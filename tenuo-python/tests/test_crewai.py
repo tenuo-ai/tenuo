@@ -10,24 +10,25 @@ Covers:
 - Tier 2 warrant requirements
 """
 
-import pytest
-from typing import Optional, Callable
+from typing import Callable, Optional
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Import the crewai module under test
 from tenuo.crewai import (
-    GuardBuilder,
-    CrewAIGuard,
-    ToolDenied,
-    ConstraintViolation,
-    UnlistedArgument,
-    MissingSigningKey,
     ConfigurationError,
+    ConstraintViolation,
+    CrewAIGuard,
     DenialResult,
-    Wildcard,
+    GuardBuilder,
+    MissingSigningKey,
     Pattern,
     Range,
     Subpath,
+    ToolDenied,
+    UnlistedArgument,
+    Wildcard,
 )
 
 try:
@@ -960,8 +961,8 @@ class TestTier2Exports:
     def test_tier2_exceptions_importable(self):
         """Tier 2 exceptions can be imported from tenuo.crewai."""
         from tenuo.crewai import (
-            WarrantExpired,
             InvalidPoP,
+            WarrantExpired,
             WarrantToolDenied,
         )
 
@@ -996,7 +997,7 @@ class TestWarrantDelegator:
 
     def test_delegation_rejects_unknown_tool(self):
         """Delegation fails if parent doesn't have the tool."""
-        from tenuo.crewai import WarrantDelegator, EscalationAttempt
+        from tenuo.crewai import EscalationAttempt, WarrantDelegator
 
         delegator = WarrantDelegator()
 
@@ -1020,7 +1021,7 @@ class TestWarrantDelegator:
 
     def test_delegation_rejects_widening_constraint(self):
         """Delegation fails if child constraint would widen access."""
-        from tenuo.crewai import WarrantDelegator, EscalationAttempt, Pattern
+        from tenuo.crewai import EscalationAttempt, Pattern, WarrantDelegator
 
         delegator = WarrantDelegator()
 
@@ -1122,7 +1123,7 @@ class TestPhase5GuardedStep:
 
     def test_guarded_step_creates_guard(self):
         """guarded_step creates a scoped guard."""
-        from tenuo.crewai import guarded_step, Wildcard, get_active_guard
+        from tenuo.crewai import Wildcard, get_active_guard, guarded_step
 
         guard_in_step = None
 
@@ -1139,7 +1140,7 @@ class TestPhase5GuardedStep:
 
     def test_guarded_step_with_ttl(self):
         """guarded_step accepts TTL parameter."""
-        from tenuo.crewai import guarded_step, Wildcard
+        from tenuo.crewai import Wildcard, guarded_step
 
         @guarded_step(allow={"test": {"arg": Wildcard()}}, ttl="10m")
         def step_with_ttl():
@@ -1150,7 +1151,7 @@ class TestPhase5GuardedStep:
 
     def test_guarded_step_strict_mode(self):
         """strict=True enables strict mode during step."""
-        from tenuo.crewai import guarded_step, Wildcard, is_strict_mode
+        from tenuo.crewai import Wildcard, guarded_step, is_strict_mode
 
         strict_inside = None
 
@@ -1279,7 +1280,7 @@ class TestPhase5GuardedStepAdvanced:
 
     def test_guarded_step_passes_args(self):
         """guarded_step passes arguments through to wrapped function."""
-        from tenuo.crewai import guarded_step, Wildcard
+        from tenuo.crewai import Wildcard, guarded_step
 
         @guarded_step(allow={"test": {"arg": Wildcard()}})
         def my_step(a, b, c=None):
@@ -1290,7 +1291,7 @@ class TestPhase5GuardedStepAdvanced:
 
     def test_guarded_step_preserves_function_name(self):
         """guarded_step preserves original function metadata."""
-        from tenuo.crewai import guarded_step, Wildcard
+        from tenuo.crewai import Wildcard, guarded_step
 
         @guarded_step(allow={"test": {"arg": Wildcard()}})
         def my_named_function():
@@ -1300,7 +1301,7 @@ class TestPhase5GuardedStepAdvanced:
 
     def test_guarded_step_with_on_denial(self):
         """guarded_step respects on_denial setting."""
-        from tenuo.crewai import guarded_step, Wildcard
+        from tenuo.crewai import Wildcard, guarded_step
 
         @guarded_step(allow={"test": {"arg": Wildcard()}}, on_denial="log")
         def step_with_log_denial():
@@ -1395,7 +1396,7 @@ class TestPhase5RealCrewAIIntegration:
     def test_register_hook_with_guard(self):
         """Can register a guard as a hook."""
         try:
-            from tenuo.crewai import GuardBuilder, Subpath, HOOKS_AVAILABLE
+            from tenuo.crewai import HOOKS_AVAILABLE, GuardBuilder, Subpath
 
             if not HOOKS_AVAILABLE:
                 pytest.skip("CrewAI hooks API not available")

@@ -3,7 +3,9 @@ GuardedFlow Example
 """
 from crewai import Flow, listen, start
 from crewai.tools import BaseTool
-from tenuo.crewai import guarded_step, Pattern, Wildcard, TenuoCrewAIError
+
+from tenuo.crewai import Pattern, TenuoCrewAIError, Wildcard, guarded_step
+
 
 class SearchTool(BaseTool):
     name: str = "web_search"

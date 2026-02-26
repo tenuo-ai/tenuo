@@ -29,24 +29,24 @@ Example:
 For multi-agent graphs with automatic delegation, see tenuo.langgraph.
 """
 
-from typing import Any, Dict, List, Optional
 import asyncio
 import inspect
 import logging
-
-from .config import allow_passthrough
-from .decorators import warrant_scope, key_scope, get_allowed_tools_context
-from .exceptions import (
-    ToolNotAuthorized,
-    ConstraintViolation,
-    ConfigurationError,
-)
-from .schemas import ToolSchema, TOOL_SCHEMAS, _get_tool_name
-from .audit import log_authorization_success
-from ._enforcement import enforce_tool_call
+from typing import Any, Dict, List, Optional
 
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_langchain_compat  # noqa: E402
+
+from ._enforcement import enforce_tool_call
+from .audit import log_authorization_success
+from .config import allow_passthrough
+from .decorators import get_allowed_tools_context, key_scope, warrant_scope
+from .exceptions import (
+    ConfigurationError,
+    ConstraintViolation,
+    ToolNotAuthorized,
+)
+from .schemas import TOOL_SCHEMAS, ToolSchema, _get_tool_name
 
 check_langchain_compat()
 
@@ -205,6 +205,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                 # Plain Warrant — sign PoP then use Authorizer.authorize_one() for
                 # full verification (issuer trust, revocation, clearance, PoP, constraints).
                 import time
+
                 from tenuo_core import Authorizer
                 signing_key = key_scope()
                 if signing_key:
@@ -227,7 +228,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         except (ToolNotAuthorized, ConstraintViolation, ConfigurationError):
             raise
         except Exception as e:
-            from .approval import ApprovalRequired, ApprovalDenied, ApprovalVerificationError
+            from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
             if isinstance(e, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
                 raise
             raise ConstraintViolation(
@@ -719,7 +720,7 @@ def auto_protect(
         # After analyzing logs, switch to enforce
         executor = auto_protect(executor, mode="enforce")
     """
-    from .config import configure, EnforcementMode, is_configured, get_config
+    from .config import EnforcementMode, configure, get_config, is_configured
 
     # Map mode string to enum
     mode_map = {

@@ -41,22 +41,24 @@ For thread pools, use `contextvars.copy_context().run(fn)` or
 the helper `tenuo.spawn()` when available.
 """
 
-from functools import wraps
-from typing import Callable, List, Optional, Union, overload, get_type_hints, get_origin, get_args, Any
-from typing_extensions import Annotated
-from contextvars import ContextVar
+import logging
 import traceback
 import warnings
+from contextvars import ContextVar
+from functools import wraps
+from typing import Any, Callable, List, Optional, Union, get_args, get_origin, get_type_hints, overload
+
+from typing_extensions import Annotated
+
+from .audit import AuditEvent, AuditEventType, audit_logger
 from .exceptions import (
-    ScopeViolation,
-    ExpiredError,
-    MissingSigningKey,
     AuthorizationDenied,
     ConstraintResult,
+    ExpiredError,
+    MissingSigningKey,
+    ScopeViolation,
     ToolNotAuthorized,
 )
-from .audit import audit_logger, AuditEvent, AuditEventType
-import logging
 
 logger = logging.getLogger("tenuo.decorators")
 
@@ -140,8 +142,7 @@ def _make_actionable_error(
 
 
 # Runtime imports (after class definitions above)
-from tenuo_core import Warrant, SigningKey  # type: ignore[import-untyped]  # noqa: E402
-
+from tenuo_core import SigningKey, Warrant  # type: ignore[import-untyped]  # noqa: E402
 
 # =============================================================================
 # Annotated Type Hint Extraction
@@ -775,6 +776,7 @@ def guard(
 
             # PoP: sign and verify via Authorizer (full check: issuer, PoP, constraints)
             import time as _time
+
             from tenuo_core import Authorizer as _Authorizer
 
             pop_signature = warrant_to_use.sign(keypair_to_use, tool_name, auth_args, int(_time.time()))

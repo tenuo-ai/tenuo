@@ -48,41 +48,43 @@ def now() -> int:
 # Core Types (from Rust)
 # =============================================================================
 from tenuo_core import (  # type: ignore
-    SigningKey,
-    PublicKey,
-    Warrant,
-    Authorizer,
-    # Approval cryptography
-    ApprovalPayload,
-    SignedApproval,
-    ApprovalMetadata,
-    py_compute_request_hash as compute_request_hash,
-    # Revocation
-    RevocationRequest,
-    SignedRevocationList,
-    SrlBuilder,
-    # Common constraints
-    Pattern,
-    Exact,
-    OneOf,
-    Range,
-    Contains,
-    Wildcard,
-    # Advanced constraints
-    AnyOf,
-    All,
-    Not,
-    NotOneOf,
-    Subset,
-    Cidr,
-    UrlPattern,
-    Regex,
     CEL,
+    DEFAULT_WARRANT_TTL_SECS,
     # Protocol constants
     MAX_DELEGATION_DEPTH,
-    MAX_WARRANT_TTL_SECS,
-    DEFAULT_WARRANT_TTL_SECS,
     MAX_WARRANT_SIZE,
+    MAX_WARRANT_TTL_SECS,
+    All,
+    # Advanced constraints
+    AnyOf,
+    ApprovalMetadata,
+    # Approval cryptography
+    ApprovalPayload,
+    Authorizer,
+    Cidr,
+    Contains,
+    Exact,
+    Not,
+    NotOneOf,
+    OneOf,
+    # Common constraints
+    Pattern,
+    PublicKey,
+    Range,
+    Regex,
+    # Revocation
+    RevocationRequest,
+    SignedApproval,
+    SignedRevocationList,
+    SigningKey,
+    SrlBuilder,
+    Subset,
+    UrlPattern,
+    Warrant,
+    Wildcard,
+)
+from tenuo_core import (
+    py_compute_request_hash as compute_request_hash,
 )
 
 # Semantic alias: Any() = Wildcard() for zero-trust constraint sets
@@ -95,24 +97,24 @@ Any = Wildcard
 
 # Setup
 from .config import (
-    configure,
     auto_configure,
-    reset_config,
-    is_configured,
+    configure,
     is_audit_mode,
+    is_configured,
     is_enforce_mode,
+    reset_config,
     should_block_violation,
 )
 
+# Constraints
+from .constraints import Capability, Shlex, Subpath, UrlSafe
+
 # Authority context managers
 from .scoped import (
+    grant,
     mint,
     mint_sync,
-    grant,
 )
-
-# Constraints
-from .constraints import Capability, Subpath, UrlSafe, Shlex
 
 # Constraint aliases (shorter names for common use)
 # Path = Subpath, Url = UrlSafe, Cmd = Shlex
@@ -121,70 +123,70 @@ Url = UrlSafe
 Cmd = Shlex
 
 # One-line guard (auto-inference)
-from .guard import guard as auto_guard
-
-# Protection decorator
-from .decorators import (
-    guard,
-    warrant_scope,
-    key_scope,
-)
-
-# LangChain integration
-from .langchain import (
-    guard_tools,
-    guard_agent,
-    auto_protect,
-    LANGCHAIN_AVAILABLE,
-)
-
-# Essential errors only
-from .exceptions import (
-    TenuoError,
-    ConstraintViolation,
-    MonotonicityError,
-    ConfigurationError,
-    AuthorizationDenied,  # Rich error with diff support
-    ScopeViolation,  # Authorization scope exceeded
-)
-
-# Error explanation
-from .explain import explain, explain_str
-
-# Diagnostics
-from .diagnostics import diagnose, info
-
-# BoundWarrant (common result of warrant.bind())
-from .bound_warrant import BoundWarrant
-
-# Validation result
-from .validation import ValidationResult
-
-# Key management
-from .keys import KeyRegistry, Keyring
+import tenuo.builder  # noqa: F401 - Adds Warrant.mint_builder()
+import tenuo.keys  # noqa: F401 - Adds SigningKey.from_env(), PublicKey.from_env()
 
 # =============================================================================
 # Initialize extensions (must run)
 # =============================================================================
 import tenuo.warrant_ext  # noqa: F401
-import tenuo.builder  # noqa: F401 - Adds Warrant.mint_builder()
-import tenuo.keys  # noqa: F401 - Adds SigningKey.from_env(), PublicKey.from_env()
+
+# BoundWarrant (common result of warrant.bind())
+from .bound_warrant import BoundWarrant
+
+# Protection decorator
+from .decorators import (
+    guard,
+    key_scope,
+    warrant_scope,
+)
+
+# Diagnostics
+from .diagnostics import diagnose, info
+
+# Essential errors only
+from .exceptions import (
+    AuthorizationDenied,  # Rich error with diff support
+    ConfigurationError,
+    ConstraintViolation,
+    MonotonicityError,
+    ScopeViolation,  # Authorization scope exceeded
+    TenuoError,
+)
+
+# Error explanation
+from .explain import explain, explain_str
+from .guard import guard as auto_guard
+
+# Key management
+from .keys import KeyRegistry, Keyring
+
+# LangChain integration
+from .langchain import (
+    LANGCHAIN_AVAILABLE,
+    auto_protect,
+    guard_agent,
+    guard_tools,
+)
+
+# Validation result
+from .validation import ValidationResult
 
 Warrant.bind = BoundWarrant.bind_warrant
 
 from tenuo.approval import (  # noqa: E402
+    ApprovalDenied,
     ApprovalPolicy,
-    ApprovalRule,
     ApprovalRequest,
     ApprovalRequired,
-    ApprovalDenied,
+    ApprovalRule,
     ApprovalTimeout,
     ApprovalVerificationError,
-    require_approval,
-    sign_approval,
-    cli_prompt,
     auto_approve,
     auto_deny,
+    cli_prompt,
+    require_approval,
+    sign_approval,
 )
 
 # =============================================================================

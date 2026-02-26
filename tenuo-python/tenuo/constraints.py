@@ -58,7 +58,7 @@ They're the core security building blocks across all Tenuo integrations.
 import logging
 import posixpath
 import shlex
-from typing import Dict, Any, TYPE_CHECKING, List, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Set
 
 logger = logging.getLogger("tenuo.constraints")
 
@@ -122,23 +122,23 @@ def ensure_constraint(value: Any) -> Any:
     # Check if it's already a constraint (by class name to avoid circular imports of types)
     try:
         from tenuo_core import (
-            Pattern,
-            Exact,
-            OneOf,
-            Range,
-            Regex,
-            Wildcard,
-            NotOneOf,
-            Cidr,
-            UrlPattern,
-            Contains,
-            Subset,
+            CEL,
             All,
             AnyOf,
+            Cidr,
+            Contains,
+            Exact,
             Not,
-            CEL,
+            NotOneOf,
+            OneOf,
+            Pattern,
+            Range,
+            Regex,
             Subpath,
+            Subset,
+            UrlPattern,
             UrlSafe,
+            Wildcard,
         )
 
         if isinstance(

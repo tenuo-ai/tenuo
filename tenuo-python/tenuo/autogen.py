@@ -11,12 +11,12 @@ AutoGen is optional; importing this module does not require the dependency.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import functools
 import importlib.util
 import inspect
 import json
 import logging
+from dataclasses import dataclass
 from typing import (
     Any,
     Callable,
@@ -29,13 +29,13 @@ from typing import (
     Union,
 )
 
+from ._builder import BaseGuardBuilder
+from ._enforcement import EnforcementResult, enforce_tool_call, handle_denial
 from .exceptions import (
     AuthorizationDenied,
     ConstraintViolation,
     ToolNotAuthorized,
 )
-from ._enforcement import EnforcementResult, handle_denial, enforce_tool_call
-from ._builder import BaseGuardBuilder
 
 # Optional AutoGen availability check (best-effort, for feature detection only)
 AUTOGEN_AVAILABLE = importlib.util.find_spec("autogen_agentchat") is not None

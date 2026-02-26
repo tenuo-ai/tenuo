@@ -81,7 +81,7 @@ def get_package_version(package_name: str) -> Optional[str]:
     """Get installed version of a package."""
     try:
         # Try importlib.metadata first (Python 3.8+)
-        from importlib.metadata import version, PackageNotFoundError
+        from importlib.metadata import PackageNotFoundError, version
 
         try:
             return version(package_name)

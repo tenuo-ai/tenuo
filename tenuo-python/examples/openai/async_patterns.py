@@ -19,13 +19,13 @@ Usage:
 
 import asyncio
 
+from tenuo import SigningKey, Warrant
 from tenuo.openai import (
-    guard,
-    Subpath,
     Pattern,
     Range,
+    Subpath,
+    guard,
 )
-from tenuo import SigningKey, Warrant
 
 # Check if OpenAI is available
 try:

@@ -68,6 +68,9 @@ results/
 benchmarks/**/results/
 benchmarks/**/REPORT.md
 benchmarks/**/BENCHMARK_REPORT.md
+benchmarks/CONFERENCE_BRIEF.md
+benchmarks/**/*COLLABORATION*.md
+benchmarks/**/*FINDINGS*.md
 MASTER_BENCHMARK_REPORT.md
 tenuo-core/REPORT.md
 security_report.md

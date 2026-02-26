@@ -31,9 +31,9 @@ from pathlib import Path
 # Ensure we can import from tenuo
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from tenuo import SigningKey, Warrant, Cidr, Exact, Wildcard
+from tenuo import Cidr, Exact, SigningKey, Warrant, Wildcard
+from tenuo.a2a import A2AClient, A2AServer
 from tenuo.constraints import Subpath
-from tenuo.a2a import A2AServer, A2AClient
 
 
 # Colors

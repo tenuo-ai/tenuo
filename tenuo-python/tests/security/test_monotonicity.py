@@ -10,25 +10,25 @@ Tests verifying:
 """
 
 import pytest
+from tenuo_core import Cidr, UrlPattern
 
 from tenuo import (
-    Warrant,
+    CEL,
+    ConstraintViolation,
+    Contains,
+    MonotonicityError,
+    NotOneOf,
+    OneOf,
     Pattern,
     Range,
-    Wildcard,
-    OneOf,
-    NotOneOf,
-    Contains,
-    Subset,
-    CEL,
-    MonotonicityError,
-    ConstraintViolation,
     Subpath,
+    Subset,
     UrlSafe,
+    Warrant,
+    Wildcard,
 )
 from tenuo.constraints import Constraints
-from tenuo.exceptions import PatternExpanded, WildcardExpansion, EmptyResultSet
-from tenuo_core import Cidr, UrlPattern
+from tenuo.exceptions import EmptyResultSet, PatternExpanded, WildcardExpansion
 
 
 @pytest.mark.security

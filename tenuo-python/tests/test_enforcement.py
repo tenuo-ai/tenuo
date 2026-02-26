@@ -13,26 +13,26 @@ and focus on the core enforcement logic.
 """
 
 import logging
-import pytest
 from unittest.mock import MagicMock
 
-from tenuo import Warrant, SigningKey, Authorizer
-from tenuo.exceptions import (
-    ToolNotAuthorized,
-    ConstraintViolation,
-    ConfigurationError,
-)
+import pytest
+
+from tenuo import Authorizer, SigningKey, Warrant
 from tenuo._enforcement import (
-    EnforcementResult,
     DenialPolicy,
     DenialResult,
-    handle_denial,
+    EnforcementResult,
+    _extract_violated_field,
     enforce_tool_call,
     filter_tools_by_warrant,
-    _extract_violated_field,
+    handle_denial,
+)
+from tenuo.exceptions import (
+    ConfigurationError,
+    ConstraintViolation,
+    ToolNotAuthorized,
 )
 from tenuo.schemas import ToolSchema
-
 
 # =============================================================================
 # Test Fixtures

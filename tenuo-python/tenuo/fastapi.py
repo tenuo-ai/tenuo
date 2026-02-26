@@ -20,22 +20,23 @@ Usage:
         return {"results": [...]}
 """
 
-from dataclasses import dataclass
-from typing import Optional, Any, Dict, List, Callable
 import base64
-import uuid
 import logging
+import uuid
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional
 
-from tenuo_core import Warrant, PublicKey  # type: ignore[import-untyped]
-from tenuo.exceptions import TenuoError, DeserializationError
+from tenuo_core import PublicKey, Warrant  # type: ignore[import-untyped]
+
 from tenuo._enforcement import EnforcementResult
+from tenuo.exceptions import DeserializationError, TenuoError
 
 logger = logging.getLogger("tenuo.fastapi")
 
 
 # Use string forward refs or try import, FastAPI must be installed
 try:
-    from fastapi import FastAPI, Header, HTTPException, Depends, Request, status
+    from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
     from fastapi.responses import JSONResponse
     from fastapi.security import APIKeyHeader
 
@@ -321,8 +322,9 @@ class TenuoGuard:
         Note: This uses _VerificationOnlyKey sentinel since in verify mode,
         the signing key is never used (precomputed_signature is used instead).
         """
-        from tenuo._enforcement import enforce_tool_call
         from tenuo_core import Authorizer as _Authorizer
+
+        from tenuo._enforcement import enforce_tool_call
 
         # In verify mode, enforce_tool_call() requires a BoundWarrant for type safety
         # and to access warrant properties (id, tools, etc.), but the signing key

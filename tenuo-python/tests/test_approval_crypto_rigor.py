@@ -2,11 +2,14 @@
 Adversarial tests for Tenuo Approval Protocol.
 These tests explicitly attempt to break the security model.
 """
-import pytest
 import os
 import time
-from tenuo import SigningKey
+
+import pytest
 from tenuo_core import ApprovalPayload, SignedApproval, py_compute_request_hash
+
+from tenuo import SigningKey
+
 
 def test_verify_before_deserialize_tampering():
     """

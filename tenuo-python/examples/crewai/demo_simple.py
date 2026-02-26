@@ -36,16 +36,16 @@ def main():
     print(f"\n{BOLD}{C}═══ Tenuo CrewAI Demo ═══{END}\n")
 
     # Suppress CrewAI import noise
-    import io
     import contextlib
+    import io
     with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
-        from crewai.tools import BaseTool
         from crewai.events.utils import console_formatter
+        from crewai.tools import BaseTool
         console_formatter.ConsoleFormatter._show_tracing_disabled_message_if_needed = lambda self: None
 
     try:
-        from tenuo import SigningKey, Warrant, Subpath
-        from tenuo.crewai import GuardBuilder, ConstraintViolation
+        from tenuo import SigningKey, Subpath, Warrant
+        from tenuo.crewai import ConstraintViolation, GuardBuilder
     except ImportError:
         print(f'{R}pip install "tenuo[crewai]"{END}')
         sys.exit(1)

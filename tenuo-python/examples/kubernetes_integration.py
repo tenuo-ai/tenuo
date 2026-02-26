@@ -27,19 +27,19 @@ Architecture:
     Protected Tool Functions (@guard)
 """
 
+import os
+from typing import Any, Dict, Optional
+
 from tenuo import (
-    Warrant,
-    SigningKey,
-    Pattern,
-    guard,
     Exact,
-    warrant_scope,
+    Pattern,
+    SigningKey,
+    Warrant,
+    guard,
     key_scope,
+    warrant_scope,
 )
 from tenuo.exceptions import AuthorizationError
-from typing import Optional, Dict, Any
-import os
-
 
 # ============================================================================
 # Warrant Loading from Kubernetes Environment

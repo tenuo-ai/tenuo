@@ -13,15 +13,16 @@ Run:
 """
 
 import argparse
-import time
 import os
+import time
 
 # Optional imports for --live mode
 HAS_LIVE_DEPS = False
 try:
     import openai  # noqa: F401
-    from tenuo.openai import GuardBuilder, ConstraintViolation  # noqa: F401
+
     from tenuo import Subpath  # noqa: F401
+    from tenuo.openai import ConstraintViolation, GuardBuilder  # noqa: F401
 
     HAS_LIVE_DEPS = True
 except ImportError:

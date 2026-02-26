@@ -1,7 +1,9 @@
-import pytest
 from unittest.mock import MagicMock, PropertyMock
-from tenuo.google_adk.guard import TenuoGuard, MissingSigningKeyError
-from tenuo.google_adk.plugin import TenuoPlugin, ScopedWarrant
+
+import pytest
+
+from tenuo.google_adk.guard import MissingSigningKeyError, TenuoGuard
+from tenuo.google_adk.plugin import ScopedWarrant, TenuoPlugin
 
 # =============================================================================
 # Fixtures & Mocks
@@ -320,7 +322,7 @@ class TestReplayAndBinding:
         Scenario: Warrant constrains path to /tmp/*, attacker tries /etc/passwd.
         Verify that constraint violations are detected and denied.
         """
-        from tenuo import SigningKey, Warrant, Subpath
+        from tenuo import SigningKey, Subpath, Warrant
 
         sk = SigningKey.generate()
         # Warrant authorizes read_file but only under /tmp/

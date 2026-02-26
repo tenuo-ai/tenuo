@@ -2,15 +2,16 @@
 Tests for delegation diff and builder functionality.
 """
 
+from tenuo_core import ChangeType, DelegationDiff, DelegationReceipt
+
 from tenuo import (
+    Exact,
+    Pattern,
     SigningKey,
     Warrant,
-    Pattern,
-    Exact,
 )
-from tenuo.constraints import Constraints
-from tenuo_core import ChangeType, DelegationDiff, DelegationReceipt
 from tenuo.builder import GrantBuilder
+from tenuo.constraints import Constraints
 
 
 def test_builder_basic():

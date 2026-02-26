@@ -46,15 +46,16 @@ except ImportError:
     raise SystemExit("Install temporalio: pip install temporalio")
 
 # Tenuo imports
-from tenuo import SigningKey, Warrant
 from tenuo_core import Subpath
+
+from tenuo import SigningKey, Warrant
 from tenuo.temporal import (
+    EnvKeyResolver,
+    TemporalAuditEvent,
+    TenuoClientInterceptor,
     TenuoInterceptor,
     TenuoInterceptorConfig,
-    TenuoClientInterceptor,
-    EnvKeyResolver,
     tenuo_headers,
-    TemporalAuditEvent,
 )
 
 # Logging

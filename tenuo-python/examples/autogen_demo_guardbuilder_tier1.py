@@ -46,7 +46,6 @@ except Exception as e:  # pragma: no cover - optional dep guard
 from tenuo import Subpath, UrlSafe
 from tenuo.autogen import GuardBuilder
 
-
 SAMPLE_PAPER_CONTENT = (
     "Time-Of-Check to Time-Of-Use Vulnerabilities in LLM Tool Execution\n"
     "===================================================================\n\n"

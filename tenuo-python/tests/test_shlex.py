@@ -5,6 +5,7 @@ Tests based on the test vectors in shlex-constraint-spec.md.
 """
 
 import pytest
+
 from tenuo.constraints import Shlex
 
 

@@ -9,12 +9,12 @@ Covers:
 """
 
 import pytest
+
 from tenuo import (
     RevocationRequest,
     SignedRevocationList,
     SigningKey,
 )
-
 
 # =============================================================================
 # Fixtures

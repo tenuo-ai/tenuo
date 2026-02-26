@@ -1,5 +1,7 @@
-import pytest
 import time
+
+import pytest
+
 from tenuo import (
     Authorizer,
     SigningKey,

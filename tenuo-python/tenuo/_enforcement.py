@@ -44,21 +44,21 @@ import inspect
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, cast
 
 if TYPE_CHECKING:
     from .approval import ApprovalHandler, ApprovalPolicy
 
 from .bound_warrant import BoundWarrant
-from .validation import ValidationResult
 from .exceptions import (
-    TenuoError,
-    ToolNotAuthorized,
+    ConfigurationError,
     ConstraintViolation,
     ExpiredError,
-    ConfigurationError,
+    TenuoError,
+    ToolNotAuthorized,
 )
-from .schemas import ToolSchema, TOOL_SCHEMAS
+from .schemas import TOOL_SCHEMAS, ToolSchema
+from .validation import ValidationResult
 
 logger = logging.getLogger("tenuo.enforcement")
 
@@ -348,8 +348,11 @@ def _check_approval(
     """
     from tenuo_core import (
         py_compute_request_hash as _compute_hash,
+    )
+    from tenuo_core import (
         verify_approvals as _verify_approvals,
     )
+
     from .approval import (
         ApprovalRequired,
         ApprovalVerificationError,
@@ -741,7 +744,7 @@ def enforce_tool_call(
             warrant_id=warrant_id,
         )
     except Exception as e:
-        from .approval import ApprovalRequired, ApprovalDenied, ApprovalVerificationError
+        from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
         if isinstance(e, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
             raise
 

@@ -8,10 +8,11 @@ Tests verifying:
 - Session IDs are metadata only, not authorization
 """
 
-import pytest
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
+
+import pytest
 
 from tenuo import (
     Warrant,

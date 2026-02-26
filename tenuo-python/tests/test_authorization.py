@@ -10,19 +10,19 @@ Tests cover:
 """
 
 import pytest
-from tenuo import (
-    Warrant,
-    SigningKey,
-    Pattern,
-    guard,
-    warrant_scope,
-    key_scope,
-    Exact,
-)
-from tenuo.exceptions import ScopeViolation
-from tenuo.constraints import Constraints
 from tenuo_core import Clearance
 
+from tenuo import (
+    Exact,
+    Pattern,
+    SigningKey,
+    Warrant,
+    guard,
+    key_scope,
+    warrant_scope,
+)
+from tenuo.constraints import Constraints
+from tenuo.exceptions import ScopeViolation
 
 # ============================================================================
 # PoP Enforcement Tests

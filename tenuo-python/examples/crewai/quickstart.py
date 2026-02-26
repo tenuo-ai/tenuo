@@ -10,15 +10,15 @@ Requires: pip install tenuo crewai>=0.80.0
 
 # Import Tenuo CrewAI integration
 from tenuo.crewai import (
+    HOOKS_AVAILABLE,
+    ConstraintViolation,
     GuardBuilder,
     Pattern,
-    Subpath,
     Range,
-    Wildcard,
+    Subpath,
     ToolDenied,
-    ConstraintViolation,
     UnlistedArgument,
-    HOOKS_AVAILABLE,
+    Wildcard,
 )
 
 

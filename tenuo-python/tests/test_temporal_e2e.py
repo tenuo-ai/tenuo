@@ -18,33 +18,34 @@ Covers:
 import asyncio
 import base64
 import time
-import pytest
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 pytest.importorskip("temporalio")
 
-from tenuo import SigningKey, Warrant  # noqa: E402
 from tenuo_core import Subpath  # noqa: E402
+
+from tenuo import SigningKey, Warrant  # noqa: E402
 from tenuo.temporal import (  # noqa: E402
-    TenuoInterceptor,
-    TenuoInterceptorConfig,
-    TenuoClientInterceptor,
-    EnvKeyResolver,
-    ConstraintViolation,
-    tenuo_headers,
-    TENUO_WARRANT_HEADER,
+    TENUO_COMPRESSED_HEADER,
     TENUO_KEY_ID_HEADER,
     TENUO_POP_HEADER,
-    TENUO_COMPRESSED_HEADER,
-    _workflow_headers_store,
+    TENUO_WARRANT_HEADER,
+    ConstraintViolation,
+    EnvKeyResolver,
+    TenuoClientInterceptor,
+    TenuoInterceptor,
+    TenuoInterceptorConfig,
+    _extract_warrant_from_headers,
     _pop_dedup_cache,
     _store_lock,
-    _extract_warrant_from_headers,
     _TenuoWorkflowInboundInterceptor,
+    _workflow_headers_store,
+    tenuo_headers,
 )
-
 
 # -- Fixtures ----------------------------------------------------------------
 
@@ -635,6 +636,7 @@ class TestWarrantExpiration:
     def test_expired_warrant_denied_lightweight_path(self, agent_key, control_key):
         """Lightweight path (no trusted_roots): expired warrant raises WarrantExpired."""
         import time
+
         from tenuo.temporal import WarrantExpired
 
         expired = (
@@ -1139,8 +1141,8 @@ class TestChildWorkflowDelegation:
     ):
         """Outbound interceptor pops _pending_child_headers and injects into child."""
         from tenuo.temporal import (
-            _TenuoWorkflowOutboundInterceptor,
             _pending_child_headers,
+            _TenuoWorkflowOutboundInterceptor,
         )
 
         child_id = "wf-child-001"
@@ -1304,8 +1306,8 @@ class TestOutboundFailClosed:
     def test_pop_failure_raises_context_error(self, warrant, headers_dict):
         """If key resolver fails, outbound interceptor raises TenuoContextError."""
         from tenuo.temporal import (
-            _TenuoWorkflowOutboundInterceptor,
             TenuoContextError,
+            _TenuoWorkflowOutboundInterceptor,
         )
 
         wf_id = "wf-fail-pop"
@@ -1343,8 +1345,8 @@ class TestOutboundFailClosed:
     def test_missing_key_resolver_raises_context_error(self, warrant, headers_dict):
         """If no key_resolver configured, outbound interceptor raises TenuoContextError."""
         from tenuo.temporal import (
-            _TenuoWorkflowOutboundInterceptor,
             TenuoContextError,
+            _TenuoWorkflowOutboundInterceptor,
         )
 
         wf_id = "wf-no-resolver"

@@ -12,11 +12,12 @@ Covers:
 - Integration invariants from integration guide
 """
 
-from dataclasses import dataclass
 import logging
 import time
-import pytest
+from dataclasses import dataclass
 from typing import Any, List, Optional
+
+import pytest
 
 from tenuo import (
     All,

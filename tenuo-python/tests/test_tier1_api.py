@@ -8,24 +8,25 @@ Covers:
 - Containment logic for constraints
 """
 
-import pytest
 import asyncio
 
+import pytest
+
 from tenuo import (
-    configure,
-    reset_config,
-    mint,
-    grant,
-    guard,
-    SigningKey,
     ConfigurationError,
     MonotonicityError,
+    SigningKey,
+    configure,
+    grant,
+    guard,
+    mint,
+    reset_config,
 )
 from tenuo.config import get_config
+from tenuo.decorators import warrant_scope
 from tenuo.exceptions import ScopeViolation
 from tenuo.schemas import ToolSchema, register_schema
 from tenuo.scoped import _is_constraint_contained
-from tenuo.decorators import warrant_scope
 
 # =============================================================================
 # Fixtures
@@ -99,7 +100,7 @@ class TestConstraintContainment:
     # -------------------------------------------------------------------------
     def test_wildcard_contains_anything(self):
         """Wildcard parent contains any child constraint."""
-        from tenuo_core import Wildcard, Exact, Pattern, OneOf, Range
+        from tenuo_core import Exact, OneOf, Pattern, Range, Wildcard
 
         wildcard = Wildcard()
 
@@ -123,7 +124,7 @@ class TestConstraintContainment:
 
     def test_wildcard_child_never_contained(self):
         """No parent can contain Wildcard child (would widen permissions)."""
-        from tenuo_core import Wildcard, Exact, Pattern, OneOf, Range
+        from tenuo_core import Exact, OneOf, Pattern, Range, Wildcard
 
         wildcard = Wildcard()
 
@@ -157,7 +158,7 @@ class TestConstraintContainment:
 
     def test_regex_exact_inside(self):
         """Regex -> Exact: exact value must match the regex."""
-        from tenuo_core import Regex, Exact
+        from tenuo_core import Exact, Regex
 
         parent = Regex(r"^staging-.*$")
 
@@ -188,7 +189,7 @@ class TestConstraintContainment:
 
     def test_regex_complex_patterns(self):
         """Test regex with complex patterns."""
-        from tenuo_core import Regex, Exact
+        from tenuo_core import Exact, Regex
 
         # IP address pattern
         ip_pattern = Regex(r"^192\.168\.\d+\.\d+$")
@@ -206,7 +207,7 @@ class TestConstraintContainment:
     # -------------------------------------------------------------------------
     def test_pattern_suffix_exact_inside(self):
         """Exact value inside suffix wildcard pattern."""
-        from tenuo_core import Pattern, Exact
+        from tenuo_core import Exact, Pattern
 
         # /data/* should contain /data/anything
         assert _is_constraint_contained(Exact("/data/reports/q3.pdf"), Pattern("/data/*"))
@@ -230,7 +231,7 @@ class TestConstraintContainment:
     # -------------------------------------------------------------------------
     def test_pattern_prefix_exact_inside(self):
         """Exact value inside prefix wildcard pattern (e.g., *@company.com)."""
-        from tenuo_core import Pattern, Exact
+        from tenuo_core import Exact, Pattern
 
         # *@company.com should contain anything@company.com
         assert _is_constraint_contained(Exact("cfo@company.com"), Pattern("*@company.com"))
@@ -253,7 +254,7 @@ class TestConstraintContainment:
     # -------------------------------------------------------------------------
     def test_pattern_middle_exact_inside(self):
         """Exact value inside middle wildcard pattern."""
-        from tenuo_core import Pattern, Exact
+        from tenuo_core import Exact, Pattern
 
         # /data/*/file.txt should contain /data/anything/file.txt
         assert _is_constraint_contained(Exact("/data/reports/file.txt"), Pattern("/data/*/file.txt"))
@@ -267,7 +268,7 @@ class TestConstraintContainment:
     # -------------------------------------------------------------------------
     def test_pattern_multiple_wildcards(self):
         """Pattern with multiple wildcards."""
-        from tenuo_core import Pattern, Exact
+        from tenuo_core import Exact, Pattern
 
         # /*/reports/*.pdf
         assert _is_constraint_contained(Exact("/data/reports/q3.pdf"), Pattern("/*/reports/*.pdf"))
@@ -372,7 +373,7 @@ class TestConstraintContainment:
 
     def test_exact_in_pattern(self):
         """Exact value should be contained if it matches the pattern."""
-        from tenuo_core import Pattern, Exact
+        from tenuo_core import Exact, Pattern
 
         # Suffix wildcard
         assert _is_constraint_contained(Exact("/data/file.txt"), Pattern("/data/*"))
@@ -403,7 +404,7 @@ class TestConstraintContainment:
     # -------------------------------------------------------------------------
     def test_range_exact_cross_type(self):
         """Range parent CAN contain Exact child if numeric value is within bounds."""
-        from tenuo_core import Range, Exact
+        from tenuo_core import Exact, Range
 
         # Range parent can contain Exact child with numeric value
         assert _is_constraint_contained(Exact("50"), Range(0, 100))  # In range
@@ -419,7 +420,7 @@ class TestConstraintContainment:
 
     def test_incompatible_pattern_oneof(self):
         """Pattern parent with specific pattern won't match OneOf child."""
-        from tenuo_core import Pattern, OneOf
+        from tenuo_core import OneOf, Pattern
 
         # OneOf child doesn't match specific pattern (not a simple string)
         # Note: Pattern("*") WOULD match because "*" matches anything
@@ -430,7 +431,7 @@ class TestConstraintContainment:
     # -------------------------------------------------------------------------
     def test_empty_pattern(self):
         """Edge case: empty or minimal patterns."""
-        from tenuo_core import Pattern, Exact
+        from tenuo_core import Exact, Pattern
 
         # Single wildcard matches everything
         assert _is_constraint_contained(Exact("anything"), Pattern("*"))
@@ -438,7 +439,7 @@ class TestConstraintContainment:
 
     def test_no_wildcard_pattern(self):
         """Pattern without wildcard is effectively Exact."""
-        from tenuo_core import Pattern, Exact
+        from tenuo_core import Exact, Pattern
 
         assert _is_constraint_contained(Exact("/data/file.txt"), Pattern("/data/file.txt"))
         assert not _is_constraint_contained(Exact("/data/other.txt"), Pattern("/data/file.txt"))
@@ -500,7 +501,7 @@ class TestConstraintContainment:
     # -------------------------------------------------------------------------
     def test_range_to_exact_numeric(self):
         """Range parent can contain Exact numeric child if within bounds."""
-        from tenuo_core import Range, Exact
+        from tenuo_core import Exact, Range
 
         parent = Range(0, 100)
 
@@ -515,7 +516,7 @@ class TestConstraintContainment:
 
     def test_range_to_exact_string_fails(self):
         """Range -> Exact with non-numeric string should fail."""
-        from tenuo_core import Range, Exact
+        from tenuo_core import Exact, Range
 
         parent = Range(0, 100)
 
@@ -695,6 +696,7 @@ class TestConstraintContainment:
 
 def test_root_task_creates_warrant(setup_config):
     from tenuo_core import Pattern
+
     from tenuo import Capability
 
     async def _test():
@@ -712,6 +714,7 @@ def test_root_task_creates_warrant(setup_config):
 
 def test_scoped_task_narrowing(setup_config):
     from tenuo_core import Pattern
+
     from tenuo import Capability
 
     async def _test():
@@ -731,6 +734,7 @@ def test_scoped_task_narrowing(setup_config):
 
 def test_scoped_task_requires_parent(setup_config):
     from tenuo_core import Pattern
+
     from tenuo import Capability
 
     async def _test():
@@ -743,6 +747,7 @@ def test_scoped_task_requires_parent(setup_config):
 
 def test_scoped_task_enforces_containment(setup_config):
     from tenuo_core import Pattern
+
     from tenuo import Capability
 
     async def _test():
@@ -757,6 +762,7 @@ def test_scoped_task_enforces_containment(setup_config):
 
 def test_scoped_task_preview(setup_config):
     from tenuo_core import Pattern
+
     from tenuo import Capability
 
     async def _test():
@@ -777,6 +783,7 @@ def test_scoped_task_preview(setup_config):
 
 def test_guard_decorator_async(setup_config):
     from tenuo_core import Pattern
+
     from tenuo import Capability
 
     @guard(tool="read_file")
@@ -878,6 +885,7 @@ class TestGrantWithAllConstraints:
     def test_grant_range_narrowing(self, setup_config):
         """grant() allows narrowing Range."""
         from tenuo_core import Range
+
         from tenuo import Capability
 
         async def _test():
@@ -892,6 +900,7 @@ class TestGrantWithAllConstraints:
     def test_grant_oneof_subset(self, setup_config):
         """grant() allows narrowing OneOf to subset."""
         from tenuo_core import OneOf
+
         from tenuo import Capability
 
         async def _test():

@@ -10,23 +10,23 @@ security testing standards of the OpenAI adapter. Specifically ensuring:
 5. Path traversal protection
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
 
-from tenuo.crewai import (
-    GuardBuilder,
-    ToolDenied,
-    ConstraintViolation,
-    UnlistedArgument,
-    MissingSigningKey,
-    DenialResult,
-    Pattern,
-    Wildcard,
-    Range,
-)
-from tenuo.constraints import Subpath
-from tenuo.bound_warrant import BoundWarrant
+import pytest
 
+from tenuo.bound_warrant import BoundWarrant
+from tenuo.constraints import Subpath
+from tenuo.crewai import (
+    ConstraintViolation,
+    DenialResult,
+    GuardBuilder,
+    MissingSigningKey,
+    Pattern,
+    Range,
+    ToolDenied,
+    UnlistedArgument,
+    Wildcard,
+)
 
 # =============================================================================
 # Real CrewAI Tool (using actual dependency)
@@ -525,7 +525,7 @@ class TestSecurityRegressions:
         REGRESSION: Delegation from expired warrant must fail.
         Previously: Expiry wasn't checked before delegation.
         """
-        from tenuo.crewai import WarrantDelegator, EscalationAttempt
+        from tenuo.crewai import EscalationAttempt, WarrantDelegator
 
         delegator = WarrantDelegator()
 
@@ -545,7 +545,7 @@ class TestSecurityRegressions:
         REGRESSION: Constraints without is_subset_of must be rejected.
         Previously: Warning logged but delegation allowed (bypass).
         """
-        from tenuo.crewai import WarrantDelegator, EscalationAttempt
+        from tenuo.crewai import EscalationAttempt, WarrantDelegator
 
         delegator = WarrantDelegator()
 
@@ -571,7 +571,7 @@ class TestSecurityRegressions:
         REGRESSION: Agents not in policy must raise, not proceed unguarded.
         Previously: Logged warning and added agent with no guards.
         """
-        from tenuo.crewai import GuardedCrew, ConfigurationError
+        from tenuo.crewai import ConfigurationError, GuardedCrew
 
         mock_agent = MagicMock()
         mock_agent.role = "unregistered_agent"
@@ -647,7 +647,7 @@ class TestSecurityRegressions:
         REGRESSION: If parent.tools() fails, must deny (fail-closed).
         Previously: Returned empty set and skipped validation.
         """
-        from tenuo.crewai import WarrantDelegator, EscalationAttempt
+        from tenuo.crewai import EscalationAttempt, WarrantDelegator
 
         delegator = WarrantDelegator()
 
@@ -668,7 +668,7 @@ class TestSecurityRegressions:
         REGRESSION: If parent.constraint_for() fails unexpectedly, must deny.
         Previously: Set to None and skipped subset validation.
         """
-        from tenuo.crewai import WarrantDelegator, EscalationAttempt
+        from tenuo.crewai import EscalationAttempt, WarrantDelegator
 
         delegator = WarrantDelegator()
 
@@ -861,7 +861,8 @@ class TestConcurrentAccess:
         """
         import threading
         import time
-        from tenuo.crewai import guarded_step, get_active_guard, Wildcard
+
+        from tenuo.crewai import Wildcard, get_active_guard, guarded_step
 
         results = {}
 
@@ -979,7 +980,7 @@ class TestConstraintComposition:
         Attack: Satisfy one constraint but not another.
         Invariant: All constraints on an argument must be satisfied.
         """
-        from tenuo.crewai import Range, Pattern
+        from tenuo.crewai import Pattern, Range
 
         # Both constraints on same tool's different arguments
         guard = (
@@ -1089,7 +1090,7 @@ class TestWarrantChainDepth:
         Attack: Create excessively deep delegation chain to confuse auditing.
         Invariant: Delegation should fail beyond max depth.
         """
-        from tenuo.crewai import WarrantDelegator, EscalationAttempt
+        from tenuo.crewai import EscalationAttempt, WarrantDelegator
 
         # Create parent warrant mock that simulates depth limit
         parent_warrant = MagicMock()

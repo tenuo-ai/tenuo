@@ -1,5 +1,6 @@
 import asyncio
 import sys
+
 import requests
 from rich.prompt import Confirm
 
@@ -11,8 +12,9 @@ except ImportError:
 
 import config
 import display
-from tenuo import Warrant, Pattern, SigningKey
 from agents import run_research_agent, run_summary_agent
+
+from tenuo import Pattern, SigningKey, Warrant
 
 # Constants
 LM_STUDIO_API_URL = config.LM_STUDIO_URL + "/v1/models"
@@ -148,9 +150,10 @@ def simulate_attacks():
     Simulate attack attempts to demonstrate Tenuo blocking.
     Use this mode to see exactly what Tenuo blocks, without needing an LLM.
     """
-    from tenuo import Warrant, SigningKey, Pattern
     from protected_tools import ProtectedToolWrapper
-    from tools import read_file, write_file, http_request
+    from tools import http_request, read_file, write_file
+
+    from tenuo import Pattern, SigningKey, Warrant
 
     display.print_demo_intro()
     display.print_header("ATTACK SIMULATION MODE")

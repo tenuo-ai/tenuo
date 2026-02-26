@@ -12,26 +12,27 @@ Requirements:
 Note: This example uses OpenAI, but the pattern works with any LLM provider.
 """
 
-from tenuo import (
-    Warrant,
-    SigningKey,
-    Pattern,
-    guard,
-    warrant_scope,
-    key_scope,
-)
-from tenuo.exceptions import AuthorizationError
-from typing import Dict, Any, Optional
 import os
 from contextvars import Token
+from typing import Any, Dict, Optional
+
+from tenuo import (
+    Pattern,
+    SigningKey,
+    Warrant,
+    guard,
+    key_scope,
+    warrant_scope,
+)
+from tenuo.exceptions import AuthorizationError
 
 # Try to import LangChain components
 try:
-    from langchain_core.tools import Tool
     from langchain.agents.agent import AgentExecutor
     from langchain.agents.openai_tools.base import create_openai_tools_agent
-    from langchain_openai import ChatOpenAI
     from langchain_core.callbacks import BaseCallbackHandler
+    from langchain_core.tools import Tool
+    from langchain_openai import ChatOpenAI
 
     # from langchain.schema import AgentAction, AgentFinish, LLMResult
     LANGCHAIN_AVAILABLE = True
@@ -158,7 +159,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
         """Called when a tool starts executing. Set warrant and keypair in context."""
         if LANGCHAIN_AVAILABLE:
             # Set warrant and keypair in context for this tool execution
-            from tenuo.decorators import _warrant_context, _keypair_context
+            from tenuo.decorators import _keypair_context, _warrant_context
 
             self.warrant_token = _warrant_context.set(self.warrant)
             self.keypair_token = _keypair_context.set(self.keypair)
@@ -166,7 +167,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
     def on_tool_end(self, output: str, **kwargs) -> None:
         """Called when a tool finishes. Clean up context."""
         if LANGCHAIN_AVAILABLE:
-            from tenuo.decorators import _warrant_context, _keypair_context
+            from tenuo.decorators import _keypair_context, _warrant_context
 
             if self.warrant_token:
                 _warrant_context.reset(self.warrant_token)
@@ -178,7 +179,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
     def on_tool_error(self, error: Exception, **kwargs) -> None:
         """Called when a tool errors. Clean up context."""
         if LANGCHAIN_AVAILABLE:
-            from tenuo.decorators import _warrant_context, _keypair_context
+            from tenuo.decorators import _keypair_context, _warrant_context
 
             if self.warrant_token:
                 _warrant_context.reset(self.warrant_token)

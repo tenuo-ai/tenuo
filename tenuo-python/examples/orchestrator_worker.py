@@ -16,8 +16,9 @@ different authority per task phase.
 
 import time
 
-from tenuo import Warrant, SigningKey, guard, Pattern, Range, Authorizer, warrant_scope, key_scope, Wildcard
 from tenuo_core import ChainVerificationResult
+
+from tenuo import Authorizer, Pattern, Range, SigningKey, Warrant, Wildcard, guard, key_scope, warrant_scope
 
 # ============================================================================
 # Protected Tools

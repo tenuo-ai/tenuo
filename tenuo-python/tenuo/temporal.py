@@ -2128,8 +2128,9 @@ class _TenuoWorkflowOutboundInterceptor:
         workflow.execute_activity() calls go through this interceptor,
         which computes PoP inline with no queue machinery needed.
         """
-        from temporalio import workflow as _wf  # type: ignore[import-not-found]
         import inspect
+
+        from temporalio import workflow as _wf  # type: ignore[import-not-found]
 
         try:
             from temporalio.api.common.v1 import Payload  # type: ignore

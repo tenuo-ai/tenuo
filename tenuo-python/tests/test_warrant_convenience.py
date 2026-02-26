@@ -12,12 +12,14 @@ Tests cover:
 
 import os
 import pickle
-import pytest
 from datetime import timedelta
+
+import pytest
+
 from tenuo import (
-    Warrant,
-    SigningKey,
     BoundWarrant,
+    SigningKey,
+    Warrant,
     diagnose,
     info,
 )

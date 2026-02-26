@@ -11,15 +11,14 @@ This demonstrates the recommended production pattern using Tenuo's current API.
 """
 
 from tenuo import (
+    Pattern,
     SigningKey,
     Warrant,
-    Pattern,
     guard,
-    warrant_scope,
     key_scope,
+    warrant_scope,
 )
 from tenuo.exceptions import AuthorizationError
-
 
 # ============================================================================
 # Setup: Three-Tier Architecture

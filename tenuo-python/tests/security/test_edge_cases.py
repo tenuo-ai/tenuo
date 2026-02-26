@@ -4,21 +4,22 @@ Edge Case Attacks
 Tests for unusual scenarios and boundary conditions.
 """
 
-import pytest
+import threading
 import time
 import unicodedata
-import threading
 from dataclasses import dataclass
 from typing import Optional
 
+import pytest
+
 from tenuo import (
-    Warrant,
     Exact,
     Range,
+    Warrant,
 )
 from tenuo.constraints import Constraints
+from tenuo.decorators import _warrant_context, warrant_scope
 from tenuo.exceptions import Unauthorized
-from tenuo.decorators import warrant_scope, _warrant_context
 
 
 @dataclass

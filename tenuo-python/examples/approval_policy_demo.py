@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import argparse
 
-from tenuo import Range, SigningKey, Warrant
+from tenuo import Range, SigningKey, Warrant, compute_request_hash
 from tenuo.approval import (
     ApprovalDenied,
     ApprovalPolicy,
@@ -41,7 +41,6 @@ from tenuo.approval import (
     sign_approval,
 )
 from tenuo.autogen import GuardBuilder
-from tenuo import compute_request_hash
 
 
 def demo_single_approver(agent_key, warrant, interactive=False):

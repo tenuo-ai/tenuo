@@ -13,6 +13,7 @@ Requires: pip install tenuo crewai
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
+
 # Mock CrewAI Tool
 @dataclass
 class Tool:
@@ -23,13 +24,13 @@ class Tool:
 
 # Import Tenuo CrewAI integration
 from tenuo.crewai import (  # noqa: E402
-    GuardBuilder,
-    WarrantDelegator,
-    Pattern,
-    Subpath,
-    Range,
-    Wildcard,
     EscalationAttempt,
+    GuardBuilder,
+    Pattern,
+    Range,
+    Subpath,
+    WarrantDelegator,
+    Wildcard,
 )
 
 

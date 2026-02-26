@@ -18,12 +18,13 @@ Pattern demonstrated:
 4. Rust core verifies all signatures and checks the 2-of-2 threshold
 """
 
-from typing import List, Dict, Any, Optional
-from tenuo import SigningKey, PublicKey, SignedApproval, Warrant
-from tenuo.approval import ApprovalRequest, sign_approval
-from tenuo import compute_request_hash
+from typing import Any, Dict, List, Optional
+
 import display
 from rich.prompt import Confirm
+
+from tenuo import PublicKey, SignedApproval, SigningKey, Warrant, compute_request_hash
+from tenuo.approval import ApprovalRequest, sign_approval
 
 
 class HumanApprover:

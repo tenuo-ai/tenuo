@@ -7,13 +7,14 @@ Tests verifying:
 - Replay prevented within window via timestamp
 """
 
-import pytest
 import time
 
+import pytest
+
 from tenuo import (
-    Warrant,
-    Range,
     Authorizer,
+    Range,
+    Warrant,
 )
 from tenuo.constraints import Constraints
 

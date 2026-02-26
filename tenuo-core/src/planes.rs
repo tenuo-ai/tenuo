@@ -2693,7 +2693,8 @@ mod tests {
             .unwrap();
 
         // Should pass without any approvals (just PoP)
-        let result = authorizer.authorize_one(&warrant_for_holder, "test", &args, Some(&pop_sig), &[]);
+        let result =
+            authorizer.authorize_one(&warrant_for_holder, "test", &args, Some(&pop_sig), &[]);
         assert!(result.is_ok());
     }
 
@@ -2721,7 +2722,8 @@ mod tests {
             .unwrap();
 
         // Should FAIL without approval (but WITH PoP signature)
-        let result = authorizer.authorize_one(&warrant, "sensitive_action", &args, Some(&pop_sig), &[]);
+        let result =
+            authorizer.authorize_one(&warrant, "sensitive_action", &args, Some(&pop_sig), &[]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("insufficient"));
     }
@@ -3520,7 +3522,8 @@ mod tests {
         let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // read_file should succeed (External >= External)
-        let result = data_plane.check_chain(&[warrant.clone()], "read_file", &args, Some(&pop_sig), &[]);
+        let result =
+            data_plane.check_chain(&[warrant.clone()], "read_file", &args, Some(&pop_sig), &[]);
         assert!(
             result.is_ok(),
             "read_file should be authorized: {:?}",

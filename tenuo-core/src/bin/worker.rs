@@ -227,7 +227,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .collect();
 
     let mission_a_sig = mission_a_leaf.sign(&worker_keypair, "read_file", &file_args)?;
-    let result = authorizer.authorize_one(mission_a_leaf, "read_file", &file_args, Some(&mission_a_sig), &[]);
+    let result = authorizer.authorize_one(
+        mission_a_leaf,
+        "read_file",
+        &file_args,
+        Some(&mission_a_sig),
+        &[],
+    );
     println!("  📁 Mission A → read_file /data/config.json");
     match result {
         Ok(_) => println!("     ✓ ALLOWED (correct warrant for this mission)"),
@@ -249,7 +255,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .into_iter()
     .collect();
 
-    let result = authorizer.authorize_one(mission_a_leaf, "manage_infrastructure", &infra_args, None, &[]);
+    let result = authorizer.authorize_one(
+        mission_a_leaf,
+        "manage_infrastructure",
+        &infra_args,
+        None,
+        &[],
+    );
     println!("\n  📁 Mission A → manage_infrastructure staging-web");
     match result {
         Ok(_) => println!("     ✗ ALLOWED (unexpected! should be denied)"),
@@ -259,7 +271,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 3: Mission B warrant for manage_infrastructure (should PASS)
     let mission_b_sig =
         mission_b_leaf.sign(&worker_keypair, "manage_infrastructure", &infra_args)?;
-    let result = authorizer.authorize_one(mission_b_leaf, "manage_infrastructure", &infra_args, Some(&mission_b_sig), &[]);
+    let result = authorizer.authorize_one(
+        mission_b_leaf,
+        "manage_infrastructure",
+        &infra_args,
+        Some(&mission_b_sig),
+        &[],
+    );
     println!("\n  🔧 Mission B → manage_infrastructure staging-web");
     match result {
         Ok(_) => println!("     ✓ ALLOWED (correct warrant for this mission)"),
@@ -673,7 +691,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sig_immediate = short_warrant.sign(&worker_keypair, "read_file", &short_args)?;
 
-    match authorizer.authorize_one(&short_warrant, "read_file", &short_args, Some(&sig_immediate), &[]) {
+    match authorizer.authorize_one(
+        &short_warrant,
+        "read_file",
+        &short_args,
+        Some(&sig_immediate),
+        &[],
+    ) {
         Ok(_) => println!("        ✓ Success (Authorized)"),
         Err(e) => {
             println!("        ✗ Failed: {}", e);
@@ -689,7 +713,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  [4/5] Testing after expiration...");
 
     let sig_delayed = short_warrant.sign(&worker_keypair, "read_file", &short_args)?;
-    match authorizer.authorize_one(&short_warrant, "read_file", &short_args, Some(&sig_delayed), &[]) {
+    match authorizer.authorize_one(
+        &short_warrant,
+        "read_file",
+        &short_args,
+        Some(&sig_delayed),
+        &[],
+    ) {
         Ok(_) => {
             println!("        ✗ Unexpected SUCCESS (Should be expired!)");
             std::process::exit(1);
@@ -706,7 +736,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  [5/5] Verifying parent (Mission A) is still valid...");
     match mission_a_leaf.sign(&worker_keypair, "read_file", &short_args) {
         Ok(fresh_sig) => {
-            match authorizer.authorize_one(mission_a_leaf, "read_file", &short_args, Some(&fresh_sig), &[]) {
+            match authorizer.authorize_one(
+                mission_a_leaf,
+                "read_file",
+                &short_args,
+                Some(&fresh_sig),
+                &[],
+            ) {
                 Ok(_) => println!("        ✓ Parent still valid"),
                 Err(e) => {
                     println!("        ✗ Parent verification failed: {}", e);

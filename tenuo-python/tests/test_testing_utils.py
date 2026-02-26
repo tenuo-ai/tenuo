@@ -1,6 +1,6 @@
-import unittest
 import os
 import sys
+import unittest
 from unittest.mock import MagicMock
 
 # External dependencies might still be missing in some minimal envs, so we conditionally mock them
@@ -28,8 +28,8 @@ if "pydantic" in sys.modules and isinstance(sys.modules["pydantic"], MagicMock):
 # Set test mode
 os.environ["TENUO_TEST_MODE"] = "1"
 
-from tenuo.testing import assert_denied, assert_authorized, AuthorizationAssertionError  # noqa: E402
 from tenuo.exceptions import AuthorizationDenied  # noqa: E402
+from tenuo.testing import AuthorizationAssertionError, assert_authorized, assert_denied  # noqa: E402
 
 
 class TestDXTooling(unittest.TestCase):

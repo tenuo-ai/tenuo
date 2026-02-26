@@ -3,6 +3,7 @@ Shared pytest configuration for the test suite.
 """
 
 import os
+
 import pytest
 
 

@@ -57,57 +57,55 @@ Client usage (direct):
     )
 """
 
-from .types import (
-    # Core types
-    Grant,
-    AgentCard,
-    SkillInfo,
-    Message,
-    TaskResult,
-    TaskUpdate,
-    TaskUpdateType,
-    # Audit
-    AuditEvent,
-    AuditEventType,
-    # Context
-    current_task_warrant,
-)
-
+from .client import A2AClient, A2AClientBuilder, delegate
 from .errors import (
     # Base
     A2AError,
     A2AErrorCode,
-    # Warrant validation
-    MissingWarrantError,
-    InvalidSignatureError,
-    UntrustedIssuerError,
-    WarrantExpiredError,
     AudienceMismatchError,
-    ReplayDetectedError,
-    # Authorization
-    SkillNotFoundError,
-    SkillNotGrantedError,
-    ConstraintViolationError,
-    UnknownConstraintError,
-    RevokedError,
     # Chain
     ChainInvalidError,
     ChainMissingError,
-    ChainValidationError,
     ChainReason,
+    ChainValidationError,
+    # Configuration
+    ConstraintBindingError,
+    ConstraintViolationError,
+    InvalidSignatureError,
+    # Client
+    KeyMismatchError,
+    MissingSigningKeyError,
+    # Warrant validation
+    MissingWarrantError,
     # PoP (Proof-of-Possession)
     PopRequiredError,
     PopVerificationError,
-    MissingSigningKeyError,
-    # Client
-    KeyMismatchError,
-    # Configuration
-    ConstraintBindingError,
+    ReplayDetectedError,
+    RevokedError,
+    # Authorization
+    SkillNotFoundError,
+    SkillNotGrantedError,
+    UnknownConstraintError,
+    UntrustedIssuerError,
+    WarrantExpiredError,
 )
-
+from .helpers import SimulationTrace, dry_run, explain, explain_str, simulate, visualize_chain
 from .server import A2AServer, A2AServerBuilder
-from .client import A2AClient, A2AClientBuilder, delegate
-from .helpers import explain, explain_str, visualize_chain, dry_run, simulate, SimulationTrace
+from .types import (
+    AgentCard,
+    # Audit
+    AuditEvent,
+    AuditEventType,
+    # Core types
+    Grant,
+    Message,
+    SkillInfo,
+    TaskResult,
+    TaskUpdate,
+    TaskUpdateType,
+    # Context
+    current_task_warrant,
+)
 
 __all__ = [
     # Server

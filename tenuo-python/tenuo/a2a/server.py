@@ -59,14 +59,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from .types import (
-    AgentCard,
-    AuditEvent,
-    AuditEventType,
-    SkillInfo,
-    TenuoExtension,
-    current_task_warrant,
-)
 from .errors import (
     A2AError,
     A2AErrorCode,
@@ -84,6 +76,14 @@ from .errors import (
     UnknownConstraintError,
     UntrustedIssuerError,
     WarrantExpiredError,
+)
+from .types import (
+    AgentCard,
+    AuditEvent,
+    AuditEventType,
+    SkillInfo,
+    TenuoExtension,
+    current_task_warrant,
 )
 
 if TYPE_CHECKING:
@@ -644,7 +644,8 @@ class A2AServer:
         proceed with zero roots.
         """
         try:
-            from tenuo_core import Authorizer as _Authorizer, PublicKey as _PublicKey
+            from tenuo_core import Authorizer as _Authorizer
+            from tenuo_core import PublicKey as _PublicKey
         except ImportError as e:
             raise RuntimeError("tenuo_core is required for A2A server authorization") from e
 

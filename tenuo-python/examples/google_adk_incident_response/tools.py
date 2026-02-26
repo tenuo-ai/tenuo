@@ -4,8 +4,8 @@ Mock tool implementations for incident response demo.
 These simulate real security tools without requiring actual infrastructure.
 """
 
-from typing import Dict, Any
 import time
+from typing import Any, Dict
 
 
 def read_logs(path: str) -> str:

@@ -21,12 +21,12 @@ Usage:
     python demo.py --no-attacks     # Skip attack scenarios
 """
 
-import asyncio
 import argparse
-import time
+import asyncio
 import os
-from typing import Optional, Dict, Any
+import time
 from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
 # Google ADK - optional dependency
 try:
@@ -40,13 +40,11 @@ except ImportError:
         session_state: Dict[str, Any]
         agent_name: str = "simulation"
 
-from tenuo import SigningKey, Warrant, Subpath, Cidr, Wildcard, Exact
-
-from tenuo.google_adk import GuardBuilder
-
 # Import mock tools
-from tools import read_logs, query_threat_db, block_ip, quarantine_user
+from tools import block_ip, quarantine_user, query_threat_db, read_logs
 
+from tenuo import Cidr, Exact, SigningKey, Subpath, Warrant, Wildcard
+from tenuo.google_adk import GuardBuilder
 
 # ======================================================================
 # Tool Wrappers (guards expect objects with .name attribute)

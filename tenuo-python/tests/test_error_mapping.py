@@ -1,12 +1,14 @@
-import pytest
 import sys
+
+import pytest
+
 from tenuo import (
-    Warrant,
-    SigningKey,
+    Authorizer,
+    Exact,
     Pattern,
     Range,
-    Exact,
-    Authorizer,
+    SigningKey,
+    Warrant,
 )
 from tenuo.constraints import Constraints
 from tenuo.exceptions import DelegationAuthorityError, PatternExpanded, RangeExpanded

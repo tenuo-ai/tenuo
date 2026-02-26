@@ -10,11 +10,12 @@ Tests the "Trust Cliff" behavior:
 """
 
 import pytest
+
 from tenuo import (
-    Warrant,
-    SigningKey,
     Pattern,
     Range,
+    SigningKey,
+    Warrant,
     Wildcard,
 )
 

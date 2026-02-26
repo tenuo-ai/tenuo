@@ -14,20 +14,20 @@ Requirements:
 """
 
 from tenuo import (
+    Pattern,
     SigningKey,
     Warrant,
-    Pattern,
     guard,
-    warrant_scope,
     key_scope,
+    warrant_scope,
 )
 from tenuo.exceptions import AuthorizationError
 
 # Try to import LangChain
 try:
-    from langchain_core.tools import Tool
     from langchain.agents.agent import AgentExecutor
     from langchain.agents.openai_tools.base import create_openai_tools_agent
+    from langchain_core.tools import Tool
     from langchain_openai import ChatOpenAI
 
     LANGCHAIN_AVAILABLE = True

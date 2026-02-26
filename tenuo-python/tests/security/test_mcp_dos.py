@@ -5,12 +5,13 @@ This script attempts to trigger resource exhaustion or limits check
 by loading a maliciously large configuration file.
 """
 
-import unittest
-import tempfile
 import os
+import tempfile
+import unittest
 from unittest.mock import patch
-from tenuo.mcp.client import SecureMCPClient
+
 import tenuo.mcp.client
+from tenuo.mcp.client import SecureMCPClient
 
 
 class TestMcpDos(unittest.IsolatedAsyncioTestCase):

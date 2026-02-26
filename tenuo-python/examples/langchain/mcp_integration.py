@@ -18,17 +18,18 @@ Pattern: LangChain connects → Tenuo authorizes → MCP executes
 
 import time
 
+from tenuo_core import CompiledMcpConfig, McpConfig
+
 from tenuo import (
     Authorizer,
-    SigningKey,
-    Warrant,
     Pattern,
     Range,
+    SigningKey,
+    Warrant,
     guard,
-    warrant_scope,
     key_scope,
+    warrant_scope,
 )
-from tenuo_core import CompiledMcpConfig, McpConfig
 
 
 def main():

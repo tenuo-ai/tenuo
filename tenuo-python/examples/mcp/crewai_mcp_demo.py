@@ -36,15 +36,16 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 try:
-    from crewai import Agent, Task, Crew, Process  # noqa: F401
+    from crewai import Agent, Crew, Process, Task  # noqa: F401
     CREWAI_AVAILABLE = True
 except ImportError:
     CREWAI_AVAILABLE = False
     print("⚠️  CrewAI not installed. Install with: uv pip install crewai")
     print("   Running in simulation mode...\n")
 
-from tenuo import SigningKey, Warrant, Pattern, Subpath
-from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
+from tenuo import Pattern, SigningKey, Subpath, Warrant
+from tenuo.mcp import MCP_AVAILABLE, SecureMCPClient
+
 
 # Colors
 class C:

@@ -7,72 +7,72 @@ and that the mappings are correct according to the wire format spec.
 
 from tenuo.exceptions import (
     ERROR_CODE_REGISTRY,
-    ErrorCode,
-    TenuoError,
-    # Crypto errors
-    CryptoError,
-    SignatureInvalid,
-    MissingSignature,
-    # Scope violations
-    ToolNotAuthorized,
-    ConstraintViolation,
-    ExpiredError,
-    Unauthorized,
-    # Monotonicity errors
-    MonotonicityError,
-    IncompatibleConstraintTypes,
-    WildcardExpansion,
-    EmptyResultSet,
-    ExclusionRemoved,
-    ValueNotInParentSet,
-    RangeExpanded,
-    PatternExpanded,
-    RequiredValueRemoved,
-    ExactValueMismatch,
-    # Clearance
-    PopError,
-    MissingSigningKey,
-    SignatureMismatch,
-    PopExpired,
-    # Chain
-    ChainError,
-    BrokenChain,
-    CycleDetected,
-    UntrustedRoot,
-    ParentRequired,
-    DelegationAuthorityError,
-    # Limits
-    LimitError,
-    DepthExceeded,
-    ConstraintDepthExceeded,
-    PayloadTooLarge,
-    # Revocation
-    RevokedError,
-    # Validation
-    ValidationError,
-    MissingField,
-    InvalidWarrantId,
-    InvalidTtl,
-    # Constraint syntax
-    ConstraintSyntaxError,
-    InvalidPattern,
-    InvalidRange,
-    InvalidRegex,
-    CelError,
-    # Serialization
-    SerializationError,
-    DeserializationError,
-    UnsupportedVersion,
     # Approval
     ApprovalError,
     ApprovalExpired,
-    InsufficientApprovals,
-    InvalidApproval,
-    UnknownProvider,
+    BrokenChain,
+    CelError,
+    # Chain
+    ChainError,
     # Configuration
     ConfigurationError,
+    ConstraintDepthExceeded,
+    # Constraint syntax
+    ConstraintSyntaxError,
+    ConstraintViolation,
+    # Crypto errors
+    CryptoError,
+    CycleDetected,
+    DelegationAuthorityError,
+    DepthExceeded,
+    DeserializationError,
+    EmptyResultSet,
+    ErrorCode,
+    ExactValueMismatch,
+    ExclusionRemoved,
+    ExpiredError,
     FeatureNotEnabled,
+    IncompatibleConstraintTypes,
+    InsufficientApprovals,
+    InvalidApproval,
+    InvalidPattern,
+    InvalidRange,
+    InvalidRegex,
+    InvalidTtl,
+    InvalidWarrantId,
+    # Limits
+    LimitError,
+    MissingField,
+    MissingSignature,
+    MissingSigningKey,
+    # Monotonicity errors
+    MonotonicityError,
+    ParentRequired,
+    PatternExpanded,
+    PayloadTooLarge,
+    # Clearance
+    PopError,
+    PopExpired,
+    RangeExpanded,
+    RequiredValueRemoved,
+    # Revocation
+    RevokedError,
     RuntimeError,
+    # Serialization
+    SerializationError,
+    SignatureInvalid,
+    SignatureMismatch,
+    TenuoError,
+    # Scope violations
+    ToolNotAuthorized,
+    Unauthorized,
+    UnknownProvider,
+    UnsupportedVersion,
+    UntrustedRoot,
+    # Validation
+    ValidationError,
+    ValueNotInParentSet,
+    WildcardExpansion,
 )
 
 

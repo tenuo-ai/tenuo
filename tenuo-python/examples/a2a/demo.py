@@ -41,11 +41,12 @@ from typing import Any, Dict
 # =============================================================================
 
 try:
-    from tenuo import SigningKey, Warrant
-    from tenuo.constraints import Subpath, UrlSafe
-    from tenuo.a2a import A2AServer, A2AClient
-    import uvicorn
     import httpx  # noqa: F401 - imported to verify availability
+    import uvicorn
+
+    from tenuo import SigningKey, Warrant
+    from tenuo.a2a import A2AClient, A2AServer
+    from tenuo.constraints import Subpath, UrlSafe
 except ImportError as e:
     print(f"Error: Missing dependency - {e}")
     print("\nInstall with: uv pip install tenuo[a2a] uvicorn")

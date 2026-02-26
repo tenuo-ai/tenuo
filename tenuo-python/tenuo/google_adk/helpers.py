@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 if TYPE_CHECKING:
     from tenuo_core import Warrant

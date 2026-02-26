@@ -76,8 +76,8 @@ def diagnose(warrant: Warrant) -> str:
     # Add playground link
     lines.append("")
 
-    import json
     import base64
+    import json
 
     playground_url = "https://tenuo.ai/explorer/"
     try:

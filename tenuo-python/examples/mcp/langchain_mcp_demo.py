@@ -43,8 +43,9 @@ except ImportError:
 # Ensure we can import from tenuo
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from tenuo import SigningKey, configure, mint, Capability, Subpath, Range
-from tenuo.mcp import SecureMCPClient, MCPToolAdapter, MCP_AVAILABLE
+from tenuo import Capability, Range, SigningKey, Subpath, configure, mint
+from tenuo.mcp import MCP_AVAILABLE, MCPToolAdapter, SecureMCPClient
+
 
 # Colors
 class C:

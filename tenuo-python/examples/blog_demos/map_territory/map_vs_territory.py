@@ -22,15 +22,15 @@ import argparse
 import json
 import os
 import re
-import tempfile
 import shutil
+import tempfile
 import time
 from typing import Optional
-from urllib.parse import urlparse, unquote
+from urllib.parse import unquote, urlparse
 
 # Optional imports - demo degrades gracefully
 try:
-    from tenuo import Subpath, UrlSafe, Shlex
+    from tenuo import Shlex, Subpath, UrlSafe
 
     HAS_TENUO = True
 except ImportError:
@@ -61,7 +61,8 @@ except ImportError:
 HAS_OPENAI = False
 try:
     import openai
-    from tenuo.openai import GuardBuilder, ConstraintViolation
+
+    from tenuo.openai import ConstraintViolation, GuardBuilder
 
     HAS_OPENAI = True
 except ImportError:

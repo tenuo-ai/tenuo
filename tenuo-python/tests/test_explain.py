@@ -9,13 +9,13 @@ from tenuo import (
     explain_str,
 )
 from tenuo.exceptions import (
-    TenuoError,
-    ToolNotAuthorized,
+    ConfigurationError,
     ConstraintViolation,
     ExpiredError,
     MonotonicityError,
-    ConfigurationError,
     ScopeViolation,
+    TenuoError,
+    ToolNotAuthorized,
 )
 
 

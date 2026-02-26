@@ -1,7 +1,7 @@
-import unittest
 import json
-from tenuo import Warrant, SigningKey, Pattern
+import unittest
 
+from tenuo import Pattern, SigningKey, Warrant
 from tenuo.exceptions import DeserializationError
 
 

@@ -7,15 +7,16 @@ This suite tests the adapter against active attack vectors, specifically ensurin
 3. Cryptographic integrity (Replay, Binding)
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from tenuo import Pattern, SigningKey, Warrant
 from tenuo.openai import (
-    verify_tool_call,
     ConstraintViolation,
     MissingSigningKey,
+    verify_tool_call,
 )
-from tenuo import Warrant, SigningKey, Pattern
 
 # =============================================================================
 # 1. Zero Trust & Argument Validation

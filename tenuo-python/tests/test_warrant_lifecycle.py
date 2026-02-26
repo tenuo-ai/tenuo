@@ -1,6 +1,6 @@
 import time
 
-from tenuo import SigningKey, Warrant, Pattern, Exact, Range, Authorizer
+from tenuo import Authorizer, Exact, Pattern, Range, SigningKey, Warrant
 from tenuo.constraints import Constraints
 
 

@@ -13,7 +13,7 @@ from pathlib import Path
 try:
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
-    from mcp.types import Tool, TextContent
+    from mcp.types import TextContent, Tool
 except ImportError:
     print("MCP SDK not installed. Install with: uv pip install mcp", file=sys.stderr)
     sys.exit(1)

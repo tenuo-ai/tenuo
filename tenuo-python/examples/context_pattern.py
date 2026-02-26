@@ -7,13 +7,13 @@ automatically used by all @guard-decorated functions in the call stack.
 """
 
 from tenuo import (
-    SigningKey,
-    Warrant,
     Pattern,
     Range,
+    SigningKey,
+    Warrant,
     guard,
-    warrant_scope,
     key_scope,
+    warrant_scope,
 )
 from tenuo.exceptions import AuthorizationError
 

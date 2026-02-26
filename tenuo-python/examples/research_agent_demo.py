@@ -30,12 +30,12 @@ Usage:
     python research_agent_demo.py
 """
 
+import asyncio
 import os
 import sys
 import time
-import asyncio
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 # ============================================================================
 # ANSI Colors for Terminal Output
@@ -105,8 +105,8 @@ def check_dependencies():
 def check_llm_available() -> bool:
     """Check if LangChain + OpenAI is available."""
     try:
-        from langchain_openai import ChatOpenAI  # noqa: F401
         from langchain_core.tools import StructuredTool  # noqa: F401
+        from langchain_openai import ChatOpenAI  # noqa: F401
 
         return True
     except ImportError:
@@ -166,7 +166,7 @@ async def main():
     print()
 
     # Only import what we actually use in this demo
-    from tenuo import configure, Warrant, SigningKey, Pattern
+    from tenuo import Pattern, SigningKey, Warrant, configure
     from tenuo.mcp import SecureMCPClient
 
     # ========================================================================
@@ -755,8 +755,9 @@ async def main():
     if llm_available:
         # Real LLM mode
         try:
-            from langchain_openai import ChatOpenAI
             from langchain_core.tools import StructuredTool
+            from langchain_openai import ChatOpenAI
+
             from tenuo.langchain import guard
 
             # Define simple tools
@@ -898,7 +899,7 @@ async def main():
 
     # Show template examples
     try:
-        from tenuo.templates import FileReader, WebSearcher, DatabaseReader
+        from tenuo.templates import DatabaseReader, FileReader, WebSearcher
 
         print("  📁 FileReader Templates:")
         print("     " + cyan('FileReader.in_directory("/data")'))

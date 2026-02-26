@@ -10,18 +10,19 @@ Tests verifying:
 Note: Some tests document APPLICATION responsibilities, not Tenuo bugs.
 """
 
-import pytest
 import base64
 import json
 
+import pytest
+
 from tenuo import (
-    Warrant,
-    guard,
-    warrant_scope,
-    key_scope,
+    Exact,
     Pattern,
     Range,
-    Exact,
+    Warrant,
+    guard,
+    key_scope,
+    warrant_scope,
 )
 from tenuo.constraints import Constraints
 from tenuo.exceptions import Unauthorized

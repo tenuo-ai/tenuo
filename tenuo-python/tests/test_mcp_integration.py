@@ -4,17 +4,19 @@ Integration tests for Tenuo + MCP.
 Tests SecureMCPClient with a real MCP server.
 """
 
-import pytest
-import tempfile
 import os
 import sys
+import tempfile
 from pathlib import Path
+
+import pytest
 
 # Check if MCP is available
 try:
-    from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
-    from tenuo import SigningKey, configure, mint, Pattern, Range, Capability
     from tenuo_core import CompiledMcpConfig, McpConfig
+
+    from tenuo import Capability, Pattern, Range, SigningKey, configure, mint
+    from tenuo.mcp import MCP_AVAILABLE, SecureMCPClient
 
     pytestmark = pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
 except ImportError:
@@ -92,7 +94,7 @@ async def test_mcp_tool_call_blocked(mcp_server_script):
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
 
-    from tenuo import ConstraintViolation, AuthorizationDenied
+    from tenuo import AuthorizationDenied, ConstraintViolation
 
     # Configure Tenuo
     keypair = SigningKey.generate()
@@ -228,7 +230,7 @@ async def test_discover_and_protect_usage(mcp_server_script):
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
 
-    from tenuo import SigningKey, configure, mint, Pattern, Capability
+    from tenuo import Capability, Pattern, SigningKey, configure, mint
     from tenuo.mcp.client import discover_and_protect
 
     # Configure Tenuo

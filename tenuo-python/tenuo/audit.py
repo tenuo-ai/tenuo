@@ -37,13 +37,13 @@ Usage:
 """
 
 import json
-import uuid
-import sys
-from datetime import datetime, timezone
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional, Dict, Any, Callable
 import logging
+import sys
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any, Callable, Dict, Optional
 
 
 class AuditEventType(str, Enum):

@@ -36,9 +36,10 @@ from typing import Any, Dict
 # Ensure we can import from tenuo
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from tenuo import SigningKey, Warrant, Pattern, Subpath, Range
-from tenuo.a2a import A2AServer, A2AClient
-from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
+from tenuo import Pattern, Range, SigningKey, Subpath, Warrant
+from tenuo.a2a import A2AClient, A2AServer
+from tenuo.mcp import MCP_AVAILABLE, SecureMCPClient
+
 
 # Colors
 class C:

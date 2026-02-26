@@ -9,47 +9,47 @@ import asyncio
 import base64
 import gzip
 import os
-import pytest
 import threading
-from unittest.mock import MagicMock, patch, AsyncMock
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Skip all tests if temporalio is not installed
 pytest.importorskip("temporalio")
 
 from tenuo.temporal import (  # noqa: E402 - must be after importorskip
+    TENUO_COMPRESSED_HEADER,
+    TENUO_KEY_ID_HEADER,
+    TENUO_WARRANT_HEADER,
+    ChainValidationError,
     # Exceptions
     ConstraintViolation,
-    WarrantExpired,
-    ChainValidationError,
+    EnvKeyResolver,
     KeyResolutionError,
+    # Key Resolvers
+    KeyResolver,
     # Phase 2 exceptions
     LocalActivityError,
     PopVerificationError,
     # Audit
     TemporalAuditEvent,
-    # Key Resolvers
-    KeyResolver,
-    EnvKeyResolver,
-    # Config
-    TenuoInterceptorConfig,
     # Interceptor
     TenuoInterceptor,
+    # Config
+    TenuoInterceptorConfig,
+    WarrantExpired,
+    _compute_pop_challenge,
+    _extract_key_id_from_headers,
+    get_tool_name,
+    is_unprotected,
     # Header utilities
     tenuo_headers,
-    TENUO_WARRANT_HEADER,
-    TENUO_KEY_ID_HEADER,
-    TENUO_COMPRESSED_HEADER,
-    _extract_key_id_from_headers,
-    _compute_pop_challenge,
-    # Phase 2: Decorators
-    unprotected,
-    is_unprotected,
     # Phase 3: Decorators and delegation
     tool,
-    get_tool_name,
+    # Phase 2: Decorators
+    unprotected,
 )
-
 
 # =============================================================================
 # Test Fixtures
@@ -206,6 +206,7 @@ class TestSecurityKeyNeverTransmitted:
     def test_base64_encoded_key_not_in_headers(self):
         """SECURITY: Even base64-encoded keys must not be in headers."""
         import base64
+
         from tenuo_core import SigningKey, Warrant
 
         signing_key = SigningKey.generate()
@@ -419,7 +420,6 @@ class TestResolveSyncUnderEventLoop:
 
     def test_resolve_sync_without_event_loop(self):
         """resolve_sync works when no event loop is running."""
-        import asyncio
 
         class TestResolver(KeyResolver):
             async def resolve(self, key_id: str):
@@ -895,6 +895,7 @@ class TestCompositeKeyResolver:
     def test_uses_first_successful_resolver(self):
         """CompositeKeyResolver uses first resolver that succeeds."""
         import asyncio
+
         from tenuo.temporal import CompositeKeyResolver
 
         # Mock resolvers
@@ -915,6 +916,7 @@ class TestCompositeKeyResolver:
     def test_raises_if_all_fail(self):
         """CompositeKeyResolver raises if all resolvers fail."""
         import asyncio
+
         from tenuo.temporal import CompositeKeyResolver
 
         resolver1 = MagicMock(spec=KeyResolver)
@@ -1296,6 +1298,7 @@ class TestVaultKeyResolverCache:
     def test_cache_returns_cached_key_within_ttl(self):
         """Cached key is returned without Vault fetch when within TTL."""
         import time
+
         from tenuo.temporal import VaultKeyResolver
 
         resolver = VaultKeyResolver(
@@ -1317,6 +1320,7 @@ class TestVaultKeyResolverCache:
     def test_cache_expires_after_ttl(self):
         """Cached key is NOT returned after TTL expires — triggers fresh fetch."""
         import time
+
         from tenuo.temporal import VaultKeyResolver
 
         resolver = VaultKeyResolver(
@@ -1337,7 +1341,7 @@ class TestVaultKeyResolverCache:
 
     def test_missing_token_raises_key_resolution_error(self):
         """Vault resolver raises KeyResolutionError when no token available."""
-        from tenuo.temporal import VaultKeyResolver, KeyResolutionError
+        from tenuo.temporal import KeyResolutionError, VaultKeyResolver
 
         resolver = VaultKeyResolver(
             url="https://vault.test:8200",
@@ -1355,7 +1359,7 @@ class TestVaultKeyResolverCache:
     def test_concurrent_cache_access_is_safe(self):
         """Multiple threads reading/writing cache don't corrupt it."""
         import time
-        import threading
+
         from tenuo.temporal import VaultKeyResolver
 
         resolver = VaultKeyResolver(
@@ -1407,8 +1411,9 @@ class TestDedupCacheEviction:
 
     def test_dedup_cache_can_be_filled_and_cleared(self):
         """Basic smoke test: cache supports dict operations."""
-        from tenuo.temporal import _pop_dedup_cache, _store_lock
         import time
+
+        from tenuo.temporal import _pop_dedup_cache
 
         _pop_dedup_cache.clear()
 

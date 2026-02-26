@@ -8,10 +8,12 @@ The control plane is the trusted component that:
 4. Mints task-specific warrants
 """
 
-from typing import List, Dict, Any, Optional
-from tenuo import Warrant, SigningKey, Pattern, Exact
-import display
+from typing import Any, Dict, List, Optional
+
 import config
+import display
+
+from tenuo import Exact, Pattern, SigningKey, Warrant
 
 
 class ControlPlane:

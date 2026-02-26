@@ -29,8 +29,9 @@ Usage:
     pytest tests/integration/test_smoke.py -v
 """
 
-import pytest
 import sys
+
+import pytest
 
 # =============================================================================
 # OpenAI Smoke Tests
@@ -174,7 +175,7 @@ def test_crewai_crew_creation():
     requirements which are too complex for smoke tests.
     """
     try:
-        from crewai import Agent, Task, Crew
+        from crewai import Agent, Crew, Task
 
         # Verify the classes exist
         assert Agent is not None
@@ -300,8 +301,9 @@ def test_langgraph_import():
 def test_langgraph_state_graph():
     """Verify StateGraph constructor signature."""
     try:
-        from langgraph.graph import StateGraph
         from typing import TypedDict
+
+        from langgraph.graph import StateGraph
 
         class State(TypedDict):
             value: int

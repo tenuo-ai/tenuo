@@ -38,20 +38,19 @@ from temporalio.worker.workflow_sandbox import (  # noqa: E402
     SandboxedWorkflowRunner,
     SandboxRestrictions,
 )
+from tenuo_core import Pattern, Subpath  # noqa: E402
 
 from tenuo import SigningKey, Warrant  # noqa: E402
-from tenuo_core import Subpath, Pattern  # noqa: E402
 from tenuo.temporal import (  # noqa: E402
     AuthorizedWorkflow,
+    EnvKeyResolver,
+    TemporalAuditEvent,
+    TenuoClientInterceptor,
     TenuoInterceptor,
     TenuoInterceptorConfig,
-    TenuoClientInterceptor,
-    EnvKeyResolver,
-    tenuo_headers,
     tenuo_execute_activity,
-    TemporalAuditEvent,
+    tenuo_headers,
 )
-
 
 # ---------------------------------------------------------------------------
 # Activities

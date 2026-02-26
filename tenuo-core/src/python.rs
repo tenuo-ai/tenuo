@@ -5001,7 +5001,13 @@ impl PyAuthorizer {
 
         let result = self
             .inner
-            .authorize_one(&warrant.inner, tool, &rust_args, sig.as_ref(), &rust_approvals)
+            .authorize_one(
+                &warrant.inner,
+                tool,
+                &rust_args,
+                sig.as_ref(),
+                &rust_approvals,
+            )
             .map_err(to_py_err)?;
         Ok(PyChainVerificationResult { inner: result })
     }

@@ -1123,7 +1123,8 @@ fn test_pop_args_binding() {
     .into_iter()
     .collect();
 
-    let result = authorizer.authorize_one(&warrant, "read_file", &malicious_args, Some(&safe_sig), &[]);
+    let result =
+        authorizer.authorize_one(&warrant, "read_file", &malicious_args, Some(&safe_sig), &[]);
 
     assert!(
         result.is_err(),

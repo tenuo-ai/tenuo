@@ -10,14 +10,15 @@ and managing authority scopes.
 """
 
 import asyncio
+
 from tenuo import (
-    configure,
-    mint,
-    grant,
-    guard,
+    Capability,
     SigningKey,
     Subpath,
-    Capability,
+    configure,
+    grant,
+    guard,
+    mint,
 )
 from tenuo.schemas import ToolSchema, register_schema
 

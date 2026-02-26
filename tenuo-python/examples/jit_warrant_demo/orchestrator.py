@@ -13,12 +13,13 @@ Key security properties demonstrated:
 - Temporal safety: Shows what happens with stale/mismatched warrants
 """
 
-import re
 import json
-from typing import List, Dict, Any, Optional
-from tenuo import Warrant, SigningKey, PublicKey
+import re
+from typing import Any, Dict, List, Optional
+
 import display
 
+from tenuo import PublicKey, SigningKey, Warrant
 
 # System prompt for capability analysis
 CAPABILITY_ANALYSIS_PROMPT = """You are a security-aware AI assistant analyzing what capabilities are needed for a task.

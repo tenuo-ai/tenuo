@@ -19,9 +19,9 @@ Design Decision: timestamp parameter is OPTIONAL
 """
 
 import asyncio
-import time
 import base64
 import os
+import time
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -40,16 +40,16 @@ except ImportError:
     TEMPORAL_AVAILABLE = False
 
 # Tenuo imports
-from tenuo import SigningKey, Warrant
 from tenuo_core import Subpath
+
+from tenuo import SigningKey, Warrant
 from tenuo.temporal import (
+    EnvKeyResolver,
+    TenuoClientInterceptor,
     TenuoInterceptor,
     TenuoInterceptorConfig,
-    TenuoClientInterceptor,
-    EnvKeyResolver,
     tenuo_headers,
 )
-
 
 # =============================================================================
 # Test sign() backward compatibility
@@ -362,8 +362,9 @@ if TEMPORAL_AVAILABLE:
 
 def test_parameter_name_resolution_consistency():
     """Verify outbound and inbound interceptors use same arg resolution strategy."""
-    from tenuo.temporal import TenuoActivityInboundInterceptor, _TenuoWorkflowOutboundInterceptor
     import inspect
+
+    from tenuo.temporal import TenuoActivityInboundInterceptor, _TenuoWorkflowOutboundInterceptor
 
     outbound_source = inspect.getsource(_TenuoWorkflowOutboundInterceptor.start_activity)
     inbound_source = inspect.getsource(TenuoActivityInboundInterceptor._extract_arguments)
@@ -380,8 +381,9 @@ def test_parameter_name_resolution_consistency():
 
 def test_fail_closed_behavior():
     """Verify that PoP computation failures abort the activity (fail-closed)."""
-    from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
     import inspect
+
+    from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
 
     source = inspect.getsource(_TenuoWorkflowOutboundInterceptor.start_activity)
 

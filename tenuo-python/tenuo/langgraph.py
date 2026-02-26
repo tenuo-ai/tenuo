@@ -47,29 +47,30 @@ Alternative Patterns:
 See docs: https://tenuo.dev/langgraph
 """
 
-from typing import Any, Callable, Dict, List, Optional, Union, TypeVar
-from functools import wraps
 import logging
 import os
 import uuid
+from functools import wraps
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 
-from .exceptions import ConfigurationError
-from .bound_warrant import BoundWarrant
-from .keys import KeyRegistry, load_signing_key_from_env
-from ._enforcement import enforce_tool_call, filter_tools_by_warrant
 from tenuo_core import Warrant
 
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_langgraph_compat  # noqa: E402
 
+from ._enforcement import enforce_tool_call, filter_tools_by_warrant
+from .bound_warrant import BoundWarrant
+from .exceptions import ConfigurationError
+from .keys import KeyRegistry, load_signing_key_from_env
+
 check_langgraph_compat()
 
 # Optional LangGraph imports
 try:
-    from langgraph.prebuilt import ToolNode  # type: ignore
     from langchain_core.messages import ToolMessage
-    from langchain_core.tools import BaseTool
     from langchain_core.runnables import RunnableConfig
+    from langchain_core.tools import BaseTool
+    from langgraph.prebuilt import ToolNode  # type: ignore
 
     LANGGRAPH_AVAILABLE = True
 except (ImportError, TypeError):

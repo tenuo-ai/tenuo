@@ -27,16 +27,15 @@ except ImportError:
     print("Install with: uv pip install openai-agents")
     print()
 
+from tenuo import SigningKey, Warrant
 from tenuo.openai import (
-    create_tier1_guardrail,
-    create_tier2_guardrail,
     GuardrailResult,
     Pattern,
     Range,
     Subpath,  # Secure path containment
+    create_tier1_guardrail,
+    create_tier2_guardrail,
 )
-from tenuo import SigningKey, Warrant
-
 
 # =============================================================================
 # Demo 1: Tier 1 Guardrails (Runtime Constraints)

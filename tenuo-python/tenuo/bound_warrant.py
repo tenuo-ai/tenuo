@@ -18,9 +18,11 @@ Context Manager:
             def my_func(): ...
 """
 
-from typing import TYPE_CHECKING, Optional, Union, List, Dict
-from tenuo_core import Warrant, SigningKey, PublicKey  # type: ignore[import-untyped]
 from datetime import timedelta
+from typing import TYPE_CHECKING, Dict, List, Optional, Union
+
+from tenuo_core import PublicKey, SigningKey, Warrant  # type: ignore[import-untyped]
+
 from .validation import ValidationResult
 
 if TYPE_CHECKING:
@@ -94,7 +96,7 @@ class BoundWarrant:
                 @guard(tool="search")
                 def my_func(): ...
         """
-        from .decorators import _warrant_context, _keypair_context
+        from .decorators import _keypair_context, _warrant_context
 
         self._warrant_token = _warrant_context.set(self._warrant)
         self._key_token = _keypair_context.set(self._key)
@@ -102,7 +104,7 @@ class BoundWarrant:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit context: reset warrant and key scope."""
-        from .decorators import _warrant_context, _keypair_context
+        from .decorators import _keypair_context, _warrant_context
 
         if self._warrant_token is not None:
             _warrant_context.reset(self._warrant_token)
@@ -270,6 +272,7 @@ class BoundWarrant:
                 print(f"Validation failed: {result.reason}")
         """
         import time
+
         from tenuo_core import Authorizer
 
         # 1. Sign PoP
@@ -287,7 +290,7 @@ class BoundWarrant:
             # Re-raise structural failures — callers should handle these explicitly.
             # ExpiredError, SignatureInvalid, MissingSignature are NOT policy denials;
             # they indicate the warrant itself is invalid, not just a constraint miss.
-            from tenuo.exceptions import ExpiredError, SignatureInvalid, MissingSignature
+            from tenuo.exceptions import ExpiredError, MissingSignature, SignatureInvalid
             if isinstance(exc, (ExpiredError, SignatureInvalid, MissingSignature)):
                 raise
             # 3. Policy-level denial: return rich feedback via why_denied

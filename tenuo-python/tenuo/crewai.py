@@ -84,6 +84,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -95,46 +96,45 @@ from typing import (
 
 # Import constraint types from tenuo core
 from tenuo import (
-    Pattern,
-    Exact,
-    OneOf,
-    Range,
-    Regex,
-    Cidr,
-    UrlPattern,
-    Contains,
-    Subset,
-    Wildcard,
-    AnyOf,
+    CEL,
     All,
+    AnyOf,
+    Cidr,
+    Contains,
+    Exact,
     Not,
     NotOneOf,
-    CEL,
+    OneOf,
+    Pattern,
+    PublicKey,
+    Range,
+    Regex,
+    SigningKey,
+    Subset,
+    UrlPattern,
     # Tier 2: Warrant types
     Warrant,
-    SigningKey,
-    PublicKey,
+    Wildcard,
 )
+from tenuo._builder import BaseGuardBuilder
 
-# Import Python-only security constraints
-from tenuo.constraints import Subpath, UrlSafe, Shlex
-
-# Import shared constraint checking logic from framework-agnostic core
-from tenuo.core import check_constraint
+# Import unified enforcement logic
+from tenuo._enforcement import (
+    DenialResult,
+    EnforcementResult,
+    enforce_tool_call,
+    handle_denial,
+)
 
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_crewai_compat  # noqa: E402
 
-# Import unified enforcement logic
-from tenuo._enforcement import (
-    enforce_tool_call,
-    EnforcementResult,
-    DenialResult,
-    handle_denial,
-)
-from tenuo._builder import BaseGuardBuilder
+# Import Python-only security constraints
+from tenuo.constraints import Shlex, Subpath, UrlSafe
 
-from typing import TYPE_CHECKING
+# Import shared constraint checking logic from framework-agnostic core
+from tenuo.core import check_constraint
+
 if TYPE_CHECKING:
     from tenuo.approval import ApprovalHandler, ApprovalPolicy
 
@@ -143,9 +143,9 @@ check_crewai_compat()
 # Import CrewAI hooks API (required for this integration)
 try:
     from crewai.hooks import (  # type: ignore[import-not-found,import-untyped]
+        ToolCallHookContext,
         register_before_tool_call_hook,
         unregister_before_tool_call_hook,
-        ToolCallHookContext,
     )
 
     HOOKS_AVAILABLE = True

@@ -5,24 +5,24 @@ Cryptographic attacks, temporal attacks, and core bypass attempts.
 These tests verify the security invariants of the A2A adapter.
 """
 
-import pytest
-import time
 import base64
 import json
+import time
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from tenuo.a2a import (
     A2AServer,
 )
 from tenuo.a2a.errors import (
+    AudienceMismatchError,
+    ChainValidationError,
     InvalidSignatureError,
     UntrustedIssuerError,
     WarrantExpiredError,
-    ChainValidationError,
-    AudienceMismatchError,
 )
 from tenuo.a2a.server import ReplayCache
-
 
 # =============================================================================
 # Fixtures
@@ -1153,7 +1153,7 @@ class TestPoPSignerVerification:
     def test_pop_wrong_signer_rejected(self):
         """PoP signed by wrong key should be rejected."""
         try:
-            from tenuo_core import SigningKey, Warrant, Authorizer
+            from tenuo_core import Authorizer, SigningKey, Warrant
 
             holder_key = SigningKey.generate()
             attacker_key = SigningKey.generate()
@@ -1189,7 +1189,7 @@ class TestPoPSignerVerification:
     def test_pop_correct_signer_accepted(self):
         """PoP signed by holder should be accepted."""
         try:
-            from tenuo_core import SigningKey, Warrant, ConstraintValue, Signature, Authorizer
+            from tenuo_core import Authorizer, ConstraintValue, Signature, SigningKey, Warrant
 
             holder_key = SigningKey.generate()
 
@@ -1219,7 +1219,7 @@ class TestPoPSignerVerification:
     def test_delegated_pop_uses_delegate_key(self):
         """Delegated warrant PoP must use delegate's key, not issuer's."""
         try:
-            from tenuo_core import SigningKey, Warrant, ConstraintValue, Signature
+            from tenuo_core import ConstraintValue, Signature, SigningKey, Warrant
 
             issuer_key = SigningKey.generate()
             delegate_key = SigningKey.generate()

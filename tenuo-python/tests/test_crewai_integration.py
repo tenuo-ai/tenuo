@@ -7,23 +7,24 @@ These tests focus on the protection layer and don't require LLM calls.
 Run with: pytest tests/test_crewai_integration.py -v
 """
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 # Skip all tests if crewai is not installed
 crewai = pytest.importorskip("crewai")
 
 from tenuo.crewai import (  # noqa: E402 - must be after importorskip
-    GuardBuilder,
+    ConfigurationError,
     CrewAIGuard,
+    DenialResult,
+    GuardBuilder,
     GuardedCrew,
-    guarded_step,
-    get_active_guard,
-    is_strict_mode,
     Subpath,
     Wildcard,
-    ConfigurationError,
-    DenialResult,
+    get_active_guard,
+    guarded_step,
+    is_strict_mode,
 )
 
 

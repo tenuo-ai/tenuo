@@ -2,11 +2,28 @@
 Test Wire Fidelity - Verify all Tenuo Core features pass through the wire.
 """
 from tenuo import (
-    SigningKey, Warrant, Pattern, Exact, OneOf, NotOneOf, Range, Cidr,
-    UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard,
-    Subpath, UrlSafe
+    CEL,
+    All,
+    AnyOf,
+    Cidr,
+    Contains,
+    Exact,
+    Not,
+    NotOneOf,
+    OneOf,
+    Pattern,
+    Range,
+    Regex,
+    SigningKey,
+    Subpath,
+    Subset,
+    UrlPattern,
+    UrlSafe,
+    Warrant,
+    Wildcard,
 )
-from tenuo.temporal import tenuo_headers, _extract_warrant_from_headers
+from tenuo.temporal import _extract_warrant_from_headers, tenuo_headers
+
 
 def test_all_constraints_serialization_roundtrip():
     """

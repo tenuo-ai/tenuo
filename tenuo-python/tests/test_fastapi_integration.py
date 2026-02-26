@@ -1,11 +1,12 @@
-import pytest
-import time
 import base64
+import time
 from typing import Any, Dict
 
+import pytest
+
 from tenuo import (
-    Warrant,
     SigningKey,
+    Warrant,
 )
 
 # Import FastAPI components with fallback for when not installed
@@ -21,15 +22,16 @@ X_TENUO_WARRANT = ""
 X_TENUO_POP = ""
 
 try:
-    from fastapi import FastAPI, Depends, Request  # type: ignore[no-redef]
+    from fastapi import Depends, FastAPI, Request  # type: ignore[no-redef]
     from fastapi.testclient import TestClient  # type: ignore[no-redef]
+
     from tenuo.fastapi import (  # type: ignore[no-redef]
-        configure_tenuo,
-        TenuoGuard,
-        SecurityContext,
-        X_TENUO_WARRANT,
-        X_TENUO_POP,
         FASTAPI_AVAILABLE,
+        X_TENUO_POP,
+        X_TENUO_WARRANT,
+        SecurityContext,
+        TenuoGuard,
+        configure_tenuo,
     )
 except ImportError:
     pass  # Use fallback values defined above

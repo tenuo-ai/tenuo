@@ -29,16 +29,16 @@ Requirements:
 import os
 
 # Universal constraints (work with any integration)
-from tenuo import Subpath, UrlSafe, Shlex, Pattern, Range
+from tenuo import Pattern, Range, Shlex, Subpath, UrlSafe
 
 # OpenAI-specific
 from tenuo.openai import (
-    protect,  # Zero-config entry point
-    guard,
+    AuditEvent,
+    ConstraintViolation,
     GuardBuilder,
     ToolDenied,
-    ConstraintViolation,
-    AuditEvent,
+    guard,
+    protect,  # Zero-config entry point
 )
 
 # Try to import OpenAI

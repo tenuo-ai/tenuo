@@ -11,7 +11,7 @@ Demonstrates:
 
 import time
 
-from tenuo import SigningKey, Warrant, Pattern, Exact, Range, Authorizer
+from tenuo import Authorizer, Exact, Pattern, Range, SigningKey, Warrant
 
 
 def main():

@@ -58,8 +58,8 @@ import argparse
 import asyncio
 import os
 import sys
-import time
 import tempfile
+import time
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -153,10 +153,11 @@ def check_dependencies() -> bool:
 
     try:
         # Suppress CrewAI's "Tracing is disabled" info box
-        import io
         import contextlib
+        import io
         with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
-            from crewai import Agent, Task, Crew  # noqa: F401
+            from crewai import Agent, Crew, Task  # noqa: F401
+
             # Monkey-patch to suppress tracing status message after kickoff
             from crewai.events.utils import console_formatter
             console_formatter.ConsoleFormatter._show_tracing_disabled_message_if_needed = lambda self: None
@@ -273,10 +274,11 @@ async def demo_live_llm():
         print(f"{C.YELLOW}   Set it with: export OPENAI_API_KEY='sk-...'{C.RESET}")
         return
 
-    from crewai import Agent, Task, Crew, Process
+    from crewai import Agent, Crew, Process, Task
     from crewai.tools import BaseTool
-    from tenuo.crewai import GuardBuilder, AuditEvent
+
     from tenuo import Subpath, Wildcard
+    from tenuo.crewai import AuditEvent, GuardBuilder
 
     # Create a temp directory structure for the demo
     demo_dir = Path(tempfile.mkdtemp(prefix="tenuo_demo_"))
@@ -497,10 +499,11 @@ async def demo_live_attack():
         print(f"\n{C.RED}❌ OPENAI_API_KEY not set. Cannot run live mode.{C.RESET}")
         return
 
-    from crewai import Agent, Task, Crew, Process
+    from crewai import Agent, Crew, Process, Task
     from crewai.tools import BaseTool
-    from tenuo.crewai import GuardBuilder, AuditEvent
+
     from tenuo import Subpath
+    from tenuo.crewai import AuditEvent, GuardBuilder
 
     # Create restricted demo environment
     demo_dir = Path(tempfile.mkdtemp(prefix="tenuo_attack_"))
@@ -673,8 +676,8 @@ async def demo_normal_workflow(delay: float = 0.5):
     """)
 
     # Import Tenuo components
-    from tenuo.crewai import GuardBuilder
     from tenuo import Subpath, UrlSafe, Wildcard
+    from tenuo.crewai import GuardBuilder
 
     step(1, "Control Plane issues root warrant to Manager", delay)
     print_warrant_info(
@@ -769,8 +772,8 @@ async def demo_attack_scenarios(delay: float = 0.5):
     allowed, not the LLM's output.
     """)
 
-    from tenuo.crewai import GuardBuilder
     from tenuo import Subpath, UrlSafe, Wildcard
+    from tenuo.crewai import GuardBuilder
 
     # Researcher's limited guard
     researcher_guard = (GuardBuilder()

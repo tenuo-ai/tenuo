@@ -10,15 +10,16 @@ These tests verify that:
 """
 
 import pytest
+from tenuo_core import Clearance, WarrantType
+
 from tenuo import (
+    Exact,
+    Pattern,
+    Range,
     SigningKey,
     Warrant,
-    Pattern,
-    Exact,
-    Range,
 )
 from tenuo.exceptions import ValidationError
-from tenuo_core import Clearance, WarrantType
 
 
 class TestWarrantBuilderExecution:

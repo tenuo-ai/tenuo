@@ -23,20 +23,23 @@ Usage:
 Note: This will make real API calls and cost a few cents.
 """
 
+import argparse
 import asyncio
+import json
 import os
 import sys
-import json
 import warnings
-import argparse
+
 try:
     from urllib3.exceptions import NotOpenSSLWarning
     warnings.simplefilter('ignore', NotOpenSSLWarning)
 except ImportError:
     pass
 
-from tenuo import Warrant, SigningKey, AuthorizationDenied, OneOf, Wildcard, UrlPattern
 from wrapper import TenuoAgentQLAgent, format_denial_error
+
+from tenuo import AuthorizationDenied, OneOf, SigningKey, UrlPattern, Warrant, Wildcard
+
 
 # Simple LLM integration
 class SimpleLLMAgent:

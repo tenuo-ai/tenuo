@@ -16,8 +16,10 @@ This is NOT just a constraint check - it's a cryptographic proof that:
 import functools
 import time
 from typing import Callable, Dict, List, Optional
-from tenuo import Warrant, SigningKey, SignedApproval, Authorizer
+
 import display
+
+from tenuo import Authorizer, SignedApproval, SigningKey, Warrant
 
 
 class WarrantExecutor:

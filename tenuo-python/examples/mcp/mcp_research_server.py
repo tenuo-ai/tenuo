@@ -15,9 +15,10 @@ Usage:
 """
 
 import os
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
 # Check for Tavily (optional - will use mock if not available)
 try:

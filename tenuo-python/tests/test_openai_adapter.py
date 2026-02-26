@@ -12,40 +12,40 @@ Covers:
 """
 
 import json
-import pytest
 from dataclasses import dataclass
 from typing import Any, List, Optional
 from unittest.mock import Mock, patch
 
+import pytest
+
 from tenuo.openai import (
-    guard,
-    GuardedClient,
-    ToolDenied,
-    ConstraintViolation,
-    MalformedToolCall,
-    WarrantDenied,
-    MissingSigningKey,
-    ConfigurationError,
-    enable_debug,
-    AuditEvent,
-    Pattern,
-    OneOf,
-    Range,
-    Wildcard,
-    AnyOf,
+    CEL,
     All,
+    AnyOf,
+    AuditEvent,
+    Cidr,
+    ConfigurationError,
+    ConstraintViolation,
+    GuardedClient,
+    MalformedToolCall,
+    MissingSigningKey,
     Not,
     NotOneOf,
-    Cidr,
-    UrlPattern,
-    CEL,
-    Subpath,
-    Warrant,
+    OneOf,
+    Pattern,
+    Range,
     SigningKey,
-    verify_tool_call,
+    Subpath,
+    ToolDenied,
+    UrlPattern,
+    Warrant,
+    WarrantDenied,
+    Wildcard,
     check_constraint,
+    enable_debug,
+    guard,
+    verify_tool_call,
 )
-
 
 # =============================================================================
 # Mock Helpers
@@ -1618,7 +1618,7 @@ class TestAgentsSDKIntegration:
 
     def test_create_tier1_guardrail_basic(self):
         """Test creating a Tier 1 guardrail."""
-        from tenuo.openai import create_tier1_guardrail, TenuoToolGuardrail
+        from tenuo.openai import TenuoToolGuardrail, create_tier1_guardrail
 
         guardrail = create_tier1_guardrail(
             allow_tools=["search", "read_file"],
@@ -1632,7 +1632,7 @@ class TestAgentsSDKIntegration:
 
     def test_create_tier2_guardrail(self):
         """Test creating a Tier 2 guardrail."""
-        from tenuo.openai import create_tier2_guardrail, TenuoToolGuardrail
+        from tenuo.openai import TenuoToolGuardrail, create_tier2_guardrail
 
         key = SigningKey.generate()
         warrant = (
@@ -1651,7 +1651,7 @@ class TestAgentsSDKIntegration:
 
     def test_warrant_guardrail_requires_signing_key(self):
         """Test that warrant guardrail requires signing_key."""
-        from tenuo.openai import TenuoToolGuardrail, MissingSigningKey
+        from tenuo.openai import MissingSigningKey, TenuoToolGuardrail
 
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("send_email", {}).holder(key.public_key).ttl(3600).mint(key)
@@ -2766,8 +2766,9 @@ class TestToolSchemaValidation:
 
     def test_valid_constraints_no_warning(self, sample_tools, caplog):
         """Valid constraint params should not produce warnings."""
-        from tenuo.openai import GuardBuilder
         import logging
+
+        from tenuo.openai import GuardBuilder
 
         caplog.set_level(logging.WARNING)
 
@@ -2784,8 +2785,9 @@ class TestToolSchemaValidation:
 
     def test_typo_warns(self, sample_tools, caplog):
         """Typo in param name should produce warning."""
-        from tenuo.openai import GuardBuilder
         import logging
+
+        from tenuo.openai import GuardBuilder
 
         caplog.set_level(logging.WARNING)
 
@@ -2820,8 +2822,9 @@ class TestToolSchemaValidation:
 
     def test_validation_disabled(self, sample_tools, caplog):
         """Validation can be disabled."""
-        from tenuo.openai import GuardBuilder
         import logging
+
+        from tenuo.openai import GuardBuilder
 
         caplog.set_level(logging.WARNING)
 
@@ -2838,8 +2841,9 @@ class TestToolSchemaValidation:
 
     def test_unknown_tool_not_error(self, sample_tools, caplog):
         """Constraints for tools not in schema should not warn."""
-        from tenuo.openai import GuardBuilder
         import logging
+
+        from tenuo.openai import GuardBuilder
 
         caplog.set_level(logging.WARNING)
 
@@ -2851,8 +2855,9 @@ class TestToolSchemaValidation:
 
     def test_meta_params_skipped(self, sample_tools, caplog):
         """Meta params like _allow_unknown should be skipped."""
-        from tenuo.openai import GuardBuilder
         import logging
+
+        from tenuo.openai import GuardBuilder
 
         caplog.set_level(logging.WARNING)
 
@@ -2897,8 +2902,9 @@ class TestToolSchemaValidation:
 
     def test_multiple_invalid_params(self, sample_tools, caplog):
         """Multiple invalid params should all be reported."""
-        from tenuo.openai import GuardBuilder
         import logging
+
+        from tenuo.openai import GuardBuilder
 
         caplog.set_level(logging.WARNING)
 
@@ -2971,8 +2977,9 @@ class TestGuardedResponses:
 
     def test_log_mode_filters_denied_function_calls(self, caplog):
         """Log mode should remove denied function_call items and log."""
-        from tenuo.openai import GuardedResponses
         import logging
+
+        from tenuo.openai import GuardedResponses
 
         caplog.set_level(logging.WARNING)
 
@@ -3120,8 +3127,8 @@ class TestUrlSafeOpenAIIntegration:
 
     def test_urlsafe_in_constraints_dict(self):
         """UrlSafe can be used in constraints dict for verify_tool_call()."""
-        from tenuo.openai import verify_tool_call
         from tenuo import UrlSafe
+        from tenuo.openai import verify_tool_call
 
         # Safe public URL should pass
         result = verify_tool_call(
@@ -3135,8 +3142,8 @@ class TestUrlSafeOpenAIIntegration:
 
     def test_urlsafe_blocks_metadata(self):
         """UrlSafe blocks cloud metadata URLs."""
-        from tenuo.openai import verify_tool_call, ConstraintViolation
         from tenuo import UrlSafe
+        from tenuo.openai import ConstraintViolation, verify_tool_call
 
         with pytest.raises(ConstraintViolation):
             verify_tool_call(
@@ -3149,8 +3156,8 @@ class TestUrlSafeOpenAIIntegration:
 
     def test_urlsafe_blocks_localhost(self):
         """UrlSafe blocks localhost URLs."""
-        from tenuo.openai import verify_tool_call, ConstraintViolation
         from tenuo import UrlSafe
+        from tenuo.openai import ConstraintViolation, verify_tool_call
 
         with pytest.raises(ConstraintViolation):
             verify_tool_call(
@@ -3163,8 +3170,8 @@ class TestUrlSafeOpenAIIntegration:
 
     def test_urlsafe_blocks_private_ips(self):
         """UrlSafe blocks private IP addresses."""
-        from tenuo.openai import verify_tool_call, ConstraintViolation
         from tenuo import UrlSafe
+        from tenuo.openai import ConstraintViolation, verify_tool_call
 
         with pytest.raises(ConstraintViolation):
             verify_tool_call(
@@ -3177,8 +3184,8 @@ class TestUrlSafeOpenAIIntegration:
 
     def test_urlsafe_with_domain_allowlist(self):
         """UrlSafe with domain allowlist restricts to specific domains."""
-        from tenuo.openai import verify_tool_call, ConstraintViolation
         from tenuo import UrlSafe
+        from tenuo.openai import ConstraintViolation, verify_tool_call
 
         safe = UrlSafe(allow_domains=["api.github.com"])
 
@@ -3204,9 +3211,10 @@ class TestUrlSafeOpenAIIntegration:
 
     def test_urlsafe_with_guard_builder(self):
         """UrlSafe works with GuardBuilder."""
-        from tenuo.openai import GuardBuilder
-        from tenuo import UrlSafe
         from unittest.mock import Mock
+
+        from tenuo import UrlSafe
+        from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
         builder = GuardBuilder(mock_client).allow("fetch_url").constrain("fetch_url", url=UrlSafe())
@@ -3218,8 +3226,8 @@ class TestUrlSafeOpenAIIntegration:
 
     def test_urlsafe_ip_encoding_bypasses(self):
         """UrlSafe blocks IP encoding bypass attempts."""
-        from tenuo.openai import verify_tool_call, ConstraintViolation
         from tenuo import UrlSafe
+        from tenuo.openai import ConstraintViolation, verify_tool_call
 
         bypass_attempts = [
             "http://2130706433/",  # Decimal 127.0.0.1
@@ -3248,8 +3256,8 @@ class TestShlexOpenAIIntegration:
 
     def test_shlex_allows_safe_command(self):
         """Shlex allows simple commands with allowed binaries."""
-        from tenuo.openai import verify_tool_call
         from tenuo import Shlex
+        from tenuo.openai import verify_tool_call
 
         result = verify_tool_call(
             tool_name="run_command",
@@ -3262,8 +3270,8 @@ class TestShlexOpenAIIntegration:
 
     def test_shlex_blocks_shell_injection(self):
         """Shlex blocks shell injection attempts."""
-        from tenuo.openai import verify_tool_call, ConstraintViolation
         from tenuo import Shlex
+        from tenuo.openai import ConstraintViolation, verify_tool_call
 
         with pytest.raises(ConstraintViolation):
             verify_tool_call(
@@ -3276,8 +3284,8 @@ class TestShlexOpenAIIntegration:
 
     def test_shlex_blocks_pipe(self):
         """Shlex blocks pipe operators."""
-        from tenuo.openai import verify_tool_call, ConstraintViolation
         from tenuo import Shlex
+        from tenuo.openai import ConstraintViolation, verify_tool_call
 
         with pytest.raises(ConstraintViolation):
             verify_tool_call(
@@ -3290,8 +3298,8 @@ class TestShlexOpenAIIntegration:
 
     def test_shlex_blocks_command_substitution(self):
         """Shlex blocks command substitution."""
-        from tenuo.openai import verify_tool_call, ConstraintViolation
         from tenuo import Shlex
+        from tenuo.openai import ConstraintViolation, verify_tool_call
 
         with pytest.raises(ConstraintViolation):
             verify_tool_call(
@@ -3304,8 +3312,8 @@ class TestShlexOpenAIIntegration:
 
     def test_shlex_blocks_variable_expansion(self):
         """Shlex blocks variable expansion."""
-        from tenuo.openai import verify_tool_call, ConstraintViolation
         from tenuo import Shlex
+        from tenuo.openai import ConstraintViolation, verify_tool_call
 
         with pytest.raises(ConstraintViolation):
             verify_tool_call(
@@ -3318,8 +3326,8 @@ class TestShlexOpenAIIntegration:
 
     def test_shlex_blocks_unlisted_binary(self):
         """Shlex blocks binaries not in allowlist."""
-        from tenuo.openai import verify_tool_call, ConstraintViolation
         from tenuo import Shlex
+        from tenuo.openai import ConstraintViolation, verify_tool_call
 
         with pytest.raises(ConstraintViolation):
             verify_tool_call(
@@ -3332,9 +3340,10 @@ class TestShlexOpenAIIntegration:
 
     def test_shlex_with_guard_builder(self):
         """Shlex works with GuardBuilder."""
-        from tenuo.openai import GuardBuilder
-        from tenuo import Shlex
         from unittest.mock import Mock
+
+        from tenuo import Shlex
+        from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
         builder = (
@@ -3348,8 +3357,8 @@ class TestShlexOpenAIIntegration:
 
     def test_shlex_with_block_globs(self):
         """Shlex with block_globs=True rejects glob characters."""
-        from tenuo.openai import verify_tool_call, ConstraintViolation
         from tenuo import Shlex
+        from tenuo.openai import ConstraintViolation, verify_tool_call
 
         # Without block_globs, globs are allowed
         result = verify_tool_call(

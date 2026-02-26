@@ -16,33 +16,34 @@ Tests cover:
 
 import os
 import time
-
-import pytest
 from unittest.mock import patch
 
-from tenuo import SigningKey, Warrant, Subpath
-from tenuo.approval import (
-    ApprovalPolicy,
-    ApprovalRule,
-    ApprovalRequest,
-    ApprovalRequired,
-    ApprovalDenied,
-    ApprovalTimeout,
-    ApprovalVerificationError,
-    require_approval,
-    sign_approval,
-    auto_approve,
-    auto_deny,
-    cli_prompt,
-    webhook,
-)
-from tenuo._enforcement import enforce_tool_call
+import pytest
 from tenuo_core import (
     ApprovalPayload,
     SignedApproval,
+)
+from tenuo_core import (
     py_compute_request_hash as compute_request_hash,
 )
 
+from tenuo import SigningKey, Subpath, Warrant
+from tenuo._enforcement import enforce_tool_call
+from tenuo.approval import (
+    ApprovalDenied,
+    ApprovalPolicy,
+    ApprovalRequest,
+    ApprovalRequired,
+    ApprovalRule,
+    ApprovalTimeout,
+    ApprovalVerificationError,
+    auto_approve,
+    auto_deny,
+    cli_prompt,
+    require_approval,
+    sign_approval,
+    webhook,
+)
 
 # =============================================================================
 # Fixtures
@@ -1114,8 +1115,8 @@ class TestCrewAIApproval:
     """Verify approval flows through CrewAI's GuardBuilder -> CrewAIGuard -> enforce_tool_call."""
 
     def test_crewai_builder_passes_approval_through(self, agent_key, approver_key):
-        from tenuo.crewai import GuardBuilder
         from tenuo import Wildcard
+        from tenuo.crewai import GuardBuilder
 
         w = Warrant.issue(
             agent_key,
@@ -1141,8 +1142,8 @@ class TestCrewAIApproval:
         assert guard._approval_handler is handler
 
     def test_crewai_approval_required_raises(self, agent_key, approver_key):
-        from tenuo.crewai import GuardBuilder
         from tenuo import Wildcard
+        from tenuo.crewai import GuardBuilder
 
         w = Warrant.issue(
             agent_key,
@@ -1167,8 +1168,8 @@ class TestCrewAIApproval:
             guard._authorize("search", {"query": "test"})
 
     def test_crewai_approval_auto_approve_succeeds(self, agent_key, approver_key):
-        from tenuo.crewai import GuardBuilder
         from tenuo import Wildcard
+        from tenuo.crewai import GuardBuilder
 
         w = Warrant.issue(
             agent_key,
@@ -1194,8 +1195,8 @@ class TestCrewAIApproval:
         assert result is None  # None means authorized
 
     def test_crewai_approval_denied_raises(self, agent_key, approver_key):
-        from tenuo.crewai import GuardBuilder
         from tenuo import Wildcard
+        from tenuo.crewai import GuardBuilder
 
         w = Warrant.issue(
             agent_key,
@@ -1379,9 +1380,10 @@ class TestApprovalsAsInput:
 
     def test_matching_approval_succeeds(self):
         """A caller-provided SignedApproval that matches is accepted."""
-        from tenuo._enforcement import enforce_tool_call
-        from tenuo.approval import sign_approval, ApprovalRequest
         from tenuo_core import py_compute_request_hash as _compute_hash
+
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo.approval import ApprovalRequest, sign_approval
 
         agent_key, approver_key, bound, policy = self._setup()
 
@@ -1402,9 +1404,10 @@ class TestApprovalsAsInput:
 
     def test_approvals_take_precedence_over_handler(self):
         """When both approvals and handler are provided, approvals win."""
-        from tenuo._enforcement import enforce_tool_call
-        from tenuo.approval import sign_approval, ApprovalRequest, auto_deny
         from tenuo_core import py_compute_request_hash as _compute_hash
+
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo.approval import ApprovalRequest, auto_deny, sign_approval
 
         agent_key, approver_key, bound, policy = self._setup()
 
@@ -1427,7 +1430,7 @@ class TestApprovalsAsInput:
     def test_no_matching_approval_raises_verification_error(self):
         """If no provided approval matches the request hash, raises."""
         from tenuo._enforcement import enforce_tool_call
-        from tenuo.approval import sign_approval, ApprovalRequest, ApprovalVerificationError
+        from tenuo.approval import ApprovalRequest, ApprovalVerificationError, sign_approval
 
         agent_key, approver_key, bound, policy = self._setup()
 
@@ -1446,9 +1449,10 @@ class TestApprovalsAsInput:
 
     def test_untrusted_approver_key_rejected(self):
         """An approval signed by an untrusted key is rejected."""
-        from tenuo._enforcement import enforce_tool_call
-        from tenuo.approval import sign_approval, ApprovalRequest, ApprovalVerificationError
         from tenuo_core import py_compute_request_hash as _compute_hash
+
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo.approval import ApprovalRequest, ApprovalVerificationError, sign_approval
 
         agent_key, approver_key, bound, policy = self._setup()
         untrusted_key = SigningKey.generate()
@@ -1470,12 +1474,16 @@ class TestApprovalsAsInput:
 
     def test_expired_approval_rejected(self):
         """An expired SignedApproval is rejected (beyond clock tolerance)."""
-        from tenuo._enforcement import enforce_tool_call
-        from tenuo.approval import ApprovalVerificationError
+        from tenuo_core import (
+            ApprovalPayload,
+            SignedApproval,
+        )
         from tenuo_core import (
             py_compute_request_hash as _compute_hash,
-            ApprovalPayload, SignedApproval,
         )
+
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo.approval import ApprovalVerificationError
 
         agent_key, approver_key, bound, policy = self._setup()
 

@@ -10,6 +10,7 @@ Tests cover:
 """
 
 import pytest
+
 from tenuo.openai import UrlSafe
 
 

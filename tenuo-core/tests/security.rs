@@ -1008,7 +1008,13 @@ fn test_expired_parent_invalidates_chain() {
     let args = HashMap::new();
     let pop = child.sign(&worker, "read", &args).unwrap();
     assert!(authorizer
-        .check_chain(&[root.clone(), child.clone()], "read", &args, Some(&pop), &[])
+        .check_chain(
+            &[root.clone(), child.clone()],
+            "read",
+            &args,
+            Some(&pop),
+            &[]
+        )
         .is_ok());
 
     // Wait for expiry

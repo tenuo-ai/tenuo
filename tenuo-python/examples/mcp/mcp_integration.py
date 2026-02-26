@@ -10,8 +10,9 @@ Demonstrates:
 
 import time
 
-from tenuo import Authorizer, SigningKey, Warrant, Pattern, Range
 from tenuo_core import CompiledMcpConfig, McpConfig
+
+from tenuo import Authorizer, Pattern, Range, SigningKey, Warrant
 
 
 def main():

@@ -11,11 +11,12 @@ Tests cover:
 
 import os
 import time
+
 from tenuo import (
-    SigningKey,
+    ApprovalMetadata,
     ApprovalPayload,
     SignedApproval,
-    ApprovalMetadata,
+    SigningKey,
 )
 
 
