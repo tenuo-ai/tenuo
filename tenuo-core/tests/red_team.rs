@@ -350,7 +350,7 @@ fn test_pop_future_timestamp() {
     // Try to authorize with future signature
     let authorizer = Authorizer::new().with_trusted_root(keypair.public_key());
 
-    let result = authorizer.authorize(&warrant, "transfer", &args, Some(&future_sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "transfer", &args, Some(&future_sig), &[]);
 
     assert!(result.is_err(), "Future timestamp PoP should be rejected");
 
@@ -399,7 +399,7 @@ fn test_pop_old_timestamp_replay() {
     // Try to authorize with old signature
     let authorizer = Authorizer::new().with_trusted_root(keypair.public_key());
 
-    let result = authorizer.authorize(&warrant, "transfer", &args, Some(&old_sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "transfer", &args, Some(&old_sig), &[]);
 
     assert!(
         result.is_err(),
@@ -458,7 +458,7 @@ fn test_pop_concurrent_window_boundary() {
         let auth = Arc::clone(&authorizer);
 
         handles.push(thread::spawn(move || {
-            auth.authorize(&w, "transfer", &a, Some(&s), &[])
+            auth.authorize_one(&w, "transfer", &a, Some(&s), &[])
         }));
     }
 
@@ -611,7 +611,7 @@ fn test_execution_warrant_tool_addition() {
     let sig = child.sign(&keypair, "write", &args).unwrap();
 
     let authorizer = Authorizer::new().with_trusted_root(keypair.public_key());
-    let result = authorizer.authorize(&child, "write", &args, Some(&sig), &[]);
+    let result = authorizer.authorize_one(&child, "write", &args, Some(&sig), &[]);
 
     assert!(
         result.is_err(),
@@ -719,7 +719,7 @@ fn test_empty_capabilities_semantics() {
 
     let sig = warrant.sign(&keypair, "ping", &random_args).unwrap();
 
-    let result = authorizer.authorize(&warrant, "ping", &random_args, Some(&sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "ping", &random_args, Some(&sig), &[]);
     assert!(
         result.is_ok(),
         "Empty constraints should ALLOW any arguments: {:?}",
@@ -731,7 +731,7 @@ fn test_empty_capabilities_semantics() {
     let empty_args: HashMap<String, ConstraintValue> = HashMap::new();
     let sig2 = warrant.sign(&keypair, "ping", &empty_args).unwrap();
 
-    let result2 = authorizer.authorize(&warrant, "ping", &empty_args, Some(&sig2), &[]);
+    let result2 = authorizer.authorize_one(&warrant, "ping", &empty_args, Some(&sig2), &[]);
     assert!(
         result2.is_ok(),
         "Empty constraints should ALLOW empty args too: {:?}",
@@ -742,7 +742,7 @@ fn test_empty_capabilities_semantics() {
     // Test 3: Other tools should be DENIED (not present in capabilities)
     let pong_sig = warrant.sign(&keypair, "pong", &empty_args).unwrap();
 
-    let result3 = authorizer.authorize(&warrant, "pong", &empty_args, Some(&pong_sig), &[]);
+    let result3 = authorizer.authorize_one(&warrant, "pong", &empty_args, Some(&pong_sig), &[]);
     assert!(result3.is_err(), "Missing tool should be DENIED");
     println!("✅ Missing tool = DENIED");
 
@@ -796,7 +796,7 @@ fn test_holder_mismatch_pop_fails() {
 
     let authorizer = Authorizer::new().with_trusted_root(issuer_kp.public_key());
 
-    let result = authorizer.authorize(&warrant, "transfer", &args, Some(&attacker_sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "transfer", &args, Some(&attacker_sig), &[]);
 
     assert!(
         result.is_err(),
@@ -1037,7 +1037,7 @@ fn test_child_warrant_with_parent_hash() {
     let args: HashMap<String, ConstraintValue> = HashMap::new();
     let sig = child.sign(&child_kp, "read", &args).unwrap();
 
-    let auth_result = authorizer.authorize(&child, "read", &args, Some(&sig), &[]);
+    let auth_result = authorizer.authorize_one(&child, "read", &args, Some(&sig), &[]);
 
     assert!(
         auth_result.is_ok(),
@@ -1123,7 +1123,7 @@ fn test_pop_args_binding() {
     .into_iter()
     .collect();
 
-    let result = authorizer.authorize(&warrant, "read_file", &malicious_args, Some(&safe_sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "read_file", &malicious_args, Some(&safe_sig), &[]);
 
     assert!(
         result.is_err(),
@@ -1162,7 +1162,7 @@ fn test_pop_tool_binding() {
     let read_sig = warrant.sign(&keypair, "read", &args).unwrap();
 
     // ATTACK: Use that signature for "write"
-    let result = authorizer.authorize(&warrant, "write", &args, Some(&read_sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "write", &args, Some(&read_sig), &[]);
 
     assert!(
         result.is_err(),
@@ -1485,7 +1485,7 @@ fn test_untrusted_root_rejection() {
     let args: HashMap<String, ConstraintValue> = HashMap::new();
     let sig = attacker_warrant.sign(&attacker_kp, "admin", &args).unwrap();
 
-    let result = authorizer.authorize(&attacker_warrant, "admin", &args, Some(&sig), &[]);
+    let result = authorizer.authorize_one(&attacker_warrant, "admin", &args, Some(&sig), &[]);
 
     // The warrant should be rejected because attacker_kp is not in trusted_roots
     // However, if the warrant has no parent_hash (root), it might verify against its own issuer key
@@ -1527,7 +1527,7 @@ fn test_dynamic_trusted_root_addition() {
     let sig = warrant.sign(&new_root_kp, "test", &args).unwrap();
 
     // Try to authorize before root is trusted
-    let before_result = authorizer.authorize(&warrant, "test", &args, Some(&sig), &[]);
+    let before_result = authorizer.authorize_one(&warrant, "test", &args, Some(&sig), &[]);
 
     // Root warrants (no parent_hash) might still verify if trust check isn't enforced
     // This tests the Authorizer behavior
@@ -1545,7 +1545,7 @@ fn test_dynamic_trusted_root_addition() {
     authorizer.add_trusted_root(new_root_kp.public_key());
 
     // Should succeed after adding root
-    let after_result = authorizer.authorize(&warrant, "test", &args, Some(&sig), &[]);
+    let after_result = authorizer.authorize_one(&warrant, "test", &args, Some(&sig), &[]);
 
     assert!(
         after_result.is_ok(),
@@ -1588,7 +1588,7 @@ fn test_unicode_lookalike_bypass() {
     .collect();
 
     let sig = warrant.sign(&keypair, "read", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "read", &args, Some(&sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "read", &args, Some(&sig), &[]);
 
     assert!(
         result.is_err(),
@@ -1626,7 +1626,7 @@ fn test_case_sensitivity_bypass() {
     .collect();
 
     let sig = warrant.sign(&keypair, "deploy", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "deploy", &args, Some(&sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "deploy", &args, Some(&sig), &[]);
 
     assert!(result.is_err(), "Case variation should not match pattern");
     println!("✅ Case variation blocked (case-sensitive matching)");
@@ -1867,7 +1867,7 @@ fn test_attack_redos_resistance() {
     );
 
     let sig = warrant.sign(&keypair, "process", &args).unwrap();
-    let _ = authorizer.authorize(&warrant, "process", &args, Some(&sig), &[]);
+    let _ = authorizer.authorize_one(&warrant, "process", &args, Some(&sig), &[]);
     let elapsed = start.elapsed();
 
     if elapsed > timeout {
@@ -1909,7 +1909,7 @@ fn test_attack_type_confusion_range_string() {
     );
 
     let sig = warrant.sign(&keypair, "transfer", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "transfer", &args, Some(&sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "transfer", &args, Some(&sig), &[]);
 
     match result {
         Ok(_) => {
@@ -1944,7 +1944,7 @@ fn test_attack_type_confusion_nan() {
     args.insert("value".to_string(), ConstraintValue::Float(f64::NAN));
 
     let sig = warrant.sign(&keypair, "process", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "process", &args, Some(&sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "process", &args, Some(&sig), &[]);
 
     match result {
         Ok(_) => {

@@ -6,6 +6,7 @@ from tenuo import (
     Pattern,
     Range,
     Exact,
+    Authorizer,
 )
 from tenuo.constraints import Constraints
 from tenuo.exceptions import DelegationAuthorityError, PatternExpanded, RangeExpanded
@@ -96,8 +97,15 @@ class TestErrorMapping:
             keypair=keypair, capabilities=Constraints.for_tool("search", {"query": Exact("foo")}), ttl_seconds=60
         )
 
-        # authorize returns False on constraint violation, doesn't raise
-        assert warrant.authorize("search", {"query": "bar"}) is False
+        # Create authorizer and try to authorize with wrong constraint value
+        authorizer = Authorizer()
+        authorizer.add_trusted_root(keypair.public_key)
+
+        # Should raise exception on constraint violation
+        import time
+        sig = warrant.sign(keypair, "search", {"query": "bar"}, int(time.time()))
+        with pytest.raises(Exception):  # Will be some form of constraint error
+            authorizer.authorize(warrant, "search", {"query": "bar"}, bytes(sig))
 
     def test_tool_mismatch(self, keypair):
         """Verify ToolMismatch mapping."""

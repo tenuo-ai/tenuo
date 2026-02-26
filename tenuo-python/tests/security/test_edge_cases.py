@@ -17,7 +17,7 @@ from tenuo import (
     Range,
 )
 from tenuo.constraints import Constraints
-from tenuo.exceptions import ExpiredError, Unauthorized
+from tenuo.exceptions import Unauthorized
 from tenuo.decorators import warrant_scope, _warrant_context
 
 
@@ -113,13 +113,11 @@ class TestEdgeCases:
         time.sleep(1.1)  # Expired by 0.1s
 
         print("  [Attack 17A] Using warrant expired by 0.1s...")
-        try:
-            warrant.authorize("search", {})
-            print("  [WARNING] Attack 17A SUCCEEDED: Expired warrant accepted")
-        except ExpiredError:
+        if warrant.is_expired():
             print("  [Result] Attack 17A blocked (Strict expiry enforced)")
-        except Exception as e:
-            print(f"  [Result] Attack 17A blocked with error: {e}")
+        else:
+            print("  [WARNING] Attack 17A SUCCEEDED: Expired warrant accepted")
+            assert False, "Warrant should be expired after TTL"
 
         print("  [Info] Attack 17B skipped (Cannot mint future warrants via API)")
 
@@ -140,7 +138,8 @@ class TestEdgeCases:
 
         print("  [Attack 20] Testing NFD 'café' against NFC constraint...")
 
-        if warrant.authorize("search", {"query": cafe_nfd}):
+        result = warrant.check_constraints("search", {"query": cafe_nfd})
+        if result is None:
             print("  [Info] Tenuo normalizes Unicode (NFD matched NFC)")
         else:
             print("  [Info] Tenuo performs byte-wise comparison (NFD != NFC)")
@@ -174,11 +173,11 @@ class TestEdgeCases:
             print(f"  [Result] Huge int constraint rejected gracefully: {type(e).__name__}")
             assert "panic" not in str(e).lower(), "Should not panic!"
 
-        # Test 2: Authorize with huge int arg
-        print(f"  [Attack] Authorizing with arg val={huge_int}...")
+        # Test 2: check_constraints with huge int arg
+        print(f"  [Attack] Checking constraints with arg val={huge_int}...")
         warrant = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("test", {}), ttl_seconds=60)
         try:
-            warrant.authorize("test", {"val": huge_int})
+            warrant.check_constraints("test", {"val": huge_int})
             print("  [Result] Huge int argument handled gracefully")
         except Exception as e:
             assert "panic" not in str(e).lower(), f"Panicked on huge int: {e}"
@@ -187,7 +186,7 @@ class TestEdgeCases:
         # Test 3: Negative overflow
         print(f"  [Attack] Testing negative overflow {negative_huge}...")
         try:
-            warrant.authorize("test", {"val": negative_huge})
+            warrant.check_constraints("test", {"val": negative_huge})
             print("  [Result] Negative huge int handled gracefully")
         except Exception as e:
             assert "panic" not in str(e).lower(), f"Panicked on negative huge: {e}"
@@ -209,11 +208,9 @@ class TestEdgeCases:
 
         print("  [Attack 5] Attempting to use issuer warrant for execution...")
 
-        from tenuo.exceptions import ValidationError
-
-        try:
-            issuer_warrant.authorize("search", {})
-            print("  [CRITICAL] Attack 5 SUCCEEDED: Issuer executed tool!")
+        result = issuer_warrant.check_constraints("search", {})
+        if result is None:
+            print("  [CRITICAL] Attack 5 SUCCEEDED: Issuer passed constraint check!")
             assert False, "Issuer warrants should not authorize execution"
-        except (ValidationError, Exception) as e:
-            print(f"  [Result] Attack 5 blocked ({type(e).__name__})")
+        else:
+            print(f"  [Result] Attack 5 blocked ({result})")

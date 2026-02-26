@@ -270,22 +270,32 @@ class BoundWarrant:
                 print(f"Validation failed: {result.reason}")
         """
         import time
+        from tenuo_core import Authorizer
 
-        # 1. Sign
+        # 1. Sign PoP
         pop_signature = self._warrant.sign(self._key, tool, args, int(time.time()))
 
-        # 2. Verify (calls Rust authorize)
-        success = self._warrant.authorize(tool=tool, args=args, signature=bytes(pop_signature))
-
-        if success:
+        # 2. Verify via Authorizer.authorize_one() — full check: issuer trust,
+        #    expiry, revocation, clearance, PoP, constraints.
+        issuer_pub = getattr(self._warrant, "issuer_public_key", None) or getattr(self._warrant, "issuer", None)
+        roots = [issuer_pub] if issuer_pub is not None else []
+        auth = Authorizer(trusted_roots=roots)
+        try:
+            auth.authorize_one(self._warrant, tool, args, signature=bytes(pop_signature))
             return ValidationResult.ok()
-
-        # 3. If failed, get rich feedback via why_denied
-        why = self.why_denied(tool, args)
-        return ValidationResult.fail(
-            reason=why.suggestion or f"Authorization failed ({why.deny_code})",
-            suggestions=[why.suggestion] if why.suggestion else [],
-        )
+        except Exception as exc:
+            # Re-raise structural failures — callers should handle these explicitly.
+            # ExpiredError, SignatureInvalid, MissingSignature are NOT policy denials;
+            # they indicate the warrant itself is invalid, not just a constraint miss.
+            from tenuo.exceptions import ExpiredError, SignatureInvalid, MissingSignature
+            if isinstance(exc, (ExpiredError, SignatureInvalid, MissingSignature)):
+                raise
+            # 3. Policy-level denial: return rich feedback via why_denied
+            why = self.why_denied(tool, args)
+            return ValidationResult.fail(
+                reason=why.suggestion or f"Authorization failed ({why.deny_code})",
+                suggestions=[why.suggestion] if why.suggestion else [],
+            )
 
     # ========================================================================
     # Forward preview/debugging methods

@@ -1153,7 +1153,7 @@ class TestPoPSignerVerification:
     def test_pop_wrong_signer_rejected(self):
         """PoP signed by wrong key should be rejected."""
         try:
-            from tenuo_core import SigningKey, Warrant
+            from tenuo_core import SigningKey, Warrant, Authorizer
 
             holder_key = SigningKey.generate()
             attacker_key = SigningKey.generate()
@@ -1175,9 +1175,13 @@ class TestPoPSignerVerification:
             args_cv = {"arg": ConstraintValue.from_any("value")}
             pop_sig = Signature.from_bytes(bytes(attacker_pop))
 
+            # Use Authorizer for full verification
+            authorizer = Authorizer()
+            authorizer.add_trusted_root(holder_key.public_key)
+
             # This should fail because PoP signer != warrant.sub
             with pytest.raises(Exception):
-                warrant.authorize("test_skill", args_cv, signature=pop_sig)
+                authorizer.authorize(warrant, "test_skill", args_cv, signature=pop_sig)
 
         except ImportError:
             pytest.skip("tenuo_core not available")
@@ -1185,7 +1189,7 @@ class TestPoPSignerVerification:
     def test_pop_correct_signer_accepted(self):
         """PoP signed by holder should be accepted."""
         try:
-            from tenuo_core import SigningKey, Warrant, ConstraintValue, Signature
+            from tenuo_core import SigningKey, Warrant, ConstraintValue, Signature, Authorizer
 
             holder_key = SigningKey.generate()
 
@@ -1202,9 +1206,12 @@ class TestPoPSignerVerification:
             args_cv = {"arg": ConstraintValue.from_any("value")}
             pop_sig = Signature.from_bytes(bytes(holder_pop))
 
+            # Use Authorizer for full verification
+            authorizer = Authorizer()
+            authorizer.add_trusted_root(holder_key.public_key)
+
             # This should succeed
-            authorized = warrant.authorize("test_skill", args_cv, signature=pop_sig)
-            assert authorized is True
+            authorizer.authorize(warrant, "test_skill", args_cv, signature=pop_sig)
 
         except ImportError:
             pytest.skip("tenuo_core not available")

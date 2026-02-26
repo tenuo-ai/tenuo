@@ -533,6 +533,12 @@ class A2AServer:
         # SECURITY: Validate configuration for insecure combinations
         self._validate_config()
 
+        # Build a cached Authorizer from trusted_issuers so we don't rebuild
+        # it on every request and share revocation state across requests.
+        # Fails loudly at init time if key parsing fails — better than silent
+        # production outage during PoP verification.
+        self._authorizer = self._build_authorizer()
+
         # Skill registry
         self._skills: Dict[str, SkillDefinition] = {}
 
@@ -623,6 +629,60 @@ class A2AServer:
                 logger.warning(f"Invalid int for {env_var}: {env_val!r}, using default {default}")
         return default
 
+    def _build_authorizer(self) -> Any:
+        """
+        Build a cached Authorizer from self.trusted_issuers.
+
+        Handles all key formats produced by _normalize_key():
+        - 64-char hex strings (canonical form for most keys)
+        - Multibase strings (z6Mk...) that couldn't be decoded to hex
+        - PublicKey objects (passed directly)
+
+        Raises RuntimeError at server init if tenuo_core is unavailable.
+        Logs a warning if some keys fail to parse so operators know their
+        Authorizer has fewer roots than intended — but does NOT silently
+        proceed with zero roots.
+        """
+        try:
+            from tenuo_core import Authorizer as _Authorizer, PublicKey as _PublicKey
+        except ImportError as e:
+            raise RuntimeError("tenuo_core is required for A2A server authorization") from e
+
+        parsed_keys = []
+        failed_keys = []
+
+        for raw_key in self.trusted_issuers:
+            try:
+                if hasattr(raw_key, "to_bytes"):  # Already a PublicKey object
+                    parsed_keys.append(raw_key)
+                elif isinstance(raw_key, str) and len(raw_key) == 64:
+                    # Canonical hex (64 hex chars = 32 bytes = Ed25519 public key)
+                    parsed_keys.append(_PublicKey.from_bytes(bytes.fromhex(raw_key)))
+                elif isinstance(raw_key, str):
+                    # Non-hex string (multibase / DID fragment that couldn't be decoded).
+                    # Try hex anyway — raises ValueError on malformed input.
+                    parsed_keys.append(_PublicKey.from_bytes(bytes.fromhex(raw_key)))
+            except Exception as exc:
+                failed_keys.append((raw_key, str(exc)))
+
+        if failed_keys:
+            for key, reason in failed_keys:
+                logger.warning(
+                    f"A2A: trusted issuer key could not be parsed and will NOT be trusted: "
+                    f"key={str(key)!r:.40} reason={reason}"
+                )
+
+        if not parsed_keys and self.trusted_issuers:
+            # Every configured key failed to parse. The Authorizer will have zero roots
+            # and will reject all warrants. Log a prominent warning so operators notice.
+            logger.warning(
+                f"A2A server: all {len(self.trusted_issuers)} trusted_issuers failed to parse "
+                f"into PublicKey objects. All warrants will be REJECTED. "
+                f"Check key formats (expected 64-char hex)."
+            )
+
+        return _Authorizer(trusted_roots=parsed_keys)
+
     @staticmethod
     def _normalize_key(key: Any) -> str:
         """
@@ -639,6 +699,7 @@ class A2AServer:
 
         Note: All formats are normalized to hex to enable cross-format comparison.
         """
+
         if isinstance(key, str):
             # Handle DID format: did:key:z6Mk...
             if key.startswith("did:key:"):
@@ -862,13 +923,10 @@ class A2AServer:
             except Exception as e:
                 raise PopVerificationError(f"Failed to parse PoP signature: {e}")
 
-            # Verify PoP using warrant.authorize() which calls verify_pop internally
-            # This verifies:
-            #   1. Signature was made by the key matching warrant.sub (holder)
-            #   2. Skill is granted in warrant
-            #   3. Arguments satisfy constraint requirements
+            # Verify PoP via the cached Authorizer (built at server init from trusted_issuers).
+            # Performs full verification: issuer trust, PoP signature, skill grant, constraints.
             try:
-                warrant.authorize(skill_id, args_cv, signature=pop_sig)
+                self._authorizer.authorize_one(warrant, skill_id, args_cv, signature=pop_sig)
                 logger.debug(f"PoP verified for skill '{skill_id}'")
             except Exception as e:
                 # Map tenuo_core errors to A2A errors

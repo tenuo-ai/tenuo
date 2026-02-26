@@ -129,23 +129,28 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     return research_warrant, write_warrant
 
 
-def worker_research(warrant: Warrant, keypair: SigningKey):
+def worker_research(warrant: Warrant, issuer_key: SigningKey, keypair: SigningKey):
     """Worker: Executes research with attenuated authority."""
     print("\n  [Worker/Research] Received research warrant")
     print(f"  [Worker/Research] Warrant allows: {warrant.tools}")
 
+    # Build Authorizer for full single-warrant verification
+    # (issuer trust + PoP + constraints in one call)
+    auth = Authorizer(trusted_roots=[issuer_key.public_key])
+
     with warrant_scope(warrant), key_scope(keypair):
-        print("\n  [Worker/Research] Demonstrating explicit warrant.authorize calls with signatures:")
+        print("\n  [Worker/Research] Demonstrating authorize_one calls (issuer trust + PoP + constraints):")
 
         # 1. Search (Allowed)
         try:
             print("  > Attempting: search(query='competitor analysis', max_results=3)")
             args = {"query": "competitor analysis", "max_results": 3}
             sig = warrant.sign(keypair, "search", args, int(time.time()))
-            if warrant.authorize("search", args, signature=bytes(sig)):
+            try:
+                auth.authorize_one(warrant, "search", args, signature=bytes(sig))
                 print("    [Allowed] Search executed")
-                search(query="competitor analysis", max_results=3)  # Execute the actual tool
-            else:
+                search(query="competitor analysis", max_results=3)
+            except Exception:
                 print("    [Blocked] Search denied (unexpected)")
         except Exception as e:
             print(f"    [Error] {e}")
@@ -155,9 +160,10 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
             print("  > Attempting: search(query='internal salary data', max_results=3)")
             args = {"query": "internal salary data", "max_results": 3}
             sig = warrant.sign(keypair, "search", args, int(time.time()))
-            if warrant.authorize("search", args, signature=bytes(sig)):
+            try:
+                auth.authorize_one(warrant, "search", args, signature=bytes(sig))
                 print("    [Allowed] Search executed (unexpected)")
-            else:
+            except Exception:
                 print("    [Blocked] Search denied (constraint violation)")
         except Exception as e:
             print(f"    [Error] {e}")
@@ -167,10 +173,11 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
             print("  > Attempting: fetch(url='https://public.example.com/report')")
             args = {"url": "https://public.example.com/report"}
             sig = warrant.sign(keypair, "fetch", args, int(time.time()))
-            if warrant.authorize("fetch", args, signature=bytes(sig)):
+            try:
+                auth.authorize_one(warrant, "fetch", args, signature=bytes(sig))
                 print("    [Allowed] Fetch executed")
-                fetch(url="https://public.example.com/report")  # Execute the actual tool
-            else:
+                fetch(url="https://public.example.com/report")
+            except Exception:
                 print("    [Blocked] Fetch denied (unexpected)")
         except Exception as e:
             print(f"    [Error] {e}")
@@ -180,45 +187,48 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
             print("  > Attempting: fetch(url='https://internal.example.com/secret')")
             args = {"url": "https://internal.example.com/secret"}
             sig = warrant.sign(keypair, "fetch", args, int(time.time()))
-            if warrant.authorize("fetch", args, signature=bytes(sig)):
+            try:
+                auth.authorize_one(warrant, "fetch", args, signature=bytes(sig))
                 print("    [Allowed] Fetch executed (unexpected)")
-            else:
+            except Exception:
                 print("    [Blocked] Fetch denied (constraint violation)")
         except Exception as e:
             print(f"    [Error] {e}")
 
-        # 5. Write (Blocked - no matching constraint for path)
+        # 5. Write (Blocked - tool not authorized in this warrant)
         try:
             print("  > Attempting: write(path='/output/reports/research.txt', content='data')")
             args = {"path": "/output/reports/research.txt", "content": "data"}
             sig = warrant.sign(keypair, "write", args, int(time.time()))
-            if warrant.authorize("write", args, signature=bytes(sig)):
+            try:
+                auth.authorize_one(warrant, "write", args, signature=bytes(sig))
                 print("    [Allowed] Write executed (unexpected)")
-            else:
+            except Exception:
                 print("    [Blocked] Write denied (no matching constraint)")
         except Exception as e:
             print(f"    [Error] {e}")
 
 
-def worker_write(warrant: Warrant, keypair: SigningKey):
+def worker_write(warrant: Warrant, issuer_key: SigningKey, keypair: SigningKey):
     """Worker: Executes write with attenuated authority."""
     print("\n  [Worker/Write] Received write warrant")
     print(f"  [Worker/Write] Warrant allows: {warrant.tools}")
 
+    auth = Authorizer(trusted_roots=[issuer_key.public_key])
+
     with warrant_scope(warrant), key_scope(keypair):
-        print("\n  [Worker/Write] Demonstrating explicit warrant.authorize calls with signatures:")
+        print("\n  [Worker/Write] Demonstrating authorize_one calls:")
 
         # 1. Write (Allowed)
         try:
             print("  > Attempting: write(path='/output/reports/q3-analysis.txt', content='Q3 competitor analysis...')")
             args = {"path": "/output/reports/q3-analysis.txt", "content": "Q3 competitor analysis..."}
             sig = warrant.sign(keypair, "write", args, int(time.time()))
-            if warrant.authorize("write", args, signature=bytes(sig)):
+            try:
+                auth.authorize_one(warrant, "write", args, signature=bytes(sig))
                 print("    [Allowed] Write executed")
-                write(
-                    path="/output/reports/q3-analysis.txt", content="Q3 competitor analysis..."
-                )  # Execute the actual tool
-            else:
+                write(path="/output/reports/q3-analysis.txt", content="Q3 competitor analysis...")
+            except Exception:
                 print("    [Blocked] Write denied (unexpected)")
         except Exception as e:
             print(f"    [Error] {e}")
@@ -228,9 +238,10 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
             print("  > Attempting: write(path='/etc/passwd', content='malicious')")
             args = {"path": "/etc/passwd", "content": "malicious"}
             sig = warrant.sign(keypair, "write", args, int(time.time()))
-            if warrant.authorize("write", args, signature=bytes(sig)):
+            try:
+                auth.authorize_one(warrant, "write", args, signature=bytes(sig))
                 print("    [Allowed] Write executed (unexpected)")
-            else:
+            except Exception:
                 print("    [Blocked] Write denied (constraint violation)")
         except Exception as e:
             print(f"    [Error] {e}")
@@ -240,9 +251,10 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
             print("  > Attempting: search(query='more data', max_results=1)")
             args = {"query": "more data", "max_results": 1}
             sig = warrant.sign(keypair, "search", args, int(time.time()))
-            if warrant.authorize("search", args, signature=bytes(sig)):
+            try:
+                auth.authorize_one(warrant, "search", args, signature=bytes(sig))
                 print("    [Allowed] Search executed (unexpected)")
-            else:
+            except Exception:
                 print("    [Blocked] Search denied (tool not authorized)")
         except Exception as e:
             print(f"    [Error] {e}")
@@ -286,6 +298,8 @@ def main():
 
     # Orchestrator executes task, delegating to Worker
     research_warrant, write_warrant = orchestrator_task(root_warrant, orchestrator_keypair, worker_keypair)
+    worker_research(research_warrant, orchestrator_keypair, worker_keypair)
+    worker_write(write_warrant, orchestrator_keypair, worker_keypair)
 
     # ============================================================================
     # Chain Verification

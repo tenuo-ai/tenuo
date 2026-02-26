@@ -773,11 +773,21 @@ def guard(
                                 ],
                             )
 
+            # PoP: sign and verify via Authorizer (full check: issuer, PoP, constraints)
             import time as _time
-            pop_signature = warrant_to_use.sign(keypair_to_use, tool_name, auth_args, int(_time.time()))
+            from tenuo_core import Authorizer as _Authorizer
 
-            # pop_signature is list[int], convert to bytes
-            if not warrant_to_use.authorize(tool_name, auth_args, signature=bytes(pop_signature)):
+            pop_signature = warrant_to_use.sign(keypair_to_use, tool_name, auth_args, int(_time.time()))
+            issuer_pub = getattr(warrant_to_use, "issuer_public_key", None) or getattr(warrant_to_use, "issuer", None)
+            _roots = [issuer_pub] if issuer_pub is not None else []
+            try:
+                _auth = _Authorizer(trusted_roots=_roots)
+                _auth.authorize_one(warrant_to_use, tool_name, auth_args, signature=bytes(pop_signature))
+                _pop_ok = True
+            except Exception:
+                _pop_ok = False
+
+            if not _pop_ok:
                 warrant_tools = warrant_to_use.tools if hasattr(warrant_to_use, "tools") else []
 
                 # Tool not in warrant

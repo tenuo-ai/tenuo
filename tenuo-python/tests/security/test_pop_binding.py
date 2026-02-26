@@ -13,6 +13,7 @@ import time
 from tenuo import (
     Warrant,
     Range,
+    Authorizer,
 )
 from tenuo.constraints import Constraints
 
@@ -38,6 +39,10 @@ class TestPopBinding:
             ttl_seconds=3600,
         )
 
+        # Create authorizer
+        authorizer = Authorizer()
+        authorizer.add_trusted_root(keypair.public_key)
+
         # Attacker steals warrant and tries with their keypair
         print("  [Attack 7] Attacker stolen warrant, trying to use with wrong keypair...")
 
@@ -45,7 +50,11 @@ class TestPopBinding:
         attacker_pop = warrant.sign(attacker_keypair, "admin_access", args, int(time.time()))
 
         # Should fail - signature doesn't match holder
-        authorized = warrant.authorize("admin_access", args, signature=bytes(attacker_pop))
+        try:
+            authorizer.authorize(warrant, "admin_access", args, signature=bytes(attacker_pop))
+            authorized = True
+        except Exception:
+            authorized = False
 
         if authorized:
             print("  [CRITICAL] Attack 7 SUCCEEDED: Wrong keypair passed PoP verification!")
@@ -65,6 +74,10 @@ class TestPopBinding:
             keypair=keypair, capabilities={"search": {}, "delete": {}}, holder=keypair.public_key, ttl_seconds=3600
         )
 
+        # Create authorizer
+        authorizer = Authorizer()
+        authorizer.add_trusted_root(keypair.public_key)
+
         # Create valid PoP for "search"
         search_args = {"query": "test"}
         search_pop = warrant.sign(keypair, "search", search_args, int(time.time()))
@@ -73,7 +86,11 @@ class TestPopBinding:
         print("  [Attack 13] Using 'search' PoP for 'delete' tool...")
         delete_args = {"file": "important.txt"}
 
-        authorized = warrant.authorize("delete", delete_args, signature=bytes(search_pop))
+        try:
+            authorizer.authorize(warrant, "delete", delete_args, signature=bytes(search_pop))
+            authorized = True
+        except Exception:
+            authorized = False
 
         if authorized:
             print("  [CRITICAL] Attack 13 SUCCEEDED: PoP not bound to tool name!")
@@ -96,6 +113,10 @@ class TestPopBinding:
             ttl_seconds=3600,
         )
 
+        # Create authorizer
+        authorizer = Authorizer()
+        authorizer.add_trusted_root(keypair.public_key)
+
         # Create valid PoP for small amount
         small_args = {"amount": 10}
         small_pop = warrant.sign(keypair, "transfer", small_args, int(time.time()))
@@ -104,7 +125,11 @@ class TestPopBinding:
         print("  [Attack 14] Using PoP for amount=10 with amount=10000...")
         large_args = {"amount": 10000}
 
-        authorized = warrant.authorize("transfer", large_args, signature=bytes(small_pop))
+        try:
+            authorizer.authorize(warrant, "transfer", large_args, signature=bytes(small_pop))
+            authorized = True
+        except Exception:
+            authorized = False
 
         if authorized:
             print("  [CRITICAL] Attack 14 SUCCEEDED: PoP not bound to args!")
@@ -148,12 +173,16 @@ class TestPopBinding:
             ttl_seconds=3600,
         )
 
+        # Create authorizer
+        authorizer = Authorizer()
+        authorizer.add_trusted_root(keypair.public_key)
+
         args = {"amount": 100}
         pop_sig = warrant.sign(keypair, "transfer", args, int(time.time()))
 
         # Immediately verify - should work
         print("  [Check] Verifying fresh PoP...")
-        assert warrant.authorize("transfer", args, signature=bytes(pop_sig))
+        authorizer.authorize(warrant, "transfer", args, signature=bytes(pop_sig))
         print("  [Info] Fresh PoP accepted")
 
         # Note: Can't easily test window expiry without waiting 120+ seconds

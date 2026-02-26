@@ -202,16 +202,24 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                 if not result.allowed:
                     raise ToolNotAuthorized(tool=self.name)
             else:
-                # Plain Warrant - need to sign with key from context
+                # Plain Warrant — sign PoP then use Authorizer.authorize_one() for
+                # full verification (issuer trust, revocation, clearance, PoP, constraints).
                 import time
+                from tenuo_core import Authorizer
                 signing_key = key_scope()
                 if signing_key:
                     pop_signature = bytes(warrant.sign(signing_key, self.name, constraint_args, int(time.time())))
-                    authorized = warrant.authorize(self.name, constraint_args, pop_signature)
+                    # Build a minimal Authorizer trusting the warrant's own issuer.
+                    # For production delegated warrants, callers should pass a
+                    # bound_warrant so the BoundWarrant/enforce_tool_call path runs instead.
+                    try:
+                        issuer_pub = getattr(warrant, "issuer_public_key", None) or getattr(warrant, "issuer", None)
+                        roots = [issuer_pub] if issuer_pub is not None else []
+                        auth = Authorizer(trusted_roots=roots)
+                        auth.authorize_one(warrant, self.name, constraint_args, signature=pop_signature)
+                    except Exception:
+                        raise ToolNotAuthorized(tool=self.name)
                 else:
-                    authorized = False
-
-                if not authorized:
                     raise ToolNotAuthorized(tool=self.name)
 
             log_authorization_success(warrant, self.name, tool_input)

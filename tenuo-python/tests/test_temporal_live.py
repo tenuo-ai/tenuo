@@ -215,7 +215,7 @@ async def _run_workflow(
     client_interceptor = TenuoClientInterceptor()
     if send_headers:
         client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent1", agent)
+            tenuo_headers(warrant, "agent1")
         )
 
     events: list[TemporalAuditEvent] = []

@@ -322,6 +322,7 @@ class TenuoGuard:
         the signing key is never used (precomputed_signature is used instead).
         """
         from tenuo._enforcement import enforce_tool_call
+        from tenuo_core import Authorizer as _Authorizer
 
         # In verify mode, enforce_tool_call() requires a BoundWarrant for type safety
         # and to access warrant properties (id, tools, etc.), but the signing key
@@ -332,12 +333,17 @@ class TenuoGuard:
         # This is safe and intentional - the key is only for type compatibility.
         bound = warrant.bind(_VerificationOnlyKey())  # type: ignore[arg-type]
 
+        issuer_pub = getattr(warrant, "issuer_public_key", None) or getattr(warrant, "issuer", None)
+        roots = [issuer_pub] if issuer_pub is not None else []
+        authorizer = _Authorizer(trusted_roots=roots)
+
         return enforce_tool_call(
             tool_name=tool,
             tool_args=args,
             bound_warrant=bound,
             verify_mode="verify",
             precomputed_signature=pop_signature,
+            authorizer=authorizer,
         )
 
     def __call__(
@@ -424,7 +430,9 @@ class TenuoGuard:
             expose_details = _config.get("expose_error_details", False)
 
             # Map specific errors to HTTP codes
-            if "expired" in reason.lower():
+            if enforcement.error_type == "expired" or (
+                "expired" in reason.lower() and "proof-of-possession" not in reason.lower()
+            ):
                  raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail={

@@ -253,7 +253,7 @@ async def main():
         # ── Authorized sequential access ─────────────────────────
         logger.info("=== Sequential access (path=/tmp/tenuo-demo) ===")
         client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent1", agent_key)
+            tenuo_headers(warrant, "agent1")
         )
 
         result = await client.execute_workflow(
@@ -267,7 +267,7 @@ async def main():
         # ── Parallel activity execution ──────────────────────────
         logger.info("=== Parallel activities (asyncio.gather) ===")
         client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent1", agent_key)
+            tenuo_headers(warrant, "agent1")
         )
 
         result = await client.execute_workflow(

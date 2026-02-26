@@ -253,7 +253,7 @@ if TEMPORAL_AVAILABLE:
                     workflow_runner=sandbox_runner,
                 ):
                     client_interceptor.set_headers(
-                        tenuo_headers(warrant, "agent1", agent_key)
+                        tenuo_headers(warrant, "agent1")
                     )
 
                     result = await client.execute_workflow(
@@ -337,7 +337,7 @@ if TEMPORAL_AVAILABLE:
                     workflow_runner=sandbox_runner,
                 ):
                     client_interceptor.set_headers(
-                        tenuo_headers(warrant, "agent1", agent_key)
+                        tenuo_headers(warrant, "agent1")
                     )
 
                     result = await client.execute_workflow(
@@ -378,12 +378,12 @@ def test_parameter_name_resolution_consistency():
     assert "activity_fn" in inbound_source
 
 
-def test_fail_closed_warning():
-    """Verify that PoP computation failures log at WARNING level."""
+def test_fail_closed_behavior():
+    """Verify that PoP computation failures abort the activity (fail-closed)."""
     from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
     import inspect
 
     source = inspect.getsource(_TenuoWorkflowOutboundInterceptor.start_activity)
 
-    assert "logger.warning" in source, "Should log PoP failures at WARNING level"
-    assert "except Exception" in source, "Should catch exceptions"
+    assert "fail-closed" in source.lower(), "Should document fail-closed behavior"
+    assert "TenuoContextError" in source, "Should raise TenuoContextError on PoP failure"

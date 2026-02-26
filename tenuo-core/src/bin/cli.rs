@@ -1644,78 +1644,56 @@ fn handle_verify(
         }
     }
 
-    // Verify chain or single warrant
-    let chain_valid;
-    let mut chain_error = None;
-
-    if warrants.len() > 1 {
-        match data_plane.verify_chain(&warrants) {
-            Ok(_) => chain_valid = true,
-            Err(e) => {
-                chain_valid = false;
-                chain_error = Some(e.to_string());
-            }
-        }
-    } else {
-        // Single warrant verification
-        if trusted_any {
-            // Production mode: verify signature AND trust
-            match data_plane.verify(leaf_warrant) {
-                Ok(_) => chain_valid = true,
-                Err(e) => {
-                    chain_valid = false;
-                    chain_error = Some(e.to_string());
-                }
-            }
-        } else {
-            // Debugging mode: verify signature only (no trust check)
-            match leaf_warrant.verify_signature() {
-                Ok(_) => chain_valid = true,
-                Err(e) => {
-                    chain_valid = false;
-                    chain_error = Some(e.to_string());
-                }
-            }
-        }
-    }
-
-    // Check expiration of leaf warrant
-    let expired = if let Some(at_str) = at {
+    // Check expiration of leaf warrant (custom time override)
+    if let Some(at_str) = at {
         let verify_time = DateTime::parse_from_rfc3339(&at_str)
             .map_err(|_| "Invalid timestamp format (use ISO 8601)")?
             .with_timezone(&Utc);
-        verify_time > leaf_warrant.expires_at()
-    } else {
-        leaf_warrant.is_expired()
-    };
-
-    if expired {
-        if quiet {
+        if verify_time > leaf_warrant.expires_at() {
+            if quiet {
+                std::process::exit(2);
+            }
+            eprintln!("❌ INVALID: Warrant has expired");
+            eprintln!("Expires at: {}", leaf_warrant.expires_at());
             std::process::exit(2);
         }
-        eprintln!("❌ INVALID: Warrant has expired");
-        eprintln!("Expires at: {}", leaf_warrant.expires_at());
-        std::process::exit(2);
     }
 
-    if !chain_valid {
-        if quiet {
-            std::process::exit(2);
-        }
-        if let Some(e) = chain_error {
-            eprintln!("❌ INVALID: {}", e);
-        }
-        std::process::exit(2);
-    }
-
-    // Verify authorization (includes PoP signature verification)
+    // Full verification + authorization in one call
     let holder = leaf_warrant.authorized_holder();
 
-    match leaf_warrant.authorize(&tool, &args, Some(&sig)) {
-        Ok(()) => {
-            // Authorization successful - PoP signature is valid
+    if trusted_any {
+        match data_plane.check_chain(&warrants, &tool, &args, Some(&sig), &[]) {
+            Ok(_) => {}
+            Err(e) => {
+                if quiet {
+                    std::process::exit(2);
+                }
+                let err_str = e.to_string();
+                if err_str.contains("expired") || err_str.contains("Expired") {
+                    eprintln!("❌ INVALID: Warrant has expired");
+                    eprintln!("Expires at: {}", leaf_warrant.expires_at());
+                } else if err_str.contains("signature") || err_str.contains("PoP") {
+                    eprintln!("❌ INVALID: {}", e);
+                    eprintln!();
+                    eprintln!("Expected:    {}", hex::encode(holder.to_bytes()));
+                    eprintln!("Signer:      (PoP signature verification failed)");
+                } else {
+                    eprintln!("❌ INVALID: {}", e);
+                }
+                std::process::exit(2);
+            }
         }
-        Err(e) => {
+    } else {
+        // Debugging mode (no --trusted-issuer): verify signature + authorize leaf only
+        if let Err(e) = leaf_warrant.verify_signature() {
+            if quiet {
+                std::process::exit(2);
+            }
+            eprintln!("❌ INVALID: {}", e);
+            std::process::exit(2);
+        }
+        if let Err(e) = leaf_warrant.authorize(&tool, &args, Some(&sig)) {
             if quiet {
                 std::process::exit(2);
             }
@@ -1742,7 +1720,7 @@ fn handle_verify(
             "holder": hex::encode(holder.to_bytes()),
             "expires_at": leaf_warrant.expires_at().to_rfc3339(),
             "tools": leaf_warrant.tools(),
-            "chain_verified": chain_valid,
+            "chain_verified": true,
             "chain_length": warrants.len(),
             "trusted_root": trusted_any,
         });

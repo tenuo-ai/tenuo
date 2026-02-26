@@ -66,7 +66,7 @@ fn test_single_approval_succeeds() {
     let approval = SignedApproval::create(payload, &approver);
 
     let sig = warrant.sign(&root_key, "action", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "action", &args, Some(&sig), &[approval]);
+    let result = authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[approval]);
 
     assert!(
         result.is_ok(),
@@ -138,7 +138,7 @@ fn test_two_of_three_approvals_succeeds() {
     let approval_2 = SignedApproval::create(payload_2, &approver_2);
 
     let sig = warrant.sign(&root_key, "critical_action", &args).unwrap();
-    let result = authorizer.authorize(
+    let result = authorizer.authorize_one(
         &warrant,
         "critical_action",
         &args,
@@ -172,7 +172,7 @@ fn test_no_multisig_requirement_succeeds_without_approvals() {
     let sig = warrant.sign(&root_key, "simple_action", &args).unwrap();
 
     // Should succeed without any approvals
-    let result = authorizer.authorize(&warrant, "simple_action", &args, Some(&sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "simple_action", &args, Some(&sig), &[]);
 
     assert!(
         result.is_ok(),
@@ -233,7 +233,7 @@ fn test_duplicate_approvals_rejected() {
     let approvals = vec![approval.clone(), approval.clone()];
 
     let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &approvals);
+    let result = authorizer.authorize_one(&warrant, "critical_op", &args, Some(&sig), &approvals);
 
     assert!(result.is_err(), "Duplicate approvals should be rejected");
 }
@@ -285,7 +285,7 @@ fn test_insufficient_approvals_rejected() {
 
     // Submit only 1 approval
     let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &[approval]);
+    let result = authorizer.authorize_one(&warrant, "critical_op", &args, Some(&sig), &[approval]);
 
     assert!(result.is_err(), "Insufficient approvals should be rejected");
 }
@@ -335,7 +335,7 @@ fn test_unauthorized_approver_rejected() {
     let approval = SignedApproval::create(payload, &random_attacker); // <-- Unauthorized key
 
     let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &[approval]);
+    let result = authorizer.authorize_one(&warrant, "critical_op", &args, Some(&sig), &[approval]);
 
     assert!(result.is_err(), "Unauthorized approver should be rejected");
 }
@@ -386,7 +386,7 @@ fn test_mismatched_request_hash_rejected() {
 
     // Request is for "critical_op"
     let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &[approval]);
+    let result = authorizer.authorize_one(&warrant, "critical_op", &args, Some(&sig), &[approval]);
 
     assert!(
         result.is_err(),
@@ -439,7 +439,7 @@ fn test_expired_approval_rejected() {
     let approval = SignedApproval::create(payload, &approver);
 
     let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &[approval]);
+    let result = authorizer.authorize_one(&warrant, "critical_op", &args, Some(&sig), &[approval]);
 
     assert!(result.is_err(), "Expired approval should be rejected");
 }
@@ -510,7 +510,7 @@ fn test_three_of_five_exact_threshold() {
 
     let args = HashMap::new();
     let sig = warrant.sign(&root, "deploy", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "deploy", &args, Some(&sig), &[a0, a1, a2]);
+    let result = authorizer.authorize_one(&warrant, "deploy", &args, Some(&sig), &[a0, a1, a2]);
 
     assert!(
         result.is_ok(),
@@ -537,7 +537,7 @@ fn test_three_of_five_all_approve() {
 
     let args = HashMap::new();
     let sig = warrant.sign(&root, "deploy", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "deploy", &args, Some(&sig), &all);
+    let result = authorizer.authorize_one(&warrant, "deploy", &args, Some(&sig), &all);
 
     assert!(
         result.is_ok(),
@@ -561,7 +561,7 @@ fn test_three_of_five_insufficient() {
 
     let args = HashMap::new();
     let sig = warrant.sign(&root, "deploy", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "deploy", &args, Some(&sig), &[a0, a1]);
+    let result = authorizer.authorize_one(&warrant, "deploy", &args, Some(&sig), &[a0, a1]);
 
     assert!(result.is_err(), "3-of-5 with only 2 valid should fail");
     let err_msg = format!("{}", result.unwrap_err());
@@ -618,7 +618,7 @@ fn test_two_of_three_with_mixed_invalid() {
     let valid2 = make_approval(&root, &a3, &warrant, "op", "carol");
 
     let sig = warrant.sign(&root, "op", &args).unwrap();
-    let result = authorizer.authorize(
+    let result = authorizer.authorize_one(
         &warrant,
         "op",
         &args,
@@ -670,7 +670,7 @@ fn test_two_of_three_all_invalid_shows_summary() {
     let untrusted = make_approval(&root, &outsider, &warrant, "op", "rogue");
 
     let sig = warrant.sign(&root, "op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[expired, untrusted]);
+    let result = authorizer.authorize_one(&warrant, "op", &args, Some(&sig), &[expired, untrusted]);
 
     assert!(result.is_err());
     let err_msg = format!("{}", result.unwrap_err());
@@ -698,7 +698,7 @@ fn test_one_of_one_untrusted_key_specific_error() {
 
     let args = HashMap::new();
     let sig = warrant.sign(&root, "op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[rogue_approval]);
+    let result = authorizer.authorize_one(&warrant, "op", &args, Some(&sig), &[rogue_approval]);
 
     assert!(result.is_err());
     let err_msg = format!("{}", result.unwrap_err());
@@ -738,7 +738,7 @@ fn test_one_of_one_expired_specific_error() {
     let expired = SignedApproval::create(expired_payload, &approver);
 
     let sig = warrant.sign(&root, "op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[expired]);
+    let result = authorizer.authorize_one(&warrant, "op", &args, Some(&sig), &[expired]);
 
     assert!(result.is_err());
     let err_msg = format!("{}", result.unwrap_err());
@@ -778,7 +778,7 @@ fn test_one_of_one_hash_mismatch_specific_error() {
     let wrong_approval = SignedApproval::create(wrong_payload, &approver);
 
     let sig = warrant.sign(&root, "op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[wrong_approval]);
+    let result = authorizer.authorize_one(&warrant, "op", &args, Some(&sig), &[wrong_approval]);
 
     assert!(result.is_err());
     let err_msg = format!("{}", result.unwrap_err());
@@ -804,7 +804,7 @@ fn test_m_of_n_duplicate_counted_once() {
 
     let args = HashMap::new();
     let sig = warrant.sign(&root, "op", &args).unwrap();
-    let result = authorizer.authorize(
+    let result = authorizer.authorize_one(
         &warrant,
         "op",
         &args,
@@ -829,7 +829,7 @@ fn test_m_of_n_no_approvals_provided() {
 
     let args = HashMap::new();
     let sig = warrant.sign(&root, "op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[]);
+    let result = authorizer.authorize_one(&warrant, "op", &args, Some(&sig), &[]);
 
     assert!(result.is_err(), "No approvals should fail m-of-n");
 }
@@ -850,7 +850,7 @@ fn test_dos_protection_too_many_approvals() {
 
     let args = HashMap::new();
     let sig = warrant.sign(&root, "op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[a, b, c]);
+    let result = authorizer.authorize_one(&warrant, "op", &args, Some(&sig), &[a, b, c]);
 
     assert!(result.is_err(), "Too many approvals should be rejected");
     let err_msg = format!("{}", result.unwrap_err());
@@ -891,7 +891,7 @@ fn test_clock_tolerance_allows_near_expiry() {
     let approval = SignedApproval::create(payload, &approver);
 
     let sig = warrant.sign(&root, "op", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[approval]);
+    let result = authorizer.authorize_one(&warrant, "op", &args, Some(&sig), &[approval]);
 
     assert!(
         result.is_ok(),
@@ -972,4 +972,55 @@ fn test_suffix_pattern_valid_attenuation() {
     // Invalid: different suffix
     let child3 = Pattern::new("*-unsafe").unwrap();
     assert!(parent.validate_attenuation(&child3).is_err());
+}
+
+// ============================================================================
+// Chain Expiry - Expired parent must invalidate entire chain
+// ============================================================================
+
+/// When a parent warrant in a chain expires, check_chain must reject the
+/// entire chain. Monotonicity ensures child.expires_at <= parent.expires_at,
+/// so an expired parent implies an expired child.
+#[test]
+fn test_expired_parent_invalidates_chain() {
+    let root_key = SigningKey::generate();
+    let delegator = SigningKey::generate();
+    let worker = SigningKey::generate();
+
+    let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+
+    let root = Warrant::builder()
+        .capability("read", ConstraintSet::new())
+        .holder(delegator.public_key())
+        .ttl(Duration::from_secs(1))
+        .build(&root_key)
+        .unwrap();
+
+    let child = root
+        .attenuate()
+        .capability("read", ConstraintSet::new())
+        .holder(worker.public_key())
+        .ttl(Duration::from_secs(1))
+        .build(&delegator)
+        .unwrap();
+
+    // Immediately should pass
+    let args = HashMap::new();
+    let pop = child.sign(&worker, "read", &args).unwrap();
+    assert!(authorizer
+        .check_chain(&[root.clone(), child.clone()], "read", &args, Some(&pop), &[])
+        .is_ok());
+
+    // Wait for expiry
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let pop2 = child.sign(&worker, "read", &args).unwrap();
+    let result = authorizer.check_chain(&[root, child], "read", &args, Some(&pop2), &[]);
+    assert!(result.is_err(), "expired chain must be rejected");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("expired") || err.contains("Expired"),
+        "error should mention expiration: {}",
+        err
+    );
 }

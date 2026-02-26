@@ -37,7 +37,6 @@ from tenuo.temporal import (  # noqa: E402
     TENUO_WARRANT_HEADER,
     TENUO_KEY_ID_HEADER,
     TENUO_POP_HEADER,
-    TENUO_SIGNING_KEY_HEADER,
     TENUO_COMPRESSED_HEADER,
     _workflow_headers_store,
     _pop_dedup_cache,
@@ -70,7 +69,7 @@ def warrant(control_key, agent_key):
 
 @pytest.fixture
 def headers_dict(warrant, agent_key):
-    return tenuo_headers(warrant, "agent1", agent_key)
+    return tenuo_headers(warrant, "agent1")
 
 @pytest.fixture(autouse=True)
 def clean_stores():
@@ -158,7 +157,7 @@ class TestTenuoClientInterceptor:
         s = _workflow_headers_store["wf-123"]
         assert TENUO_WARRANT_HEADER in s
         assert TENUO_KEY_ID_HEADER in s
-        assert TENUO_SIGNING_KEY_HEADER in s
+        assert "x-tenuo-signing-key" not in s
 
     def test_stored_warrant_roundtrips(self, warrant, headers_dict):
         ci = TenuoClientInterceptor()
@@ -189,19 +188,19 @@ class TestTenuoClientInterceptor:
 
 class TestTenuoHeadersReal:
     def test_produces_valid_headers(self, warrant, agent_key):
-        h = tenuo_headers(warrant, "agent1", agent_key)
+        h = tenuo_headers(warrant, "agent1")
         assert isinstance(h[TENUO_WARRANT_HEADER], bytes)
         assert h[TENUO_KEY_ID_HEADER] == b"agent1"
         assert h[TENUO_COMPRESSED_HEADER] == b"1"
 
-    def test_signing_key_roundtrips(self, warrant, agent_key):
-        h = tenuo_headers(warrant, "agent1", agent_key)
-        raw = base64.b64decode(h[TENUO_SIGNING_KEY_HEADER])
-        restored = SigningKey.from_bytes(raw)
-        assert restored.public_key == agent_key.public_key
+    def test_signing_key_not_in_headers(self, warrant, agent_key):
+        h = tenuo_headers(warrant, "agent1")
+        assert "x-tenuo-signing-key" not in h
+        for v in h.values():
+            assert agent_key.secret_key_bytes() not in v
 
     def test_warrant_extraction_roundtrip(self, warrant, agent_key):
-        h = tenuo_headers(warrant, "agent1", agent_key)
+        h = tenuo_headers(warrant, "agent1")
         extracted = _extract_warrant_from_headers(h)
         assert extracted.id == warrant.id
 
@@ -603,7 +602,7 @@ class TestWarrantExpiration:
             .ttl(1)
             .mint(control_key)
         )
-        h = tenuo_headers(expired, "agent1", agent_key)
+        h = tenuo_headers(expired, "agent1")
 
         # Wait for expiration
         time.sleep(1.5)
@@ -645,7 +644,7 @@ class TestWarrantExpiration:
             .ttl(1)
             .mint(control_key)
         )
-        h = tenuo_headers(expired, "agent1", agent_key)
+        h = tenuo_headers(expired, "agent1")
 
         time.sleep(1.5)
         assert expired.is_expired()
@@ -799,8 +798,8 @@ class TestConcurrentWorkflowsFullRoundTrip:
         )
         ti = TenuoInterceptor(cfg)
 
-        h1 = tenuo_headers(warrant1, "a1", agent1)
-        h2 = tenuo_headers(warrant2, "a2", agent2)
+        h1 = tenuo_headers(warrant1, "a1")
+        h2 = tenuo_headers(warrant2, "a2")
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="content")
@@ -849,7 +848,7 @@ class TestConcurrentWorkflowsFullRoundTrip:
         )
         ti = TenuoInterceptor(cfg)
 
-        h1 = tenuo_headers(warrant1, "a1", agent1)
+        h1 = tenuo_headers(warrant1, "a1")
         # PoP for an out-of-scope path
         act_headers = _make_activity_headers(
             h1, warrant1, agent1, "read_file",
@@ -908,7 +907,7 @@ class TestDistributedHeaderPropagation:
         """Worker-only test: store is empty, headers arrive via Payload."""
         assert "wf-dist-001" not in _workflow_headers_store
 
-        h = tenuo_headers(warrant, "agent1", agent_key)
+        h = tenuo_headers(warrant, "agent1")
         payload_headers = self._make_payload_headers(h)
 
         nxt = MagicMock()
@@ -930,7 +929,7 @@ class TestDistributedHeaderPropagation:
         self, warrant, agent_key, control_key
     ):
         """Full round-trip: workflow interceptor → store → activity interceptor."""
-        h = tenuo_headers(warrant, "agent1", agent_key)
+        h = tenuo_headers(warrant, "agent1")
         payload_headers = self._make_payload_headers(h)
 
         wf_id = "wf-dist-rt"
@@ -999,7 +998,7 @@ class TestDistributedHeaderPropagation:
                 TENUO_KEY_ID_HEADER: b"stale-key"
             }
 
-        h = tenuo_headers(warrant, "fresh-agent", agent_key)
+        h = tenuo_headers(warrant, "fresh-agent")
         payload_headers = self._make_payload_headers(h)
 
         nxt = MagicMock()
@@ -1042,7 +1041,14 @@ class TestOutboundInterceptorHeaderInjection:
                 captured_input["headers"] = dict(input.headers or {})
                 return AsyncMock()()
 
-        outbound = _TenuoWorkflowOutboundInterceptor(FakeNextOutbound())
+        # Create a mock key resolver that returns the agent_key
+        mock_resolver = AsyncMock()
+        mock_resolver.resolve = AsyncMock(return_value=agent_key)
+        mock_resolver.resolve_sync = MagicMock(return_value=agent_key)
+        config = TenuoInterceptorConfig(
+            key_resolver=mock_resolver,
+        )
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNextOutbound(), config=config)
 
         @dataclass
         class FakeStartActivityInput:
@@ -1063,7 +1069,7 @@ class TestOutboundInterceptorHeaderInjection:
         h = captured_input["headers"]
         assert TENUO_WARRANT_HEADER in h
         assert TENUO_KEY_ID_HEADER in h
-        assert TENUO_SIGNING_KEY_HEADER in h
+        assert "x-tenuo-signing-key" not in h
         assert TENUO_POP_HEADER in h
 
         raw = {k: v.data for k, v in h.items() if hasattr(v, "data")}
@@ -1117,6 +1123,281 @@ class TestOutboundInterceptorHeaderInjection:
             m.return_value = info
             r = _run(ai.execute_activity(inp))
         assert r == "remote-result"
+
+
+# -- Child workflow delegation (outbound interceptor) -------------------------
+
+class TestChildWorkflowDelegation:
+    """Tests for _TenuoWorkflowOutboundInterceptor.start_child_workflow().
+
+    Verifies that _pending_child_headers are consumed and injected into child
+    workflow start inputs, and cleaned up on failure.
+    """
+
+    def test_child_workflow_receives_attenuated_headers(
+        self, warrant, agent_key, control_key, headers_dict
+    ):
+        """Outbound interceptor pops _pending_child_headers and injects into child."""
+        from tenuo.temporal import (
+            _TenuoWorkflowOutboundInterceptor,
+            _pending_child_headers,
+        )
+
+        child_id = "wf-child-001"
+        raw_child_headers = {}
+        for k, v in headers_dict.items():
+            raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+            if k.startswith("x-tenuo-"):
+                raw_child_headers[k] = raw_v
+
+        with _store_lock:
+            _pending_child_headers[child_id] = raw_child_headers
+
+        captured = {}
+        class FakeNext:
+            def start_child_workflow(self, input):
+                captured["headers"] = dict(input.headers or {})
+                return MagicMock()
+
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext())
+
+        @dataclass
+        class FakeChildInput:
+            id: str = child_id
+            headers: Optional[Dict[str, Any]] = None
+
+        outbound.start_child_workflow(FakeChildInput())
+
+        assert TENUO_WARRANT_HEADER in captured["headers"]
+        assert TENUO_KEY_ID_HEADER in captured["headers"]
+
+        # Pending entry should be consumed
+        with _store_lock:
+            assert child_id not in _pending_child_headers
+
+    def test_child_workflow_no_headers_passes_through(self):
+        """When no pending headers exist, child workflow passes through unchanged."""
+        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+
+        captured = {}
+        class FakeNext:
+            def start_child_workflow(self, input):
+                captured["headers"] = input.headers
+                return MagicMock()
+
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext())
+
+        @dataclass
+        class FakeChildInput:
+            id: str = "wf-unknown-child"
+            headers: Optional[Dict[str, Any]] = None
+
+        outbound.start_child_workflow(FakeChildInput())
+        assert captured["headers"] is None
+
+
+# -- Continue-as-new header propagation --------------------------------------
+
+class TestContinueAsNew:
+    """Tests for _TenuoWorkflowOutboundInterceptor.continue_as_new().
+
+    Verifies that warrant headers are re-injected when a workflow continues
+    as new, so the next run retains its authorization.
+    """
+
+    def test_continue_as_new_reinjects_headers(self, warrant, headers_dict):
+        """continue_as_new should inject stored warrant headers into the new run."""
+        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+
+        wf_id = "wf-continue"
+        _populate_store(wf_id, headers_dict)
+
+        captured = {}
+        class FakeNext:
+            def continue_as_new(self, input):
+                captured["headers"] = dict(input.headers or {})
+
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext())
+
+        @dataclass
+        class FakeContinueInput:
+            headers: Optional[Dict[str, Any]] = None
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            outbound.continue_as_new(FakeContinueInput())
+
+        assert TENUO_WARRANT_HEADER in captured["headers"]
+        assert TENUO_KEY_ID_HEADER in captured["headers"]
+
+    def test_continue_as_new_no_store_passes_through(self):
+        """Without stored headers, continue_as_new passes through."""
+        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+
+        wf_id = "wf-no-store"
+        captured = {}
+        class FakeNext:
+            def continue_as_new(self, input):
+                captured["headers"] = input.headers
+
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext())
+
+        @dataclass
+        class FakeContinueInput:
+            headers: Optional[Dict[str, Any]] = None
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            outbound.continue_as_new(FakeContinueInput())
+
+        assert captured["headers"] is None
+
+
+# -- Nexus operation header propagation --------------------------------------
+
+class TestNexusHeaderPropagation:
+    """Tests for _TenuoWorkflowOutboundInterceptor.start_nexus_operation().
+
+    Verifies that warrant headers are base64-encoded and propagated to Nexus
+    cross-namespace operations.
+    """
+
+    def test_nexus_receives_base64_encoded_headers(self, warrant, headers_dict):
+        """start_nexus_operation base64-encodes stored headers for cross-namespace transport."""
+        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+
+        wf_id = "wf-nexus"
+        _populate_store(wf_id, headers_dict)
+
+        captured = {}
+        class FakeNext:
+            def start_nexus_operation(self, input):
+                captured["headers"] = dict(input.headers or {})
+                return MagicMock()
+
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext())
+
+        @dataclass
+        class FakeNexusInput:
+            headers: Optional[Dict[str, Any]] = None
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            outbound.start_nexus_operation(FakeNexusInput())
+
+        assert TENUO_WARRANT_HEADER in captured["headers"]
+        # Nexus headers should be base64-encoded strings, not raw bytes
+        val = captured["headers"][TENUO_WARRANT_HEADER]
+        assert isinstance(val, str)
+        base64.b64decode(val)  # should not raise
+
+
+# -- Fail-closed outbound interceptor behavior -------------------------------
+
+class TestOutboundFailClosed:
+    """Verify the outbound interceptor aborts activities when PoP cannot be computed.
+
+    After our fix, the outbound interceptor raises TenuoContextError instead
+    of silently proceeding without PoP.
+    """
+
+    def test_pop_failure_raises_context_error(self, warrant, headers_dict):
+        """If key resolver fails, outbound interceptor raises TenuoContextError."""
+        from tenuo.temporal import (
+            _TenuoWorkflowOutboundInterceptor,
+            TenuoContextError,
+        )
+
+        wf_id = "wf-fail-pop"
+        _populate_store(wf_id, headers_dict)
+
+        # Resolver that explodes
+        mock_resolver = MagicMock()
+        mock_resolver.resolve_sync = MagicMock(
+            side_effect=RuntimeError("Vault unreachable")
+        )
+        config = TenuoInterceptorConfig(key_resolver=mock_resolver)
+
+        class FakeNext:
+            def start_activity(self, input):
+                return MagicMock()
+
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext(), config=config)
+
+        @dataclass
+        class FakeInput:
+            activity: str = "read_file"
+            fn: Any = lambda path: path
+            args: tuple = ("/tmp/demo/f.txt",)
+            headers: Optional[Dict[str, Any]] = None
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            with patch("temporalio.workflow.now") as mock_now:
+                import datetime
+                mock_now.return_value = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+                with pytest.raises(TenuoContextError) as exc:
+                    outbound.start_activity(FakeInput())
+                assert "fail-closed" in str(exc.value).lower()
+
+    def test_missing_key_resolver_raises_context_error(self, warrant, headers_dict):
+        """If no key_resolver configured, outbound interceptor raises TenuoContextError."""
+        from tenuo.temporal import (
+            _TenuoWorkflowOutboundInterceptor,
+            TenuoContextError,
+        )
+
+        wf_id = "wf-no-resolver"
+        _populate_store(wf_id, headers_dict)
+
+        # Config with no key_resolver
+        config = TenuoInterceptorConfig(key_resolver=None)
+
+        class FakeNext:
+            def start_activity(self, input):
+                return MagicMock()
+
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext(), config=config)
+
+        @dataclass
+        class FakeInput:
+            activity: str = "read_file"
+            fn: Any = lambda path: path
+            args: tuple = ("/tmp/demo/f.txt",)
+            headers: Optional[Dict[str, Any]] = None
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            with pytest.raises(TenuoContextError) as exc:
+                outbound.start_activity(FakeInput())
+            assert "key_resolver" in str(exc.value).lower()
+
+    def test_no_headers_passes_through_silently(self):
+        """If no warrant in store, activity passes through without error (unprotected)."""
+        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+
+        wf_id = "wf-empty-store"
+
+        called = {}
+        class FakeNext:
+            def start_activity(self, input):
+                called["pass"] = True
+                return MagicMock()
+
+        config = TenuoInterceptorConfig(key_resolver=MagicMock())
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext(), config=config)
+
+        @dataclass
+        class FakeInput:
+            activity: str = "unprotected_tool"
+            args: tuple = ()
+            headers: Optional[Dict[str, Any]] = None
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            outbound.start_activity(FakeInput())
+
+        assert called.get("pass") is True
 
 
 if __name__ == "__main__":

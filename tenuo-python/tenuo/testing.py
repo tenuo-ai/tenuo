@@ -271,11 +271,11 @@ def assert_authorized(
 
         args = args or {}
         try:
-            pop_sig = warrant.sign(key, tool, args, int(time.time()))
-            result = warrant.authorize(tool, args, pop_sig)
+            bound = warrant.bind(key)
+            result = bound.validate(tool, args)
             if not result:
                 raise AuthorizationAssertionError(
-                    message or f"Expected authorization to succeed for tool '{tool}', but it was denied."
+                    message or f"Expected authorization to succeed for tool '{tool}', but it was denied: {result.reason}"
                 )
         except Exception as e:
             if isinstance(e, AuthorizationAssertionError):
@@ -327,8 +327,8 @@ def assert_denied(
 
         args = args or {}
         try:
-            pop_sig = warrant.sign(key, tool, args, int(time.time()))
-            result = warrant.authorize(tool, args, pop_sig)
+            bound = warrant.bind(key)
+            result = bound.validate(tool, args)
             if result:
                 raise AuthorizationAssertionError(
                     message or f"Expected authorization to FAIL for tool '{tool}', but it was ALLOWED."

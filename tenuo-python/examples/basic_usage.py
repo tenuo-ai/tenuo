@@ -11,7 +11,7 @@ Demonstrates:
 
 import time
 
-from tenuo import SigningKey, Warrant, Pattern, Exact, Range
+from tenuo import SigningKey, Warrant, Pattern, Exact, Range, Authorizer
 
 
 def main():
@@ -61,12 +61,20 @@ def main():
     # 4. Test authorization
     print("4. Testing authorization...")
 
+    # Create authorizer that trusts the control plane's root key
+    authorizer = Authorizer()
+    authorizer.add_trusted_root(control_key.public_key)
+
     # Helper to authorize with PoP
     def check_auth(warrant, tool, args, signing_key):
         # Create Proof-of-Possession signature
         signature = warrant.sign(signing_key, tool, args, int(time.time()))
-        # Authorize returns True/False based on constraint check
-        return warrant.authorize(tool, args, bytes(signature))
+        # Authorizer performs full verification (trust, chain, PoP, constraints)
+        try:
+            authorizer.authorize(warrant, tool, args, bytes(signature))
+            return True
+        except Exception:
+            return False
 
     # Allowed: matches constraints
     args1 = {"cluster": "staging-web", "replicas": 5}

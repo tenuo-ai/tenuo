@@ -2365,7 +2365,7 @@ fn test_vector_a19_1_range_constraint() {
     valid_args.insert("count".to_string(), ConstraintValue::Float(50.0));
 
     let pop = warrant.sign(&worker, "api_call", &valid_args).unwrap();
-    let result = data_plane.authorize(&warrant, "api_call", &valid_args, Some(&pop), &[]);
+    let result = data_plane.check_chain(&[warrant.clone()], "api_call", &valid_args, Some(&pop), &[]);
     assert!(
         result.is_ok(),
         "A.19.1 Range should ACCEPT value within bounds: {:?}",
@@ -2377,7 +2377,7 @@ fn test_vector_a19_1_range_constraint() {
     invalid_args.insert("count".to_string(), ConstraintValue::Float(150.0));
 
     let pop = warrant.sign(&worker, "api_call", &invalid_args).unwrap();
-    let result = data_plane.authorize(&warrant, "api_call", &invalid_args, Some(&pop), &[]);
+    let result = data_plane.check_chain(&[warrant], "api_call", &invalid_args, Some(&pop), &[]);
     assert!(
         result.is_err(),
         "A.19.1 Range should REJECT value outside bounds"
@@ -2420,7 +2420,7 @@ fn test_vector_a19_2_oneof_constraint() {
     );
 
     let pop = warrant.sign(&worker, "deploy", &valid_args).unwrap();
-    let result = data_plane.authorize(&warrant, "deploy", &valid_args, Some(&pop), &[]);
+    let result = data_plane.check_chain(&[warrant.clone()], "deploy", &valid_args, Some(&pop), &[]);
     assert!(
         result.is_ok(),
         "A.19.2 OneOf should ACCEPT value in set: {:?}",
@@ -2435,7 +2435,7 @@ fn test_vector_a19_2_oneof_constraint() {
     );
 
     let pop = warrant.sign(&worker, "deploy", &invalid_args).unwrap();
-    let result = data_plane.authorize(&warrant, "deploy", &invalid_args, Some(&pop), &[]);
+    let result = data_plane.check_chain(&[warrant], "deploy", &invalid_args, Some(&pop), &[]);
     assert!(
         result.is_err(),
         "A.19.2 OneOf should REJECT value not in set"
@@ -2478,7 +2478,7 @@ fn test_vector_a19_3_cidr_constraint() {
     );
 
     let pop = warrant.sign(&worker, "connect", &valid_args).unwrap();
-    let result = data_plane.authorize(&warrant, "connect", &valid_args, Some(&pop), &[]);
+    let result = data_plane.check_chain(&[warrant.clone()], "connect", &valid_args, Some(&pop), &[]);
     assert!(
         result.is_ok(),
         "A.19.3 CIDR should ACCEPT IP in network: {:?}",
@@ -2493,7 +2493,7 @@ fn test_vector_a19_3_cidr_constraint() {
     );
 
     let pop = warrant.sign(&worker, "connect", &invalid_args).unwrap();
-    let result = data_plane.authorize(&warrant, "connect", &invalid_args, Some(&pop), &[]);
+    let result = data_plane.check_chain(&[warrant], "connect", &invalid_args, Some(&pop), &[]);
     assert!(
         result.is_err(),
         "A.19.3 CIDR should REJECT IP outside network"
@@ -2543,7 +2543,7 @@ fn test_vector_a20_1_pop_wrong_holder_key() {
     let pop = warrant.sign(&attacker, "read_file", &args).unwrap();
 
     // Verify with PoP - should fail because signer != holder
-    let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop), &[]);
+    let result = data_plane.check_chain(&[warrant], "read_file", &args, Some(&pop), &[]);
     assert!(
         result.is_err(),
         "A.20.1 should REJECT PoP signed by wrong key"
@@ -2602,7 +2602,7 @@ fn test_vector_a20_2_pop_expired_window() {
 
     // Create a valid PoP and verify it works
     let pop = warrant.sign(&worker, "read_file", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop), &[]);
+    let result = authorizer.authorize_one(&warrant, "read_file", &args, Some(&pop), &[]);
 
     // With default window, fresh PoP should pass
     assert!(
@@ -2695,7 +2695,7 @@ fn test_vector_a21_1_valid_multisig_approval() {
     let approval2 = SignedApproval::create(payload2, &approver2);
 
     let pop = warrant.sign(&worker, "transfer", &args).unwrap();
-    let result = authorizer.authorize(
+    let result = authorizer.authorize_one(
         &warrant,
         "transfer",
         &args,
@@ -2763,7 +2763,7 @@ fn test_vector_a21_2_insufficient_approvals() {
     let approval1 = SignedApproval::create(payload, &approver1);
 
     let pop = warrant.sign(&worker, "transfer", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "transfer", &args, Some(&pop), &[approval1]);
+    let result = authorizer.authorize_one(&warrant, "transfer", &args, Some(&pop), &[approval1]);
     assert!(
         result.is_err(),
         "A.21.2 should REJECT with insufficient approvals"

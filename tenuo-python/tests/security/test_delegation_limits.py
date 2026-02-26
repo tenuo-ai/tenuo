@@ -141,7 +141,7 @@ class TestDelegationLimits:
         print("  [Attack 30] Attempting to authorize tool execution with issuer warrant...")
 
         try:
-            authorized = issuer.authorize("delete", {})
+            authorized = issuer.check_constraints("delete", {}) is None
             if authorized:
                 print("  [CRITICAL] Attack 30 SUCCEEDED: Issuer warrant executed tool!")
                 assert False, "Issuer warrants should not execute tools"
