@@ -89,3 +89,7 @@ tenuo-python/examples/agentql-demo-spec.md
 
 # Claude IDE settings
 .claude/
+
+tenuo-python/examples/yc_demo.py
+tenuo-python/examples/unprompted_demo.py
+
