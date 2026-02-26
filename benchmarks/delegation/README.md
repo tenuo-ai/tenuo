@@ -10,6 +10,22 @@ This benchmark validates that warrant constraints are correctly enforced by test
 
 For cryptographic property tests (forgery resistance, key separation, etc.), see `benchmarks/cryptographic/`.
 
+### Delegation vs Adversarial Benchmarks
+
+**This benchmark (Delegation):**
+- Tests multi-agent chains with prompt injection targeting specific roles in a workflow
+- Validates constraint enforcement across delegation hierarchies
+- Focuses on how warrants propagate through Manager → Assistant → Bot chains
+- Deterministic unit tests for constraint types (Range, Pattern, etc.)
+
+**Adversarial benchmark:**
+- Tests single-step attacks with adaptive reconnaissance and creative bypasses
+- Uses LLM as the attacker to discover novel evasion techniques
+- Focuses on constraint robustness under intelligent adversarial probing
+- Stochastic (LLM-based) with statistical confidence intervals
+
+**Summary:** Delegation tests the *delegation model*, Adversarial tests *constraint robustness*.
+
 ## Test Suites
 
 ### 1. Constraint Scenarios (`scenarios.py`)
@@ -111,4 +127,4 @@ benchmarks/delegation/
 ## Related
 
 - `benchmarks/cryptographic/` - Forgery resistance, key separation, delegation monotonicity
-- `benchmarks/agentdojo/` - AgentDojo prompt injection benchmark with Tenuo
+- `benchmarks/agentdojo/` - AgentDojo prompt injection benchmark with Tenuo ⚠️ WIP, see agentdojo/README.md

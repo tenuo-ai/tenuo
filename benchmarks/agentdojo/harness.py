@@ -41,6 +41,10 @@ class TenuoProtectedPipeline(BasePipelineElement):
 
     This acts as a proxy around the base AgentDojo pipeline, intercepting
     tool calls to enforce Tenuo constraints before execution.
+
+    WARNING: mutates runtime.functions in place (restored in finally).
+    Safe for the benchmark (single-threaded), but not reusable in concurrent
+    pipelines sharing the same runtime without a lock or copy.
     """
 
     def __init__(
@@ -135,7 +139,7 @@ class TenuoProtectedPipeline(BasePipelineElement):
             logger.debug(
                 f"Wrapping {len(runtime.functions)} tools with Tenuo authorization"
             )
-            original_functions = runtime.functions
+            original_functions = runtime.functions.copy()
             protected_tools, _ = wrap_tools(
                 tools=original_functions,
                 warrants=warrants,

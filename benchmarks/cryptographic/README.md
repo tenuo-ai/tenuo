@@ -89,40 +89,38 @@ python -m benchmarks.cryptographic.report
 
 ## Performance
 
-Core cryptographic operations are benchmarked in Rust using Criterion:
+### Running Rust Benchmarks
+
+Authoritative performance numbers come from the Rust Criterion benchmarks:
 
 ```bash
-cd tenuo-core && cargo bench
+# From repository root
+cd tenuo-core
+
+# Run all benchmarks
+cargo bench
+
+# Run specific benchmark
+cargo bench --bench authorize
+
+# Generate HTML report (opens in browser)
+cargo bench -- --save-baseline my-baseline
+open target/criterion/report/index.html
 ```
 
-Typical results:
+### Performance Numbers
 
-| Operation | Latency |
-|-----------|---------|
-| Full verification (PoP + constraints) | ~27μs |
-| Constraint evaluation only | ~100ns |
-| Denial (wrong tool) | ~150ns |
-| Wire encode/decode | ~5μs |
+| Operation | Rust (Criterion) | Python (via PyO3) |
+|-----------|-----------------|-------------------|
+| Full verification (PoP + constraints) | ~27μs | ~50-60μs |
+| Constraint evaluation only | ~100ns | — |
+| Denial (wrong tool) | ~150ns | — |
 
-The ~27μs verification time is the end-to-end cost including signature verification,
-constraint matching, and TTL checks. Denials are faster because they short-circuit.
+The ~27μs number is the Rust-native cost including Ed25519 PoP verification,
+constraint evaluation, and TTL checks. Python timings are higher due to PyO3 FFI
+overhead. Denials are faster because they short-circuit before signature verification.
 
-Quick Python timing:
-
-```python
-import time
-from tenuo import SigningKey, Warrant, Range
-
-key = SigningKey.generate()
-w = Warrant.mint_builder().capability("test", x=Range(0, 100)).ttl(60).mint(key)
-sig = w.sign(key, "test", {"x": 50})
-
-start = time.perf_counter()
-for _ in range(1000):
-    w.authorize("test", {"x": 50}, bytes(sig))
-elapsed = (time.perf_counter() - start) / 1000 * 1_000_000
-print(f"Verification: {elapsed:.1f}μs")
-```
+**Benchmark location:** `tenuo-core/benches/authorize.rs`
 
 ## When to Use Tenuo
 

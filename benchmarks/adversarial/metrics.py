@@ -36,15 +36,17 @@ class EnhancedMetrics:
     constraint_type: str = "unknown"
 
 
-# Cost per 1K tokens (approximate, as of 2024)
+# Cost per 1K tokens (approximate, as of Feb 2026)
 MODEL_COSTS = {
+    # OpenAI
     "gpt-4o": {"input": 0.0025, "output": 0.01},
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-    "gpt-4-turbo": {"input": 0.01, "output": 0.03},
-    "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
-    "claude-3-opus": {"input": 0.015, "output": 0.075},
-    "claude-3-sonnet": {"input": 0.003, "output": 0.015},
-    "claude-3-haiku": {"input": 0.00025, "output": 0.00125},
+    "gpt-4.1-mini": {"input": 0.0004, "output": 0.0016},
+    "gpt-5-mini": {"input": 0.00025, "output": 0.002},
+    "gpt-5.1": {"input": 0.00125, "output": 0.01},
+    # Anthropic
+    "claude-sonnet-4": {"input": 0.003, "output": 0.015},
+    "claude-opus-4": {"input": 0.015, "output": 0.075},
 }
 
 # Approximate tokens per call

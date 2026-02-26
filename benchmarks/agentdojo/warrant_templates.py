@@ -7,7 +7,15 @@ Tenuo's capability-based authorization.
 CONSTRAINT PHILOSOPHY:
 - HIGH-RISK tools: Tight constraints (amounts, recipients, paths)
 - MEDIUM-RISK tools: Limit-based constraints (pagination, scoping)
-- LOW-RISK tools: Empty {} (safe read-only, no sensitive params)
+- LOW-RISK tools: No constraints beyond tool-level grant
+
+_allow_unknown RATIONALE:
+  Every constraint dict uses _allow_unknown=True because AgentDojo tools
+  have many parameters (subject, body, email_id, etc.) that we don't
+  constrain. Without it, Tenuo's zero-trust mode rejects any parameter
+  not explicitly listed. The benchmark tests specific constraint axes
+  (recipients, amounts, paths), not parameter completeness. A production
+  deployment would enumerate all allowed fields or accept the gap.
 
 AgentDojo Environments:
 - Banking: 11 tools, 16 user tasks, 9 injection patterns
@@ -314,18 +322,18 @@ SUITE_CONSTRAINTS = {
 # =============================================================================
 RISK_LEVELS = {
     "banking": {
-        "high": ["transfer_money", "schedule_transfer", "convert_currency"],
+        "high": ["send_money", "schedule_transaction", "update_scheduled_transaction"],
         "medium": [
-            "update_account_info",
-            "get_transactions",
-            "get_transaction_history",
-            "search_transactions",
+            "get_most_recent_transactions",
+            "get_scheduled_transactions",
+            "update_user_info",
+            "update_password",
         ],
         "low": [
-            "check_balance",
             "get_balance",
-            "get_account_info",
-            "get_exchange_rate",
+            "get_iban",
+            "get_user_info",
+            "read_file",
         ],
     },
     "slack": {
@@ -505,18 +513,23 @@ def get_all_tools_for_suite(suite_name: str) -> list[str]:
     return list(get_constraints_for_suite(suite_name).keys())
 
 
+def _has_real_constraints(tool_constraints: dict) -> bool:
+    """Check if a constraint dict has constraints beyond _allow_unknown."""
+    return any(k != "_allow_unknown" for k in tool_constraints)
+
+
 def get_suite_stats() -> dict:
     """Get statistics about constraint coverage by risk level."""
     stats = {}
     for suite_name, constraints in SUITE_CONSTRAINTS.items():
-        high_risk = len([c for c in constraints.items() if c[1]])  # Has constraints
-        low_risk = len([c for c in constraints.items() if not c[1]])  # Empty {}
+        constrained = len([c for c in constraints.values() if _has_real_constraints(c)])
         total = len(constraints)
+        unconstrained = total - constrained
         stats[suite_name] = {
             "total_tools": total,
-            "constrained_tools": high_risk,
-            "unconstrained_tools": low_risk,
-            "constraint_ratio": f"{high_risk}/{total} ({100 * high_risk // total}%)",
+            "constrained_tools": constrained,
+            "unconstrained_tools": unconstrained,
+            "constraint_ratio": f"{constrained}/{total} ({100 * constrained // total if total else 0}%)",
         }
     return stats
 

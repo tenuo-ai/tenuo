@@ -18,22 +18,22 @@ for task in "${TASKS[@]}"; do
     echo "Running task: $task"
     echo "========================================="
     
-    OPENAI_API_KEY=$OPENAI_API_KEY \
+    OUTPUT=$(OPENAI_API_KEY=$OPENAI_API_KEY \
     python \
       -m benchmarks.agentdojo.evaluate \
       --suite "$SUITE" \
       --compare \
-      --tasks "$task"
+      --tasks "$task" 2>&1)
     
     EXIT_CODE=$?
+    echo "$OUTPUT"
     
     if [ $EXIT_CODE -eq 0 ]; then
         echo "✓ Task $task completed successfully"
     else
         echo "✗ Task $task failed with exit code $EXIT_CODE"
         
-        # If rate limited, wait longer
-        if grep -q "rate_limit" <<< "$OUTPUT"; then
+        if echo "$OUTPUT" | grep -qi "rate_limit\|429"; then
             echo "Rate limit detected, waiting 60s..."
             sleep 60
         fi

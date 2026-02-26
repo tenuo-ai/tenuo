@@ -10,7 +10,7 @@ import time
 import json
 from pathlib import Path
 
-from tenuo import Warrant, Authorizer, ScopeViolation
+from tenuo import Warrant, Authorizer, ScopeViolation, TenuoError
 
 logger = logging.getLogger(__name__)
 
@@ -162,10 +162,8 @@ class DelegationHarness:
 
         start = time.perf_counter()
         try:
-            # Create PoP signature for the tool call
-            pop = warrant.sign(holder_key, tool, args)
+            pop = warrant.sign(holder_key, tool, args, int(time.time()))
 
-            # authorize() raises exceptions on failure
             authorizer.authorize(
                 warrant,
                 tool,
@@ -174,11 +172,11 @@ class DelegationHarness:
                 approvals=[],
             )
             actual = "allowed"
-        except ScopeViolation:
+        except TenuoError:
             actual = "denied"
-        except Exception:
-            # Any other exception also means denied
-            actual = "denied"
+        except Exception as e:
+            logger.error("Internal error (not a policy denial): %s: %s", type(e).__name__, e)
+            actual = "error"
         finally:
             elapsed_ms = (time.perf_counter() - start) * 1000
             self.metrics.total_auth_time_ms += elapsed_ms
