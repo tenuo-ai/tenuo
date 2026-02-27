@@ -215,6 +215,7 @@ jobs:
   temporal-integration:
     name: Temporal Integration
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # Fail fast if hanging
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -235,20 +236,29 @@ jobs:
           cache: pip
           cache-dependency-path: tenuo-python/pyproject.toml
 
+      # Cache Temporal test server binary to avoid re-download
+      - name: Cache Temporal test server
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/temporalio
+          key: temporal-test-server-${{ runner.os }}
+
       - name: Install Tenuo and Temporal dependencies
         working-directory: tenuo-python
         run: |
           pip install uv
           uv pip install --system maturin
-          maturin build --release
+          # Use development profile for faster CI builds (still validates correctness)
+          maturin build
           uv pip install --system target/wheels/*.whl
-          uv pip install --system pytest temporalio
+          uv pip install --system pytest pytest-asyncio pytest-timeout temporalio
 
       - name: Run Temporal live tests
         working-directory: tenuo-python
+        timeout-minutes: 10  # Tests should complete in <5 minutes
         env:
           TEMPORAL_LIVE_TESTS: "1"
-        run: pytest tests/test_temporal_live.py -v -m temporal_live
+        run: pytest tests/test_temporal_live.py -v -m temporal_live --timeout=300
 
   # ============================================================================
   # LANGCHAIN COMPATIBILITY
