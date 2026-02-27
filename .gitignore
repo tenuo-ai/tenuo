@@ -79,3 +79,5 @@ docs/explorer/
 # Claude IDE settings
 .claude/
 
+# Demo/presentation scripts (local only)
+tenuo-python/examples/unprompted_demo.py
