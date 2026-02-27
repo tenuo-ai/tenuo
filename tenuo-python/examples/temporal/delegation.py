@@ -293,8 +293,9 @@ async def main():
     logger.info(f"Transform warrant: {transform_warrant.id} (write {output_dir})")
 
     # Pre-load keys to avoid os.environ access inside Temporal's workflow sandbox
+    # Note: orchestrator and writeonly keys are created later in the demo
     key_resolver = EnvKeyResolver()
-    key_resolver.preload_keys(["ingest", "transform", "orchestrator", "writeonly"])
+    key_resolver.preload_keys(["ingest", "transform"])
 
     worker_interceptor = TenuoInterceptor(
         TenuoInterceptorConfig(
@@ -376,6 +377,7 @@ async def main():
         os.environ["TENUO_KEY_orchestrator"] = base64.b64encode(
             orchestrator_key.secret_key_bytes()
         ).decode()
+        key_resolver.preload_keys(["orchestrator"])  # Cache for workflow sandbox
 
         broad_warrant = (
             Warrant.mint_builder()
@@ -413,6 +415,7 @@ async def main():
             os.environ["TENUO_KEY_writeonly"] = base64.b64encode(
                 write_only_key.secret_key_bytes()
             ).decode()
+            key_resolver.preload_keys(["writeonly"])  # Cache for workflow sandbox
             write_only_warrant = (
                 Warrant.mint_builder()
                 .holder(write_only_key.public_key)
