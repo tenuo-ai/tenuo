@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import init, { decode_warrant, check_access, check_chain_access, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm } from './wasm/tenuo_wasm'
 import wasmUrl from './wasm/tenuo_wasm_bg.wasm'
 import { cleanInput, truncate, generateId } from './utils';
+import packageJson from '../package.json';
 
 // Types
 interface AuthResult {
@@ -2923,7 +2924,7 @@ function App() {
               <a href="https://crates.io/crates/tenuo" className="nav-link">🦀 Rust</a>
               <a href="https://pypi.org/project/tenuo/" className="nav-link">🐍 Python</a>
               <span style={{ color: 'var(--muted)' }}>🔐 100% client-side WASM</span>
-              <span style={{ color: 'var(--accent)', fontSize: '11px', border: '1px solid var(--border)', padding: '2px 6px', borderRadius: '4px' }}>v0.1.0-beta.6</span>
+              <span style={{ color: 'var(--accent)', fontSize: '11px', border: '1px solid var(--border)', padding: '2px 6px', borderRadius: '4px' }}>v{packageJson.version}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', fontSize: '12px', color: 'var(--muted)' }}>
               <a href="https://github.com/tenuo-ai/tenuo" style={{ color: 'var(--muted)', textDecoration: 'none' }}>GitHub</a>
