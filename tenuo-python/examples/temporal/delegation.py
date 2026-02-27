@@ -292,9 +292,13 @@ async def main():
     logger.info(f"Ingest warrant:    {ingest_warrant.id} (read {source_dir})")
     logger.info(f"Transform warrant: {transform_warrant.id} (write {output_dir})")
 
+    # Pre-load keys to avoid os.environ access inside Temporal's workflow sandbox
+    key_resolver = EnvKeyResolver()
+    key_resolver.preload_keys(["ingest", "transform", "orchestrator", "writeonly"])
+
     worker_interceptor = TenuoInterceptor(
         TenuoInterceptorConfig(
-            key_resolver=EnvKeyResolver(),
+            key_resolver=key_resolver,
             on_denial="raise",
             audit_callback=on_audit,
             trusted_roots=[control_key.public_key],

@@ -93,8 +93,8 @@ def create_analysis_server(signing_key: SigningKey, trusted_issuers: list, port:
                 "chunk_result": f"Analyzed items {i}-{chunk_end}",
             }
 
-        # Final result
-        return {
+        # Final result (must use yield, not return, in async generators)
+        yield {
             "status": "complete",
             "total_processed": total_items,
             "summary": f"Analyzed {total_items} items in {total_items // chunk_size} chunks",

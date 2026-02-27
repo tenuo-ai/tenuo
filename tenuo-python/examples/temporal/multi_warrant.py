@@ -156,9 +156,13 @@ async def main():
 
     task_queue = f"multi-warrant-{uuid.uuid4().hex[:8]}"
 
+    # Pre-load keys to avoid os.environ access inside Temporal's workflow sandbox
+    key_resolver = EnvKeyResolver()
+    key_resolver.preload_keys(["agentA", "agentB"])
+
     worker_interceptor = TenuoInterceptor(
         TenuoInterceptorConfig(
-            key_resolver=EnvKeyResolver(),
+            key_resolver=key_resolver,
             on_denial="raise",
             audit_callback=on_audit,
             trusted_roots=[control_key.public_key],
