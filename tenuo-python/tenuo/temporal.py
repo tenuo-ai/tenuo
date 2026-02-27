@@ -572,6 +572,13 @@ class EnvKeyResolver(KeyResolver):
             environment does not look like a development setup (i.e.
             the ``TENUO_ENV`` env var is not ``"development"`` or
             ``"test"``).  Default: True.
+
+    For Temporal workflows:
+        Call `preload_keys()` before creating the worker to cache keys
+        and avoid os.environ access inside the workflow sandbox:
+
+            resolver = EnvKeyResolver()
+            resolver.preload_keys(["agent1", "agent2"])  # Cache before workflow
     """
 
     _DEV_ENVS = {"development", "dev", "test", "testing", "local"}
@@ -580,6 +587,7 @@ class EnvKeyResolver(KeyResolver):
         self._prefix = prefix
         self._warn_in_production = warn_in_production
         self._warned = False
+        self._key_cache: Dict[str, Any] = {}  # Pre-loaded keys for Temporal workflows
 
     def _maybe_warn(self) -> None:
         """Emit a one-time production warning if not suppressed."""
@@ -598,6 +606,69 @@ class EnvKeyResolver(KeyResolver):
 
     async def resolve(self, key_id: str) -> Any:
         """Resolve key from environment variable."""
+        import os
+
+        self._maybe_warn()
+
+        env_name = f"{self._prefix}{key_id}"
+        value = os.environ.get(env_name)
+
+        if value is None:
+            raise KeyResolutionError(key_id=key_id)
+
+        try:
+            from tenuo_core import SigningKey
+
+            key_bytes = base64.b64decode(value)
+            return SigningKey.from_bytes(key_bytes)
+        except Exception as e:
+            logger.error(f"Failed to decode key from {env_name}: {e}")
+            raise KeyResolutionError(key_id=key_id)
+
+    def preload_keys(self, key_ids: list[str]) -> None:
+        """Pre-load keys from environment to cache for Temporal workflows.
+
+        Call this before creating the Temporal worker to avoid os.environ access
+        inside the workflow sandbox, which is blocked as non-deterministic.
+
+        Args:
+            key_ids: List of key IDs to pre-load (e.g., ["agent1", "agent2"])
+
+        Raises:
+            KeyResolutionError: If any key cannot be loaded
+        """
+        import os
+
+        for key_id in key_ids:
+            env_name = f"{self._prefix}{key_id}"
+            value = os.environ.get(env_name)
+
+            if value is None:
+                raise KeyResolutionError(key_id=key_id)
+
+            try:
+                from tenuo_core import SigningKey
+
+                key_bytes = base64.b64decode(value)
+                self._key_cache[key_id] = SigningKey.from_bytes(key_bytes)
+            except Exception as e:
+                logger.error(f"Failed to decode key from {env_name}: {e}")
+                raise KeyResolutionError(key_id=key_id)
+
+    def resolve_sync(self, key_id: str) -> Any:
+        """Resolve key from cache or environment variable synchronously.
+
+        Overrides base class to avoid ThreadPoolExecutor, which is blocked
+        by Temporal's workflow sandbox.
+
+        For Temporal workflows, use preload_keys() before creating the worker
+        to cache keys and avoid os.environ access inside the sandbox.
+        """
+        # Check cache first (for Temporal workflows)
+        if key_id in self._key_cache:
+            return self._key_cache[key_id]
+
+        # Fall back to os.environ (for non-workflow contexts)
         import os
 
         self._maybe_warn()
