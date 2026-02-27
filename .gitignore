@@ -57,9 +57,6 @@ coverage/
 test_failures.txt
 test_output.txt
 
-# Demo internal docs
-tenuo-python/examples/local_llm_demo/local_llm_demo_spec.md
-
 tenuo-core/check.log
 
 # Benchmark results (run locally, not committed until validated)
@@ -68,12 +65,6 @@ results/
 benchmarks/**/results/
 benchmarks/**/REPORT.md
 benchmarks/**/BENCHMARK_REPORT.md
-benchmarks/CONFERENCE_BRIEF.md
-benchmarks/**/*COLLABORATION*.md
-benchmarks/**/*FINDINGS*.md
-MASTER_BENCHMARK_REPORT.md
-tenuo-core/REPORT.md
-security_report.md
 *.log
 tenuo-core/benchmark_results.txt
 
@@ -84,12 +75,7 @@ benchmarks/**/venv/
 docs/reference/
 docs/vendor/
 docs/explorer/
-tenuo-python/tenuo/openai-adapter-spec-v2.2.md
-tenuo-python/examples/agentql-demo-spec.md
 
 # Claude IDE settings
 .claude/
-
-tenuo-python/examples/yc_demo.py
-tenuo-python/examples/unprompted_demo.py
 
