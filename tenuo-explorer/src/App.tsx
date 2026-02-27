@@ -2574,7 +2574,36 @@ function App() {
                         <label className="label">Quick Select Tool</label>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                           {decodedWarrant.tools.slice(0, 6).map(t => (
-                            <button key={t} onClick={() => setTool(t)} className={`tool-tag ${tool === t ? 'active' : ''}`}>{t}</button>
+                            <button
+                              key={t}
+                              onClick={() => {
+                                setTool(t);
+                                // Auto-populate example args based on tool's constraints
+                                const toolCaps = decodedWarrant.capabilities[t];
+                                if (toolCaps && typeof toolCaps === 'object') {
+                                  const exampleArgs: Record<string, any> = {};
+                                  Object.entries(toolCaps).forEach(([field, constraint]: [string, any]) => {
+                                    if (constraint?.pattern) {
+                                      exampleArgs[field] = constraint.pattern.replace('*', 'example');
+                                    } else if (constraint?.exact !== undefined) {
+                                      exampleArgs[field] = constraint.exact;
+                                    } else if (constraint?.range) {
+                                      exampleArgs[field] = constraint.range.split('-')[0];
+                                    } else if (constraint?.oneof && Array.isArray(constraint.oneof)) {
+                                      exampleArgs[field] = constraint.oneof[0];
+                                    } else {
+                                      exampleArgs[field] = 'value';
+                                    }
+                                  });
+                                  if (Object.keys(exampleArgs).length > 0) {
+                                    setArgsJson(JSON.stringify(exampleArgs, null, 2));
+                                  }
+                                }
+                              }}
+                              className={`tool-tag ${tool === t ? 'active' : ''}`}
+                            >
+                              {t}
+                            </button>
                           ))}
                         </div>
                       </div>
