@@ -16,7 +16,7 @@ layout: default
 2. [The Authorization Gap](#the-authorization-gap)
 3. [Why Existing Infrastructure Fails](#why-existing-infrastructure-fails)
 4. [Warrant-Based Authorization](#warrant-based-authorization)
-5. [Architecture](#architecture)
+5. [Architecture](#architecture) (Rust Core, Python SDK, Approval Policies, Tenuo Cloud)
 6. [Constraint System](#constraint-system)
 7. [Offline Verification vs. Centralized Enforcement](#offline-verification-vs-centralized-enforcement)
 8. [Competitive Landscape](#competitive-landscape)
@@ -30,11 +30,11 @@ layout: default
 
 ## Overview
 
-AI agents are no longer conversational interfaces. They are autonomous systems that issue refunds, modify databases, delegate to sub-agents, and execute multi-step workflows, often completing entire chains of action in seconds.
+AI agents are no longer conversational interfaces. They are autonomous systems that issue refunds, modify databases, delegate to sub-agents, and execute multi-step workflows, often completing entire sequences of actions in seconds.
 
 This shift from conversation to action exposes an authorization gap that existing infrastructure was not designed to address. Authentication tells you *who* the agent is. Orchestration tells you *what workflow* the agent is executing. Neither provides the artifact that matters at execution time: cryptographic proof that this specific action, with these specific parameters, is the authorized continuation of a legitimate task.
 
-Tenuo is cryptographic authorization infrastructure for agentic systems. It implements **warrant-based authorization**: signed, scoped, time-bound capability tokens that attenuate through delegation chains, verify offline in microseconds, and produce signed receipts for every action.
+Tenuo is cryptographic authorization infrastructure for agentic systems. It implements **warrant-based authorization**: signed, scoped, time-bound capability tokens that attenuate through delegation chains, verify offline in ~27μs, and produce signed receipts for every action.
 
 This document presents the problem, the architecture, and the thesis behind Tenuo.
 
@@ -74,7 +74,7 @@ The **temporal mismatch** compounds this. Credentials are scoped to a session th
 
 ### The prompt injection multiplier
 
-The authorization gap is a structural problem. Prompt injection makes it an urgent one.
+The authorization gap is an architectural problem. Prompt injection makes it an urgent one.
 
 When an agent can be induced to take unintended actions (through adversarial inputs in documents, emails, web pages, or user messages) the blast radius is determined entirely by the scope of authority the agent holds. If that scope is a session-level credential with broad permissions, the blast radius is everything the session can reach.
 
@@ -84,7 +84,7 @@ The structural failure is that **the authorization architecture provides no cont
 
 ### The delegation chain problem
 
-The authorization gap exists independently of adversarial scenarios. Even without prompt injection, delegation complexity alone requires structural containment. When Agent A delegates to Agent B:
+The authorization gap exists independently of adversarial scenarios. Even without prompt injection, delegation complexity alone requires explicit containment. When Agent A delegates to Agent B:
 
 1. What authority does B inherit?
 2. Can B delegate further to Agent C?
@@ -93,7 +93,7 @@ The authorization gap exists independently of adversarial scenarios. Even withou
 
 OAuth tokens carry identity. They do not carry provenance. At the first hop, the token tells you *who* is acting. At the second hop, the token tells you who the delegate is, but not under what constraints they were delegated authority. By the third hop, the provenance is gone entirely. You have a valid token. You have no idea how the authority arrived there, whether it was supposed to narrow along the way, or whether this request has any relationship to the workflow that originally justified the access.
 
-This is a structural limitation of the bearer token model, not a configuration gap that better policy can fix. OAuth, JWT, and API keys were designed for a world where a human authenticates and a service acts on their behalf. One hop. Multi-hop delegation, where agents spawn sub-agents that invoke tools that call external services, requires a primitive that carries provenance as a first-class property. Bearer tokens do not have this property and cannot be extended to have it without becoming something fundamentally different.
+This is a fundamental limitation of the bearer token model, not a configuration gap that better policy can fix. OAuth, JWT, and API keys were designed for a world where a human authenticates and a service acts on their behalf. One hop. Multi-hop delegation, where agents spawn sub-agents that invoke tools that call external services, requires a primitive that carries provenance as a first-class property. Bearer tokens do not have this property and cannot be extended to have it without becoming something fundamentally different.
 
 ---
 
@@ -115,9 +115,9 @@ The authorization question is *"does this agent hold a valid, scoped, unexpired 
 
 ### Human escalation doesn't scale
 
-"High-risk actions should trigger human oversight until confidence in the agent's reliability grows." This is OpenAI's recommendation for production deployments.
+"High-risk actions should trigger human oversight until confidence in the agent's reliability grows." This is the standard recommendation across agent frameworks and [enterprise deployment guides](https://cookbook.openai.com/examples/o1/using_reasoning_for_data_validation).
 
-At agent velocity, human oversight is structurally impossible for real-time containment. An agent completes an entire workflow, including any violations, before a human reviewer can act. Human oversight remains valuable for audit, policy refinement, and exception handling. It is not a security boundary for autonomous systems operating at machine speed.
+At agent velocity, human oversight is operationally impossible for real-time containment. An agent completes an entire workflow, including any violations, before a human reviewer can act. Human oversight remains valuable for audit, policy refinement, and exception handling. It is not a security boundary for autonomous systems operating at machine speed.
 
 ### Policy servers become bottlenecks
 
@@ -180,7 +180,7 @@ Root Warrant (Alice, human)
         └── ttl: 60s  ← shortened further
 ```
 
-At each hop, capabilities can be removed but not added. Constraints can be tightened but not loosened. TTL can be shortened but not extended. The Rust core enforces this structurally. It will not sign a warrant that expands authority relative to its parent.
+At each hop, capabilities can be removed but not added. Constraints can be tightened but not loosened. TTL can be shortened but not extended. **The Rust core enforces this as a cryptographic invariant: it will not sign a warrant that expands authority relative to its parent.**
 
 This is the same principle behind [Google's Macaroons](https://research.google/pubs/pub41892/) (2014), [Biscuit tokens](https://www.biscuitsec.org/) (Clever Cloud), and [UCAN](https://ucan.xyz/) (Fission). What Tenuo adds is the application of this primitive to the specific problem space of AI agent workflows: delegation at machine speed rather than human speed, constraints that encode business logic (not just resource paths), semantic parsing that matches target system interpretation, and audit trails that satisfy emerging Know Your Agent (KYA) requirements. The capability model is well-established. The agent-specific enforcement layer is what has been missing.
 
@@ -188,7 +188,7 @@ This is the same principle behind [Google's Macaroons](https://research.google/p
 
 Bearer tokens grant authority through possession. Whoever holds the token is authorized. This means interception equals compromise.
 
-Warrants implement **Proof of Possession (PoP)**. Each warrant designates a specific agent public key as the authorized holder. When the agent presents a warrant, the verifier demands cryptographic proof: sign this challenge with the private key corresponding to the holder field. This is the same principle behind DPoP (RFC 9449) and mTLS-bound tokens, applied to agent authorization.
+Warrants implement **Proof of Possession (PoP)**. Each warrant designates a specific agent public key as the authorized holder. When the agent presents a warrant, the verifier demands cryptographic proof: sign this challenge with the private key corresponding to the holder field. This is the same principle behind DPoP (RFC 9449) and mTLS-bound tokens, applied to agent authorization. The difference: DPoP binds tokens to an HTTP client via a per-request JWT proof; Tenuo's PoP binds warrants to an agent identity key and covers non-HTTP contexts (message queues, workflow headers, inter-agent delegation) where DPoP has no mechanism.
 
 An attacker who intercepts a warrant in transit cannot use it. They have the authorization artifact but not the private key. The transaction is rejected. Unlike bearer tokens, where theft equals access, warrant theft without key compromise is useless.
 
@@ -205,9 +205,11 @@ Receipt {
     parameters: {order_id: "12345", amount: 29.99}
     timestamp: 2026-02-18T10:32:01Z
     holder_signature: Ed25519 signature by the executing agent
-    verifier_signature: Ed25519 signature by the enforcement point
+    enforcement_signature: Ed25519 signature by the enforcement point
 }
 ```
+
+The enforcement point (the `@guard` decorator, FastAPI middleware, or Temporal interceptor) holds its own Ed25519 key pair, configured at deployment. Its signature attests that the warrant was verified and constraints were satisfied at execution time. The enforcement key is distributed as part of the deployment configuration, alongside the issuer's trusted root.
 
 A receipt is a cryptographic artifact, distinct from a log entry. A log entry is an assertion by your system that something happened. A receipt proves:
 
@@ -226,7 +228,7 @@ The enforcement layer produces signed receipts locally as part of the open-sourc
 
 ## Architecture
 
-Tenuo consists of three components:
+Tenuo consists of four components:
 
 ### Rust Core
 
@@ -237,7 +239,7 @@ The authorization engine. Handles warrant minting, signature generation and veri
 | **Signatures** | Ed25519 (RFC 8032) |
 | **Encoding** | CBOR (RFC 8949) |
 | **Hashing** | SHA-256 for chain linking |
-| **Verification latency** | Microsecond-range (wire-level evaluation, stateless, no I/O) |
+| **Verification latency** | ~27μs (wire-level evaluation, stateless, no I/O) |
 | **Wire format** | Specified with test vectors for cross-implementation consistency |
 
 The core is deliberately minimal. It enforces cryptographic invariants: signature validity, monotonic attenuation, TTL bounds, holder binding. It does not handle routing, transport, tool invocation, or any application logic. The trusted computing base is small by design.
@@ -252,11 +254,13 @@ Client library with framework integrations:
 | Google ADK | Native tool guard integration |
 | LangChain / LangGraph | Middleware for chain-of-thought and multi-agent graphs |
 | CrewAI | Task-scoped warrant lifecycle |
-| AutoGen | Agent-to-agent delegation with attenuation |
+| AutoGen (v0.4 / AG2) | Agent-to-agent delegation with attenuation |
+| Temporal | Durable workflow authorization with Proof-of-Possession per activity |
+| A2A | Warrant-based inter-agent delegation across organizational boundaries |
 | MCP | Secure client wrapping for Model Context Protocol servers |
 | FastAPI | Request-scoped warrant verification middleware |
 
-The SDK wraps the Rust core via PyO3. Five lines of code to protect an agent:
+The SDK wraps the Rust core via PyO3. A few lines of code to protect an agent:
 
 ```python
 from tenuo import configure, SigningKey, mint_sync, guard, Capability, Pattern
@@ -274,9 +278,21 @@ with mint_sync(Capability("send_email", to=Pattern("*@company.com"))):
 
 ### Approval Policies
 
-Warrants define what an agent can do. Approval policies define when a human must confirm before execution proceeds. The approval layer sits between warrant authorization and tool execution: a warrant may permit a transfer up to $100K, but an approval policy requires human confirmation for amounts over $10K.
+Warrants define what an agent *can* do. Approval policies define when a human *must* confirm before execution proceeds. The approval layer sits between warrant authorization and tool execution: a warrant may permit a transfer up to $100K, but an approval policy requires human confirmation for amounts over $10K.
 
-Every approval is cryptographically signed. There is no unsigned "approved=True" path. The approver's signing key produces a SignedApproval that binds to the exact (warrant, tool, arguments, holder) tuple via a SHA-256 request hash. The enforcement layer verifies the signature, hash, and approver key before allowing execution. Approvals are time-bound and scoped to a single action.
+This separation is deliberate. Warrants are minted ahead of time and travel with the task. Approval policies are evaluated at the enforcement point, at the moment of execution. A single warrant can cover a batch of actions where most proceed automatically and a few trigger human review, without re-minting.
+
+Every approval is cryptographically signed. There is no unsigned `approved=True` path. The approver's signing key produces a `SignedApproval` that binds to the exact `(warrant, tool, arguments, holder)` tuple via a SHA-256 request hash. The enforcement layer verifies the signature, hash, and approver key before allowing execution. Approvals are time-bound and scoped to a single action.
+
+| Property | Detail |
+|---|---|
+| **Binding** | SHA-256 hash of (warrant, tool, arguments, holder) — approval cannot be reused for a different action |
+| **Signature** | Ed25519 by the approver's key — no unsigned approval path exists |
+| **Scope** | Single action — approving one transfer does not approve the next |
+| **Expiry** | Time-bound — an approval left pending does not remain valid indefinitely |
+| **Approver identity** | Approver key must be in the policy's allowed set — not any key can approve |
+
+The approval flow integrates with existing human-in-the-loop patterns (Slack, email, dashboard) while producing the same cryptographic evidence as the rest of the authorization chain. The approval decision is part of the receipt, not a separate audit trail.
 
 ### Tenuo Cloud (Enterprise)
 
@@ -377,6 +393,14 @@ Each of these layers answers a different question at a different point in the ag
 
 Tenuo does not replace any of these layers. It answers the question that none of them ask: does this agent hold a valid, scoped, unexpired warrant for this specific action with these specific parameters, issued through a verifiable delegation chain where constraints tightened at every hop? That question only has meaning at the moment of execution, which is why it must be answered at the tool boundary.
 
+### CaMeL and capability-based defenses
+
+Google's [CaMeL](https://arxiv.org/abs/2503.18813) (Debenedetti et al., 2025) is the closest work in the research literature. CaMeL creates a protective system layer around the LLM by extracting control and data flows from the trusted query, preventing untrusted data from influencing program flow. It uses capabilities to prevent data exfiltration over unauthorized flows.
+
+Tenuo and CaMeL share the capability-based intuition but operate at different layers. CaMeL is a runtime defense that interposes between the LLM and tool execution within a single agent process. It requires the system to extract and track data provenance through the agent's reasoning steps. Tenuo operates at the authorization boundary between agents, tools, and services. It does not track data flow within an agent; it verifies that the agent holds a valid, scoped, unexpired warrant for the action it is attempting, regardless of how it arrived at that action.
+
+The approaches are complementary: CaMeL can prevent the agent from *deciding* to exfiltrate data. Tenuo can prevent the *execution* of that decision even if CaMeL is not present, and carries that protection across delegation hops, organizational boundaries, and async execution contexts that CaMeL's single-process model does not address.
+
 ### Warrant constraints subsume existing policy models
 
 A common objection: "We already have RBAC and ABAC. Why add another authorization layer?"
@@ -393,7 +417,7 @@ Teams adopting Tenuo use the same mental models they already know. Roles and att
 
 ## Real-World Scenarios
 
-The following are concrete attack scenarios with specific warrant configurations that prevent them. Full code for all ten scenarios is available at [tenuo.ai/examples](https://tenuo.ai/examples).
+The following are three concrete attack scenarios with specific warrant configurations that prevent them. Full code examples are available in the [examples directory](https://github.com/tenuo-ai/tenuo/tree/main/examples).
 
 ### Healthcare: patient data exfiltration
 
@@ -439,13 +463,13 @@ Multi-agent systems are where the authorization gap becomes critical. Delegation
 
 ### The security gap is quantified
 
-Deloitte found only 21% of companies have a mature governance model for autonomous agents, even as adoption accelerates ([Deloitte](https://www.deloitte.com/us/en/what-we-do/capabilities/applied-artificial-intelligence/content/state-of-ai-in-the-enterprise.html)). Gartner predicts 25% of enterprise cybersecurity incidents will involve AI agent misuse by 2028, and separately forecasts that over 40% of agentic AI projects will be canceled by end of 2027 due to escalating costs, unclear value, or **inadequate risk controls** ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2025-06-11-gartner-predicts-that-guardian-agents-will-capture-10-15-percent-of-the-agentic-ai-market-by-2030)). NIST launched an [AI Agent Standards Initiative](https://www.nist.gov/news-events/news/2026/02/announcing-ai-agent-standards-initiative-interoperable-and-secure) in February 2026, explicitly identifying agent authorization, delegation, and audit as open problems requiring industry demonstration.
+Deloitte found only 21% of companies have a mature governance model for autonomous agents, even as adoption accelerates ([Deloitte](https://www.deloitte.com/us/en/what-we-do/capabilities/applied-artificial-intelligence/content/state-of-ai-in-the-enterprise.html)). Gartner predicts 25% of enterprise cybersecurity breaches will be traced back to AI agent abuse by 2028 ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2024-10-22-gartner-unveils-top-predictions-for-it-organizations-and-users-in-2025-and-beyond)), and separately forecasts that over 40% of agentic AI projects will be canceled by end of 2027 due to escalating costs, unclear value, or **inadequate risk controls** ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)). NIST launched an [AI Agent Standards Initiative](https://www.nist.gov/news-events/news/2026/02/announcing-ai-agent-standards-initiative-interoperable-and-secure) in February 2026, explicitly identifying agent authorization, delegation, and audit as open problems requiring industry demonstration.
 
 Authorization infrastructure is a prerequisite for agents reaching production.
 
 ### Authorization doesn't survive model hops
 
-Production agent deployments already route across multiple model providers in the same workflow. LangChain's State of Agent Engineering survey reports 75%+ of production teams use multiple models to balance quality, latency, and cost. Google's [Agent-to-Agent (A2A) protocol](https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/), now backed by over 150 organizations and hosted by the Linux Foundation, formalizes this as the standard architecture: client agents discover remote agents via Agent Cards, delegate tasks, and coordinate across organizational boundaries.
+Production agent deployments already route across multiple model providers in the same workflow. LangChain's State of Agent Engineering survey reports 75%+ of production teams use multiple models to balance quality, latency, and cost. Google's [Agent-to-Agent (A2A) protocol](https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/), now backed by over 100 technology companies and [hosted by the Linux Foundation](https://www.linuxfoundation.org/press/linux-foundation-launches-the-agent2agent-protocol-project), formalizes this as the standard architecture: client agents discover remote agents via Agent Cards, delegate tasks, and coordinate across organizational boundaries.
 
 A2A solves discovery and communication. Its authentication model supports OpenAPI-compatible schemes (API keys, OAuth 2.0, OIDC) at the connection level. What A2A does not carry is per-task authorization provenance. When a client agent delegates a task to a remote agent, and that remote agent delegates further, the A2A protocol establishes who is communicating. It does not establish a cryptographic chain proving that each hop's authority descends from the original grant with constraints that tightened along the way.
 
@@ -498,7 +522,7 @@ Organizations with queryable authorization chains will pass audits faster. This 
 | **Platform incumbents** | OpenAI, Anthropic, or hyperscalers build capability-based authorization natively. | Open-source core and 9 framework integrations make Tenuo a natural integration target. Incumbents will build for their own stack, not cross-platform. |
 | **Regulatory uncertainty** | KYA requirements do not materialize. Compliance driver weakens. | Audit requirements for autonomous systems are increasing across EU AI Act, NIST, and financial regulators. The trend is acceleration, not retreat. |
 | **Key management complexity** | Per-agent keys and rotation add operational burden relative to bearer tokens. | Tenuo Cloud handles key lifecycle for enterprise deployments. Short TTLs reduce the window of key compromise. |
-| **Developer adoption** | Capability-based security learning curve slows adoption. | SDK provides secure defaults in five lines of code. Existing RBAC/ABAC mental models map directly to warrant constraints. |
+| **Developer adoption** | Capability-based security learning curve slows adoption. | SDK provides secure defaults in a few lines of code. Existing RBAC/ABAC mental models map directly to warrant constraints. |
 
 ---
 
@@ -514,7 +538,7 @@ At agent velocity, policy servers become bottlenecks and probabilistic filters b
 
 **3. Offline verification is architecturally superior for agent-speed systems.**
 
-Centralized gateways add latency, create single points of failure, and don't survive async boundaries. Self-contained, cryptographically verifiable warrants verify in microseconds, across organizational boundaries, through message queues, and without coordination.
+Centralized gateways add latency, create single points of failure, and don't survive async boundaries. Self-contained, cryptographically verifiable warrants verify in ~27μs, across organizational boundaries, through message queues, and without coordination.
 
 **4. Receipts close the accountability gap.**
 
@@ -526,16 +550,16 @@ Gartner predicts 40% of agentic AI projects will be canceled by 2027 due to esca
 
 ---
 
-**Tenuo is open-source, MIT licensed.**
+**Tenuo is open-source, dual-licensed under MIT and Apache-2.0.**
 
 - **Core**: Rust. Ed25519, CBOR, SHA-256. Wire format spec with test vectors.
 - **SDK**: Python. Integrations with OpenAI, Google ADK, LangChain, LangGraph, CrewAI, AutoGen, MCP, A2A, Temporal.
-- **Verification**: Microsecond-range. Stateless. No I/O.
+- **Verification**: ~27μs. Stateless. No I/O.
 
 GitHub: [github.com/tenuo-ai/tenuo](https://github.com/tenuo-ai/tenuo)  
 Install: `pip install tenuo`  
-Talk to us: [tenuo.ai/contact](https://tenuo.ai/contact)
+Talk to us: [calendly.com/tenuo/30min](https://calendly.com/tenuo/30min)
 
 ---
 
-*Tenuo builds on decades of capability-based security research: [Macaroons](https://research.google/pubs/pub41892/) (Google, 2014), [Biscuit](https://www.biscuitsec.org/) (Clever Cloud), [UCAN](https://ucan.xyz/) (Fission), and recent work on agent security including [CaMeL](https://arxiv.org/abs/2503.18813) (Debenedetti et al., 2025). The ideas in this document evolved through the [Agentic Security series](https://niyikiza.com/posts/) on Vectors, starting in December 2025.*
+*Tenuo builds on decades of capability-based security research: [Macaroons](https://research.google/pubs/pub41892/) (Google, 2014), [Biscuit](https://www.biscuitsec.org/) (Clever Cloud), [UCAN](https://ucan.xyz/) (Fission), and recent work on agent security including [CaMeL](https://arxiv.org/abs/2503.18813) (Debenedetti et al., 2025). The ideas in this document evolved through the [Agentic Security series](https://niyikiza.com/categories/agentic-security/) on Vectors, starting in December 2025.*
