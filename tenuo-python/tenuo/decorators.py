@@ -873,8 +873,14 @@ def guard(
                 # Build explorer URL for debugging
                 warrant_b64 = warrant_to_use.to_base64() if hasattr(warrant_to_use, "to_base64") else ""
                 if warrant_b64:
+                    import base64 as b64_mod
+                    import json as json_mod
                     import urllib.parse
-                    explorer_url = f"https://tenuo.ai/explorer/?s={urllib.parse.quote(warrant_b64)}"
+
+                    # Explorer expects JSON state: {"warrant": "...", "tool": "", "args": "{}"}
+                    state = {"warrant": warrant_b64, "tool": tool_name, "args": json_mod.dumps(auth_args)}
+                    state_b64 = b64_mod.b64encode(json_mod.dumps(state).encode()).decode()
+                    explorer_url = f"https://tenuo.ai/explorer/?s={urllib.parse.quote(state_b64)}"
                 else:
                     explorer_url = None
 
