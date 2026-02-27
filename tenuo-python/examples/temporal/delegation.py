@@ -39,17 +39,17 @@ from temporalio.worker.workflow_sandbox import (
     SandboxedWorkflowRunner,
     SandboxRestrictions,
 )
-
-from tenuo import SigningKey, Warrant, Pattern
 from tenuo_core import Subpath
+
+from tenuo import Pattern, SigningKey, Warrant
 from tenuo.temporal import (
+    EnvKeyResolver,
+    TemporalAuditEvent,
+    TenuoClientInterceptor,
     TenuoInterceptor,
     TenuoInterceptorConfig,
-    TenuoClientInterceptor,
-    EnvKeyResolver,
-    tenuo_headers,
     tenuo_execute_child_workflow,
-    TemporalAuditEvent,
+    tenuo_headers,
 )
 
 logging.basicConfig(
@@ -323,7 +323,7 @@ async def main():
 
         # -- Stage 1: Ingest (read-only warrant) --
         logger.info("  Stage 1: Ingest (read-only)")
-        client_interceptor.set_headers(tenuo_headers(ingest_warrant, "ingest", ingest_key))
+        client_interceptor.set_headers(tenuo_headers(ingest_warrant, "ingest"))
         data = await client.execute_workflow(
             IngestWorkflow.run,
             arg=str(source_dir),
@@ -334,7 +334,7 @@ async def main():
 
         # -- Stage 2: Transform (write-only warrant) --
         logger.info("  Stage 2: Transform (write-only)")
-        client_interceptor.set_headers(tenuo_headers(transform_warrant, "transform", transform_key))
+        client_interceptor.set_headers(tenuo_headers(transform_warrant, "transform"))
         result = await client.execute_workflow(
             TransformWorkflow.run,
             args=[str(output_dir), data],
@@ -389,7 +389,7 @@ async def main():
         output2_dir.mkdir(parents=True, exist_ok=True)
 
         client_interceptor.set_headers(
-            tenuo_headers(broad_warrant, "orchestrator", orchestrator_key)
+            tenuo_headers(broad_warrant, "orchestrator")
         )
         result = await client.execute_workflow(
             OrchestratorWorkflow.run,
@@ -417,7 +417,7 @@ async def main():
                 .mint(control_key)
             )
             client_interceptor.set_headers(
-                tenuo_headers(write_only_warrant, "writeonly", write_only_key)
+                tenuo_headers(write_only_warrant, "writeonly")
             )
             # ReaderChild needs read_file + list_directory, but warrant only has write_file
             await client.execute_workflow(

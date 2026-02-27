@@ -242,7 +242,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map_err(|_| "Invalid PoP signature format")?;
 
             // Check authorization with PoP (no approvals for CLI mode)
-            let result = authorizer.check(&w, tool, &args, Some(&pop_signature), &[]);
+            let result = authorizer.authorize_one(&w, tool, &args, Some(&pop_signature), &[]);
 
             match output.as_str() {
                 "exit-code" => match result {
@@ -959,40 +959,29 @@ async fn handle_request(
     let authorizer = state.authorizer.read().await;
     let lock_us = lock_start.elapsed().as_micros() as u64;
 
-    // Phase 2: Chain verification (signature checks, SRL lookup, cycle detection)
-    let verify_start = std::time::Instant::now();
-    let verify_result = authorizer.verify_chain(&chain);
-    let verify_us = verify_start.elapsed().as_micros() as u64;
-
-    // Phase 3: Authorization (constraint matching, PoP verification, approval verification)
-    let authorize_start = std::time::Instant::now();
-    let result = match verify_result {
-        Ok(_) => authorizer.authorize(
-            leaf_warrant,
-            &extraction_result.tool,
-            &extraction_result.constraints,
-            pop_signature.as_ref(),
-            &approvals,
-        ),
-        Err(e) => Err(e),
-    };
-    let authorize_us = authorize_start.elapsed().as_micros() as u64;
+    // Phase 2: Chain verification + leaf authorization (single atomic call)
+    let check_start = std::time::Instant::now();
+    let result = authorizer.check_chain(
+        &chain,
+        &extraction_result.tool,
+        &extraction_result.constraints,
+        pop_signature.as_ref(),
+        &approvals,
+    );
+    let check_us = check_start.elapsed().as_micros() as u64;
 
     // Release the lock before building the response
     drop(authorizer);
 
     // Calculate total and core latency
     let total_us = total_start.elapsed().as_micros() as u64;
-    // Core latency excludes lock acquisition (for accurate benchmarking)
-    let latency_us = verify_us + authorize_us;
+    let latency_us = check_us;
 
-    // Log detailed timing breakdown in debug mode (at info level for visibility)
     if state.debug_mode {
         info!(
             request_id = %request_id,
             lock_us = %lock_us,
-            verify_us = %verify_us,
-            authorize_us = %authorize_us,
+            check_chain_us = %check_us,
             core_us = %latency_us,
             total_us = %total_us,
             chain_depth = %chain.len(),
@@ -1008,7 +997,7 @@ async fn handle_request(
     let warrant_stack_b64 = encode_warrant_stack_for_audit(&chain);
 
     match result {
-        Ok(()) => {
+        Ok(_) => {
             info!(
                 request_id = %request_id,
                 warrant_id = %warrant_id,

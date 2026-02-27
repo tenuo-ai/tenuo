@@ -270,7 +270,7 @@ pub fn check_access(
     } else {
         // Full Authorizer check (requires PoP)
         let authorizer = Authorizer::new().with_trusted_root(root_key);
-        match authorizer.check(&warrant, tool, &args, None, &[]) {
+        match authorizer.authorize_one(&warrant, tool, &args, None, &[]) {
             Ok(_) => serde_wasm_bindgen::to_value(&AuthResult {
                     authorized: true,
                     reason: None,
@@ -585,7 +585,7 @@ pub fn check_access_with_pop(
 
     // 5. Full authorization with PoP
     let authorizer = Authorizer::new().with_trusted_root(root_key);
-    match authorizer.check(&warrant, tool, &args, Some(&signature), &[]) {
+    match authorizer.authorize_one(&warrant, tool, &args, Some(&signature), &[]) {
         Ok(_) => serde_wasm_bindgen::to_value(&AuthResult {
                 authorized: true,
                 reason: Some("Full authorization with PoP verified".to_string()),

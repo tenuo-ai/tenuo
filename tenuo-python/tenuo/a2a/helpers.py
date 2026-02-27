@@ -20,8 +20,8 @@ Usage:
     result = await server.dry_run(warrant, "read_file", {"path": "/tmp/test"})
 """
 
-from typing import Any, Dict, List, Optional, TextIO, TYPE_CHECKING
 import sys
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TextIO
 
 if TYPE_CHECKING:
     from .server import A2AServer
@@ -66,18 +66,18 @@ def explain(
     """
     from .errors import (
         A2AError,
-        MissingWarrantError,
-        InvalidSignatureError,
-        UntrustedIssuerError,
-        WarrantExpiredError,
         AudienceMismatchError,
+        ChainValidationError,
+        ConstraintViolationError,
+        InvalidSignatureError,
+        MissingWarrantError,
+        PopRequiredError,
+        PopVerificationError,
         ReplayDetectedError,
         SkillNotFoundError,
         SkillNotGrantedError,
-        ConstraintViolationError,
-        ChainValidationError,
-        PopRequiredError,
-        PopVerificationError,
+        UntrustedIssuerError,
+        WarrantExpiredError,
     )
 
     out = file or sys.stderr
@@ -309,10 +309,11 @@ def visualize_chain(
 
 def _visualize_chain_rich(warrants: List[Any]) -> str:
     """Visualize chain using rich library."""
-    from rich.console import Console  # type: ignore[import-not-found]
-    from rich.tree import Tree  # type: ignore[import-not-found]
-    from rich.text import Text  # type: ignore[import-not-found]
     import io
+
+    from rich.console import Console  # type: ignore[import-not-found]
+    from rich.text import Text  # type: ignore[import-not-found]
+    from rich.tree import Tree  # type: ignore[import-not-found]
 
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=True)

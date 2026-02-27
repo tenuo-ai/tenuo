@@ -16,10 +16,10 @@ Run:
 import time
 
 from tenuo import (
-    Warrant,
-    SigningKey,
     Pattern,
     Range,
+    SigningKey,
+    Warrant,
     Wildcard,
 )
 

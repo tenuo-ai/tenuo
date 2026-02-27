@@ -12,25 +12,25 @@ Run with:
 """
 
 import operator
-from typing import Annotated, TypedDict, List, Dict, Any
+from typing import Annotated, Any, Dict, List, TypedDict
 from uuid import uuid4
 
 # Tenuo Imports
-from tenuo import Warrant, SigningKey
+from tenuo import SigningKey, Warrant
 from tenuo.keys import KeyRegistry
 from tenuo.langgraph import (
-    guard_node,
     TenuoToolNode,
+    guard_node,
     require_warrant,
 )
 
 # LangGraph / LangChain Imports
 try:
-    from langgraph.graph import StateGraph, END
-    from langgraph.checkpoint.memory import MemorySaver
-    from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-    from langchain_core.tools import tool
+    from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
     from langchain_core.runnables import RunnableConfig  # noqa: F401
+    from langchain_core.tools import tool
+    from langgraph.checkpoint.memory import MemorySaver
+    from langgraph.graph import END, StateGraph
 except ImportError:
     print("Please install langgraph and langchain-core to run this example.")
     print("uv pip install langgraph langchain-core")

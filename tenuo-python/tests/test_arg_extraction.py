@@ -1,9 +1,10 @@
 import pytest
+
 from tenuo import (
-    Warrant,
-    SigningKey,
-    guard,
     Exact,
+    SigningKey,
+    Warrant,
+    guard,
 )
 from tenuo.constraints import Constraints
 

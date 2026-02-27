@@ -44,21 +44,21 @@ import inspect
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, cast
 
 if TYPE_CHECKING:
     from .approval import ApprovalHandler, ApprovalPolicy
 
 from .bound_warrant import BoundWarrant
-from .validation import ValidationResult
 from .exceptions import (
-    TenuoError,
-    ToolNotAuthorized,
+    ConfigurationError,
     ConstraintViolation,
     ExpiredError,
-    ConfigurationError,
+    TenuoError,
+    ToolNotAuthorized,
 )
-from .schemas import ToolSchema, TOOL_SCHEMAS
+from .schemas import TOOL_SCHEMAS, ToolSchema
+from .validation import ValidationResult
 
 logger = logging.getLogger("tenuo.enforcement")
 
@@ -348,8 +348,11 @@ def _check_approval(
     """
     from tenuo_core import (
         py_compute_request_hash as _compute_hash,
+    )
+    from tenuo_core import (
         verify_approvals as _verify_approvals,
     )
+
     from .approval import (
         ApprovalRequired,
         ApprovalVerificationError,
@@ -464,6 +467,7 @@ def enforce_tool_call(
     require_constraints: bool = False,
     verify_mode: Literal["sign", "verify"] = "sign",
     precomputed_signature: Optional[bytes] = None,
+    authorizer: Optional[Any] = None,
     approval_policy: Optional[ApprovalPolicy] = None,
     approval_handler: Optional[ApprovalHandler] = None,
     approvals: Optional[List[Any]] = None,
@@ -494,6 +498,10 @@ def enforce_tool_call(
             or "verify" to validate a pre-computed signature (Remote PEP/FastAPI).
         precomputed_signature: Required if verify_mode="verify". The PoP signature
             provided by the client.
+        authorizer: Required when verify_mode="verify". Authorizer instance for
+            full chain verification using Authorizer.check_chain(), which performs
+            issuer trust, chain linkage, revocation, clearance, capabilities,
+            constraints, and PoP verification in one atomic call.
         approval_policy: Optional ApprovalPolicy to check after warrant authorization.
             If a rule matches, the approval_handler is invoked.
         approval_handler: Callable that handles approval requests and returns a
@@ -544,8 +552,11 @@ def enforce_tool_call(
             "Use warrant.bind(signing_key) to create a BoundWarrant."
         )
 
-    if verify_mode == "verify" and precomputed_signature is None:
-        raise ConfigurationError("precomputed_signature is required when verify_mode='verify'")
+    if verify_mode == "verify":
+        if precomputed_signature is None:
+            raise ConfigurationError("precomputed_signature is required when verify_mode='verify'")
+        if authorizer is None:
+            raise ConfigurationError("authorizer is required when verify_mode='verify'")
 
     # Capture warrant_id for audit correlation (available on all results)
     warrant_id = getattr(bound_warrant, "id", None)
@@ -642,50 +653,30 @@ def enforce_tool_call(
                 )
         else:
             # verify_mode == "verify"
-            # Verify the precomputed signature against the warrant.
-            # Note: We intentionally use warrant.authorize() which returns bool,
-            # not validate() which would generate a new signature.
-            authorized = bound_warrant.warrant.authorize(tool_name, tool_args, precomputed_signature)
-
-            if not authorized:
-                # Try to determine failure reason for better audit trail.
-                # First check expiration (doesn't require signature).
-                denial_reason = "Authorization denied (invalid PoP or constraint violation)"
-                violated_field = None
-
+            # Full chain verification: issuer trust, chain linkage, revocation,
+            # clearance, capabilities, constraints, and PoP — all in one call.
+            # Defense in depth: re-check authorizer even though validated above
+            if authorizer is None:
+                raise ConfigurationError("authorizer required for verify_mode='verify'")
+            try:
+                authorizer.check_chain(
+                    [bound_warrant.warrant],
+                    tool_name,
+                    tool_args,
+                    signature=precomputed_signature,
+                )
+            except Exception as chain_err:
+                denial_reason = str(chain_err)
+                error_type = "authorization_failed"
                 if bound_warrant.warrant.is_expired():
                     denial_reason = "Warrant has expired"
                     error_type = "expired"
-                else:
-                    # Could be PoP mismatch or constraint violation.
-                    # Try validating constraints without PoP to distinguish.
-                    try:
-                        # Check if tool is in warrant
-                        tools = getattr(bound_warrant.warrant, "tools", None)
-                        if tools is not None and tool_name not in tools:
-                            denial_reason = f"Tool '{tool_name}' not in warrant"
-                            error_type = "tool_not_allowed"
-                        else:
-                            # Likely constraint violation or invalid PoP.
-                            # We can't distinguish without re-running validation,
-                            # which would require the holder's private key.
-                            #
-                            # SECURITY NOTE: We intentionally keep the error message
-                            # generic here to prevent information disclosure. Revealing
-                            # whether PoP failed vs constraint failed could help
-                            # attackers refine their attacks. Server logs contain
-                            # full details for legitimate debugging.
-                            error_type = "authorization_failed"
-                    except Exception:
-                        # If introspection fails, use generic error
-                        error_type = "authorization_failed"
-
                 return EnforcementResult(
                     allowed=False,
                     tool=tool_name,
                     arguments=tool_args,
                     denial_reason=denial_reason,
-                    constraint_violated=violated_field,
+                    constraint_violated=None,
                     error_type=error_type,
                     warrant_id=warrant_id,
                 )
@@ -755,7 +746,7 @@ def enforce_tool_call(
             warrant_id=warrant_id,
         )
     except Exception as e:
-        from .approval import ApprovalRequired, ApprovalDenied, ApprovalVerificationError
+        from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
         if isinstance(e, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
             raise
 

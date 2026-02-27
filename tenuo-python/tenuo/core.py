@@ -267,8 +267,8 @@ def _get_attr_safe(obj: Any, attr: str) -> Any:
 
 def _check_url_pattern(constraint: Any, value: Any) -> bool:
     """Check URL against UrlPattern constraint."""
-    from urllib.parse import urlparse
     import fnmatch
+    from urllib.parse import urlparse
 
     try:
         parsed = urlparse(str(value))

@@ -19,14 +19,14 @@ import asyncio
 from pathlib import Path
 
 from tenuo import (
+    Capability,
+    Pattern,
+    Range,
     SigningKey,
     configure,
     mint,
-    Pattern,
-    Range,
-    Capability,
 )
-from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
+from tenuo.mcp import MCP_AVAILABLE, SecureMCPClient
 
 
 async def main():

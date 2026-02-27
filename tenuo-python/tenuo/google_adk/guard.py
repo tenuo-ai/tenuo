@@ -65,14 +65,14 @@ import json
 import logging
 from contextlib import ExitStack
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from tenuo._enforcement import enforce_tool_call
 
 if TYPE_CHECKING:
-    from google.adk.tools.tool_context import ToolContext  # type: ignore[import-not-found,import-untyped]
     from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
-    from tenuo_core import Warrant, SigningKey
+    from google.adk.tools.tool_context import ToolContext  # type: ignore[import-not-found,import-untyped]
+    from tenuo_core import SigningKey, Warrant
 
 logger = logging.getLogger(__name__)
 

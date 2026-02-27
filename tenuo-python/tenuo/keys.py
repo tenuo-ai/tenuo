@@ -23,16 +23,15 @@ Usage:
     key = registry.get("worker")
 """
 
-import os
 import base64
+import os
 import threading
-from typing import Optional, List, Dict
 from pathlib import Path
+from typing import Dict, List, Optional
 
-from tenuo_core import SigningKey, PublicKey  # type: ignore[import-untyped]
+from tenuo_core import PublicKey, SigningKey  # type: ignore[import-untyped]
 
 from .exceptions import ConfigurationError
-
 
 # ============================================================================
 # Key Loading Helpers

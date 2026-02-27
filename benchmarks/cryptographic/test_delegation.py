@@ -9,8 +9,44 @@ Key insight: An orchestrator can delegate to a worker, but the worker's
 capabilities are mathematically bounded by what the orchestrator has.
 """
 
+import time
+
 import pytest
 from tenuo import SigningKey, Warrant, Pattern, Range, Exact
+from tenuo import Authorizer
+
+
+
+# ---------------------------------------------------------------------------
+# Authorization helpers — require an explicit issuer_key so each test
+# configures trust roots the same way production code does. No self-trust.
+# ---------------------------------------------------------------------------
+
+def _is_authorized(warrant, tool, args, sig, *, issuer_key):
+    """Return True if authorized, False if denied. Uses explicit root-of-trust."""
+    try:
+        Authorizer(trusted_roots=[issuer_key]).authorize_one(
+            warrant, tool, args,
+            signature=sig if isinstance(sig, bytes) else bytes(sig)
+        )
+        return True
+    except Exception:
+        return False
+
+def _assert_authorized(warrant, tool, args, sig, *, issuer_key):
+    """Assert that authorization succeeds against an explicit trust root."""
+    Authorizer(trusted_roots=[issuer_key]).authorize_one(
+        warrant, tool, args,
+        signature=sig if isinstance(sig, bytes) else bytes(sig)
+    )
+
+def _assert_denied(warrant, tool, args, sig, *, issuer_key):
+    """Assert that authorization fails against an explicit trust root."""
+    with pytest.raises(Exception):
+        Authorizer(trusted_roots=[issuer_key]).authorize_one(
+            warrant, tool, args,
+            signature=sig if isinstance(sig, bytes) else bytes(sig)
+        )
 
 
 class TestDelegationMonotonicity:
@@ -74,18 +110,20 @@ class TestDelegationMonotonicity:
         # Worker can use their limited capabilities
         # Note: must include all required fields (currency is required by zero-trust)
         sig = worker_warrant.sign(
-            worker_key, "transfer", {"amount": 500, "currency": "USD"}
+            worker_key, "transfer", {"amount": 500, "currency": "USD"}, int(time.time())
         )
-        assert worker_warrant.authorize(
-            "transfer", {"amount": 500, "currency": "USD"}, bytes(sig)
+        # worker_warrant was delegated by orchestrator_key, so issuer = orchestrator_key
+        _assert_authorized(worker_warrant,
+            "transfer", {"amount": 500, "currency": "USD"}, bytes(sig),
+            issuer_key=orchestrator_key.public_key
         )
 
-        # But cannot exceed their narrower limits
         sig = worker_warrant.sign(
-            worker_key, "transfer", {"amount": 5000, "currency": "USD"}
+            worker_key, "transfer", {"amount": 5000, "currency": "USD"}, int(time.time())
         )
-        assert not worker_warrant.authorize(
-            "transfer", {"amount": 5000, "currency": "USD"}, bytes(sig)
+        _assert_denied(worker_warrant,
+            "transfer", {"amount": 5000, "currency": "USD"}, bytes(sig),
+            issuer_key=orchestrator_key.public_key
         )
 
     def test_cannot_escalate_amount(self, root_warrant, orchestrator_key, worker_key):
@@ -218,11 +256,16 @@ class TestMultiLevelDelegation:
         subworker_warrant = ab2.delegate(worker)
 
         # SubWorker can only do $100 max
-        sig = subworker_warrant.sign(subworker, "transfer", {"amount": 50})
-        assert subworker_warrant.authorize("transfer", {"amount": 50}, bytes(sig))
+        sig = subworker_warrant.sign(subworker, "transfer", {"amount": 50}, int(time.time()))
+        # subworker_warrant was delegated by worker, so issuer = worker
+        _assert_authorized(subworker_warrant, "transfer", {"amount": 50}, bytes(sig),
+            issuer_key=worker.public_key
+        )
 
-        sig = subworker_warrant.sign(subworker, "transfer", {"amount": 150})
-        assert not subworker_warrant.authorize("transfer", {"amount": 150}, bytes(sig))
+        sig = subworker_warrant.sign(subworker, "transfer", {"amount": 150}, int(time.time()))
+        _assert_denied(subworker_warrant, "transfer", {"amount": 150}, bytes(sig),
+            issuer_key=worker.public_key
+        )
 
     def test_chain_cannot_skip_levels(self):
         """
@@ -302,10 +345,11 @@ class TestDelegationWithZeroTrust:
         child = ab.delegate(orchestrator)
 
         # Child with zero-trust will reject unknown fields
-        sig = child.sign(worker, "api_call", {"method": "GET", "timeout": 30})
-        # This should fail because timeout is unknown and _allow_unknown not set
-        assert not child.authorize(
-            "api_call", {"method": "GET", "timeout": 30}, bytes(sig)
+        sig = child.sign(worker, "api_call", {"method": "GET", "timeout": 30}, int(time.time()))
+        # child was delegated by orchestrator, so issuer = orchestrator
+        _assert_denied(child,
+            "api_call", {"method": "GET", "timeout": 30}, bytes(sig),
+            issuer_key=orchestrator.public_key
         )
 
 

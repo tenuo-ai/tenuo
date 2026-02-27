@@ -17,9 +17,10 @@ from pathlib import Path
 from typing import TypedDict
 
 try:
-    from langgraph.graph import StateGraph, START, END
-    from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
-    from tenuo import SigningKey, configure, mint, Pattern, Capability
+    from langgraph.graph import END, START, StateGraph
+
+    from tenuo import Capability, Pattern, SigningKey, configure, mint
+    from tenuo.mcp import MCP_AVAILABLE, SecureMCPClient
 except ImportError:
     print('❌ Prerequisites not met. Install with: uv pip install "tenuo[langgraph,mcp]"')
     import sys

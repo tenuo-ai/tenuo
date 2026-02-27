@@ -13,7 +13,7 @@ Key Features:
 6. Chain reconstruction with full diffs
 """
 
-from tenuo import SigningKey, Warrant, Pattern, Exact, Authorizer
+from tenuo import Authorizer, Exact, Pattern, SigningKey, Warrant
 
 
 def main():

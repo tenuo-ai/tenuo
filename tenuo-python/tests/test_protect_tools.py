@@ -3,14 +3,15 @@ Tests for Tenuo @guard decorator and tool schemas.
 """
 
 import pytest
+
 from tenuo import (
-    configure,
-    reset_config,
-    mint_sync,
-    guard,
-    SigningKey,
-    Pattern,
     Capability,
+    Pattern,
+    SigningKey,
+    configure,
+    guard,
+    mint_sync,
+    reset_config,
 )
 from tenuo.schemas import (
     TOOL_SCHEMAS,

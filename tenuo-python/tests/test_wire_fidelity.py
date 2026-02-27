@@ -2,11 +2,28 @@
 Test Wire Fidelity - Verify all Tenuo Core features pass through the wire.
 """
 from tenuo import (
-    SigningKey, Warrant, Pattern, Exact, OneOf, NotOneOf, Range, Cidr,
-    UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard,
-    Subpath, UrlSafe
+    CEL,
+    All,
+    AnyOf,
+    Cidr,
+    Contains,
+    Exact,
+    Not,
+    NotOneOf,
+    OneOf,
+    Pattern,
+    Range,
+    Regex,
+    SigningKey,
+    Subpath,
+    Subset,
+    UrlPattern,
+    UrlSafe,
+    Warrant,
+    Wildcard,
 )
-from tenuo.temporal import tenuo_headers, _extract_warrant_from_headers
+from tenuo.temporal import _extract_warrant_from_headers, tenuo_headers
+
 
 def test_all_constraints_serialization_roundtrip():
     """
@@ -50,7 +67,7 @@ def test_all_constraints_serialization_roundtrip():
     )
 
     # Serialize to headers (The "Wire")
-    headers = tenuo_headers(warrant, "agent1", key)
+    headers = tenuo_headers(warrant, "agent1")
 
     # Deserialize (The "Worker" side)
     extracted_warrant = _extract_warrant_from_headers(headers)
@@ -122,7 +139,7 @@ def test_complex_nested_constraints_roundtrip():
         ttl_seconds=300,
     )
 
-    headers = tenuo_headers(warrant, "agent1", key)
+    headers = tenuo_headers(warrant, "agent1")
     extracted = _extract_warrant_from_headers(headers)
 
     c = extracted.capabilities["nested_tool"]["complex"]

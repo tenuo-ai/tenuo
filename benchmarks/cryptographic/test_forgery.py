@@ -14,8 +14,43 @@ This enables:
 - Portable trust (any party with issuer's public key can verify)
 """
 
+import time
+
 import pytest
 from tenuo import SigningKey, Warrant, Pattern, Range, Authorizer
+
+
+
+# ---------------------------------------------------------------------------
+# Authorization helpers — require an explicit issuer_key so each test
+# configures trust roots the same way production code does. No self-trust.
+# ---------------------------------------------------------------------------
+
+def _is_authorized(warrant, tool, args, sig, *, issuer_key):
+    """Return True if authorized, False if denied. Uses explicit root-of-trust."""
+    try:
+        Authorizer(trusted_roots=[issuer_key]).authorize_one(
+            warrant, tool, args,
+            signature=sig if isinstance(sig, bytes) else bytes(sig)
+        )
+        return True
+    except Exception:
+        return False
+
+def _assert_authorized(warrant, tool, args, sig, *, issuer_key):
+    """Assert that authorization succeeds against an explicit trust root."""
+    Authorizer(trusted_roots=[issuer_key]).authorize_one(
+        warrant, tool, args,
+        signature=sig if isinstance(sig, bytes) else bytes(sig)
+    )
+
+def _assert_denied(warrant, tool, args, sig, *, issuer_key):
+    """Assert that authorization fails against an explicit trust root."""
+    with pytest.raises(Exception):
+        Authorizer(trusted_roots=[issuer_key]).authorize_one(
+            warrant, tool, args,
+            signature=sig if isinstance(sig, bytes) else bytes(sig)
+        )
 
 
 class TestWarrantForgeryResistance:
@@ -51,15 +86,12 @@ class TestWarrantForgeryResistance:
             .mint(issuer_key)
         )
 
-    def test_valid_warrant_works(self, valid_warrant, holder_key):
+    def test_valid_warrant_works(self, valid_warrant, holder_key, issuer_key):
         """Baseline: legitimate usage works"""
-        # Sign with holder's key
-        sig = valid_warrant.sign(holder_key, "send_money", {"amount": 500})
+        sig = valid_warrant.sign(holder_key, "send_money", {"amount": 500}, int(time.time()))
+        _assert_authorized(valid_warrant, "send_money", {"amount": 500}, bytes(sig), issuer_key=issuer_key.public_key)
 
-        # Verify succeeds
-        assert valid_warrant.authorize("send_money", {"amount": 500}, bytes(sig))
-
-    def test_attacker_cannot_sign_without_holder_key(self, valid_warrant, attacker_key):
+    def test_attacker_cannot_sign_without_holder_key(self, valid_warrant, attacker_key, issuer_key):
         """
         Even with the warrant, attacker can't use it without holder's key.
 
@@ -69,11 +101,8 @@ class TestWarrantForgeryResistance:
 
         Result: The warrant is useless. PoP signature requires the key.
         """
-        # Attacker tries to sign with their own key
-        sig = valid_warrant.sign(attacker_key, "send_money", {"amount": 500})
-
-        # Verification fails - wrong key
-        assert not valid_warrant.authorize("send_money", {"amount": 500}, bytes(sig))
+        sig = valid_warrant.sign(attacker_key, "send_money", {"amount": 500}, int(time.time()))
+        _assert_denied(valid_warrant, "send_money", {"amount": 500}, bytes(sig), issuer_key=issuer_key.public_key)
 
     def test_cannot_forge_warrant_with_broader_constraints(
         self, issuer_key, holder_key, attacker_key
@@ -98,7 +127,7 @@ class TestWarrantForgeryResistance:
         # An authorizer that trusts the real issuer will reject this
         authorizer = Authorizer(trusted_roots=[issuer_key.public_key])
 
-        sig = forged.sign(holder_key, "send_money", {"amount": 500000})
+        sig = forged.sign(holder_key, "send_money", {"amount": 500000}, int(time.time()))
 
         # Rejected: forged warrant is not trusted (raises exception)
         try:
@@ -109,57 +138,50 @@ class TestWarrantForgeryResistance:
         except Exception:
             pass  # Expected: issuer not in trusted roots
 
-    def test_serialized_warrant_tampering_detected(self, valid_warrant, holder_key):
+    def test_serialized_warrant_tampering_detected(self, valid_warrant, holder_key, issuer_key):
         """
-        If attacker modifies serialized warrant, verification will fail.
+        Flipping a byte in the serialized warrant invalidates it.
 
-        This simulates tampering with the warrant - the cryptographic
-        signature will not match the modified content.
+        Serialize, corrupt a byte in the middle, then show that
+        deserialization or verification fails.
         """
-        # The warrant has an internal signature that covers all fields
-        # Any modification would require re-signing with the issuer's key
+        wire = valid_warrant.to_base64()
 
-        # We test a simpler form: if someone creates a new warrant with
-        # modified constraints, they can't sign it as the original issuer
+        mid = len(wire) // 2
+        flip_char = 'A' if wire[mid] != 'A' else 'B'
+        tampered = wire[:mid] + flip_char + wire[mid + 1:]
 
-        attacker_key = SigningKey.generate()
+        authorizer = Authorizer(trusted_roots=[issuer_key.public_key])
 
-        # Attacker tries to create a "modified" version of the warrant
-        # with broader constraints, signing with their own key
-        _ = (
-            Warrant.mint_builder()
-            .capability("read_file", path=Pattern("/*"))  # Broader than /public/*
-            .holder(holder_key.public_key)  # Same holder
-            .ttl(3600)
-            .mint(attacker_key)  # Attacker's key, not real issuer
-        )
+        try:
+            recovered = Warrant.from_base64(tampered)
+            sig = recovered.sign(holder_key, "read_file", {"path": "/public/x"}, int(time.time()))
+            authorizer.authorize(
+                recovered, "read_file", {"path": "/public/x"}, signature=bytes(sig)
+            )
+            pytest.fail("Tampered warrant should not pass verification")
+        except Exception:
+            pass  # Deserialization or signature failure — both acceptable
 
-        # This modified warrant is not from the trusted issuer
-        # An authorizer would reject it (tested in other tests)
-
-    def test_replay_with_different_args_fails(self, valid_warrant, holder_key):
+    def test_replay_with_different_args_fails(self, valid_warrant, holder_key, issuer_key):
         """
         PoP signature is bound to specific arguments.
 
         Attacker cannot capture a valid signature and replay it with different args.
         """
-        # Legitimate call: transfer $100
-        legitimate_sig = valid_warrant.sign(holder_key, "send_money", {"amount": 100})
+        legitimate_sig = valid_warrant.sign(holder_key, "send_money", {"amount": 100}, int(time.time()))
 
-        # Verify works for the original args
-        assert valid_warrant.authorize(
-            "send_money", {"amount": 100}, bytes(legitimate_sig)
+        _assert_authorized(valid_warrant,
+            "send_money", {"amount": 100}, bytes(legitimate_sig),
+            issuer_key=issuer_key.public_key
         )
-
-        # Attacker tries to replay with $999 (max allowed)
-        # The signature was for $100, not $999
-        assert not valid_warrant.authorize(
-            "send_money", {"amount": 999}, bytes(legitimate_sig)
+        _assert_denied(valid_warrant,
+            "send_money", {"amount": 999}, bytes(legitimate_sig),
+            issuer_key=issuer_key.public_key
         )
-
-        # Attacker tries to replay with different tool
-        assert not valid_warrant.authorize(
-            "read_file", {"path": "/public/x"}, bytes(legitimate_sig)
+        _assert_denied(valid_warrant,
+            "read_file", {"path": "/public/x"}, bytes(legitimate_sig),
+            issuer_key=issuer_key.public_key
         )
 
 
@@ -209,10 +231,10 @@ class TestCrossBoundaryVerification:
         authorizer = Authorizer(trusted_roots=[issuer_key.public_key])
 
         # Holder signs the request
-        sig = warrant.sign(holder_key, "read_data", {"scope": "/shared/file.txt"})
+        sig = warrant.sign(holder_key, "read_data", {"scope": "/shared/file.txt"}, int(time.time()))
 
         # Verification succeeds locally - no network call
-        authorizer.authorize(
+        authorizer.authorize_one(
             warrant, "read_data", {"scope": "/shared/file.txt"}, signature=bytes(sig)
         )
 
@@ -239,13 +261,13 @@ class TestCrossBoundaryVerification:
         region_a = Authorizer(trusted_roots=[hq_key.public_key])
         region_b = Authorizer(trusted_roots=[hq_key.public_key])
 
-        sig = warrant.sign(agent_key, "deploy", {"env": "staging-us"})
+        sig = warrant.sign(agent_key, "deploy", {"env": "staging-us"}, int(time.time()))
 
         # Both regions can verify independently
-        region_a.authorize(
+        region_a.authorize_one(
             warrant, "deploy", {"env": "staging-us"}, signature=bytes(sig)
         )
-        region_b.authorize(
+        region_b.authorize_one(
             warrant, "deploy", {"env": "staging-us"}, signature=bytes(sig)
         )
 
@@ -268,7 +290,7 @@ class TestCrossBoundaryVerification:
         )
 
         # Holder signs approval
-        sig = warrant.sign(holder_key, "approve_expense", {"amount": 5000})
+        sig = warrant.sign(holder_key, "approve_expense", {"amount": 5000}, int(time.time()))
 
         # This signature is proof:
         # 1. The warrant was valid (signed by trusted issuer)
@@ -277,7 +299,9 @@ class TestCrossBoundaryVerification:
 
         # The signature can be stored as an audit record
         # It's self-proving - no need to trust the log system
-        assert warrant.authorize("approve_expense", {"amount": 5000}, bytes(sig))
+        _assert_authorized(warrant, "approve_expense", {"amount": 5000}, bytes(sig),
+            issuer_key=issuer_key.public_key
+        )
 
 
 class BenchmarkMetrics:
@@ -314,24 +338,27 @@ class BenchmarkMetrics:
         import random
 
         for _ in range(num_attempts):
-            # Test 1: Wrong key signing
+            call_amount = random.randint(1, 1000)  # vary per iteration
+
+            # Test 1: Wrong key — vary amount so PoP covers different args each time
             results["wrong_key_attempts"] += 1
-            sig = warrant.sign(attacker_key, "transfer", {"amount": 500})
-            if not warrant.authorize("transfer", {"amount": 500}, bytes(sig)):
+            sig = warrant.sign(attacker_key, "transfer", {"amount": call_amount}, int(time.time()))
+            if not _is_authorized(warrant, "transfer", {"amount": call_amount}, bytes(sig), issuer_key=issuer_key.public_key):
                 results["wrong_key_blocked"] += 1
 
-            # Test 2: Signature replay with different args
+            # Test 2: Signature replay with different args (always different amounts)
             results["replay_attempts"] += 1
             original_amount = random.randint(1, 500)
             replay_amount = random.randint(501, 1000)
-            sig = warrant.sign(holder_key, "transfer", {"amount": original_amount})
-            if not warrant.authorize("transfer", {"amount": replay_amount}, bytes(sig)):
+            sig = warrant.sign(holder_key, "transfer", {"amount": original_amount}, int(time.time()))
+            if not _is_authorized(warrant, "transfer", {"amount": replay_amount}, bytes(sig), issuer_key=issuer_key.public_key):
                 results["replay_blocked"] += 1
 
-            # Test 3: Constraint escalation (amount > 1000)
+            # Test 3: Constraint escalation — vary amount above limit so boundary is probed
+            escalation_amount = random.randint(1001, 10000)
             results["escalation_attempts"] += 1
-            sig = warrant.sign(holder_key, "transfer", {"amount": 5000})
-            if not warrant.authorize("transfer", {"amount": 5000}, bytes(sig)):
+            sig = warrant.sign(holder_key, "transfer", {"amount": escalation_amount}, int(time.time()))
+            if not _is_authorized(warrant, "transfer", {"amount": escalation_amount}, bytes(sig), issuer_key=issuer_key.public_key):
                 results["escalation_blocked"] += 1
 
         # Calculate rates

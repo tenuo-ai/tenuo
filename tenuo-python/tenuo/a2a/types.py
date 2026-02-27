@@ -6,11 +6,11 @@ Types for inter-agent delegation over the A2A protocol.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
-from contextvars import ContextVar
 
 if TYPE_CHECKING:
     from tenuo_core import Warrant as _WarrantType

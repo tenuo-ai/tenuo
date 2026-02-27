@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, TypeVar, Generic, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Generic, Optional, TypeVar
 
+from ._enforcement import DenialPolicy
 from .bound_warrant import BoundWarrant
 from .exceptions import ConfigurationError, ExpiredError, MissingSigningKey
-from ._enforcement import DenialPolicy
 
 if TYPE_CHECKING:
     from .approval import ApprovalHandler, ApprovalPolicy

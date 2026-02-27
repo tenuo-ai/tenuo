@@ -4,6 +4,7 @@ Simulates browser interactions without requiring a real browser or AgentQL API k
 """
 import asyncio
 
+
 class MockLocator:
     def __init__(self, alias: str):
         self.alias = alias

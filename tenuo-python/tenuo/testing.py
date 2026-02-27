@@ -11,12 +11,13 @@ Note:
     - Use linting rules to catch test imports in production code
 """
 
-import os
 import base64
-import time
+import os
 from contextlib import contextmanager
-from typing import Tuple, List, Optional
-from tenuo_core import Warrant, SigningKey  # type: ignore[import-untyped]
+from typing import List, Optional, Tuple
+
+from tenuo_core import SigningKey, Warrant  # type: ignore[import-untyped]
+
 from .exceptions import AuthorizationDenied
 
 
@@ -271,11 +272,11 @@ def assert_authorized(
 
         args = args or {}
         try:
-            pop_sig = warrant.sign(key, tool, args, int(time.time()))
-            result = warrant.authorize(tool, args, pop_sig)
+            bound = warrant.bind(key)
+            result = bound.validate(tool, args)
             if not result:
                 raise AuthorizationAssertionError(
-                    message or f"Expected authorization to succeed for tool '{tool}', but it was denied."
+                    message or f"Expected authorization to succeed for tool '{tool}', but it was denied: {result.reason}"
                 )
         except Exception as e:
             if isinstance(e, AuthorizationAssertionError):
@@ -327,8 +328,8 @@ def assert_denied(
 
         args = args or {}
         try:
-            pop_sig = warrant.sign(key, tool, args, int(time.time()))
-            result = warrant.authorize(tool, args, pop_sig)
+            bound = warrant.bind(key)
+            result = bound.validate(tool, args)
             if result:
                 raise AuthorizationAssertionError(
                     message or f"Expected authorization to FAIL for tool '{tool}', but it was ALLOWED."

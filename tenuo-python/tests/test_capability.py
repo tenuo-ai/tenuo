@@ -12,20 +12,20 @@ import pytest
 
 from tenuo import (
     Capability,
+    ConfigurationError,
+    Exact,
+    MonotonicityError,
     Pattern,
     Range,
-    Exact,
     SigningKey,
     configure,
-    reset_config,
-    mint_sync,
     grant,
-    ConfigurationError,
-    MonotonicityError,
+    mint_sync,
+    reset_config,
 )
-from tenuo.exceptions import ScopeViolation
 from tenuo.constraints import ensure_constraint
 from tenuo.decorators import warrant_scope
+from tenuo.exceptions import ScopeViolation
 
 
 @pytest.fixture(autouse=True)

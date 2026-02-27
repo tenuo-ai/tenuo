@@ -1,7 +1,7 @@
 """Shared tool implementations for multi-process incident response demo."""
 
 import time
-from typing import Dict, Any
+from typing import Any, Dict
 
 
 def read_logs(path: str) -> str:

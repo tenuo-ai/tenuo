@@ -10,18 +10,19 @@ Tests verifying:
 Note: Some tests document APPLICATION responsibilities, not Tenuo bugs.
 """
 
-import pytest
 import base64
 import json
 
+import pytest
+
 from tenuo import (
-    Warrant,
-    guard,
-    warrant_scope,
-    key_scope,
+    Exact,
     Pattern,
     Range,
-    Exact,
+    Warrant,
+    guard,
+    key_scope,
+    warrant_scope,
 )
 from tenuo.constraints import Constraints
 from tenuo.exceptions import Unauthorized
@@ -38,7 +39,7 @@ class TestImplementation:
         Attack: Buggy wrapper checks tool names but ignores constraints.
 
         Note: This is an INTEGRATION bug, not a Tenuo bug.
-        Tenuo provides warrant.authorize() - apps must call it correctly.
+        Tenuo provides warrant.check_constraints() - apps must call it correctly.
         """
         print("\n--- Attack 10: Tool Enforcement Mismatch ---")
 
@@ -46,13 +47,14 @@ class TestImplementation:
         def buggy_tool_wrapper(warrant, arg):
             if "search" not in warrant.tools:
                 raise Unauthorized("Tool not allowed")
-            # ❌ MISSING: warrant.authorize("search", {"query": arg})
+            # ❌ MISSING: warrant.check_constraints("search", {"query": arg})
             return f"Searching for {arg}"
 
         # Correct wrapper
         def secure_tool_wrapper(warrant, arg):
-            if not warrant.authorize("search", {"query": arg}):
-                raise Unauthorized("Constraint violation")
+            violation = warrant.check_constraints("search", {"query": arg})
+            if violation is not None:
+                raise Unauthorized(f"Constraint violation: {violation}")
             return f"Searching for {arg}"
 
         warrant = Warrant.mint(
@@ -83,13 +85,13 @@ class TestImplementation:
         )
 
         print("  [Attack 15A] Testing string '999' against Range(max=100)...")
-        if warrant.authorize("query", {"limit": "999"}):
+        if warrant.check_constraints("query", {"limit": "999"}) is None:
             print("  [WARNING] Attack 15A SUCCEEDED: '999' passed Range(max=100)")
         else:
             print("  [Result] Attack 15A blocked (Correctly rejected '999')")
 
         print("  [Attack 15B] Testing float 100.0001 against Range(max=100)...")
-        if warrant.authorize("query", {"limit": 100.0001}):
+        if warrant.check_constraints("query", {"limit": 100.0001}) is None:
             print("  [WARNING] Attack 15B SUCCEEDED: 100.0001 passed Range(max=100)")
         else:
             print("  [Result] Attack 15B blocked (Correctly rejected 100.0001)")
@@ -164,7 +166,7 @@ class TestImplementation:
         )
 
         print("  [Attack 24] Attempting path=/data/../etc/passwd...")
-        authorized = warrant.authorize("read_file", {"path": "/data/../etc/passwd"})
+        authorized = warrant.check_constraints("read_file", {"path": "/data/../etc/passwd"}) is None
 
         if authorized:
             print("  [WARNING] Attack 24 SUCCEEDED: Path traversal bypassed pattern!")
@@ -216,7 +218,7 @@ class TestImplementation:
             )
             print("  [Info] Warrant issued with injected key.")
 
-            if warrant.authorize("read_file", {injected_key: "secret"}):
+            if warrant.check_constraints("read_file", {injected_key: "secret"}) is None:
                 print("  [Result] Attack 19: Tenuo matched exact key (Safe for Tenuo)")
                 print("  [Note] App must not use keys to construct paths blindly")
             else:
@@ -247,7 +249,7 @@ class TestImplementation:
 
         print(f"  [Attack] Testing path with null byte: {repr(malicious_path)}")
 
-        if warrant.authorize("read", {"path": malicious_path}):
+        if warrant.check_constraints("read", {"path": malicious_path}) is None:
             print("  [WARNING] Null byte truncation detected!")
             print("  [WARNING] Path with embedded null matched safe path constraint!")
             assert False, "Null byte injection should be blocked"
@@ -270,7 +272,7 @@ class TestImplementation:
 
         print(f"  [Attack] Testing tool name: {repr(malicious_tool)}")
 
-        if warrant.authorize(malicious_tool, {}):
+        if warrant.check_constraints(malicious_tool, {}) is None:
             print("  [WARNING] Null byte truncation in tool name!")
             assert False, "Tool name null byte injection should fail"
         else:

@@ -1,12 +1,13 @@
 """Rich console display for JIT Warrant Demo."""
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
-from rich.syntax import Syntax
-from rich import box
 import json
 import time
+
+from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.table import Table
 
 console = Console()
 

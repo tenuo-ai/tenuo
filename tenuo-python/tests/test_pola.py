@@ -8,12 +8,13 @@ This prevents accidentally granting more authority than intended.
 """
 
 import pytest
+
 from tenuo import (
-    Warrant,
-    SigningKey,
-    Pattern,
     Exact,
+    Pattern,
     Range,
+    SigningKey,
+    Warrant,
 )
 from tenuo.exceptions import ValidationError
 

@@ -51,7 +51,6 @@ except Exception as e:  # pragma: no cover - import guard for optional deps
 from tenuo import SigningKey, Subpath, UrlSafe, Warrant
 from tenuo.autogen import guard_tool
 
-
 # =============================================================================
 # Demo Colors
 # =============================================================================

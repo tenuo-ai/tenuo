@@ -5,15 +5,16 @@ Tests both Tier 1 (context-based) and Tier 2 (explicit) APIs.
 """
 
 import pytest
+
 from tenuo import (
-    configure,
-    reset_config,
-    mint_sync,
-    SigningKey,
-    Warrant,
-    ConfigurationError,
     LANGCHAIN_AVAILABLE,
     Capability,
+    ConfigurationError,
+    SigningKey,
+    Warrant,
+    configure,
+    mint_sync,
+    reset_config,
 )
 from tenuo.exceptions import ToolNotAuthorized
 
@@ -36,7 +37,8 @@ def reset_config_fixture():
 if LANGCHAIN_AVAILABLE:
     try:
         from langchain_core.tools import tool
-        from tenuo.langchain import guard_tools, TenuoTool
+
+        from tenuo.langchain import TenuoTool, guard_tools
 
         @tool
         def search(query: str) -> str:
@@ -284,8 +286,8 @@ class TestLangChainApproval:
 
     def test_guard_with_approval_stores_params(self):
         """guard() passes approval params to TenuoTool."""
+        from tenuo.approval import ApprovalPolicy, auto_approve, require_approval
         from tenuo.langchain import guard
-        from tenuo.approval import ApprovalPolicy, require_approval, auto_approve
 
         agent_key = SigningKey.generate()
         approver_key = SigningKey.generate()
@@ -314,7 +316,9 @@ class TestLangChainApproval:
     def test_tenuo_tool_with_bound_warrant_and_approval(self):
         """TenuoTool uses enforce_tool_call with approval when given BoundWarrant."""
         from tenuo.approval import (
-            ApprovalPolicy, ApprovalRequired, require_approval,
+            ApprovalPolicy,
+            ApprovalRequired,
+            require_approval,
         )
         from tenuo.langchain import guard
 
@@ -340,7 +344,9 @@ class TestLangChainApproval:
     def test_tenuo_tool_approval_auto_approve_succeeds(self):
         """TenuoTool with auto_approve handler executes successfully."""
         from tenuo.approval import (
-            ApprovalPolicy, require_approval, auto_approve,
+            ApprovalPolicy,
+            auto_approve,
+            require_approval,
         )
         from tenuo.langchain import guard
 
@@ -370,7 +376,10 @@ class TestLangChainApproval:
     def test_tenuo_tool_approval_denied_raises(self):
         """TenuoTool with auto_deny handler raises ApprovalDenied."""
         from tenuo.approval import (
-            ApprovalPolicy, ApprovalDenied, require_approval, auto_deny,
+            ApprovalDenied,
+            ApprovalPolicy,
+            auto_deny,
+            require_approval,
         )
         from tenuo.langchain import guard
 

@@ -36,16 +36,16 @@ from temporalio.worker.workflow_sandbox import (
     SandboxedWorkflowRunner,
     SandboxRestrictions,
 )
+from tenuo_core import Subpath
 
 from tenuo import SigningKey, Warrant
-from tenuo_core import Subpath
 from tenuo.temporal import (
+    EnvKeyResolver,
+    TemporalAuditEvent,
+    TenuoClientInterceptor,
     TenuoInterceptor,
     TenuoInterceptorConfig,
-    TenuoClientInterceptor,
-    EnvKeyResolver,
     tenuo_headers,
-    TemporalAuditEvent,
 )
 
 logging.basicConfig(
@@ -181,7 +181,7 @@ async def main():
 
         # --- Workflow A: reads project-a ---
         logger.info("=== Workflow A: reading project-a ===")
-        client_interceptor.set_headers(tenuo_headers(warrant_a, "agentA", agent_a_key))
+        client_interceptor.set_headers(tenuo_headers(warrant_a, "agentA"))
         result_a = await client.execute_workflow(
             ScopedReadWorkflow.run,
             args=["/tmp/tenuo-demo/project-a"],
@@ -192,7 +192,7 @@ async def main():
 
         # --- Workflow B: reads project-b ---
         logger.info("=== Workflow B: reading project-b ===")
-        client_interceptor.set_headers(tenuo_headers(warrant_b, "agentB", agent_b_key))
+        client_interceptor.set_headers(tenuo_headers(warrant_b, "agentB"))
         result_b = await client.execute_workflow(
             ScopedReadWorkflow.run,
             args=["/tmp/tenuo-demo/project-b"],
@@ -203,7 +203,7 @@ async def main():
 
         # --- Cross-access: Workflow A tries project-b (should be denied) ---
         logger.info("=== Cross-access: Warrant A on project-b (should be denied) ===")
-        client_interceptor.set_headers(tenuo_headers(warrant_a, "agentA", agent_a_key))
+        client_interceptor.set_headers(tenuo_headers(warrant_a, "agentA"))
         try:
             from temporalio.client import WorkflowFailureError
             await client.execute_workflow(

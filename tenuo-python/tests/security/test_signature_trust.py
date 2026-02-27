@@ -8,10 +8,11 @@ Tests verifying:
 - Session IDs are metadata only, not authorization
 """
 
-import pytest
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
+
+import pytest
 
 from tenuo import (
     Warrant,
@@ -125,8 +126,11 @@ class TestSignatureTrust:
             w = Warrant.from_base64(s.warrant)
             if not w.verify(keypair.public_key.to_bytes()):
                 raise SignatureInvalid("Sig failed")
-            # authorize() checks expiry
-            w.authorize("admin_access", {})
+            if w.is_expired():
+                raise ExpiredError("Warrant expired")
+            violation = w.check_constraints("admin_access", {})
+            if violation is not None:
+                raise ExpiredError(violation)
 
         # Expectation: Should fail due to expiry
         with pytest.raises(ExpiredError):
@@ -219,7 +223,7 @@ class TestSignatureTrust:
         print(f"  [Check] Low warrant tools: {low_warrant.tools}")
 
         # Try to use low warrant for admin action
-        if low_warrant.authorize("admin", {}):
+        if low_warrant.check_constraints("admin", {}) is None:
             print("  [CRITICAL] Attack 36 SUCCEEDED: Session ID gave unauthorized access!")
             assert False, "Session ID should not grant authorization"
         else:

@@ -23,21 +23,21 @@ Usage:
 """
 
 import json
-from typing import Optional, TextIO
 import sys
+from typing import Optional, TextIO
 
 from .exceptions import (
-    TenuoError,
-    ScopeViolation,
-    ToolNotAuthorized,
+    ChainError,
+    ConfigurationError,
     ConstraintViolation,
+    CryptoError,
     ExpiredError,
     MonotonicityError,
-    ConfigurationError,
-    CryptoError,
     PopError,
-    ChainError,
     RevokedError,
+    ScopeViolation,
+    TenuoError,
+    ToolNotAuthorized,
 )
 
 

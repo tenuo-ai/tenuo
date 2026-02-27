@@ -68,8 +68,7 @@ Error Hierarchy:
     └── ConfigurationError (invalid configuration)
 """
 
-from typing import Optional, Any
-
+from typing import Any, Optional
 
 # =============================================================================
 # Canonical Error Codes (Wire Format Spec §Appendix A)

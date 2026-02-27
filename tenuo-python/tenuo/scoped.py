@@ -21,27 +21,27 @@ Usage:
 """
 
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass
-from typing import Optional, List, Dict, Any, AsyncIterator, Iterator
 from contextvars import Token
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 from tenuo_core import (  # type: ignore[import-untyped]
-    Warrant,
     SigningKey,
+    Warrant,
 )
 
-from .config import get_config, ConfigurationError
+from .config import ConfigurationError, get_config
 from .constraints import Capability
 from .decorators import (
-    _warrant_context,
-    _keypair_context,
     _allowed_tools_context,
-    warrant_scope,
+    _keypair_context,
+    _warrant_context,
     key_scope,
+    warrant_scope,
 )
 from .exceptions import (
-    ScopeViolation,
     MonotonicityError,
+    ScopeViolation,
 )
 
 

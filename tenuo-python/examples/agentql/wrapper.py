@@ -1,10 +1,13 @@
-from typing import Any, List, Dict, Callable, Optional
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import inspect
 import time
-from tenuo import Warrant, SigningKey, AuthorizationDenied
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional
+
 from lazy_locator import LazySemanticLocator
+
+from tenuo import AuthorizationDenied, SigningKey, Warrant
+
 
 @dataclass
 class AuditEntry:
@@ -430,8 +433,8 @@ class RealAgentQLSession:
         self.page = None
 
     async def __aenter__(self):
-        from playwright.async_api import async_playwright
         import agentql
+        from playwright.async_api import async_playwright
 
         self.playwright = await async_playwright().start()
 

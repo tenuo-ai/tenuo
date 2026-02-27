@@ -106,36 +106,36 @@ from urllib.parse import urlparse
 
 # Import constraint types from tenuo core
 from tenuo import (
-    Pattern,
-    Exact,
-    OneOf,
-    Range,
-    Regex,
-    Cidr,
-    UrlPattern,
-    Contains,
-    Subset,
-    Wildcard,
-    AnyOf,
+    CEL,
     All,
+    AnyOf,
+    Cidr,
+    Contains,
+    Exact,
     Not,
     NotOneOf,
-    CEL,
+    OneOf,
+    Pattern,
+    Range,
+    Regex,
+    SigningKey,
+    Subset,
+    UrlPattern,
     # Tier 2: Warrant types
     Warrant,
-    SigningKey,
+    Wildcard,
 )
-
-# Import Python-only security constraints (defined in constraints.py, re-exported here)
-from tenuo.constraints import Subpath, UrlSafe
 
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_openai_compat
 
+# Import Python-only security constraints (defined in constraints.py, re-exported here)
+from tenuo.constraints import Subpath, UrlSafe
+
 check_openai_compat()
 
 # Import shared enforcement logic (after version check)
-from tenuo._enforcement import DenialPolicy, EnforcementResult, handle_denial, enforce_tool_call  # noqa: E402
+from tenuo._enforcement import DenialPolicy, EnforcementResult, enforce_tool_call, handle_denial  # noqa: E402
 
 logger = logging.getLogger("tenuo.openai")
 

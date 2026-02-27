@@ -11,9 +11,10 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 import json
 import logging
+import time
 
 from openai import OpenAI
-from tenuo import SigningKey, Warrant, CEL, Pattern, Authorizer
+from tenuo import SigningKey, Warrant, CEL, Pattern, Authorizer, TenuoError
 
 logger = logging.getLogger(__name__)
 
@@ -208,13 +209,18 @@ class MultiStepBenchmark:
             
             # Check authorization
             try:
-                pop = warrant.sign(agent_key, tool, args)
-                authorizer.authorize(warrant, tool, args, bytes(pop))
+                safe_args = {k: (json.dumps(v, sort_keys=True) if isinstance(v, dict) else v) for k, v in args.items()}
+                pop = warrant.sign(agent_key, tool, safe_args, int(time.time()))
+                authorizer.authorize(warrant, tool, safe_args, bytes(pop))
                 allowed = True
                 reason = None
+            except TenuoError as e:
+                allowed = False
+                reason = f"DENIED: {e}"
             except Exception as e:
                 allowed = False
-                reason = str(e)
+                reason = f"ERROR: {type(e).__name__}: {e}"
+                logger.error("Internal error in multi-step auth: %s", reason)
             
             # Simulate data extraction for state tracking
             data_extracted = None

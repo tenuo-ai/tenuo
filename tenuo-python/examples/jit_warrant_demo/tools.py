@@ -1,7 +1,8 @@
 """Tools available to the agent."""
 
-import config
 from urllib.parse import urlparse
+
+import config
 
 
 def _get_hostname(url: str) -> str:

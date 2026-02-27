@@ -10,8 +10,8 @@ Usage:
     python demo_distributed.py --no-services # Demo without spawning services (simulation)
 """
 
-import asyncio
 import argparse
+import asyncio
 import subprocess
 import sys
 from pathlib import Path
@@ -20,7 +20,7 @@ from typing import List, Optional
 # Ensure we can import from tenuo
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from tenuo import SigningKey, Warrant, Subpath, Cidr, Wildcard, Exact
+from tenuo import Cidr, Exact, SigningKey, Subpath, Warrant, Wildcard
 
 # Try to import A2A client
 try:

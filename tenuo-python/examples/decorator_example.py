@@ -5,7 +5,7 @@ Example demonstrating the @guard decorator with explicit warrant.
 For LangChain/FastAPI integration using ContextVar, see examples/context_pattern.py
 """
 
-from tenuo import SigningKey, Pattern, Range, guard, configure, mint_sync, Capability
+from tenuo import Capability, Pattern, Range, SigningKey, configure, guard, mint_sync
 
 
 def main():

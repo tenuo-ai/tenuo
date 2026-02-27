@@ -3660,63 +3660,6 @@ impl PyWarrant {
     // Use these for actual authorization decisions in production code.
     // ========================================================================
 
-    /// Authorize an action against this warrant (PRODUCTION USE).
-    ///
-    /// This is the primary authorization method. It performs all security checks:
-    /// - Warrant expiration
-    /// - Tool permission
-    /// - Proof-of-Possession signature verification
-    /// - Constraint satisfaction
-    ///
-    /// Use this method when you need to make an actual authorization decision.
-    /// For debugging why authorization failed, use `check_constraints()` or `why_denied()`.
-    ///
-    /// Args:
-    ///     tool: Tool name to authorize
-    ///     args: Dictionary of argument name -> value
-    ///     signature: PoP signature bytes (64 bytes) - REQUIRED for security
-    ///
-    /// Returns:
-    ///     True if fully authorized, False otherwise
-    ///
-    /// Note:
-    ///     Returns False for BOTH constraint failures AND missing/invalid PoP.
-    ///     This is intentional - in production, you should not distinguish these.
-    ///     For debugging, use `check_constraints()` instead.
-    #[pyo3(signature = (tool, args, signature=None))]
-    fn authorize(
-        &self,
-        tool: &str,
-        args: &Bound<'_, PyDict>,
-        signature: Option<&[u8]>,
-    ) -> PyResult<bool> {
-        let mut rust_args = HashMap::new();
-        for (key, value) in args.iter() {
-            let field: String = key.extract()?;
-            let cv = py_to_constraint_value(&value)?;
-            rust_args.insert(field, cv);
-        }
-
-        // Convert signature bytes to Signature if provided
-        let sig = match signature {
-            Some(bytes) => {
-                let arr: [u8; 64] = bytes
-                    .try_into()
-                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
-                Some(crate::crypto::Signature::from_bytes(&arr).map_err(to_py_err)?)
-            }
-            None => None,
-        };
-
-        match self.inner.authorize(tool, &rust_args, sig.as_ref()) {
-            Ok(()) => Ok(true),
-            Err(crate::error::Error::ConstraintNotSatisfied { .. }) => Ok(false),
-            Err(crate::error::Error::MissingSignature(_)) => Ok(false),
-            Err(crate::error::Error::SignatureInvalid(_)) => Ok(false),
-            Err(e) => Err(to_py_err(e)),
-        }
-    }
-
     // ========================================================================
     // DIAGNOSTIC METHODS
     // Use these for debugging, logging, and understanding authorization failures.
@@ -3960,6 +3903,11 @@ impl PyWarrant {
         wire::encode_base64(&self.inner).map_err(to_py_err)
     }
 
+    /// Serialize the warrant to raw CBOR bytes.
+    fn to_bytes(&self) -> PyResult<Vec<u8>> {
+        wire::encode(&self.inner).map_err(to_py_err)
+    }
+
     /// Encode the warrant to PEM format (for config files).
     fn to_pem(&self) -> PyResult<String> {
         wire::encode_pem(&self.inner).map_err(to_py_err)
@@ -3969,6 +3917,13 @@ impl PyWarrant {
     #[staticmethod]
     fn from_base64(s: &str) -> PyResult<Self> {
         let inner = wire::decode_base64(s).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    /// Deserialize a warrant from raw CBOR bytes.
+    #[staticmethod]
+    fn from_bytes(data: &[u8]) -> PyResult<Self> {
+        let inner = wire::decode(data).map_err(to_py_err)?;
         Ok(Self { inner })
     }
 
@@ -4905,12 +4860,10 @@ impl PyAuthorizer {
         self.inner.trusted_root_count()
     }
 
-    /// Verify a warrant (checks signature, expiration, revocation).
-    fn verify(&self, warrant: &PyWarrant) -> PyResult<()> {
-        self.inner.verify(&warrant.inner).map_err(to_py_err)
-    }
-
     /// Authorize an action against a warrant.
+    ///
+    /// Full security boundary: signature verification, issuer trust,
+    /// revocation, clearance, capabilities, constraints, PoP, and multi-sig.
     ///
     /// Args:
     ///     warrant: The warrant to check
@@ -4925,6 +4878,12 @@ impl PyAuthorizer {
     /// Example (Python):
     /// - Simple: `authorizer.authorize(warrant, "search", {"query": "test"}, signature)`
     /// - With multi-sig: `authorizer.authorize(warrant, tool, args, signature, [approval1, approval2])`
+    ///
+    /// **Chain verification:** Unlike `Warrant.authorize()` (single-warrant, no issuer trust),
+    /// this method calls `authorize_one()` which wraps `check_chain()`. It verifies issuer
+    /// trust, chain linkage, revocation status, clearance, capabilities, constraints,
+    /// PoP signature, and multi-sig approvals in one call. Prefer this over `Warrant.authorize()`
+    /// for delegated warrants.
     #[pyo3(signature = (warrant, tool, args, signature=None, approvals=None))]
     fn authorize(
         &self,
@@ -4951,7 +4910,6 @@ impl PyAuthorizer {
             None => None,
         };
 
-        // Convert approvals
         let rust_approvals: Vec<RustSignedApproval> = approvals
             .unwrap_or_default()
             .iter()
@@ -4959,24 +4917,18 @@ impl PyAuthorizer {
             .collect();
 
         self.inner
-            .authorize(
+            .authorize_one(
                 &warrant.inner,
                 tool,
                 &rust_args,
                 sig.as_ref(),
                 &rust_approvals,
             )
+            .map(|_| ())
             .map_err(to_py_err)
     }
 
-    /// Convenience: verify warrant and authorize in one call.
-    ///
-    /// Args:
-    ///     warrant: The warrant to check
-    ///     tool: Tool name being invoked
-    ///     args: Dictionary of argument name -> value
-    ///     signature: Optional PoP signature bytes (64 bytes)
-    ///     approvals: Optional list of SignedApproval objects (for multi-sig warrants)
+    /// Alias for `authorize()`. Verifies and authorizes in one call.
     #[pyo3(signature = (warrant, tool, args, signature=None, approvals=None))]
     fn check(
         &self,
@@ -4986,38 +4938,16 @@ impl PyAuthorizer {
         signature: Option<&[u8]>,
         approvals: Option<Vec<PyRef<PySignedApproval>>>,
     ) -> PyResult<()> {
-        let mut rust_args = HashMap::new();
-        for (key, value) in args.iter() {
-            let field: String = key.extract()?;
-            let cv = py_to_constraint_value(&value)?;
-            rust_args.insert(field, cv);
-        }
+        self.authorize(warrant, tool, args, signature, approvals)
+    }
 
-        let sig = match signature {
-            Some(bytes) => {
-                let arr: [u8; 64] = bytes
-                    .try_into()
-                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
-                Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
-            }
-            None => None,
-        };
-
-        // Convert approvals
-        let rust_approvals: Vec<RustSignedApproval> = approvals
-            .unwrap_or_default()
-            .iter()
-            .map(|a| a.inner.clone())
-            .collect();
-
+    /// Verify a warrant's signature, issuer trust, expiration, and revocation.
+    ///
+    /// Does NOT authorize a tool call — use `authorize()` for that.
+    fn verify(&self, warrant: &PyWarrant) -> PyResult<()> {
         self.inner
-            .check(
-                &warrant.inner,
-                tool,
-                &rust_args,
-                sig.as_ref(),
-                &rust_approvals,
-            )
+            .verify_chain(std::slice::from_ref(&warrant.inner))
+            .map(|_| ())
             .map_err(to_py_err)
     }
 
@@ -5033,16 +4963,18 @@ impl PyAuthorizer {
     ///     tool: Tool name being invoked
     ///     args: Dictionary of argument name -> value
     ///     signature: Optional PoP signature bytes (64 bytes)
+    ///     approvals: Optional list of SignedApproval objects for multi-sig warrants
     ///
     /// Returns:
     ///     ChainVerificationResult on success, raises exception on failure
-    #[pyo3(signature = (warrant, tool, args, signature=None))]
+    #[pyo3(signature = (warrant, tool, args, signature=None, approvals=None))]
     fn authorize_one(
         &self,
         warrant: &PyWarrant,
         tool: &str,
         args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
+        approvals: Option<Vec<PyRef<PySignedApproval>>>,
     ) -> PyResult<PyChainVerificationResult> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
@@ -5061,9 +4993,21 @@ impl PyAuthorizer {
             None => None,
         };
 
+        let rust_approvals: Vec<RustSignedApproval> = approvals
+            .unwrap_or_default()
+            .iter()
+            .map(|a| a.inner.clone())
+            .collect();
+
         let result = self
             .inner
-            .authorize_one(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
+            .authorize_one(
+                &warrant.inner,
+                tool,
+                &rust_args,
+                sig.as_ref(),
+                &rust_approvals,
+            )
             .map_err(to_py_err)?;
         Ok(PyChainVerificationResult { inner: result })
     }

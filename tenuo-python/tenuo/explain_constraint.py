@@ -21,11 +21,11 @@ Usage:
     # )
 """
 
-from dataclasses import dataclass
-from typing import Any, Optional, List
-import posixpath
-from urllib.parse import urlparse, unquote
 import ipaddress
+import posixpath
+from dataclasses import dataclass
+from typing import Any, List, Optional
+from urllib.parse import unquote, urlparse
 
 
 @dataclass

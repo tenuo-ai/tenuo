@@ -37,13 +37,12 @@ Usage:
 import base64
 import logging
 import os
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, List, Literal, Optional
 
-from contextvars import ContextVar
-
-from tenuo_core import SigningKey, PublicKey, Authorizer  # type: ignore[import-untyped]
+from tenuo_core import Authorizer, PublicKey, SigningKey  # type: ignore[import-untyped]
 
 from .exceptions import ConfigurationError
 

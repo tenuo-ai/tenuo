@@ -13,14 +13,15 @@ Run this to verify claims on your system. Results will include system
 specifications for reproducibility.
 """
 
-import time
-import sys
-import statistics
 import platform
+import statistics
+import sys
+import time
 from typing import Dict
 
-from tenuo import Warrant, SigningKey, OneOf, UrlPattern, Wildcard, Exact
 from wrapper import TenuoAgentQLAgent
+
+from tenuo import Exact, OneOf, SigningKey, UrlPattern, Warrant, Wildcard
 
 
 class Benchmark:
@@ -524,8 +525,9 @@ def benchmark_memory_usage():
     print("="*70)
 
     try:
-        import psutil  # type: ignore
         import os
+
+        import psutil  # type: ignore
 
         process = psutil.Process(os.getpid())
 

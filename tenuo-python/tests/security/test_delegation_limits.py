@@ -8,14 +8,13 @@ Tests verifying:
 """
 
 import pytest
+from tenuo_core import MAX_DELEGATION_DEPTH, Clearance
 
 from tenuo import (
     Warrant,
 )
 from tenuo.constraints import Constraints
-from tenuo.exceptions import DepthExceeded
-from tenuo_core import Clearance, MAX_DELEGATION_DEPTH
-from tenuo.exceptions import ValidationError
+from tenuo.exceptions import DepthExceeded, ValidationError
 
 
 @pytest.mark.security
@@ -141,7 +140,7 @@ class TestDelegationLimits:
         print("  [Attack 30] Attempting to authorize tool execution with issuer warrant...")
 
         try:
-            authorized = issuer.authorize("delete", {})
+            authorized = issuer.check_constraints("delete", {}) is None
             if authorized:
                 print("  [CRITICAL] Attack 30 SUCCEEDED: Issuer warrant executed tool!")
                 assert False, "Issuer warrants should not execute tools"

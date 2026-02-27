@@ -2,13 +2,14 @@
 
 import io
 import json
-import pytest
-from typing import Any, Dict, Optional
-from unittest.mock import MagicMock
 
 # Mock google.adk classes since they might not be installed
 # We need to do this BEFORE importing tenuo.google_adk because plugin.py imports from google.adk
 import sys
+from typing import Any, Dict, Optional
+from unittest.mock import MagicMock
+
+import pytest
 
 mock_google = MagicMock()
 sys.modules["google"] = mock_google
@@ -47,9 +48,10 @@ class MockToolContext:
 
 
 # Import the code under test (after mocking google.adk)
-from tenuo.google_adk import TenuoGuard, ToolAuthorizationError, MissingSigningKeyError  # noqa: E402
-from tenuo_core import Warrant, SigningKey, Pattern, Range  # noqa: E402
+from tenuo_core import Pattern, Range, SigningKey, Warrant  # noqa: E402
+
 from tenuo.constraints import Subpath, UrlSafe  # noqa: E402
+from tenuo.google_adk import MissingSigningKeyError, TenuoGuard, ToolAuthorizationError  # noqa: E402
 
 
 @pytest.fixture
@@ -461,7 +463,7 @@ class TestArgumentRemapping:
 
 # --- Plugin Tests ---
 
-from tenuo.google_adk import TenuoPlugin, ScopedWarrant  # noqa: E402
+from tenuo.google_adk import ScopedWarrant, TenuoPlugin  # noqa: E402
 
 
 class MockCallbackContext:
@@ -568,10 +570,10 @@ from tenuo.google_adk import (  # noqa: E402
     GuardBuilder,
     chain_callbacks,
     explain_denial,
-    visualize_warrant,
-    suggest_skill_mapping,
-    scoped_warrant,
     generate_hints,
+    scoped_warrant,
+    suggest_skill_mapping,
+    visualize_warrant,
 )
 
 
@@ -1512,7 +1514,7 @@ class TestInvariantAttenuation:
 
     def test_cannot_escalate_to_wildcard(self, keys):
         """Escalating from any constraint TO Wildcard MUST fail (monotonicity)."""
-        from tenuo_core import Wildcard, Exact
+        from tenuo_core import Exact, Wildcard
 
         # Create parent with Exact constraint
         parent_warrant = Warrant.issue(
@@ -1536,7 +1538,7 @@ class TestInvariantAttenuation:
 
     def test_wildcard_can_narrow_to_anything(self, keys):
         """Wildcard CAN be narrowed to any constraint (it's the superset)."""
-        from tenuo_core import Wildcard, Exact
+        from tenuo_core import Exact, Wildcard
 
         # Create parent with Wildcard constraint
         parent_warrant = Warrant.issue(

@@ -1,7 +1,8 @@
 """Test tool selection methods in GrantBuilder."""
 
-from tenuo import SigningKey, Warrant
 from tenuo_core import Clearance
+
+from tenuo import SigningKey, Warrant
 
 
 def test_with_issuable_tool_single():

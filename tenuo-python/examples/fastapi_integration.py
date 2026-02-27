@@ -19,14 +19,15 @@ Key Patterns:
 Run with: uvicorn fastapi_integration:app --reload
 """
 
-import os
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException
-from tenuo import SigningKey, Warrant, Pattern, Range
+
+from tenuo import Pattern, Range, SigningKey, Warrant
 from tenuo.fastapi import SecureAPIRouter, configure_tenuo
 
 # Configure logging
@@ -322,8 +323,9 @@ def create_demo_warrants() -> Dict[str, tuple[Warrant, str]]:
 
 
 if __name__ == "__main__":
-    import uvicorn
     import base64
+
+    import uvicorn
 
     print("=" * 70)
     print("Tenuo FastAPI Integration Example - SecureAPIRouter Pattern")

@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from tenuo import configure, SigningKey, Capability, Pattern, Range
+from tenuo import Capability, Pattern, Range, SigningKey, configure
 from tenuo.cli import print_rich_warrant
 
 

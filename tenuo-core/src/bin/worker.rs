@@ -227,10 +227,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .collect();
 
     let mission_a_sig = mission_a_leaf.sign(&worker_keypair, "read_file", &file_args)?;
-    let result = mission_a_leaf.authorize("read_file", &file_args, Some(&mission_a_sig));
+    let result = authorizer.authorize_one(
+        mission_a_leaf,
+        "read_file",
+        &file_args,
+        Some(&mission_a_sig),
+        &[],
+    );
     println!("  📁 Mission A → read_file /data/config.json");
     match result {
-        Ok(()) => println!("     ✓ ALLOWED (correct warrant for this mission)"),
+        Ok(_) => println!("     ✓ ALLOWED (correct warrant for this mission)"),
         Err(e) => println!("     ✗ DENIED: {} (unexpected!)", e),
     }
 
@@ -249,29 +255,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .into_iter()
     .collect();
 
-    let result = mission_a_leaf.authorize("manage_infrastructure", &infra_args, None);
+    let result = authorizer.authorize_one(
+        mission_a_leaf,
+        "manage_infrastructure",
+        &infra_args,
+        None,
+        &[],
+    );
     println!("\n  📁 Mission A → manage_infrastructure staging-web");
     match result {
-        Ok(()) => println!("     ✗ ALLOWED (unexpected! should be denied)"),
+        Ok(_) => println!("     ✗ ALLOWED (unexpected! should be denied)"),
         Err(_) => println!("     ✓ DENIED (correct: wrong warrant for this tool)"),
     }
 
     // Test 3: Mission B warrant for manage_infrastructure (should PASS)
     let mission_b_sig =
         mission_b_leaf.sign(&worker_keypair, "manage_infrastructure", &infra_args)?;
-    let result =
-        mission_b_leaf.authorize("manage_infrastructure", &infra_args, Some(&mission_b_sig));
+    let result = authorizer.authorize_one(
+        mission_b_leaf,
+        "manage_infrastructure",
+        &infra_args,
+        Some(&mission_b_sig),
+        &[],
+    );
     println!("\n  🔧 Mission B → manage_infrastructure staging-web");
     match result {
-        Ok(()) => println!("     ✓ ALLOWED (correct warrant for this mission)"),
+        Ok(_) => println!("     ✓ ALLOWED (correct warrant for this mission)"),
         Err(e) => println!("     ✗ DENIED: {} (unexpected!)", e),
     }
 
     // Test 4: Mission B warrant for read_file (should FAIL)
-    let result = mission_b_leaf.authorize("read_file", &file_args, None);
+    let result = authorizer.authorize_one(mission_b_leaf, "read_file", &file_args, None, &[]);
     println!("\n  🔧 Mission B → read_file /data/config.json");
     match result {
-        Ok(()) => println!("     ✗ ALLOWED (unexpected! should be denied)"),
+        Ok(_) => println!("     ✗ ALLOWED (unexpected! should be denied)"),
         Err(_) => println!("     ✓ DENIED (correct: wrong warrant for this tool)"),
     }
 
@@ -421,14 +438,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Remote mode: Send full chain to authorizer (zero-trust pattern)
             remote_check(&client, url, &chain, tool, &args, &signature)
         } else {
-            // Local mode: Verify leaf warrant directly
-            leaf_warrant
-                .authorize(tool, &args, Some(&signature))
+            // Local mode: Full Authorizer check (chain + PoP + constraints)
+            authorizer
+                .check_chain(&chain, tool, &args, Some(&signature), &[])
+                .map(|_| ())
                 .map_err(|e| e.into())
         };
         #[cfg(not(feature = "http-client"))]
-        let result = leaf_warrant
-            .authorize(tool, &args, Some(&signature))
+        let result = authorizer
+            .check_chain(&chain, tool, &args, Some(&signature), &[])
+            .map(|_| ())
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() });
         let elapsed = start.elapsed();
 
@@ -672,7 +691,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sig_immediate = short_warrant.sign(&worker_keypair, "read_file", &short_args)?;
 
-    match short_warrant.authorize("read_file", &short_args, Some(&sig_immediate)) {
+    match authorizer.authorize_one(
+        &short_warrant,
+        "read_file",
+        &short_args,
+        Some(&sig_immediate),
+        &[],
+    ) {
         Ok(_) => println!("        ✓ Success (Authorized)"),
         Err(e) => {
             println!("        ✗ Failed: {}", e);
@@ -686,18 +711,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. Verification after expiration
     println!("  [4/5] Testing after expiration...");
-    // Update signature implies new timestamp, but warrant itself is expired
-    // We can try to sign, or just rely on authorize check.
-    // authorize() checks expiration first.
 
     let sig_delayed = short_warrant.sign(&worker_keypair, "read_file", &short_args)?;
-    match short_warrant.authorize("read_file", &short_args, Some(&sig_delayed)) {
+    match authorizer.authorize_one(
+        &short_warrant,
+        "read_file",
+        &short_args,
+        Some(&sig_delayed),
+        &[],
+    ) {
         Ok(_) => {
             println!("        ✗ Unexpected SUCCESS (Should be expired!)");
             std::process::exit(1);
         }
         Err(e) => {
-            // We expect "Warrant expired" error or similar
             println!("        ✓ DENIED: {}", e);
             if !e.to_string().contains("expired") && !e.to_string().contains("Expired") {
                 println!("          (Note: Check error message to ensure it's expiration)");
@@ -709,7 +736,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  [5/5] Verifying parent (Mission A) is still valid...");
     match mission_a_leaf.sign(&worker_keypair, "read_file", &short_args) {
         Ok(fresh_sig) => {
-            match mission_a_leaf.authorize("read_file", &short_args, Some(&fresh_sig)) {
+            match authorizer.authorize_one(
+                mission_a_leaf,
+                "read_file",
+                &short_args,
+                Some(&fresh_sig),
+                &[],
+            ) {
                 Ok(_) => println!("        ✓ Parent still valid"),
                 Err(e) => {
                     println!("        ✗ Parent verification failed: {}", e);

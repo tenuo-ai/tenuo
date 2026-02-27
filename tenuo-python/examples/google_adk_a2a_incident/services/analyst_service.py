@@ -9,21 +9,21 @@ access to query_threat_db capability.
 Security: Uses warrant.authorize() for Tier 2 (PoP) validation.
 """
 
-import asyncio
 import argparse
+import asyncio
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from tenuo import SigningKey, Warrant
-from tenuo.exceptions import AuthorizationError, ConstraintViolation
-
 # Import tools
 from tools import query_threat_db
+
+from tenuo import SigningKey, Warrant
+from tenuo.exceptions import AuthorizationError, ConstraintViolation
 
 
 class AnalystService:
@@ -57,9 +57,9 @@ class AnalystService:
         """Create Starlette ASGI application."""
         try:
             from starlette.applications import Starlette
-            from starlette.routing import Route
-            from starlette.responses import JSONResponse
             from starlette.requests import Request
+            from starlette.responses import JSONResponse
+            from starlette.routing import Route
         except ImportError:
             raise ImportError("starlette is required: uv pip install starlette uvicorn")
 

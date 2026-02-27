@@ -12,14 +12,18 @@ These Python wrappers add:
 - Type hints and documentation
 """
 
-from typing import Dict, Optional, Any, List, Union
+from typing import Any, Dict, List, Optional, Union
 
-from tenuo_core import (  # type: ignore[import-untyped]
-    Warrant,
-    SigningKey,
-    PublicKey,
-    Clearance,
+from tenuo_core import (
     AttenuationBuilder as RustAttenuationBuilder,
+)
+from tenuo_core import (  # type: ignore[import-untyped]
+    Clearance,
+    PublicKey,
+    SigningKey,
+    Warrant,
+)
+from tenuo_core import (
     DelegationDiff as RustDelegationDiff,
 )
 

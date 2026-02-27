@@ -198,16 +198,46 @@ Shlex(allow_binaries=["/usr/bin/ls", "/usr/bin/cat"])  # Only allows these binar
 
 ### PROOF-OF-POSSESSION (PoP) ###
 
-# PoP proves the holder has the private key
-args = {"path": "/data/test.txt"}
-pop_signature = warrant.sign(holder_key, "read_file", args)
+# PoP proves the holder has the private key at invocation time.
+# ALWAYS use an Authorizer — never call warrant.authorize() directly.
 
-# Verification (done by authorizer)
-authorized = warrant.authorize(
-    tool="read_file",
-    args=args,
-    signature=bytes(pop_signature)
-)
+### AUTHORIZATION: WHICH METHOD TO USE ###
+
+# 1. You have the key bound (local PEP, LangChain, decorators):
+bound = warrant.bind(holder_key)
+result = bound.validate("read_file", {"path": "/data/test.txt"})
+if result:
+    do_read()  # authorized
+
+# 2. Single warrant, server-side (you have trusted roots):
+from tenuo import Authorizer
+auth = Authorizer(trusted_roots=[root_pubkey])
+pop = warrant.sign(holder_key, "read_file", args, int(time.time()))
+auth.authorize_one(warrant, "read_file", args, signature=bytes(pop))
+# raises TenuoError on any failure — catches issuer trust, expiry, revocation,
+# PoP mismatch, constraint violations, and multi-sig gaps
+
+# 3. Delegation chain (attenuated warrant from another agent):
+chain = [root_warrant, delegated_warrant]
+auth.check_chain(chain, "read_file", args, signature=bytes(pop))
+# verifies all invariants: root trust, chain linkage, depth, monotonicity,
+# expiry, revocation, clearance, PoP, constraints
+# NOTE: verify_chain(chain) is structural check only — no tool/PoP/constraints.
+#       Always use check_chain() for authorization decisions on chains.
+
+# HIERARCHY:
+# bound.validate()   — single-warrant; trusts the warrant's OWN issuer (self-trust).
+#                      Safe only when you already trust whoever gave you the warrant.
+# authorize_one()    — single-warrant; trusts only your PRE-CONFIGURED roots.
+#                      Adds issuer trust, SRL revocation, clearance, multi-sig.
+# check_chain()      — delegation chain; strongest. All of authorize_one() plus
+#                      chain linkage, monotonicity, depth limit across the chain.
+# verify_chain()     — structural check ONLY (no PoP/constraints). Use for debugging.
+
+# DO NOT USE for authorization decisions:
+# warrant.authorize()  — skips issuer trust, no chain verification
+# auth.verify(warrant) — checks signature/trust only, NOT expiry or PoP
+# warrant.allows()     — no crypto at all, for UI hints only
 
 ### KEY MANAGEMENT ###
 

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +42,10 @@ except ImportError:
     BasePlugin = object  # type: ignore[misc,assignment]
 
 if TYPE_CHECKING:
-    from google.adk.tools.tool_context import ToolContext  # type: ignore[import-not-found,import-untyped]
-    from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
     from google.adk.agents.callback_context import CallbackContext  # type: ignore[import-not-found,import-untyped]
-    from tenuo_core import Warrant, SigningKey
+    from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
+    from google.adk.tools.tool_context import ToolContext  # type: ignore[import-not-found,import-untyped]
+    from tenuo_core import SigningKey, Warrant
 
 from .guard import TenuoGuard  # noqa: E402
 

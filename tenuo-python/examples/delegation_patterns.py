@@ -4,7 +4,7 @@ Delegation Patterns: Issuer → Issuer vs Issuer → Executor
 This example demonstrates the key delegation patterns in Tenuo using the new API.
 """
 
-from tenuo import SigningKey, Warrant, Pattern, Exact
+from tenuo import Exact, Pattern, SigningKey, Warrant
 
 
 def main():

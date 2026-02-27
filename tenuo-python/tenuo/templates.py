@@ -21,9 +21,9 @@ Usage:
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from .constraints import Capability
-from tenuo_core import Pattern, Exact, OneOf, Range, Regex, Subpath, UrlSafe  # type: ignore
+from tenuo_core import Exact, OneOf, Pattern, Range, Regex, Subpath, UrlSafe  # type: ignore
 
+from .constraints import Capability
 
 # =============================================================================
 # File System Templates

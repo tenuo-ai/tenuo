@@ -10,25 +10,25 @@ Tests verifying:
 """
 
 import pytest
+from tenuo_core import Cidr, UrlPattern
 
 from tenuo import (
-    Warrant,
+    CEL,
+    ConstraintViolation,
+    Contains,
+    MonotonicityError,
+    NotOneOf,
+    OneOf,
     Pattern,
     Range,
-    Wildcard,
-    OneOf,
-    NotOneOf,
-    Contains,
-    Subset,
-    CEL,
-    MonotonicityError,
-    ConstraintViolation,
     Subpath,
+    Subset,
     UrlSafe,
+    Warrant,
+    Wildcard,
 )
 from tenuo.constraints import Constraints
-from tenuo.exceptions import PatternExpanded, WildcardExpansion, EmptyResultSet
-from tenuo_core import Cidr, UrlPattern
+from tenuo.exceptions import EmptyResultSet, PatternExpanded, WildcardExpansion
 
 
 @pytest.mark.security
@@ -100,7 +100,7 @@ class TestMonotonicity:
         print(f"  [Check] Child capabilities: {child.capabilities}")
 
         # Try to read /etc/passwd (should fail)
-        if child.authorize("read_file", {"path": "/etc/passwd"}):
+        if child.check_constraints("read_file", {"path": "/etc/passwd"}) is None:
             print("  [CRITICAL] Attack 12 SUCCEEDED: Constraint was removed!")
             assert False, "Constraint should be inherited"
         else:
@@ -248,10 +248,10 @@ class TestMonotonicity:
         )
 
         # Allows everything except prod
-        if warrant.authorize("query", {"env": "staging"}):
+        if warrant.check_constraints("query", {"env": "staging"}) is None:
             print("  [Info] NotOneOf without positive constraint accepted (Legal but risky)")
 
-        if warrant.authorize("query", {"env": "prod"}):
+        if warrant.check_constraints("query", {"env": "prod"}) is None:
             print("  [CRITICAL] NotOneOf didn't block prod!")
             assert False, "NotOneOf should block excluded values"
         else:

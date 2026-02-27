@@ -12,18 +12,19 @@ Tests cover:
 """
 
 import pytest
+from tenuo_core import Cidr, UrlPattern
+
 from tenuo import (
-    Warrant,
-    SigningKey,
-    Pattern,
-    guard,
-    warrant_scope,
-    key_scope,
     Exact,
+    Pattern,
+    SigningKey,
+    Warrant,
+    guard,
+    key_scope,
+    warrant_scope,
 )
 from tenuo.constraints import Constraints
 from tenuo.exceptions import ScopeViolation
-from tenuo_core import Cidr, UrlPattern
 
 
 def test_pattern_constraint_matching():

@@ -79,7 +79,7 @@
 //! let warrant = wire::decode_base64(&warrant_chain_base64)?;
 //!
 //! // 3. Authorize the action using extracted constraints
-//! authorizer.check(
+//! authorizer.authorize_one(
 //!     &warrant,
 //!     "filesystem_read",
 //!     &result.constraints,
@@ -407,7 +407,7 @@ pub fn to_jsonrpc_error(error: &ExtractionError) -> (i32, String) {
 /// # Example
 ///
 /// ```rust,ignore
-/// match authorizer.check(&warrant, tool, &constraints, signature) {
+/// match authorizer.authorize_one(&warrant, tool, &constraints, signature, &[]) {
 ///     Ok(_) => { /* execute tool */ },
 ///     Err(e) => {
 ///         let (code, message) = auth_error_to_jsonrpc(&e);

@@ -1,6 +1,6 @@
 import time
 
-from tenuo import SigningKey, Warrant, Pattern, Exact, Range
+from tenuo import Authorizer, Exact, Pattern, Range, SigningKey, Warrant
 from tenuo.constraints import Constraints
 
 
@@ -48,11 +48,18 @@ def test_full_warrant_lifecycle():
     assert worker_warrant.depth == 1
 
     # 4. Test authorization
+    # Create an authorizer that trusts the control plane's root key
+    authorizer = Authorizer()
+    authorizer.add_trusted_root(control_keypair.public_key)
 
     # Helper to authorize with PoP
     def check_auth(warrant, tool, args, keypair):
         signature = warrant.sign(keypair, tool, args, int(time.time()))
-        return warrant.authorize(tool, args, bytes(signature))
+        try:
+            authorizer.authorize(warrant, tool, args, bytes(signature))
+            return True
+        except Exception:
+            return False
 
     # Allowed: matches constraints
     args1 = {"cluster": "staging-web", "replicas": 5}

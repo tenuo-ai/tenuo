@@ -20,22 +20,23 @@ Usage:
         return {"results": [...]}
 """
 
-from dataclasses import dataclass
-from typing import Optional, Any, Dict, List, Callable
 import base64
-import uuid
 import logging
+import uuid
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional
 
-from tenuo_core import Warrant, PublicKey  # type: ignore[import-untyped]
-from tenuo.exceptions import TenuoError, DeserializationError
+from tenuo_core import PublicKey, Warrant  # type: ignore[import-untyped]
+
 from tenuo._enforcement import EnforcementResult
+from tenuo.exceptions import DeserializationError, TenuoError
 
 logger = logging.getLogger("tenuo.fastapi")
 
 
 # Use string forward refs or try import, FastAPI must be installed
 try:
-    from fastapi import FastAPI, Header, HTTPException, Depends, Request, status
+    from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
     from fastapi.responses import JSONResponse
     from fastapi.security import APIKeyHeader
 
@@ -321,6 +322,8 @@ class TenuoGuard:
         Note: This uses _VerificationOnlyKey sentinel since in verify mode,
         the signing key is never used (precomputed_signature is used instead).
         """
+        from tenuo_core import Authorizer as _Authorizer
+
         from tenuo._enforcement import enforce_tool_call
 
         # In verify mode, enforce_tool_call() requires a BoundWarrant for type safety
@@ -332,12 +335,17 @@ class TenuoGuard:
         # This is safe and intentional - the key is only for type compatibility.
         bound = warrant.bind(_VerificationOnlyKey())  # type: ignore[arg-type]
 
+        issuer_pub = getattr(warrant, "issuer_public_key", None) or getattr(warrant, "issuer", None)
+        roots = [issuer_pub] if issuer_pub is not None else []
+        authorizer = _Authorizer(trusted_roots=roots)
+
         return enforce_tool_call(
             tool_name=tool,
             tool_args=args,
             bound_warrant=bound,
             verify_mode="verify",
             precomputed_signature=pop_signature,
+            authorizer=authorizer,
         )
 
     def __call__(
@@ -424,7 +432,9 @@ class TenuoGuard:
             expose_details = _config.get("expose_error_details", False)
 
             # Map specific errors to HTTP codes
-            if "expired" in reason.lower():
+            if enforcement.error_type == "expired" or (
+                "expired" in reason.lower() and "proof-of-possession" not in reason.lower()
+            ):
                  raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail={

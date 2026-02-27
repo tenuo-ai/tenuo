@@ -8,24 +8,24 @@ Tests cover:
 - Client-server roundtrip (basic)
 """
 
-import pytest
 import time
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from tenuo.a2a import (
-    A2AServer,
     A2AClient,
-    Grant,
+    A2AServer,
     AgentCard,
-    current_task_warrant,
+    AudienceMismatchError,
+    ConstraintBindingError,
+    ConstraintViolationError,
+    Grant,
     MissingWarrantError,
     SkillNotGrantedError,
-    ConstraintViolationError,
-    ConstraintBindingError,
-    AudienceMismatchError,
+    current_task_warrant,
 )
 from tenuo.a2a.server import ReplayCache
-
 
 # =============================================================================
 # Fixtures
@@ -621,7 +621,7 @@ class TestConstraintChecking:
     def test_not_constraint(self, server):
         """Not constraint negates inner constraint."""
         try:
-            from tenuo_core import Not, Exact
+            from tenuo_core import Exact, Not
 
             constraint = Not(Exact("forbidden"))
             if hasattr(constraint, "matches"):
@@ -902,18 +902,18 @@ class TestErrorCodeInvariants:
     def test_all_errors_have_to_jsonrpc_error(self):
         """Invariant: All error types can format to JSON-RPC."""
         from tenuo.a2a.errors import (
-            MissingWarrantError,
-            InvalidSignatureError,
-            UntrustedIssuerError,
-            WarrantExpiredError,
             AudienceMismatchError,
-            ReplayDetectedError,
-            SkillNotGrantedError,
-            ConstraintViolationError,
-            RevokedError,
             ChainInvalidError,
             ChainMissingError,
+            ConstraintViolationError,
+            InvalidSignatureError,
             KeyMismatchError,
+            MissingWarrantError,
+            ReplayDetectedError,
+            RevokedError,
+            SkillNotGrantedError,
+            UntrustedIssuerError,
+            WarrantExpiredError,
         )
 
         errors = [
@@ -1498,8 +1498,9 @@ class TestWarrantValidationUnit:
     @pytest.mark.asyncio
     async def test_validate_warrant_replay_detected(self, server_for_validation):
         """Replayed warrant (same jti) is rejected."""
-        from tenuo.a2a.errors import ReplayDetectedError
         import io
+
+        from tenuo.a2a.errors import ReplayDetectedError
 
         # Redirect audit log to prevent serialization errors with mocks
         server_for_validation.audit_log = io.StringIO()
@@ -2046,6 +2047,7 @@ class TestAdversarialStreaming:
     def test_stream_timeout_exists(self):
         """Stream timeout parameter should exist."""
         import inspect
+
         from tenuo.a2a.client import A2AClient
 
         sig = inspect.signature(A2AClient.send_task_streaming)
@@ -2363,7 +2365,7 @@ class TestASGIEndToEnd:
     async def test_discover_endpoint(self, app_server):
         """GET /.well-known/agent.json returns agent card."""
         try:
-            from httpx import AsyncClient, ASGITransport
+            from httpx import ASGITransport, AsyncClient
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2382,7 +2384,7 @@ class TestASGIEndToEnd:
     async def test_task_send_basic(self, app_server):
         """POST /a2a with task/send executes skill."""
         try:
-            from httpx import AsyncClient, ASGITransport
+            from httpx import ASGITransport, AsyncClient
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2411,7 +2413,7 @@ class TestASGIEndToEnd:
     async def test_task_send_with_constraints(self, app_server):
         """Task send validates type constraints."""
         try:
-            from httpx import AsyncClient, ASGITransport
+            from httpx import ASGITransport, AsyncClient
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2435,7 +2437,7 @@ class TestASGIEndToEnd:
     async def test_task_send_skill_not_found(self, app_server):
         """Task send returns error for unknown skill."""
         try:
-            from httpx import AsyncClient, ASGITransport
+            from httpx import ASGITransport, AsyncClient
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2462,7 +2464,7 @@ class TestASGIEndToEnd:
     async def test_unknown_method_error(self, app_server):
         """Unknown JSON-RPC method returns error."""
         try:
-            from httpx import AsyncClient, ASGITransport
+            from httpx import ASGITransport, AsyncClient
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2481,7 +2483,7 @@ class TestASGIEndToEnd:
     async def test_parse_error(self, app_server):
         """Invalid JSON returns parse error."""
         try:
-            from httpx import AsyncClient, ASGITransport
+            from httpx import ASGITransport, AsyncClient
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2524,8 +2526,9 @@ class TestA2AClientWithMockServer:
     async def test_discover_success(self, mock_agent_card):
         """Client.discover() fetches and parses agent card."""
         try:
-            from httpx import Response  # noqa: F401
             from unittest.mock import AsyncMock
+
+            from httpx import Response  # noqa: F401
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2551,8 +2554,9 @@ class TestA2AClientWithMockServer:
     async def test_discover_with_key_pinning_success(self, mock_agent_card):
         """Client verifies pinned key matches."""
         try:
-            from httpx import Response  # noqa: F401
             from unittest.mock import AsyncMock
+
+            from httpx import Response  # noqa: F401
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2577,8 +2581,9 @@ class TestA2AClientWithMockServer:
     async def test_discover_with_key_pinning_mismatch(self, mock_agent_card):
         """Client raises error when pinned key doesn't match."""
         try:
-            from httpx import Response  # noqa: F401
             from unittest.mock import AsyncMock
+
+            from httpx import Response  # noqa: F401
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2604,8 +2609,9 @@ class TestA2AClientWithMockServer:
     async def test_send_task_success(self):
         """Client.send_task() sends task and returns result."""
         try:
-            from httpx import Response  # noqa: F401
             from unittest.mock import AsyncMock
+
+            from httpx import Response  # noqa: F401
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2653,8 +2659,9 @@ class TestA2AClientWithMockServer:
     async def test_send_task_with_warrant(self):
         """Client.send_task() includes warrant in header."""
         try:
-            from httpx import Response  # noqa: F401
             from unittest.mock import AsyncMock
+
+            from httpx import Response  # noqa: F401
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2698,8 +2705,9 @@ class TestA2AClientWithMockServer:
     async def test_send_task_error_response(self):
         """Client.send_task() handles error responses."""
         try:
-            from httpx import Response  # noqa: F401
             from unittest.mock import AsyncMock
+
+            from httpx import Response  # noqa: F401
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2824,7 +2832,7 @@ class TestWarrantJWTParsing:
     def test_warrant_with_constraints(self, test_keypair):
         """Warrant with constraints serializes correctly."""
         try:
-            from tenuo_core import Warrant, Pattern  # noqa: F401
+            from tenuo_core import Pattern, Warrant  # noqa: F401
         except ImportError:
             pytest.skip("tenuo_core not available")
 
@@ -2884,8 +2892,8 @@ class TestE2EWithRealWarrants:
     async def test_valid_warrant_allows_execution(self, trusted_keypair, server_with_real_trust):
         """Valid warrant from trusted issuer allows skill execution."""
         try:
+            from httpx import ASGITransport, AsyncClient
             from tenuo_core import Warrant
-            from httpx import AsyncClient, ASGITransport
         except ImportError:
             pytest.skip("tenuo_core or httpx not available")
 
@@ -2921,7 +2929,7 @@ class TestE2EWithRealWarrants:
     async def test_missing_warrant_rejected(self, server_with_real_trust):
         """Missing warrant is rejected when required."""
         try:
-            from httpx import AsyncClient, ASGITransport
+            from httpx import ASGITransport, AsyncClient
         except ImportError:
             pytest.skip("httpx not available")
 
@@ -2961,7 +2969,8 @@ class TestDelegateFunction:
     async def test_delegate_basic_usage(self):
         """delegate() creates attenuated warrant."""
         try:
-            from tenuo_core import Warrant, SigningKey  # noqa: F401
+            from tenuo_core import SigningKey, Warrant  # noqa: F401
+
             from tenuo.a2a import delegate
         except ImportError:
             pytest.skip("tenuo_core not available")

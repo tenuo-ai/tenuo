@@ -18,18 +18,18 @@ Key Patterns:
 """
 
 import time
-from typing import Optional, Callable, Any
 from enum import Enum
+from typing import Any, Callable, Optional
 
 from tenuo import (
-    Warrant,
-    SigningKey,
-    warrant_scope,
-    key_scope,
-    guard,
     Pattern,
     Range,
+    SigningKey,
     TenuoError,
+    Warrant,
+    guard,
+    key_scope,
+    warrant_scope,
 )
 from tenuo.exceptions import AuthorizationError, ScopeViolation
 

@@ -49,7 +49,6 @@ from tenuo import SigningKey, Subpath, UrlSafe, Warrant
 from tenuo.autogen import GuardBuilder
 from tenuo.exceptions import AuthorizationDenied
 
-
 SAMPLE_PAPER_CONTENT = (
     "Time-Of-Check to Time-Of-Use Vulnerabilities in LLM Tool Execution\n"
     "===================================================================\n\n"

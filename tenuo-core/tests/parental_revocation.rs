@@ -21,7 +21,9 @@ fn test_parental_revocation() {
         .unwrap();
 
     // 3. Verify Initial State (Valid)
-    assert!(data_plane.verify(&warrant).is_ok());
+    assert!(data_plane
+        .verify_chain(std::slice::from_ref(&warrant))
+        .is_ok());
     assert!(!data_plane.is_revoked(&warrant));
 
     // 4. Submit Revocation (Parent)
@@ -35,8 +37,8 @@ fn test_parental_revocation() {
     // 5. Verify Revoked State
     assert!(data_plane.is_revoked(&warrant));
 
-    // Verify verify() fails
-    let result = data_plane.verify(&warrant);
+    // Verify chain verification fails after revocation
+    let result = data_plane.verify_chain(&[warrant]);
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("revoked"));
 }

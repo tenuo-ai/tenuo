@@ -5,10 +5,11 @@ except ImportError:
     lms = None
 
 import display
-from protected_tools import ProtectedToolWrapper
-from tools import web_search, read_file, write_file, http_request, delegate
 from prompts import RESEARCH_AGENT_SYSTEM_PROMPT, SUMMARY_AGENT_SYSTEM_PROMPT
-from tenuo import Warrant, Capability, Pattern, Exact, SigningKey
+from protected_tools import ProtectedToolWrapper
+from tools import delegate, http_request, read_file, web_search, write_file
+
+from tenuo import Capability, Exact, Pattern, SigningKey, Warrant
 
 
 async def run_research_agent(

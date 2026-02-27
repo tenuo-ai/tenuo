@@ -6,15 +6,16 @@ Covers:
 - tenuo.fastapi
 """
 
-import pytest
-
-from tenuo import Warrant
-from tenuo.cli import verify_warrant, inspect_warrant, parse_kv_args
-import tenuo.testing  # noqa: F401 - Applies monkey-patch for Warrant.quick_mint
-import sys
 import os
+import sys
 import tempfile
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+import tenuo.testing  # noqa: F401 - Applies monkey-patch for Warrant.quick_mint
+from tenuo import Warrant
+from tenuo.cli import inspect_warrant, parse_kv_args, verify_warrant
 
 try:
     from fastapi import HTTPException

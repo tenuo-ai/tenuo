@@ -41,14 +41,15 @@ This demo shows how to enforce these boundaries at the gateway level.
 
 import time
 
+from tenuo_core import Clearance
+
 from tenuo import (
-    SigningKey,
-    Warrant,
     Authorizer,
     Pattern,
+    SigningKey,
+    Warrant,
 )
 from tenuo.exceptions import Unauthorized
-from tenuo_core import Clearance
 
 
 def main():

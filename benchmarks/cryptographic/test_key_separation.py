@@ -10,8 +10,43 @@ Key insight: Even if a warrant is intercepted, it's useless without
 the holder's private key.
 """
 
+import time
+
 import pytest
 from tenuo import SigningKey, Warrant, Range, Authorizer
+
+
+
+# ---------------------------------------------------------------------------
+# Authorization helpers — require an explicit issuer_key so each test
+# configures trust roots the same way production code does. No self-trust.
+# ---------------------------------------------------------------------------
+
+def _is_authorized(warrant, tool, args, sig, *, issuer_key):
+    """Return True if authorized, False if denied. Uses explicit root-of-trust."""
+    try:
+        Authorizer(trusted_roots=[issuer_key]).authorize_one(
+            warrant, tool, args,
+            signature=sig if isinstance(sig, bytes) else bytes(sig)
+        )
+        return True
+    except Exception:
+        return False
+
+def _assert_authorized(warrant, tool, args, sig, *, issuer_key):
+    """Assert that authorization succeeds against an explicit trust root."""
+    Authorizer(trusted_roots=[issuer_key]).authorize_one(
+        warrant, tool, args,
+        signature=sig if isinstance(sig, bytes) else bytes(sig)
+    )
+
+def _assert_denied(warrant, tool, args, sig, *, issuer_key):
+    """Assert that authorization fails against an explicit trust root."""
+    with pytest.raises(Exception):
+        Authorizer(trusted_roots=[issuer_key]).authorize_one(
+            warrant, tool, args,
+            signature=sig if isinstance(sig, bytes) else bytes(sig)
+        )
 
 
 class TestKeySeparation:
@@ -44,7 +79,7 @@ class TestKeySeparation:
             .mint(issuer_key)
         )
 
-    def test_warrant_alone_is_useless(self, warrant, attacker_key):
+    def test_warrant_alone_is_useless(self, warrant, attacker_key, issuer_key):
         """
         Having the warrant bytes doesn't grant access.
 
@@ -55,33 +90,40 @@ class TestKeySeparation:
         recovered_warrant = Warrant.from_base64(warrant_base64)
 
         # But attacker can't use it without holder's key
-        sig = recovered_warrant.sign(attacker_key, "secret_action", {"level": 5})
-        assert not recovered_warrant.authorize(
-            "secret_action", {"level": 5}, bytes(sig)
+        sig = recovered_warrant.sign(attacker_key, "secret_action", {"level": 5}, int(time.time()))
+        _assert_denied(recovered_warrant,
+            "secret_action", {"level": 5}, bytes(sig),
+            issuer_key=issuer_key.public_key
         )
 
-    def test_holder_key_alone_is_useless(self, holder_key):
+    def test_holder_key_alone_is_useless(self, issuer_key, holder_key):
         """
-        Having the holder's key doesn't grant access without a warrant.
+        A holder key without a trusted warrant cannot authorize anything.
 
-        The key lets you sign, but there's nothing valid to sign for.
+        The holder can self-sign a warrant, but an Authorizer that trusts
+        only the real issuer will reject it.
         """
-        # Holder has their key, but no warrant
-        # They can't just create tool calls - they need a warrant from an issuer
+        authorizer = Authorizer(trusted_roots=[issuer_key.public_key])
 
-        # There's no way to use a key without a warrant
-        # (This is more of a conceptual test - the API doesn't allow it)
-        pass
+        self_issued = (
+            Warrant.mint_builder()
+            .capability("secret_action", level=Range(1, 10))
+            .holder(holder_key.public_key)
+            .ttl(3600)
+            .mint(holder_key)  # Self-signed — not the trusted issuer
+        )
+
+        sig = self_issued.sign(holder_key, "secret_action", {"level": 5}, int(time.time()))
+
+        with pytest.raises(Exception):
+            authorizer.authorize(
+                self_issued, "secret_action", {"level": 5}, signature=bytes(sig)
+            )
 
     def test_issuer_cannot_use_warrant_as_holder(self, warrant, issuer_key):
-        """
-        Even the issuer can't use a warrant issued to someone else.
-
-        The warrant is bound to a specific holder.
-        """
-        # Issuer tries to use warrant they created for someone else
-        sig = warrant.sign(issuer_key, "secret_action", {"level": 5})
-        assert not warrant.authorize("secret_action", {"level": 5}, bytes(sig))
+        """Even the issuer can't use a warrant issued to someone else."""
+        sig = warrant.sign(issuer_key, "secret_action", {"level": 5}, int(time.time()))
+        _assert_denied(warrant, "secret_action", {"level": 5}, bytes(sig), issuer_key=issuer_key.public_key)
 
     def test_verifier_needs_no_secrets(self, warrant, holder_key, issuer_key):
         """
@@ -93,17 +135,11 @@ class TestKeySeparation:
         authorizer = Authorizer(trusted_roots=[issuer_key.public_key])
 
         # Holder creates valid signature
-        sig = warrant.sign(holder_key, "secret_action", {"level": 5})
-
-        # Verifier can validate without any private keys
-        # Authorizer.authorize() returns None on success, raises on failure
-        try:
-            authorizer.authorize(
-                warrant, "secret_action", {"level": 5}, signature=bytes(sig)
-            )
-            # Success!
-        except Exception as e:
-            pytest.fail(f"Authorization should have succeeded: {e}")
+        sig = warrant.sign(holder_key, "secret_action", {"level": 5}, int(time.time()))
+        # Authorizer is configured with only public keys — no secrets needed
+        Authorizer(trusted_roots=[issuer_key.public_key]).authorize_one(
+            warrant, "secret_action", {"level": 5}, signature=bytes(sig)
+        )
 
     def test_different_holder_keys_are_not_interchangeable(self, issuer_key):
         """
@@ -125,12 +161,11 @@ class TestKeySeparation:
         )
 
         # Bob tries to use Alice's warrant
-        sig = alice_warrant.sign(bob_key, "action", {"value": 50})
-        assert not alice_warrant.authorize("action", {"value": 50}, bytes(sig))
+        sig = alice_warrant.sign(bob_key, "action", {"value": 50}, int(time.time()))
+        _assert_denied(alice_warrant, "action", {"value": 50}, bytes(sig), issuer_key=issuer_key.public_key)
 
-        # Only Alice can use her warrant
-        sig = alice_warrant.sign(alice_key, "action", {"value": 50})
-        assert alice_warrant.authorize("action", {"value": 50}, bytes(sig))
+        sig = alice_warrant.sign(alice_key, "action", {"value": 50}, int(time.time()))
+        _assert_authorized(alice_warrant, "action", {"value": 50}, bytes(sig), issuer_key=issuer_key.public_key)
 
 
 class TestStolenCredentialScenarios:
@@ -163,48 +198,44 @@ class TestStolenCredentialScenarios:
         # Attacker tries various attacks:
 
         # 1. Sign with their own key
-        sig = stolen_warrant.sign(attacker, "transfer", {"amount": 9999})
-        assert not stolen_warrant.authorize("transfer", {"amount": 9999}, bytes(sig))
+        sig = stolen_warrant.sign(attacker, "transfer", {"amount": 9999}, int(time.time()))
+        _assert_denied(stolen_warrant, "transfer", {"amount": 9999}, bytes(sig), issuer_key=issuer.public_key)
 
-        # 2. Try random bytes as signature (must be exactly 64 bytes)
         import os
-
         random_sig = os.urandom(64)
-        assert not stolen_warrant.authorize("transfer", {"amount": 9999}, random_sig)
+        _assert_denied(stolen_warrant, "transfer", {"amount": 9999}, random_sig, issuer_key=issuer.public_key)
 
     def test_stolen_key_but_no_warrant(self):
         """
-        Scenario: Attacker steals holder's private key.
+        Scenario: Attacker steals holder's private key but has no
+        warrant from a trusted issuer.
 
-        Result: Key alone is useless - they need both key AND warrant.
-
-        Note: This test demonstrates that having a key isn't enough.
-        The attacker can create their own warrant, but:
-        1. It won't be trusted by systems that verify the issuer
-        2. The warrant.authorize() method doesn't check issuer trust
-           (that's what Authorizer is for in production)
+        The attacker can self-issue a warrant, but an Authorizer that
+        only trusts the real issuer rejects it.
         """
-        # Attacker has a key
-        holder = SigningKey.generate()
+        real_issuer = SigningKey.generate()
+        stolen_key = SigningKey.generate()
 
-        # Attacker creates their own warrant (self-issued)
+        authorizer = Authorizer(trusted_roots=[real_issuer.public_key])
+
+        # Attacker self-issues a warrant with the stolen key
         attacker_warrant = (
             Warrant.mint_builder()
             .capability("transfer", amount=Range(0, 1000000))
-            .holder(holder.public_key)
+            .holder(stolen_key.public_key)
             .ttl(3600)
-            .mint(holder)  # Self-signed
+            .mint(stolen_key)  # Self-signed — not the trusted issuer
         )
 
-        # The warrant works for the attacker (they are both issuer and holder)
-        sig = attacker_warrant.sign(holder, "transfer", {"amount": 500000})
+        sig = attacker_warrant.sign(stolen_key, "transfer", {"amount": 500000}, int(time.time()))
 
-        # But in a real system, the tool executor would verify the issuer
-        # is in a trusted set. The attacker's self-issued warrant would
-        # not be in that set.
-
-        # For now, we just verify the mechanics work correctly
-        assert attacker_warrant.authorize("transfer", {"amount": 500000}, bytes(sig))
+        # Self-signed warrant: the Authorizer below trusts ONLY the real issuer,
+        # so a SELF-issued warrant (signed by stolen_key, not real_issuer) is rejected.
+        # This is the meaningful distinction: even with a valid key, no trusted warrant = no access.
+        with pytest.raises(Exception):
+            Authorizer(trusted_roots=[real_issuer.public_key]).authorize_one(
+                attacker_warrant, "transfer", {"amount": 500000}, signature=bytes(sig)
+            )
 
     def test_compromised_worker_cannot_escalate(self):
         """
@@ -232,18 +263,22 @@ class TestStolenCredentialScenarios:
         ab.with_ttl(1800)
         worker_warrant = ab.delegate(orchestrator)
 
-        # Attacker has worker's key but can only do what worker was allowed
-        sig = worker_warrant.sign(worker, "transfer", {"amount": 99})
-        assert worker_warrant.authorize("transfer", {"amount": 99}, bytes(sig))
+        sig = worker_warrant.sign(worker, "transfer", {"amount": 99}, int(time.time()))
+        # Delegated warrant: the issuer of worker_warrant is the orchestrator, not the org.
+        # Use the org issuer as the root — Authorizer.check_chain would be ideal for full
+        # chain validation, but authorize_one on the leaf warrant still proves enforcement.
+        _assert_authorized(worker_warrant, "transfer", {"amount": 99}, bytes(sig),
+            issuer_key=orchestrator.public_key
+        )
 
-        # Can't exceed worker's limits even with the key
-        sig = worker_warrant.sign(worker, "transfer", {"amount": 5000})
-        assert not worker_warrant.authorize("transfer", {"amount": 5000}, bytes(sig))
+        sig = worker_warrant.sign(worker, "transfer", {"amount": 5000}, int(time.time()))
+        _assert_denied(worker_warrant, "transfer", {"amount": 5000}, bytes(sig),
+            issuer_key=orchestrator.public_key
+        )
 
-        # Can't use orchestrator's warrant
-        sig = orchestrator_warrant.sign(worker, "transfer", {"amount": 5000})
-        assert not orchestrator_warrant.authorize(
-            "transfer", {"amount": 5000}, bytes(sig)
+        sig = orchestrator_warrant.sign(worker, "transfer", {"amount": 5000}, int(time.time()))
+        _assert_denied(orchestrator_warrant, "transfer", {"amount": 5000}, bytes(sig),
+            issuer_key=issuer.public_key
         )
 
 
@@ -253,6 +288,7 @@ class BenchmarkMetrics:
     @staticmethod
     def run_key_separation_benchmark(num_attempts: int = 1000) -> dict:
         """Test that key separation is always enforced."""
+        import random
         issuer = SigningKey.generate()
         holder = SigningKey.generate()
         attacker = SigningKey.generate()
@@ -273,17 +309,23 @@ class BenchmarkMetrics:
         }
 
         for _ in range(num_attempts):
-            # Test: Wrong key signing
+            call_value = random.randint(1, 100)  # vary per iteration
+
+            # Test 1: Wrong key — attacker signs with their own key, not the holder's.
             results["wrong_key_attempts"] += 1
-            sig = warrant.sign(attacker, "action", {"value": 50})
-            if not warrant.authorize("action", {"value": 50}, bytes(sig)):
+            sig = warrant.sign(attacker, "action", {"value": call_value}, int(time.time()))
+            if not _is_authorized(warrant, "action", {"value": call_value}, bytes(sig), issuer_key=issuer.public_key):
                 results["wrong_key_blocked"] += 1
 
-            # Test: Stolen warrant (simulated by re-serializing)
+            # Test 2: Stolen warrant — simulates attacker intercepting the warrant bytes
+            # over the wire (serialise → deserialise), then trying to use it with their
+            # own key. Distinct from Test 1 because `stolen` is a separate deserialized
+            # object; confirms the check doesn't depend on Python object identity.
             results["stolen_warrant_attempts"] += 1
             stolen = Warrant.from_base64(warrant.to_base64())
-            sig = stolen.sign(attacker, "action", {"value": 50})
-            if not stolen.authorize("action", {"value": 50}, bytes(sig)):
+            stolen_value = random.randint(1, 100)
+            sig = stolen.sign(attacker, "action", {"value": stolen_value}, int(time.time()))
+            if not _is_authorized(stolen, "action", {"value": stolen_value}, bytes(sig), issuer_key=issuer.public_key):
                 results["stolen_warrant_blocked"] += 1
 
         results["wrong_key_block_rate"] = (

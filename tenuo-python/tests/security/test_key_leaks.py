@@ -1,8 +1,10 @@
-import pytest
-import tenuo.testing  # noqa: F401
-import pickle
 import json
+import pickle
 import re
+
+import pytest
+
+import tenuo.testing  # noqa: F401
 from tenuo import SigningKey, Warrant
 
 

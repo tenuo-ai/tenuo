@@ -10,8 +10,10 @@ the warrant's authorized_holder, preventing replay attacks.
 """
 
 import functools
-from tenuo import Warrant, SigningKey
+
 import display
+
+from tenuo import SigningKey, Warrant
 
 
 class ProtectedToolWrapper:

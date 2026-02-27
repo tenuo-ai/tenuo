@@ -8,22 +8,23 @@ Tests the improved KeyRegistry pattern where:
 - guard_node() wrapper OR @tenuo_node decorator
 """
 
-import pytest
-import tenuo.testing  # noqa: F401
-from typing import Dict, Any, TypedDict, Optional
+from typing import Any, Dict, Optional, TypedDict
 
+import pytest
+
+import tenuo.testing  # noqa: F401
 from tenuo import (
+    BoundWarrant,
+    ConfigurationError,
     SigningKey,
     Warrant,
-    ConfigurationError,
-    BoundWarrant,
 )
 from tenuo.keys import KeyRegistry
 from tenuo.langgraph import (
-    tenuo_node,
-    require_warrant,
     guard_node,
     load_tenuo_keys,
+    require_warrant,
+    tenuo_node,
 )
 
 
@@ -483,8 +484,9 @@ class TestEnforcementModule:
 
     def test_filter_tools_by_warrant(self, warrant_and_key, registry):
         """filter_tools_by_warrant filters tool list."""
-        from tenuo._enforcement import filter_tools_by_warrant
         from dataclasses import dataclass
+
+        from tenuo._enforcement import filter_tools_by_warrant
 
         @dataclass
         class MockTool:
@@ -508,8 +510,9 @@ class TestEnforcementModule:
 
     def test_filter_tools_requires_bound_warrant(self, warrant_and_key, registry):
         """filter_tools_by_warrant raises ConfigurationError for plain Warrant."""
-        from tenuo._enforcement import filter_tools_by_warrant
         from dataclasses import dataclass
+
+        from tenuo._enforcement import filter_tools_by_warrant
 
         @dataclass
         class MockTool:
@@ -525,8 +528,9 @@ class TestEnforcementModule:
 
     def test_filter_tools_with_many_tools(self, registry):
         """filter_tools_by_warrant handles warrants with many tools."""
-        from tenuo._enforcement import filter_tools_by_warrant
         from dataclasses import dataclass
+
+        from tenuo._enforcement import filter_tools_by_warrant
 
         @dataclass
         class MockTool:
@@ -554,7 +558,7 @@ class TestEnforcementModule:
     def test_enforcement_result_raise_if_denied(self):
         """EnforcementResult.raise_if_denied raises appropriate exception."""
         from tenuo._enforcement import EnforcementResult
-        from tenuo.exceptions import ToolNotAuthorized, ConstraintViolation
+        from tenuo.exceptions import ConstraintViolation, ToolNotAuthorized
 
         # Allowed - should not raise
         allowed_result = EnforcementResult(
@@ -598,8 +602,9 @@ class TestEnforcementModule:
 
     def test_get_constraints_dict_uses_capabilities(self, registry):
         """_get_constraints_dict properly extracts from capabilities."""
-        from tenuo._enforcement import _get_constraints_dict
         from tenuo_core import Pattern
+
+        from tenuo._enforcement import _get_constraints_dict
 
         # Create warrant with capabilities-based constraints
         key = SigningKey.generate()
@@ -646,6 +651,7 @@ class TestCoreInvariants:
         This cannot be bypassed by Python code.
         """
         import time
+
         from tenuo._enforcement import enforce_tool_call
 
         key = SigningKey.generate()
@@ -676,8 +682,9 @@ class TestCoreInvariants:
 
         Python cannot bypass the min/max bounds.
         """
-        from tenuo._enforcement import enforce_tool_call
         from tenuo_core import Range
+
+        from tenuo._enforcement import enforce_tool_call
 
         key = SigningKey.generate()
         registry.register("range-test-key", key)
@@ -706,8 +713,9 @@ class TestCoreInvariants:
 
         Python cannot bypass glob/regex matching.
         """
-        from tenuo._enforcement import enforce_tool_call
         from tenuo_core import Pattern
+
+        from tenuo._enforcement import enforce_tool_call
 
         key = SigningKey.generate()
         registry.register("pattern-test-key", key)
@@ -966,6 +974,7 @@ class TestPhilosophyAndDesign:
         This creates an audit trail of all authorized operations.
         """
         import logging
+
         from tenuo._enforcement import enforce_tool_call
 
         key = SigningKey.generate()
@@ -999,6 +1008,7 @@ class TestPhilosophyAndDesign:
         PHILOSOPHY: Denied authorizations must be logged for security monitoring.
         """
         import logging
+
         from tenuo._enforcement import enforce_tool_call
 
         key = SigningKey.generate()
@@ -1023,8 +1033,9 @@ class TestPhilosophyAndDesign:
         We don't want to leak constraint details that could help
         an attacker craft bypass attempts.
         """
-        from tenuo._enforcement import enforce_tool_call
         from tenuo_core import Range
+
+        from tenuo._enforcement import enforce_tool_call
 
         key = SigningKey.generate()
         registry.register("opaque-error-key", key)
@@ -1057,8 +1068,9 @@ class TestPhilosophyAndDesign:
         This is defense in depth - even if one check has a bug,
         another should catch it.
         """
+        from tenuo_core import Pattern, Range
+
         from tenuo._enforcement import enforce_tool_call
-        from tenuo_core import Range, Pattern
 
         key = SigningKey.generate()
         registry.register("multi-constraint-key", key)
@@ -1212,8 +1224,8 @@ class TestLangGraphApproval:
     )
     def test_middleware_stores_approval_params(self, registry):
         """TenuoMiddleware accepts and stores approval_policy and approval_handler."""
+        from tenuo.approval import ApprovalPolicy, auto_approve, require_approval
         from tenuo.langgraph import TenuoMiddleware
-        from tenuo.approval import ApprovalPolicy, require_approval, auto_approve
 
         approver_key = SigningKey.generate()
 
@@ -1245,14 +1257,14 @@ class TestLangGraphApproval:
     def test_toolnode_stores_approval_params(self, registry):
         """TenuoToolNode accepts and stores approval_policy and approval_handler."""
         try:
-            from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
+            from tenuo.langgraph import LANGGRAPH_AVAILABLE, TenuoToolNode
         except ImportError:
             pytest.skip("LangGraph not installed")
 
         if not LANGGRAPH_AVAILABLE:
             pytest.skip("LangGraph not installed")
 
-        from tenuo.approval import ApprovalPolicy, require_approval, auto_approve
+        from tenuo.approval import ApprovalPolicy, auto_approve, require_approval
 
         approver_key = SigningKey.generate()
         policy = ApprovalPolicy(

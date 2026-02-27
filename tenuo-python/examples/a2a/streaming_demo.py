@@ -24,9 +24,9 @@ from pathlib import Path
 # Ensure we can import from tenuo
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from tenuo import SigningKey, Warrant
-from tenuo import Subpath, Range
-from tenuo.a2a import A2AServer, A2AClient
+from tenuo import Range, SigningKey, Subpath, Warrant
+from tenuo.a2a import A2AClient, A2AServer
+
 
 # Colors for output
 class C:

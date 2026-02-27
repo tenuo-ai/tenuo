@@ -13,26 +13,26 @@ and focus on the core enforcement logic.
 """
 
 import logging
-import pytest
 from unittest.mock import MagicMock
 
-from tenuo import Warrant, SigningKey
-from tenuo.exceptions import (
-    ToolNotAuthorized,
-    ConstraintViolation,
-    ConfigurationError,
-)
+import pytest
+
+from tenuo import Authorizer, SigningKey, Warrant
 from tenuo._enforcement import (
-    EnforcementResult,
     DenialPolicy,
     DenialResult,
-    handle_denial,
+    EnforcementResult,
+    _extract_violated_field,
     enforce_tool_call,
     filter_tools_by_warrant,
-    _extract_violated_field,
+    handle_denial,
+)
+from tenuo.exceptions import (
+    ConfigurationError,
+    ConstraintViolation,
+    ToolNotAuthorized,
 )
 from tenuo.schemas import ToolSchema
-
 
 # =============================================================================
 # Test Fixtures
@@ -748,3 +748,124 @@ class TestSecurityInvariants:
         # Verify values remain stable
         assert result.allowed is False
         assert result.tool == "test"
+
+
+# =============================================================================
+# enforce_tool_call with Authorizer (full chain verification in verify mode)
+# =============================================================================
+
+
+class TestEnforceToolCallWithAuthorizer:
+    """Tests for enforce_tool_call() with the authorizer= parameter.
+
+    This covers the production path where a Remote PEP / FastAPI server
+    receives a precomputed PoP signature and delegates full chain verification
+    to a configured Authorizer instance.
+    """
+
+    @pytest.fixture
+    def keypair(self):
+        return SigningKey.generate()
+
+    @pytest.fixture
+    def authorizer(self, keypair):
+        return Authorizer(trusted_roots=[keypair.public_key])
+
+    @pytest.fixture
+    def warrant_and_bound(self, keypair):
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search")
+            .holder(keypair.public_key)
+            .ttl(3600)
+            .mint(keypair)
+        )
+        bound = warrant.bind(keypair)
+        return warrant, bound
+
+    def test_authorizer_verify_mode_success(self, keypair, authorizer, warrant_and_bound):
+        """verify_mode='verify' with authorizer succeeds for valid PoP."""
+        import time
+        warrant, bound = warrant_and_bound
+        pop_sig = warrant.sign(keypair, "search", {}, int(time.time()))
+
+        result = enforce_tool_call(
+            "search",
+            {},
+            bound,
+            verify_mode="verify",
+            precomputed_signature=bytes(pop_sig),
+            authorizer=authorizer,
+        )
+        assert result.allowed is True
+        assert result.tool == "search"
+
+    def test_authorizer_verify_mode_rejects_untrusted_issuer(self, keypair):
+        """Authorizer rejects warrant from untrusted issuer."""
+        import time
+        other_kp = SigningKey.generate()
+        auth = Authorizer(trusted_roots=[other_kp.public_key])
+
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search")
+            .holder(keypair.public_key)
+            .ttl(3600)
+            .mint(keypair)
+        )
+        bound = warrant.bind(keypair)
+        pop_sig = warrant.sign(keypair, "search", {}, int(time.time()))
+
+        result = enforce_tool_call(
+            "search",
+            {},
+            bound,
+            verify_mode="verify",
+            precomputed_signature=bytes(pop_sig),
+            authorizer=auth,
+        )
+        assert result.allowed is False
+        assert result.error_type == "authorization_failed"
+        assert "trusted" in result.denial_reason.lower() or "issuer" in result.denial_reason.lower()
+
+    def test_authorizer_verify_mode_expired_warrant(self, keypair, authorizer):
+        """Expired warrant is properly detected via authorizer path."""
+        import time
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search")
+            .holder(keypair.public_key)
+            .ttl(1)
+            .mint(keypair)
+        )
+        bound = warrant.bind(keypair)
+        pop_sig = warrant.sign(keypair, "search", {}, int(time.time()))
+        time.sleep(1.5)
+
+        result = enforce_tool_call(
+            "search",
+            {},
+            bound,
+            verify_mode="verify",
+            precomputed_signature=bytes(pop_sig),
+            authorizer=authorizer,
+        )
+        assert result.allowed is False
+        assert result.error_type == "expired"
+
+    def test_authorizer_verify_mode_wrong_tool(self, keypair, authorizer, warrant_and_bound):
+        """Authorizer rejects PoP for a tool not in the warrant."""
+        import time
+        warrant, bound = warrant_and_bound
+        pop_sig = warrant.sign(keypair, "delete", {}, int(time.time()))
+
+        result = enforce_tool_call(
+            "delete",
+            {},
+            bound,
+            verify_mode="verify",
+            precomputed_signature=bytes(pop_sig),
+            authorizer=authorizer,
+        )
+        assert result.allowed is False
+        assert result.error_type == "authorization_failed"

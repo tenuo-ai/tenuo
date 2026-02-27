@@ -15,31 +15,31 @@ Test Coverage:
 - Warrant expiration detection
 """
 
-import pytest
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
 
+import pytest
+
 # Import the modules under test
 from tenuo.temporal import (
-    # Config
-    TenuoInterceptorConfig,
-    KeyResolver,
+    ChainValidationError,
     # Exceptions
     ConstraintViolation,
-    WarrantExpired,
-    ChainValidationError,
+    KeyResolver,
     LocalActivityError,
     PopVerificationError,
-    # Decorators
-    unprotected,
-    is_unprotected,
-    tool,
-    get_tool_name,
     # Audit
     TemporalAuditEvent,
+    # Config
+    TenuoInterceptorConfig,
+    WarrantExpired,
+    get_tool_name,
+    is_unprotected,
+    tool,
+    # Decorators
+    unprotected,
 )
-
 
 # =============================================================================
 # Test Fixtures

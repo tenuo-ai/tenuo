@@ -13,7 +13,7 @@ Example:
             result = await client.tools["read_file"](path="/data/file.txt")
 """
 
-from .client import SecureMCPClient, discover_and_protect, MCP_AVAILABLE
+from .client import MCP_AVAILABLE, SecureMCPClient, discover_and_protect
 
 __all__ = [
     "SecureMCPClient",

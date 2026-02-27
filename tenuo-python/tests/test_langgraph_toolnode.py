@@ -4,23 +4,23 @@ Tests for TenuoToolNode and LangGraph DX features.
 These tests verify the TenuoToolNode that uses KeyRegistry pattern.
 """
 
-import pytest
-import tenuo.testing  # noqa: F401
 from dataclasses import dataclass
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
+import pytest
+
+import tenuo.testing  # noqa: F401
 from tenuo import (
-    SigningKey,
-    Warrant,
+    LANGCHAIN_AVAILABLE,
+    AuthorizationDenied,
     Pattern,
     Range,
-    AuthorizationDenied,
-    LANGCHAIN_AVAILABLE,
+    SigningKey,
+    Warrant,
 )
 from tenuo.exceptions import ConstraintResult
 from tenuo.keys import KeyRegistry
-from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
-
+from tenuo.langgraph import LANGGRAPH_AVAILABLE, TenuoToolNode
 
 # =============================================================================
 # Test Fixtures
@@ -117,8 +117,8 @@ class TestTenuoToolNode:
 
     def test_tenuo_tool_node_execution(self, warrant_and_key, registry):
         """Test TenuoToolNode executes tools with authorization."""
-        from langchain_core.tools import tool
         from langchain_core.messages import AIMessage
+        from langchain_core.tools import tool
 
         warrant, key_id = warrant_and_key
 
@@ -149,8 +149,8 @@ class TestTenuoToolNode:
 
     def test_tenuo_tool_node_missing_warrant(self, registry):
         """TenuoToolNode fails gracefully without warrant in state."""
-        from langchain_core.tools import tool
         from langchain_core.messages import AIMessage
+        from langchain_core.tools import tool
 
         @tool
         def search(query: str) -> str:
@@ -172,8 +172,8 @@ class TestTenuoToolNode:
 
     def test_tenuo_tool_node_tool_not_found(self, warrant_and_key, registry):
         """TenuoToolNode handles missing tools gracefully."""
-        from langchain_core.tools import tool
         from langchain_core.messages import AIMessage
+        from langchain_core.tools import tool
 
         warrant, key_id = warrant_and_key
 
@@ -330,7 +330,7 @@ class TestSecureAgent:
     def test_guard_tools_basic(self, keypair):
         """Test basic guard_tools usage."""
         from tenuo import reset_config
-        from tenuo.langchain import guard_tools, TenuoTool
+        from tenuo.langchain import TenuoTool, guard_tools
 
         reset_config()
 

@@ -19,8 +19,6 @@ unit tests with mocks fundamentally cannot:
 """
 
 import asyncio
-import base64
-import os
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -38,20 +36,19 @@ from temporalio.worker.workflow_sandbox import (  # noqa: E402
     SandboxedWorkflowRunner,
     SandboxRestrictions,
 )
+from tenuo_core import Pattern, Subpath  # noqa: E402
 
 from tenuo import SigningKey, Warrant  # noqa: E402
-from tenuo_core import Subpath, Pattern  # noqa: E402
 from tenuo.temporal import (  # noqa: E402
     AuthorizedWorkflow,
+    KeyResolver,
+    TemporalAuditEvent,
+    TenuoClientInterceptor,
     TenuoInterceptor,
     TenuoInterceptorConfig,
-    TenuoClientInterceptor,
-    EnvKeyResolver,
-    tenuo_headers,
     tenuo_execute_activity,
-    TemporalAuditEvent,
+    tenuo_headers,
 )
-
 
 # ---------------------------------------------------------------------------
 # Activities
@@ -152,32 +149,24 @@ class UnauthorizedPathWorkflow:
 # Fixtures
 # ---------------------------------------------------------------------------
 
-def _run(coro):
-    """Run an async coroutine on a fresh event loop."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
-
-
-@pytest.fixture(scope="module")
+@pytest.fixture
 def keys():
     control = SigningKey.generate()
     agent = SigningKey.generate()
     return control, agent
 
 
-@pytest.fixture(scope="module")
-def demo_dir(tmp_path_factory):
-    d = tmp_path_factory.mktemp("tenuo_live")
+@pytest.fixture
+def demo_dir(tmp_path):
+    d = tmp_path / "tenuo_live"
+    d.mkdir()
     (d / "a.txt").write_text("alpha")
     (d / "b.txt").write_text("bravo")
     (d / "c.txt").write_text("charlie")
     return d
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def warrant(keys, demo_dir):
     control, agent = keys
     return (
@@ -195,6 +184,24 @@ def warrant(keys, demo_dir):
 # Helpers
 # ---------------------------------------------------------------------------
 
+class DictKeyResolver(KeyResolver):
+    """Dictionary-based key resolver for tests (no sandbox restrictions)."""
+
+    def __init__(self, keys: dict):
+        """Initialize with pre-loaded keys."""
+        self.keys = keys
+
+    async def resolve(self, key_id: str):
+        """Resolve key asynchronously."""
+        return self.resolve_sync(key_id)
+
+    def resolve_sync(self, key_id: str):
+        """Resolve key synchronously without accessing os.environ."""
+        if key_id not in self.keys:
+            raise ValueError(f"Key {key_id} not found")
+        return self.keys[key_id]
+
+
 async def _run_workflow(
     env: WorkflowEnvironment,
     keys,
@@ -208,21 +215,20 @@ async def _run_workflow(
     control, agent = keys
     task_queue = f"test-{uuid.uuid4().hex[:8]}"
 
-    os.environ["TENUO_KEY_agent1"] = base64.b64encode(
-        agent.secret_key_bytes()
-    ).decode()
+    # Pre-load keys to avoid sandbox restrictions on os.environ
+    key_dict = {"agent1": agent}
 
     client_interceptor = TenuoClientInterceptor()
     if send_headers:
         client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent1", agent)
+            tenuo_headers(warrant, "agent1")
         )
 
     events: list[TemporalAuditEvent] = []
 
     interceptor = TenuoInterceptor(
         TenuoInterceptorConfig(
-            key_resolver=EnvKeyResolver(),
+            key_resolver=DictKeyResolver(key_dict),
             on_denial="raise",
             trusted_roots=[control.public_key],
             audit_callback=events.append,
@@ -231,7 +237,8 @@ async def _run_workflow(
 
     sandbox_runner = SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(
-            "tenuo", "tenuo_core",
+            "tenuo",
+            "tenuo_core",
         )
     )
 
@@ -240,20 +247,24 @@ async def _run_workflow(
         interceptors=[client_interceptor],  # type: ignore[list-item]
     )
 
-    async with Worker(
+    worker = Worker(
         raw_client,
         task_queue=task_queue,
         workflows=[wf_class],
         activities=[echo, read_file, list_directory],
         interceptors=[interceptor],  # type: ignore[list-item]
         workflow_runner=sandbox_runner,
-    ):
+    )
+
+    async with worker:
         result = await raw_client.execute_workflow(
             wf_class.run,
             args=[arg],
             id=f"live-{uuid.uuid4().hex[:8]}",
             task_queue=task_queue,
+            execution_timeout=timedelta(seconds=120),
         )
+
     return result, events
 
 
@@ -263,61 +274,56 @@ async def _run_workflow(
 
 @pytest.mark.temporal_live
 class TestLiveSequential:
-    def test_sequential_activities(self, keys, warrant, demo_dir):
-        async def _test():
-            async with await WorkflowEnvironment.start_local() as env:
-                result, events = await _run_workflow(
-                    env, keys, warrant, SequentialWorkflow, str(demo_dir),
-                )
-            assert result == "read:3"
-            allow_events = [e for e in events if e.decision == "ALLOW"]
-            assert len(allow_events) >= 4  # 1 list + 3 reads
-        _run(_test())
+    @pytest.mark.asyncio
+    async def test_sequential_activities(self, keys, warrant, demo_dir):
+        async with await WorkflowEnvironment.start_local() as env:
+            result, events = await _run_workflow(
+                env, keys, warrant, SequentialWorkflow, str(demo_dir),
+            )
+        assert result == "read:3"
+        allow_events = [e for e in events if e.decision == "ALLOW"]
+        assert len(allow_events) >= 4  # 1 list + 3 reads
 
 
 @pytest.mark.temporal_live
 class TestLiveParallel:
-    def test_parallel_gather(self, keys, warrant, demo_dir):
-        async def _test():
-            async with await WorkflowEnvironment.start_local() as env:
-                result, events = await _run_workflow(
-                    env, keys, warrant, ParallelWorkflow, str(demo_dir),
-                )
-            assert result == "parallel:3"
-            allow_events = [e for e in events if e.decision == "ALLOW"]
-            assert len(allow_events) == 3
-        _run(_test())
+    @pytest.mark.asyncio
+    async def test_parallel_gather(self, keys, warrant, demo_dir):
+        async with await WorkflowEnvironment.start_local() as env:
+            result, events = await _run_workflow(
+                env, keys, warrant, ParallelWorkflow, str(demo_dir),
+            )
+        assert result == "parallel:3"
+        allow_events = [e for e in events if e.decision == "ALLOW"]
+        assert len(allow_events) == 3
 
 
 @pytest.mark.temporal_live
 class TestLiveAuthorizedWorkflow:
-    def test_authorized_workflow_happy_path(self, keys, warrant, demo_dir):
-        async def _test():
-            async with await WorkflowEnvironment.start_local() as env:
-                result, events = await _run_workflow(
-                    env, keys, warrant, AuthorizedFileWorkflow, "hello",
-                )
-            assert result == "echo:hello"
-        _run(_test())
+    @pytest.mark.asyncio
+    async def test_authorized_workflow_happy_path(self, keys, warrant, demo_dir):
+        async with await WorkflowEnvironment.start_local() as env:
+            result, events = await _run_workflow(
+                env, keys, warrant, AuthorizedFileWorkflow, "hello",
+            )
+        assert result == "echo:hello"
 
-    def test_authorized_workflow_missing_headers(self, keys, warrant, demo_dir):
-        async def _test():
-            async with await WorkflowEnvironment.start_local() as env:
-                with pytest.raises(WorkflowFailureError):
-                    await _run_workflow(
-                        env, keys, warrant, AuthorizedFileWorkflow, "hello",
-                        send_headers=False,
-                    )
-        _run(_test())
+    @pytest.mark.asyncio
+    async def test_authorized_workflow_missing_headers(self, keys, warrant, demo_dir):
+        async with await WorkflowEnvironment.start_local() as env:
+            with pytest.raises(WorkflowFailureError):
+                await _run_workflow(
+                    env, keys, warrant, AuthorizedFileWorkflow, "hello",
+                    send_headers=False,
+                )
 
 
 @pytest.mark.temporal_live
 class TestLiveDenial:
-    def test_out_of_scope_denied(self, keys, warrant, demo_dir):
-        async def _test():
-            async with await WorkflowEnvironment.start_local() as env:
-                with pytest.raises(WorkflowFailureError):
-                    await _run_workflow(
-                        env, keys, warrant, UnauthorizedPathWorkflow, "/etc",
-                    )
-        _run(_test())
+    @pytest.mark.asyncio
+    async def test_out_of_scope_denied(self, keys, warrant, demo_dir):
+        async with await WorkflowEnvironment.start_local() as env:
+            with pytest.raises(WorkflowFailureError):
+                await _run_workflow(
+                    env, keys, warrant, UnauthorizedPathWorkflow, "/etc",
+                )

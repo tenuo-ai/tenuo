@@ -10,12 +10,12 @@ Tests the "Trust Cliff" behavior:
 """
 
 import pytest
-import time
+
 from tenuo import (
-    Warrant,
-    SigningKey,
     Pattern,
     Range,
+    SigningKey,
+    Warrant,
     Wildcard,
 )
 
@@ -41,8 +41,7 @@ class TestTrustCliffBasics:
 
         # Any arguments should pass
         args = {"url": "https://any.com", "timeout": 999, "random_field": "anything"}
-        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
-        assert warrant.authorize("api_call", args, bytes(pop)) is True
+        assert warrant.check_constraints("api_call", args) is None
 
     def test_one_constraint_blocks_unknown_fields(self, keypair):
         """Rule 2: Once any constraint is defined, unknown fields are rejected."""
@@ -56,8 +55,7 @@ class TestTrustCliffBasics:
 
         # Unknown field 'timeout' should be blocked
         args = {"url": "https://api.example.com/v1", "timeout": 30}
-        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
-        assert warrant.authorize("api_call", args, bytes(pop)) is False
+        assert warrant.check_constraints("api_call", args) is not None
 
         # Detailed error check
         reason = warrant.check_constraints("api_call", args)
@@ -76,8 +74,7 @@ class TestTrustCliffBasics:
 
         # Only the constrained field - should pass
         args = {"url": "https://api.example.com/v1"}
-        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
-        assert warrant.authorize("api_call", args, bytes(pop)) is True
+        assert warrant.check_constraints("api_call", args) is None
 
 
 class TestAllowUnknownOptOut:
@@ -101,8 +98,7 @@ class TestAllowUnknownOptOut:
 
         # Unknown fields should now pass
         args = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 5}
-        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
-        assert warrant.authorize("api_call", args, bytes(pop)) is True
+        assert warrant.check_constraints("api_call", args) is None
 
     def test_allow_unknown_still_enforces_defined_constraints(self, keypair):
         """_allow_unknown doesn't skip validation of defined constraints."""
@@ -122,8 +118,7 @@ class TestAllowUnknownOptOut:
 
         # Unknown field OK, but defined constraint must still be satisfied
         args = {"url": "https://evil.com/attack", "timeout": 30}
-        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
-        assert warrant.authorize("api_call", args, bytes(pop)) is False
+        assert warrant.check_constraints("api_call", args) is not None
 
 
 class TestWildcardVsAllowUnknown:
@@ -141,8 +136,7 @@ class TestWildcardVsAllowUnknown:
 
         # timeout can be any value
         args = {"url": "https://api.example.com/v1", "timeout": 999999}
-        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
-        assert warrant.authorize("api_call", args, bytes(pop)) is True
+        assert warrant.check_constraints("api_call", args) is None
 
     def test_wildcard_does_not_allow_other_unknown_fields(self, keypair):
         """Wildcard() for one field doesn't open others."""
@@ -156,8 +150,7 @@ class TestWildcardVsAllowUnknown:
 
         # 'retries' is still unknown and should be blocked
         args = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 5}
-        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
-        assert warrant.authorize("api_call", args, bytes(pop)) is False
+        assert warrant.check_constraints("api_call", args) is not None
 
     def test_wildcard_with_other_constraints(self, keypair):
         """Wildcard() works alongside other constraint types."""
@@ -173,13 +166,11 @@ class TestWildcardVsAllowUnknown:
 
         # All fields constrained - should pass
         args = {"url": "https://api.example.com/v1", "timeout": 9999, "retries": 2}
-        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
-        assert warrant.authorize("api_call", args, bytes(pop)) is True
+        assert warrant.check_constraints("api_call", args) is None
 
         # retries exceeds range - should fail
         args_bad = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 10}
-        pop_bad = warrant.sign(keypair, "api_call", args_bad, int(time.time()))
-        assert warrant.authorize("api_call", args_bad, bytes(pop_bad)) is False
+        assert warrant.check_constraints("api_call", args_bad) is not None
 
 
 class TestAllowUnknownInheritance:
@@ -212,13 +203,11 @@ class TestAllowUnknownInheritance:
 
         # Parent allows unknown fields
         parent_args = {"url": "https://any.com/path", "unknown_field": True}
-        parent_pop = parent.sign(keypair, "api_call", parent_args, int(time.time()))
-        assert parent.authorize("api_call", parent_args, bytes(parent_pop)) is True
+        assert parent.check_constraints("api_call", parent_args) is None
 
         # Child blocks unknown fields
         child_args = {"url": "https://api.example.com/v1", "unknown_field": True}
-        child_pop = child.sign(keypair, "api_call", child_args, int(time.time()))
-        assert child.authorize("api_call", child_args, bytes(child_pop)) is False
+        assert child.check_constraints("api_call", child_args) is not None
 
     def test_child_can_explicitly_set_allow_unknown(self, keypair):
         """Child can explicitly set _allow_unknown: True if parent also has it."""
@@ -253,8 +242,7 @@ class TestAllowUnknownInheritance:
 
         # Child should allow unknown fields
         args = {"url": "https://api.example.com/v1", "unknown_field": True}
-        pop = child.sign(keypair, "api_call", args, int(time.time()))
-        assert child.authorize("api_call", args, bytes(pop)) is True
+        assert child.check_constraints("api_call", args) is None
 
 
 class TestEdgeCases:
@@ -279,13 +267,11 @@ class TestEdgeCases:
 
         # read_file is closed (no _allow_unknown)
         read_args = {"path": "/data/file.txt", "encoding": "utf-8"}
-        read_pop = warrant.sign(keypair, "read_file", read_args, int(time.time()))
-        assert warrant.authorize("read_file", read_args, bytes(read_pop)) is False
+        assert warrant.check_constraints("read_file", read_args) is not None
 
         # write_file is open (_allow_unknown: True)
         write_args = {"path": "/output/file.txt", "encoding": "utf-8"}
-        write_pop = warrant.sign(keypair, "write_file", write_args, int(time.time()))
-        assert warrant.authorize("write_file", write_args, bytes(write_pop)) is True
+        assert warrant.check_constraints("write_file", write_args) is None
 
     def test_empty_args_with_constraints(self, keypair):
         """Empty args should fail if constraints require fields."""
@@ -299,8 +285,7 @@ class TestEdgeCases:
 
         # Empty args - missing required 'url'
         args = {}
-        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
-        assert warrant.authorize("api_call", args, bytes(pop)) is False
+        assert warrant.check_constraints("api_call", args) is not None
 
         reason = warrant.check_constraints("api_call", args)
         assert "missing required argument" in reason
@@ -317,5 +302,4 @@ class TestEdgeCases:
 
         # String value for Range constraint - should fail
         args = {"count": "five"}
-        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
-        assert warrant.authorize("api_call", args, bytes(pop)) is False
+        assert warrant.check_constraints("api_call", args) is not None

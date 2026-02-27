@@ -3,8 +3,10 @@ Tests for AuthorizedWorkflow base class.
 """
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+
 from tenuo.temporal import AuthorizedWorkflow, TenuoContextError
 
 try:

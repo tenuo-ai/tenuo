@@ -3,6 +3,7 @@
 Escalation Prevention Benchmark CLI.
 
 Measures how delegation bounds damage from compromised AI agents.
+Runs Layer 1 (policy enforcement) and Layer 2 (cryptographic integrity).
 
 Usage:
     python -m benchmarks.escalation.evaluate
@@ -15,7 +16,12 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from .scenarios import SCENARIOS, run_scenario, run_all_scenarios, ScenarioResult
+from .scenarios import (
+    SCENARIOS, run_scenario, run_all_scenarios,
+    run_policy_scenarios, run_crypto_scenarios,
+    run_holder_binding_scenario, run_crypto_integrity_scenario,
+    run_chain_manipulation_scenario, ScenarioResult,
+)
 
 
 def print_result(result: ScenarioResult, verbose: bool = True):
@@ -36,10 +42,10 @@ def print_result(result: ScenarioResult, verbose: bool = True):
     print(f"| {'Attacks blocked':<23} | {result.p_blocked:<16} | {result.q_blocked:<{width-49}} |")
     print("+" + "-" * 25 + "+" + "-" * 18 + "+" + "-" * (width - 47) + "+")
 
-    violations_str = str(result.escalation_prevented)
-    rate_str = f"{result.escalation_prevention_rate:.1%}"
-    print(f"| {'POLICY VIOLATIONS BLOCKED:':<26} {violations_str:<{width-31}} |")
-    print(f"| {'ENFORCEMENT RATE:':<26} {rate_str:<{width-31}} |")
+    enforce_str = f"{result.escalation_prevented}/{result.expected_violations} ({result.enforcement_rate:.0%})"
+    legit_str = f"{result.both_allowed} calls passed through correctly"
+    print(f"| {'CAUGHT:':<26} {enforce_str:<{width-31}} |")
+    print(f"| {'LEGITIMATE PRESERVED:':<26} {legit_str:<{width-31}} |")
     print("+" + "-" * (width - 2) + "+")
 
     if verbose:
@@ -50,56 +56,45 @@ def print_result(result: ScenarioResult, verbose: bool = True):
         for i, attack in enumerate(result.attacks, 1):
             p_status = "allowed" if attack.p_allowed else "BLOCKED"
             q_status = "allowed" if attack.q_allowed else "BLOCKED"
-            prevented = " [POLICY VIOLATION]" if attack.escalation_prevented else ""
+            prevented = " [CAUGHT]" if attack.escalation_prevented else ""
 
-            args_str = ", ".join(f"{k}={v!r}" for k, v in list(attack.args.items())[:2])
-            if len(attack.args) > 2:
-                args_str += ", ..."
+            if attack.label:
+                print(f"  {i:2}. [{attack.label}]")
+                args_str = ", ".join(f"{k}={v!r}" for k, v in list(attack.args.items())[:3])
+                print(f"      {attack.tool}({args_str})")
+            else:
+                args_str = ", ".join(f"{k}={v!r}" for k, v in list(attack.args.items())[:2])
+                if len(attack.args) > 2:
+                    args_str += ", ..."
+                print(f"  {i:2}. {attack.tool}({args_str})")
 
-            print(f"  {i:2}. {attack.tool}({args_str})")
             print(f"      p-agent: {p_status:<8} | q-agent: {q_status}{prevented}")
 
 
-def print_summary(results: list[ScenarioResult]):
-    """Print overall summary."""
-    total_attacks = sum(len(r.attacks) for r in results)
-    total_p_allowed = sum(r.p_allowed for r in results)
-    total_q_allowed = sum(r.q_allowed for r in results)
+def _print_layer_summary(title: str, results: list[ScenarioResult]):
     total_prevented = sum(r.escalation_prevented for r in results)
+    total_expected = sum(r.expected_violations for r in results)
+    total_legitimate = sum(r.both_allowed for r in results)
+    enforcement = total_prevented / total_expected if total_expected else 1.0
 
     print()
     print("=" * 75)
-    print("OVERALL SUMMARY")
+    print(title)
     print("=" * 75)
-    print()
-    print("Threat Model:")
-    print("  p-agent: Trusted orchestrator with broad authority")
-    print("  q-agent: Task executor with minimal delegated authority (COMPROMISED)")
-    print()
-    print(f"{'Metric':<30} {'Value':<20}")
-    print("-" * 50)
-    print(f"{'Scenarios tested':<30} {len(results):<20}")
-    print(f"{'Total attacks':<30} {total_attacks:<20}")
-    print(f"{'p-agent would allow':<30} {total_p_allowed:<20}")
-    print(f"{'q-agent allowed':<30} {total_q_allowed:<20}")
-    print(f"{'Policy violations blocked':<30} {total_prevented:<20}")
-    print(f"{'Enforcement rate':<30} {total_prevented/total_p_allowed:.1%}")
-    print()
-    print("=" * 75)
-    print()
-    print("Conclusion: Same attacks, different warrants.")
-    print(f"{total_prevented} of {total_p_allowed} calls violated q-agent's policy and were blocked.")
-    print("These same calls would have succeeded for p-agent.")
+    print(f"  Scenarios: {len(results)}")
+    print(f"  Attacks:   {sum(len(r.attacks) for r in results)}")
+    print(f"  Caught:    {total_prevented}/{total_expected} ({enforcement:.0%})")
+    print(f"  Legit:     {total_legitimate} preserved")
     print("=" * 75)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Escalation prevention benchmark"
+        description="Escalation prevention benchmark (Layers 1+2)"
     )
     parser.add_argument(
         "--scenario",
-        choices=list(SCENARIOS.keys()) + ["all"],
+        choices=list(SCENARIOS.keys()) + ["holder_binding", "crypto_integrity", "chain_manipulation", "all"],
         default="all",
         help="Scenario to run (default: all)",
     )
@@ -116,50 +111,53 @@ def main():
     )
     args = parser.parse_args()
 
-    # Run scenarios
     if args.scenario == "all":
-        results = run_all_scenarios()
+        policy = run_policy_scenarios()
+        crypto = run_crypto_scenarios()
+
+        print("\n--- Layer 1: Policy Enforcement ---")
+        for r in policy:
+            print_result(r, verbose=not args.quiet)
+        _print_layer_summary("LAYER 1: POLICY ENFORCEMENT", policy)
+
+        print("\n--- Layer 2: Cryptographic Integrity ---")
+        for r in crypto:
+            print_result(r, verbose=not args.quiet)
+        _print_layer_summary("LAYER 2: CRYPTOGRAPHIC INTEGRITY", crypto)
+
+        results = policy + crypto
+    elif args.scenario == "holder_binding":
+        results = [run_holder_binding_scenario()]
+        for r in results:
+            print_result(r, verbose=not args.quiet)
+    elif args.scenario == "crypto_integrity":
+        results = [run_crypto_integrity_scenario()]
+        for r in results:
+            print_result(r, verbose=not args.quiet)
+    elif args.scenario == "chain_manipulation":
+        results = [run_chain_manipulation_scenario()]
+        for r in results:
+            print_result(r, verbose=not args.quiet)
     else:
         results = [run_scenario(args.scenario)]
+        for r in results:
+            print_result(r, verbose=not args.quiet)
 
-    # Print results
-    for result in results:
-        print_result(result, verbose=not args.quiet)
-
-    if len(results) > 1:
-        print_summary(results)
-
-    # Save results
     if args.output:
-        total_attacks = sum(len(r.attacks) for r in results)
-        total_prevented = sum(r.escalation_prevented for r in results)
-        total_p_allowed = sum(r.p_allowed for r in results)
-
         output_data = {
             "timestamp": datetime.now().isoformat(),
-            "threat_model": {
-                "p_agent": "Trusted orchestrator with broad authority",
-                "q_agent": "Task executor with minimal delegated authority (assumed compromised)",
-            },
             "scenarios": [
                 {
                     "name": r.name,
                     "description": r.description,
                     "attacks": len(r.attacks),
-                    "p_allowed": r.p_allowed,
-                    "q_allowed": r.q_allowed,
-                    "policy_violations_blocked": r.escalation_prevented,
-                    "enforcement_rate": r.escalation_prevention_rate,
+                    "violations_caught": r.escalation_prevented,
+                    "expected_violations": r.expected_violations,
+                    "enforcement_rate": r.enforcement_rate,
+                    "legitimate_preserved": r.both_allowed,
                 }
                 for r in results
             ],
-            "summary": {
-                "total_attacks": total_attacks,
-                "total_p_allowed": total_p_allowed,
-                "total_q_allowed": sum(r.q_allowed for r in results),
-                "total_prevented": total_prevented,
-                "prevention_rate": total_prevented / total_p_allowed if total_p_allowed else 0,
-            },
         }
 
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -171,4 +169,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

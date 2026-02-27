@@ -4,17 +4,16 @@ Secure MCP Client with Tenuo Authorization.
 Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 """
 
+import logging
 import sys
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional
 
+from .._enforcement import EnforcementResult, enforce_tool_call
 from ..config import is_configured
-from ..decorators import guard, warrant_scope, key_scope
+from ..decorators import guard, key_scope, warrant_scope
 from ..exceptions import ConfigurationError
 from ..validation import ValidationResult
-from .._enforcement import enforce_tool_call, EnforcementResult
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +98,7 @@ class SecureMCPClient:
         self.mcp_config = None
         self.compiled_config = None
         if config_path:
-            from tenuo_core import McpConfig, CompiledMcpConfig
+            from tenuo_core import CompiledMcpConfig, McpConfig
 
             self.mcp_config = McpConfig.from_file(config_path)
             self.compiled_config = CompiledMcpConfig.compile(self.mcp_config)
@@ -110,8 +109,10 @@ class SecureMCPClient:
 
             # Optionally register with global config
             if should_register:
-                from ..config import get_config, configure as tenuo_configure
                 import warnings
+
+                from ..config import configure as tenuo_configure
+                from ..config import get_config
 
                 existing_config = get_config()
                 if existing_config and existing_config.mcp_config is not None:

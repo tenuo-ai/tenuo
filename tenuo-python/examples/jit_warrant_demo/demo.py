@@ -11,20 +11,20 @@ Demonstrates a production-realistic pattern where:
 """
 
 import asyncio
-import requests
-import display
+
 import config
+import display
+import requests
+import tools as tool_module
+from control_plane import ControlPlane
+from executor import WarrantExecutor, simulate_compromised_execution
+from human_approval import HumanApprover, MultiSigApprovalFlow
 from orchestrator import (
     Orchestrator,
-    propose_capabilities_with_llm,
-    propose_capabilities_sync,
     extract_urls,
+    propose_capabilities_sync,
+    propose_capabilities_with_llm,
 )
-from control_plane import ControlPlane
-from human_approval import HumanApprover, MultiSigApprovalFlow
-from executor import WarrantExecutor, simulate_compromised_execution
-import tools as tool_module
-
 
 LM_STUDIO_API_URL = config.LM_STUDIO_URL + "/v1/models"
 

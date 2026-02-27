@@ -9,11 +9,13 @@ Usage:
     python demo.py --no-pause    # Automated mode (no waiting)
 """
 
+import argparse
 import asyncio
 import time
-import argparse
-from tenuo import Warrant, SigningKey, AuthorizationDenied, OneOf, Wildcard, UrlPattern
+
 from wrapper import TenuoAgentQLAgent, format_denial_error
+
+from tenuo import AuthorizationDenied, OneOf, SigningKey, UrlPattern, Warrant, Wildcard
 
 # Global flag for no-pause mode
 NO_PAUSE = False

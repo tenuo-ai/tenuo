@@ -2,16 +2,17 @@
 Tests for chain reconstruction with diffs.
 """
 
+from tenuo_core import DelegationDiff, DelegationReceipt
+
 from tenuo import (
+    Exact,
+    Pattern,
+    Range,
     SigningKey,
     Warrant,
-    Pattern,
-    Exact,
-    Range,
 )
 from tenuo.constraints import Constraints
-from tenuo_core import DelegationDiff, DelegationReceipt
-from tenuo.warrant_ext import get_chain_with_diffs, compute_diff
+from tenuo.warrant_ext import compute_diff, get_chain_with_diffs
 
 
 def test_compute_diff_basic():
@@ -250,6 +251,7 @@ def test_tool_dropping():
 def test_receipt_serialization_roundtrip():
     """Test that receipt can be serialized and contains all fields."""
     import json
+
     from tenuo.builder import GrantBuilder
 
     control_kp = SigningKey.generate()

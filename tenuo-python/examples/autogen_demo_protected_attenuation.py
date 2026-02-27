@@ -52,7 +52,6 @@ from tenuo import SigningKey, Subpath, UrlSafe, Warrant
 from tenuo.autogen import guard_tool
 from tenuo.constraints import Constraints
 
-
 # =============================================================================
 # Demo Colors
 # =============================================================================

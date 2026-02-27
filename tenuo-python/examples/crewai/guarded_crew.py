@@ -9,7 +9,8 @@ Features:
 - Audit Logging
 """
 
-from crewai import Agent, Task, Process
+from crewai import Agent, Process, Task
+
 try:
     from crewai.tools import BaseTool
 except ImportError:
@@ -17,13 +18,7 @@ except ImportError:
     class BaseTool:
         pass
 
-from tenuo.crewai import (
-    GuardedCrew,
-    Pattern,
-    Subpath,
-    AuditEvent,
-    TenuoCrewAIError
-)
+from tenuo.crewai import AuditEvent, GuardedCrew, Pattern, Subpath, TenuoCrewAIError
 
 # =============================================================================
 # 1. Define Tools

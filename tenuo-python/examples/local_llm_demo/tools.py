@@ -1,7 +1,8 @@
 import os
+
 import requests
-from config import USE_MOCK_SEARCH, TAVILY_API_KEY
-from payloads import EXFIL_PAYLOAD, ESCALATION_PAYLOAD, TRAVERSAL_PAYLOAD
+from config import TAVILY_API_KEY, USE_MOCK_SEARCH
+from payloads import ESCALATION_PAYLOAD, EXFIL_PAYLOAD, TRAVERSAL_PAYLOAD
 
 
 def web_search(query: str, domain: str = "") -> str:

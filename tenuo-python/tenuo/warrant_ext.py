@@ -12,7 +12,7 @@ This module provides:
 ## Method Categories
 
 ### Authorization Methods (use in production)
-Use `warrant.authorize(tool, args, signature)` for actual authorization decisions.
+Use `Authorizer.authorize(warrant, tool, args, signature)` for actual authorization decisions.
 This performs ALL security checks including PoP verification.
 
 ### Diagnostic Methods (use for debugging only)
@@ -34,19 +34,24 @@ Note on memory management:
     periodically or clear_receipt(warrant) when individual warrants are no longer needed.
 """
 
-from typing import Optional, Dict, Any, List, TYPE_CHECKING, Union, Protocol, runtime_checkable
-from datetime import timedelta, datetime, timezone
-from dataclasses import dataclass
 import base64
-from tenuo_core import Warrant, PublicKey, SigningKey  # type: ignore[import-untyped]
-from tenuo_core import (  # type: ignore[import-untyped]
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Union, runtime_checkable
+
+from tenuo_core import (  # type: ignore[import-untyped]  # type: ignore[import-untyped]
     DelegationDiff,
     DelegationReceipt,
+    PublicKey,
+    SigningKey,
+    Warrant,
+)
+from tenuo_core import (
     compute_diff as rust_compute_diff,
 )
-from .validation import ValidationResult
 
 from .decorators import key_scope
+from .validation import ValidationResult
 
 if TYPE_CHECKING:
     from .builder import GrantBuilder
@@ -308,16 +313,11 @@ def _warrant_validate(
     Returns:
         ValidationResult
     """
-    import time as _time
-    pop_signature = self.sign(key, tool, args, int(_time.time()))
-
-    # 2. Verify
-    success = self.authorize(tool=tool, args=args, signature=bytes(pop_signature))
-
-    if success:
+    violation = self.check_constraints(tool, args)
+    if violation is None:
         return ValidationResult.ok()
 
-    # 3. Rich feedback
+    # Rich feedback
     why = self.why_denied(tool, args)
     return ValidationResult.fail(
         reason=why.suggestion or f"Authorization failed ({why.deny_code})",
@@ -389,7 +389,7 @@ def _warrant_allows(self: Warrant, tool: str, args: Optional[dict] = None) -> bo
     Check if the warrant allows the given tool and arguments (DIAGNOSTIC).
 
     WARNING: This checks constraints only, NOT PoP signatures.
-    For actual authorization, use `warrant.authorize(tool, args, signature)`.
+    For actual authorization, use `Authorizer.authorize(warrant, tool, args, signature)`.
 
     Use this for:
     - UI previews showing what's possible
@@ -500,7 +500,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     Get structured explanation for why a request would be denied (DIAGNOSTIC).
 
     WARNING: This is for debugging only. It does NOT verify PoP signatures.
-    For actual authorization, use `warrant.authorize(tool, args, signature)`.
+    For actual authorization, use `Authorizer.authorize(warrant, tool, args, signature)`.
 
     Use this to:
     - Generate helpful error messages for denied requests
@@ -1058,22 +1058,12 @@ def _warrant_bytes(self: Warrant) -> bytes:
     This allows warrants to be serialized to bytes:
         warrant_bytes = bytes(warrant)
     """
-    return self.to_cbor()
+    return self.to_bytes()
 
 
 Warrant.__bytes__ = _warrant_bytes  # type: ignore[attr-defined]
 
-
-# Add from_bytes as alias for from_cbor
-def _warrant_from_bytes(data: bytes) -> "Warrant":
-    """Parse warrant from bytes (CBOR encoded).
-
-    This is an alias for from_cbor() that pairs with bytes(warrant).
-    """
-    return Warrant.from_cbor(data)
-
-
-Warrant.from_bytes = _warrant_from_bytes  # type: ignore[attr-defined]
+# from_bytes is now provided natively by the Rust extension (PyWarrant.from_bytes)
 
 # ============================================================================
 # Chain Traversal

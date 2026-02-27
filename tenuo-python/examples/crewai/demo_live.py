@@ -35,15 +35,15 @@ def main():
         sys.exit(1)
 
     # Suppress CrewAI tracing message
-    import io
     import contextlib
+    import io
     with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
-        from crewai import Agent, Task, Crew, Process
-        from crewai.tools import BaseTool
+        from crewai import Agent, Crew, Process, Task
         from crewai.events.utils import console_formatter
+        from crewai.tools import BaseTool
         console_formatter.ConsoleFormatter._show_tracing_disabled_message_if_needed = lambda self: None
-    from tenuo.crewai import GuardBuilder, AuditEvent, ConstraintViolation, HOOKS_AVAILABLE
     from tenuo import Subpath
+    from tenuo.crewai import HOOKS_AVAILABLE, AuditEvent, ConstraintViolation, GuardBuilder
 
     if not args.unprotected and not HOOKS_AVAILABLE:
         print(f"{R}❌ CrewAI hooks API not available. Requires crewai>=0.80.0{END}")

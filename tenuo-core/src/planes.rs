@@ -410,12 +410,9 @@ impl ControlPlane {
 /// let mut data_plane = DataPlane::new();
 /// data_plane.trust_issuer("control-plane", control_plane_public_key);
 ///
-/// // At request time, verify incoming warrant
+/// // At request time, verify and authorize in one call
 /// let warrant = wire::decode_base64(&header_value)?;
-/// data_plane.verify(&warrant)?;
-///
-/// // Authorize the specific action
-/// data_plane.authorize(&warrant, "upgrade_cluster", &args)?;
+/// data_plane.check_chain(&[warrant], "upgrade_cluster", &args, Some(&pop_sig), &[])?;
 /// ```
 /// Default clock skew tolerance: 30 seconds.
 ///
@@ -738,38 +735,6 @@ impl DataPlane {
         } else {
             pattern == tool
         }
-    }
-
-    /// Verify a warrant against trusted issuers.
-    ///
-    /// This checks:
-    /// 1. The warrant is signed by a trusted issuer
-    /// 2. The warrant has not expired
-    ///
-    /// This is an **offline operation** - no network calls.
-    pub fn verify(&self, warrant: &Warrant) -> Result<()> {
-        // Check revocation first
-        if self.is_revoked(warrant) {
-            return Err(Error::WarrantRevoked(warrant.id().to_string()));
-        }
-
-        // Check expiration first (fast path), with clock tolerance
-        if warrant.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired(warrant.expires_at()));
-        }
-
-        // Check if issuer is trusted
-        let issuer = warrant.issuer();
-        let is_trusted = self.trusted_issuers.values().any(|pk| pk == issuer);
-
-        if !is_trusted {
-            return Err(Error::SignatureInvalid(
-                "warrant issuer is not trusted".to_string(),
-            ));
-        }
-
-        // Verify the signature
-        warrant.verify(issuer)
     }
 
     /// Verify a complete delegation chain.
@@ -1146,10 +1111,15 @@ impl DataPlane {
         Ok(())
     }
 
-    /// Verify chain and authorize an action.
+    /// Verify chain and authorize a tool call in one atomic operation.
     ///
-    /// Convenience method that verifies the full chain and then authorizes
-    /// the action against the leaf warrant (last in chain).
+    /// This is the **primary authorization method** for DataPlane. It:
+    /// 1. Verifies the entire delegation chain (signatures, linkage, monotonicity)
+    /// 2. Checks clearance requirements against the leaf warrant
+    /// 3. Authorizes the tool call (capabilities, constraints, PoP)
+    /// 4. Verifies multi-sig approvals if required
+    ///
+    /// For a single warrant, pass `&[warrant]`.
     pub fn check_chain(
         &self,
         chain: &[Warrant],
@@ -1160,91 +1130,57 @@ impl DataPlane {
     ) -> Result<ChainVerificationResult> {
         let result = self.verify_chain(chain)?;
 
-        // Authorize against the leaf warrant
         if let Some(leaf) = chain.last() {
-            self.authorize(leaf, tool, args, signature, approvals)?;
+            // Check clearance requirement
+            if let Some(required) = self.get_required_clearance(tool) {
+                let actual = leaf.payload.clearance.unwrap_or(Clearance::UNTRUSTED);
+                if !actual.meets(required) {
+                    return Err(Error::InsufficientClearance {
+                        tool: tool.to_string(),
+                        required: required.to_string(),
+                        actual: actual.to_string(),
+                    });
+                }
+            }
+
+            let auth_result = leaf.authorize(tool, args, signature).and_then(|_| {
+                verify_approvals_with_tolerance(
+                    leaf,
+                    tool,
+                    args,
+                    approvals,
+                    chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+                )
+            });
+
+            match &auth_result {
+                Ok(_) => {
+                    crate::audit::log_event(
+                        crate::approval::AuditEvent::new(
+                            crate::approval::AuditEventType::AuthorizationSuccess,
+                            "data-plane",
+                            "check_chain",
+                        )
+                        .with_details(format!("Authorized tool '{}'", tool))
+                        .with_related(vec![leaf.id().to_string()]),
+                    );
+                }
+                Err(e) => {
+                    crate::audit::log_event(
+                        crate::approval::AuditEvent::new(
+                            crate::approval::AuditEventType::AuthorizationFailure,
+                            "data-plane",
+                            "check_chain",
+                        )
+                        .with_details(format!("Denied tool '{}': {}", tool, e))
+                        .with_related(vec![leaf.id().to_string()]),
+                    );
+                }
+            }
+            auth_result?;
         }
 
         Ok(result)
-    }
-
-    /// Authorize an action.
-    ///
-    /// This checks that the warrant permits the given tool call with the given arguments.
-    /// If the warrant requires multi-sig, approvals must be provided.
-    /// If tool trust requirements are configured, the warrant's trust level is also checked.
-    ///
-    /// This is an **offline operation** - no network calls.
-    pub fn authorize(
-        &self,
-        warrant: &Warrant,
-        tool: &str,
-        args: &HashMap<String, ConstraintValue>,
-        signature: Option<&crate::crypto::Signature>,
-        approvals: &[crate::approval::SignedApproval],
-    ) -> Result<()> {
-        // Check clearance requirement
-        if let Some(required) = self.get_required_clearance(tool) {
-            let actual = warrant.payload.clearance.unwrap_or(Clearance::UNTRUSTED);
-            if !actual.meets(required) {
-                return Err(Error::InsufficientClearance {
-                    tool: tool.to_string(),
-                    required: required.to_string(),
-                    actual: actual.to_string(),
-                });
-            }
-        }
-        // Standard constraint authorization
-        let result = warrant.authorize(tool, args, signature).and_then(|_| {
-            // Multi-sig verification
-            verify_approvals_with_tolerance(
-                warrant,
-                tool,
-                args,
-                approvals,
-                chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-            )
-        });
-
-        match &result {
-            Ok(_) => {
-                crate::audit::log_event(
-                    crate::approval::AuditEvent::new(
-                        crate::approval::AuditEventType::AuthorizationSuccess,
-                        "data-plane",
-                        "authorize",
-                    )
-                    .with_details(format!("Authorized tool '{}'", tool))
-                    .with_related(vec![warrant.id().to_string()]),
-                );
-            }
-            Err(e) => {
-                crate::audit::log_event(
-                    crate::approval::AuditEvent::new(
-                        crate::approval::AuditEventType::AuthorizationFailure,
-                        "data-plane",
-                        "authorize",
-                    )
-                    .with_details(format!("Denied tool '{}': {}", tool, e))
-                    .with_related(vec![warrant.id().to_string()]),
-                );
-            }
-        }
-
-        result
-    }
-
-    /// Convenience: verify and authorize in one call.
-    pub fn check(
-        &self,
-        warrant: &Warrant,
-        tool: &str,
-        args: &HashMap<String, ConstraintValue>,
-        signature: Option<&crate::crypto::Signature>,
-        approvals: &[crate::approval::SignedApproval],
-    ) -> Result<()> {
-        self.verify(warrant)?;
-        self.authorize(warrant, tool, args, signature, approvals)
     }
 
     /// Attenuate a warrant for a sub-agent.
@@ -1869,95 +1805,6 @@ impl Authorizer {
         )
     }
 
-    // -- Deprecated methods --------------------------------------------------
-    // These are retained for backward compatibility but should not be used
-    // in new code. Use `authorize_one()` or `check_chain()` instead.
-
-    /// **Deprecated**: Use `authorize_one()` instead, which includes
-    /// signature verification. This method does NOT verify the warrant
-    /// signature — a caller who skips `verify()` gets no cryptographic
-    /// guarantee.
-    #[deprecated(note = "Use authorize_one() which includes signature verification")]
-    pub fn authorize(
-        &self,
-        warrant: &Warrant,
-        tool: &str,
-        args: &HashMap<String, ConstraintValue>,
-        holder_signature: Option<&crate::crypto::Signature>,
-        approvals: &[crate::approval::SignedApproval],
-    ) -> Result<()> {
-        if !self.trusted_keys.is_empty() {
-            let issuer = warrant.issuer();
-            if !self.trusted_keys.iter().any(|k| k == issuer) {
-                return Err(Error::SignatureInvalid(
-                    "warrant issuer not in trusted roots".to_string(),
-                ));
-            }
-        }
-
-        if let Some(required_trust) = self.get_required_clearance(tool) {
-            let warrant_trust = warrant.clearance().unwrap_or(Clearance::UNTRUSTED);
-            if warrant_trust < required_trust {
-                return Err(Error::InsufficientClearance {
-                    tool: tool.to_string(),
-                    required: format!("{:?}", required_trust),
-                    actual: format!("{:?}", warrant_trust),
-                });
-            }
-        }
-
-        warrant.authorize_with_pop_config(
-            tool,
-            args,
-            holder_signature,
-            self.pop_window_secs,
-            self.pop_max_windows,
-        )?;
-
-        self.verify_approvals(warrant, tool, args, approvals)
-    }
-
-    /// **Deprecated**: Use `authorize_one()` instead, which combines
-    /// verification and authorization in a single call.
-    #[deprecated(note = "Use authorize_one() which combines verify + authorize")]
-    pub fn verify(&self, warrant: &Warrant) -> Result<()> {
-        if self.is_revoked(warrant) {
-            return Err(Error::WarrantRevoked(warrant.id().to_string()));
-        }
-
-        if warrant.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired(warrant.expires_at()));
-        }
-
-        let issuer = warrant.issuer();
-        if !self.trusted_keys.is_empty() && !self.trusted_keys.contains(issuer) {
-            return Err(Error::Validation(format!(
-                "warrant issuer is not trusted: {:?}",
-                issuer
-            )));
-        }
-
-        warrant.verify_signature()?;
-        warrant.verify(issuer)
-    }
-
-    /// **Deprecated**: Use `authorize_one()` instead.
-    #[deprecated(note = "Use authorize_one() instead")]
-    pub fn check(
-        &self,
-        warrant: &Warrant,
-        tool: &str,
-        args: &HashMap<String, ConstraintValue>,
-        holder_signature: Option<&crate::crypto::Signature>,
-        approvals: &[crate::approval::SignedApproval],
-    ) -> Result<()> {
-        #[allow(deprecated)]
-        {
-            self.verify(warrant)?;
-            self.authorize(warrant, tool, args, holder_signature, approvals)
-        }
-    }
-
     /// Verify multi-sig approvals against a warrant.
     fn verify_approvals(
         &self,
@@ -2389,18 +2236,17 @@ mod tests {
         let mut data_plane = DataPlane::new();
         data_plane.trust_issuer("control-plane", root_public_key);
 
-        // Verify (offline - no network call)
-        assert!(data_plane.verify(&warrant).is_ok());
+        // Verify chain (offline - no network call)
+        assert!(data_plane
+            .verify_chain(std::slice::from_ref(&warrant))
+            .is_ok());
 
-        // Authorize (offline - no network call)
+        // Full check_chain (offline - no network call)
         let mut args = HashMap::new();
         args.insert(
             "cluster".to_string(),
             ConstraintValue::String("staging-web".to_string()),
         );
-        // Note: warrant is bound to control_plane's key, but we can't access the private key
-        // from DataPlane. In production, the holder would have their own keypair.
-        // For this test, we'll create a warrant bound to a test keypair instead.
         let holder_keypair = SigningKey::generate();
         let warrant_for_holder = control_plane
             .issue_bound_warrant(
@@ -2415,8 +2261,8 @@ mod tests {
             .sign(&holder_keypair, "upgrade_cluster", &args)
             .unwrap();
         assert!(data_plane
-            .authorize(
-                &warrant_for_holder,
+            .check_chain(
+                &[warrant_for_holder],
                 "upgrade_cluster",
                 &args,
                 Some(&pop_sig),
@@ -2482,7 +2328,7 @@ mod tests {
             .sign(&holder_keypair, "test", &args)
             .unwrap();
         assert!(authorizer
-            .check(&warrant_for_holder, "test", &args, Some(&pop_sig), &[])
+            .authorize_one(&warrant_for_holder, "test", &args, Some(&pop_sig), &[])
             .is_ok());
     }
 
@@ -2741,7 +2587,7 @@ mod tests {
         let pop_sig = child.sign(&agent_keypair, "test", &args).unwrap();
 
         assert!(authorizer
-            .authorize(&child, "test", &args, Some(&pop_sig), &[])
+            .authorize_one(&child, "test", &args, Some(&pop_sig), &[])
             .is_ok());
         assert_eq!(result.chain_length, 2);
     }
@@ -2849,7 +2695,8 @@ mod tests {
             .unwrap();
 
         // Should pass without any approvals (just PoP)
-        let result = authorizer.authorize(&warrant_for_holder, "test", &args, Some(&pop_sig), &[]);
+        let result =
+            authorizer.authorize_one(&warrant_for_holder, "test", &args, Some(&pop_sig), &[]);
         assert!(result.is_ok());
     }
 
@@ -2877,7 +2724,8 @@ mod tests {
             .unwrap();
 
         // Should FAIL without approval (but WITH PoP signature)
-        let result = authorizer.authorize(&warrant, "sensitive_action", &args, Some(&pop_sig), &[]);
+        let result =
+            authorizer.authorize_one(&warrant, "sensitive_action", &args, Some(&pop_sig), &[]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("insufficient"));
     }
@@ -2936,7 +2784,7 @@ mod tests {
         let approval = SignedApproval::create(payload, &admin_keypair);
 
         // Should SUCCEED with valid approval AND PoP signature
-        let result = authorizer.authorize(
+        let result = authorizer.authorize_one(
             &warrant,
             "sensitive_action",
             &args,
@@ -3000,7 +2848,7 @@ mod tests {
             .unwrap();
 
         // Should FAIL - approver not in required set (even with valid PoP)
-        let result = authorizer.authorize(
+        let result = authorizer.authorize_one(
             &warrant,
             "sensitive_action",
             &args,
@@ -3074,7 +2922,7 @@ mod tests {
             .unwrap();
 
         // With 1 approval - should fail (need 2)
-        let result = authorizer.authorize(
+        let result = authorizer.authorize_one(
             &warrant,
             "sensitive_action",
             &args,
@@ -3084,7 +2932,7 @@ mod tests {
         assert!(result.is_err());
 
         // With 2 approvals - should pass
-        let result = authorizer.authorize(
+        let result = authorizer.authorize_one(
             &warrant,
             "sensitive_action",
             &args,
@@ -3676,7 +3524,13 @@ mod tests {
         let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // read_file should succeed (External >= External)
-        let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
+        let result = data_plane.check_chain(
+            std::slice::from_ref(&warrant),
+            "read_file",
+            &args,
+            Some(&pop_sig),
+            &[],
+        );
         assert!(
             result.is_ok(),
             "read_file should be authorized: {:?}",
@@ -3684,7 +3538,13 @@ mod tests {
         );
 
         // delete_file should fail (External < Privileged) - trust check happens before PoP
-        let result = data_plane.authorize(&warrant, "delete_file", &args, None, &[]);
+        let result = data_plane.check_chain(
+            std::slice::from_ref(&warrant),
+            "delete_file",
+            &args,
+            None,
+            &[],
+        );
         assert!(result.is_err(), "delete_file should be denied");
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3698,7 +3558,13 @@ mod tests {
         );
 
         // admin_reset should fail (External < System, via glob pattern)
-        let result = data_plane.authorize(&warrant, "admin_reset", &args, None, &[]);
+        let result = data_plane.check_chain(
+            std::slice::from_ref(&warrant),
+            "admin_reset",
+            &args,
+            None,
+            &[],
+        );
         assert!(result.is_err(), "admin_reset should be denied");
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3793,7 +3659,7 @@ mod tests {
         let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // Privileged > External, so should succeed
-        let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
+        let result = data_plane.check_chain(&[warrant], "read_file", &args, Some(&pop_sig), &[]);
         assert!(
             result.is_ok(),
             "Privileged warrant should access External-required tool: {:?}",
@@ -3842,7 +3708,7 @@ mod tests {
         let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // read_file should succeed (External >= External)
-        let result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
+        let result = authorizer.authorize_one(&warrant, "read_file", &args, Some(&pop_sig), &[]);
         assert!(
             result.is_ok(),
             "read_file should be authorized: {:?}",
@@ -3850,7 +3716,7 @@ mod tests {
         );
 
         // admin_reset should fail (External < System)
-        let result = authorizer.authorize(&warrant, "admin_reset", &args, None, &[]);
+        let result = authorizer.authorize_one(&warrant, "admin_reset", &args, None, &[]);
         assert!(result.is_err(), "admin_reset should be denied");
         let err = result.unwrap_err().to_string();
         assert!(
@@ -4017,7 +3883,7 @@ mod tests {
         let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // Authorization should succeed (clearance check is skipped when no requirements)
-        let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
+        let result = data_plane.check_chain(&[warrant], "read_file", &args, Some(&pop_sig), &[]);
         assert!(
             result.is_ok(),
             "Should succeed when no clearance requirements: {:?}",
@@ -4064,7 +3930,7 @@ mod tests {
         .collect();
 
         // Should fail: warrant has no clearance (treated as Untrusted)
-        let result = data_plane.authorize(&warrant, "read_file", &args, None, &[]);
+        let result = data_plane.check_chain(&[warrant], "read_file", &args, None, &[]);
         assert!(result.is_err(), "Should fail: Untrusted < External");
         let err = result.unwrap_err().to_string();
         assert!(
@@ -4128,7 +3994,7 @@ mod tests {
             .expect("warrant creation should work");
 
         // Authorization MUST fail at trust check (before PoP)
-        let result = authorizer.authorize(
+        let result = authorizer.authorize_one(
             &attacker_warrant,
             "read_file",
             &Default::default(),
@@ -4142,7 +4008,7 @@ mod tests {
         );
         let err = result.unwrap_err();
         assert!(
-            format!("{}", err).contains("not in trusted roots"),
+            format!("{}", err).contains("not trusted"),
             "Error should mention untrusted issuer: {}",
             err
         );
@@ -4174,7 +4040,7 @@ mod tests {
         let pop_sig = warrant.sign(&holder_key, "read_file", &args).unwrap();
 
         // Authorization should succeed (trust check passes, PoP valid)
-        let result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
+        let result = authorizer.authorize_one(&warrant, "read_file", &args, Some(&pop_sig), &[]);
 
         assert!(
             result.is_ok(),
@@ -4183,21 +4049,18 @@ mod tests {
         );
     }
 
-    /// SECURITY: Empty trusted_keys means no trust check (backwards compatibility).
-    /// This allows gradual adoption - users can start without trusted roots.
+    /// SECURITY: Authorizer with no trusted roots must reject everything.
     #[test]
-    fn test_authorizer_no_trusted_roots_allows_any() {
+    fn test_authorizer_no_trusted_roots_rejects() {
         use crate::crypto::SigningKey;
         use std::time::Duration;
 
         let any_key = SigningKey::generate();
         let holder_key = SigningKey::generate();
 
-        // Authorizer with NO trusted roots (empty)
         let authorizer = Authorizer::new();
         assert!(!authorizer.has_trusted_roots());
 
-        // Warrant from any issuer with holder binding
         let warrant = crate::Warrant::builder()
             .capability("read_file", crate::ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
@@ -4205,17 +4068,13 @@ mod tests {
             .build(&any_key)
             .expect("warrant creation should work");
 
-        // Create PoP signature
         let args = std::collections::HashMap::new();
         let pop_sig = warrant.sign(&holder_key, "read_file", &args).unwrap();
 
-        // Should be allowed (no trust check performed when no roots configured)
-        let result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
-
+        let result = authorizer.authorize_one(&warrant, "read_file", &args, Some(&pop_sig), &[]);
         assert!(
-            result.is_ok(),
-            "Empty trusted_keys should allow any issuer for backwards compatibility: {:?}",
-            result.err()
+            result.is_err(),
+            "Authorizer with no trusted roots must reject all warrants"
         );
     }
 
@@ -4248,7 +4107,7 @@ mod tests {
             .unwrap();
         let pop1 = warrant1.sign(&holder_key, "tool", &args).unwrap();
         assert!(authorizer
-            .authorize(&warrant1, "tool", &args, Some(&pop1), &[])
+            .authorize_one(&warrant1, "tool", &args, Some(&pop1), &[])
             .is_ok());
 
         // Warrant from key2 should work
@@ -4260,7 +4119,7 @@ mod tests {
             .unwrap();
         let pop2 = warrant2.sign(&holder_key, "tool", &args).unwrap();
         assert!(authorizer
-            .authorize(&warrant2, "tool", &args, Some(&pop2), &[])
+            .authorize_one(&warrant2, "tool", &args, Some(&pop2), &[])
             .is_ok());
 
         // Warrant from untrusted key should fail (at trust check, before PoP)
@@ -4272,7 +4131,40 @@ mod tests {
             .unwrap();
         // Don't need PoP since trust check fails first
         assert!(authorizer
-            .authorize(&warrant3, "tool", &args, None, &[])
+            .authorize_one(&warrant3, "tool", &args, None, &[])
             .is_err());
+    }
+
+    /// SECURITY: PoP signature is mandatory — passing None must fail.
+    #[test]
+    fn test_pop_required_rejects_none() {
+        use crate::crypto::SigningKey;
+        use std::time::Duration;
+
+        let root_key = SigningKey::generate();
+        let holder_key = SigningKey::generate();
+
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+
+        let warrant = crate::Warrant::builder()
+            .capability("read_file", crate::ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(holder_key.public_key())
+            .build(&root_key)
+            .unwrap();
+
+        let args = std::collections::HashMap::new();
+
+        let result = authorizer.authorize_one(&warrant, "read_file", &args, None, &[]);
+        assert!(
+            result.is_err(),
+            "SECURITY BUG: Authorization succeeded without PoP signature"
+        );
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("Proof-of-Possession"),
+            "Error should mention PoP requirement: {}",
+            err
+        );
     }
 }

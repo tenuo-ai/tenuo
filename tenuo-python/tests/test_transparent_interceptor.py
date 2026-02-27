@@ -19,9 +19,9 @@ Design Decision: timestamp parameter is OPTIONAL
 """
 
 import asyncio
-import time
 import base64
 import os
+import time
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -40,16 +40,16 @@ except ImportError:
     TEMPORAL_AVAILABLE = False
 
 # Tenuo imports
-from tenuo import SigningKey, Warrant
 from tenuo_core import Subpath
+
+from tenuo import SigningKey, Warrant
 from tenuo.temporal import (
+    EnvKeyResolver,
+    TenuoClientInterceptor,
     TenuoInterceptor,
     TenuoInterceptorConfig,
-    TenuoClientInterceptor,
-    EnvKeyResolver,
     tenuo_headers,
 )
-
 
 # =============================================================================
 # Test sign() backward compatibility
@@ -253,7 +253,7 @@ if TEMPORAL_AVAILABLE:
                     workflow_runner=sandbox_runner,
                 ):
                     client_interceptor.set_headers(
-                        tenuo_headers(warrant, "agent1", agent_key)
+                        tenuo_headers(warrant, "agent1")
                     )
 
                     result = await client.execute_workflow(
@@ -337,7 +337,7 @@ if TEMPORAL_AVAILABLE:
                     workflow_runner=sandbox_runner,
                 ):
                     client_interceptor.set_headers(
-                        tenuo_headers(warrant, "agent1", agent_key)
+                        tenuo_headers(warrant, "agent1")
                     )
 
                     result = await client.execute_workflow(
@@ -362,8 +362,9 @@ if TEMPORAL_AVAILABLE:
 
 def test_parameter_name_resolution_consistency():
     """Verify outbound and inbound interceptors use same arg resolution strategy."""
-    from tenuo.temporal import TenuoActivityInboundInterceptor, _TenuoWorkflowOutboundInterceptor
     import inspect
+
+    from tenuo.temporal import TenuoActivityInboundInterceptor, _TenuoWorkflowOutboundInterceptor
 
     outbound_source = inspect.getsource(_TenuoWorkflowOutboundInterceptor.start_activity)
     inbound_source = inspect.getsource(TenuoActivityInboundInterceptor._extract_arguments)
@@ -378,12 +379,13 @@ def test_parameter_name_resolution_consistency():
     assert "activity_fn" in inbound_source
 
 
-def test_fail_closed_warning():
-    """Verify that PoP computation failures log at WARNING level."""
-    from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+def test_fail_closed_behavior():
+    """Verify that PoP computation failures abort the activity (fail-closed)."""
     import inspect
+
+    from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
 
     source = inspect.getsource(_TenuoWorkflowOutboundInterceptor.start_activity)
 
-    assert "logger.warning" in source, "Should log PoP failures at WARNING level"
-    assert "except Exception" in source, "Should catch exceptions"
+    assert "fail-closed" in source.lower(), "Should document fail-closed behavior"
+    assert "TenuoContextError" in source, "Should raise TenuoContextError on PoP failure"

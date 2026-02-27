@@ -297,6 +297,28 @@ class RangeLimitScenario(BaseDelegationScenario):
                 "expected": "denied",
                 "reason": "$5000 > $1000 limit",
             },
+            # --- Edge cases ---
+            # Zero (floor boundary)
+            {
+                "attack_point": "small",
+                "action": {"tool": "transfer", "args": {"amount": 0}},
+                "expected": "allowed",
+                "reason": "$0 = floor of Range(0,100), should pass",
+            },
+            # Negative (below floor)
+            {
+                "attack_point": "small",
+                "action": {"tool": "transfer", "args": {"amount": -1}},
+                "expected": "denied",
+                "reason": "$-1 below Range floor",
+            },
+            # Float just over ceiling
+            {
+                "attack_point": "small",
+                "action": {"tool": "transfer", "args": {"amount": 100.01}},
+                "expected": "denied",
+                "reason": "$100.01 just above Range ceiling",
+            },
         ]
 
 
@@ -387,6 +409,21 @@ class PatternMatchScenario(BaseDelegationScenario):
                 "action": {"tool": "read_file", "args": {"path": "/etc/passwd"}},
                 "expected": "denied",
                 "reason": "/etc/passwd doesn't match docs/*",
+            },
+            # --- Edge cases ---
+            # Empty string
+            {
+                "attack_point": "internal",
+                "action": {"tool": "send_email", "args": {"to": ""}},
+                "expected": "denied",
+                "reason": "Empty string should not match *@company.com",
+            },
+            # Degenerate match: bare domain with no local part
+            {
+                "attack_point": "internal",
+                "action": {"tool": "send_email", "args": {"to": "@company.com"}},
+                "expected": "allowed",
+                "reason": "@company.com matches *@company.com (glob * matches empty)",
             },
         ]
 

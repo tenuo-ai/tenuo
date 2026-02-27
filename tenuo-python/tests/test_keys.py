@@ -8,17 +8,18 @@ Covers:
 - KeyRegistry
 """
 
-import os
 import base64
+import os
 import tempfile
 import threading
+
 import pytest
 
 from tenuo import (
     SigningKey,
 )
-from tenuo.keys import KeyRegistry, Keyring
 from tenuo.exceptions import ConfigurationError
+from tenuo.keys import KeyRegistry, Keyring
 
 
 class TestSigningKeyFromEnv:

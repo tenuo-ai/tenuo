@@ -10,21 +10,22 @@ Tests cover:
 - Composite templates (CommonAgents)
 """
 
+from tenuo_core import Exact, OneOf, Pattern, Range, Regex, Subpath, UrlSafe
+
+from tenuo.constraints import Capability
 from tenuo.templates import (
-    FileReader,
-    FileWriter,
-    DatabaseReader,
-    DatabaseWriter,
-    WebSearcher,
+    AgentTemplate,
     ApiClient,
     CodeRunner,
-    ShellExecutor,
-    EmailSender,
-    AgentTemplate,
     CommonAgents,
+    DatabaseReader,
+    DatabaseWriter,
+    EmailSender,
+    FileReader,
+    FileWriter,
+    ShellExecutor,
+    WebSearcher,
 )
-from tenuo.constraints import Capability
-from tenuo_core import Exact, OneOf, Pattern, Range, Regex, Subpath, UrlSafe
 
 
 class TestFileReader:
@@ -463,7 +464,7 @@ class TestTemplatesWithMint:
 
     def test_template_with_mint_sync(self):
         """Templates can be used with mint_sync."""
-        from tenuo import configure, mint_sync, SigningKey
+        from tenuo import SigningKey, configure, mint_sync
         from tenuo.config import reset_config
 
         reset_config()
@@ -479,7 +480,7 @@ class TestTemplatesWithMint:
 
     def test_composite_template_with_mint_sync(self):
         """Composite templates can be unpacked into mint_sync."""
-        from tenuo import configure, mint_sync, SigningKey
+        from tenuo import SigningKey, configure, mint_sync
         from tenuo.config import reset_config
 
         reset_config()
@@ -497,7 +498,7 @@ class TestTemplatesWithMint:
 
     def test_web_agent_template_with_mint_sync(self):
         """Web agent templates work with mint_sync."""
-        from tenuo import configure, mint_sync, SigningKey
+        from tenuo import SigningKey, configure, mint_sync
         from tenuo.config import reset_config
 
         reset_config()

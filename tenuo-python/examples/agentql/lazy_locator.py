@@ -1,6 +1,7 @@
 
 from typing import Any
 
+
 class LazySemanticLocator:
     """
     Lazy locator that resolves an AgentQL prompt only when an action is taken.

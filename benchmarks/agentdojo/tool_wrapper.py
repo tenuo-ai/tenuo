@@ -3,6 +3,7 @@ Tool wrapper that adds Tenuo authorization to AgentDojo tools.
 """
 
 import logging
+import time as _time
 from typing import Callable, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime, date, time
@@ -245,7 +246,7 @@ class TenuoToolWrapper:
             # Create PoP signature for this specific call (includes Ed25519 signing)
             try:
                 pop_signature = self.warrant.sign(
-                    self.holder_key, self.tool_name, filtered_args
+                    self.holder_key, self.tool_name, filtered_args, int(_time.time())
                 )
             except ValueError as ve:
                 logger.error(f"PoP creation failed for {self.tool_name}: {ve}")

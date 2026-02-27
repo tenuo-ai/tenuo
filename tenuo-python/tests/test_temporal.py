@@ -5,50 +5,51 @@ These tests verify the core functionality without requiring
 a running Temporal server.
 """
 
+import asyncio
 import base64
 import gzip
 import os
-import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+import threading
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Skip all tests if temporalio is not installed
 pytest.importorskip("temporalio")
 
 from tenuo.temporal import (  # noqa: E402 - must be after importorskip
+    TENUO_COMPRESSED_HEADER,
+    TENUO_KEY_ID_HEADER,
+    TENUO_WARRANT_HEADER,
+    ChainValidationError,
     # Exceptions
     ConstraintViolation,
-    WarrantExpired,
-    ChainValidationError,
+    EnvKeyResolver,
     KeyResolutionError,
+    # Key Resolvers
+    KeyResolver,
     # Phase 2 exceptions
     LocalActivityError,
     PopVerificationError,
     # Audit
     TemporalAuditEvent,
-    # Key Resolvers
-    KeyResolver,
-    EnvKeyResolver,
-    # Config
-    TenuoInterceptorConfig,
     # Interceptor
     TenuoInterceptor,
+    # Config
+    TenuoInterceptorConfig,
+    WarrantExpired,
+    _compute_pop_challenge,
+    _extract_key_id_from_headers,
+    get_tool_name,
+    is_unprotected,
     # Header utilities
     tenuo_headers,
-    TENUO_WARRANT_HEADER,
-    TENUO_KEY_ID_HEADER,
-    TENUO_COMPRESSED_HEADER,
-    TENUO_SIGNING_KEY_HEADER,
-    _extract_key_id_from_headers,
-    _compute_pop_challenge,
-    # Phase 2: Decorators
-    unprotected,
-    is_unprotected,
     # Phase 3: Decorators and delegation
     tool,
-    get_tool_name,
+    # Phase 2: Decorators
+    unprotected,
 )
-
 
 # =============================================================================
 # Test Fixtures
@@ -61,6 +62,7 @@ def mock_warrant():
     warrant = MagicMock()
     warrant.id.return_value = "test-warrant-123"
     warrant.to_base64.return_value = "eyJ0ZXN0IjogIndhcnJhbnQifQ=="  # {"test": "warrant"}
+    warrant.to_bytes.return_value = b'{"test": "warrant"}'
     warrant.is_expired.return_value = False
     warrant.expires_at.return_value = datetime(2030, 1, 1, tzinfo=timezone.utc)
     warrant.tools.return_value = ["read_file", "write_file"]
@@ -87,40 +89,239 @@ class TestTenuoHeaders:
 
     def test_creates_headers_with_warrant(self, mock_warrant, mock_signing_key):
         """tenuo_headers creates proper header dict."""
-        headers = tenuo_headers(mock_warrant, "key-123", mock_signing_key)
+        headers = tenuo_headers(mock_warrant, "key-123")
 
         assert TENUO_KEY_ID_HEADER in headers
         assert headers[TENUO_KEY_ID_HEADER] == b"key-123"
         assert TENUO_WARRANT_HEADER in headers
         assert TENUO_COMPRESSED_HEADER in headers
-        assert TENUO_SIGNING_KEY_HEADER in headers
+        # Security: Private key should NOT be in headers
+        assert "x-tenuo-signing-key" not in headers
 
     def test_compresses_by_default(self, mock_warrant, mock_signing_key):
         """Warrant is gzip compressed by default."""
-        headers = tenuo_headers(mock_warrant, "key-123", mock_signing_key)
+        headers = tenuo_headers(mock_warrant, "key-123")
 
         assert headers[TENUO_COMPRESSED_HEADER] == b"1"
 
-        # Verify we can decompress
-        compressed = base64.b64decode(headers[TENUO_WARRANT_HEADER])
-        decompressed = gzip.decompress(compressed)
-        assert b"eyJ0ZXN0IjogIndhcnJhbnQifQ==" in decompressed
+        # V2 format: raw gzip(cbor), no intermediate base64
+        decompressed = gzip.decompress(headers[TENUO_WARRANT_HEADER])
+        assert decompressed == b'{"test": "warrant"}'
 
     def test_uncompressed_option(self, mock_warrant, mock_signing_key):
         """Can disable compression."""
-        headers = tenuo_headers(mock_warrant, "key-123", mock_signing_key, compress=False)
+        headers = tenuo_headers(mock_warrant, "key-123", compress=False)
 
         assert headers[TENUO_COMPRESSED_HEADER] == b"0"
-        # Should be the raw base64
-        assert headers[TENUO_WARRANT_HEADER] == b"eyJ0ZXN0IjogIndhcnJhbnQifQ=="
+        # V2 format: raw CBOR bytes (no base64 wrapping)
+        assert headers[TENUO_WARRANT_HEADER] == b'{"test": "warrant"}'
 
-    def test_signing_key_propagated(self, mock_warrant, mock_signing_key):
-        """Signing key is base64-encoded in headers for PoP."""
-        headers = tenuo_headers(mock_warrant, "key-123", mock_signing_key)
+    def test_signing_key_not_in_headers(self, mock_warrant, mock_signing_key):
+        """SECURITY: Signing key is NEVER transmitted in headers."""
+        headers = tenuo_headers(mock_warrant, "key-123")
 
-        signing_key_b64 = headers[TENUO_SIGNING_KEY_HEADER]
-        decoded = base64.b64decode(signing_key_b64)
-        assert decoded == b"\x00" * 32
+        # Private key must NOT be in headers (security requirement)
+        assert "x-tenuo-signing-key" not in headers
+
+        # Verify no key material in any header value
+        key_bytes = mock_signing_key.to_bytes()
+        for value in headers.values():
+            assert key_bytes not in value, "Private key bytes found in headers!"
+
+
+class TestSecurityKeyNeverTransmitted:
+    """Security tests: Verify private keys are NEVER transmitted in headers.
+
+    These tests enforce the critical security requirement that private keys
+    must never be included in Temporal headers (which are persisted in the
+    database and transmitted over the network).
+    """
+
+    def test_tenuo_headers_never_contains_private_key_bytes(self):
+        """SECURITY: Private key bytes must never appear in any header."""
+        from tenuo_core import SigningKey, Warrant
+
+        # Generate a real key with real bytes
+        signing_key = SigningKey.generate()
+        key_bytes = signing_key.secret_key_bytes()
+
+        # Create a real warrant
+        warrant = Warrant.issue(
+            signing_key,
+            capabilities={"test": {}},
+            ttl_seconds=3600,
+            holder=signing_key.public_key,
+        )
+
+        # Generate headers
+        headers = tenuo_headers(warrant, "test-key-id")
+
+        # Verify key bytes are NOT in any header value
+        for header_name, header_value in headers.items():
+            assert key_bytes not in header_value, (
+                f"SECURITY VIOLATION: Private key bytes found in header {header_name}!"
+            )
+
+    def test_tenuo_headers_never_contains_signing_key_header(self):
+        """SECURITY: TENUO_SIGNING_KEY_HEADER must never be present."""
+        from tenuo_core import SigningKey, Warrant
+
+        signing_key = SigningKey.generate()
+        warrant = Warrant.issue(
+            signing_key,
+            capabilities={"test": {}},
+            ttl_seconds=3600,
+            holder=signing_key.public_key,
+        )
+
+        headers = tenuo_headers(warrant, "test-key-id")
+
+        # The deprecated header must NOT be present
+        assert "x-tenuo-signing-key" not in headers, (
+            "SECURITY VIOLATION: TENUO_SIGNING_KEY_HEADER found in headers! "
+            "Private keys must never be transmitted."
+        )
+
+    def test_only_key_id_transmitted(self):
+        """SECURITY: Only key_id (not the key itself) is transmitted."""
+        from tenuo_core import SigningKey, Warrant
+
+        signing_key = SigningKey.generate()
+        warrant = Warrant.issue(
+            signing_key,
+            capabilities={"test": {}},
+            ttl_seconds=3600,
+            holder=signing_key.public_key,
+        )
+
+        headers = tenuo_headers(warrant, "prod-agent-2024")
+
+        # Key ID should be present
+        assert TENUO_KEY_ID_HEADER in headers
+        assert headers[TENUO_KEY_ID_HEADER] == b"prod-agent-2024"
+
+        # But no key material
+        assert "x-tenuo-signing-key" not in headers
+
+    def test_base64_encoded_key_not_in_headers(self):
+        """SECURITY: Even base64-encoded keys must not be in headers."""
+        import base64
+
+        from tenuo_core import SigningKey, Warrant
+
+        signing_key = SigningKey.generate()
+        key_bytes = signing_key.secret_key_bytes()
+        key_b64 = base64.b64encode(key_bytes)
+
+        warrant = Warrant.issue(
+            signing_key,
+            capabilities={"test": {}},
+            ttl_seconds=3600,
+            holder=signing_key.public_key,
+        )
+
+        headers = tenuo_headers(warrant, "test-key")
+
+        # Verify base64-encoded key is NOT in headers
+        for header_value in headers.values():
+            assert key_b64 not in header_value, (
+                "SECURITY VIOLATION: Base64-encoded private key found in headers!"
+            )
+
+    def test_multiple_headers_no_key_leakage(self):
+        """SECURITY: Multiple header generations don't leak keys."""
+        from tenuo_core import SigningKey, Warrant
+
+        signing_key = SigningKey.generate()
+        key_bytes = signing_key.secret_key_bytes()
+
+        warrant = Warrant.issue(
+            signing_key,
+            capabilities={"test": {}},
+            ttl_seconds=3600,
+            holder=signing_key.public_key,
+        )
+
+        # Generate headers multiple times
+        for i in range(10):
+            headers = tenuo_headers(warrant, f"key-{i}")
+
+            # Each time, verify no key leakage
+            for header_value in headers.values():
+                assert key_bytes not in header_value
+
+    def test_compressed_and_uncompressed_no_key_leakage(self):
+        """SECURITY: Both compressed and uncompressed modes never leak keys."""
+        from tenuo_core import SigningKey, Warrant
+
+        signing_key = SigningKey.generate()
+        key_bytes = signing_key.secret_key_bytes()
+
+        warrant = Warrant.issue(
+            signing_key,
+            capabilities={"test": {}},
+            ttl_seconds=3600,
+            holder=signing_key.public_key,
+        )
+
+        # Test compressed
+        headers_compressed = tenuo_headers(warrant, "key-1", compress=True)
+        for header_value in headers_compressed.values():
+            assert key_bytes not in header_value
+
+        # Test uncompressed
+        headers_uncompressed = tenuo_headers(warrant, "key-1", compress=False)
+        for header_value in headers_uncompressed.values():
+            assert key_bytes not in header_value
+
+
+class TestTenuoHeadersRejectsKeyObjects:
+    """Runtime guard: tenuo_headers() must reject SigningKey objects as key_id."""
+
+    def test_rejects_signing_key_as_key_id(self):
+        """Passing a SigningKey instead of a string key_id raises TypeError."""
+        from tenuo_core import SigningKey, Warrant
+
+        signing_key = SigningKey.generate()
+        warrant = Warrant.issue(
+            signing_key,
+            capabilities={"test": {}},
+            ttl_seconds=3600,
+            holder=signing_key.public_key,
+        )
+
+        with pytest.raises(TypeError, match="not a SigningKey"):
+            tenuo_headers(warrant, signing_key)
+
+    def test_rejects_bytes_as_key_id(self):
+        """Passing raw bytes instead of a string key_id raises TypeError."""
+        from tenuo_core import SigningKey, Warrant
+
+        signing_key = SigningKey.generate()
+        warrant = Warrant.issue(
+            signing_key,
+            capabilities={"test": {}},
+            ttl_seconds=3600,
+            holder=signing_key.public_key,
+        )
+
+        with pytest.raises(TypeError, match="must be a string"):
+            tenuo_headers(warrant, signing_key.secret_key_bytes())
+
+    def test_rejects_int_as_key_id(self):
+        """Passing a non-string type raises TypeError."""
+        from tenuo_core import SigningKey, Warrant
+
+        signing_key = SigningKey.generate()
+        warrant = Warrant.issue(
+            signing_key,
+            capabilities={"test": {}},
+            ttl_seconds=3600,
+            holder=signing_key.public_key,
+        )
+
+        with pytest.raises(TypeError, match="must be a string"):
+            tenuo_headers(warrant, 12345)
 
 
 class TestExtractKeyId:
@@ -202,6 +403,74 @@ class TestEnvKeyResolver:
                     assert key is not None
 
         asyncio.run(_test())
+
+
+# =============================================================================
+# Test KeyResolver.resolve_sync()
+# =============================================================================
+
+
+class TestResolveSyncUnderEventLoop:
+    """Tests for KeyResolver.resolve_sync() behavior under running event loops.
+
+    resolve_sync() must work from both sync contexts and from within
+    running event loops (e.g., Temporal workflow coroutines). The latter
+    requires a thread-pool fallback to avoid 'loop already running' errors.
+    """
+
+    def test_resolve_sync_without_event_loop(self):
+        """resolve_sync works when no event loop is running."""
+
+        class TestResolver(KeyResolver):
+            async def resolve(self, key_id: str):
+                return f"key-for-{key_id}"
+
+        resolver = TestResolver()
+        result = resolver.resolve_sync("agent-1")
+        assert result == "key-for-agent-1"
+
+    def test_resolve_sync_under_running_event_loop(self):
+        """resolve_sync works when called from within a running event loop."""
+        import asyncio
+
+        class TestResolver(KeyResolver):
+            async def resolve(self, key_id: str):
+                await asyncio.sleep(0.01)
+                return f"key-for-{key_id}"
+
+        resolver = TestResolver()
+
+        async def _run_inside_loop():
+            return resolver.resolve_sync("agent-2")
+
+        result = asyncio.run(_run_inside_loop())
+        assert result == "key-for-agent-2"
+
+    def test_resolve_sync_propagates_errors(self):
+        """resolve_sync propagates KeyResolutionError from resolve()."""
+
+        class FailingResolver(KeyResolver):
+            async def resolve(self, key_id: str):
+                raise KeyResolutionError(key_id)
+
+        resolver = FailingResolver()
+        with pytest.raises(KeyResolutionError) as exc:
+            resolver.resolve_sync("missing-key")
+        assert exc.value.key_id == "missing-key"
+
+    def test_resolve_sync_override(self):
+        """Subclasses can override resolve_sync for efficient sync implementations."""
+
+        class SyncNativeResolver(KeyResolver):
+            async def resolve(self, key_id: str):
+                raise RuntimeError("should not be called")
+
+            def resolve_sync(self, key_id: str):
+                return f"sync-{key_id}"
+
+        resolver = SyncNativeResolver()
+        result = resolver.resolve_sync("fast-key")
+        assert result == "sync-fast-key"
 
 
 # =============================================================================
@@ -626,6 +895,7 @@ class TestCompositeKeyResolver:
     def test_uses_first_successful_resolver(self):
         """CompositeKeyResolver uses first resolver that succeeds."""
         import asyncio
+
         from tenuo.temporal import CompositeKeyResolver
 
         # Mock resolvers
@@ -646,6 +916,7 @@ class TestCompositeKeyResolver:
     def test_raises_if_all_fail(self):
         """CompositeKeyResolver raises if all resolvers fail."""
         import asyncio
+
         from tenuo.temporal import CompositeKeyResolver
 
         resolver1 = MagicMock(spec=KeyResolver)
@@ -1014,6 +1285,145 @@ class TestSecurityConfig:
         config = TenuoInterceptorConfig(key_resolver=resolver, redact_args_in_logs=False)
 
         assert config.redact_args_in_logs is False
+
+
+# =============================================================================
+# Key Resolver Cache & Failure Tests
+# =============================================================================
+
+
+class TestVaultKeyResolverCache:
+    """Tests for VaultKeyResolver cache thread safety and failure paths."""
+
+    def test_cache_returns_cached_key_within_ttl(self):
+        """Cached key is returned without Vault fetch when within TTL."""
+        import time
+
+        from tenuo.temporal import VaultKeyResolver
+
+        resolver = VaultKeyResolver(
+            url="https://vault.test:8200",
+            token="test-token",
+            cache_ttl=300,
+        )
+
+        fake_key = MagicMock()
+        with resolver._cache_lock:
+            resolver._cache["agent-1"] = (fake_key, time.time())
+
+        async def _test():
+            return await resolver.resolve("agent-1")
+
+        result = asyncio.run(_test())
+        assert result is fake_key
+
+    def test_cache_expires_after_ttl(self):
+        """Cached key is NOT returned after TTL expires — triggers fresh fetch."""
+        import time
+
+        from tenuo.temporal import VaultKeyResolver
+
+        resolver = VaultKeyResolver(
+            url="https://vault.test:8200",
+            token="test-token",
+            cache_ttl=1,
+        )
+
+        fake_key = MagicMock()
+        with resolver._cache_lock:
+            resolver._cache["agent-1"] = (fake_key, time.time() - 10)
+
+        async def _test():
+            return await resolver.resolve("agent-1")
+
+        with pytest.raises(Exception):
+            asyncio.run(_test())
+
+    def test_missing_token_raises_key_resolution_error(self):
+        """Vault resolver raises KeyResolutionError when no token available."""
+        from tenuo.temporal import KeyResolutionError, VaultKeyResolver
+
+        resolver = VaultKeyResolver(
+            url="https://vault.test:8200",
+            token=None,
+            cache_ttl=300,
+        )
+
+        async def _test():
+            return await resolver.resolve("agent-1")
+
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(KeyResolutionError):
+                asyncio.run(_test())
+
+    def test_concurrent_cache_access_is_safe(self):
+        """Multiple threads reading/writing cache don't corrupt it."""
+        import time
+
+        from tenuo.temporal import VaultKeyResolver
+
+        resolver = VaultKeyResolver(
+            url="https://vault.test:8200",
+            token="test-token",
+            cache_ttl=300,
+        )
+
+        errors = []
+
+        def _write(key_id):
+            try:
+                with resolver._cache_lock:
+                    resolver._cache[key_id] = (MagicMock(), time.time())
+            except Exception as e:
+                errors.append(e)
+
+        def _read(key_id):
+            try:
+                with resolver._cache_lock:
+                    resolver._cache.get(key_id)
+            except Exception as e:
+                errors.append(e)
+
+        threads = []
+        for i in range(50):
+            t = threading.Thread(target=_write, args=(f"key-{i}",))
+            threads.append(t)
+            t = threading.Thread(target=_read, args=(f"key-{i % 10}",))
+            threads.append(t)
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert len(resolver._cache) == 50
+
+
+class TestDedupCacheEviction:
+    """Tests for the PoP dedup cache size limit."""
+
+    def test_dedup_cache_has_max_size_constant(self):
+        """_DEDUP_MAX_SIZE is defined and reasonable."""
+        from tenuo.temporal import _DEDUP_MAX_SIZE
+        assert _DEDUP_MAX_SIZE > 0
+        assert _DEDUP_MAX_SIZE <= 100_000
+
+    def test_dedup_cache_can_be_filled_and_cleared(self):
+        """Basic smoke test: cache supports dict operations."""
+        import time
+
+        from tenuo.temporal import _pop_dedup_cache
+
+        _pop_dedup_cache.clear()
+
+        now = time.time()
+        for i in range(100):
+            _pop_dedup_cache[f"nonce-{i}"] = now
+
+        assert len(_pop_dedup_cache) == 100
+        _pop_dedup_cache.clear()
+        assert len(_pop_dedup_cache) == 0
 
 
 # =============================================================================

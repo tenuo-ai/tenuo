@@ -12,10 +12,13 @@ import sys
 import argparse
 
 
+RATE_LIMITED = "rate_limited"
+
+
 def run_task(
     suite: str, task: str, api_key: str, python_path: str, model: str = None
-) -> bool:
-    """Run a single benchmark task."""
+) -> bool | str:
+    """Run a single benchmark task. Returns True, False, or RATE_LIMITED."""
     print(f"\n{'=' * 60}")
     print(f"Running task: {task}")
     print(f"Model: {model if model else 'default'}")
@@ -56,10 +59,9 @@ def run_task(
         else:
             print(f"✗ Task {task} failed with exit code {result.returncode}")
 
-            # Check if rate limited
             if "rate_limit" in result.stderr.lower() or "429" in result.stderr:
                 print("⚠ Rate limit detected!")
-                return False
+                return RATE_LIMITED
 
             return False
 
@@ -96,8 +98,8 @@ def main():
     )
     parser.add_argument(
         "--python",
-        default="/opt/homebrew/Caskroom/miniconda/base/envs/agentdojo/bin/python",
-        help="Path to Python interpreter",
+        default=sys.executable,
+        help="Path to Python interpreter (default: current interpreter)",
     )
     parser.add_argument(
         "--model", default=None, help="Model to use (e.g. gpt-4o, gpt-5.1)"
@@ -137,14 +139,13 @@ def main():
     failed = 0
 
     for i, task in enumerate(args.tasks):
-        success = run_task(args.suite, task, api_key, args.python, args.model)
+        result = run_task(args.suite, task, api_key, args.python, args.model)
 
-        if success:
+        if result is True:
             successful += 1
         else:
             failed += 1
-            # If rate limited, wait extra time
-            if "rate" in str(success).lower():
+            if result == RATE_LIMITED:
                 print(f"Waiting {args.rate_limit_delay}s for rate limit...")
                 time.sleep(args.rate_limit_delay)
                 continue

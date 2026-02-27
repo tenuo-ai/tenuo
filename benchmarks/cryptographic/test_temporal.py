@@ -11,7 +11,46 @@ Changing it invalidates the signature.
 import pytest
 import time
 from tenuo import SigningKey, Warrant, Range
-from tenuo.exceptions import ExpiredError
+from tenuo import Authorizer
+from tenuo.exceptions import ExpiredError, TenuoError
+
+
+
+# ---------------------------------------------------------------------------
+# Authorization helpers — require an explicit issuer_key so each test
+# configures trust roots the same way production code does. No self-trust.
+# ---------------------------------------------------------------------------
+
+def _is_authorized(warrant, tool, args, sig, *, issuer_key):
+    """Return True if authorized, False if denied. Uses explicit root-of-trust.
+
+    Only catches expected authorization errors (TenuoError, ExpiredError).
+    Other exceptions (import failures, attribute errors, etc.) propagate so
+    that environment issues are not silently reported as authorization denials.
+    """
+    try:
+        Authorizer(trusted_roots=[issuer_key]).authorize_one(
+            warrant, tool, args,
+            signature=sig if isinstance(sig, bytes) else bytes(sig)
+        )
+        return True
+    except (TenuoError, ExpiredError):
+        return False
+
+def _assert_authorized(warrant, tool, args, sig, *, issuer_key):
+    """Assert that authorization succeeds against an explicit trust root."""
+    Authorizer(trusted_roots=[issuer_key]).authorize_one(
+        warrant, tool, args,
+        signature=sig if isinstance(sig, bytes) else bytes(sig)
+    )
+
+def _assert_denied(warrant, tool, args, sig, *, issuer_key):
+    """Assert that authorization fails against an explicit trust root."""
+    with pytest.raises(Exception):
+        Authorizer(trusted_roots=[issuer_key]).authorize_one(
+            warrant, tool, args,
+            signature=sig if isinstance(sig, bytes) else bytes(sig)
+        )
 
 
 class TestTemporalEnforcement:
@@ -37,8 +76,8 @@ class TestTemporalEnforcement:
             .mint(issuer_key)
         )
 
-        sig = warrant.sign(holder_key, "action", {"value": 50})
-        assert warrant.authorize("action", {"value": 50}, bytes(sig))
+        sig = warrant.sign(holder_key, "action", {"value": 50}, int(time.time()))
+        _assert_authorized(warrant, "action", {"value": 50}, bytes(sig), issuer_key=issuer_key.public_key)
 
     def test_expired_warrant_rejected(self, issuer_key, holder_key):
         """
@@ -55,20 +94,18 @@ class TestTemporalEnforcement:
         )
 
         # Works immediately
-        sig = warrant.sign(holder_key, "action", {"value": 50})
-        assert warrant.authorize("action", {"value": 50}, bytes(sig))
+        sig = warrant.sign(holder_key, "action", {"value": 50}, int(time.time()))
+        _assert_authorized(warrant, "action", {"value": 50}, bytes(sig), issuer_key=issuer_key.public_key)
 
         # Wait for expiration
         time.sleep(2)
 
         # Now it's expired - should raise ExpiredError or return False
-        sig = warrant.sign(holder_key, "action", {"value": 50})
+        sig = warrant.sign(holder_key, "action", {"value": 50}, int(time.time()))
         try:
-            result = warrant.authorize("action", {"value": 50}, bytes(sig))
-            # If no exception, result should be False
+            result = _is_authorized(warrant, "action", {"value": 50}, bytes(sig), issuer_key=issuer_key.public_key)
             assert not result
         except ExpiredError:
-            # Expected: expired warrants raise ExpiredError
             pass
 
     def test_cannot_tamper_with_expiration(self, issuer_key, holder_key):
@@ -94,12 +131,12 @@ class TestTemporalEnforcement:
 
         # Verify it's expired
         recovered = Warrant.from_base64(original_base64)
-        sig = recovered.sign(holder_key, "action", {"value": 50})
+        sig = recovered.sign(holder_key, "action", {"value": 50}, int(time.time()))
         try:
-            result = recovered.authorize("action", {"value": 50}, bytes(sig))
+            result = _is_authorized(recovered, "action", {"value": 50}, bytes(sig), issuer_key=issuer_key.public_key)
             assert not result
         except ExpiredError:
-            pass  # Expected
+            pass
 
         # Attacker cannot just "edit" the expiration in the bytes
         # because it would invalidate the signature
@@ -149,9 +186,10 @@ class TestTemporalEnforcement:
         )
 
         # Must act quickly
-        sig = sensitive_warrant.sign(holder_key, "delete_database", {"confirmed": 1})
-        assert sensitive_warrant.authorize(
-            "delete_database", {"confirmed": 1}, bytes(sig)
+        sig = sensitive_warrant.sign(holder_key, "delete_database", {"confirmed": 1}, int(time.time()))
+        _assert_authorized(sensitive_warrant,
+            "delete_database", {"confirmed": 1}, bytes(sig),
+            issuer_key=issuer_key.public_key
         )
 
         # After 30 seconds, warrant is useless (even if stolen)
@@ -187,8 +225,8 @@ class TestJustInTimeWarrants:
         )
 
         # Agent uses it immediately
-        sig = warrant.sign(agent, "process_payment", {"amount": 100})
-        assert warrant.authorize("process_payment", {"amount": 100}, bytes(sig))
+        sig = warrant.sign(agent, "process_payment", {"amount": 100}, int(time.time()))
+        _assert_authorized(warrant, "process_payment", {"amount": 100}, bytes(sig), issuer_key=issuer.public_key)
 
         # Verify we're within the window
         elapsed = time.time() - start_time
@@ -225,12 +263,11 @@ class BenchmarkMetrics:
             )
 
             results["fresh_warrants"] += 1
-            sig = warrant.sign(holder, "action", {"value": 50})
-            if warrant.authorize("action", {"value": 50}, bytes(sig)):
+            sig = warrant.sign(holder, "action", {"value": 50}, int(time.time()))
+            if _is_authorized(warrant, "action", {"value": 50}, bytes(sig), issuer_key=issuer.public_key):
                 results["fresh_warrants_accepted"] += 1
 
         # Test expired warrants (should fail)
-        # Create with 1-second TTL and wait
         for _ in range(5):
             warrant = (
                 Warrant.mint_builder()
@@ -239,12 +276,12 @@ class BenchmarkMetrics:
                 .ttl(1)
                 .mint(issuer)
             )
-            time.sleep(1.5)  # Wait for expiration
+            time.sleep(1.5)
 
             results["expired_warrants"] += 1
-            sig = warrant.sign(holder, "action", {"value": 50})
+            sig = warrant.sign(holder, "action", {"value": 50}, int(time.time()))
             try:
-                result = warrant.authorize("action", {"value": 50}, bytes(sig))
+                result = _is_authorized(warrant, "action", {"value": 50}, bytes(sig), issuer_key=issuer.public_key)
                 if not result:
                     results["expired_warrants_rejected"] += 1
             except ExpiredError:

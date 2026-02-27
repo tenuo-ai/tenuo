@@ -8,15 +8,16 @@ Verifies:
 """
 
 import pytest
+from tenuo_core import Clearance
+
 from tenuo import (
-    Warrant,
-    SigningKey,
-    Pattern,
-    Exact,
     Capability,
+    Exact,
+    Pattern,
+    SigningKey,
+    Warrant,
 )
 from tenuo.constraints import Constraints
-from tenuo_core import Clearance
 
 
 class TestIssuerWarrantExists:
@@ -160,7 +161,7 @@ class TestGrantMethod:
 
     def test_grant_narrows_constraints(self):
         """grant() should narrow constraints."""
-        from tenuo import configure, mint_sync, Pattern
+        from tenuo import Pattern, configure, mint_sync
         from tenuo.config import reset_config
 
         reset_config()

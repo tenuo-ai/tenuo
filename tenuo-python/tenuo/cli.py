@@ -20,8 +20,8 @@ import argparse
 import json
 import sys
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 
 
 def discover_capabilities(
@@ -315,10 +315,10 @@ def print_rich_warrant(warrant) -> bool:
     """
     try:
         from rich.console import Console  # type: ignore[import-not-found]
-        from rich.tree import Tree  # type: ignore[import-not-found]
-        from rich.table import Table  # type: ignore[import-not-found]
         from rich.panel import Panel  # type: ignore[import-not-found]
+        from rich.table import Table  # type: ignore[import-not-found]
         from rich.text import Text  # type: ignore[import-not-found]
+        from rich.tree import Tree  # type: ignore[import-not-found]
     except ImportError:
         return False
 
@@ -403,9 +403,9 @@ def print_rich_warrant_stack(warrants) -> bool:
     """
     try:
         from rich.console import Console  # type: ignore[import-not-found]
-        from rich.tree import Tree  # type: ignore[import-not-found]
         from rich.panel import Panel  # type: ignore[import-not-found]
         from rich.text import Text  # type: ignore[import-not-found]
+        from rich.tree import Tree  # type: ignore[import-not-found]
     except ImportError:
         return False
 
@@ -512,8 +512,8 @@ def mint_warrant(tools: List[str], ttl: str = "1h") -> str:
     Returns:
         Base64-encoded warrant string
     """
-    import os
     import base64
+    import os
 
     # Get key from environment
     key_b64 = os.environ.get("TENUO_ROOT_KEY")
@@ -1129,6 +1129,7 @@ def init_project() -> None:
     - tenuo_config.py with basics
     """
     import base64
+
     from tenuo_core import SigningKey
 
     print("🚀 Initializing Tenuo project (development mode)...")

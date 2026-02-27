@@ -145,8 +145,8 @@ def _guard_openai(
     on_denial: str,
 ) -> Any:
     """Guard an OpenAI client."""
+    from .constraints import Shlex, Subpath, UrlSafe
     from .openai import GuardBuilder
-    from .constraints import Subpath, UrlSafe, Shlex
 
     builder = GuardBuilder(client).on_denial(on_denial)  # type: ignore[arg-type]
 
@@ -223,7 +223,7 @@ def _infer_constraints(
     allowed_bins: Optional[List[str]],
 ) -> Dict[str, Dict[str, Any]]:
     """Infer constraints from tool schemas based on parameter names."""
-    from .constraints import Subpath, UrlSafe, Shlex
+    from .constraints import Shlex, Subpath, UrlSafe
 
     constraints: Dict[str, Dict[str, Any]] = {}
 
