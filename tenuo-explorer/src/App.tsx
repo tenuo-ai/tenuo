@@ -190,9 +190,14 @@ function generateFreshSamples(): Record<string, SampleDef> {
 const CopyBtn = ({ text, label }: { text: string; label?: string }) => {
   const [copied, setCopied] = useState(false);
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error('[Copy] Failed to copy to clipboard:', err);
+      setCopied(false);
+    }
   };
   return (
     <button
@@ -975,9 +980,14 @@ ${argsLines}
   }, [lang, decoded, tool, args]);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error('[Code Copy] Failed to copy to clipboard:', err);
+      setCopied(false);
+    }
   };
 
   return (
@@ -2264,9 +2274,16 @@ function App() {
 
   const handleShare = async () => {
     const url = generateShareUrl();
-    await navigator.clipboard.writeText(url);
-    setShareUrl(url);
-    setTimeout(() => setShareUrl(""), 2000);
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareUrl(url);
+      setTimeout(() => setShareUrl(""), 2000);
+    } catch (err) {
+      console.error('[Tenuo Explorer] Failed to copy to clipboard:', err);
+      // Fallback: show the URL so user can copy manually
+      setShareUrl('⚠️ Copy failed - check console');
+      setTimeout(() => setShareUrl(""), 3000);
+    }
   };
 
   const handleExport = (format: 'json' | 'curl') => {
@@ -2285,7 +2302,9 @@ function App() {
   -H "Authorization: Bearer ${warrantB64}" \\
   -H "Content-Type: application/json" \\
   -d '${JSON.stringify({ tool, args: JSON.parse(argsJson) })}'`;
-      navigator.clipboard.writeText(curl);
+      navigator.clipboard.writeText(curl).catch(err => {
+        console.error('[cURL Export] Failed to copy to clipboard:', err);
+      });
     }
   };
 
@@ -2391,7 +2410,10 @@ function App() {
                             />
                             <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px' }}>
                               <button
-                                onClick={() => navigator.clipboard.writeText((builderPreview as { warrant_b64: string }).warrant_b64)}
+                                onClick={() => {
+                                  navigator.clipboard.writeText((builderPreview as { warrant_b64: string }).warrant_b64)
+                                    .catch(err => console.error('[Builder] Failed to copy warrant:', err));
+                                }}
                                 className="btn btn-secondary"
                                 style={{ fontSize: '11px', padding: '4px 8px' }}
                               >
