@@ -33,6 +33,9 @@ pub const MAX_EXTENSION_KEYS: usize = 64;
 /// Maximum size of an extension value (8 KB).
 pub const MAX_EXTENSION_VALUE_SIZE: usize = 8 * 1024;
 
+/// Maximum length of an extension key in bytes.
+pub const MAX_EXTENSION_KEY_SIZE: usize = 255;
+
 /// Encode a warrant to a compact binary format.
 pub fn encode(warrant: &Warrant) -> Result<Vec<u8>> {
     let mut buf = Vec::new();

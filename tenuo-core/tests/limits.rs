@@ -73,42 +73,17 @@ fn test_max_extensions_limit() {
         builder = builder.extension(format!("ext_{}", i), vec![0u8]);
     }
 
-    // Note: build() might not validate extensions if I didn't add the check to build() explicitly.
-    // I added check to `validate()`, but `build()` calls `validate()`?
-    // Let's check logic. If build() doesn't call validate(), this test might pass (false positive)
-    // until we decode it. But `build()` constructs a Warrant.
-    // If build() succeeds, we should try `wire::encode` and `wire::decode` and assert decode failure.
-    // Ideally `build()` should fail too.
-
     let result = builder.build(&keypair);
 
-    // If build() incorporates validation, it should fail.
-    // My change to `warrant.rs` did NOT add extension check to `build()` explicitly
-    // (I added it to `validate()` and `validate_constraint_depth`).
-    // `build()` calls `validate_constraint_depth()`.
-    // But extension check was added to `validate()`.
-    // So `build()` will likely SUCCEED.
-    // We must verify via `wire::decode` (simulating verifier).
-
-    if let Ok(warrant) = result {
-        let encoded = wire::encode(&warrant).unwrap();
-        let decode_result = wire::decode(&encoded);
-        assert!(decode_result.is_err(), "Decode should fail validation");
-        let err = decode_result.unwrap_err();
-        assert!(
-            err.to_string().contains("extensions count"),
-            "Error: {}",
-            err
-        );
-    } else {
-        // If build() was updated to call validate(), then this is also good.
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("extensions count"),
-            "Error: {}",
-            err
-        );
-    }
+    // build() validates extensions eagerly; it should fail before signing.
+    assert!(result.is_err(), "build() should reject too many extensions");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("extensions count"),
+        "expected extensions count error"
+    );
 }
 
 #[test]
@@ -126,15 +101,31 @@ fn test_max_extension_value_limit() {
 
     let result = builder.build(&keypair);
 
-    // Same logic as above: Verifier must reject.
-    if let Ok(warrant) = result {
-        let encoded = wire::encode(&warrant).unwrap();
-        let decode_result = wire::decode(&encoded);
-        assert!(decode_result.is_err(), "Decode should fail validation");
-        let err = decode_result.unwrap_err();
-        assert!(err.to_string().contains("exceeds limit"), "Error: {}", err);
-    } else {
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("exceeds limit"), "Error: {}", err);
-    }
+    // build() validates extensions eagerly; it should fail before signing.
+    assert!(result.is_err(), "build() should reject oversized extension value");
+    assert!(
+        result.unwrap_err().to_string().contains("exceeds limit"),
+        "expected exceeds limit error"
+    );
+}
+
+#[test]
+fn test_max_extension_key_length() {
+    let keypair = SigningKey::generate();
+
+    // Create a key that exceeds MAX_EXTENSION_KEY_SIZE (255 bytes)
+    let long_key = "x".repeat(wire::MAX_EXTENSION_KEY_SIZE + 1);
+
+    let result = Warrant::builder()
+        .capability("tool", ConstraintSet::new())
+        .ttl(Duration::from_secs(60))
+        .holder(keypair.public_key())
+        .extension(long_key, vec![0u8])
+        .build(&keypair);
+
+    assert!(result.is_err(), "build() should reject oversized extension key");
+    assert!(
+        result.unwrap_err().to_string().contains("exceeds limit"),
+        "expected exceeds limit error for key length"
+    );
 }

@@ -43,7 +43,8 @@ use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::diff::ClearanceDiff;
 use crate::error::{Error, Result};
 use crate::wire::{
-    MAX_CONSTRAINTS_PER_TOOL, MAX_EXTENSION_KEYS, MAX_EXTENSION_VALUE_SIZE, MAX_TOOLS_PER_WARRANT,
+    MAX_CONSTRAINTS_PER_TOOL, MAX_EXTENSION_KEY_SIZE, MAX_EXTENSION_KEYS,
+    MAX_EXTENSION_VALUE_SIZE, MAX_TOOLS_PER_WARRANT,
 };
 use crate::MAX_DELEGATION_DEPTH;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -1077,7 +1078,7 @@ impl Warrant {
 
         if !verified {
             return Err(Error::SignatureInvalid(
-                "Proof-of-Possession failed or expired".to_string(),
+                "Proof-of-Possession verification failed".to_string(),
             ));
         }
 
@@ -1461,6 +1462,14 @@ impl WarrantBuilder {
             )));
         }
         for (key, val) in &self.extensions {
+            if key.len() > MAX_EXTENSION_KEY_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension key '{}...' length {} exceeds limit {}",
+                    key.chars().take(32).collect::<String>(),
+                    key.len(),
+                    MAX_EXTENSION_KEY_SIZE
+                )));
+            }
             if val.len() > MAX_EXTENSION_VALUE_SIZE {
                 return Err(Error::Validation(format!(
                     "extension '{}' value size {} exceeds limit {}",
@@ -1853,15 +1862,24 @@ impl<'a> AttenuationBuilder<'a> {
                     ));
                 }
 
-                // Clearance monotonicity: child clearance cannot exceed parent's
-                if let (Some(parent_clearance), Some(child_clearance)) =
-                    (self.parent.payload.clearance, self.clearance)
-                {
-                    if child_clearance > parent_clearance {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "clearance cannot increase: parent {:?}, child {:?}",
-                            parent_clearance, child_clearance
-                        )));
+                // Clearance monotonicity: child cannot exceed parent, and cannot
+                // introduce a clearance claim that the parent never established.
+                if let Some(child_clearance) = self.clearance {
+                    match self.parent.payload.clearance {
+                        Some(parent_clearance) => {
+                            if child_clearance > parent_clearance {
+                                return Err(Error::MonotonicityViolation(format!(
+                                    "clearance cannot increase: parent {:?}, child {:?}",
+                                    parent_clearance, child_clearance
+                                )));
+                            }
+                        }
+                        None => {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "cannot introduce clearance {:?} in child when parent has none",
+                                child_clearance
+                            )));
+                        }
                     }
                 }
             }
@@ -1885,6 +1903,33 @@ impl<'a> AttenuationBuilder<'a> {
         }
 
         self.validate_multisig_monotonicity()?;
+
+        // Validate extensions
+        if self.extensions.len() > MAX_EXTENSION_KEYS {
+            return Err(Error::Validation(format!(
+                "extensions count {} exceeds limit {}",
+                self.extensions.len(),
+                MAX_EXTENSION_KEYS
+            )));
+        }
+        for (key, val) in &self.extensions {
+            if key.len() > MAX_EXTENSION_KEY_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension key '{}...' length {} exceeds limit {}",
+                    key.chars().take(32).collect::<String>(),
+                    key.len(),
+                    MAX_EXTENSION_KEY_SIZE
+                )));
+            }
+            if val.len() > MAX_EXTENSION_VALUE_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension '{}' value size {} exceeds limit {}",
+                    key,
+                    val.len(),
+                    MAX_EXTENSION_VALUE_SIZE
+                )));
+            }
+        }
 
         let holder = self
             .holder
@@ -2523,15 +2568,24 @@ impl OwnedAttenuationBuilder {
                     ));
                 }
 
-                // Clearance monotonicity: child clearance cannot exceed parent's
-                if let (Some(parent_clearance), Some(child_clearance)) =
-                    (self.parent.payload.clearance, self.clearance)
-                {
-                    if child_clearance > parent_clearance {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "clearance cannot increase: parent {:?}, child {:?}",
-                            parent_clearance, child_clearance
-                        )));
+                // Clearance monotonicity: child cannot exceed parent, and cannot
+                // introduce a clearance claim that the parent never established.
+                if let Some(child_clearance) = self.clearance {
+                    match self.parent.payload.clearance {
+                        Some(parent_clearance) => {
+                            if child_clearance > parent_clearance {
+                                return Err(Error::MonotonicityViolation(format!(
+                                    "clearance cannot increase: parent {:?}, child {:?}",
+                                    parent_clearance, child_clearance
+                                )));
+                            }
+                        }
+                        None => {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "cannot introduce clearance {:?} in child when parent has none",
+                                child_clearance
+                            )));
+                        }
                     }
                 }
             }
@@ -2902,14 +2956,23 @@ impl<'a> IssuanceBuilder<'a> {
             });
         }
 
-        // Validate clearance <= issuer's clearance (monotonicity)
+        // Clearance monotonicity: issued warrant cannot exceed issuer's clearance, and
+        // cannot introduce a clearance claim the issuer warrant never established.
         if let Some(clearance) = self.clearance {
-            if let Some(issuer_clearance) = self.issuer.payload.clearance {
-                if clearance > issuer_clearance {
-                    return Err(Error::ClearanceLevelExceeded {
-                        requested: format!("{:?}", clearance),
-                        limit: format!("{:?}", issuer_clearance),
-                    });
+            match self.issuer.payload.clearance {
+                Some(issuer_clearance) => {
+                    if clearance > issuer_clearance {
+                        return Err(Error::ClearanceLevelExceeded {
+                            requested: format!("{:?}", clearance),
+                            limit: format!("{:?}", issuer_clearance),
+                        });
+                    }
+                }
+                None => {
+                    return Err(Error::MonotonicityViolation(format!(
+                        "cannot introduce clearance {:?} when issuer has none",
+                        clearance
+                    )));
                 }
             }
         }
@@ -2970,6 +3033,33 @@ impl<'a> IssuanceBuilder<'a> {
         // Validate tool validation depth
         for constraints in self.tools.values() {
             constraints.validate_depth()?;
+        }
+
+        // Validate extensions
+        if self.extensions.len() > MAX_EXTENSION_KEYS {
+            return Err(Error::Validation(format!(
+                "extensions count {} exceeds limit {}",
+                self.extensions.len(),
+                MAX_EXTENSION_KEYS
+            )));
+        }
+        for (key, val) in &self.extensions {
+            if key.len() > MAX_EXTENSION_KEY_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension key '{}...' length {} exceeds limit {}",
+                    key.chars().take(32).collect::<String>(),
+                    key.len(),
+                    MAX_EXTENSION_KEY_SIZE
+                )));
+            }
+            if val.len() > MAX_EXTENSION_VALUE_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension '{}' value size {} exceeds limit {}",
+                    key,
+                    val.len(),
+                    MAX_EXTENSION_VALUE_SIZE
+                )));
+            }
         }
 
         let chrono_ttl = ChronoDuration::from_std(ttl)
