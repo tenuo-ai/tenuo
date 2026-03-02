@@ -256,7 +256,7 @@ impl ErrorCode {
 
             // PoP errors
             Self::PopSignatureInvalid => "Proof-of-Possession signature invalid",
-            Self::PopExpired => "Proof-of-Possession expired",
+            Self::PopExpired => "Proof-of-Possession outside replay window",
             Self::PopChallengeInvalid => "Proof-of-Possession challenge invalid",
 
             // Multi-sig errors
