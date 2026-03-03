@@ -60,10 +60,11 @@ Error Hierarchy:
     ├── SerializationError (wire format)
     │   ├── DeserializationError
     │   └── UnsupportedVersion
-    ├── ApprovalError (multi-sig)
+    ├── ApprovalError (multi-sig / guards)
     │   ├── ApprovalExpired
     │   ├── InsufficientApprovals
     │   ├── InvalidApproval
+    │   ├── GuardTriggered
     │   └── UnknownProvider
     └── ConfigurationError (invalid configuration)
 """
@@ -150,6 +151,7 @@ class ErrorCode:
     UNSUPPORTED_APPROVAL_VERSION = 1704
     APPROVAL_PAYLOAD_INVALID = 1705
     APPROVAL_REQUEST_HASH_MISMATCH = 1706
+    GUARD_TRIGGERED = 1707
 
     # Revocation errors (1800-1899)
     WARRANT_REVOKED = 1800
@@ -213,6 +215,7 @@ class ErrorCode:
             1704: "unsupported-approval-version",
             1705: "approval-payload-invalid",
             1706: "approval-request-hash-mismatch",
+            1707: "guard-triggered",
             1800: "warrant-revoked",
             1801: "srl-invalid",
             1802: "srl-version-rollback",
@@ -1112,6 +1115,37 @@ class InvalidApproval(ApprovalError):
         self.details = {"reason": reason}
 
 
+@wire_code(ErrorCode.GUARD_TRIGGERED)
+class GuardTriggered(ApprovalError):
+    """Guard fired — human approval is required before this tool invocation can proceed."""
+
+    error_code = "guard_triggered"
+    rust_variant = "GuardTriggered"
+
+    def __init__(
+        self,
+        tool: str,
+        request_id: str = "",
+        request_hash: str = "",
+        min_approvals: int = 1,
+        hint: Optional[str] = None,
+    ):
+        self.tool = tool
+        self.request_id = request_id
+        self.request_hash = request_hash
+        self.min_approvals = min_approvals
+        super().__init__(
+            f"Guard triggered: approval required for tool '{tool}'",
+            hint=hint,
+        )
+        self.details = {
+            "tool": tool,
+            "request_id": request_id,
+            "request_hash": request_hash,
+            "min_approvals": min_approvals,
+        }
+
+
 @wire_code(ErrorCode.APPROVAL_INVALID)
 class UnknownProvider(ApprovalError):
     """Unknown approval provider."""
@@ -1386,6 +1420,7 @@ RUST_ERROR_MAP: dict[str, type[TenuoError]] = {
     "ApprovalExpired": ApprovalExpired,
     "InsufficientApprovals": InsufficientApprovals,
     "InvalidApproval": InvalidApproval,
+    "GuardTriggered": GuardTriggered,
     "UnknownProvider": UnknownProvider,
     "Unauthorized": Unauthorized,
     "Validation": ValidationError,
@@ -1420,6 +1455,10 @@ def categorize_rust_error(error_message: str) -> TenuoError:
     # Revocation
     if "revoked" in msg:
         return RevokedError("unknown")
+
+    # Guard triggered
+    if "guard triggered" in msg:
+        return GuardTriggered("unknown")
 
     # Approval errors (check early - contains "invalid" which would match elsewhere)
     if "approval" in msg:
