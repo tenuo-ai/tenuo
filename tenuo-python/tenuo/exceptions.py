@@ -1143,6 +1143,7 @@ class GuardTriggered(ApprovalError):
             "request_id": request_id,
             "request_hash": request_hash,
             "min_approvals": min_approvals,
+            "guarded": True,
         }
 
 
