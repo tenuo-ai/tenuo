@@ -78,10 +78,7 @@ fn test_max_extensions_limit() {
     // build() validates extensions eagerly; it should fail before signing.
     assert!(result.is_err(), "build() should reject too many extensions");
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("extensions count"),
+        result.unwrap_err().to_string().contains("extensions count"),
         "expected extensions count error"
     );
 }
@@ -102,7 +99,10 @@ fn test_max_extension_value_limit() {
     let result = builder.build(&keypair);
 
     // build() validates extensions eagerly; it should fail before signing.
-    assert!(result.is_err(), "build() should reject oversized extension value");
+    assert!(
+        result.is_err(),
+        "build() should reject oversized extension value"
+    );
     assert!(
         result.unwrap_err().to_string().contains("exceeds limit"),
         "expected exceeds limit error"
@@ -123,7 +123,10 @@ fn test_max_extension_key_length() {
         .extension(long_key, vec![0u8])
         .build(&keypair);
 
-    assert!(result.is_err(), "build() should reject oversized extension key");
+    assert!(
+        result.is_err(),
+        "build() should reject oversized extension key"
+    );
     assert!(
         result.unwrap_err().to_string().contains("exceeds limit"),
         "expected exceeds limit error for key length"

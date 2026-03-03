@@ -328,7 +328,10 @@ fn test_clearance_escalation_via_attenuation() {
         .holder(delegate_kp.public_key())
         .build(&holder_kp);
 
-    assert!(result.is_err(), "Clearance escalation via attenuation must be rejected");
+    assert!(
+        result.is_err(),
+        "Clearance escalation via attenuation must be rejected"
+    );
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("clearance cannot increase") || err.contains("monotonicity"),
@@ -353,7 +356,10 @@ fn test_clearance_introduction_from_none_parent() {
         .build(&holder_kp)
         .unwrap();
 
-    assert!(parent.clearance().is_none(), "precondition: parent has no clearance");
+    assert!(
+        parent.clearance().is_none(),
+        "precondition: parent has no clearance"
+    );
 
     // ATTACK: Attenuate and introduce SYSTEM clearance from thin air
     let result = parent

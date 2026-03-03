@@ -2205,14 +2205,9 @@ impl Authorizer {
 
             // Guard evaluation: determines whether this invocation requires approval.
             // Parse guard map once, then evaluate.
-            let guard_map = crate::guard::parse_guard_map(
-                leaf.extension(crate::guard::GUARD_EXTENSION_KEY),
-            )?;
-            let needs_approval = crate::guard::evaluate_guards(
-                guard_map.as_ref(),
-                tool,
-                args,
-            )?;
+            let guard_map =
+                crate::guard::parse_guard_map(leaf.extension(crate::guard::GUARD_EXTENSION_KEY))?;
+            let needs_approval = crate::guard::evaluate_guards(guard_map.as_ref(), tool, args)?;
 
             if needs_approval {
                 // Guard fired — verify approvers are configured. A guard without
@@ -4360,14 +4355,13 @@ mod tests {
         let approval = SignedApproval::create(approval_payload, &approver_key);
 
         // Guarded tool + valid approval → passes
-        let result = authorizer.authorize_one(
-            &warrant,
-            "email.delete",
-            &args,
-            Some(&sig),
-            &[approval],
+        let result =
+            authorizer.authorize_one(&warrant, "email.delete", &args, Some(&sig), &[approval]);
+        assert!(
+            result.is_ok(),
+            "guarded tool with valid approval should pass: {:?}",
+            result
         );
-        assert!(result.is_ok(), "guarded tool with valid approval should pass: {:?}", result);
     }
 
     #[test]
@@ -4437,7 +4431,10 @@ mod tests {
 
         let result =
             authorizer.authorize_one(&warrant, "exec", &args, Some(&sig), &[garbage_approval]);
-        assert!(result.is_err(), "guard bypass with garbage approvals must fail");
+        assert!(
+            result.is_err(),
+            "guard bypass with garbage approvals must fail"
+        );
         let err = result.unwrap_err();
         assert!(
             err.to_string().contains("no required_approvers configured"),
@@ -4448,7 +4445,9 @@ mod tests {
 
     #[test]
     fn test_guard_propagation_through_delegation() {
-        use crate::guard::{encode_guard_map, parse_guard_map, GuardMap, ToolGuard, GUARD_EXTENSION_KEY};
+        use crate::guard::{
+            encode_guard_map, parse_guard_map, GuardMap, ToolGuard, GUARD_EXTENSION_KEY,
+        };
 
         let root_key = SigningKey::generate();
         let child_key = SigningKey::generate();
@@ -4477,14 +4476,18 @@ mod tests {
             .unwrap();
 
         // Child should have guards for email.delete only (exec dropped)
-        let child_guards = parse_guard_map(child.extension(GUARD_EXTENSION_KEY)).unwrap().unwrap();
+        let child_guards = parse_guard_map(child.extension(GUARD_EXTENSION_KEY))
+            .unwrap()
+            .unwrap();
         assert!(child_guards.contains_tool("email.delete"));
         assert!(!child_guards.contains_tool("exec"));
     }
 
     #[test]
     fn test_extension_cannot_override_inherited_guards() {
-        use crate::guard::{encode_guard_map, parse_guard_map, GuardMap, ToolGuard, GUARD_EXTENSION_KEY};
+        use crate::guard::{
+            encode_guard_map, parse_guard_map, GuardMap, ToolGuard, GUARD_EXTENSION_KEY,
+        };
 
         let root_key = SigningKey::generate();
         let child_key = SigningKey::generate();
@@ -4510,7 +4513,9 @@ mod tests {
             .unwrap();
 
         // Guard should still be present (override was rejected)
-        let child_guards = parse_guard_map(child.extension(GUARD_EXTENSION_KEY)).unwrap().unwrap();
+        let child_guards = parse_guard_map(child.extension(GUARD_EXTENSION_KEY))
+            .unwrap()
+            .unwrap();
         assert!(child_guards.contains_tool("email.delete"));
     }
 }

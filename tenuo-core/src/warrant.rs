@@ -43,8 +43,8 @@ use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::diff::ClearanceDiff;
 use crate::error::{Error, Result};
 use crate::wire::{
-    MAX_CONSTRAINTS_PER_TOOL, MAX_EXTENSION_KEY_SIZE, MAX_EXTENSION_KEYS,
-    MAX_EXTENSION_VALUE_SIZE, MAX_TOOLS_PER_WARRANT,
+    MAX_CONSTRAINTS_PER_TOOL, MAX_EXTENSION_KEYS, MAX_EXTENSION_KEY_SIZE, MAX_EXTENSION_VALUE_SIZE,
+    MAX_TOOLS_PER_WARRANT,
 };
 use crate::MAX_DELEGATION_DEPTH;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -1434,8 +1434,14 @@ impl WarrantBuilder {
         // required_approvers must be paired with a guard map: the guard map
         // specifies which tools require approval. Without one, required_approvers
         // has no effect at authorization time.
-        if self.required_approvers.as_ref().map(|a| !a.is_empty()).unwrap_or(false)
-            && !self.extensions.contains_key(crate::guard::GUARD_EXTENSION_KEY)
+        if self
+            .required_approvers
+            .as_ref()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+            && !self
+                .extensions
+                .contains_key(crate::guard::GUARD_EXTENSION_KEY)
         {
             return Err(Error::Validation(
                 "required_approvers requires a guard map: add a tenuo.guards extension \
@@ -1631,7 +1637,10 @@ impl<'a> AttenuationBuilder<'a> {
         // Inherit tenuo.guards from parent — guards propagate automatically
         // during delegation and are scoped to the child's tool set at build() time.
         let mut extensions = BTreeMap::new();
-        if let Some(guard_bytes) = parent.payload.extensions.get(crate::guard::GUARD_EXTENSION_KEY)
+        if let Some(guard_bytes) = parent
+            .payload
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
         {
             extensions.insert(
                 crate::guard::GUARD_EXTENSION_KEY.to_string(),
@@ -1937,16 +1946,18 @@ impl<'a> AttenuationBuilder<'a> {
 
         // Propagate guards: scope inherited guard map to the child's tool set.
         // Guards for tools the child doesn't have are dropped.
-        if let Some(guard_bytes) = self.extensions.get(crate::guard::GUARD_EXTENSION_KEY).cloned() {
+        if let Some(guard_bytes) = self
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .cloned()
+        {
             let parent_guards = crate::guard::parse_guard_map(Some(&guard_bytes))?;
             if let Some(parent_guards) = parent_guards {
                 match crate::guard::propagate_guards(&parent_guards, &self.tools) {
                     Some(scoped) => {
                         let encoded = crate::guard::encode_guard_map(&scoped)?;
-                        self.extensions.insert(
-                            crate::guard::GUARD_EXTENSION_KEY.to_string(),
-                            encoded,
-                        );
+                        self.extensions
+                            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
                     }
                     None => {
                         self.extensions.remove(crate::guard::GUARD_EXTENSION_KEY);
@@ -2166,7 +2177,10 @@ impl OwnedAttenuationBuilder {
 
         // Inherit tenuo.guards from parent
         let mut extensions = BTreeMap::new();
-        if let Some(guard_bytes) = parent.payload.extensions.get(crate::guard::GUARD_EXTENSION_KEY)
+        if let Some(guard_bytes) = parent
+            .payload
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
         {
             extensions.insert(
                 crate::guard::GUARD_EXTENSION_KEY.to_string(),
@@ -2683,16 +2697,18 @@ impl OwnedAttenuationBuilder {
         self.validate_multisig_monotonicity()?;
 
         // Propagate guards: scope inherited guard map to the child's tool set.
-        if let Some(guard_bytes) = self.extensions.get(crate::guard::GUARD_EXTENSION_KEY).cloned() {
+        if let Some(guard_bytes) = self
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .cloned()
+        {
             let parent_guards = crate::guard::parse_guard_map(Some(&guard_bytes))?;
             if let Some(parent_guards) = parent_guards {
                 match crate::guard::propagate_guards(&parent_guards, &self.tools) {
                     Some(scoped) => {
                         let encoded = crate::guard::encode_guard_map(&scoped)?;
-                        self.extensions.insert(
-                            crate::guard::GUARD_EXTENSION_KEY.to_string(),
-                            encoded,
-                        );
+                        self.extensions
+                            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
                     }
                     None => {
                         self.extensions.remove(crate::guard::GUARD_EXTENSION_KEY);
@@ -2856,8 +2872,10 @@ impl<'a> IssuanceBuilder<'a> {
     /// guards propagate to issued execution warrants.
     fn new(issuer: &'a Warrant) -> Self {
         let mut extensions = BTreeMap::new();
-        if let Some(guard_bytes) =
-            issuer.payload.extensions.get(crate::guard::GUARD_EXTENSION_KEY)
+        if let Some(guard_bytes) = issuer
+            .payload
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
         {
             extensions.insert(
                 crate::guard::GUARD_EXTENSION_KEY.to_string(),
@@ -3146,16 +3164,18 @@ impl<'a> IssuanceBuilder<'a> {
         }
 
         // Propagate guards from issuer template, scoped to issued tools.
-        if let Some(guard_bytes) = self.extensions.get(crate::guard::GUARD_EXTENSION_KEY).cloned() {
+        if let Some(guard_bytes) = self
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .cloned()
+        {
             let parent_guards = crate::guard::parse_guard_map(Some(&guard_bytes))?;
             if let Some(parent_guards) = parent_guards {
                 match crate::guard::propagate_guards(&parent_guards, &self.tools) {
                     Some(scoped) => {
                         let encoded = crate::guard::encode_guard_map(&scoped)?;
-                        self.extensions.insert(
-                            crate::guard::GUARD_EXTENSION_KEY.to_string(),
-                            encoded,
-                        );
+                        self.extensions
+                            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
                     }
                     None => {
                         self.extensions.remove(crate::guard::GUARD_EXTENSION_KEY);
@@ -3311,8 +3331,10 @@ impl OwnedIssuanceBuilder {
     /// Inherits `tenuo.guards` from the issuer warrant as a template.
     pub fn new(issuer: Warrant) -> Self {
         let mut extensions = BTreeMap::new();
-        if let Some(guard_bytes) =
-            issuer.payload.extensions.get(crate::guard::GUARD_EXTENSION_KEY)
+        if let Some(guard_bytes) = issuer
+            .payload
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
         {
             extensions.insert(
                 crate::guard::GUARD_EXTENSION_KEY.to_string(),

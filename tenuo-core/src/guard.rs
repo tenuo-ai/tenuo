@@ -232,9 +232,8 @@ impl<'de> Deserialize<'de> for ArgGuard {
             where
                 A: de::SeqAccess<'de>,
             {
-                let constraint = Constraint::deserialize(
-                    de::value::SeqAccessDeserializer::new(seq),
-                )?;
+                let constraint =
+                    Constraint::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
                 Ok(ArgGuard::Constraint(constraint))
             }
         }
@@ -257,9 +256,8 @@ pub fn parse_guard_map(raw: Option<&Vec<u8>>) -> Result<Option<GuardMap>> {
         _ => return Ok(None),
     };
 
-    let guard_map: GuardMap = ciborium::from_reader(raw.as_slice()).map_err(|e| {
-        Error::DeserializationError(format!("failed to decode guard map: {}", e))
-    })?;
+    let guard_map: GuardMap = ciborium::from_reader(raw.as_slice())
+        .map_err(|e| Error::DeserializationError(format!("failed to decode guard map: {}", e)))?;
 
     Ok(Some(guard_map))
 }
@@ -267,9 +265,8 @@ pub fn parse_guard_map(raw: Option<&Vec<u8>>) -> Result<Option<GuardMap>> {
 /// Encode a guard map to CBOR bytes for storage in extensions.
 pub fn encode_guard_map(guard_map: &GuardMap) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
-    ciborium::into_writer(guard_map, &mut buf).map_err(|e| {
-        Error::SerializationError(format!("failed to encode guard map: {}", e))
-    })?;
+    ciborium::into_writer(guard_map, &mut buf)
+        .map_err(|e| Error::SerializationError(format!("failed to encode guard map: {}", e)))?;
     Ok(buf)
 }
 
@@ -389,7 +386,10 @@ impl fmt::Display for GuardError {
             }
             Self::ArgGuardWeakened => write!(f, "arg guard weakened from All to Constraint"),
             Self::ArgGuardConstraintChanged => {
-                write!(f, "arg guard constraint changed (Phase 1: exact equality required)")
+                write!(
+                    f,
+                    "arg guard constraint changed (Phase 1: exact equality required)"
+                )
             }
         }
     }
@@ -517,7 +517,10 @@ mod tests {
     #[test]
     fn test_guard_map_roundtrip_per_arg() {
         let mut args = BTreeMap::new();
-        args.insert("path".into(), ArgGuard::Constraint(Subpath::new("/etc").unwrap().into()));
+        args.insert(
+            "path".into(),
+            ArgGuard::Constraint(Subpath::new("/etc").unwrap().into()),
+        );
         args.insert("mode".into(), ArgGuard::All);
 
         let mut gm = GuardMap::new();
@@ -550,7 +553,7 @@ mod tests {
     #[test]
     fn test_tool_not_in_guard_map_allows() {
         let gm = GuardMap::new();
-        assert!(!evaluate_guards(Some(&gm),"email.read", &HashMap::new()).unwrap());
+        assert!(!evaluate_guards(Some(&gm), "email.read", &HashMap::new()).unwrap());
     }
 
     #[test]
@@ -558,7 +561,7 @@ mod tests {
         let mut gm = GuardMap::new();
         gm.insert("email.delete".into(), ToolGuard::whole_tool());
 
-        assert!(evaluate_guards(Some(&gm),"email.delete", &HashMap::new()).unwrap());
+        assert!(evaluate_guards(Some(&gm), "email.delete", &HashMap::new()).unwrap());
     }
 
     #[test]
@@ -569,7 +572,7 @@ mod tests {
         gm.insert("exec".into(), ToolGuard::with_args(args_guards));
 
         let args = make_args(&[("command", "rm -rf /")]);
-        assert!(evaluate_guards(Some(&gm),"exec", &args).unwrap());
+        assert!(evaluate_guards(Some(&gm), "exec", &args).unwrap());
     }
 
     #[test]
@@ -583,7 +586,7 @@ mod tests {
         gm.insert("file.write".into(), ToolGuard::with_args(args_guards));
 
         let args = make_args(&[("path", "/etc/hosts")]);
-        assert!(evaluate_guards(Some(&gm),"file.write", &args).unwrap());
+        assert!(evaluate_guards(Some(&gm), "file.write", &args).unwrap());
     }
 
     #[test]
@@ -597,7 +600,7 @@ mod tests {
         gm.insert("file.write".into(), ToolGuard::with_args(args_guards));
 
         let args = make_args(&[("path", "/workspace/foo.txt")]);
-        assert!(!evaluate_guards(Some(&gm),"file.write", &args).unwrap());
+        assert!(!evaluate_guards(Some(&gm), "file.write", &args).unwrap());
     }
 
     #[test]
@@ -609,7 +612,7 @@ mod tests {
 
         // Invoke with no "path" argument — guard doesn't fire
         let args = make_args(&[("other", "value")]);
-        assert!(!evaluate_guards(Some(&gm),"file.write", &args).unwrap());
+        assert!(!evaluate_guards(Some(&gm), "file.write", &args).unwrap());
     }
 
     // -- Guard propagation --
@@ -622,7 +625,10 @@ mod tests {
         parent_guards.insert("file.write".into(), ToolGuard::whole_tool());
 
         let mut child_tools = BTreeMap::new();
-        child_tools.insert("email.delete".into(), crate::constraints::ConstraintSet::new());
+        child_tools.insert(
+            "email.delete".into(),
+            crate::constraints::ConstraintSet::new(),
+        );
         // child doesn't have "exec" or "file.write"
 
         let result = propagate_guards(&parent_guards, &child_tools).unwrap();
@@ -637,7 +643,10 @@ mod tests {
         parent_guards.insert("exec".into(), ToolGuard::whole_tool());
 
         let mut child_tools = BTreeMap::new();
-        child_tools.insert("email.read".into(), crate::constraints::ConstraintSet::new());
+        child_tools.insert(
+            "email.read".into(),
+            crate::constraints::ConstraintSet::new(),
+        );
 
         assert!(propagate_guards(&parent_guards, &child_tools).is_none());
     }
@@ -678,7 +687,10 @@ mod tests {
 
         let mut child_tools = BTreeMap::new();
         child_tools.insert("exec".into(), crate::constraints::ConstraintSet::new());
-        child_tools.insert("email.delete".into(), crate::constraints::ConstraintSet::new());
+        child_tools.insert(
+            "email.delete".into(),
+            crate::constraints::ConstraintSet::new(),
+        );
 
         assert_eq!(
             verify_guard_monotonicity(Some(&parent), Some(&child), &child_tools),
@@ -785,7 +797,10 @@ mod tests {
         child.insert("file.write".into(), ToolGuard::with_args(child_args));
 
         let mut child_tools = BTreeMap::new();
-        child_tools.insert("file.write".into(), crate::constraints::ConstraintSet::new());
+        child_tools.insert(
+            "file.write".into(),
+            crate::constraints::ConstraintSet::new(),
+        );
 
         assert_eq!(
             verify_guard_monotonicity(Some(&parent), Some(&child), &child_tools),
@@ -812,7 +827,10 @@ mod tests {
         child.insert("file.write".into(), ToolGuard::with_args(child_args));
 
         let mut child_tools = BTreeMap::new();
-        child_tools.insert("file.write".into(), crate::constraints::ConstraintSet::new());
+        child_tools.insert(
+            "file.write".into(),
+            crate::constraints::ConstraintSet::new(),
+        );
 
         assert!(verify_guard_monotonicity(Some(&parent), Some(&child), &child_tools).is_ok());
     }
@@ -849,17 +867,17 @@ mod tests {
 
         // email.read is NOT guarded → should be free
         let args = make_args(&[("folder", "inbox")]);
-        assert!(!evaluate_guards(Some(&gm),"email.read", &args).unwrap());
+        assert!(!evaluate_guards(Some(&gm), "email.read", &args).unwrap());
 
         // email.delete is whole-tool guarded
-        assert!(evaluate_guards(Some(&gm),"email.delete", &HashMap::new()).unwrap());
+        assert!(evaluate_guards(Some(&gm), "email.delete", &HashMap::new()).unwrap());
 
         // file.write to /workspace → free
         let args = make_args(&[("path", "/workspace/foo.txt")]);
-        assert!(!evaluate_guards(Some(&gm),"file.write", &args).unwrap());
+        assert!(!evaluate_guards(Some(&gm), "file.write", &args).unwrap());
 
         // file.write to /etc → requires approval
         let args = make_args(&[("path", "/etc/nginx/nginx.conf")]);
-        assert!(evaluate_guards(Some(&gm),"file.write", &args).unwrap());
+        assert!(evaluate_guards(Some(&gm), "file.write", &args).unwrap());
     }
 }
