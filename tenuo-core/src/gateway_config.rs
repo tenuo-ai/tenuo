@@ -75,7 +75,7 @@ pub struct GatewayConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewaySettings {
     /// Header containing the warrant (base64)
-    #[serde(default = "default_warrant_header", alias = "chain_header")]
+    #[serde(default = "default_warrant_header")]
     pub warrant_header: String,
     /// Header containing the PoP signature
     #[serde(default = "default_pop_header")]
@@ -87,7 +87,7 @@ pub struct GatewaySettings {
     #[serde(default = "default_clock_tolerance")]
     pub clock_tolerance_secs: u64,
     /// Trusted root public keys (hex)
-    #[serde(default, alias = "trusted_issuers")]
+    #[serde(default)]
     pub trusted_roots: Vec<String>,
     /// Enable debug mode (returns detailed deny reasons in response headers)
     /// WARNING: Only enable in non-production environments!
@@ -96,8 +96,6 @@ pub struct GatewaySettings {
 }
 
 fn default_warrant_header() -> String {
-    // Accept both X-Tenuo-Warrant (SDK default) and X-Tenuo-Chain (explicit chain)
-    // The SDK uses X-Tenuo-Warrant, so we default to that for compatibility
     "X-Tenuo-Warrant".into()
 }
 

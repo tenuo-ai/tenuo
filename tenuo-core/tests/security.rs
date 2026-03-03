@@ -11,6 +11,7 @@ use tenuo::{
     approval::{compute_request_hash, ApprovalPayload, SignedApproval},
     constraints::{ConstraintSet, Pattern},
     crypto::SigningKey,
+    guard::{encode_guard_map, GuardMap, ToolGuard},
     planes::Authorizer,
     warrant::Warrant,
 };
@@ -26,12 +27,15 @@ fn test_single_approval_succeeds() {
     let approver = SigningKey::generate();
 
     // Require 1 approval
+    let mut guards = GuardMap::new();
+    guards.insert("action".to_string(), ToolGuard::whole_tool());
     let warrant = Warrant::builder()
         .capability("action", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .required_approvers(vec![approver.public_key()])
         .min_approvals(1)
         .holder(root_key.public_key())
+        .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
         .build(&root_key)
         .unwrap();
 
@@ -84,6 +88,8 @@ fn test_two_of_three_approvals_succeeds() {
     let approver_3 = SigningKey::generate();
 
     // Require 2-of-3 approvals
+    let mut guards = GuardMap::new();
+    guards.insert("critical_action".to_string(), ToolGuard::whole_tool());
     let warrant = Warrant::builder()
         .capability("critical_action", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
@@ -94,6 +100,7 @@ fn test_two_of_three_approvals_succeeds() {
         ])
         .min_approvals(2)
         .holder(root_key.public_key())
+        .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
         .build(&root_key)
         .unwrap();
 
@@ -195,12 +202,15 @@ fn test_duplicate_approvals_rejected() {
     let approver_2 = SigningKey::generate();
 
     // Require 2-of-2 approvals
+    let mut guards = GuardMap::new();
+    guards.insert("critical_op".to_string(), ToolGuard::whole_tool());
     let warrant = Warrant::builder()
         .capability("critical_op", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .required_approvers(vec![approver_1.public_key(), approver_2.public_key()])
         .min_approvals(2)
         .holder(root_key.public_key())
+        .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
         .build(&root_key)
         .unwrap();
 
@@ -249,12 +259,15 @@ fn test_insufficient_approvals_rejected() {
     let approver_2 = SigningKey::generate();
 
     // Require 2-of-2
+    let mut guards = GuardMap::new();
+    guards.insert("critical_op".to_string(), ToolGuard::whole_tool());
     let warrant = Warrant::builder()
         .capability("critical_op", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .required_approvers(vec![approver_1.public_key(), approver_2.public_key()])
         .min_approvals(2)
         .holder(root_key.public_key())
+        .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
         .build(&root_key)
         .unwrap();
 
@@ -301,12 +314,15 @@ fn test_unauthorized_approver_rejected() {
     let random_attacker = SigningKey::generate();
 
     // Require 1 specific approver
+    let mut guards = GuardMap::new();
+    guards.insert("critical_op".to_string(), ToolGuard::whole_tool());
     let warrant = Warrant::builder()
         .capability("critical_op", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .required_approvers(vec![authorized_approver.public_key()])
         .min_approvals(1)
         .holder(root_key.public_key())
+        .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
         .build(&root_key)
         .unwrap();
 
@@ -349,6 +365,9 @@ fn test_mismatched_request_hash_rejected() {
     let root_key = SigningKey::generate();
     let approver = SigningKey::generate();
 
+    let mut guards = GuardMap::new();
+    guards.insert("critical_op".to_string(), ToolGuard::whole_tool());
+    guards.insert("other_op".to_string(), ToolGuard::whole_tool());
     let warrant = Warrant::builder()
         .capability("critical_op", ConstraintSet::new())
         .capability("other_op", ConstraintSet::new())
@@ -356,6 +375,7 @@ fn test_mismatched_request_hash_rejected() {
         .required_approvers(vec![approver.public_key()])
         .min_approvals(1)
         .holder(root_key.public_key())
+        .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
         .build(&root_key)
         .unwrap();
 
@@ -403,12 +423,15 @@ fn test_expired_approval_rejected() {
     let root_key = SigningKey::generate();
     let approver = SigningKey::generate();
 
+    let mut guards = GuardMap::new();
+    guards.insert("critical_op".to_string(), ToolGuard::whole_tool());
     let warrant = Warrant::builder()
         .capability("critical_op", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .required_approvers(vec![approver.public_key()])
         .min_approvals(1)
         .holder(root_key.public_key())
+        .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
         .build(&root_key)
         .unwrap();
 
@@ -456,12 +479,15 @@ fn make_multisig_warrant(
     min_approvals: u32,
 ) -> Warrant {
     let approver_pks: Vec<_> = approver_keys.iter().map(|k| k.public_key()).collect();
+    let mut guards = GuardMap::new();
+    guards.insert(tool.to_string(), ToolGuard::whole_tool());
     Warrant::builder()
         .capability(tool, ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .required_approvers(approver_pks)
         .min_approvals(min_approvals)
         .holder(root_key.public_key())
+        .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
         .build(root_key)
         .unwrap()
 }
