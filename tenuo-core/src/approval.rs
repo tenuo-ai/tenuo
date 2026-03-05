@@ -230,41 +230,6 @@ pub struct ApprovalMetadata {
     pub reason: Option<String>,
 }
 
-/// Legacy flat Approval struct for backwards compatibility.
-///
-/// This is deprecated and will be removed in v0.2. Use SignedApproval instead.
-#[deprecated(since = "0.1.1", note = "Use SignedApproval + ApprovalPayload instead")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Approval {
-    /// Hash of what was approved: H(warrant_id || tool || sorted(args) || holder)
-    pub request_hash: [u8; 32],
-
-    /// Random nonce for replay protection (128 bits)
-    pub nonce: [u8; 16],
-
-    /// The approver's public key
-    pub approver_key: PublicKey,
-
-    /// External identity reference (e.g., "arn:aws:iam::123:user/admin")
-    pub external_id: String,
-
-    /// Provider name (e.g., "aws-iam", "okta", "yubikey")
-    pub provider: String,
-
-    /// When approved (UTC)
-    pub approved_at: DateTime<Utc>,
-
-    /// When this approval expires (UTC)
-    pub expires_at: DateTime<Utc>,
-
-    /// Optional: human-readable reason/justification
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-
-    /// Signature over the approval payload
-    pub signature: Signature,
-}
-
 impl SignedApproval {
     /// Create a new signed approval.
     ///
@@ -410,62 +375,6 @@ impl ApprovalPayload {
     }
 }
 
-#[allow(deprecated)]
-impl Approval {
-    /// Verify the approval signature and check expiration.
-    ///
-    /// **Deprecated**: Use SignedApproval instead.
-    pub fn verify(&self) -> Result<()> {
-        // Check expiration
-        if Utc::now() > self.expires_at {
-            return Err(Error::ApprovalExpired {
-                approved_at: self.approved_at,
-                expired_at: self.expires_at,
-            });
-        }
-
-        // Verify signature
-        let payload = self.signable_bytes();
-        self.approver_key.verify(&payload, &self.signature)
-    }
-
-    /// Check if this approval matches a given request.
-    ///
-    /// **Deprecated**: Use SignedApproval instead.
-    pub fn matches_request(&self, request_hash: &[u8; 32]) -> bool {
-        &self.request_hash == request_hash
-    }
-
-    /// Get the bytes that were signed (legacy format).
-    fn signable_bytes(&self) -> Vec<u8> {
-        use crate::domain::APPROVAL_CONTEXT;
-
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(APPROVAL_CONTEXT);
-        bytes.extend_from_slice(&self.nonce);
-        bytes.extend_from_slice(&self.request_hash);
-        bytes.extend_from_slice(self.external_id.as_bytes());
-        bytes.extend_from_slice(&self.approved_at.timestamp().to_le_bytes());
-        bytes.extend_from_slice(&self.expires_at.timestamp().to_le_bytes());
-        bytes
-    }
-
-    /// Convert legacy Approval to new envelope format.
-    pub fn to_signed_approval(&self, keypair: &crate::crypto::SigningKey) -> SignedApproval {
-        let payload = ApprovalPayload {
-            version: 1,
-            request_hash: self.request_hash,
-            nonce: self.nonce,
-            external_id: self.external_id.clone(),
-            approved_at: self.approved_at.timestamp() as u64,
-            expires_at: self.expires_at.timestamp() as u64,
-            extensions: None,
-        };
-
-        SignedApproval::create(payload, keypair)
-    }
-}
-
 /// Compute a request hash for approval binding.
 ///
 /// This ensures an approval is bound to a specific (warrant, tool, args, holder) tuple.
@@ -502,6 +411,79 @@ pub fn compute_request_hash(
     }
 
     hasher.finalize().into()
+}
+
+// ============================================================================
+// Approval Request (emitted when a guard fires)
+// ============================================================================
+
+/// A request for human approval, emitted by the authorizer when a guard fires
+/// and no valid approval is present.
+///
+/// This is a **convenience structure**, not a signed artifact. It provides the
+/// approval engine with everything needed to present the decision to a human
+/// and construct a valid `SignedApproval` in response.
+///
+/// The `request_hash` is precomputed so the engine can verify it independently
+/// (defense against confused-deputy attacks).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequest {
+    /// Unique request identifier (UUIDv7 bytes).
+    #[serde(with = "serde_bytes")]
+    pub request_id: [u8; 16],
+
+    /// Warrant ID this request is for.
+    pub warrant_id: String,
+
+    /// Tool the agent is attempting to invoke.
+    pub tool: String,
+
+    /// Arguments the agent is passing (CBOR-compatible values).
+    pub args: std::collections::BTreeMap<String, crate::constraints::ConstraintValue>,
+
+    /// Precomputed request_hash the approval must match.
+    /// `H(warrant_id || tool || sorted(args) || holder)`
+    pub request_hash: [u8; 32],
+
+    /// Keys authorized to approve (from `warrant.required_approvers`).
+    pub required_approvers: Vec<PublicKey>,
+
+    /// Approval threshold (from `warrant.min_approvals` or `len(required_approvers)`).
+    pub min_approvals: u32,
+
+    /// Warrant expiration (Unix seconds). The approval SHOULD NOT outlive the warrant.
+    pub warrant_expires_at: u64,
+
+    /// When this request was created (Unix seconds).
+    pub created_at: u64,
+}
+
+impl ApprovalRequest {
+    /// Create a new approval request from authorization context.
+    pub fn new(
+        warrant_id: &str,
+        tool: &str,
+        args: &std::collections::HashMap<String, crate::constraints::ConstraintValue>,
+        request_hash: [u8; 32],
+        required_approvers: Vec<PublicKey>,
+        min_approvals: u32,
+        warrant_expires_at: u64,
+    ) -> Self {
+        let request_id = uuid::Uuid::now_v7();
+        let now = Utc::now().timestamp() as u64;
+
+        Self {
+            request_id: *request_id.as_bytes(),
+            warrant_id: warrant_id.to_string(),
+            tool: tool.to_string(),
+            args: args.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            request_hash,
+            required_approvers,
+            min_approvals,
+            warrant_expires_at,
+            created_at: now,
+        }
+    }
 }
 
 // ============================================================================
@@ -1360,25 +1342,6 @@ impl NotaryRegistry {
             .filter(|((p, _), _)| p == provider)
             .map(|(_, b)| b)
             .collect()
-    }
-
-    /// Record an approval event (for audit trail).
-    pub fn record_approval(
-        &mut self,
-        event_type: AuditEventType,
-        approval: &Approval,
-        notary: &Notary,
-        details: Option<String>,
-    ) {
-        let mut event = AuditEvent::new(event_type, &approval.provider, notary.id())
-            .with_identity(&approval.external_id)
-            .with_key(&approval.approver_key);
-
-        if let Some(d) = details {
-            event = event.with_details(d);
-        }
-
-        self.pending_events.push(event);
     }
 
     /// Drain pending audit events.

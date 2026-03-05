@@ -2645,6 +2645,7 @@ fn test_vector_a21_1_valid_multisig_approval() {
     use std::collections::HashMap;
     use std::time::Duration;
     use tenuo::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+    use tenuo::guard::{encode_guard_map, GuardMap, ToolGuard};
 
     let control_plane = control_plane_key();
     let worker = worker_key();
@@ -2659,6 +2660,9 @@ fn test_vector_a21_1_valid_multisig_approval() {
         Constraint::Range(Range::new(Some(0.0), Some(10000.0)).unwrap()),
     );
 
+    let mut guards = GuardMap::new();
+    guards.insert("transfer".to_string(), ToolGuard::whole_tool());
+
     let warrant = Warrant::builder()
         .r#type(warrant::WarrantType::Execution)
         .capability("transfer", constraint_set)
@@ -2670,6 +2674,7 @@ fn test_vector_a21_1_valid_multisig_approval() {
             approver3.public_key(),
         ])
         .min_approvals(2)
+        .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
         .build(&control_plane)
         .expect("Failed to build multi-sig warrant");
 
@@ -2735,6 +2740,7 @@ fn test_vector_a21_2_insufficient_approvals() {
     use std::collections::HashMap;
     use std::time::Duration;
     use tenuo::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+    use tenuo::guard::{encode_guard_map, GuardMap, ToolGuard};
 
     let control_plane = control_plane_key();
     let worker = worker_key();
@@ -2748,6 +2754,9 @@ fn test_vector_a21_2_insufficient_approvals() {
         Constraint::Range(Range::new(Some(0.0), Some(10000.0)).unwrap()),
     );
 
+    let mut guards = GuardMap::new();
+    guards.insert("transfer".to_string(), ToolGuard::whole_tool());
+
     let warrant = Warrant::builder()
         .r#type(warrant::WarrantType::Execution)
         .capability("transfer", constraint_set)
@@ -2755,6 +2764,7 @@ fn test_vector_a21_2_insufficient_approvals() {
         .holder(worker.public_key())
         .required_approvers(vec![approver1.public_key(), approver2.public_key()])
         .min_approvals(2)
+        .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
         .build(&control_plane)
         .expect("Failed to build multi-sig warrant");
 

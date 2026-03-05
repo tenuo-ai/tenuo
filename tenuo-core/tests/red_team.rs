@@ -303,6 +303,84 @@ fn test_clearance_level_escalation() {
     println!("✅ Clearance ceiling violation blocked: {}", err);
 }
 
+/// Attack: Holder attenuates an INTERNAL warrant and tries to raise child to PRIVILEGED.
+///
+/// Expected: MonotonicityViolation — child clearance cannot exceed parent's.
+#[test]
+fn test_clearance_escalation_via_attenuation() {
+    let holder_kp = SigningKey::generate();
+    let delegate_kp = SigningKey::generate();
+
+    // Parent has INTERNAL clearance
+    let parent = Warrant::builder()
+        .capability("read", ConstraintSet::new())
+        .clearance(Clearance::INTERNAL)
+        .ttl(Duration::from_secs(3600))
+        .holder(holder_kp.public_key())
+        .build(&holder_kp)
+        .unwrap();
+
+    // ATTACK: Attenuate and try to raise clearance to PRIVILEGED
+    let result = parent
+        .attenuate()
+        .inherit_all()
+        .clearance(Clearance::PRIVILEGED) // Exceeds parent's INTERNAL ceiling
+        .holder(delegate_kp.public_key())
+        .build(&holder_kp);
+
+    assert!(
+        result.is_err(),
+        "Clearance escalation via attenuation must be rejected"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("clearance cannot increase") || err.contains("monotonicity"),
+        "Expected monotonicity error, got: {err}"
+    );
+    println!("✅ Clearance escalation via attenuation blocked: {err}");
+}
+
+/// Attack: Holder attenuates a warrant with no clearance and introduces SYSTEM clearance.
+///
+/// Expected: MonotonicityViolation — cannot introduce clearance that parent never established.
+#[test]
+fn test_clearance_introduction_from_none_parent() {
+    let holder_kp = SigningKey::generate();
+    let delegate_kp = SigningKey::generate();
+
+    // Parent has NO clearance set
+    let parent = Warrant::builder()
+        .capability("read", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .holder(holder_kp.public_key())
+        .build(&holder_kp)
+        .unwrap();
+
+    assert!(
+        parent.clearance().is_none(),
+        "precondition: parent has no clearance"
+    );
+
+    // ATTACK: Attenuate and introduce SYSTEM clearance from thin air
+    let result = parent
+        .attenuate()
+        .inherit_all()
+        .clearance(Clearance::SYSTEM)
+        .holder(delegate_kp.public_key())
+        .build(&holder_kp);
+
+    assert!(
+        result.is_err(),
+        "Introducing clearance when parent has none must be rejected"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("cannot introduce clearance") || err.contains("monotonicity"),
+        "Expected monotonicity error, got: {err}"
+    );
+    println!("✅ Clearance introduction from unclearanced parent blocked: {err}");
+}
+
 // ============================================================================
 // PoP Timestamp Manipulation
 // ============================================================================

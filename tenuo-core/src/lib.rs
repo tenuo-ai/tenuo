@@ -46,6 +46,7 @@ pub mod domain;
 pub mod error;
 pub mod extraction;
 pub mod gateway_config;
+pub mod guard;
 pub mod mcp;
 pub mod payload;
 pub mod planes;
@@ -96,6 +97,15 @@ pub use warrant::{
     WarrantType, POP_MAX_WINDOWS, POP_TIMESTAMP_WINDOW_SECS, WARRANT_ID_PREFIX,
 };
 pub use wire::MAX_WARRANT_SIZE;
+
+// Re-export guard types
+pub use guard::{
+    encode_guard_map, evaluate_guards, parse_guard_map, propagate_guards,
+    verify_guard_monotonicity, ArgGuard, GuardError, GuardMap, ToolGuard, GUARD_EXTENSION_KEY,
+};
+
+// Re-export approval request
+pub use approval::ApprovalRequest;
 
 // Re-export diff types
 pub use diff::{

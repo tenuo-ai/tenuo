@@ -43,7 +43,8 @@ use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::diff::ClearanceDiff;
 use crate::error::{Error, Result};
 use crate::wire::{
-    MAX_CONSTRAINTS_PER_TOOL, MAX_EXTENSION_KEYS, MAX_EXTENSION_VALUE_SIZE, MAX_TOOLS_PER_WARRANT,
+    MAX_CONSTRAINTS_PER_TOOL, MAX_EXTENSION_KEYS, MAX_EXTENSION_KEY_SIZE, MAX_EXTENSION_VALUE_SIZE,
+    MAX_TOOLS_PER_WARRANT,
 };
 use crate::MAX_DELEGATION_DEPTH;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -1077,7 +1078,7 @@ impl Warrant {
 
         if !verified {
             return Err(Error::SignatureInvalid(
-                "Proof-of-Possession failed or expired".to_string(),
+                "Proof-of-Possession verification failed".to_string(),
             ));
         }
 
@@ -1430,6 +1431,25 @@ impl WarrantBuilder {
             }
         }
 
+        // required_approvers must be paired with a guard map: the guard map
+        // specifies which tools require approval. Without one, required_approvers
+        // has no effect at authorization time.
+        if self
+            .required_approvers
+            .as_ref()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+            && !self
+                .extensions
+                .contains_key(crate::guard::GUARD_EXTENSION_KEY)
+        {
+            return Err(Error::Validation(
+                "required_approvers requires a guard map: add a tenuo.guards extension \
+                 specifying which tools need approval"
+                    .to_string(),
+            ));
+        }
+
         // Validate tools count
         if self.tools.len() > MAX_TOOLS_PER_WARRANT {
             return Err(Error::Validation(format!(
@@ -1461,6 +1481,14 @@ impl WarrantBuilder {
             )));
         }
         for (key, val) in &self.extensions {
+            if key.len() > MAX_EXTENSION_KEY_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension key '{}...' length {} exceeds limit {}",
+                    key.chars().take(32).collect::<String>(),
+                    key.len(),
+                    MAX_EXTENSION_KEY_SIZE
+                )));
+            }
             if val.len() > MAX_EXTENSION_VALUE_SIZE {
                 return Err(Error::Validation(format!(
                     "extension '{}' value size {} exceeds limit {}",
@@ -1606,6 +1634,20 @@ impl<'a> AttenuationBuilder<'a> {
                 ),
             };
 
+        // Inherit tenuo.guards from parent — guards propagate automatically
+        // during delegation and are scoped to the child's tool set at build() time.
+        let mut extensions = BTreeMap::new();
+        if let Some(guard_bytes) = parent
+            .payload
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
+        {
+            extensions.insert(
+                crate::guard::GUARD_EXTENSION_KEY.to_string(),
+                guard_bytes.clone(),
+            );
+        }
+
         Self {
             parent,
             tools,
@@ -1621,7 +1663,7 @@ impl<'a> AttenuationBuilder<'a> {
             // Multi-sig: inherit from parent (can only add MORE approvers or raise threshold)
             required_approvers: parent.payload.required_approvers.clone(),
             min_approvals: parent.payload.min_approvals,
-            extensions: BTreeMap::new(),
+            extensions,
         }
     }
 
@@ -1723,8 +1765,15 @@ impl<'a> AttenuationBuilder<'a> {
     }
 
     /// Add an extension.
+    ///
+    /// The `tenuo.guards` key is system-managed (inherited from parent and
+    /// propagated automatically) and cannot be overwritten here.
     pub fn extension(mut self, key: impl Into<String>, value: Vec<u8>) -> Self {
-        self.extensions.insert(key.into(), value);
+        let key = key.into();
+        if key == crate::guard::GUARD_EXTENSION_KEY {
+            return self;
+        }
+        self.extensions.insert(key, value);
         self
     }
 
@@ -1783,7 +1832,7 @@ impl<'a> AttenuationBuilder<'a> {
     /// # Errors
     /// Returns `DelegationAuthorityError` if the signing key doesn't match
     /// the parent warrant's holder.
-    pub fn build(self, signing_key: &SigningKey) -> Result<Warrant> {
+    pub fn build(mut self, signing_key: &SigningKey) -> Result<Warrant> {
         // Delegation authority check: signer must be the parent's holder
         if signing_key.public_key() != *self.parent.authorized_holder() {
             return Err(Error::DelegationAuthorityError {
@@ -1853,15 +1902,24 @@ impl<'a> AttenuationBuilder<'a> {
                     ));
                 }
 
-                // Clearance monotonicity: child clearance cannot exceed parent's
-                if let (Some(parent_clearance), Some(child_clearance)) =
-                    (self.parent.payload.clearance, self.clearance)
-                {
-                    if child_clearance > parent_clearance {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "clearance cannot increase: parent {:?}, child {:?}",
-                            parent_clearance, child_clearance
-                        )));
+                // Clearance monotonicity: child cannot exceed parent, and cannot
+                // introduce a clearance claim that the parent never established.
+                if let Some(child_clearance) = self.clearance {
+                    match self.parent.payload.clearance {
+                        Some(parent_clearance) => {
+                            if child_clearance > parent_clearance {
+                                return Err(Error::MonotonicityViolation(format!(
+                                    "clearance cannot increase: parent {:?}, child {:?}",
+                                    parent_clearance, child_clearance
+                                )));
+                            }
+                        }
+                        None => {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "cannot introduce clearance {:?} in child when parent has none",
+                                child_clearance
+                            )));
+                        }
                     }
                 }
             }
@@ -1885,6 +1943,55 @@ impl<'a> AttenuationBuilder<'a> {
         }
 
         self.validate_multisig_monotonicity()?;
+
+        // Propagate guards: scope inherited guard map to the child's tool set.
+        // Guards for tools the child doesn't have are dropped.
+        if let Some(guard_bytes) = self
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .cloned()
+        {
+            let parent_guards = crate::guard::parse_guard_map(Some(&guard_bytes))?;
+            if let Some(parent_guards) = parent_guards {
+                match crate::guard::propagate_guards(&parent_guards, &self.tools) {
+                    Some(scoped) => {
+                        let encoded = crate::guard::encode_guard_map(&scoped)?;
+                        self.extensions
+                            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
+                    }
+                    None => {
+                        self.extensions.remove(crate::guard::GUARD_EXTENSION_KEY);
+                    }
+                }
+            }
+        }
+
+        // Validate extensions
+        if self.extensions.len() > MAX_EXTENSION_KEYS {
+            return Err(Error::Validation(format!(
+                "extensions count {} exceeds limit {}",
+                self.extensions.len(),
+                MAX_EXTENSION_KEYS
+            )));
+        }
+        for (key, val) in &self.extensions {
+            if key.len() > MAX_EXTENSION_KEY_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension key '{}...' length {} exceeds limit {}",
+                    key.chars().take(32).collect::<String>(),
+                    key.len(),
+                    MAX_EXTENSION_KEY_SIZE
+                )));
+            }
+            if val.len() > MAX_EXTENSION_VALUE_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension '{}' value size {} exceeds limit {}",
+                    key,
+                    val.len(),
+                    MAX_EXTENSION_VALUE_SIZE
+                )));
+            }
+        }
 
         let holder = self
             .holder
@@ -2068,6 +2175,19 @@ impl OwnedAttenuationBuilder {
                 ),
             };
 
+        // Inherit tenuo.guards from parent
+        let mut extensions = BTreeMap::new();
+        if let Some(guard_bytes) = parent
+            .payload
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
+        {
+            extensions.insert(
+                crate::guard::GUARD_EXTENSION_KEY.to_string(),
+                guard_bytes.clone(),
+            );
+        }
+
         Self {
             clearance: parent.payload.clearance,
             session_id: parent.payload.session_id.clone(),
@@ -2084,7 +2204,7 @@ impl OwnedAttenuationBuilder {
             ttl: None,
             max_depth: None,
             intent: None,
-            extensions: BTreeMap::new(),
+            extensions,
         }
     }
 
@@ -2278,14 +2398,25 @@ impl OwnedAttenuationBuilder {
         }
     }
 
-    /// Add extension
+    /// Add an extension.
+    ///
+    /// The `tenuo.guards` key is system-managed and cannot be overwritten.
     pub fn extension(mut self, key: impl Into<String>, value: Vec<u8>) -> Self {
-        self.extensions.insert(key.into(), value);
+        let key = key.into();
+        if key == crate::guard::GUARD_EXTENSION_KEY {
+            return self;
+        }
+        self.extensions.insert(key, value);
         self
     }
 
-    /// Add extension (FFI)
+    /// Add extension (FFI).
+    ///
+    /// The `tenuo.guards` key is system-managed and cannot be overwritten.
     pub fn add_extension(&mut self, key: String, value: Vec<u8>) {
+        if key == crate::guard::GUARD_EXTENSION_KEY {
+            return;
+        }
         self.extensions.insert(key, value);
     }
 
@@ -2523,15 +2654,24 @@ impl OwnedAttenuationBuilder {
                     ));
                 }
 
-                // Clearance monotonicity: child clearance cannot exceed parent's
-                if let (Some(parent_clearance), Some(child_clearance)) =
-                    (self.parent.payload.clearance, self.clearance)
-                {
-                    if child_clearance > parent_clearance {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "clearance cannot increase: parent {:?}, child {:?}",
-                            parent_clearance, child_clearance
-                        )));
+                // Clearance monotonicity: child cannot exceed parent, and cannot
+                // introduce a clearance claim that the parent never established.
+                if let Some(child_clearance) = self.clearance {
+                    match self.parent.payload.clearance {
+                        Some(parent_clearance) => {
+                            if child_clearance > parent_clearance {
+                                return Err(Error::MonotonicityViolation(format!(
+                                    "clearance cannot increase: parent {:?}, child {:?}",
+                                    parent_clearance, child_clearance
+                                )));
+                            }
+                        }
+                        None => {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "cannot introduce clearance {:?} in child when parent has none",
+                                child_clearance
+                            )));
+                        }
                     }
                 }
             }
@@ -2555,6 +2695,27 @@ impl OwnedAttenuationBuilder {
         }
 
         self.validate_multisig_monotonicity()?;
+
+        // Propagate guards: scope inherited guard map to the child's tool set.
+        if let Some(guard_bytes) = self
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .cloned()
+        {
+            let parent_guards = crate::guard::parse_guard_map(Some(&guard_bytes))?;
+            if let Some(parent_guards) = parent_guards {
+                match crate::guard::propagate_guards(&parent_guards, &self.tools) {
+                    Some(scoped) => {
+                        let encoded = crate::guard::encode_guard_map(&scoped)?;
+                        self.extensions
+                            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
+                    }
+                    None => {
+                        self.extensions.remove(crate::guard::GUARD_EXTENSION_KEY);
+                    }
+                }
+            }
+        }
 
         let holder = self
             .holder
@@ -2706,7 +2867,22 @@ pub struct IssuanceBuilder<'a> {
 
 impl<'a> IssuanceBuilder<'a> {
     /// Create a new issuance builder.
+    ///
+    /// Inherits `tenuo.guards` from the issuer warrant as a template —
+    /// guards propagate to issued execution warrants.
     fn new(issuer: &'a Warrant) -> Self {
+        let mut extensions = BTreeMap::new();
+        if let Some(guard_bytes) = issuer
+            .payload
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
+        {
+            extensions.insert(
+                crate::guard::GUARD_EXTENSION_KEY.to_string(),
+                guard_bytes.clone(),
+            );
+        }
+
         Self {
             issuer,
             tools: BTreeMap::new(),
@@ -2718,7 +2894,7 @@ impl<'a> IssuanceBuilder<'a> {
             holder: None,
             required_approvers: None,
             min_approvals: None,
-            extensions: BTreeMap::new(),
+            extensions,
         }
     }
 
@@ -2792,9 +2968,15 @@ impl<'a> IssuanceBuilder<'a> {
         self
     }
 
-    /// Add extension
+    /// Add an extension.
+    ///
+    /// The `tenuo.guards` key is system-managed and cannot be overwritten.
     pub fn extension(mut self, key: impl Into<String>, value: Vec<u8>) -> Self {
-        self.extensions.insert(key.into(), value);
+        let key = key.into();
+        if key == crate::guard::GUARD_EXTENSION_KEY {
+            return self;
+        }
+        self.extensions.insert(key, value);
         self
     }
 
@@ -2902,14 +3084,23 @@ impl<'a> IssuanceBuilder<'a> {
             });
         }
 
-        // Validate clearance <= issuer's clearance (monotonicity)
+        // Clearance monotonicity: issued warrant cannot exceed issuer's clearance, and
+        // cannot introduce a clearance claim the issuer warrant never established.
         if let Some(clearance) = self.clearance {
-            if let Some(issuer_clearance) = self.issuer.payload.clearance {
-                if clearance > issuer_clearance {
-                    return Err(Error::ClearanceLevelExceeded {
-                        requested: format!("{:?}", clearance),
-                        limit: format!("{:?}", issuer_clearance),
-                    });
+            match self.issuer.payload.clearance {
+                Some(issuer_clearance) => {
+                    if clearance > issuer_clearance {
+                        return Err(Error::ClearanceLevelExceeded {
+                            requested: format!("{:?}", clearance),
+                            limit: format!("{:?}", issuer_clearance),
+                        });
+                    }
+                }
+                None => {
+                    return Err(Error::MonotonicityViolation(format!(
+                        "cannot introduce clearance {:?} when issuer has none",
+                        clearance
+                    )));
                 }
             }
         }
@@ -2970,6 +3161,54 @@ impl<'a> IssuanceBuilder<'a> {
         // Validate tool validation depth
         for constraints in self.tools.values() {
             constraints.validate_depth()?;
+        }
+
+        // Propagate guards from issuer template, scoped to issued tools.
+        if let Some(guard_bytes) = self
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .cloned()
+        {
+            let parent_guards = crate::guard::parse_guard_map(Some(&guard_bytes))?;
+            if let Some(parent_guards) = parent_guards {
+                match crate::guard::propagate_guards(&parent_guards, &self.tools) {
+                    Some(scoped) => {
+                        let encoded = crate::guard::encode_guard_map(&scoped)?;
+                        self.extensions
+                            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
+                    }
+                    None => {
+                        self.extensions.remove(crate::guard::GUARD_EXTENSION_KEY);
+                    }
+                }
+            }
+        }
+
+        // Validate extensions
+        if self.extensions.len() > MAX_EXTENSION_KEYS {
+            return Err(Error::Validation(format!(
+                "extensions count {} exceeds limit {}",
+                self.extensions.len(),
+                MAX_EXTENSION_KEYS
+            )));
+        }
+        for (key, val) in &self.extensions {
+            if key.len() > MAX_EXTENSION_KEY_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension key '{}...' length {} exceeds limit {}",
+                    key.chars().take(32).collect::<String>(),
+                    key.len(),
+                    MAX_EXTENSION_KEY_SIZE
+                )));
+            }
+            if val.len() > MAX_EXTENSION_VALUE_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension '{}' value size {} exceeds limit {}",
+                    key,
+                    val.len(),
+                    MAX_EXTENSION_VALUE_SIZE
+                )));
+            }
         }
 
         let chrono_ttl = ChronoDuration::from_std(ttl)
@@ -3088,7 +3327,21 @@ pub struct OwnedIssuanceBuilder {
 
 impl OwnedIssuanceBuilder {
     /// Create a new owned issuance builder.
+    ///
+    /// Inherits `tenuo.guards` from the issuer warrant as a template.
     pub fn new(issuer: Warrant) -> Self {
+        let mut extensions = BTreeMap::new();
+        if let Some(guard_bytes) = issuer
+            .payload
+            .extensions
+            .get(crate::guard::GUARD_EXTENSION_KEY)
+        {
+            extensions.insert(
+                crate::guard::GUARD_EXTENSION_KEY.to_string(),
+                guard_bytes.clone(),
+            );
+        }
+
         Self {
             session_id: issuer.payload.session_id.clone(),
             agent_id: issuer.payload.agent_id.clone(),
@@ -3101,7 +3354,7 @@ impl OwnedIssuanceBuilder {
             required_approvers: None,
             min_approvals: None,
             intent: None,
-            extensions: BTreeMap::new(),
+            extensions,
         }
     }
 
@@ -3250,14 +3503,25 @@ impl OwnedIssuanceBuilder {
         self.intent = Some(intent.into());
     }
 
-    /// Add extension (FFI)
+    /// Add extension (FFI).
+    ///
+    /// The `tenuo.guards` key is system-managed and cannot be overwritten.
     pub fn add_extension(&mut self, key: String, value: Vec<u8>) {
+        if key == crate::guard::GUARD_EXTENSION_KEY {
+            return;
+        }
         self.extensions.insert(key, value);
     }
 
-    /// Add extension
+    /// Add an extension.
+    ///
+    /// The `tenuo.guards` key is system-managed and cannot be overwritten.
     pub fn extension(mut self, key: impl Into<String>, value: Vec<u8>) -> Self {
-        self.extensions.insert(key.into(), value);
+        let key = key.into();
+        if key == crate::guard::GUARD_EXTENSION_KEY {
+            return self;
+        }
+        self.extensions.insert(key, value);
         self
     }
 
@@ -3889,9 +4153,14 @@ mod tests {
 
     #[test]
     fn test_multisig_root_warrant() {
+        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+
         let issuer = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
+
+        let mut guards = GuardMap::new();
+        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
 
         let warrant = Warrant::builder()
             .tool("sensitive_action", ConstraintSet::new())
@@ -3899,6 +4168,7 @@ mod tests {
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(2)
             .holder(issuer.public_key())
+            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
             .build(&issuer)
             .unwrap();
 
@@ -3909,9 +4179,14 @@ mod tests {
 
     #[test]
     fn test_multisig_default_all_must_sign() {
+        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+
         let issuer = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
+
+        let mut guards = GuardMap::new();
+        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
 
         // Set approvers but NOT min_approvals - should require all
         let warrant = Warrant::builder()
@@ -3919,6 +4194,7 @@ mod tests {
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .holder(issuer.public_key())
+            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
             // min_approvals NOT set
             .build(&issuer)
             .unwrap();
@@ -3946,10 +4222,14 @@ mod tests {
 
     #[test]
     fn test_multisig_attenuation_add_approvers() {
+        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
         let issuer = create_test_keypair();
         let delegator = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
+
+        let mut guards = GuardMap::new();
+        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
 
         // Root with 1 approver
         let root = Warrant::builder()
@@ -3958,6 +4238,7 @@ mod tests {
             .required_approvers(vec![approver1.public_key()])
             .min_approvals(1)
             .holder(issuer.public_key())
+            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
             .build(&issuer)
             .unwrap();
 
@@ -3978,10 +4259,14 @@ mod tests {
 
     #[test]
     fn test_multisig_attenuation_cannot_remove_approvers() {
+        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
         let issuer = create_test_keypair();
         let delegatee = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
+
+        let mut guards = GuardMap::new();
+        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
 
         // Root with 2 approvers
         let root = Warrant::builder()
@@ -3990,6 +4275,7 @@ mod tests {
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(1)
             .holder(issuer.public_key())
+            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
             .build(&issuer)
             .unwrap();
 
@@ -4007,10 +4293,14 @@ mod tests {
 
     #[test]
     fn test_multisig_attenuation_cannot_lower_threshold() {
+        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
         let issuer = create_test_keypair();
         let delegatee = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
+
+        let mut guards = GuardMap::new();
+        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
 
         // Root with threshold of 2
         let root = Warrant::builder()
@@ -4019,6 +4309,7 @@ mod tests {
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(2)
             .holder(issuer.public_key())
+            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
             .build(&issuer)
             .unwrap();
 

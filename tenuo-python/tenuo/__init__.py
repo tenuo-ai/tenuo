@@ -149,6 +149,7 @@ from .exceptions import (
     AuthorizationDenied,  # Rich error with diff support
     ConfigurationError,
     ConstraintViolation,
+    GuardTriggered,
     MonotonicityError,
     ScopeViolation,  # Authorization scope exceeded
     TenuoError,
@@ -276,6 +277,7 @@ __all__ = [
     "MonotonicityError",
     "ConfigurationError",
     "AuthorizationDenied",  # Rich error with diff support
+    "GuardTriggered",  # Guard fired — approval required
     "ScopeViolation",  # Authorization scope exceeded
     # Error explanation
     "explain",

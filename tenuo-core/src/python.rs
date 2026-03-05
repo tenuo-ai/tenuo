@@ -223,6 +223,22 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             crate::error::Error::InvalidApproval(m) => {
                 ("InvalidApproval", PyTuple::new(py, [m.as_str()]))
             }
+            crate::error::Error::GuardTriggered { ref tool, ref request } => {
+                let request_hash_hex = hex::encode(request.request_hash);
+                let request_id_hex = hex::encode(request.request_id);
+                (
+                    "GuardTriggered",
+                    PyTuple::new(
+                        py,
+                        [
+                            tool.as_str(),
+                            request_id_hex.as_str(),
+                            request_hash_hex.as_str(),
+                            &request.min_approvals.to_string(),
+                        ],
+                    ),
+                )
+            }
             crate::error::Error::UnknownProvider(m) => {
                 ("UnknownProvider", PyTuple::new(py, [m.as_str()]))
             }

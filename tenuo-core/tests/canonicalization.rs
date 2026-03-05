@@ -1,5 +1,6 @@
 use std::time::Duration;
 use tenuo::crypto::SigningKey;
+use tenuo::guard::{encode_guard_map, GuardMap, ToolGuard};
 use tenuo::warrant::{Clearance, Warrant, WarrantType};
 
 fn create_test_keypair() -> SigningKey {
@@ -72,11 +73,16 @@ fn test_required_approvers_canonicalization() {
     // Ensure byte order for test
     assert!(pk1.to_bytes() < pk2.to_bytes());
 
+    let mut guards = GuardMap::new();
+    guards.insert("test".into(), ToolGuard::whole_tool());
+    let guard_bytes = encode_guard_map(&guards).unwrap();
+
     // Order 1: [pk1, pk2] (already sorted)
     let w1 = Warrant::builder()
         .r#type(WarrantType::Execution)
         .capability("test", tenuo::constraints::ConstraintSet::new())
         .required_approvers(vec![pk1.clone(), pk2.clone()])
+        .extension("tenuo.guards", guard_bytes.clone())
         .build(&kp) // build consumes builder, keys moved into warrant
         .unwrap();
 
@@ -85,6 +91,7 @@ fn test_required_approvers_canonicalization() {
         .r#type(WarrantType::Execution)
         .capability("test", tenuo::constraints::ConstraintSet::new())
         .required_approvers(vec![pk2.clone(), pk1.clone()])
+        .extension("tenuo.guards", guard_bytes)
         .build(&kp)
         .unwrap();
 
