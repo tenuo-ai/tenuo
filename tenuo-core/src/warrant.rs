@@ -43,8 +43,8 @@ use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::diff::ClearanceDiff;
 use crate::error::{Error, Result};
 use crate::wire::{
-    MAX_CONSTRAINTS_PER_TOOL, MAX_EXTENSION_KEYS, MAX_EXTENSION_KEY_SIZE, MAX_EXTENSION_VALUE_SIZE,
-    MAX_TOOLS_PER_WARRANT,
+    KEY_DISPLAY_TRUNCATION, MAX_CONSTRAINTS_PER_TOOL, MAX_EXTENSION_KEYS, MAX_EXTENSION_KEY_SIZE,
+    MAX_EXTENSION_VALUE_SIZE, MAX_TOOLS_PER_WARRANT,
 };
 use crate::MAX_DELEGATION_DEPTH;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -410,7 +410,6 @@ pub struct Warrant {
     /// The internal signature.
     pub signature: Signature,
     /// The canonical bytes of the payload (for signature verification).
-    #[allow(dead_code)] // Used for verification and re-serialization
     pub payload_bytes: Vec<u8>,
     /// Envelope format version (default 1).
     pub envelope_version: u8,
@@ -691,18 +690,20 @@ impl Warrant {
                 }
             }
             WarrantType::Issuer => {
-                // Issuer warrants should NOT have tools (capabilities)
                 if !self.payload.tools.is_empty() {
                     return Err(Error::InvalidWarrantType {
-                        message: "issuer warrant cannot have tools (capabilities)".to_string(),
+                        message: "issuer warrant cannot have tools".to_string(),
                     });
                 }
 
-                if self.payload.issuable_tools.is_none()
-                    || self.payload.issuable_tools.as_ref().unwrap().is_empty()
+                if self
+                    .payload
+                    .issuable_tools
+                    .as_ref()
+                    .is_none_or(|t| t.is_empty())
                 {
                     return Err(Error::InvalidWarrantType {
-                        message: "issuer warrant must have at least one issuable_tool".to_string(),
+                        message: "issuer warrant requires at least one issuable_tool".to_string(),
                     });
                 }
             }
@@ -1369,11 +1370,10 @@ impl WarrantBuilder {
             WarrantType::Issuer => {
                 if !self.tools.is_empty() {
                     return Err(Error::InvalidWarrantType {
-                        message: "issuer warrant cannot have tools (capabilities)".to_string(),
+                        message: "issuer warrant cannot have tools".to_string(),
                     });
                 }
-                if self.issuable_tools.is_none() || self.issuable_tools.as_ref().unwrap().is_empty()
-                {
+                if self.issuable_tools.as_ref().is_none_or(|t| t.is_empty()) {
                     return Err(Error::InvalidWarrantType {
                         message: "issuer warrant requires at least one issuable_tool".to_string(),
                     });
@@ -1484,7 +1484,7 @@ impl WarrantBuilder {
             if key.len() > MAX_EXTENSION_KEY_SIZE {
                 return Err(Error::Validation(format!(
                     "extension key '{}...' length {} exceeds limit {}",
-                    key.chars().take(32).collect::<String>(),
+                    key.chars().take(KEY_DISPLAY_TRUNCATION).collect::<String>(),
                     key.len(),
                     MAX_EXTENSION_KEY_SIZE
                 )));
@@ -1978,7 +1978,7 @@ impl<'a> AttenuationBuilder<'a> {
             if key.len() > MAX_EXTENSION_KEY_SIZE {
                 return Err(Error::Validation(format!(
                     "extension key '{}...' length {} exceeds limit {}",
-                    key.chars().take(32).collect::<String>(),
+                    key.chars().take(KEY_DISPLAY_TRUNCATION).collect::<String>(),
                     key.len(),
                     MAX_EXTENSION_KEY_SIZE
                 )));
@@ -2420,6 +2420,29 @@ impl OwnedAttenuationBuilder {
         self.extensions.insert(key, value);
     }
 
+    /// Add or merge guard bytes into the `tenuo.guards` extension.
+    ///
+    /// Merges with any inherited parent guards using union semantics
+    /// (more-restrictive wins for conflicts). Scoping to child tools
+    /// still happens during `build()` via `propagate_guards`.
+    pub fn set_guards_extension(&mut self, bytes: Vec<u8>) -> Result<()> {
+        let explicit = match crate::guard::parse_guard_map(Some(&bytes))? {
+            Some(g) => g,
+            None => return Ok(()),
+        };
+        let merged = match self.extensions.get(crate::guard::GUARD_EXTENSION_KEY) {
+            Some(existing) => match crate::guard::parse_guard_map(Some(existing))? {
+                Some(inherited) => crate::guard::merge_guard_maps(&inherited, &explicit),
+                None => explicit,
+            },
+            None => explicit,
+        };
+        let encoded = crate::guard::encode_guard_map(&merged)?;
+        self.extensions
+            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
+        Ok(())
+    }
+
     /// Add required approvers.
     pub fn add_approvers(mut self, approvers: Vec<PublicKey>) -> Self {
         let mut current = self.required_approvers.unwrap_or_default();
@@ -2624,7 +2647,8 @@ impl OwnedAttenuationBuilder {
             use chrono::TimeZone;
             let expiry = Utc
                 .timestamp_opt(self.parent.payload.expires_at as i64, 0)
-                .unwrap();
+                .single()
+                .unwrap_or_else(Utc::now);
             return Err(Error::WarrantExpired(expiry));
         }
 
@@ -2715,6 +2739,23 @@ impl OwnedAttenuationBuilder {
                     }
                 }
             }
+        }
+
+        // Defense-in-depth: verify the final child guard map is monotonically
+        // at least as strict as the parent's guards. This catches any code path
+        // that bypassed `set_guards_extension` (e.g. raw `add_extension` calls)
+        // and accidentally weakened a guard.
+        {
+            let parent_guard_bytes = self.parent.extension(crate::guard::GUARD_EXTENSION_KEY);
+            let parent_guards = crate::guard::parse_guard_map(parent_guard_bytes)?;
+            let child_guard_bytes = self.extensions.get(crate::guard::GUARD_EXTENSION_KEY);
+            let child_guards = crate::guard::parse_guard_map(child_guard_bytes)?;
+            crate::guard::verify_guard_monotonicity(
+                parent_guards.as_ref(),
+                child_guards.as_ref(),
+                &self.tools,
+            )
+            .map_err(|e| Error::Validation(format!("guard monotonicity violation: {e}")))?;
         }
 
         let holder = self
@@ -3012,7 +3053,8 @@ impl<'a> IssuanceBuilder<'a> {
             use chrono::TimeZone;
             let expiry = Utc
                 .timestamp_opt(self.issuer.payload.expires_at as i64, 0)
-                .unwrap();
+                .single()
+                .unwrap_or_else(Utc::now);
             return Err(Error::WarrantExpired(expiry));
         }
 
@@ -3040,9 +3082,9 @@ impl<'a> IssuanceBuilder<'a> {
                 }
             }
         } else {
-            return Err(Error::Validation(
-                "issuer warrant has no issuable_tools".to_string(),
-            ));
+            return Err(Error::InvalidWarrantType {
+                message: "issuer warrant requires at least one issuable_tool".to_string(),
+            });
         }
         let holder = self.holder.ok_or(Error::Validation(
             "execution warrant requires holder".to_string(),
@@ -3080,7 +3122,7 @@ impl<'a> IssuanceBuilder<'a> {
             }
         } else {
             return Err(Error::InvalidWarrantType {
-                message: "issuer warrant must have issuable_tools".to_string(),
+                message: "issuer warrant requires at least one issuable_tool".to_string(),
             });
         }
 
@@ -3196,7 +3238,7 @@ impl<'a> IssuanceBuilder<'a> {
             if key.len() > MAX_EXTENSION_KEY_SIZE {
                 return Err(Error::Validation(format!(
                     "extension key '{}...' length {} exceeds limit {}",
-                    key.chars().take(32).collect::<String>(),
+                    key.chars().take(KEY_DISPLAY_TRUNCATION).collect::<String>(),
                     key.len(),
                     MAX_EXTENSION_KEY_SIZE
                 )));
@@ -3511,6 +3553,29 @@ impl OwnedIssuanceBuilder {
             return;
         }
         self.extensions.insert(key, value);
+    }
+
+    /// Add or merge guard bytes into the `tenuo.guards` extension.
+    ///
+    /// Merges with any inherited parent guards using union semantics
+    /// (more-restrictive wins for conflicts). Scoping to child tools
+    /// still happens during `build()` via `propagate_guards`.
+    pub fn set_guards_extension(&mut self, bytes: Vec<u8>) -> Result<()> {
+        let explicit = match crate::guard::parse_guard_map(Some(&bytes))? {
+            Some(g) => g,
+            None => return Ok(()),
+        };
+        let merged = match self.extensions.get(crate::guard::GUARD_EXTENSION_KEY) {
+            Some(existing) => match crate::guard::parse_guard_map(Some(existing))? {
+                Some(inherited) => crate::guard::merge_guard_maps(&inherited, &explicit),
+                None => explicit,
+            },
+            None => explicit,
+        };
+        let encoded = crate::guard::encode_guard_map(&merged)?;
+        self.extensions
+            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
+        Ok(())
     }
 
     /// Add an extension.

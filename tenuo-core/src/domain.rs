@@ -38,3 +38,15 @@ pub const ROTATION_PROOF_CONTEXT: &[u8] = b"tenuo-key-rotation-v1";
 ///
 /// Used when signing warrant payloads during issuance.
 pub const WARRANT_CONTEXT: &[u8] = b"tenuo-warrant-v1";
+
+/// Domain separation context for revocation request signatures.
+///
+/// Used when a requestor signs a revocation request to prove they
+/// authorize the revocation of a specific warrant.
+pub const REVOCATION_REQUEST_CONTEXT: &[u8] = b"tenuo-revocation-request-v1";
+
+/// Domain separation context for Signed Revocation List (SRL) signatures.
+///
+/// Used when the control plane signs a revocation list to prevent
+/// tampering in transit.
+pub const SRL_CONTEXT: &[u8] = b"tenuo-srl-v1";

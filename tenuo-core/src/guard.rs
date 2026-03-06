@@ -307,7 +307,11 @@ pub fn evaluate_guards(
         for (arg_name, arg_guard) in arg_guards {
             let arg_value = match args.get(arg_name) {
                 Some(v) => v,
-                None => continue, // Absent arg — constraint checking already validated completeness
+                // SECURITY: absent guarded argument fires the guard (fail-safe).
+                // A per-arg guard expresses "calls touching this argument need approval."
+                // If the argument is absent the tool's behaviour for that parameter is
+                // unknown, so we require approval rather than silently bypassing the gate.
+                None => return Ok(true),
             };
 
             match arg_guard {
@@ -349,6 +353,48 @@ pub fn propagate_guards(
         None
     } else {
         Some(child_guards)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Guard Merging (for attenuation / issuance)
+// ---------------------------------------------------------------------------
+
+/// Merge two guard maps, taking the union (more-restrictive wins for conflicts).
+///
+/// Used when a child explicitly adds guards during attenuation or issuance.
+/// Parent guards are always preserved; additional guards are unioned in.
+pub fn merge_guard_maps(base: &GuardMap, additional: &GuardMap) -> GuardMap {
+    let mut merged = base.0.clone();
+    for (tool, additional_guard) in additional.0.iter() {
+        merged
+            .entry(tool.clone())
+            .and_modify(|existing| {
+                *existing = take_stricter_guard(existing, additional_guard);
+            })
+            .or_insert_with(|| additional_guard.clone());
+    }
+    GuardMap(merged)
+}
+
+/// `a` is the existing/base guard (typically the parent's), `b` is the additional guard.
+///
+/// For same-argument conflicts in per-arg maps, `a` wins. This is intentional:
+/// the base guard is the parent's established gate; the additional guard cannot
+/// loosen it. Swapping the argument order would silently flip this security property.
+fn take_stricter_guard(a: &ToolGuard, b: &ToolGuard) -> ToolGuard {
+    match (&a.args, &b.args) {
+        // Either is whole-tool → whole-tool wins (strictest possible)
+        (None, _) | (_, None) => ToolGuard::whole_tool(),
+        // Both per-arg → union of argument keys (more args guarded = stricter).
+        // Same-argument conflicts: `a`'s guard wins (base takes precedence).
+        (Some(args_a), Some(args_b)) => {
+            let mut merged_args = args_a.clone();
+            for (arg, guard) in args_b {
+                merged_args.entry(arg.clone()).or_insert_with(|| guard.clone());
+            }
+            ToolGuard::with_args(merged_args)
+        }
     }
 }
 
@@ -404,7 +450,7 @@ impl std::error::Error for GuardError {}
 ///
 /// Returns `Ok(())` if the child guards are valid, `Err(GuardError)` if
 /// they violate monotonicity.
-pub fn verify_guard_monotonicity(
+pub(crate) fn verify_guard_monotonicity(
     parent_guards: Option<&GuardMap>,
     child_guards: Option<&GuardMap>,
     child_tools: &BTreeMap<String, crate::constraints::ConstraintSet>,
@@ -449,7 +495,7 @@ pub fn verify_guard_monotonicity(
                         .get(arg)
                         .ok_or_else(|| GuardError::ArgGuardRemoved(tool.clone(), arg.clone()))?;
 
-                    validate_arg_guard_subset(child_arg_guard, parent_arg_guard)?;
+                    validate_arg_guard_monotonic(child_arg_guard, parent_arg_guard)?;
                 }
             }
         }
@@ -458,10 +504,11 @@ pub fn verify_guard_monotonicity(
     Ok(())
 }
 
-/// Validate that a child arg guard is equal to or stricter than the parent.
+/// Validate that a child arg guard is monotonically at least as strict as the parent.
 ///
+/// "At least as strict" means the child guards a superset of values: child ≥ parent.
 /// Phase 1: constraint-based guards require exact equality.
-fn validate_arg_guard_subset(
+fn validate_arg_guard_monotonic(
     child: &ArgGuard,
     parent: &ArgGuard,
 ) -> std::result::Result<(), GuardError> {
@@ -604,15 +651,37 @@ mod tests {
     }
 
     #[test]
-    fn test_per_arg_absent_argument_skipped() {
+    fn test_per_arg_absent_argument_fires_guard() {
+        // SECURITY: absent guarded argument → guard fires (fail-safe).
+        // A call that omits the guarded argument has unknown behaviour for
+        // that parameter, so we require approval rather than bypassing the gate.
         let mut args_guards = BTreeMap::new();
         args_guards.insert("path".into(), ArgGuard::All);
         let mut gm = GuardMap::new();
         gm.insert("file.write".into(), ToolGuard::with_args(args_guards));
 
-        // Invoke with no "path" argument — guard doesn't fire
+        // Call with no "path" argument — guard must fire
         let args = make_args(&[("other", "value")]);
-        assert!(!evaluate_guards(Some(&gm), "file.write", &args).unwrap());
+        assert!(evaluate_guards(Some(&gm), "file.write", &args).unwrap());
+
+        // Confirm the guard does NOT fire for a completely different tool
+        assert!(!evaluate_guards(Some(&gm), "file.read", &args).unwrap());
+    }
+
+    #[test]
+    fn test_per_arg_constraint_absent_argument_fires_guard() {
+        // Same fail-safe semantics apply when the guard is a constraint, not ArgGuard::All.
+        let mut args_guards = BTreeMap::new();
+        args_guards.insert(
+            "path".into(),
+            ArgGuard::Constraint(Subpath::new("/etc").unwrap().into()),
+        );
+        let mut gm = GuardMap::new();
+        gm.insert("file.write".into(), ToolGuard::with_args(args_guards));
+
+        // No "path" supplied → guard fires even though the constraint can't match
+        let args = make_args(&[("content", "hello")]);
+        assert!(evaluate_guards(Some(&gm), "file.write", &args).unwrap());
     }
 
     // -- Guard propagation --

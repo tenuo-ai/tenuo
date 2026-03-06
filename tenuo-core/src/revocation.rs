@@ -44,6 +44,7 @@
 //! ```
 
 use crate::crypto::{PublicKey, Signature, SigningKey};
+use crate::domain::{REVOCATION_REQUEST_CONTEXT, SRL_CONTEXT};
 use crate::error::{Error, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -99,12 +100,13 @@ impl RevocationRequest {
         let requested_at = Utc::now();
         let requestor = requestor_keypair.public_key();
 
-        // Sign the request
+        // Sign the request with domain-separated preimage
         let payload = (&warrant_id, &reason, &requestor, requested_at.timestamp());
         let mut payload_bytes = Vec::new();
         ciborium::ser::into_writer(&payload, &mut payload_bytes)
             .map_err(|e| Error::SerializationError(e.to_string()))?;
-        let signature = requestor_keypair.sign(&payload_bytes);
+        let preimage = Self::build_preimage(&payload_bytes);
+        let signature = requestor_keypair.sign(&preimage);
 
         Ok(Self {
             warrant_id,
@@ -129,9 +131,10 @@ impl RevocationRequest {
         let mut payload_bytes = Vec::new();
         ciborium::ser::into_writer(&payload, &mut payload_bytes)
             .map_err(|e| Error::SerializationError(e.to_string()))?;
+        let preimage = Self::build_preimage(&payload_bytes);
 
         self.requestor
-            .verify(&payload_bytes, &self.signature)
+            .verify(&preimage, &self.signature)
             .map_err(|_| Error::SignatureInvalid("Revocation request signature invalid".into()))
     }
 
@@ -252,6 +255,14 @@ impl RevocationRequest {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         ciborium::de::from_reader(bytes).map_err(|e| Error::DeserializationError(e.to_string()))
     }
+
+    fn build_preimage(payload_bytes: &[u8]) -> Vec<u8> {
+        let mut preimage =
+            Vec::with_capacity(REVOCATION_REQUEST_CONTEXT.len() + payload_bytes.len());
+        preimage.extend_from_slice(REVOCATION_REQUEST_CONTEXT);
+        preimage.extend_from_slice(payload_bytes);
+        preimage
+    }
 }
 
 // ============================================================================
@@ -330,10 +341,11 @@ impl SignedRevocationList {
             ));
         }
 
-        // Verify signature
+        // Verify signature with domain-separated preimage
         let payload_bytes = self.payload_bytes()?;
+        let preimage = Self::build_preimage(&payload_bytes);
         expected_issuer
-            .verify(&payload_bytes, &self.signature)
+            .verify(&preimage, &self.signature)
             .map_err(|_| Error::SignatureInvalid("SRL signature verification failed".into()))
     }
 
@@ -407,6 +419,13 @@ impl SignedRevocationList {
             .map_err(|e| Error::SerializationError(e.to_string()))?;
         Ok(bytes)
     }
+
+    fn build_preimage(payload_bytes: &[u8]) -> Vec<u8> {
+        let mut preimage = Vec::with_capacity(SRL_CONTEXT.len() + payload_bytes.len());
+        preimage.extend_from_slice(SRL_CONTEXT);
+        preimage.extend_from_slice(payload_bytes);
+        preimage
+    }
 }
 
 /// Builder for creating signed revocation lists.
@@ -474,13 +493,12 @@ impl SrlBuilder {
             issuer: keypair.public_key(),
         };
 
-        // Serialize payload for signing
+        // Serialize payload and sign with domain-separated preimage
         let mut payload_bytes = Vec::new();
         ciborium::ser::into_writer(&payload, &mut payload_bytes)
             .map_err(|e| Error::SerializationError(e.to_string()))?;
-
-        // Sign
-        let signature = keypair.sign(&payload_bytes);
+        let preimage = SignedRevocationList::build_preimage(&payload_bytes);
+        let signature = keypair.sign(&preimage);
 
         let lookup_cache = Some(self.revoked_ids.into_iter().collect());
 

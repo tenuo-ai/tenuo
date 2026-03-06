@@ -100,12 +100,18 @@ pub use wire::MAX_WARRANT_SIZE;
 
 // Re-export guard types
 pub use guard::{
-    encode_guard_map, evaluate_guards, parse_guard_map, propagate_guards,
-    verify_guard_monotonicity, ArgGuard, GuardError, GuardMap, ToolGuard, GUARD_EXTENSION_KEY,
+    encode_guard_map, evaluate_guards, merge_guard_maps, parse_guard_map, propagate_guards,
+    ArgGuard, GuardError, GuardMap, ToolGuard,
 };
 
 // Re-export approval request
 pub use approval::ApprovalRequest;
+
+// Reserved extension keys. The core (data plane) enforces `tenuo.guards`
+// on every verification. Other `tenuo.*` keys are carried opaquely and
+// enforced only by the control plane.
+pub use guard::GUARD_EXTENSION_KEY;           // "tenuo.guards" — data-plane enforced
+pub const IDENTITY_BINDING_EXTENSION_KEY: &str = "tenuo.identity_binding"; // control-plane enforced
 
 // Re-export diff types
 pub use diff::{
