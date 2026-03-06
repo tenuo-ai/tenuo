@@ -75,6 +75,7 @@ def mock_signing_key():
     """Create a mock signing key."""
     key = MagicMock()
     key.secret_key_bytes.return_value = b"\x00" * 32  # 32-byte signing key
+    key.to_bytes.return_value = b"\x00" * 32
     key.public_key.return_value = MagicMock()
     return key
 

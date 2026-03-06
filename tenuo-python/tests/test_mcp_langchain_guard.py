@@ -10,9 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-pytestmark = pytest.mark.asyncio
-
-
 # =============================================================================
 # Helpers / fixtures
 # =============================================================================
@@ -48,6 +45,7 @@ class _FakeMultiServerMCPClient:
 # =============================================================================
 
 
+@pytest.mark.asyncio
 class TestGuardMCPClient:
     """guard_mcp_client() wraps MultiServerMCPClient tools with @guard."""
 
@@ -237,6 +235,7 @@ class TestIsConnectionError:
         assert SecureMCPClient._is_connection_error(exc) is True
 
 
+@pytest.mark.asyncio
 class TestReconnectResetsState:
     """_reconnect() resets session state and reconnects."""
 
@@ -272,6 +271,7 @@ class TestReconnectResetsState:
         assert client.session is not None  # connect() set a new session
 
 
+@pytest.mark.asyncio
 class TestCallToolReconnects:
     """call_tool() retries once after a connection error."""
 
