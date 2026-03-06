@@ -145,10 +145,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar
 
-logger = logging.getLogger("tenuo.temporal")
+import inspect as _inspect
 
-# Type variable for decorator
-F = TypeVar("F", bound=Callable[..., Any])
+logger = logging.getLogger("tenuo.temporal")
 
 # =============================================================================
 # Header Constants
@@ -161,6 +160,7 @@ TENUO_POP_HEADER = "x-tenuo-pop"
 TENUO_CHAIN_HEADER = "x-tenuo-warrant-chain"
 TENUO_ARG_KEYS_HEADER = "x-tenuo-arg-keys"
 TENUO_WIRE_FORMAT_HEADER = "x-tenuo-wire-format"
+TENUO_APPROVALS_HEADER = "x-tenuo-approvals"
 
 # Wire format versions:
 #   "1" (or absent): legacy base64(cbor) warrant encoding
@@ -200,6 +200,7 @@ _DEDUP_EVICT_INTERVAL: float = 60.0
 _DEDUP_MAX_SIZE: int = 10_000
 _workflow_config_store: Dict[str, "TenuoInterceptorConfig"] = {}
 _pending_activity_fn: Dict[str, Any] = {}  # workflow_id → activity function ref
+_pending_activity_approvals: Dict[str, List[Any]] = {}  # workflow_id → SignedApproval list
 
 
 # =============================================================================
@@ -1143,6 +1144,30 @@ class TenuoInterceptorConfig:
     Pass the same list you give to ``Worker(activities=...)``.
     """
 
+    approval_handler: Optional[Callable] = None
+    """
+    Callback invoked when a warrant guard fires and no pre-supplied
+    approvals are available in activity headers.  Receives an
+    ``ApprovalRequest`` and must return a ``SignedApproval`` (or list).
+    Raise ``ApprovalDenied`` to reject.
+
+    When ``None`` (default), guard-triggered calls with no pre-supplied
+    approvals are denied with ``GuardTriggered``.
+    """
+
+    trusted_approvers: Optional[List[Any]] = None
+    """
+    Public keys of trusted approvers for guard satisfaction.
+    Required when using warrant guards with ``required_approvers``.
+    If ``None``, the warrant's own ``required_approvers()`` list is used.
+    """
+
+    approval_threshold: Optional[int] = None
+    """
+    Minimum number of valid approvals required to satisfy a guard.
+    If ``None``, uses the warrant's ``approval_threshold()``.
+    """
+
     strict_mode: bool = False
     """
     Enforce production-safe configuration at startup.  When ``True``:
@@ -1445,6 +1470,37 @@ async def tenuo_execute_activity(
     finally:
         with _store_lock:
             _pending_activity_fn.pop(wf_id, None)
+
+
+def set_activity_approvals(approvals: List[Any]) -> None:
+    """Pre-supply signed approvals for the next activity execution.
+
+    Call this from a workflow before ``workflow.execute_activity()`` when
+    the warrant has guards that require approval.  The outbound interceptor
+    encodes them into activity headers and the inbound interceptor uses
+    them to satisfy the guard check.
+
+    Approvals are consumed on the next activity dispatch (one-shot).
+
+    Args:
+        approvals: List of ``SignedApproval`` objects.
+
+    Example::
+
+        set_activity_approvals([signed_approval])
+        await workflow.execute_activity(
+            delete_file, args=["/etc/config"],
+            start_to_close_timeout=timedelta(seconds=30),
+        )
+    """
+    try:
+        from temporalio import workflow  # type: ignore[import-not-found]
+    except ImportError:
+        raise TenuoContextError("temporalio not available")
+
+    wf_id = workflow.info().workflow_id
+    with _store_lock:
+        _pending_activity_approvals[wf_id] = list(approvals)
 
 
 def attenuated_headers(
@@ -2291,6 +2347,20 @@ class _TenuoWorkflowOutboundInterceptor:
                         data=arg_keys_csv.encode("utf-8")
                     )
 
+                    # Forward pre-supplied approvals (set by workflow code
+                    # via set_activity_approvals()) so the inbound interceptor
+                    # can satisfy guard checks.
+                    with _store_lock:
+                        pending_approvals = _pending_activity_approvals.pop(wf_id, None)
+                    if pending_approvals:
+                        encoded = json.dumps([
+                            base64.b64encode(a.to_bytes()).decode("ascii")
+                            for a in pending_approvals
+                        ])
+                        activity_headers[TENUO_APPROVALS_HEADER] = Payload(
+                            data=encoded.encode("utf-8")
+                        )
+
                     input = _replace_field(input, "headers", activity_headers)
 
         except TenuoContextError:
@@ -2719,6 +2789,7 @@ class TenuoActivityInboundInterceptor:
         if self._authorizer is not None:
             try:
                 from tenuo_core import Warrant as CoreWarrant  # type: ignore[import-not-found]
+                from tenuo_core import evaluate_guards as _evaluate_guards  # type: ignore[import-not-found]
 
                 authorizer = self._authorizer
 
@@ -2728,16 +2799,26 @@ class TenuoActivityInboundInterceptor:
                 if pop_header:
                     pop_bytes = base64.b64decode(pop_header)
 
+                # Guard evaluation: collect approvals before authorize
+                # so Rust can satisfy the guard atomically with PoP.
+                guard_approvals = self._resolve_guard_approvals(
+                    warrant, tool_name, args, headers,
+                )
+
                 chain_header = headers.get(TENUO_CHAIN_HEADER)
                 if chain_header:
                     chain_list = json.loads(base64.b64decode(chain_header))
                     chain = [CoreWarrant.from_base64(w) for w in chain_list]
                     authorizer.check_chain(
-                        chain, tool_name, args, signature=pop_bytes,
+                        chain, tool_name, args,
+                        signature=pop_bytes,
+                        approvals=guard_approvals,
                     )
                 else:
                     authorizer.authorize_one(
-                        warrant, tool_name, args, signature=pop_bytes,
+                        warrant, tool_name, args,
+                        signature=pop_bytes,
+                        approvals=guard_approvals,
                     )
 
                 # PoP replay detection: reject if the same dedup key
@@ -2895,6 +2976,37 @@ class TenuoActivityInboundInterceptor:
                     )
                 return None
 
+            # Lightweight guard check (no cryptographic verification of
+            # approvals — the full path handles that).  If a guard fires
+            # and no approval_handler is configured, deny the call.
+            try:
+                from tenuo_core import evaluate_guards as _eval_g
+                if _eval_g(warrant, tool_name, args):
+                    self._emit_denial_event(
+                        info=info,
+                        warrant=warrant,
+                        tool=tool_name,
+                        args=args,
+                        reason=f"Guard triggered for '{tool_name}' (lightweight path — "
+                               "configure trusted_roots for full approval verification)",
+                        constraint="guard_triggered",
+                    )
+                    if self._config.on_denial == "raise":
+                        raise ConstraintViolation(
+                            tool=tool_name,
+                            arguments=args,
+                            constraint=f"Guard triggered for '{tool_name}'. "
+                                       "Use trusted_roots for full guard+approval support.",
+                            warrant_id=warrant.id,
+                        )
+                    return None
+            except ConstraintViolation:
+                raise
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.debug(f"Guard evaluation skipped (lightweight path): {e}")
+
         # Authorization passed — emit allow event
         self._emit_allow_event(
             info=info,
@@ -2905,6 +3017,103 @@ class TenuoActivityInboundInterceptor:
 
         # Execute the activity
         return await self._next.execute_activity(input)
+
+    def _resolve_guard_approvals(
+        self,
+        warrant: Any,
+        tool_name: str,
+        args: Dict[str, Any],
+        headers: Dict[str, bytes],
+    ) -> Optional[List[Any]]:
+        """Evaluate warrant guards and collect approvals when a guard fires.
+
+        Resolution order:
+          1. Pre-supplied approvals in ``x-tenuo-approvals`` header
+             (base64-encoded JSON list of CBOR-serialized SignedApprovals).
+          2. ``approval_handler`` callback on TenuoInterceptorConfig.
+          3. Raise ConstraintViolation (guard fires, no approvals available).
+
+        Returns ``None`` when no guard fires (unguarded call).
+        """
+        from tenuo_core import evaluate_guards as _evaluate_guards
+
+        if not _evaluate_guards(warrant, tool_name, args):
+            return None
+
+        # Guard fired — try to collect approvals.
+        from tenuo_core import SignedApproval as CoreSignedApproval
+
+        # 1. Check header for pre-supplied approvals
+        raw_approvals_header = headers.get(TENUO_APPROVALS_HEADER)
+        if raw_approvals_header:
+            try:
+                approvals_list = json.loads(raw_approvals_header)
+                return [
+                    CoreSignedApproval.from_bytes(base64.b64decode(a))
+                    for a in approvals_list
+                ]
+            except Exception as e:
+                logger.warning(f"Failed to decode approvals header: {e}")
+
+        # 2. Try approval_handler callback
+        handler = self._config.approval_handler if self._config else None
+        if handler is not None:
+            try:
+                from tenuo_core import py_compute_request_hash as _compute_hash
+                from tenuo.approval import ApprovalRequest
+
+                holder_key = getattr(warrant, "holder_key", None)
+                warrant_id = getattr(warrant, "id", "") or ""
+                request_hash = _compute_hash(warrant_id, tool_name, args, holder_key)
+                request = ApprovalRequest(
+                    tool=tool_name,
+                    arguments=args,
+                    warrant_id=warrant_id,
+                    request_hash=request_hash,
+                )
+
+                result = handler(request)
+                if _inspect.isawaitable(result):
+                    import asyncio
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+                    if loop and loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                            result = pool.submit(asyncio.run, result).result()
+                    else:
+                        result = asyncio.run(result)
+
+                collected = result if isinstance(result, list) else [result]
+
+                # Verify the approvals locally before forwarding to Rust
+                approvers = (
+                    self._config.trusted_approvers
+                    if self._config and self._config.trusted_approvers
+                    else warrant.required_approvers()
+                )
+                threshold = (
+                    self._config.approval_threshold
+                    if self._config and self._config.approval_threshold is not None
+                    else warrant.approval_threshold()
+                )
+                from tenuo_core import verify_approvals as _verify
+                _verify(request_hash, collected, approvers, threshold)
+
+                return collected
+            except Exception:
+                raise
+
+        # 3. No approvals available — deny.
+        raise ConstraintViolation(
+            tool=tool_name,
+            arguments=args,
+            constraint=f"Guard triggered for '{tool_name}' but no approvals "
+                       "available (set approval_handler or supply x-tenuo-approvals header)",
+            warrant_id=getattr(warrant, "id", ""),
+        )
 
     def _extract_arguments(
         self, input: Any, headers: Optional[Dict[str, bytes]] = None,
@@ -3071,6 +3280,7 @@ __all__ = [
     # Workflow helpers
     "tenuo_execute_activity",
     "tenuo_execute_child_workflow",
+    "set_activity_approvals",
     # Context accessors
     "current_warrant",
     "current_key_id",
@@ -3089,4 +3299,5 @@ __all__ = [
     "TENUO_COMPRESSED_HEADER",
     "TENUO_CHAIN_HEADER",
     "TENUO_WIRE_FORMAT_HEADER",
+    "TENUO_APPROVALS_HEADER",
 ]

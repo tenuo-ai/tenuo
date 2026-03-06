@@ -610,6 +610,19 @@ class GrantBuilder:
         self._rust_builder.terminal()
         return self
 
+    def guards(self, guard_map: Dict[str, Any]) -> "GrantBuilder":
+        """Add or merge guards into the attenuated warrant.
+
+        Keys are tool names. Values are None (whole-tool guard) or a dict of
+        argument guards. Guards merge with any guards inherited from the parent.
+
+        Example:
+            builder.guards({"transfer": None})
+            builder.guards({"transfer": {"amount": Range(min=1000)}})
+        """
+        self._rust_builder.with_guards(guard_map)
+        return self
+
     # =========================================================================
     # Diff and build methods
     # =========================================================================
@@ -913,6 +926,19 @@ class IssuanceBuilder:
             Self for chaining
         """
         self._rust_builder.terminal()
+        return self
+
+    def guards(self, guard_map: Dict[str, Any]) -> "IssuanceBuilder":
+        """Add or merge guards into the issued execution warrant.
+
+        Keys are tool names. Values are None (whole-tool guard) or a dict of
+        argument guards. Guards merge with any guards inherited from the issuer warrant.
+
+        Example:
+            builder.guards({"transfer": None})
+            builder.guards({"transfer": {"amount": Range(min=1000)}})
+        """
+        self._rust_builder.with_guards(guard_map)
         return self
 
     def build(self, key: SigningKey) -> Warrant:

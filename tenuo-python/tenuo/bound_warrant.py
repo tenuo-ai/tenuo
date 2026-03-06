@@ -222,13 +222,16 @@ class BoundWarrant:
         """
         return self._warrant.grant(to=to, allow=allow, ttl=ttl, key=self._key, **constraints)
 
-    def headers(self, tool: str, args: dict) -> Dict[str, str]:
+    def headers(self, tool: str, args: dict, approvals=None) -> Dict[str, str]:
         """
         Generate HTTP authorization headers using the bound key.
 
         Args:
             tool: Tool name
             args: Tool arguments
+            approvals: Optional list of SignedApproval objects. Required when the
+                warrant has a guard on this tool — pass the verified approvals so
+                the guard is satisfied during PoP validation on the server side.
 
         Returns:
             Dictionary with X-Tenuo-Warrant and X-Tenuo-PoP headers
@@ -236,8 +239,9 @@ class BoundWarrant:
         import base64
         import time
 
-        # Validate before signing for better error messages
-        validation = self.validate(tool, args)
+        # Validate before signing for better error messages.
+        # Pass approvals so guarded tools don't fail here.
+        validation = self.validate(tool, args, approvals=approvals)
         if not validation:
             raise RuntimeError(f"Authorization failed: {validation.reason}")
 
@@ -249,7 +253,7 @@ class BoundWarrant:
             "X-Tenuo-PoP": pop_b64,
         }
 
-    def validate(self, tool: str, args: dict) -> ValidationResult:
+    def validate(self, tool: str, args: dict, approvals=None) -> ValidationResult:
         """
         Pre-check if this action would be authorized.
 
@@ -259,6 +263,9 @@ class BoundWarrant:
         Args:
             tool: Tool name
             args: Tool arguments (constraints)
+            approvals: Optional list of SignedApproval objects. Pass when the warrant
+                has guards that require approval — the Rust core verifies these and
+                satisfies the guard check atomically with PoP verification.
 
         Returns:
             ValidationResult (True if authorized and PoP is valid, with feedback on failure)
@@ -279,12 +286,12 @@ class BoundWarrant:
         pop_signature = self._warrant.sign(self._key, tool, args, int(time.time()))
 
         # 2. Verify via Authorizer.authorize_one() — full check: issuer trust,
-        #    expiry, revocation, clearance, PoP, constraints.
+        #    expiry, revocation, clearance, PoP, constraints, guard satisfaction.
         issuer_pub = getattr(self._warrant, "issuer_public_key", None) or getattr(self._warrant, "issuer", None)
         roots = [issuer_pub] if issuer_pub is not None else []
         auth = Authorizer(trusted_roots=roots)
         try:
-            auth.authorize_one(self._warrant, tool, args, signature=bytes(pop_signature))
+            auth.authorize_one(self._warrant, tool, args, signature=bytes(pop_signature), approvals=approvals or [])
             return ValidationResult.ok()
         except Exception as exc:
             # Re-raise structural failures — callers should handle these explicitly.
