@@ -432,13 +432,10 @@ The Python and Rust APIs use different names for the same operations to match ea
 | Operation | Python | Rust |
 |-----------|--------|------|
 | Create new warrant | `Warrant.mint_builder()...mint(key)` | `Warrant::builder()...build(keypair)` |
-| Delegate (narrow) | `warrant.grant_builder()...grant(key)` | `warrant.attenuate()...build(keypair)` |
+| Delegate (narrow) | `warrant.grant_builder()...grant(key)` | `warrant.narrow()...build(keypair)` |
 | Issue from issuer warrant | `warrant.issue_execution()...build(key)` | `warrant.issue_execution_warrant()...build(keypair)` |
-| Static issue (low-level) | `Warrant.issue(keypair, ...)` | N/A (builder pattern only) |
 
-`Warrant.issue()` (static method) is a low-level API that creates a warrant in a single call.
-`Warrant.mint_builder()` (fluent builder) is the recommended higher-level API.
-Both produce the same result — use whichever fits your style.
+`Warrant.mint_builder()` (fluent builder) is the recommended API for creating warrants.
 
 #### Logic Checks & Debugging Methods
 

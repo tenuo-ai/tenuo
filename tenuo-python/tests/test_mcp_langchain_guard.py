@@ -225,7 +225,7 @@ class TestReconnectResetsState:
     async def test_reconnect_resets_session(self):
         """After _reconnect(), session, tools, and wrapped_tools are reset then repopulated."""
         try:
-            from mcp import ClientSession  # noqa: F401
+            import mcp  # noqa: F401
         except ImportError:
             pytest.skip("mcp not available")
 
@@ -260,7 +260,7 @@ class TestCallToolReconnects:
     async def test_reconnects_on_connection_error(self):
         """call_tool() retries after ClosedResourceError from session."""
         try:
-            from mcp import ClientSession  # noqa: F401
+            import mcp  # noqa: F401
         except ImportError:
             pytest.skip("mcp not available")
 
@@ -309,7 +309,7 @@ class TestCallToolReconnects:
     async def test_does_not_retry_on_non_connection_error(self):
         """call_tool() propagates non-connection errors without retrying."""
         try:
-            from mcp import ClientSession  # noqa: F401
+            import mcp  # noqa: F401
         except ImportError:
             pytest.skip("mcp not available")
 
@@ -349,7 +349,7 @@ class TestCallToolReconnects:
     async def test_timeout_not_retried(self):
         """asyncio.TimeoutError is not treated as a connection error and is not retried."""
         try:
-            from mcp import ClientSession  # noqa: F401
+            import mcp  # noqa: F401
         except ImportError:
             pytest.skip("mcp not available")
 

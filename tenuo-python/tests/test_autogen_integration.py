@@ -774,14 +774,14 @@ class TestGuardToolTier2:
             Warrant.mint_builder()
             .capability("search", query=Pattern("ok*"), limit=Range(1, 3))
             .holder(key.public_key)
-            .ttl(1)
+            .ttl(2)
             .mint(key)
         )
         bound = warrant.bind(key)
 
         guarded = guard_tool(search, bound, tool_name="search")
         assert guarded(query="ok", limit=1) == "results:ok:1"
-        time.sleep(2)
+        time.sleep(4)
         with pytest.raises(ExpiredError):
             guarded(query="ok", limit=1)
 
