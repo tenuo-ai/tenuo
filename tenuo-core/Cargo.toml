@@ -85,7 +85,7 @@ required-features = ["data-plane"]
 [dependencies]
 # Cryptography
 ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "batch", "pkcs8", "zeroize"] }
-rand = "0.8"
+rand = "0.9"
 sha2 = "0.10"
 subtle = "2.6"  # Constant-time comparison for secrets
 secrecy = { version = "0.10", features = ["serde"] }
