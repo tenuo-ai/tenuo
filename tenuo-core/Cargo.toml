@@ -126,7 +126,7 @@ cel-interpreter = { version = "0.10", optional = true }
 moka = { version = "0.12", features = ["sync"], optional = true }
 
 # Error handling
-thiserror = "1.0"
+thiserror = "2.0"
 
 # UUID for warrant IDs (v4 for random, v7 for time-ordered)
 uuid = { version = "1.6", features = ["v4", "v7", "serde", "js"] }
