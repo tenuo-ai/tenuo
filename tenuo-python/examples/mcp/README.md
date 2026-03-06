@@ -176,7 +176,32 @@ python mcp_server_demo.py
 
 ---
 
-### 7. [`mcp_research_server.py`](mcp_research_server.py) - Research Agent Server
+### 7. [`../mcp_client.py`](../mcp_client.py) - Multi-Transport Client Patterns
+
+Advanced client examples showing all three transports and guard approval flow.
+
+**What it shows:**
+- Stdio, SSE, and StreamableHTTP transports
+- `discover_and_protect` shorthand for quick connections
+- Supplying `SignedApproval` objects for guard-protected tools
+- Config-driven constraint extraction with `mcp-config.yaml`
+
+---
+
+### 8. [`../mcp_server.py`](../mcp_server.py) - Server-Side MCPVerifier Patterns
+
+Server-side warrant verification using `MCPVerifier`.
+
+**What it shows:**
+- `MCPVerifier` with `fastmcp` and config-driven extraction
+- Raw mode (no config, direct constraint verification)
+- Guard-triggered approval flow (JSON-RPC error `-32002`)
+- Mixed deployment (some tools protected, others public)
+- `verify_mcp_call` standalone convenience function
+
+---
+
+### 9. [`mcp_research_server.py`](mcp_research_server.py) - Research Agent Server
 
 MCP server with web search and file operations for research workflows.
 
@@ -219,7 +244,7 @@ This connects to the test MCP server, discovers tools, and executes with warrant
 
 ### Pattern 1: SecureMCPClient (Recommended)
 
-Built-in client with automatic discovery and protection.
+Built-in client with automatic discovery and protection. Supports stdio, SSE, and StreamableHTTP.
 
 ```python
 from tenuo.mcp import SecureMCPClient
@@ -228,9 +253,37 @@ from tenuo import configure, mint, Capability, Subpath, SigningKey
 key = SigningKey.generate()
 configure(issuer_key=key)
 
+# Stdio (local subprocess)
 async with SecureMCPClient("python", ["server.py"], register_config=True) as client:
     async with mint(Capability("read_file", path=Subpath("/data"))):
         result = await client.tools["read_file"](path="/data/file.txt")
+
+# StreamableHTTP (remote server)
+async with SecureMCPClient(
+    url="https://mcp.example.com/mcp",
+    transport="http",
+    inject_warrant=True,
+) as client:
+    ...
+```
+
+### Pattern 1b: MCPVerifier (Server-Side)
+
+Verify warrants inside MCP tool handlers.
+
+```python
+from tenuo import Authorizer, PublicKey, CompiledMcpConfig, McpConfig
+from tenuo.mcp import MCPVerifier
+
+verifier = MCPVerifier(
+    authorizer=Authorizer(trusted_roots=[PublicKey.from_bytes(root_pub)]),
+    config=CompiledMcpConfig.compile(McpConfig.from_file("mcp-config.yaml")),
+)
+
+@mcp.tool()
+async def read_file(path: str, **kwargs) -> str:
+    clean = verifier.verify_or_raise("read_file", {"path": path, **kwargs})
+    return open(clean["path"]).read()
 ```
 
 ### Pattern 2: LangChain Integration
@@ -417,6 +470,8 @@ Start simple, build up complexity:
 | Example | Complexity | Concepts |
 |---------|-----------|----------|
 | **mcp_client_demo.py** | ⭐ Basic | SecureMCPClient, automatic protection |
+| **../mcp_client.py** | ⭐⭐ Intermediate | Multi-transport, guard approvals |
+| **../mcp_server.py** | ⭐⭐ Intermediate | MCPVerifier, server-side verification |
 | **langchain_mcp_demo.py** | ⭐⭐ Intermediate | Framework integration, ReAct agent |
 | **crewai_mcp_demo.py** | ⭐⭐ Intermediate | Crew workflows, per-agent warrants |
 | **mcp_a2a_delegation.py** | ⭐⭐⭐ Advanced | Multi-agent, A2A protocol, warrant chains |

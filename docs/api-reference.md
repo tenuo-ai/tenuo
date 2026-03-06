@@ -1195,10 +1195,11 @@ protected = guard_tools(original, inplace=False)
 
 ## MCP Integration
 
-Native support for [Model Context Protocol](https://modelcontextprotocol.io).
+Native support for [Model Context Protocol](https://modelcontextprotocol.io) — client-side authorization and server-side verification.
 
 ```python
 from tenuo import McpConfig, CompiledMcpConfig
+from tenuo.mcp import SecureMCPClient, MCPVerifier, verify_mcp_call
 ```
 
 ### McpConfig
@@ -1218,7 +1219,71 @@ compiled = CompiledMcpConfig.compile(config)
 result = compiled.extract_constraints("filesystem_read", {"path": "/var/log/app.log"})
 ```
 
-See `examples/mcp_integration.py` for a complete example.
+### SecureMCPClient
+
+MCP client with automatic warrant injection. Supports stdio, SSE, and StreamableHTTP transports.
+
+```python
+# Stdio
+async with SecureMCPClient("python", ["server.py"]) as client:
+    result = await client.tools["read_file"](path="/data/file.txt")
+
+# SSE / StreamableHTTP
+async with SecureMCPClient(
+    url="https://mcp.example.com/mcp",
+    transport="http",  # or "sse"
+    inject_warrant=True,
+) as client:
+    result = await client.tools["read_file"](path="/data/file.txt")
+```
+
+Parameters:
+- `command`, `args`, `env` — Stdio transport (local subprocess)
+- `url`, `transport`, `headers`, `timeout` — HTTP transports (remote server)
+- `inject_warrant` — Embed `_tenuo` field in tool arguments for server-side verification
+- `config_path`, `register_config` — Load MCP config for constraint extraction
+
+### MCPVerifier
+
+Server-side warrant verification for MCP tool handlers. Framework-agnostic.
+
+```python
+from tenuo import Authorizer, PublicKey, CompiledMcpConfig, McpConfig
+from tenuo.mcp import MCPVerifier
+
+verifier = MCPVerifier(
+    authorizer=Authorizer(trusted_roots=[PublicKey.from_bytes(root_pub)]),
+    config=CompiledMcpConfig.compile(McpConfig.from_file("mcp-config.yaml")),
+)
+
+result = verifier.verify("read_file", {"path": "/data/log.txt", "_tenuo": {...}})
+result.raise_if_denied()
+execute_tool(result.clean_arguments)
+```
+
+Returns `MCPVerificationResult` with:
+- `allowed` — Whether the call is authorized
+- `clean_arguments` — Arguments with `_tenuo` stripped
+- `is_guard_triggered` — Whether a guard requires approval
+- `jsonrpc_error_code` — `-32001` (denied), `-32002` (approval required), or `-32602` (invalid params)
+- `to_jsonrpc_error()` — Format as JSON-RPC error response
+
+### verify_mcp_call
+
+Standalone convenience function for one-off verification:
+
+```python
+from tenuo.mcp import verify_mcp_call
+
+clean = verify_mcp_call(
+    authorizer=authorizer,
+    tool_name="read_file",
+    arguments=raw_arguments,
+    config=compiled_config,  # optional
+)
+```
+
+See [`examples/mcp/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/mcp) for complete examples.
 
 ---
 

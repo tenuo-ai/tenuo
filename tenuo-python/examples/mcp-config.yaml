@@ -1,0 +1,61 @@
+# Tenuo MCP Configuration
+#
+# Maps MCP tool argument names to warrant constraint names.
+# Both the client (SecureMCPClient) and server (MCPVerifier) should
+# share the same config so PoP signatures are computed over the same
+# constraint view.
+
+version: "1"
+
+settings:
+  # Public keys of trusted issuers (hex-encoded Ed25519).
+  # In production, load from environment or secrets manager.
+  trusted_issuers: []
+
+tools:
+  read_file:
+    description: "Read a file from disk"
+    constraints:
+      path:
+        from: body
+        path: path
+        required: true
+      max_size:
+        from: body
+        path: maxSize          # MCP schema name → warrant constraint name
+        required: false
+        default: 4096
+        value_type: integer
+
+  write_file:
+    description: "Write content to a file"
+    constraints:
+      path:
+        from: body
+        path: path
+        required: true
+      content:
+        from: body
+        path: content
+        required: true
+
+  search:
+    description: "Search a knowledge base"
+    constraints:
+      query:
+        from: body
+        path: query
+        required: true
+
+  transfer:
+    description: "Transfer funds between accounts"
+    constraints:
+      amount:
+        from: body
+        path: amount
+        required: true
+        value_type: number
+      destination:
+        from: body
+        path: destination
+        required: true

@@ -479,6 +479,8 @@ async with SecureMCPClient("python", ["mcp_server.py"]) as client:
 
 Protects MCP tool access. The proxy is the trust boundary.
 
+**Alternative:** For server-side verification without a proxy, use `MCPVerifier` inside the MCP server itself. Set `inject_warrant=True` on the client to embed the warrant in `_tenuo`, and verify it in each tool handler. See [MCP Integration](./mcp) for details.
+
 ---
 
 ## Combining Models (Defense in Depth)

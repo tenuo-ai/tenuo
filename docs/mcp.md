@@ -1,20 +1,20 @@
 ## MCP Integration
 
-Tenuo provides full Model Context Protocol (MCP) client integration with cryptographic authorization.
+Tenuo provides full Model Context Protocol (MCP) integration with cryptographic authorization — both **client-side** (protecting outgoing tool calls) and **server-side** (verifying warrants inside tool handlers).
 
-**Full Stack**: Connect to MCP servers → Discover tools → Auto-protect with warrants → Execute securely.
+**Full Stack**: Connect to MCP servers → Discover tools → Auto-protect with warrants → Execute securely → Verify on the server.
 
 ---
 
 ## Prerequisites
 
 ```bash
-uv pip install tenuo
+uv pip install "tenuo[mcp]"       # MCP client + server (Python ≥3.10)
 ```
 
 For the full LangChain + MCP example:
 ```bash
-uv pip install "tenuo[langchain]"
+uv pip install "tenuo[langchain,mcp]"
 ```
 
 ---
@@ -66,10 +66,11 @@ OAuth tells you *who* is authenticated. Warrants constrain *what* they can do *w
 
 ## Quick Start
 
-Tenuo supports two integration patterns for MCP:
+Tenuo supports three integration patterns for MCP:
 
 1. **`SecureMCPClient`** (Built-in): Full client with automatic discovery and protection.
-2. **`langchain-mcp-adapters`** (Official): Secure the official LangChain MCP client.
+2. **`MCPVerifier`** (Built-in): Server-side warrant verification inside tool handlers.
+3. **`langchain-mcp-adapters`** (Official): Secure the official LangChain MCP client.
 
 ### Pattern 1: SecureMCPClient (Recommended)
 
@@ -79,19 +80,54 @@ Tenuo supports two integration patterns for MCP:
 from tenuo.mcp import SecureMCPClient
 from tenuo import configure, mint, Capability, Subpath, SigningKey
 
-# 1. Configure Tenuo
-key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+key = SigningKey.generate()
 configure(issuer_key=key)
 
-# 2. Connect to MCP server
-# Automatically discovers tools and wraps them with authorization
+# Stdio (local subprocess)
 async with SecureMCPClient("python", ["server.py"], register_config=True) as client:
-    # 3. Call tool with authorization
     async with mint(Capability("read_file", path=Subpath("/data"))):
         result = await client.tools["read_file"](path="/data/file.txt")
+
+# SSE (remote server, legacy transport)
+async with SecureMCPClient(
+    url="https://mcp.example.com/sse",
+    transport="sse",
+    inject_warrant=True,
+) as client:
+    ...
+
+# StreamableHTTP (remote server, current transport)
+async with SecureMCPClient(
+    url="https://mcp.example.com/mcp",
+    transport="http",
+    headers={"Authorization": "Bearer <token>"},
+    inject_warrant=True,
+) as client:
+    ...
 ```
 
-### Pattern 2: Securing LangChain Adapters
+### Pattern 2: MCPVerifier (Server-Side)
+
+Verify warrants inside MCP tool handlers. Works with any server framework.
+
+```python
+from tenuo import Authorizer, PublicKey, CompiledMcpConfig, McpConfig
+from tenuo.mcp import MCPVerifier
+
+authorizer = Authorizer(trusted_roots=[PublicKey.from_bytes(root_pub)])
+config = CompiledMcpConfig.compile(McpConfig.from_file("mcp-config.yaml"))
+verifier = MCPVerifier(authorizer=authorizer, config=config)
+
+# fastmcp example
+@mcp.tool()
+async def read_file(path: str, **kwargs) -> str:
+    clean = verifier.verify_or_raise("read_file", {"path": path, **kwargs})
+    return open(clean["path"]).read()
+```
+
+The verifier extracts `_tenuo` from arguments, verifies the warrant + PoP signature, checks constraints, and returns clean arguments (with `_tenuo` stripped).
+
+### Pattern 3: Securing LangChain Adapters
 
 If you are already using `langchain-mcp-adapters`, you can protect its tools using `guard()`:
 
@@ -351,7 +387,11 @@ When `inject_warrant=True`, Tenuo injects a `_tenuo` field into the tool argumen
 # Tenuo modifies the call payload:
 {
   "path": "/data/file.txt",
-  "_tenuo": { "warrant": "...", "signature": "..." }
+  "_tenuo": {
+    "warrant": "<base64>",
+    "signature": "<base64>",
+    "approvals": ["<base64>", ...]  # optional, for guard-protected tools
+  }
 }
 ```
 
@@ -526,6 +566,48 @@ warrant = (Warrant.mint_builder()
     .mint(key)
 )
 ```
+
+---
+
+## Guard Approval Flow
+
+Warrants can embed **guards** that require human approval before a tool call proceeds. When a guard triggers, the MCP integration returns a structured error so clients can collect approvals and retry.
+
+### Server-Side (MCPVerifier)
+
+```python
+result = verifier.verify("transfer", arguments)
+if result.is_guard_triggered:
+    # Return JSON-RPC error -32002 with approval_request details
+    return {"jsonrpc": "2.0", "id": req_id, "error": result.to_jsonrpc_error()}
+
+result.raise_if_denied()
+execute_tool(result.clean_arguments)
+```
+
+### Client-Side (Retry with Approvals)
+
+```python
+try:
+    result = await client.call_tool("transfer", amount=5000, recipient="acme")
+except Exception as e:
+    if is_guard_triggered(e):  # JSON-RPC code -32002
+        approval = collect_human_approval(e)  # app-specific UI flow
+        result = await client.call_tool(
+            "transfer",
+            amount=5000,
+            recipient="acme",
+            _approvals=[approval],  # re-submit with SignedApproval
+        )
+```
+
+### JSON-RPC Error Codes
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| `-32602` | Invalid params (missing required extraction field) | Fix arguments |
+| `-32001` | Access denied (constraint violation, expired, bad signature) | Request new warrant |
+| `-32002` | Approval required (guard triggered) | Collect approvals and re-submit |
 
 ---
 
@@ -719,21 +801,25 @@ max_size:
 ## Scope & Boundaries
 
 ### Tenuo Provides
-- Secure Client: A wrapper around the official MCP SDK that adds authorization.
-- Tool discovery: Automatic wrapping of discovered tools with `@guard`.
-- Warrant propagation: Injecting warrants into `_tenuo` field for server-side verification.
-- Constraint extraction: Config-driven extraction from MCP arguments.
+- **Secure Client** (`SecureMCPClient`): Wraps the MCP SDK with warrant injection and constraint enforcement. Supports stdio, SSE, and StreamableHTTP transports.
+- **Server Verification** (`MCPVerifier`): Framework-agnostic warrant verification for MCP server tool handlers. Works with `fastmcp`, the raw MCP SDK, or any custom server.
+- **Tool discovery**: Automatic wrapping of discovered tools with `@guard`.
+- **Warrant propagation**: Injecting warrants (+ approvals) into `_tenuo` field for end-to-end verification.
+- **Constraint extraction**: Config-driven extraction from MCP arguments.
+- **Guard approval flow**: Structured JSON-RPC errors (`-32002`) for guard-protected tools with retry support.
 
 ### Tenuo Does NOT Provide
-- MCP Server Library: Use [`fastmcp`](https://github.com/j-parker/fastmcp) or the official SDK to build servers.
-- MCP Transport: Tenuo relies on standard transports (stdio, SSE, HTTP).
+- MCP Server Framework: Use [`fastmcp`](https://github.com/jlowin/fastmcp) or the official SDK to build servers. Tenuo's `MCPVerifier` plugs into any framework.
+- MCP Transport: Tenuo relies on standard transports (stdio, SSE, StreamableHTTP).
 - Prompt Injection Detection: Tenuo assumes injection will happen and makes unauthorized actions impossible.
 
 ---
 
 ## Examples
 
-See [`tenuo-python/examples/mcp_integration.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/mcp_integration.py) for a complete working example.
+- [`tenuo-python/examples/mcp/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/mcp) — Client demos, LangChain/CrewAI/A2A integrations
+- [`tenuo-python/examples/mcp_client.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/mcp_client.py) — Multi-transport client patterns
+- [`tenuo-python/examples/mcp_server.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/mcp_server.py) — Server-side MCPVerifier patterns
 
 ---
 

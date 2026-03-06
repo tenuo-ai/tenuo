@@ -137,7 +137,7 @@ uv pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
 uv pip install "tenuo[crewai]"        # + CrewAI
 uv pip install "tenuo[temporal]"      # + Temporal workflows
 uv pip install "tenuo[autogen]"       # + AutoGen AgentChat (Python ≥3.10)
-uv pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10 required)
+uv pip install "tenuo[mcp]"           # + MCP client & server verification (Python ≥3.10 required)
 ```
 
 ---
@@ -295,7 +295,7 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 | **[LangGraph](https://tenuo.ai/langgraph)** | Multi-agent graph security |
 | **[CrewAI](https://tenuo.ai/crewai)** | Multi-agent crew protection |
 | **[Temporal](https://tenuo.ai/temporal)** | Durable workflow authorization |
-| **[MCP](https://tenuo.ai/mcp)** | Model Context Protocol client |
+| **[MCP](https://tenuo.ai/mcp)** | Model Context Protocol client + server verification |
 | **[Security](https://tenuo.ai/security)** | Threat model |
 
 ---

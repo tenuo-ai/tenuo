@@ -519,15 +519,44 @@ warrant.capabilities   # dict of tool -> constraints
 
 _(Requires Python ≥3.10)_
 
+**Client** — connect to any MCP server with automatic warrant injection:
+
 ```python
 from tenuo.mcp import SecureMCPClient
 
-async with SecureMCPClient("python", ["mcp_server.py"]) as client:
-    tools = client.tools  # All tools wrapped with Tenuo
-    
+# Stdio (local subprocess)
+async with SecureMCPClient("python", ["server.py"]) as client:
     async with mint(Capability("read_file", path=Subpath("/data"))):
-        result = await tools["read_file"](path="/data/file.txt")
+        result = await client.tools["read_file"](path="/data/file.txt")
+
+# SSE or StreamableHTTP (remote server)
+async with SecureMCPClient(
+    url="https://mcp.example.com/mcp",
+    transport="http",          # or "sse"
+    inject_warrant=True,       # embed _tenuo in tool arguments
+) as client:
+    ...
 ```
+
+**Server** — verify warrants inside MCP tool handlers:
+
+```python
+from tenuo import Authorizer, PublicKey, CompiledMcpConfig, McpConfig
+from tenuo.mcp import MCPVerifier
+
+verifier = MCPVerifier(
+    authorizer=Authorizer(trusted_roots=[PublicKey.from_bytes(root_pub)]),
+    config=CompiledMcpConfig.compile(McpConfig.from_file("mcp-config.yaml")),
+)
+
+@mcp.tool()
+async def read_file(path: str, **kwargs) -> str:
+    clean = verifier.verify_or_raise("read_file", {"path": path, **kwargs})
+    return open(clean["path"]).read()
+```
+
+Guard-protected tools return JSON-RPC error `-32002` when approval is required.
+See `examples/mcp/` for complete examples.
 
 ## Security Considerations
 
@@ -604,7 +633,7 @@ python examples/fastapi_integration.py
 python examples/langchain/langgraph_protected.py
 
 # MCP integration
-python examples/mcp_integration.py
+python examples/mcp/mcp_client_demo.py
 ```
 
 ## Documentation
