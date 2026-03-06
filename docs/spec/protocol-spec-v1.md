@@ -4,7 +4,7 @@
 **Status:** Normative  
 **Date:** 2026-01-01  
 
-**Documentation Revision:** 3 (2026-01-21)
+**Documentation Revision:** 4 (2026-03-06)
 
 **Authors:** Niki Aimable Niyikiza
 
@@ -16,6 +16,7 @@
 
 ## Revision History
 
+- **Rev 4** (2026-03-06): Clarified `pop_failed` error description to "outside replay window".
 - **Rev 3** (2026-01-21): Verification and enforcement. Confirmed normative invariants (I1-I6) against codebase and test vectors.
 - **Rev 2** (2026-01-10): Reconciled with v1.0 wire format.
 - **Rev 1** (2026-01-01): Initial release.
@@ -670,7 +671,7 @@ This domain separation prevents cross-protocol signature reuse.
 | `depth_exceeded` | Depth > max_depth or > MAX_DELEGATION_DEPTH |
 | `ttl_exceeded` | Child expires after parent |
 | `attenuation_invalid` | Child capabilities exceed parent |
-| `pop_failed` | PoP signature invalid or expired |
+| `pop_failed` | PoP signature invalid or outside replay window |
 | `tool_not_allowed` | Tool not in warrant's capabilities |
 | `constraint_not_satisfied` | Argument violates constraint |
 | `unknown_field` | Payload contains unknown CBOR keys |

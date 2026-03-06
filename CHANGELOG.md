@@ -22,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`GuardTriggered` exception**: Exposed in Python SDK for approval gate evaluation results
 
 #### Core Hardening
-- **IETF readiness**: Protocol hardening for spec alignment
 - **Clearance monotonicity fix**: Clearance levels now correctly enforce monotonic narrowing during delegation
 - **Extension validation**: Fixed gaps in warrant extension validation
 - **PoP error clarity**: `PopExpired` message now says "outside replay window" instead of ambiguous wording
@@ -33,15 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Improved client**: Retry logic, connection pooling, and better error propagation
 
 ### Fixed
-- Temporal `mock_signing_key` fixture: added `to_bytes()` return value for header security test
-- Flaky `guard_mcp_client` test: handles both raise and warn denial modes depending on config state
-- mypy: ignore optional `mcp` stubs (Python 3.9 compatibility), exclude `venv/` from scanning
-- Deprecated `.attenuate()` and `Warrant.issue()` references removed from `docs/api-reference.md`
-- Flaky `test_warrant_expires_mid_execution`: increased TTL/sleep margins for slow CI environments
-- Playwright test artifacts accidentally committed — added to `.gitignore`
-- Security: prevent logging of sensitive key material in A2A server
-- Temporal: preload keys incrementally, resolve workflow sandbox restrictions
-- Explorer: error handling for clipboard operations, auto-populate args on tool selection
+- Flaky timing-sensitive tests in CI (autogen expiry, MCP guard denial mode)
+- mypy compatibility for optional `mcp` stubs on Python 3.9
+- Deprecated API references in docs (`.attenuate()`, `Warrant.issue()`)
+- Prevent logging of sensitive key material in A2A server
+- Temporal key preloading and workflow sandbox restrictions
+- Explorer clipboard error handling and tool arg auto-populate
 
 ### Documentation
 - Updated `docs/mcp.md` with server-side verification and multi-transport examples
