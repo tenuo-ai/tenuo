@@ -7,7 +7,7 @@ Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 import logging
 import sys
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 from .._enforcement import EnforcementResult, enforce_tool_call
 from ..config import is_configured
@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 # Optional MCP import (requires Python 3.10+)
 try:
     from mcp import ClientSession, StdioServerParameters  # type: ignore[import-not-found]
+    from mcp.client.sse import sse_client  # type: ignore[import-not-found]
     from mcp.client.stdio import stdio_client  # type: ignore[import-not-found]
+    from mcp.client.streamable_http import streamablehttp_client  # type: ignore[import-not-found]
     from mcp.types import Tool as MCPTool  # type: ignore[import-not-found]
 
     MCP_AVAILABLE = True
@@ -41,41 +43,73 @@ class SecureMCPClient:
     MCP client with Tenuo authorization.
 
     Wraps the MCP Python SDK and automatically protects tool calls with warrants.
+    Supports stdio (local subprocess), SSE, and StreamableHTTP transports.
 
-    Example:
+    Stdio (local subprocess):
         async with SecureMCPClient("python", ["mcp_server.py"]) as client:
-            # Tools are auto-discovered and protected
-            # Use the .tools property for easy access
+            async with mint(Capability("read_file", path=Pattern("/data/*"))):
+                result = await client.tools["read_file"](path="/data/file.txt")
 
-            # Use with warrant context
+    SSE (remote server, legacy HTTP transport):
+        async with SecureMCPClient(
+            url="https://mcp.example.com/sse",
+            transport="sse",
+            inject_warrant=True,
+        ) as client:
+            async with mint(Capability("read_file", path=Pattern("/data/*"))):
+                result = await client.tools["read_file"](path="/data/file.txt")
+
+    StreamableHTTP (remote server, current HTTP transport):
+        async with SecureMCPClient(
+            url="https://mcp.example.com/mcp",
+            transport="http",
+            headers={"Authorization": "Bearer <token>"},
+            inject_warrant=True,
+        ) as client:
             async with mint(Capability("read_file", path=Pattern("/data/*"))):
                 result = await client.tools["read_file"](path="/data/file.txt")
     """
 
     def __init__(
         self,
-        command: str,
-        args: List[str],
+        command: Optional[str] = None,
+        args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
         config_path: Optional[str] = None,
         register_config: Optional[bool] = None,
         inject_warrant: bool = False,
+        url: Optional[str] = None,
+        transport: Literal["stdio", "sse", "http"] = "stdio",
+        headers: Optional[Dict[str, str]] = None,
+        timeout: float = 30.0,
+        sse_read_timeout: float = 300.0,
+        auth: Optional[Any] = None,
     ):
         """
         Initialize MCP client.
 
-        Args:
+        Stdio transport (local subprocess):
             command: Command to run MCP server ("python" or "node")
             args: Arguments to pass to server (e.g., ["server.py"])
             env: Environment variables for server process
+
+        HTTP transports (remote server):
+            url: MCP server endpoint URL
+            transport: "sse" for legacy SSE transport, "http" for StreamableHTTP
+            headers: HTTP headers to include in every request (e.g., Authorization)
+            timeout: HTTP request timeout in seconds (default 30)
+            sse_read_timeout: SSE stream read timeout in seconds (default 300)
+            auth: httpx.Auth instance for authentication (e.g., httpx.BasicAuth(...))
+
+        Common:
             config_path: Path to mcp-config.yaml (optional)
-            register_config: If True, register config globally for @guard.
-                           Defaults to True if config_path is provided, else False.
-            inject_warrant: If True, automatically inject warrants into tool calls (default: False)
+            register_config: Register config globally for @guard. Defaults to True
+                if config_path is provided.
+            inject_warrant: Inject warrants into tool calls for server-side
+                verification (default: False). Set True when the server runs
+                Tenuo verification.
 
         Note:
-            # register_config=True enables global configuration for @guard decorators
-            # This allows Tenuo to verify arguments without explicit extraction logic in code
             If register_config=True, this mutates global Tenuo configuration.
             Prefer calling configure(mcp_config=...) explicitly if you need
             fine-grained control.
@@ -83,11 +117,28 @@ class SecureMCPClient:
         if not MCP_AVAILABLE:
             raise ImportError('MCP SDK not installed. Install with: uv pip install "tenuo[mcp]"')
 
+        if transport == "stdio" and command is None:
+            raise ValueError(
+                "transport='stdio' requires 'command'. "
+                "For HTTP transports use transport='sse' or transport='http' with url=."
+            )
+        if transport in ("sse", "http") and url is None:
+            raise ValueError(
+                f"transport='{transport}' requires 'url'. "
+                "Provide the MCP server endpoint URL."
+            )
+
         self.command = command
-        self.args = args
+        self.args = args or []
         self.env = env
         self.config_path = config_path
         self.inject_warrant = inject_warrant
+        self.url = url
+        self.transport = transport
+        self.headers = headers
+        self.timeout = timeout
+        self.sse_read_timeout = sse_read_timeout
+        self.auth = auth
 
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
@@ -154,15 +205,50 @@ class SecureMCPClient:
         await self.close()
 
     async def connect(self):
-        """Connect to the MCP server."""
-        server_params = StdioServerParameters(command=self.command, args=self.args, env=self.env)
+        """Connect to the MCP server using the configured transport."""
+        if self.transport == "stdio":
+            server_params = StdioServerParameters(
+                command=self.command, args=self.args, env=self.env
+            )
+            stdio_transport = await self.exit_stack.enter_async_context(
+                stdio_client(server_params)
+            )
+            read_stream, write_stream = stdio_transport
 
-        # Connect via stdio
-        stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
-        stdio, write = stdio_transport
+        elif self.transport == "sse":
+            sse_transport = await self.exit_stack.enter_async_context(
+                sse_client(
+                    url=self.url,
+                    headers=self.headers,
+                    timeout=self.timeout,
+                    sse_read_timeout=self.sse_read_timeout,
+                    auth=self.auth,
+                )
+            )
+            read_stream, write_stream = sse_transport
+
+        elif self.transport == "http":
+            http_transport = await self.exit_stack.enter_async_context(
+                streamablehttp_client(
+                    url=self.url,
+                    headers=self.headers,
+                    timeout=self.timeout,
+                    sse_read_timeout=self.sse_read_timeout,
+                    auth=self.auth,
+                )
+            )
+            # streamablehttp_client returns a 3-tuple; third element is session-ID callback
+            read_stream, write_stream, _ = http_transport
+
+        else:
+            raise ValueError(
+                f"Unknown transport: {self.transport!r}. Use 'stdio', 'sse', or 'http'."
+            )
 
         # Create session
-        self.session = await self.exit_stack.enter_async_context(ClientSession(stdio, write))
+        self.session = await self.exit_stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
 
         # Initialize protocol
         await self.session.initialize()
@@ -227,6 +313,10 @@ class SecureMCPClient:
         """
         Check if a tool call would be authorized under the current warrant.
 
+        This is a local dry-run check. It does not supply approvals, so
+        guard-protected tools will always appear as unauthorized here.
+        Use :meth:`call_tool` with ``approvals=`` for the real invocation.
+
         Args:
             tool_name: Name of the tool
             arguments: Arguments for the tool
@@ -287,6 +377,7 @@ class SecureMCPClient:
         arguments: Dict[str, Any],
         warrant_context: bool = True,
         inject_warrant: Optional[bool] = None,
+        approvals: Optional[List] = None,
     ) -> Any:
         """
         Call an MCP tool with Tenuo authorization.
@@ -294,12 +385,17 @@ class SecureMCPClient:
         MCP Warrant Transport:
             When injection is enabled, the current warrant and PoP signature are
             injected into arguments._tenuo before sending to the MCP server.
+            If ``approvals`` are provided, they are serialized into
+            ``_tenuo.approvals`` so the server can satisfy any guard on the tool.
 
         Args:
             tool_name: Name of the MCP tool to call
             arguments: Tool arguments
             warrant_context: If True, authorize locally before sending
             inject_warrant: Override client's inject_warrant setting (default: None)
+            approvals: Pre-obtained SignedApproval objects to forward to the server
+                via ``_tenuo.approvals``. Required when the tool is guard-protected
+                and the server performs Tenuo verification (``inject_warrant=True``).
 
         Returns:
             Tool result from MCP server
@@ -333,7 +429,16 @@ class SecureMCPClient:
                     pop_sig = warrant.sign(keypair, tool_name, args, int(time.time()))
                     signature_base64 = base64.b64encode(bytes(pop_sig)).decode("utf-8")
 
-                    call_args["_tenuo"] = {"warrant": warrant_base64, "signature": signature_base64}
+                    tenuo_meta: Dict[str, Any] = {
+                        "warrant": warrant_base64,
+                        "signature": signature_base64,
+                    }
+                    if approvals:
+                        tenuo_meta["approvals"] = [
+                            base64.b64encode(a.to_bytes()).decode("utf-8")
+                            for a in approvals
+                        ]
+                    call_args["_tenuo"] = tenuo_meta
 
             if self.session is None:
                 raise RuntimeError("Not connected to MCP server. Call connect() first.")
@@ -376,28 +481,38 @@ class SecureMCPClient:
         allowed_keys = set(properties.keys())
 
         def _extract_auth_args(**kwargs):
+            # Strip _approvals — it is a Tenuo transport kwarg, not a tool argument.
+            # Passing SignedApproval objects to extract_constraints would fail JSON
+            # serialization and is not part of the constraint schema.
+            tool_kwargs = {k: v for k, v in kwargs.items() if k != "_approvals"}
             if self.compiled_config:
                 # Apply defaults and extraction rules from config
                 # We do NOT suppress exceptions here (Fail Closed).
                 # If extraction fails, it means the request doesn't match the required configuration.
-                result = self.compiled_config.extract_constraints(tool_name, kwargs)
+                result = self.compiled_config.extract_constraints(tool_name, tool_kwargs)
 
                 # Merge extracted constraints (which have defaults/types) over raw kwargs
-                combined = kwargs.copy()
+                combined = tool_kwargs.copy()
                 combined.update(result.constraints)
                 return combined
-            return kwargs
+            return tool_kwargs
 
         @guard(tool=tool_name, extract_args=_extract_auth_args)
         async def protected_tool(**kwargs):
             """Protected MCP tool wrapper."""
+            # Extract _approvals before schema filtering — it's a transport kwarg,
+            # not a tool schema argument and must not be forwarded to the server.
+            _approvals = kwargs.pop("_approvals", None)
+
             # Filter arguments against schema (Schema-Based Argument Stripping)
             filtered_args = {k: v for k, v in kwargs.items() if k in allowed_keys}
 
-            # Note: We could log dropped arguments here if needed
-
             return await self.call_tool(
-                tool_name, filtered_args, warrant_context=False, inject_warrant=self.inject_warrant
+                tool_name,
+                filtered_args,
+                warrant_context=False,
+                inject_warrant=self.inject_warrant,
+                approvals=_approvals,
             )
 
         # Set function metadata
@@ -409,29 +524,49 @@ class SecureMCPClient:
 
 @asynccontextmanager
 async def discover_and_protect(
-    command: str,
-    args: List[str],
+    command: Optional[str] = None,
+    args: Optional[List[str]] = None,
     env: Optional[Dict[str, str]] = None,
     config_path: Optional[str] = None,
+    url: Optional[str] = None,
+    transport: Literal["stdio", "sse", "http"] = "stdio",
+    headers: Optional[Dict[str, str]] = None,
+    timeout: float = 30.0,
+    sse_read_timeout: float = 300.0,
+    auth: Optional[Any] = None,
+    inject_warrant: bool = False,
 ):  # type: ignore[misc]
     """
     Discover MCP tools and return protected wrappers.
 
     Convenience context manager for one-liner tool discovery.
+    Supports all three transports: stdio, SSE, and StreamableHTTP.
 
-    Args:
-        command: Command to run MCP server
-        args: Server arguments
-        env: Environment variables
-        config_path: Path to mcp-config.yaml
-
-    Yields:
-        Dict of tool_name -> protected async function
-
-    Example:
+    Stdio:
         async with discover_and_protect("python", ["server.py"]) as tools:
             async with mint(Capability("read_file", path=Pattern("/data/*"))):
                 result = await tools["read_file"](path="/data/file.txt")
+
+    HTTP (SSE or StreamableHTTP):
+        async with discover_and_protect(
+            url="https://mcp.example.com/mcp",
+            transport="http",
+            inject_warrant=True,
+        ) as tools:
+            async with mint(Capability("search")):
+                result = await tools["search"](query="tenuo")
     """
-    async with SecureMCPClient(command, args, env, config_path) as client:
+    async with SecureMCPClient(
+        command=command,
+        args=args,
+        env=env,
+        config_path=config_path,
+        inject_warrant=inject_warrant,
+        url=url,
+        transport=transport,
+        headers=headers,
+        timeout=timeout,
+        sse_read_timeout=sse_read_timeout,
+        auth=auth,
+    ) as client:
         yield client.tools

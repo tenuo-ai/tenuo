@@ -62,8 +62,10 @@ from tenuo_core import (  # type: ignore
     ApprovalPayload,
     Authorizer,
     Cidr,
+    CompiledMcpConfig,
     Contains,
     Exact,
+    McpConfig,
     Not,
     NotOneOf,
     OneOf,
@@ -85,6 +87,9 @@ from tenuo_core import (  # type: ignore
 )
 from tenuo_core import (
     py_compute_request_hash as compute_request_hash,
+)
+from tenuo_core import (
+    evaluate_guards,
 )
 
 # Semantic alias: Any() = Wildcard() for zero-trust constraint sets
@@ -261,6 +266,9 @@ __all__ = [
     "MAX_WARRANT_TTL_SECS",
     "DEFAULT_WARRANT_TTL_SECS",
     "MAX_WARRANT_SIZE",
+    # MCP configuration
+    "McpConfig",
+    "CompiledMcpConfig",
     # Python-only security constraints
     "Subpath",  # Secure path containment (path traversal protection)
     "UrlSafe",  # SSRF protection (IP/domain blocking)
@@ -278,6 +286,7 @@ __all__ = [
     "ConfigurationError",
     "AuthorizationDenied",  # Rich error with diff support
     "GuardTriggered",  # Guard fired — approval required
+    "evaluate_guards",  # Check if a guard would fire for a tool call
     "ScopeViolation",  # Authorization scope exceeded
     # Error explanation
     "explain",

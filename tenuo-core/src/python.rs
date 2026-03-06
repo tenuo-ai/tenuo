@@ -2983,6 +2983,17 @@ impl PyAttenuationBuilder {
         self.inner.set_intent(intent);
     }
 
+    /// Add or merge guards into this attenuated warrant.
+    ///
+    /// Accepts `{"tool_name": None}` (whole-tool) or
+    /// `{"tool_name": {"arg": constraint}}` (per-argument).
+    /// Merges with any guards inherited from the parent warrant.
+    fn with_guards(&mut self, guards: &Bound<'_, PyDict>) -> PyResult<()> {
+        let guard_map = py_dict_to_guard_map(guards)?;
+        let bytes = crate::guard::encode_guard_map(&guard_map).map_err(to_py_err)?;
+        self.inner.set_guards_extension(bytes).map_err(to_py_err)
+    }
+
     /// Narrow execution warrant tools to a single tool.
     ///
     /// The tool must be in the parent warrant's tools.
@@ -3202,6 +3213,17 @@ impl PyIssuanceBuilder {
     /// Set minimum approvals.
     fn with_min_approvals(&mut self, min: u32) {
         self.inner.set_min_approvals(min);
+    }
+
+    /// Embed or merge a guard map into the warrant as the `tenuo.guards` extension.
+    ///
+    /// Accepts `{"tool_name": None}` for whole-tool guards, or
+    /// `{"tool_name": {"arg": constraint}}` for per-argument guards.
+    /// Merges with any guards inherited from the issuer warrant.
+    fn with_guards(&mut self, guards: &Bound<'_, PyDict>) -> PyResult<()> {
+        let guard_map = py_dict_to_guard_map(guards)?;
+        let bytes = crate::guard::encode_guard_map(&guard_map).map_err(to_py_err)?;
+        self.inner.set_guards_extension(bytes).map_err(to_py_err)
     }
 
     /// Set the intent/purpose for this issuance.
@@ -4036,6 +4058,7 @@ impl PyCompiledMcpConfig {
             tool: result.tool,
             warrant_base64: result.warrant_base64,
             signature_base64: result.signature_base64,
+            approvals_base64: result.approvals_base64,
         })
     }
 }
@@ -4051,6 +4074,8 @@ pub struct PyExtractionResult {
     warrant_base64: Option<String>,
     #[pyo3(get)]
     signature_base64: Option<String>,
+    #[pyo3(get)]
+    approvals_base64: Vec<String>,
 }
 
 #[pymethods]
@@ -4657,6 +4682,28 @@ fn py_verify_approvals(
             Some(detail)
         },
     }))
+}
+
+/// Evaluate whether a tool invocation requires approval based on the warrant's guards.
+///
+/// Returns True if the guard fires (approval needed), False otherwise.
+/// Returns False when the warrant has no guard map.
+#[pyfunction(name = "evaluate_guards")]
+fn py_evaluate_guards(
+    warrant: &PyWarrant,
+    tool: &str,
+    args: &Bound<'_, PyDict>,
+) -> PyResult<bool> {
+    let mut rust_args = HashMap::new();
+    for (key, value) in args.iter() {
+        let field: String = key.extract()?;
+        rust_args.insert(field, py_to_constraint_value(&value)?);
+    }
+    let guard_map = crate::guard::parse_guard_map(
+        warrant.inner.extension(crate::guard::GUARD_EXTENSION_KEY),
+    )
+    .map_err(to_py_err)?;
+    crate::guard::evaluate_guards(guard_map.as_ref(), tool, &rust_args).map_err(to_py_err)
 }
 
 /// Unsigned metadata for an approval (NOT part of the signed payload).
@@ -5440,6 +5487,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_decode_warrant_stack_base64, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approvals, m)?)?;
+    m.add_function(wrap_pyfunction!(py_evaluate_guards, m)?)?;
 
     Ok(())
 }

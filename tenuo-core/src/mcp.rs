@@ -65,28 +65,40 @@
 //! let control_plane_key = PublicKey::from_bytes(&control_plane_key_bytes)?;
 //! let authorizer = Authorizer::new().with_trusted_root(control_plane_key);
 //!
-//! // MCP tool call arrives from AI agent
+//! // MCP tool call arrives from AI agent (with optional _tenuo metadata)
 //! let arguments = json!({
 //!     "path": "/var/log/app.log",
-//!     "maxSize": 1024
+//!     "maxSize": 1024,
+//!     "_tenuo": {
+//!         "warrant": "eyJ0eXA...",
+//!         "signature": "c2lnXy4uLg==",
+//!         "approvals": ["YXBwcm92YWwx..."]  // pre-supplied guard approvals
+//!     }
 //! });
 //!
-//! // 1. Extract constraints from MCP arguments
+//! // 1. Extract constraints (strips _tenuo, extracts warrant + signature + approvals)
 //! let result = compiled.extract_constraints("filesystem_read", &arguments)?;
-//! // result.constraints contains: {"path": "String(...)", "max_size": "Integer(1024)"}
 //!
-//! // 2. Decode warrant chain (from MCP request metadata)
-//! let warrant = wire::decode_base64(&warrant_chain_base64)?;
+//! // 2. Decode warrant and PoP signature
+//! let warrant = wire::decode_base64(&result.warrant_base64.unwrap())?;
+//! let pop_sig = base64::decode(&result.signature_base64.unwrap())?;
 //!
-//! // 3. Authorize the action using extracted constraints
+//! // 3. Decode pre-supplied approvals (for guard satisfaction)
+//! let approvals: Vec<SignedApproval> = result.approvals_base64
+//!     .iter()
+//!     .map(|a| SignedApproval::from_cbor(&base64::decode(a)?))
+//!     .collect::<Result<_, _>>()?;
+//!
+//! // 4. Authorize with constraints, PoP, and approvals
 //! authorizer.authorize_one(
 //!     &warrant,
 //!     "filesystem_read",
 //!     &result.constraints,
-//!     pop_signature.as_ref()  // Optional PoP signature
+//!     Some(&pop_sig),
+//!     &approvals,  // satisfies guards if any fire
 //! )?;
 //!
-//! // 4. If authorized, execute the tool
+//! // 5. If authorized, execute the tool
 //! // execute_filesystem_read(arguments);
 //! ```
 //!
@@ -131,7 +143,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 const MAX_TOOLS_COUNT: usize = 200;
-const MAX_CONSTRAINT_COUNT_PER_TOOL: usize = 100;
+const MAX_CONSTRAINT_COUNT_PER_TOOL: usize = crate::wire::MAX_CONSTRAINTS_PER_TOOL;
 
 /// MCP Gateway Configuration.
 ///
@@ -298,8 +310,8 @@ impl CompiledMcpConfig {
             required: true,
         })?;
 
-        // Extract and strip _tenuo metadata (warrant + signature)
-        let (clean_arguments, warrant_base64, signature_base64) =
+        // Extract and strip _tenuo metadata (warrant + signature + approvals)
+        let (clean_arguments, warrant_base64, signature_base64, approvals_base64) =
             Self::extract_and_strip_tenuo_meta(arguments);
 
         // Create context from cleaned arguments (treated as body)
@@ -313,6 +325,7 @@ impl CompiledMcpConfig {
             tool: tool_name.to_string(),
             warrant_base64,
             signature_base64,
+            approvals_base64,
         })
     }
 
@@ -331,10 +344,15 @@ impl CompiledMcpConfig {
     /// }
     /// ```
     ///
-    /// Returns: (clean_arguments, warrant_base64, signature_base64)
+    /// Returns: (clean_arguments, warrant_base64, signature_base64, approvals_base64)
     fn extract_and_strip_tenuo_meta(
         arguments: &serde_json::Value,
-    ) -> (serde_json::Value, Option<String>, Option<String>) {
+    ) -> (
+        serde_json::Value,
+        Option<String>,
+        Option<String>,
+        Vec<String>,
+    ) {
         if let Some(obj) = arguments.as_object() {
             // Check for _tenuo field
             if let Some(tenuo_meta) = obj.get("_tenuo") {
@@ -349,16 +367,32 @@ impl CompiledMcpConfig {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
+                // Extract pre-supplied approvals (base64-encoded SignedApproval list)
+                let approvals = tenuo_meta
+                    .get("approvals")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
                 // Clone arguments without _tenuo
                 let mut clean = obj.clone();
                 clean.remove("_tenuo");
 
-                return (serde_json::Value::Object(clean), warrant, signature);
+                return (
+                    serde_json::Value::Object(clean),
+                    warrant,
+                    signature,
+                    approvals,
+                );
             }
         }
 
         // No _tenuo field, return as-is
-        (arguments.clone(), None, None)
+        (arguments.clone(), None, None, Vec::new())
     }
 }
 
@@ -403,6 +437,7 @@ pub fn to_jsonrpc_error(error: &ExtractionError) -> (i32, String) {
 /// - `ConstraintViolation` → `-32001` (Access denied)
 /// - `ExpiredError` → `-32001` (Access denied)
 /// - `SignatureInvalid` → `-32001` (Access denied)
+/// - `GuardTriggered` → `-32002` (Approval required)
 ///
 /// # Example
 ///
@@ -429,6 +464,13 @@ pub fn auth_error_to_jsonrpc(error: &crate::error::Error) -> (i32, String) {
         Error::WarrantExpired(_) => (-32001, "Access denied: Warrant expired".to_string()),
         Error::SignatureInvalid(_) => (-32001, "Access denied: Invalid signature".to_string()),
         Error::ToolMismatch { .. } => (-32001, "Access denied: Tool not authorized".to_string()),
+        Error::GuardTriggered { tool, .. } => (
+            -32002,
+            format!(
+                "Approval required: Guard triggered for tool '{}'. Supply approvals in _tenuo.approvals.",
+                tool
+            ),
+        ),
         _ => (-32001, format!("Access denied: {}", error)),
     }
 }
@@ -620,5 +662,105 @@ tools:
         assert!(config.tools.contains_key("read_file"));
         // settings should be default (empty trusted_issuers)
         assert!(config.settings.trusted_issuers.is_empty());
+    }
+
+    #[test]
+    fn test_extract_and_strip_tenuo_meta_with_approvals() {
+        let args = serde_json::json!({
+            "path": "/data/file.txt",
+            "_tenuo": {
+                "warrant": "abc123",
+                "signature": "sig456",
+                "approvals": ["appr1_b64", "appr2_b64"]
+            }
+        });
+
+        let (clean, warrant, signature, approvals) =
+            CompiledMcpConfig::extract_and_strip_tenuo_meta(&args);
+
+        assert_eq!(warrant.as_deref(), Some("abc123"));
+        assert_eq!(signature.as_deref(), Some("sig456"));
+        assert_eq!(approvals, vec!["appr1_b64", "appr2_b64"]);
+        assert!(!clean.as_object().unwrap().contains_key("_tenuo"));
+        assert_eq!(
+            clean.get("path").unwrap().as_str().unwrap(),
+            "/data/file.txt"
+        );
+    }
+
+    #[test]
+    fn test_extract_and_strip_tenuo_meta_no_approvals() {
+        let args = serde_json::json!({
+            "path": "/data/file.txt",
+            "_tenuo": {
+                "warrant": "abc123"
+            }
+        });
+
+        let (_, _, _, approvals) = CompiledMcpConfig::extract_and_strip_tenuo_meta(&args);
+        assert!(approvals.is_empty());
+    }
+
+    #[test]
+    fn test_extract_and_strip_tenuo_meta_no_tenuo() {
+        let args = serde_json::json!({
+            "path": "/data/file.txt"
+        });
+
+        let (clean, warrant, signature, approvals) =
+            CompiledMcpConfig::extract_and_strip_tenuo_meta(&args);
+
+        assert!(warrant.is_none());
+        assert!(signature.is_none());
+        assert!(approvals.is_empty());
+        assert_eq!(clean, args);
+    }
+
+    #[test]
+    fn test_extract_constraints_includes_approvals() {
+        let mut tools = HashMap::new();
+        let mut constraints = HashMap::new();
+        constraints.insert(
+            "path".to_string(),
+            ExtractionRule {
+                from: ExtractionSource::Body,
+                path: "path".to_string(),
+                required: true,
+                default: None,
+                description: None,
+                value_type: None,
+                allowed_values: None,
+            },
+        );
+        tools.insert(
+            "read_file".to_string(),
+            ToolConfig {
+                description: "Read a file".to_string(),
+                constraints,
+            },
+        );
+        let config = McpConfig {
+            version: "1".to_string(),
+            settings: McpSettings {
+                trusted_issuers: vec![],
+            },
+            tools,
+        };
+        let compiled = CompiledMcpConfig::compile(config).unwrap();
+
+        let args = serde_json::json!({
+            "path": "/data/file.txt",
+            "_tenuo": {
+                "warrant": "w_b64",
+                "signature": "s_b64",
+                "approvals": ["a1", "a2"]
+            }
+        });
+
+        let result = compiled.extract_constraints("read_file", &args).unwrap();
+        assert_eq!(result.warrant_base64.as_deref(), Some("w_b64"));
+        assert_eq!(result.signature_base64.as_deref(), Some("s_b64"));
+        assert_eq!(result.approvals_base64, vec!["a1", "a2"]);
+        assert!(result.constraints.contains_key("path"));
     }
 }
