@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.11] - 2026-03-06
+
+### Added
+
+#### MCP Server-Side Verification
+- **`MCPVerifier`**: Framework-agnostic server-side warrant verification for MCP tool handlers
+- **`verify_mcp_call()`**: Standalone convenience function for one-off verification
+- **Multi-transport client**: `SecureMCPClient` now supports SSE and StreamableHTTP transports in addition to stdio
+- **`_tenuo` field injection**: Client embeds warrant + PoP in tool arguments for server-side verification
+- **JSON-RPC error codes**: `-32001` (denied), `-32002` (approval required), `-32602` (invalid params)
+
+#### Approval Gates (renamed from Guards)
+- **`approval_gate.rs`**: Renamed guard module to approval gate for clarity — per-tool approval policy evaluation
+- **`ApprovalGate`**: Replaces `Guard` across core, Python bindings, and all integrations
+- **`GuardTriggered` exception**: Exposed in Python SDK for approval gate evaluation results
+
+#### Core Hardening
+- **IETF readiness**: Protocol hardening for spec alignment
+- **Clearance monotonicity fix**: Clearance levels now correctly enforce monotonic narrowing during delegation
+- **Extension validation**: Fixed gaps in warrant extension validation
+- **PoP error clarity**: `PopExpired` message now says "outside replay window" instead of ambiguous wording
+
+#### A2A Enhancements
+- **Structured error types**: `TenuoA2AError`, `HandshakeError`, `VerificationError` for better error handling
+- **Typed protocol messages**: `TaskRequest`, `TaskResponse`, `StreamEvent` dataclasses
+- **Improved client**: Retry logic, connection pooling, and better error propagation
+
+### Fixed
+- Temporal `mock_signing_key` fixture: added `to_bytes()` return value for header security test
+- Flaky `guard_mcp_client` test: handles both raise and warn denial modes depending on config state
+- mypy: ignore optional `mcp` stubs (Python 3.9 compatibility), exclude `venv/` from scanning
+- Deprecated `.attenuate()` and `Warrant.issue()` references removed from `docs/api-reference.md`
+- Flaky `test_warrant_expires_mid_execution`: increased TTL/sleep margins for slow CI environments
+- Playwright test artifacts accidentally committed — added to `.gitignore`
+- Security: prevent logging of sensitive key material in A2A server
+- Temporal: preload keys incrementally, resolve workflow sandbox restrictions
+- Explorer: error handling for clipboard operations, auto-populate args on tool selection
+
+### Documentation
+- Updated `docs/mcp.md` with server-side verification and multi-transport examples
+- Removed deprecated API patterns from cross-language comparison table
+
+---
+
 ## [0.1.0-beta.10] - 2026-02-20
 
 ### Added

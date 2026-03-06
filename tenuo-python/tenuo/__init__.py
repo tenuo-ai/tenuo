@@ -321,4 +321,4 @@ __all__ = [
     "auto_deny",
 ]
 
-__version__ = "0.1.0b10"
+__version__ = "0.1.0b11"

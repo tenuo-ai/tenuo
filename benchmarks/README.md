@@ -394,7 +394,7 @@ results/baseline/
 ```
 
 These baselines are frozen snapshots from:
-- **Tenuo version:** 0.1.0-beta.10
+- **Tenuo version:** 0.1.0-beta.11
 - **Date:** 2026-02-23
 - **Environment:** Python 3.11, macOS 14.2 (ARM64)
 
