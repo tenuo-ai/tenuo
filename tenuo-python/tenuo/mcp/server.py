@@ -60,14 +60,14 @@ embeds a ``_tenuo`` field in the tool arguments::
 ``MCPVerifier.verify()`` strips ``_tenuo`` before returning ``clean_arguments``,
 so tool handlers never see the authorization envelope.
 
-Guard flow
-----------
-If a warrant embeds guards and the tool call triggers one::
+Approval gate flow
+------------------
+If a warrant embeds approval gates and the tool call triggers one::
 
     result = verifier.verify("transfer", arguments)
-    # result.allowed      → False
-    # result.is_guard_triggered → True
-    # result.jsonrpc_error_code → -32002
+    # result.allowed             → False
+    # result.is_approval_required → True
+    # result.jsonrpc_error_code  → -32002
 
 The client must obtain ``SignedApproval`` objects from authorized approvers and
 re-submit the call with those approvals serialized into ``_tenuo.approvals``.
@@ -76,7 +76,7 @@ JSON-RPC error codes
 --------------------
 - ``-32602`` — Invalid params (missing required extraction field)
 - ``-32001`` — Access denied (constraint violation, expired, bad signature …)
-- ``-32002`` — Approval required (guard triggered, re-submit with approvals)
+- ``-32002`` — Approval required (approval gate triggered, re-submit with approvals)
 """
 
 from __future__ import annotations
@@ -87,9 +87,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from ..exceptions import (
+    ApprovalGateTriggered,
     ConstraintViolation,
     ExpiredError,
-    GuardTriggered,
     MissingSignature,
     SignatureInvalid,
     TenuoError,
@@ -138,12 +138,12 @@ class MCPVerificationResult:
 
     - ``-32602`` — Invalid params (extraction failed, missing required field)
     - ``-32001`` — Access denied (constraint violation, expired, bad signature …)
-    - ``-32002`` — Approval required (guard triggered)
+    - ``-32002`` — Approval required (approval gate triggered)
     """
 
     @property
-    def is_guard_triggered(self) -> bool:
-        """``True`` when a warrant guard fired and approvals must be supplied."""
+    def is_approval_required(self) -> bool:
+        """``True`` when an approval gate fired and approvals must be supplied."""
         return self.jsonrpc_error_code == -32002
 
     def raise_if_denied(self) -> "MCPVerificationResult":
@@ -229,10 +229,10 @@ class MCPVerifier:
             clean = verifier.verify_or_raise("read_file", {"path": path, **kwargs})
             return open(clean["path"]).read()
 
-    Guard-triggered flow:
+    Approval-gate flow:
 
         result = verifier.verify("transfer", arguments)
-        if result.is_guard_triggered:
+        if result.is_approval_required:
             # Client must obtain approvals and re-submit with _tenuo.approvals
             return jsonrpc_error(-32002, result.denial_reason)
     """
@@ -427,9 +427,9 @@ class MCPVerifier:
             self._authorizer.authorize_one(
                 warrant, tool_name, constraints, pop_sig, approvals
             )
-        except GuardTriggered:
+        except ApprovalGateTriggered:
             logger.info(
-                "Guard triggered for '%s' (warrant=%s) — approvals required",
+                "Approval required for '%s' (warrant=%s) — approvals required",
                 tool_name,
                 warrant_id,
             )
@@ -440,7 +440,7 @@ class MCPVerifier:
                 constraints=constraints,
                 warrant_id=warrant_id,
                 denial_reason=(
-                    f"Guard triggered for '{tool_name}'. "
+                    f"Approval required for '{tool_name}'. "
                     "Re-submit the call with approvals in _tenuo.approvals."
                 ),
                 jsonrpc_error_code=-32002,

@@ -72,7 +72,7 @@
 //!     "_tenuo": {
 //!         "warrant": "eyJ0eXA...",
 //!         "signature": "c2lnXy4uLg==",
-//!         "approvals": ["YXBwcm92YWwx..."]  // pre-supplied guard approvals
+//!         "approvals": ["YXBwcm92YWwx..."]  // pre-supplied approval gate approvals
 //!     }
 //! });
 //!
@@ -83,7 +83,7 @@
 //! let warrant = wire::decode_base64(&result.warrant_base64.unwrap())?;
 //! let pop_sig = base64::decode(&result.signature_base64.unwrap())?;
 //!
-//! // 3. Decode pre-supplied approvals (for guard satisfaction)
+//! // 3. Decode pre-supplied approvals (for approval gate satisfaction)
 //! let approvals: Vec<SignedApproval> = result.approvals_base64
 //!     .iter()
 //!     .map(|a| SignedApproval::from_cbor(&base64::decode(a)?))
@@ -95,7 +95,7 @@
 //!     "filesystem_read",
 //!     &result.constraints,
 //!     Some(&pop_sig),
-//!     &approvals,  // satisfies guards if any fire
+//!     &approvals,  // satisfies approval gates if any fire
 //! )?;
 //!
 //! // 5. If authorized, execute the tool
@@ -437,7 +437,7 @@ pub fn to_jsonrpc_error(error: &ExtractionError) -> (i32, String) {
 /// - `ConstraintViolation` → `-32001` (Access denied)
 /// - `ExpiredError` → `-32001` (Access denied)
 /// - `SignatureInvalid` → `-32001` (Access denied)
-/// - `GuardTriggered` → `-32002` (Approval required)
+/// - `ApprovalRequired` → `-32002` (Approval required)
 ///
 /// # Example
 ///
@@ -464,10 +464,10 @@ pub fn auth_error_to_jsonrpc(error: &crate::error::Error) -> (i32, String) {
         Error::WarrantExpired(_) => (-32001, "Access denied: Warrant expired".to_string()),
         Error::SignatureInvalid(_) => (-32001, "Access denied: Invalid signature".to_string()),
         Error::ToolMismatch { .. } => (-32001, "Access denied: Tool not authorized".to_string()),
-        Error::GuardTriggered { tool, .. } => (
+        Error::ApprovalRequired { tool, .. } => (
             -32002,
             format!(
-                "Approval required: Guard triggered for tool '{}'. Supply approvals in _tenuo.approvals.",
+                "Approval required for tool '{}'. Supply approvals in _tenuo.approvals.",
                 tool
             ),
         ),

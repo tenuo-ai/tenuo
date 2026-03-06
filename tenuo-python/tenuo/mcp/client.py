@@ -4,6 +4,7 @@ Secure MCP Client with Tenuo Authorization.
 Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 """
 
+import asyncio
 import logging
 import sys
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -12,7 +13,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 from .._enforcement import EnforcementResult, enforce_tool_call
 from ..config import is_configured
 from ..decorators import guard, key_scope, warrant_scope
-from ..exceptions import ConfigurationError
+from ..exceptions import ConfigurationError, ExpiredError
 from ..validation import ValidationResult
 
 logger = logging.getLogger(__name__)
@@ -266,6 +267,43 @@ class SecureMCPClient:
         """Close the MCP connection."""
         await self.exit_stack.aclose()
 
+    @staticmethod
+    def _is_connection_error(exc: BaseException) -> bool:
+        """Return True if exc is a recoverable transport/connection error."""
+        type_name = type(exc).__name__
+        module = getattr(type(exc), "__module__", "") or ""
+        # anyio transport errors (checked by name to avoid a hard anyio import)
+        if module.startswith("anyio") and type_name in (
+            "ClosedResourceError",
+            "BrokenResourceError",
+            "EndOfStream",
+        ):
+            return True
+        # Standard Python I/O errors
+        if isinstance(exc, EOFError):
+            return True
+        if isinstance(exc, OSError) and exc.errno in (
+            32,   # EPIPE  (broken pipe)
+            54,   # ECONNRESET (macOS)
+            104,  # ECONNRESET (Linux)
+            110,  # ETIMEDOUT
+        ):
+            return True
+        return False
+
+    async def _reconnect(self) -> None:
+        """Close the current session and reconnect using the same configuration."""
+        logger.info("MCP session lost; reconnecting to %s...", self.url or self.command)
+        try:
+            await self.exit_stack.aclose()
+        except Exception:
+            pass
+        self.exit_stack = AsyncExitStack()
+        self.session = None
+        self._tools = None
+        self._wrapped_tools = {}
+        await self.connect()
+
     async def get_tools(self) -> List[MCPTool]:
         """
         Get available MCP tools.
@@ -300,8 +338,8 @@ class SecureMCPClient:
                 if self._tools:
                     for tool in self._tools:
                         self._wrapped_tools[tool.name] = self.create_protected_tool(tool)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to wrap tool '%s': %s", tool.name, exc, exc_info=True)
 
         return self._wrapped_tools
 
@@ -314,7 +352,7 @@ class SecureMCPClient:
         Check if a tool call would be authorized under the current warrant.
 
         This is a local dry-run check. It does not supply approvals, so
-        guard-protected tools will always appear as unauthorized here.
+        approval-gate-protected tools will always appear as unauthorized here.
         Use :meth:`call_tool` with ``approvals=`` for the real invocation.
 
         Args:
@@ -378,6 +416,7 @@ class SecureMCPClient:
         warrant_context: bool = True,
         inject_warrant: Optional[bool] = None,
         approvals: Optional[List] = None,
+        timeout: float = 30.0,
     ) -> Any:
         """
         Call an MCP tool with Tenuo authorization.
@@ -386,7 +425,7 @@ class SecureMCPClient:
             When injection is enabled, the current warrant and PoP signature are
             injected into arguments._tenuo before sending to the MCP server.
             If ``approvals`` are provided, they are serialized into
-            ``_tenuo.approvals`` so the server can satisfy any guard on the tool.
+            ``_tenuo.approvals`` so the server can satisfy any approval gate on the tool.
 
         Args:
             tool_name: Name of the MCP tool to call
@@ -394,8 +433,10 @@ class SecureMCPClient:
             warrant_context: If True, authorize locally before sending
             inject_warrant: Override client's inject_warrant setting (default: None)
             approvals: Pre-obtained SignedApproval objects to forward to the server
-                via ``_tenuo.approvals``. Required when the tool is guard-protected
+                via ``_tenuo.approvals``. Required when the tool is approval-gate-protected
                 and the server performs Tenuo verification (``inject_warrant=True``).
+            timeout: Maximum seconds to wait for the server response (default: 30).
+                Raises ``asyncio.TimeoutError`` if exceeded.
 
         Returns:
             Tool result from MCP server
@@ -403,6 +444,8 @@ class SecureMCPClient:
         Raises:
             ConfigurationError: If Tenuo not configured and warrant_context=True
             ConstraintViolation: If arguments don't satisfy warrant constraints
+            ExpiredError: If the active warrant has expired before the call
+            asyncio.TimeoutError: If the server does not respond within timeout
         """
         if self.session is None:
             raise RuntimeError(
@@ -411,6 +454,15 @@ class SecureMCPClient:
             )
 
         should_inject = self.inject_warrant if inject_warrant is None else inject_warrant
+
+        # Pre-flight expiry check — fail fast before touching the network
+        _active_warrant = warrant_scope()
+        if _active_warrant is not None:
+            try:
+                if _active_warrant.is_expired():
+                    raise ExpiredError("Warrant expired before MCP tool call")
+            except AttributeError:
+                pass  # is_expired() not available on this warrant type; enforcement will catch it
 
         # Helper to perform the actual network call with optional injection
         async def _perform_call(args: Dict[str, Any]) -> Any:
@@ -443,8 +495,24 @@ class SecureMCPClient:
             if self.session is None:
                 raise RuntimeError("Not connected to MCP server. Call connect() first.")
 
-            response = await self.session.call_tool(tool_name, call_args)
-            return response.content
+            for attempt in range(2):
+                try:
+                    response = await asyncio.wait_for(
+                        self.session.call_tool(tool_name, call_args),
+                        timeout=timeout,
+                    )
+                    return response.content
+                except asyncio.TimeoutError:
+                    raise
+                except Exception as exc:
+                    if attempt == 0 and self._is_connection_error(exc):
+                        logger.warning(
+                            "MCP connection lost during call to '%s'; reconnecting...",
+                            tool_name,
+                        )
+                        await self._reconnect()
+                        continue
+                    raise
 
         # Authorize locally if warrant context is enabled
         if warrant_context:
@@ -454,6 +522,9 @@ class SecureMCPClient:
             # Create protected wrapper for local authorization
             @guard(tool=tool_name, extract_args=lambda **kwargs: kwargs)
             async def wrapper(**kwargs):
+                _w = warrant_scope()
+                _wid = getattr(_w, "id", None) if _w else None
+                logger.info("MCP tool authorised: %s (warrant=%s)", tool_name, _wid)
                 return await _perform_call(kwargs)
 
             # Call with local authorization

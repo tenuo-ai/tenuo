@@ -163,7 +163,7 @@ pub struct ExtractionResult {
     pub signature_base64: Option<String>,
     /// Pre-supplied approvals (base64-encoded CBOR) from `_tenuo.approvals` (MCP only).
     /// Each entry is a base64-encoded `SignedApproval`. Pass to `authorize_one(approvals=...)`
-    /// so the Authorizer can satisfy warrant guards atomically with PoP verification.
+    /// so the Authorizer can satisfy warrant approval gates atomically with PoP verification.
     pub approvals_base64: Vec<String>,
 }
 

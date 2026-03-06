@@ -37,6 +37,7 @@
 //! ```
 
 pub mod approval;
+pub mod approval_gate;
 pub mod audit;
 pub mod cel;
 pub mod constraints;
@@ -46,7 +47,6 @@ pub mod domain;
 pub mod error;
 pub mod extraction;
 pub mod gateway_config;
-pub mod guard;
 pub mod mcp;
 pub mod payload;
 pub mod planes;
@@ -98,19 +98,20 @@ pub use warrant::{
 };
 pub use wire::MAX_WARRANT_SIZE;
 
-// Re-export guard types
-pub use guard::{
-    encode_guard_map, evaluate_guards, merge_guard_maps, parse_guard_map, propagate_guards,
-    ArgGuard, GuardError, GuardMap, ToolGuard,
+// Re-export approval gate types
+pub use approval_gate::{
+    encode_approval_gate_map, evaluate_approval_gates, merge_approval_gate_maps,
+    parse_approval_gate_map, propagate_approval_gates, ApprovalGateError, ApprovalGateMap,
+    ArgApprovalGate, ToolApprovalGate,
 };
 
 // Re-export approval request
 pub use approval::ApprovalRequest;
 
-// Reserved extension keys. The core (data plane) enforces `tenuo.guards`
+// Reserved extension keys. The core (data plane) enforces `tenuo.approval_gates`
 // on every verification. Other `tenuo.*` keys are carried opaquely and
 // enforced only by the control plane.
-pub use guard::GUARD_EXTENSION_KEY;           // "tenuo.guards" — data-plane enforced
+pub use approval_gate::APPROVAL_GATE_EXTENSION_KEY; // "tenuo.approval_gates" — data-plane enforced
 pub const IDENTITY_BINDING_EXTENSION_KEY: &str = "tenuo.identity_binding"; // control-plane enforced
 
 // Re-export diff types

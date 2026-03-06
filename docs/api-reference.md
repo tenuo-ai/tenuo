@@ -425,6 +425,21 @@ warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_s
 | `why_denied(tool, **args)` | `WhyDenied` | Get structured denial reason |
 | `headers(keypair, tool, args)` | `dict` | Generate HTTP authorization headers |
 
+#### Cross-Language API Note
+
+The Python and Rust APIs use different names for the same operations to match each language's idioms:
+
+| Operation | Python | Rust |
+|-----------|--------|------|
+| Create new warrant | `Warrant.mint_builder()...mint(key)` | `Warrant::builder()...build(keypair)` |
+| Delegate (narrow) | `warrant.grant_builder()...grant(key)` | `warrant.attenuate()...build(keypair)` |
+| Issue from issuer warrant | `warrant.issue_execution()...build(key)` | `warrant.issue_execution_warrant()...build(keypair)` |
+| Static issue (low-level) | `Warrant.issue(keypair, ...)` | N/A (builder pattern only) |
+
+`Warrant.issue()` (static method) is a low-level API that creates a warrant in a single call.
+`Warrant.mint_builder()` (fluent builder) is the recommended higher-level API.
+Both produce the same result — use whichever fits your style.
+
 #### Logic Checks & Debugging Methods
 
 ```python
@@ -787,6 +802,37 @@ print(authorizer.get_required_clearance("delete_file"))  # Clearance.PRIVILEGED
 |--------|-------------|
 | `require_clearance(pattern, level)` | Set minimum clearance for tool pattern |
 | `get_required_clearance(tool)` | Get required clearance level (or None) |
+
+### ChainVerificationResult
+
+Returned by `Authorizer.authorize_one()`, `verify_chain()`, and `check_chain()`. Provides full visibility into the delegation chain that was verified.
+
+```python
+from tenuo import ChainVerificationResult, ChainStep
+```
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `root_issuer` | `Optional[bytes]` | Public key of the root issuer (32 bytes), or None |
+| `chain_length` | `int` | Total number of warrants in the verified chain |
+| `leaf_depth` | `int` | Delegation depth of the leaf warrant |
+| `verified_steps` | `List[ChainStep]` | Details of each verified step in the chain |
+
+### ChainStep
+
+A single step in a verified delegation chain.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `warrant_id` | `str` | Warrant ID at this step |
+| `depth` | `int` | Delegation depth at this step |
+| `issuer` | `bytes` | Public key of the issuer at this step (32 bytes) |
+
+```python
+result = authorizer.authorize_one(warrant, "read_file", {"path": "/data/x"}, sig)
+for step in result.verified_steps:
+    print(f"  depth={step.depth} issuer={step.issuer[:4].hex()}... warrant={step.warrant_id}")
+```
 
 ---
 
@@ -1264,7 +1310,7 @@ execute_tool(result.clean_arguments)
 Returns `MCPVerificationResult` with:
 - `allowed` — Whether the call is authorized
 - `clean_arguments` — Arguments with `_tenuo` stripped
-- `is_guard_triggered` — Whether a guard requires approval
+- `is_approval_required` — Whether an approval gate requires approval
 - `jsonrpc_error_code` — `-32001` (denied), `-32002` (approval required), or `-32602` (invalid params)
 - `to_jsonrpc_error()` — Format as JSON-RPC error response
 

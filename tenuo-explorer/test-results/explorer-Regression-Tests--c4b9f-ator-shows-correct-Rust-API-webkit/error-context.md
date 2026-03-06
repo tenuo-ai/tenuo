@@ -1,0 +1,128 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - link "tenuo" [ref=e6]:
+        - /url: https://tenuo.ai
+      - generic [ref=e7]:
+        - link "Quick Start" [ref=e8]:
+          - /url: https://tenuo.ai/quickstart
+        - link "Concepts" [ref=e9]:
+          - /url: https://tenuo.ai/concepts
+        - link "API" [ref=e10]:
+          - /url: https://tenuo.ai/api-reference
+        - link "GitHub" [ref=e11]:
+          - /url: https://github.com/tenuo-ai/tenuo
+  - banner [ref=e12]:
+    - heading "Warrant Playground" [level=1] [ref=e13]
+    - paragraph [ref=e14]: Decode, build, and test authorization in real-time
+    - paragraph [ref=e15]: 🔒 100% client-side — nothing leaves your browser. Warrants contain only signed claims, not secrets.
+    - generic [ref=e16]:
+      - button "🔍 Decoder" [ref=e17] [cursor=pointer]
+      - button "🏗️ Builder" [ref=e18] [cursor=pointer]
+      - button "📊 Diff" [ref=e19] [cursor=pointer]
+      - button "📚 Delegation" [ref=e20] [cursor=pointer]
+  - main [ref=e21]:
+    - generic [ref=e22]:
+      - generic [ref=e23]:
+        - generic [ref=e24]:
+          - generic [ref=e25]:
+            - generic [ref=e26]:
+              - generic [ref=e27]: 📄
+              - heading "1. Paste Warrant" [level=2] [ref=e28]
+            - button "📦 Samples ▼" [ref=e30] [cursor=pointer]:
+              - generic [ref=e31]: 📦
+              - generic [ref=e32]: Samples
+              - generic [ref=e33]: ▼
+          - generic [ref=e34]:
+            - generic [ref=e35]:
+              - generic [ref=e36]: Base64 Encoded Warrant
+              - textbox "Paste your warrant here..." [ref=e37]
+            - button "Decode Warrant" [disabled] [ref=e38] [cursor=pointer]
+            - generic [ref=e39]:
+              - button "💾 Save as Preset" [disabled] [ref=e40] [cursor=pointer]
+              - generic [ref=e41] [cursor=pointer]: 📂 Import
+          - generic [ref=e43] [cursor=pointer]:
+            - generic [ref=e44]: ▶
+            - generic [ref=e45]: 💡 What is a warrant?
+        - generic [ref=e46]:
+          - generic [ref=e47]:
+            - generic [ref=e48]: 🔐
+            - heading "2. Check Authorization" [level=2] [ref=e49]
+          - generic [ref=e50]:
+            - generic [ref=e51]:
+              - generic [ref=e52]: Tool Name
+              - textbox "e.g., read_file" [ref=e53]
+            - generic [ref=e54]:
+              - generic [ref=e55]: Arguments (JSON)
+              - textbox [ref=e56]: "{}"
+            - generic [ref=e58] [cursor=pointer]:
+              - generic [ref=e59]: ▶
+              - generic [ref=e60]: 💡 About Proof-of-Possession (PoP)
+            - button "Check Authorization" [disabled] [ref=e61]
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - button "🔍 Decoded" [ref=e64] [cursor=pointer]
+          - button "🐛 Debug" [ref=e65] [cursor=pointer]
+          - button "💻 Code" [ref=e66] [cursor=pointer]
+        - generic [ref=e67]:
+          - generic [ref=e69]:
+            - generic [ref=e70]: 🔍
+            - heading "Decoded Warrant" [level=2] [ref=e71]
+          - generic [ref=e72]:
+            - generic [ref=e73]: 🔍
+            - paragraph [ref=e74]: Paste a warrant and click "Decode" to see its contents
+        - generic [ref=e75]:
+          - generic [ref=e76]:
+            - generic [ref=e77]: ⚡
+            - heading "Authorization Result" [level=2] [ref=e78]
+          - generic [ref=e79]:
+            - generic [ref=e80]: ⚡
+            - paragraph [ref=e81]: Run an authorization check to see results
+  - generic [ref=e82]:
+    - button "✕" [ref=e83] [cursor=pointer]
+    - generic [ref=e84]:
+      - generic [ref=e85]: ⌘
+      - generic [ref=e86]: ↵
+      - generic [ref=e87]: Decode
+    - generic [ref=e88]:
+      - generic [ref=e89]: ⌘
+      - generic [ref=e90]: ⇧
+      - generic [ref=e91]: ↵
+      - generic [ref=e92]: Auth
+    - generic [ref=e93]:
+      - generic [ref=e94]: ⌘
+      - generic [ref=e95]: K
+      - generic [ref=e96]: Clear
+    - generic [ref=e98]:
+      - generic [ref=e99]: ⌘
+      - generic [ref=e100]: 1-4
+      - generic [ref=e101]: Modes
+    - generic [ref=e102]:
+      - generic [ref=e103]: ⌘
+      - generic [ref=e104]: B
+      - generic [ref=e105]: Builder
+    - generic [ref=e106]:
+      - generic [ref=e107]: ⌘
+      - generic [ref=e108]: D
+      - generic [ref=e109]: Diff
+  - contentinfo [ref=e110]:
+    - generic [ref=e111]:
+      - generic [ref=e112]:
+        - link "🦀 Rust" [ref=e113]:
+          - /url: https://crates.io/crates/tenuo
+        - link "🐍 Python" [ref=e114]:
+          - /url: https://pypi.org/project/tenuo/
+        - generic [ref=e115]: 🔐 100% client-side WASM
+        - generic [ref=e116]: v0.1.0-beta.10
+      - generic [ref=e117]:
+        - link "GitHub" [ref=e118]:
+          - /url: https://github.com/tenuo-ai/tenuo
+        - generic [ref=e119]: ·
+        - link "Docs" [ref=e120]:
+          - /url: https://tenuo.ai/quickstart
+        - generic [ref=e121]: ·
+        - generic [ref=e122]: MIT / Apache-2.0
+```

@@ -735,6 +735,18 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                     )
                 )
             except Exception as e:
+                from tenuo.approval import ApprovalRequired, ApprovalDenied
+                if isinstance(e, (ApprovalRequired, ApprovalDenied)):
+                    status = "required" if isinstance(e, ApprovalRequired) else "denied"
+                    logger.info(f"[{request_id}] Tool '{tool_name}' approval {status}")
+                    results.append(
+                        ToolMessage(
+                            content=f"Approval {status} (ref: {request_id})",
+                            tool_call_id=tool_id,
+                            status="error",
+                        )
+                    )
+                    continue
                 logger.warning(f"[{request_id}] Tool '{tool_name}' execution failed: {e}")
                 results.append(
                     ToolMessage(
@@ -763,6 +775,26 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
     ) -> Dict[str, Any]:
         """Execute via invoke()."""
         return self._run_with_auth(input, config=config, **kwargs)
+
+    async def ainvoke(
+        self,
+        input: Dict[str, Any],
+        config: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Execute asynchronously via ainvoke().
+
+        Runs _run_with_auth in a thread-pool executor so blocking tool calls
+        don't stall the event loop. LangGraph calls ainvoke() on async graphs.
+        """
+        import asyncio
+        import functools
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            functools.partial(self._run_with_auth, input, config=config, **kwargs),
+        )
 
 
 __all__ = [

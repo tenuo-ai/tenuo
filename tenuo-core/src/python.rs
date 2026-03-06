@@ -223,11 +223,11 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             crate::error::Error::InvalidApproval(m) => {
                 ("InvalidApproval", PyTuple::new(py, [m.as_str()]))
             }
-            crate::error::Error::GuardTriggered { ref tool, ref request } => {
+            crate::error::Error::ApprovalRequired { ref tool, ref request } => {
                 let request_hash_hex = hex::encode(request.request_hash);
                 let request_id_hex = hex::encode(request.request_id);
                 (
-                    "GuardTriggered",
+                    "ApprovalGateTriggered",
                     PyTuple::new(
                         py,
                         [
@@ -2217,6 +2217,43 @@ fn constraint_value_to_py(py: Python<'_>, value: &ConstraintValue) -> PyResult<P
     }
 }
 
+/// Convert a Python dict to a ApprovalGateMap.
+///
+/// Accepts `{"tool_name": None}` for whole-tool approval gates, or
+/// `{"tool_name": {"arg_name": constraint}}` for per-argument approval gates.
+/// A `None` arg value means `ArgApprovalGate::All`.
+fn py_dict_to_approval_gate_map(
+    dict: &Bound<'_, PyDict>,
+) -> PyResult<crate::approval_gate::ApprovalGateMap> {
+    use crate::approval_gate::{ApprovalGateMap, ArgApprovalGate, ToolApprovalGate};
+
+    let mut gm = ApprovalGateMap::new();
+    for (key, value) in dict.iter() {
+        let tool: String = key.extract()?;
+        if value.is_none() {
+            gm.insert(tool, ToolApprovalGate::whole_tool());
+        } else if let Ok(args_dict) = value.downcast::<PyDict>() {
+            let mut args = std::collections::BTreeMap::new();
+            for (ak, av) in args_dict.iter() {
+                let arg_name: String = ak.extract()?;
+                if av.is_none() {
+                    args.insert(arg_name, ArgApprovalGate::All);
+                } else {
+                    let constraint = py_to_constraint(&av)?;
+                    args.insert(arg_name, ArgApprovalGate::Constraint(constraint));
+                }
+            }
+            gm.insert(tool, ToolApprovalGate::with_args(args));
+        } else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "approval gate for '{}' must be None (whole-tool) or a dict of arg approval gates",
+                tool
+            )));
+        }
+    }
+    Ok(gm)
+}
+
 /// Python enum for WarrantType.
 #[pyclass(name = "WarrantType")]
 #[derive(Clone, Copy)]
@@ -2983,15 +3020,18 @@ impl PyAttenuationBuilder {
         self.inner.set_intent(intent);
     }
 
-    /// Add or merge guards into this attenuated warrant.
+    /// Add or merge approval gates into this attenuated warrant.
     ///
     /// Accepts `{"tool_name": None}` (whole-tool) or
     /// `{"tool_name": {"arg": constraint}}` (per-argument).
-    /// Merges with any guards inherited from the parent warrant.
-    fn with_guards(&mut self, guards: &Bound<'_, PyDict>) -> PyResult<()> {
-        let guard_map = py_dict_to_guard_map(guards)?;
-        let bytes = crate::guard::encode_guard_map(&guard_map).map_err(to_py_err)?;
-        self.inner.set_guards_extension(bytes).map_err(to_py_err)
+    /// Merges with any approval gates inherited from the parent warrant.
+    fn with_approval_gates(&mut self, approval_gates: &Bound<'_, PyDict>) -> PyResult<()> {
+        let approval_gate_map = py_dict_to_approval_gate_map(approval_gates)?;
+        let bytes = crate::approval_gate::encode_approval_gate_map(&approval_gate_map)
+            .map_err(to_py_err)?;
+        self.inner
+            .set_approval_gates_extension(bytes)
+            .map_err(to_py_err)
     }
 
     /// Narrow execution warrant tools to a single tool.
@@ -3215,15 +3255,18 @@ impl PyIssuanceBuilder {
         self.inner.set_min_approvals(min);
     }
 
-    /// Embed or merge a guard map into the warrant as the `tenuo.guards` extension.
+    /// Embed or merge an approval gate map into the warrant as the `tenuo.approval_gates` extension.
     ///
-    /// Accepts `{"tool_name": None}` for whole-tool guards, or
-    /// `{"tool_name": {"arg": constraint}}` for per-argument guards.
-    /// Merges with any guards inherited from the issuer warrant.
-    fn with_guards(&mut self, guards: &Bound<'_, PyDict>) -> PyResult<()> {
-        let guard_map = py_dict_to_guard_map(guards)?;
-        let bytes = crate::guard::encode_guard_map(&guard_map).map_err(to_py_err)?;
-        self.inner.set_guards_extension(bytes).map_err(to_py_err)
+    /// Accepts `{"tool_name": None}` for whole-tool approval gates, or
+    /// `{"tool_name": {"arg": constraint}}` for per-argument approval gates.
+    /// Merges with any approval gates inherited from the issuer warrant.
+    fn with_approval_gates(&mut self, approval_gates: &Bound<'_, PyDict>) -> PyResult<()> {
+        let approval_gate_map = py_dict_to_approval_gate_map(approval_gates)?;
+        let bytes = crate::approval_gate::encode_approval_gate_map(&approval_gate_map)
+            .map_err(to_py_err)?;
+        self.inner
+            .set_approval_gates_extension(bytes)
+            .map_err(to_py_err)
     }
 
     /// Set the intent/purpose for this issuance.
@@ -3339,7 +3382,7 @@ impl PyWarrant {
 
     /// Issue a new warrant.
     #[staticmethod]
-    #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None))]
+    #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None, approval_gates=None))]
     #[allow(clippy::too_many_arguments)]
     fn issue(
         keypair: &PySigningKey,
@@ -3350,6 +3393,7 @@ impl PyWarrant {
         clearance: Option<&PyClearance>,
         required_approvers: Option<Vec<PyPublicKey>>,
         min_approvals: Option<u32>,
+        approval_gates: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder().ttl(Duration::from_secs(ttl_seconds));
 
@@ -3394,6 +3438,17 @@ impl PyWarrant {
         // Multi-sig: set minimum approvals if provided
         if let Some(min) = min_approvals {
             builder = builder.min_approvals(min);
+        }
+
+        // Approval gates: encode approval gate map into the tenuo.approval_gates extension
+        if let Some(approval_gates_dict) = approval_gates {
+            let approval_gate_map = py_dict_to_approval_gate_map(approval_gates_dict)?;
+            let bytes = crate::approval_gate::encode_approval_gate_map(&approval_gate_map)
+                .map_err(to_py_err)?;
+            builder = builder.extension(
+                crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+                bytes,
+            );
         }
 
         let warrant = builder.build(&keypair.inner).map_err(to_py_err)?;
@@ -4684,12 +4739,12 @@ fn py_verify_approvals(
     }))
 }
 
-/// Evaluate whether a tool invocation requires approval based on the warrant's guards.
+/// Evaluate whether a tool invocation requires approval based on the warrant's approval gates.
 ///
-/// Returns True if the guard fires (approval needed), False otherwise.
-/// Returns False when the warrant has no guard map.
-#[pyfunction(name = "evaluate_guards")]
-fn py_evaluate_guards(
+/// Returns True if the approval gate fires (approval needed), False otherwise.
+/// Returns False when the warrant has no approval gate map.
+#[pyfunction(name = "evaluate_approval_gates")]
+fn py_evaluate_approval_gates(
     warrant: &PyWarrant,
     tool: &str,
     args: &Bound<'_, PyDict>,
@@ -4699,11 +4754,14 @@ fn py_evaluate_guards(
         let field: String = key.extract()?;
         rust_args.insert(field, py_to_constraint_value(&value)?);
     }
-    let guard_map = crate::guard::parse_guard_map(
-        warrant.inner.extension(crate::guard::GUARD_EXTENSION_KEY),
+    let approval_gate_map = crate::approval_gate::parse_approval_gate_map(
+        warrant
+            .inner
+            .extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
     )
     .map_err(to_py_err)?;
-    crate::guard::evaluate_guards(guard_map.as_ref(), tool, &rust_args).map_err(to_py_err)
+    crate::approval_gate::evaluate_approval_gates(approval_gate_map.as_ref(), tool, &rust_args)
+        .map_err(to_py_err)
 }
 
 /// Unsigned metadata for an approval (NOT part of the signed payload).
@@ -5122,16 +5180,18 @@ impl PyAuthorizer {
     ///     tool: Tool name being invoked
     ///     args: Dictionary of argument name -> value
     ///     signature: Optional PoP signature bytes (64 bytes)
+    ///     approvals: Optional list of SignedApproval objects for approval-gate-protected warrants
     ///
     /// Returns:
     ///     ChainVerificationResult on success, raises exception on failure
-    #[pyo3(signature = (chain, tool, args, signature=None))]
+    #[pyo3(signature = (chain, tool, args, signature=None, approvals=None))]
     fn check_chain(
         &self,
         chain: &Bound<'_, PySequence>,
         tool: &str,
         args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
+        approvals: Option<Vec<PyRef<PySignedApproval>>>,
     ) -> PyResult<PyChainVerificationResult> {
         let len = chain.len()?;
         if len == 0 {
@@ -5163,9 +5223,15 @@ impl PyAuthorizer {
             None => None,
         };
 
+        let rust_approvals: Vec<crate::approval::SignedApproval> = approvals
+            .unwrap_or_default()
+            .iter()
+            .map(|a| a.inner.clone())
+            .collect();
+
         let result = self
             .inner
-            .check_chain(&warrants, tool, &rust_args, sig.as_ref(), &[])
+            .check_chain(&warrants, tool, &rust_args, sig.as_ref(), &rust_approvals)
             .map_err(to_py_err)?;
         Ok(PyChainVerificationResult { inner: result })
     }
@@ -5487,7 +5553,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_decode_warrant_stack_base64, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approvals, m)?)?;
-    m.add_function(wrap_pyfunction!(py_evaluate_guards, m)?)?;
+    m.add_function(wrap_pyfunction!(py_evaluate_approval_gates, m)?)?;
 
     Ok(())
 }

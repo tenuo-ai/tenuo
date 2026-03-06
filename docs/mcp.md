@@ -390,7 +390,7 @@ When `inject_warrant=True`, Tenuo injects a `_tenuo` field into the tool argumen
   "_tenuo": {
     "warrant": "<base64>",
     "signature": "<base64>",
-    "approvals": ["<base64>", ...]  # optional, for guard-protected tools
+    "approvals": ["<base64>", ...]  # optional, for approval-gate-protected tools
   }
 }
 ```
@@ -569,15 +569,15 @@ warrant = (Warrant.mint_builder()
 
 ---
 
-## Guard Approval Flow
+## Approval Gate Flow
 
-Warrants can embed **guards** that require human approval before a tool call proceeds. When a guard triggers, the MCP integration returns a structured error so clients can collect approvals and retry.
+Warrants can embed **approval gates** that require human approval before a tool call proceeds. When an approval gate triggers, the MCP integration returns a structured error so clients can collect approvals and retry.
 
 ### Server-Side (MCPVerifier)
 
 ```python
 result = verifier.verify("transfer", arguments)
-if result.is_guard_triggered:
+if result.is_approval_required:
     # Return JSON-RPC error -32002 with approval_request details
     return {"jsonrpc": "2.0", "id": req_id, "error": result.to_jsonrpc_error()}
 
@@ -591,7 +591,7 @@ execute_tool(result.clean_arguments)
 try:
     result = await client.call_tool("transfer", amount=5000, recipient="acme")
 except Exception as e:
-    if is_guard_triggered(e):  # JSON-RPC code -32002
+    if is_approval_required(e):  # JSON-RPC code -32002
         approval = collect_human_approval(e)  # app-specific UI flow
         result = await client.call_tool(
             "transfer",
@@ -607,7 +607,7 @@ except Exception as e:
 |------|---------|--------|
 | `-32602` | Invalid params (missing required extraction field) | Fix arguments |
 | `-32001` | Access denied (constraint violation, expired, bad signature) | Request new warrant |
-| `-32002` | Approval required (guard triggered) | Collect approvals and re-submit |
+| `-32002` | Approval required (approval gate triggered) | Collect approvals and re-submit |
 
 ---
 
@@ -806,7 +806,7 @@ max_size:
 - **Tool discovery**: Automatic wrapping of discovered tools with `@guard`.
 - **Warrant propagation**: Injecting warrants (+ approvals) into `_tenuo` field for end-to-end verification.
 - **Constraint extraction**: Config-driven extraction from MCP arguments.
-- **Guard approval flow**: Structured JSON-RPC errors (`-32002`) for guard-protected tools with retry support.
+- **Approval gate flow**: Structured JSON-RPC errors (`-32002`) for approval-gate-protected tools with retry support.
 
 ### Tenuo Does NOT Provide
 - MCP Server Framework: Use [`fastmcp`](https://github.com/jlowin/fastmcp) or the official SDK to build servers. Tenuo's `MCPVerifier` plugs into any framework.

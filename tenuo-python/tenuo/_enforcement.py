@@ -312,7 +312,7 @@ def _get_allowed_tools(bound_warrant: BoundWarrant) -> Optional[List[str]]:
 # =============================================================================
 
 
-def _collect_approvals_for_guard(
+def _collect_approvals_for_approval_gate(
     tool_name: str,
     tool_args: Dict[str, Any],
     bound_warrant: BoundWarrant,
@@ -321,12 +321,12 @@ def _collect_approvals_for_guard(
     handler: "Optional[ApprovalHandler]",
     approvals: Optional[List[Any]],
 ) -> List[Any]:
-    """Collect and verify approvals for a guard-triggered tool call.
+    """Collect and verify approvals for an approval-gate-triggered tool call.
 
     Unlike ``_check_approval()`` (which applies policy rules and returns None on
-    success), this function always creates an ApprovalRequest — guard always fires —
+    success), this function always creates an ApprovalRequest — the gate always fires —
     and **returns** the verified ``SignedApproval`` objects so the caller can forward
-    them to ``validate(approvals=...)`` to satisfy the Rust guard check atomically
+    them to ``validate(approvals=...)`` to satisfy the Rust approval gate check atomically
     with PoP verification.
 
     Raises:
@@ -712,50 +712,50 @@ def enforce_tool_call(
     # - Tool in warrant (including wildcard *)
     # - Proof-of-Possession signature
     # - Constraint satisfaction
-    # - Guard satisfaction (when guard fires + approvals provided)
+    # - Approval gate satisfaction (when gate fires + approvals provided)
     # =========================================================================
     try:
         # =================================================================
-        # GUARD EVALUATION (before validate — guards fire in Rust's
-        # authorize_one without approvals, causing GuardTriggered)
+        # APPROVAL GATE EVALUATION (before validate — gates fire in Rust's
+        # authorize_one without approvals, causing ApprovalRequired)
         # Must run here so we can collect+verify approvals BEFORE calling
-        # validate(), then pass them so Rust satisfies the guard atomically
+        # validate(), then pass them so Rust satisfies the gate atomically
         # with the PoP check.
         # =================================================================
-        from tenuo_core import evaluate_guards as _evaluate_guards
+        from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
 
         _warrant_obj = bound_warrant.warrant
-        _guard_approvals: Optional[List[Any]] = None
+        _gate_approvals: Optional[List[Any]] = None
 
-        if _evaluate_guards(_warrant_obj, tool_name, tool_args):
-            _guard_approvers = _warrant_obj.required_approvers()
-            _guard_threshold = _warrant_obj.approval_threshold()
+        if _evaluate_approval_gates(_warrant_obj, tool_name, tool_args):
+            _gate_approvers = _warrant_obj.required_approvers()
+            _gate_threshold = _warrant_obj.approval_threshold()
 
-            if not _guard_approvers:
+            if not _gate_approvers:
                 return EnforcementResult(
                     allowed=False,
                     tool=tool_name,
                     arguments=tool_args,
                     denial_reason=(
-                        f"Guard triggered for '{tool_name}' but warrant has "
+                        f"Approval gate triggered for '{tool_name}' but warrant has "
                         "no required_approvers configured"
                     ),
-                    error_type="guard_misconfigured",
+                    error_type="approval_gate_misconfigured",
                     warrant_id=warrant_id,
                 )
 
             # Collect and verify approvals — raises if missing or invalid.
             # Returns verified SignedApproval objects to pass to validate().
-            _guard_approvals = _collect_approvals_for_guard(
+            _gate_approvals = _collect_approvals_for_approval_gate(
                 tool_name, tool_args, bound_warrant,
-                _guard_approvers, _guard_threshold,
+                _gate_approvers, _gate_threshold,
                 approval_handler, approvals,
             )
 
         if verify_mode == "sign":
-            # Pass guard approvals (if any) so Rust satisfies the guard check.
+            # Pass approval gate approvals (if any) so Rust satisfies the gate check.
             validation_result: ValidationResult = bound_warrant.validate(
-                tool_name, tool_args, approvals=_guard_approvals
+                tool_name, tool_args, approvals=_gate_approvals
             )
 
             if not validation_result.success:
@@ -787,7 +787,7 @@ def enforce_tool_call(
                     tool_name,
                     tool_args,
                     signature=precomputed_signature,
-                    approvals=_guard_approvals or [],
+                    approvals=_gate_approvals or [],
                 )
             except Exception as chain_err:
                 denial_reason = str(chain_err)
@@ -815,8 +815,8 @@ def enforce_tool_call(
             }
         )
 
-        # Guard was satisfied above — skip approval_policy (one flow per call).
-        if _guard_approvals is not None:
+        # Approval gate was satisfied above — skip approval_policy (one flow per call).
+        if _gate_approvals is not None:
             return EnforcementResult(
                 allowed=True,
                 tool=tool_name,

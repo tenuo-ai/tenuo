@@ -259,6 +259,19 @@ class MintBuilder:
         self._min_approvals = count
         return self
 
+    def approval_gates(self, approval_gate_map: Dict[str, Any]) -> "MintBuilder":
+        """Add approval gates to the warrant.
+
+        Keys are tool names. Values are None (whole-tool approval gate) or a dict of
+        argument approval gates.
+
+        Example:
+            builder.approval_gates({"transfer": None})
+            builder.approval_gates({"transfer": {"amount": Range(min=1000)}})
+        """
+        self._approval_gates = approval_gate_map
+        return self
+
     # =========================================================================
     # Build methods
     # =========================================================================
@@ -307,6 +320,7 @@ class MintBuilder:
             clearance=self._clearance,
             required_approvers=self._required_approvers,
             min_approvals=self._min_approvals,
+            approval_gates=getattr(self, "_approval_gates", None),
         )
 
     def _issue_issuer(self, key: SigningKey) -> Warrant:
@@ -610,17 +624,17 @@ class GrantBuilder:
         self._rust_builder.terminal()
         return self
 
-    def guards(self, guard_map: Dict[str, Any]) -> "GrantBuilder":
-        """Add or merge guards into the attenuated warrant.
+    def approval_gates(self, approval_gate_map: Dict[str, Any]) -> "GrantBuilder":
+        """Add or merge approval gates into the attenuated warrant.
 
-        Keys are tool names. Values are None (whole-tool guard) or a dict of
-        argument guards. Guards merge with any guards inherited from the parent.
+        Keys are tool names. Values are None (whole-tool approval gate) or a dict of
+        argument approval gates. Approval gates merge with any gates inherited from the parent.
 
         Example:
-            builder.guards({"transfer": None})
-            builder.guards({"transfer": {"amount": Range(min=1000)}})
+            builder.approval_gates({"transfer": None})
+            builder.approval_gates({"transfer": {"amount": Range(min=1000)}})
         """
-        self._rust_builder.with_guards(guard_map)
+        self._rust_builder.with_approval_gates(approval_gate_map)
         return self
 
     # =========================================================================
@@ -928,17 +942,17 @@ class IssuanceBuilder:
         self._rust_builder.terminal()
         return self
 
-    def guards(self, guard_map: Dict[str, Any]) -> "IssuanceBuilder":
-        """Add or merge guards into the issued execution warrant.
+    def approval_gates(self, approval_gate_map: Dict[str, Any]) -> "IssuanceBuilder":
+        """Add or merge approval gates into the issued execution warrant.
 
-        Keys are tool names. Values are None (whole-tool guard) or a dict of
-        argument guards. Guards merge with any guards inherited from the issuer warrant.
+        Keys are tool names. Values are None (whole-tool approval gate) or a dict of
+        argument approval gates. Approval gates merge with any gates inherited from the issuer warrant.
 
         Example:
-            builder.guards({"transfer": None})
-            builder.guards({"transfer": {"amount": Range(min=1000)}})
+            builder.approval_gates({"transfer": None})
+            builder.approval_gates({"transfer": {"amount": Range(min=1000)}})
         """
-        self._rust_builder.with_guards(guard_map)
+        self._rust_builder.with_approval_gates(approval_gate_map)
         return self
 
     def build(self, key: SigningKey) -> Warrant:

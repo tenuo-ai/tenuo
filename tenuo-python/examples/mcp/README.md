@@ -178,12 +178,12 @@ python mcp_server_demo.py
 
 ### 7. [`../mcp_client.py`](../mcp_client.py) - Multi-Transport Client Patterns
 
-Advanced client examples showing all three transports and guard approval flow.
+Advanced client examples showing all three transports and approval gate flow.
 
 **What it shows:**
 - Stdio, SSE, and StreamableHTTP transports
 - `discover_and_protect` shorthand for quick connections
-- Supplying `SignedApproval` objects for guard-protected tools
+- Supplying `SignedApproval` objects for approval-gate-protected tools
 - Config-driven constraint extraction with `mcp-config.yaml`
 
 ---
@@ -195,7 +195,7 @@ Server-side warrant verification using `MCPVerifier`.
 **What it shows:**
 - `MCPVerifier` with `fastmcp` and config-driven extraction
 - Raw mode (no config, direct constraint verification)
-- Guard-triggered approval flow (JSON-RPC error `-32002`)
+- Approval-gate-triggered flow (JSON-RPC error `-32002`)
 - Mixed deployment (some tools protected, others public)
 - `verify_mcp_call` standalone convenience function
 
@@ -470,7 +470,7 @@ Start simple, build up complexity:
 | Example | Complexity | Concepts |
 |---------|-----------|----------|
 | **mcp_client_demo.py** | ⭐ Basic | SecureMCPClient, automatic protection |
-| **../mcp_client.py** | ⭐⭐ Intermediate | Multi-transport, guard approvals |
+| **../mcp_client.py** | ⭐⭐ Intermediate | Multi-transport, approval gates |
 | **../mcp_server.py** | ⭐⭐ Intermediate | MCPVerifier, server-side verification |
 | **langchain_mcp_demo.py** | ⭐⭐ Intermediate | Framework integration, ReAct agent |
 | **crewai_mcp_demo.py** | ⭐⭐ Intermediate | Crew workflows, per-agent warrants |

@@ -180,6 +180,7 @@ def _mock_warrant_context():
     mock_warrant = MagicMock()
     mock_warrant.to_base64.return_value = "warrant_b64"
     mock_warrant.sign.return_value = b"pop_bytes"
+    mock_warrant.is_expired.return_value = False
     mock_keypair = MagicMock()
     return mock_warrant, mock_keypair
 
@@ -357,12 +358,6 @@ class TestTransportValidation:
 
     def test_stdio_default_with_command(self):
         """Default transport is stdio; command is sufficient."""
-        # Just validates no error is raised — don't connect
-        c = SecureMCPClient.__new__(SecureMCPClient)
-        # Call __init__ manually to test validation path
-        # We can't call full __init__ without MCP session, so test via actual ctor
-        # This tests the validation by going through __init__ up to the session setup:
-        # use __new__ + manual param check to avoid actually spawning anything
         with pytest.raises(ValueError, match="requires 'command'"):
             SecureMCPClient()  # no command, default transport=stdio
 
@@ -376,9 +371,6 @@ class TestTransportValidation:
 
     def test_sse_with_url_does_not_raise(self):
         """SSE transport with url passes validation (connect not called)."""
-        client = SecureMCPClient.__new__(SecureMCPClient)
-        # Bypass MCP_AVAILABLE check by testing init directly
-        # Patch MCP_AVAILABLE to True so __init__ proceeds past the import check
         import tenuo.mcp.client as _mod
 
         original = _mod.MCP_AVAILABLE

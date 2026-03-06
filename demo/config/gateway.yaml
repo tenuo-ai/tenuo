@@ -29,7 +29,7 @@ routes:
   #    Path: /verify/manage_infrastructure
   #    Method: POST
   - pattern: "/verify/manage_infrastructure"
-    methods: ["POST"]
+    method: ["POST"]
     tool: "manage_infrastructure"
     constraints:
       # Extract arguments from JSON body
@@ -50,7 +50,7 @@ routes:
   # 2. Read File (for file access tests if applicable)
   #    Path: /verify/read_file
   - pattern: "/verify/read_file"
-    methods: ["POST"]
+    method: ["POST"]
     tool: "read_file"
     constraints:
       path:

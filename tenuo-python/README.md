@@ -398,22 +398,34 @@ Demos:
 
 ## A2A Integration (Multi-Agent)
 
-Warrant-based authorization for agent-to-agent communication:
+Warrant-based authorization for agent-to-agent communication via automated CSR handshake:
 
 ```python
-from tenuo.a2a import A2AServer, A2AClient
-from tenuo.constraints import Subpath, UrlSafe
+from tenuo.a2a import A2AServerBuilder, A2AClient
+from tenuo.constraints import UrlSafe
 
-server = A2AServer(
-    name="Research Agent",
-    url="https://research-agent.example.com",
-    public_key=my_public_key,
-    trusted_issuers=[orchestrator_key],
-)
+# Server: Define skills and decide what capabilities to grant
+server = (A2AServerBuilder()
+    .name("Research Agent")
+    .url("https://research-agent.example.com")
+    .key(my_public_key)
+    .trust(orchestrator_key)
+    .registration_handler(my_handler) # Enable CSR handshake
+    .build())
 
 @server.skill("search_papers", constraints={"sources": UrlSafe})
 async def search_papers(query: str, sources: list[str]) -> list[dict]:
     return await do_search(query, sources)
+
+# Client: Automatically fetch warrant and execute task
+client = A2AClient("https://research-agent.example.com")
+warrant = await client.request_warrant(signing_key=worker_key, capabilities={"search_papers": {}})
+result = await client.send_task(
+    skill="search_papers", 
+    arguments={"query": "AI Agents"},
+    warrant=warrant, 
+    signing_key=worker_key
+)
 ```
 
 See [A2A Integration](https://tenuo.ai/a2a) for full documentation.

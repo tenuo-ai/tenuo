@@ -145,7 +145,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar
 
+from .exceptions import ApprovalGateTriggered
+
 import inspect as _inspect
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 logger = logging.getLogger("tenuo.temporal")
 
@@ -1146,19 +1150,19 @@ class TenuoInterceptorConfig:
 
     approval_handler: Optional[Callable] = None
     """
-    Callback invoked when a warrant guard fires and no pre-supplied
+    Callback invoked when an approval gate fires and no pre-supplied
     approvals are available in activity headers.  Receives an
     ``ApprovalRequest`` and must return a ``SignedApproval`` (or list).
     Raise ``ApprovalDenied`` to reject.
 
-    When ``None`` (default), guard-triggered calls with no pre-supplied
-    approvals are denied with ``GuardTriggered``.
+    When ``None`` (default), approval-gate-triggered calls with no pre-supplied
+    approvals are denied with ``ApprovalGateTriggered``.
     """
 
     trusted_approvers: Optional[List[Any]] = None
     """
-    Public keys of trusted approvers for guard satisfaction.
-    Required when using warrant guards with ``required_approvers``.
+    Public keys of trusted approvers for approval gate satisfaction.
+    Required when using warrant approval gates with ``required_approvers``.
     If ``None``, the warrant's own ``required_approvers()`` list is used.
     """
 
@@ -2610,6 +2614,18 @@ class TenuoInterceptor:
                 "Running in lightweight mode: no PoP verification, no chain-of-trust checks. "
                 "Set trusted_roots=[control_key.public_key] for production security."
             )
+        # Verify tenuo_core is importable — catches missing passthrough_modules early.
+        # Inside a Temporal sandbox, tenuo_core must be declared as a passthrough module or
+        # it raises "PyO3 modules may only be initialized once per interpreter process".
+        try:
+            import tenuo_core as _tc  # noqa: F401
+        except ImportError as _e:
+            raise RuntimeError(
+                "tenuo_core is not importable inside the Temporal sandbox. "
+                "Add 'tenuo' and 'tenuo_core' to passthrough_modules:\n\n"
+                "    SandboxRestrictions.default.with_passthrough_modules('tenuo', 'tenuo_core')\n\n"
+                "See the module docstring for a full Worker setup example."
+            ) from _e
 
     def _get_version(self) -> str:
         """Get Tenuo version for audit events."""
@@ -2789,7 +2805,6 @@ class TenuoActivityInboundInterceptor:
         if self._authorizer is not None:
             try:
                 from tenuo_core import Warrant as CoreWarrant  # type: ignore[import-not-found]
-                from tenuo_core import evaluate_guards as _evaluate_guards  # type: ignore[import-not-found]
 
                 authorizer = self._authorizer
 
@@ -2799,9 +2814,9 @@ class TenuoActivityInboundInterceptor:
                 if pop_header:
                     pop_bytes = base64.b64decode(pop_header)
 
-                # Guard evaluation: collect approvals before authorize
-                # so Rust can satisfy the guard atomically with PoP.
-                guard_approvals = self._resolve_guard_approvals(
+                # Approval gate evaluation: collect approvals before authorize
+                # so Rust can satisfy the gate atomically with PoP.
+                gate_approvals = self._resolve_approval_gate_approvals(
                     warrant, tool_name, args, headers,
                 )
 
@@ -2812,13 +2827,13 @@ class TenuoActivityInboundInterceptor:
                     authorizer.check_chain(
                         chain, tool_name, args,
                         signature=pop_bytes,
-                        approvals=guard_approvals,
+                        approvals=gate_approvals,
                     )
                 else:
                     authorizer.authorize_one(
                         warrant, tool_name, args,
                         signature=pop_bytes,
-                        approvals=guard_approvals,
+                        approvals=gate_approvals,
                     )
 
                 # PoP replay detection: reject if the same dedup key
@@ -2976,27 +2991,27 @@ class TenuoActivityInboundInterceptor:
                     )
                 return None
 
-            # Lightweight guard check (no cryptographic verification of
-            # approvals — the full path handles that).  If a guard fires
+            # Lightweight approval gate check (no cryptographic verification of
+            # approvals — the full path handles that).  If a gate fires
             # and no approval_handler is configured, deny the call.
             try:
-                from tenuo_core import evaluate_guards as _eval_g
+                from tenuo_core import evaluate_approval_gates as _eval_g
                 if _eval_g(warrant, tool_name, args):
                     self._emit_denial_event(
                         info=info,
                         warrant=warrant,
                         tool=tool_name,
                         args=args,
-                        reason=f"Guard triggered for '{tool_name}' (lightweight path — "
+                        reason=f"Approval gate triggered for '{tool_name}' (lightweight path — "
                                "configure trusted_roots for full approval verification)",
-                        constraint="guard_triggered",
+                        constraint="approval_gate_triggered",
                     )
                     if self._config.on_denial == "raise":
                         raise ConstraintViolation(
                             tool=tool_name,
                             arguments=args,
-                            constraint=f"Guard triggered for '{tool_name}'. "
-                                       "Use trusted_roots for full guard+approval support.",
+                            constraint=f"Approval gate triggered for '{tool_name}'. "
+                                       "Use trusted_roots for full approval gate support.",
                             warrant_id=warrant.id,
                         )
                     return None
@@ -3005,7 +3020,7 @@ class TenuoActivityInboundInterceptor:
             except ImportError:
                 pass
             except Exception as e:
-                logger.debug(f"Guard evaluation skipped (lightweight path): {e}")
+                logger.debug(f"Approval gate evaluation skipped (lightweight path): {e}")
 
         # Authorization passed — emit allow event
         self._emit_allow_event(
@@ -3018,29 +3033,29 @@ class TenuoActivityInboundInterceptor:
         # Execute the activity
         return await self._next.execute_activity(input)
 
-    def _resolve_guard_approvals(
+    def _resolve_approval_gate_approvals(
         self,
         warrant: Any,
         tool_name: str,
         args: Dict[str, Any],
         headers: Dict[str, bytes],
     ) -> Optional[List[Any]]:
-        """Evaluate warrant guards and collect approvals when a guard fires.
+        """Evaluate warrant approval gates and collect approvals when a gate fires.
 
         Resolution order:
           1. Pre-supplied approvals in ``x-tenuo-approvals`` header
              (base64-encoded JSON list of CBOR-serialized SignedApprovals).
           2. ``approval_handler`` callback on TenuoInterceptorConfig.
-          3. Raise ConstraintViolation (guard fires, no approvals available).
+          3. Raise ApprovalGateTriggered (gate fires, no approvals available).
 
-        Returns ``None`` when no guard fires (unguarded call).
+        Returns ``None`` when no gate fires (ungated call).
         """
-        from tenuo_core import evaluate_guards as _evaluate_guards
+        from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
 
-        if not _evaluate_guards(warrant, tool_name, args):
+        if not _evaluate_approval_gates(warrant, tool_name, args):
             return None
 
-        # Guard fired — try to collect approvals.
+        # Approval gate fired — try to collect approvals.
         from tenuo_core import SignedApproval as CoreSignedApproval
 
         # 1. Check header for pre-supplied approvals
@@ -3075,16 +3090,17 @@ class TenuoActivityInboundInterceptor:
                 result = handler(request)
                 if _inspect.isawaitable(result):
                     import asyncio
+                    from typing import cast, Coroutine as _Coro
+                    coro = cast(_Coro[Any, Any, Any], result)
                     try:
                         loop = asyncio.get_running_loop()
                     except RuntimeError:
                         loop = None
                     if loop and loop.is_running():
-                        import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                            result = pool.submit(asyncio.run, result).result()
+                        future = asyncio.run_coroutine_threadsafe(coro, loop)
+                        result = future.result(timeout=300)
                     else:
-                        result = asyncio.run(result)
+                        result = asyncio.run(coro)
 
                 collected = result if isinstance(result, list) else [result]
 
@@ -3099,6 +3115,19 @@ class TenuoActivityInboundInterceptor:
                     if self._config and self._config.approval_threshold is not None
                     else warrant.approval_threshold()
                 )
+                # Threshold safety: config must not be weaker than the warrant's own minimum.
+                if self._config and self._config.approval_threshold is not None:
+                    warrant_min = warrant.approval_threshold()
+                    if warrant_min is not None and threshold < warrant_min:
+                        raise ConstraintViolation(
+                            tool=tool_name,
+                            arguments=args,
+                            constraint=(
+                                f"Config approval_threshold ({threshold}) is less than "
+                                f"warrant minimum ({warrant_min})"
+                            ),
+                            warrant_id=getattr(warrant, "id", ""),
+                        )
                 from tenuo_core import verify_approvals as _verify
                 _verify(request_hash, collected, approvers, threshold)
 
@@ -3106,13 +3135,10 @@ class TenuoActivityInboundInterceptor:
             except Exception:
                 raise
 
-        # 3. No approvals available — deny.
-        raise ConstraintViolation(
-            tool=tool_name,
-            arguments=args,
-            constraint=f"Guard triggered for '{tool_name}' but no approvals "
-                       "available (set approval_handler or supply x-tenuo-approvals header)",
-            warrant_id=getattr(warrant, "id", ""),
+        # 3. No approvals available — approval gate fired but cannot be satisfied.
+        raise ApprovalGateTriggered(
+            f"Approval gate triggered for '{tool_name}' but no approvals available "
+            "(set approval_handler on TenuoInterceptorConfig or supply x-tenuo-approvals header)"
         )
 
     def _extract_arguments(
@@ -3257,6 +3283,7 @@ __all__ = [
     # Phase 2 exceptions
     "LocalActivityError",
     "PopVerificationError",
+    "ApprovalGateTriggered",
     # Audit
     "TemporalAuditEvent",
     # Key Resolvers

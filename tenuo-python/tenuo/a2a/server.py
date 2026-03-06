@@ -57,7 +57,7 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, FrozenSet, List, Optional, Protocol, runtime_checkable
 
 from .errors import (
     A2AError,
@@ -70,7 +70,10 @@ from .errors import (
     MissingWarrantError,
     PopRequiredError,
     PopVerificationError,
+    RegistrationDeniedError,
+    RegistrationDisabledError,
     ReplayDetectedError,
+    RevokedError,
     SkillNotFoundError,
     SkillNotGrantedError,
     UnknownConstraintError,
@@ -83,6 +86,8 @@ from .types import (
     AuditEventType,
     SkillInfo,
     TenuoExtension,
+    VerifiedWarrantRequest,
+    WarrantRequest,
     current_task_warrant,
 )
 
@@ -93,9 +98,16 @@ if TYPE_CHECKING:
 
 __all__ = [
     "A2AServer",
-    "ReplayCache",
+    "A2AServerBuilder",
+    "ReplayBackend",
+    "InMemoryReplayBackend",
+    "ReplayCache",  # backward-compatible alias
     "SkillDefinition",
 ]
+
+# Maximum warrant token size accepted (64 KB). Warrants above this size are
+# almost certainly malformed or an attempt to trigger a DoS via parsing cost.
+MAX_WARRANT_TOKEN_BYTES = 65_536
 
 logger = logging.getLogger("tenuo.a2a.server")
 
@@ -105,7 +117,49 @@ logger = logging.getLogger("tenuo.a2a.server")
 # =============================================================================
 
 
-class ReplayCache:
+@runtime_checkable
+class ReplayBackend(Protocol):
+    """Pluggable backend for JTI replay detection.
+
+    The default implementation (:class:`InMemoryReplayBackend`) is suitable for
+    single-instance deployments. For multi-instance environments, implement this
+    protocol backed by a shared cache (e.g., Redis) so JTI deduplication is
+    coordinated across all server instances.
+
+    Rate limiting: A2AServer does not throttle requests. In production, put a
+    rate-limiting reverse proxy (nginx ``limit_req``, Envoy RateLimit) in front.
+
+    Example (Redis backend sketch)::
+
+        class RedisReplayBackend:
+            def __init__(self, redis_client):
+                self._redis = redis_client
+
+            async def check_and_add(self, jti: str, ttl_seconds: int) -> bool:
+                # SET key value EX ttl NX — returns True only if key was new
+                return bool(await self._redis.set(jti, 1, ex=ttl_seconds, nx=True))
+
+            async def clear(self) -> None:
+                pass  # TTL handles expiry; no-op for tests
+
+    Register with :meth:`A2AServerBuilder.with_replay_backend`.
+    """
+
+    async def check_and_add(self, jti: str, ttl_seconds: int) -> bool:
+        """Check if jti is new and register it if so.
+
+        Returns:
+            True if jti is new (allow request).
+            False if jti was already seen (replay — deny request).
+        """
+        ...
+
+    async def clear(self) -> None:
+        """Remove all entries (for testing / maintenance)."""
+        ...
+
+
+class InMemoryReplayBackend:
     """
     Simple in-memory replay cache with TTL.
 
@@ -170,11 +224,15 @@ class ReplayCache:
             self._cache[jti] = now + ttl_seconds
             return True
 
-    async def clear(self):
+    async def clear(self) -> None:
         """Clear all entries (for testing). Async to prevent race with check_and_add."""
         async with self._get_lock():
             self._cache.clear()
             self._counter = 0
+
+
+# Backward-compatible alias
+ReplayCache = InMemoryReplayBackend
 
 
 # =============================================================================
@@ -271,6 +329,7 @@ class A2AServerBuilder:
         self._name: Optional[str] = None
         self._url: Optional[str] = None
         self._public_key: Optional[Any] = None
+        self._signing_key: Optional[Any] = None
         self._trusted_issuers: List[Any] = []
         self._trust_delegated: bool = True
         self._require_warrant: Optional[bool] = None
@@ -282,6 +341,9 @@ class A2AServerBuilder:
         self._audit_log: Any = None
         self._audit_format: str = "json"
         self._previous_keys: Optional[List[Any]] = None
+        self._replay_backend: Optional[Any] = None
+        self._revoked_issuers: List[Any] = []
+        self._registration_handler: Optional[Any] = None
 
     def name(self, name: str) -> "A2AServerBuilder":
         """Set the agent display name (required)."""
@@ -298,15 +360,19 @@ class A2AServerBuilder:
         Set the agent's key.
 
         Accepts:
-        - SigningKey: extracts public_key automatically
-        - PublicKey: uses directly
-        - str: multibase or DID format
+        - SigningKey: extracts public_key automatically; retains signing key
+          for warrant issuance (required by ``registration_handler()``)
+        - PublicKey: uses directly (no signing capability)
+        - str: multibase or DID format (no signing capability)
         """
-        # If SigningKey, extract public_key
         if hasattr(key, "public_key"):
+            # SigningKey: retain both public and private key
             self._public_key = key.public_key
+            self._signing_key = key
         else:
+            # PublicKey or str: no signing capability
             self._public_key = key
+            self._signing_key = None
         return self
 
     def public_key(self, key: Any) -> "A2AServerBuilder":
@@ -393,12 +459,85 @@ class A2AServerBuilder:
         self._previous_keys.extend(keys)
         return self
 
+    def with_replay_backend(self, backend: Any) -> "A2AServerBuilder":
+        """Inject a custom replay detection backend.
+
+        Replaces the default :class:`InMemoryReplayBackend` with a custom
+        implementation, e.g. Redis, for multi-instance deployments.
+
+        The backend must implement :class:`ReplayBackend` (async
+        ``check_and_add(jti, ttl_seconds) -> bool`` and ``clear()``).
+
+        Example::
+
+            server = (A2AServerBuilder()
+                ...
+                .with_replay_backend(RedisReplayBackend(redis_client))
+                .build())
+        """
+        self._replay_backend = backend
+        return self
+
+    def revoke_issuers(self, *keys: Any) -> "A2AServerBuilder":
+        """Mark issuer keys as revoked.
+
+        Requests from warrants issued by these keys will be rejected with
+        :class:`~tenuo.a2a.errors.RevokedError` even if the key was previously
+        trusted.  Use this for immediate incident response.
+
+        To remove a key from the trust list permanently, remove it from
+        :meth:`accept_warrants_from` instead.
+
+        Args:
+            *keys: Public keys (``PublicKey`` objects or multibase strings) of
+                   revoked issuers.  Can be called multiple times.
+        """
+        self._revoked_issuers.extend(keys)
+        return self
+
+    def registration_handler(self, handler: Any) -> "A2AServerBuilder":
+        """
+        Enable automated agent registration (CSR pattern).
+
+        The handler is called after the server has cryptographically verified
+        key ownership via a self-signed challenge warrant. It receives a
+        :class:`~tenuo.a2a.types.VerifiedWarrantRequest` and an ``issue()``
+        oracle that mints warrants using the server's signing key.
+
+        Handler signature::
+
+            async def handle_reg(req: VerifiedWarrantRequest, issue: Callable) -> None:
+                if req.verified_key_hex not in ALLOWLIST:
+                    raise RegistrationDeniedError("Key not pre-enrolled")
+                await issue(capabilities=req.capabilities, ttl=3600)
+
+        The ``issue(capabilities, ttl, audience)`` callable is bound to the
+        server's signing key — the handler cannot extract the key, only call it.
+
+        **Requires:** ``key()`` must receive a ``SigningKey`` (not just a
+        ``PublicKey``) so the server can sign issued warrants.
+
+        .. note::
+            Extension point: inspect ``req.extensions`` for TEE attestations
+            before calling ``issue()``. Example::
+
+                {"tee_type": "sgx", "mrenclave": "<hex>", "report": "<base64>"}
+
+        .. note::
+            Future direction: Hierarchical Deterministic (HD) keys for
+            zero-handshake bulk worker derivation from a root key. Useful for
+            hyperscale worker pools. Not yet implemented.
+        """
+        self._registration_handler = handler
+        return self
+
     def build(self) -> "A2AServer":
         """
         Build the A2AServer.
 
         Raises:
             ValueError: If required fields (name, url, key, trust) are missing
+            ValueError: If registration_handler() set without a signing key
         """
         if not self._name:
             raise ValueError("A2AServerBuilder requires .name()")
@@ -408,6 +547,11 @@ class A2AServerBuilder:
             raise ValueError("A2AServerBuilder requires .key() or .public_key()")
         if not self._trusted_issuers:
             raise ValueError("A2AServerBuilder requires at least one .trust()")
+        if self._registration_handler is not None and self._signing_key is None:
+            raise ValueError(
+                "registration_handler() requires a signing key. "
+                "Pass a SigningKey (not just a PublicKey) to .key()."
+            )
 
         return A2AServer(
             name=self._name,
@@ -424,6 +568,10 @@ class A2AServerBuilder:
             audit_log=self._audit_log,
             audit_format=self._audit_format,
             previous_keys=self._previous_keys,
+            replay_backend=self._replay_backend,
+            revoked_issuers=self._revoked_issuers if self._revoked_issuers else None,
+            signing_key=self._signing_key,
+            registration_handler=self._registration_handler,
         )
 
 
@@ -472,6 +620,10 @@ class A2AServer:
         audit_log: Any = None,
         audit_format: str = "json",
         previous_keys: Optional[List[Any]] = None,
+        replay_backend: Optional[Any] = None,
+        revoked_issuers: Optional[List[Any]] = None,
+        signing_key: Optional[Any] = None,
+        registration_handler: Optional[Callable] = None,
     ):
         """
         Initialize A2A server.
@@ -492,6 +644,17 @@ class A2AServer:
             audit_log: Destination for audit events (env: TENUO_A2A_AUDIT_LOG for path)
             audit_format: "json" or "text"
             previous_keys: List of previous public keys for key rotation
+            replay_backend: Custom ReplayBackend implementation (default: InMemoryReplayBackend)
+            revoked_issuers: List of issuer keys to unconditionally reject
+            signing_key: Optional signing key retained for warrant issuance
+                (required when registration_handler is set)
+            registration_handler: Optional async callable for automated agent
+                registration (CSR pattern). Called after key ownership is verified.
+
+        Rate limiting:
+            A2AServer does not throttle requests. In production, put a
+            rate-limiting reverse proxy (nginx ``limit_req``, Envoy RateLimit)
+            in front of this server.
         """
         self.name = name
         self.url = url.rstrip("/")
@@ -530,6 +693,11 @@ class A2AServer:
         self.audit_format = audit_format
         self.previous_keys = previous_keys or []
 
+        # Revocation denylist: normalized key strings → deny immediately
+        self._revoked_issuers: FrozenSet[str] = frozenset(
+            self._normalize_key(k) for k in (revoked_issuers or [])
+        )
+
         # SECURITY: Validate configuration for insecure combinations
         self._validate_config()
 
@@ -542,8 +710,12 @@ class A2AServer:
         # Skill registry
         self._skills: Dict[str, SkillDefinition] = {}
 
-        # Replay cache
-        self._replay_cache = ReplayCache()
+        # Replay cache (pluggable)
+        self._replay_cache: Any = replay_backend if replay_backend is not None else InMemoryReplayBackend()
+
+        # Registration (CSR handshake)
+        self._signing_key: Optional[Any] = signing_key
+        self._registration_handler: Optional[Callable] = registration_handler
 
         # ASGI app (lazy init)
         self._app = None
@@ -837,6 +1009,13 @@ class A2AServer:
         """
         start_time = time.time()
 
+        # Size guard — reject oversized tokens before any parsing cost
+        if len(warrant_token) > MAX_WARRANT_TOKEN_BYTES:
+            raise A2AError(
+                f"Warrant token size ({len(warrant_token)} bytes) exceeds the "
+                f"{MAX_WARRANT_TOKEN_BYTES}-byte limit"
+            )
+
         try:
             from tenuo_core import Warrant
         except ImportError as e:
@@ -883,6 +1062,10 @@ class A2AServer:
         issuer = self._get_warrant_prop(warrant, "iss", "issuer")
         # Normalize issuer to match the format used in trusted_issuers
         issuer_normalized = self._normalize_key(issuer) if issuer else None
+
+        # Revocation check — explicit denylist takes precedence over trust
+        if issuer_normalized and issuer_normalized in self._revoked_issuers:
+            raise RevokedError(f"Issuer key '{issuer_normalized}' is revoked")
 
         if issuer_normalized and issuer_normalized not in self.trusted_issuers:
             if self.trust_delegated and warrant_chain:
@@ -1647,6 +1830,8 @@ class A2AServer:
             try:
                 if method == "agent/discover":
                     result = self.get_agent_card_dict()
+                elif method == "agent/register":
+                    result = await self._handle_register(params)
                 elif method == "task/send":
                     result = await self._handle_task_send(request, params)
                 elif method == "task/sendSubscribe":
@@ -1697,6 +1882,155 @@ class A2AServer:
         ]
 
         return Starlette(routes=routes)
+
+    async def _handle_register(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle agent/register JSON-RPC method (CSR handshake).
+
+        Validation pipeline (fail-closed at every step):
+
+        1. Check registration handler is configured → RegistrationDisabledError
+        2. Parse WarrantRequest from params → A2AError on malformed input
+        3. Size guard on challenge_token → A2AError if > MAX_WARRANT_TOKEN_BYTES
+        4. Warrant.from_base64(challenge_token) → InvalidSignatureError on bad sig
+        5. is_expired() check → InvalidSignatureError if expired
+        6. Normalize iss == public_key → InvalidSignatureError if mismatch
+        7. JTI → replay_cache.check_and_add() → ReplayDetectedError if replayed
+        8. Build VerifiedWarrantRequest
+        9. Build issue() oracle (signing key bound inside closure)
+        10. Call handler(verified_req, issue) → RegistrationDeniedError on denial
+        11. Check issue() was called → RegistrationDeniedError if not
+        12. Return {"warrant": base64_token}
+        """
+        # Step 1: Check handler configured
+        if self._registration_handler is None:
+            raise RegistrationDisabledError(
+                "Agent registration is not enabled on this server. "
+                "Obtain a warrant out-of-band from the server operator."
+            )
+
+        # Step 2: Parse WarrantRequest
+        try:
+            req = WarrantRequest.from_dict(params)
+        except (KeyError, TypeError, ValueError) as e:
+            raise A2AError(f"Invalid registration request: {e}")
+
+        # Step 3: Size guard on challenge_token
+        if len(req.challenge_token) > MAX_WARRANT_TOKEN_BYTES:
+            raise InvalidSignatureError(
+                f"Challenge token size ({len(req.challenge_token)} bytes) exceeds "
+                f"the {MAX_WARRANT_TOKEN_BYTES}-byte limit"
+            )
+
+        # Step 4: Parse and verify challenge warrant signature
+        try:
+            from tenuo_core import Warrant
+        except ImportError as e:
+            raise RuntimeError("tenuo_core not available") from e
+
+        try:
+            challenge_warrant = Warrant.from_base64(req.challenge_token)
+        except Exception as e:
+            raise InvalidSignatureError(f"Challenge token signature invalid: {e}")
+
+        # Step 5: Check challenge token not expired (fail-closed)
+        is_expired_attr = getattr(challenge_warrant, "is_expired", None)
+        try:
+            if callable(is_expired_attr):
+                expired = is_expired_attr()
+            else:
+                now = int(time.time())
+                exp = getattr(challenge_warrant, "exp", None)
+                expired = exp is not None and exp < now
+            if expired:
+                raise InvalidSignatureError("Challenge token has expired")
+        except InvalidSignatureError:
+            raise
+        except Exception:
+            raise InvalidSignatureError("Could not verify challenge token expiry (fail-closed)")
+
+        # Step 6: Verify iss == public_key (proves key ownership)
+        # The challenge token is self-signed: iss must equal the claimed public_key.
+        challenge_iss = (
+            getattr(challenge_warrant, "iss", None)
+            or getattr(challenge_warrant, "issuer", None)
+        )
+        iss_normalized = self._normalize_key(challenge_iss) if challenge_iss else None
+        req_key_normalized = self._normalize_key(req.public_key)
+
+        if not iss_normalized or iss_normalized != req_key_normalized:
+            raise InvalidSignatureError(
+                "Challenge token issuer does not match claimed public key "
+                "(self-signed proof-of-key-possession failed)"
+            )
+
+        # Step 7: Replay protection — prefix with "reg:" to isolate from task JTIs
+        challenge_jti = (
+            getattr(challenge_warrant, "jti", None)
+            or getattr(challenge_warrant, "id", None)
+        )
+        if challenge_jti:
+            is_new = await self._replay_cache.check_and_add(
+                f"reg:{challenge_jti}", self.replay_window
+            )
+            if not is_new:
+                raise ReplayDetectedError(challenge_jti)
+
+        # Step 8: Build VerifiedWarrantRequest
+        try:
+            from tenuo_core import PublicKey
+            verified_key = PublicKey.from_bytes(bytes.fromhex(req_key_normalized))
+        except Exception as e:
+            raise InvalidSignatureError(f"Cannot parse claimed public key: {e}")
+
+        verified_req = VerifiedWarrantRequest(
+            verified_key=verified_key,
+            verified_key_hex=req_key_normalized,
+            capabilities=req.capabilities,
+            extensions=req.extensions,
+        )
+
+        # Step 9: Build issue() oracle — signing key never leaves this closure
+        issued_warrant_token: Optional[str] = None
+
+        async def issue(
+            capabilities: Dict[str, Any],
+            ttl: int = 3600,
+            audience: Optional[str] = None,
+        ) -> None:
+            nonlocal issued_warrant_token
+            try:
+                granted = Warrant.mint(
+                    keypair=self._signing_key,
+                    holder=verified_req.verified_key,
+                    capabilities=capabilities,
+                    ttl_seconds=ttl,
+                )
+                issued_warrant_token = granted.to_base64()
+            except Exception as e:
+                raise RegistrationDeniedError(f"Failed to issue warrant: {e}")
+
+        # Step 10: Call handler
+        try:
+            await self._registration_handler(verified_req, issue)
+        except (RegistrationDeniedError, A2AError):
+            raise
+        except Exception as e:
+            raise RegistrationDeniedError(f"Registration handler error: {e}")
+
+        # Step 11: Check issue() was called
+        if issued_warrant_token is None:
+            raise RegistrationDeniedError(
+                "Registration handler returned without issuing a warrant. "
+                "Call await issue(capabilities=...) inside the handler to approve registration."
+            )
+
+        # Step 12: Return warrant token
+        logger.info(
+            "Registration approved for key %s...",
+            verified_req.verified_key_hex[:16],
+        )
+        return {"warrant": issued_warrant_token}
 
     async def _handle_task_send(self, request: "Request", params: Dict) -> Dict[str, Any]:
         """Handle task/send method."""

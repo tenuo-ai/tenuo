@@ -11,7 +11,7 @@ Each example shows:
   - Tool discovery and automatic protection
   - Warrant scoping with `mint()`
   - Warrant injection for server-side verification
-  - Pre-supplying guard approvals
+  - Pre-supplying approval gate approvals
 
 Prerequisites:
   pip install "tenuo[mcp]"
@@ -20,8 +20,6 @@ Run (with a local server):
   python mcp_client.py
 """
 
-import asyncio
-import base64
 import logging
 
 from tenuo import (
@@ -146,18 +144,18 @@ async def shorthand_example():
 
 
 # ============================================================================
-# 5.  Pre-supplying guard approvals
+# 5.  Pre-supplying approval gate approvals
 # ============================================================================
 
 
-async def guard_approval_example():
-    """Forward pre-obtained approvals for guard-protected tools.
+async def approval_gate_example():
+    """Forward pre-obtained approvals for gate-protected tools.
 
-    When a warrant has guards that require human approval for certain
+    When a warrant has approval gates that require human approval for certain
     tools, the client must supply SignedApproval objects.  These are
     serialized into _tenuo.approvals and verified server-side.
     """
-    print("\n=== 5. Guard approvals ===\n")
+    print("\n=== 5. Approval gate approvals ===\n")
 
     keypair = SigningKey.generate()
     configure(issuer_key=keypair, dev_mode=True)
@@ -237,7 +235,7 @@ if __name__ == "__main__":
     # asyncio.run(sse_example())
     # asyncio.run(http_example())
     # asyncio.run(shorthand_example())
-    # asyncio.run(guard_approval_example())
+    # asyncio.run(approval_gate_example())
     # asyncio.run(config_example())
 
     print("See each function's docstring for details.")

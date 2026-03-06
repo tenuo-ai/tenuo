@@ -1431,7 +1431,7 @@ impl WarrantBuilder {
             }
         }
 
-        // required_approvers must be paired with a guard map: the guard map
+        // required_approvers must be paired with an approval gate map: the gate map
         // specifies which tools require approval. Without one, required_approvers
         // has no effect at authorization time.
         if self
@@ -1441,10 +1441,10 @@ impl WarrantBuilder {
             .unwrap_or(false)
             && !self
                 .extensions
-                .contains_key(crate::guard::GUARD_EXTENSION_KEY)
+                .contains_key(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
         {
             return Err(Error::Validation(
-                "required_approvers requires a guard map: add a tenuo.guards extension \
+                "required_approvers requires an approval gate map: add a tenuo.approval_gates extension \
                  specifying which tools need approval"
                     .to_string(),
             ));
@@ -1634,17 +1634,17 @@ impl<'a> AttenuationBuilder<'a> {
                 ),
             };
 
-        // Inherit tenuo.guards from parent — guards propagate automatically
+        // Inherit tenuo.approval_gates from parent — approval gates propagate automatically
         // during delegation and are scoped to the child's tool set at build() time.
         let mut extensions = BTreeMap::new();
-        if let Some(guard_bytes) = parent
+        if let Some(gate_bytes) = parent
             .payload
             .extensions
-            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .get(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
         {
             extensions.insert(
-                crate::guard::GUARD_EXTENSION_KEY.to_string(),
-                guard_bytes.clone(),
+                crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+                gate_bytes.clone(),
             );
         }
 
@@ -1766,11 +1766,11 @@ impl<'a> AttenuationBuilder<'a> {
 
     /// Add an extension.
     ///
-    /// The `tenuo.guards` key is system-managed (inherited from parent and
+    /// The `tenuo.approval_gates` key is system-managed (inherited from parent and
     /// propagated automatically) and cannot be overwritten here.
     pub fn extension(mut self, key: impl Into<String>, value: Vec<u8>) -> Self {
         let key = key.into();
-        if key == crate::guard::GUARD_EXTENSION_KEY {
+        if key == crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY {
             return self;
         }
         self.extensions.insert(key, value);
@@ -1944,23 +1944,26 @@ impl<'a> AttenuationBuilder<'a> {
 
         self.validate_multisig_monotonicity()?;
 
-        // Propagate guards: scope inherited guard map to the child's tool set.
-        // Guards for tools the child doesn't have are dropped.
-        if let Some(guard_bytes) = self
+        // Propagate approval gates: scope inherited gate map to the child's tool set.
+        // Gates for tools the child doesn't have are dropped.
+        if let Some(gate_bytes) = self
             .extensions
-            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .get(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
             .cloned()
         {
-            let parent_guards = crate::guard::parse_guard_map(Some(&guard_bytes))?;
-            if let Some(parent_guards) = parent_guards {
-                match crate::guard::propagate_guards(&parent_guards, &self.tools) {
+            let parent_gates = crate::approval_gate::parse_approval_gate_map(Some(&gate_bytes))?;
+            if let Some(parent_gates) = parent_gates {
+                match crate::approval_gate::propagate_approval_gates(&parent_gates, &self.tools) {
                     Some(scoped) => {
-                        let encoded = crate::guard::encode_guard_map(&scoped)?;
-                        self.extensions
-                            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
+                        let encoded = crate::approval_gate::encode_approval_gate_map(&scoped)?;
+                        self.extensions.insert(
+                            crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+                            encoded,
+                        );
                     }
                     None => {
-                        self.extensions.remove(crate::guard::GUARD_EXTENSION_KEY);
+                        self.extensions
+                            .remove(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY);
                     }
                 }
             }
@@ -2175,16 +2178,16 @@ impl OwnedAttenuationBuilder {
                 ),
             };
 
-        // Inherit tenuo.guards from parent
+        // Inherit tenuo.approval_gates from parent
         let mut extensions = BTreeMap::new();
-        if let Some(guard_bytes) = parent
+        if let Some(gate_bytes) = parent
             .payload
             .extensions
-            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .get(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
         {
             extensions.insert(
-                crate::guard::GUARD_EXTENSION_KEY.to_string(),
-                guard_bytes.clone(),
+                crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+                gate_bytes.clone(),
             );
         }
 
@@ -2400,10 +2403,10 @@ impl OwnedAttenuationBuilder {
 
     /// Add an extension.
     ///
-    /// The `tenuo.guards` key is system-managed and cannot be overwritten.
+    /// The `tenuo.approval_gates` key is system-managed and cannot be overwritten.
     pub fn extension(mut self, key: impl Into<String>, value: Vec<u8>) -> Self {
         let key = key.into();
-        if key == crate::guard::GUARD_EXTENSION_KEY {
+        if key == crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY {
             return self;
         }
         self.extensions.insert(key, value);
@@ -2412,34 +2415,43 @@ impl OwnedAttenuationBuilder {
 
     /// Add extension (FFI).
     ///
-    /// The `tenuo.guards` key is system-managed and cannot be overwritten.
+    /// The `tenuo.approval_gates` key is system-managed and cannot be overwritten.
     pub fn add_extension(&mut self, key: String, value: Vec<u8>) {
-        if key == crate::guard::GUARD_EXTENSION_KEY {
+        if key == crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY {
             return;
         }
         self.extensions.insert(key, value);
     }
 
-    /// Add or merge guard bytes into the `tenuo.guards` extension.
+    /// Add or merge approval gate bytes into the `tenuo.approval_gates` extension.
     ///
-    /// Merges with any inherited parent guards using union semantics
+    /// Merges with any inherited parent gates using union semantics
     /// (more-restrictive wins for conflicts). Scoping to child tools
-    /// still happens during `build()` via `propagate_guards`.
-    pub fn set_guards_extension(&mut self, bytes: Vec<u8>) -> Result<()> {
-        let explicit = match crate::guard::parse_guard_map(Some(&bytes))? {
+    /// still happens during `build()` via `propagate_approval_gates`.
+    pub fn set_approval_gates_extension(&mut self, bytes: Vec<u8>) -> Result<()> {
+        let explicit = match crate::approval_gate::parse_approval_gate_map(Some(&bytes))? {
             Some(g) => g,
             None => return Ok(()),
         };
-        let merged = match self.extensions.get(crate::guard::GUARD_EXTENSION_KEY) {
-            Some(existing) => match crate::guard::parse_guard_map(Some(existing))? {
-                Some(inherited) => crate::guard::merge_guard_maps(&inherited, &explicit),
-                None => explicit,
-            },
+        let merged = match self
+            .extensions
+            .get(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
+        {
+            Some(existing) => {
+                match crate::approval_gate::parse_approval_gate_map(Some(existing))? {
+                    Some(inherited) => {
+                        crate::approval_gate::merge_approval_gate_maps(&inherited, &explicit)
+                    }
+                    None => explicit,
+                }
+            }
             None => explicit,
         };
-        let encoded = crate::guard::encode_guard_map(&merged)?;
-        self.extensions
-            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
+        let encoded = crate::approval_gate::encode_approval_gate_map(&merged)?;
+        self.extensions.insert(
+            crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+            encoded,
+        );
         Ok(())
     }
 
@@ -2720,42 +2732,49 @@ impl OwnedAttenuationBuilder {
 
         self.validate_multisig_monotonicity()?;
 
-        // Propagate guards: scope inherited guard map to the child's tool set.
-        if let Some(guard_bytes) = self
+        // Propagate approval gates: scope inherited gate map to the child's tool set.
+        if let Some(gate_bytes) = self
             .extensions
-            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .get(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
             .cloned()
         {
-            let parent_guards = crate::guard::parse_guard_map(Some(&guard_bytes))?;
-            if let Some(parent_guards) = parent_guards {
-                match crate::guard::propagate_guards(&parent_guards, &self.tools) {
+            let parent_gates = crate::approval_gate::parse_approval_gate_map(Some(&gate_bytes))?;
+            if let Some(parent_gates) = parent_gates {
+                match crate::approval_gate::propagate_approval_gates(&parent_gates, &self.tools) {
                     Some(scoped) => {
-                        let encoded = crate::guard::encode_guard_map(&scoped)?;
-                        self.extensions
-                            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
+                        let encoded = crate::approval_gate::encode_approval_gate_map(&scoped)?;
+                        self.extensions.insert(
+                            crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+                            encoded,
+                        );
                     }
                     None => {
-                        self.extensions.remove(crate::guard::GUARD_EXTENSION_KEY);
+                        self.extensions
+                            .remove(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY);
                     }
                 }
             }
         }
 
-        // Defense-in-depth: verify the final child guard map is monotonically
-        // at least as strict as the parent's guards. This catches any code path
-        // that bypassed `set_guards_extension` (e.g. raw `add_extension` calls)
-        // and accidentally weakened a guard.
+        // Defense-in-depth: verify the final child gate map is monotonically
+        // at least as strict as the parent's gates. This catches any code path
+        // that bypassed `set_approval_gates_extension` (e.g. raw `add_extension` calls)
+        // and accidentally weakened a gate.
         {
-            let parent_guard_bytes = self.parent.extension(crate::guard::GUARD_EXTENSION_KEY);
-            let parent_guards = crate::guard::parse_guard_map(parent_guard_bytes)?;
-            let child_guard_bytes = self.extensions.get(crate::guard::GUARD_EXTENSION_KEY);
-            let child_guards = crate::guard::parse_guard_map(child_guard_bytes)?;
-            crate::guard::verify_guard_monotonicity(
-                parent_guards.as_ref(),
-                child_guards.as_ref(),
+            let parent_gate_bytes = self
+                .parent
+                .extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY);
+            let parent_gates = crate::approval_gate::parse_approval_gate_map(parent_gate_bytes)?;
+            let child_gate_bytes = self
+                .extensions
+                .get(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY);
+            let child_gates = crate::approval_gate::parse_approval_gate_map(child_gate_bytes)?;
+            crate::approval_gate::verify_approval_gate_monotonicity(
+                parent_gates.as_ref(),
+                child_gates.as_ref(),
                 &self.tools,
             )
-            .map_err(|e| Error::Validation(format!("guard monotonicity violation: {e}")))?;
+            .map_err(|e| Error::Validation(format!("approval gate monotonicity violation: {e}")))?;
         }
 
         let holder = self
@@ -2909,18 +2928,18 @@ pub struct IssuanceBuilder<'a> {
 impl<'a> IssuanceBuilder<'a> {
     /// Create a new issuance builder.
     ///
-    /// Inherits `tenuo.guards` from the issuer warrant as a template —
-    /// guards propagate to issued execution warrants.
+    /// Inherits `tenuo.approval_gates` from the issuer warrant as a template —
+    /// approval gates propagate to issued execution warrants.
     fn new(issuer: &'a Warrant) -> Self {
         let mut extensions = BTreeMap::new();
-        if let Some(guard_bytes) = issuer
+        if let Some(gate_bytes) = issuer
             .payload
             .extensions
-            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .get(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
         {
             extensions.insert(
-                crate::guard::GUARD_EXTENSION_KEY.to_string(),
-                guard_bytes.clone(),
+                crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+                gate_bytes.clone(),
             );
         }
 
@@ -3011,10 +3030,10 @@ impl<'a> IssuanceBuilder<'a> {
 
     /// Add an extension.
     ///
-    /// The `tenuo.guards` key is system-managed and cannot be overwritten.
+    /// The `tenuo.approval_gates` key is system-managed and cannot be overwritten.
     pub fn extension(mut self, key: impl Into<String>, value: Vec<u8>) -> Self {
         let key = key.into();
-        if key == crate::guard::GUARD_EXTENSION_KEY {
+        if key == crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY {
             return self;
         }
         self.extensions.insert(key, value);
@@ -3205,22 +3224,25 @@ impl<'a> IssuanceBuilder<'a> {
             constraints.validate_depth()?;
         }
 
-        // Propagate guards from issuer template, scoped to issued tools.
-        if let Some(guard_bytes) = self
+        // Propagate approval gates from issuer template, scoped to issued tools.
+        if let Some(gate_bytes) = self
             .extensions
-            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .get(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
             .cloned()
         {
-            let parent_guards = crate::guard::parse_guard_map(Some(&guard_bytes))?;
-            if let Some(parent_guards) = parent_guards {
-                match crate::guard::propagate_guards(&parent_guards, &self.tools) {
+            let parent_gates = crate::approval_gate::parse_approval_gate_map(Some(&gate_bytes))?;
+            if let Some(parent_gates) = parent_gates {
+                match crate::approval_gate::propagate_approval_gates(&parent_gates, &self.tools) {
                     Some(scoped) => {
-                        let encoded = crate::guard::encode_guard_map(&scoped)?;
-                        self.extensions
-                            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
+                        let encoded = crate::approval_gate::encode_approval_gate_map(&scoped)?;
+                        self.extensions.insert(
+                            crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+                            encoded,
+                        );
                     }
                     None => {
-                        self.extensions.remove(crate::guard::GUARD_EXTENSION_KEY);
+                        self.extensions
+                            .remove(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY);
                     }
                 }
             }
@@ -3370,17 +3392,17 @@ pub struct OwnedIssuanceBuilder {
 impl OwnedIssuanceBuilder {
     /// Create a new owned issuance builder.
     ///
-    /// Inherits `tenuo.guards` from the issuer warrant as a template.
+    /// Inherits `tenuo.approval_gates` from the issuer warrant as a template.
     pub fn new(issuer: Warrant) -> Self {
         let mut extensions = BTreeMap::new();
-        if let Some(guard_bytes) = issuer
+        if let Some(gate_bytes) = issuer
             .payload
             .extensions
-            .get(crate::guard::GUARD_EXTENSION_KEY)
+            .get(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
         {
             extensions.insert(
-                crate::guard::GUARD_EXTENSION_KEY.to_string(),
-                guard_bytes.clone(),
+                crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+                gate_bytes.clone(),
             );
         }
 
@@ -3547,43 +3569,52 @@ impl OwnedIssuanceBuilder {
 
     /// Add extension (FFI).
     ///
-    /// The `tenuo.guards` key is system-managed and cannot be overwritten.
+    /// The `tenuo.approval_gates` key is system-managed and cannot be overwritten.
     pub fn add_extension(&mut self, key: String, value: Vec<u8>) {
-        if key == crate::guard::GUARD_EXTENSION_KEY {
+        if key == crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY {
             return;
         }
         self.extensions.insert(key, value);
     }
 
-    /// Add or merge guard bytes into the `tenuo.guards` extension.
+    /// Add or merge approval gate bytes into the `tenuo.approval_gates` extension.
     ///
-    /// Merges with any inherited parent guards using union semantics
+    /// Merges with any inherited parent gates using union semantics
     /// (more-restrictive wins for conflicts). Scoping to child tools
-    /// still happens during `build()` via `propagate_guards`.
-    pub fn set_guards_extension(&mut self, bytes: Vec<u8>) -> Result<()> {
-        let explicit = match crate::guard::parse_guard_map(Some(&bytes))? {
+    /// still happens during `build()` via `propagate_approval_gates`.
+    pub fn set_approval_gates_extension(&mut self, bytes: Vec<u8>) -> Result<()> {
+        let explicit = match crate::approval_gate::parse_approval_gate_map(Some(&bytes))? {
             Some(g) => g,
             None => return Ok(()),
         };
-        let merged = match self.extensions.get(crate::guard::GUARD_EXTENSION_KEY) {
-            Some(existing) => match crate::guard::parse_guard_map(Some(existing))? {
-                Some(inherited) => crate::guard::merge_guard_maps(&inherited, &explicit),
-                None => explicit,
-            },
+        let merged = match self
+            .extensions
+            .get(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
+        {
+            Some(existing) => {
+                match crate::approval_gate::parse_approval_gate_map(Some(existing))? {
+                    Some(inherited) => {
+                        crate::approval_gate::merge_approval_gate_maps(&inherited, &explicit)
+                    }
+                    None => explicit,
+                }
+            }
             None => explicit,
         };
-        let encoded = crate::guard::encode_guard_map(&merged)?;
-        self.extensions
-            .insert(crate::guard::GUARD_EXTENSION_KEY.to_string(), encoded);
+        let encoded = crate::approval_gate::encode_approval_gate_map(&merged)?;
+        self.extensions.insert(
+            crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+            encoded,
+        );
         Ok(())
     }
 
     /// Add an extension.
     ///
-    /// The `tenuo.guards` key is system-managed and cannot be overwritten.
+    /// The `tenuo.approval_gates` key is system-managed and cannot be overwritten.
     pub fn extension(mut self, key: impl Into<String>, value: Vec<u8>) -> Self {
         let key = key.into();
-        if key == crate::guard::GUARD_EXTENSION_KEY {
+        if key == crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY {
             return self;
         }
         self.extensions.insert(key, value);
@@ -4218,14 +4249,14 @@ mod tests {
 
     #[test]
     fn test_multisig_root_warrant() {
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
 
         let issuer = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
 
-        let mut guards = GuardMap::new();
-        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
 
         let warrant = Warrant::builder()
             .tool("sensitive_action", ConstraintSet::new())
@@ -4233,7 +4264,10 @@ mod tests {
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(2)
             .holder(issuer.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
             .build(&issuer)
             .unwrap();
 
@@ -4244,14 +4278,14 @@ mod tests {
 
     #[test]
     fn test_multisig_default_all_must_sign() {
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
 
         let issuer = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
 
-        let mut guards = GuardMap::new();
-        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
 
         // Set approvers but NOT min_approvals - should require all
         let warrant = Warrant::builder()
@@ -4259,7 +4293,10 @@ mod tests {
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .holder(issuer.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
             // min_approvals NOT set
             .build(&issuer)
             .unwrap();
@@ -4287,14 +4324,14 @@ mod tests {
 
     #[test]
     fn test_multisig_attenuation_add_approvers() {
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
         let issuer = create_test_keypair();
         let delegator = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
 
-        let mut guards = GuardMap::new();
-        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
 
         // Root with 1 approver
         let root = Warrant::builder()
@@ -4303,7 +4340,10 @@ mod tests {
             .required_approvers(vec![approver1.public_key()])
             .min_approvals(1)
             .holder(issuer.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
             .build(&issuer)
             .unwrap();
 
@@ -4324,14 +4364,14 @@ mod tests {
 
     #[test]
     fn test_multisig_attenuation_cannot_remove_approvers() {
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
         let issuer = create_test_keypair();
         let delegatee = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
 
-        let mut guards = GuardMap::new();
-        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
 
         // Root with 2 approvers
         let root = Warrant::builder()
@@ -4340,7 +4380,10 @@ mod tests {
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(1)
             .holder(issuer.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
             .build(&issuer)
             .unwrap();
 
@@ -4358,14 +4401,14 @@ mod tests {
 
     #[test]
     fn test_multisig_attenuation_cannot_lower_threshold() {
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
         let issuer = create_test_keypair();
         let delegatee = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
 
-        let mut guards = GuardMap::new();
-        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
 
         // Root with threshold of 2
         let root = Warrant::builder()
@@ -4374,7 +4417,10 @@ mod tests {
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(2)
             .holder(issuer.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
             .build(&issuer)
             .unwrap();
 

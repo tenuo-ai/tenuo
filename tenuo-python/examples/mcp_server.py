@@ -7,7 +7,7 @@ Demonstrates server-side Tenuo authorization inside an MCP server.
 Three patterns are shown:
   1. MCPVerifier with fastmcp     — recommended for most servers
   2. MCPVerifier without config   — raw mode, field names = constraint names
-  3. Guard-triggered approval flow — re-submit protocol for guarded tools
+  3. Approval-gate-triggered approval flow — re-submit protocol for gated tools
 
 The server verifies every incoming tool call against a Tenuo warrant
 embedded in ``_tenuo`` by the client (see mcp_client.py, inject_warrant=True).
@@ -20,7 +20,6 @@ Run:
   fastmcp run mcp_server.py       # alternate runner
 """
 
-import base64
 import logging
 import os
 
@@ -131,22 +130,22 @@ def create_server_raw():
 
 
 # ============================================================================
-# 3.  Guard-triggered approval flow
+# 3.  Approval-gate-triggered approval flow
 # ============================================================================
 
-def create_server_with_guards():
-    """Server that handles guard-triggered re-submit for high-risk tools.
+def create_server_with_approval_gates():
+    """Server that handles approval-gate-triggered re-submit for high-risk tools.
 
-    Some warrants attach guards to specific tools — e.g. ``transfer``
-    above $10,000 requires human approval.  When a guard fires:
+    Some warrants attach approval gates to specific tools — e.g. ``transfer``
+    above $10,000 requires human approval.  When a gate fires:
 
-      1. ``verifier.verify()`` returns ``result.is_guard_triggered == True``
+      1. ``verifier.verify()`` returns ``result.is_approval_required == True``
       2. The server returns JSON-RPC error ``-32002`` to the client
       3. The client obtains ``SignedApproval`` objects from authorized approvers
       4. The client re-submits the same call with approvals in ``_tenuo.approvals``
-      5. ``verifier.verify()`` now passes — approvals satisfy the guard
+      5. ``verifier.verify()`` now passes — approvals satisfy the gate
 
-    This example shows how to detect and handle the guard-triggered case
+    This example shows how to detect and handle the approval-gate-triggered case
     with structured JSON-RPC errors.
     """
     from fastmcp import FastMCP
@@ -166,23 +165,22 @@ def create_server_with_guards():
     )
     verifier = MCPVerifier(authorizer=authorizer)
 
-    mcp = FastMCP("tenuo-guarded-server")
+    mcp = FastMCP("tenuo-gated-server")
 
     @mcp.tool()
     async def transfer(amount: float, destination: str, **kwargs) -> str:
         """Transfer funds (may require human approval).
 
-        If the warrant has a guard on ``transfer`` and no approvals are
+        If the warrant has an approval gate on ``transfer`` and no approvals are
         supplied, the verification result will indicate ``-32002``.
         """
         result = verifier.verify(
             "transfer", {"amount": amount, "destination": destination, **kwargs}
         )
 
-        if result.is_guard_triggered:
-            # Return structured error so the client knows to collect approvals
+        if result.is_approval_required:
             log.info(
-                "Guard triggered for transfer amount=%.2f — requesting approval",
+                "Approval gate triggered for transfer amount=%.2f — requesting approval",
                 amount,
             )
             raise MCPAuthorizationError(result)

@@ -107,7 +107,7 @@ echo '    -H "Content-Type: application/json" \'
 echo '    -d '"'"'{"tool":"test","constraints":{},"ttl_seconds":60}'"'"
 echo ""
 echo "Run the demo:"
-echo "  docker compose up demo-agent"
+echo "  docker compose up"
 echo ""
 echo "View logs:"
 echo "  docker compose logs -f"

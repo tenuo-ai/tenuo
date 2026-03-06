@@ -5,7 +5,7 @@ description: Warrant-based authorization for inter-agent communication
 
 # Tenuo A2A Integration
 
-> **Status**: Implemented (MVP)
+> **Status**: Production Ready
 
 ## Overview
 
@@ -147,6 +147,63 @@ async def read_file(path: str) -> str:
 
 # uvicorn server:server.app --host 0.0.0.0 --port 8000
 ```
+
+---
+
+## Automated Registration (CSR Handshake)
+
+A2A supports an automated handshake for agent registration, eliminating the need for out-of-band key sharing. This follows the Certificate Signing Request (CSR) pattern.
+
+The connecting agent dynamically generates a self-signed challenge token to crypographically prove key ownership. The server verifies this signature and uses a registered handler to decide what capabilities to grant, minting a fresh delegation warrant on the fly. 
+
+**Server (Control Plane / Parent Agent):**
+
+```python
+from tenuo.a2a.types import VerifiedWarrantRequest
+
+# The handler decides whether to grant the requested capabilities
+async def registration_handler(req: VerifiedWarrantRequest, issue):
+    if req.verified_key_hex not in ALLOWLIST:
+        raise RegistrationDeniedError("Agent not approved")
+    
+    # Issue a new warrant bound to the requested capabilities
+    await issue(capabilities=req.capabilities, ttl=86400) # 24 hrs
+
+server = (A2AServerBuilder()
+    .name("Control Plane")
+    .url("https://control.example.com")
+    .key(server_signing_key) # MUST be a SigningKey to issue warrants
+    .trust(server_signing_key.public_key)
+    .registration_handler(registration_handler) # Enable handshake
+    .build())
+```
+
+**Client (Child Agent):**
+
+```python
+from tenuo.a2a import A2AClient
+from tenuo import SigningKey
+
+client = A2AClient("https://control.example.com")
+worker_key = SigningKey.generate() 
+
+# Request a warrant with specific capabilities
+# The client automatically generates the self-signed challenge token
+warrant = await client.request_warrant(
+    signing_key=worker_key,
+    capabilities={"search_papers": {}}
+)
+
+# You can now immediately use this warrant (and key) for tasks
+result = await client.send_task(
+    skill="search_papers",
+    arguments={"query": "AI Agents"},
+    warrant=warrant,
+    signing_key=worker_key
+)
+```
+
+**Note:** Extension data (like AWS Nitro Enclaves or SGX TEE quotes) can be attached to the request via the `extensions` parameter in `request_warrant()` and inspected in the server handler via `req.extensions`.
 
 ### Client (Orchestrator)
 

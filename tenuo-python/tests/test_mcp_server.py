@@ -145,7 +145,7 @@ class TestMCPVerificationResult:
         )
         assert result.to_jsonrpc_error()["code"] == -32001
 
-    def test_is_guard_triggered_true(self):
+    def test_is_approval_required_true(self):
         result = MCPVerificationResult(
             allowed=False,
             tool="transfer",
@@ -153,9 +153,9 @@ class TestMCPVerificationResult:
             constraints={},
             jsonrpc_error_code=-32002,
         )
-        assert result.is_guard_triggered is True
+        assert result.is_approval_required is True
 
-    def test_is_guard_triggered_false(self):
+    def test_is_approval_required_false(self):
         result = MCPVerificationResult(
             allowed=False,
             tool="read_file",
@@ -163,7 +163,7 @@ class TestMCPVerificationResult:
             constraints={},
             jsonrpc_error_code=-32001,
         )
-        assert result.is_guard_triggered is False
+        assert result.is_approval_required is False
 
 
 class TestMCPAuthorizationError:
@@ -406,12 +406,12 @@ class TestDenialScenarios:
 
 
 # ---------------------------------------------------------------------------
-# MCPVerifier — guard triggered
+# MCPVerifier — approval gate triggered
 # ---------------------------------------------------------------------------
 
 
-class TestGuardTriggered:
-    def test_guard_fires_returns_minus_32002(
+class TestApprovalGateTriggered:
+    def test_gate_fires_returns_minus_32002(
         self,
         issuer_key: SigningKey,
         agent_key: SigningKey,
@@ -423,7 +423,7 @@ class TestGuardTriggered:
             issuer_key,
             capabilities={"transfer": {}},
             holder=agent_key.public_key,
-            guards={"transfer": None},  # whole-tool guard
+            approval_gates={"transfer": None},  # whole-tool gate
             required_approvers=[approver_key.public_key],
             min_approvals=1,
         )
@@ -432,11 +432,11 @@ class TestGuardTriggered:
         result = MCPVerifier(authorizer=authorizer).verify("transfer", arguments)
 
         assert not result.allowed
-        assert result.is_guard_triggered
+        assert result.is_approval_required
         assert result.jsonrpc_error_code == -32002
         assert "approvals" in (result.denial_reason or "").lower()
 
-    def test_guard_satisfied_with_valid_approval(
+    def test_gate_satisfied_with_valid_approval(
         self,
         issuer_key: SigningKey,
         agent_key: SigningKey,
@@ -448,7 +448,7 @@ class TestGuardTriggered:
             issuer_key,
             capabilities={"transfer": {}},
             holder=agent_key.public_key,
-            guards={"transfer": None},
+            approval_gates={"transfer": None},
             required_approvers=[approver_key.public_key],
             min_approvals=1,
         )
@@ -478,7 +478,7 @@ class TestGuardTriggered:
         result = MCPVerifier(authorizer=authorizer).verify("transfer", arguments)
 
         assert result.allowed
-        assert not result.is_guard_triggered
+        assert not result.is_approval_required
 
 
 # ---------------------------------------------------------------------------

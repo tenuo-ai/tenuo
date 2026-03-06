@@ -1,12 +1,12 @@
-"""Tests for warrant-level guard API (per-tool approval gates)."""
+"""Tests for warrant-level approval gate API (per-tool approval gates)."""
 
 import time
 
 import pytest
 
 from tenuo import Authorizer, Pattern, SigningKey, Warrant
-from tenuo.exceptions import GuardTriggered
-from tenuo_core import evaluate_guards as _evaluate_guards
+from tenuo.exceptions import ApprovalGateTriggered
+from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
 
 
 @pytest.fixture
@@ -17,7 +17,7 @@ def keys():
     return root, holder, approver
 
 
-def _mint_guarded(root, holder, approver, guards, capabilities=None):
+def _mint_gated(root, holder, approver, approval_gates, capabilities=None):
     caps = capabilities or {
         "delete_file": {"path": Pattern("*")},
         "read_file": {"path": Pattern("*")},
@@ -29,7 +29,7 @@ def _mint_guarded(root, holder, approver, guards, capabilities=None):
         holder=holder.public_key,
         required_approvers=[approver.public_key],
         min_approvals=1,
-        guards=guards,
+        approval_gates=approval_gates,
     )
 
 
@@ -40,76 +40,76 @@ def _authorize(warrant, key, tool, args, root_pk, approvals=None):
 
 
 # ============================================================================
-# Whole-tool guards
+# Whole-tool approval gates
 # ============================================================================
 
 
-class TestWholeToolGuard:
-    def test_unguarded_tool_allowed(self, keys):
+class TestWholeToolApprovalGate:
+    def test_ungated_tool_allowed(self, keys):
         root, holder, approver = keys
-        w = _mint_guarded(root, holder, approver, guards={"delete_file": None})
+        w = _mint_gated(root, holder, approver, approval_gates={"delete_file": None})
         _authorize(w, holder, "read_file", {"path": "/tmp/x"}, root.public_key)
 
-    def test_guarded_tool_raises_guard_triggered(self, keys):
+    def test_gated_tool_raises_approval_gate_triggered(self, keys):
         root, holder, approver = keys
-        w = _mint_guarded(root, holder, approver, guards={"delete_file": None})
-        with pytest.raises(GuardTriggered) as exc_info:
+        w = _mint_gated(root, holder, approver, approval_gates={"delete_file": None})
+        with pytest.raises(ApprovalGateTriggered) as exc_info:
             _authorize(w, holder, "delete_file", {"path": "/tmp/x"}, root.public_key)
         assert exc_info.value.tool == "delete_file"
 
-    def test_multiple_tools_guarded(self, keys):
+    def test_multiple_tools_gated(self, keys):
         root, holder, approver = keys
-        w = _mint_guarded(
+        w = _mint_gated(
             root,
             holder,
             approver,
-            guards={"delete_file": None, "read_file": None},
+            approval_gates={"delete_file": None, "read_file": None},
         )
-        with pytest.raises(GuardTriggered):
+        with pytest.raises(ApprovalGateTriggered):
             _authorize(w, holder, "delete_file", {"path": "/x"}, root.public_key)
-        with pytest.raises(GuardTriggered):
+        with pytest.raises(ApprovalGateTriggered):
             _authorize(w, holder, "read_file", {"path": "/x"}, root.public_key)
 
 
 # ============================================================================
-# Per-argument guards
+# Per-argument approval gates
 # ============================================================================
 
 
-class TestArgGuard:
-    def test_matching_arg_triggers_guard(self, keys):
+class TestArgApprovalGate:
+    def test_matching_arg_triggers_gate(self, keys):
         root, holder, approver = keys
-        w = _mint_guarded(
+        w = _mint_gated(
             root,
             holder,
             approver,
-            guards={"delete_file": {"path": Pattern("/etc/*")}},
+            approval_gates={"delete_file": {"path": Pattern("/etc/*")}},
         )
-        with pytest.raises(GuardTriggered):
+        with pytest.raises(ApprovalGateTriggered):
             _authorize(
                 w, holder, "delete_file", {"path": "/etc/passwd"}, root.public_key
             )
 
     def test_non_matching_arg_allowed(self, keys):
         root, holder, approver = keys
-        w = _mint_guarded(
+        w = _mint_gated(
             root,
             holder,
             approver,
-            guards={"delete_file": {"path": Pattern("/etc/*")}},
+            approval_gates={"delete_file": {"path": Pattern("/etc/*")}},
         )
         _authorize(w, holder, "delete_file", {"path": "/tmp/safe"}, root.public_key)
 
-    def test_arg_guard_all_values(self, keys):
-        """None as arg guard value means all values trigger."""
+    def test_arg_gate_all_values(self, keys):
+        """None as arg gate value means all values trigger."""
         root, holder, approver = keys
-        w = _mint_guarded(
+        w = _mint_gated(
             root,
             holder,
             approver,
-            guards={"delete_file": {"path": None}},
+            approval_gates={"delete_file": {"path": None}},
         )
-        with pytest.raises(GuardTriggered):
+        with pytest.raises(ApprovalGateTriggered):
             _authorize(
                 w, holder, "delete_file", {"path": "/anything"}, root.public_key
             )
@@ -120,7 +120,7 @@ class TestArgGuard:
 # ============================================================================
 
 
-class TestMintBuilderGuards:
+class TestMintBuilderApprovalGates:
     def test_mint_builder_whole_tool(self, keys):
         root, holder, approver = keys
         w = (
@@ -129,13 +129,13 @@ class TestMintBuilderGuards:
             .capability("read_file", path=Pattern("*"))
             .required_approvers([approver.public_key])
             .min_approvals(1)
-            .guards({"delete_file": None})
+            .approval_gates({"delete_file": None})
             .holder(holder.public_key)
             .ttl(3600)
             .mint(root)
         )
         _authorize(w, holder, "read_file", {"path": "/x"}, root.public_key)
-        with pytest.raises(GuardTriggered):
+        with pytest.raises(ApprovalGateTriggered):
             _authorize(w, holder, "delete_file", {"path": "/x"}, root.public_key)
 
     def test_mint_builder_per_arg(self, keys):
@@ -145,30 +145,29 @@ class TestMintBuilderGuards:
             .capability("write_file", path=Pattern("*"))
             .required_approvers([approver.public_key])
             .min_approvals(1)
-            .guards({"write_file": {"path": Pattern("/etc/*")}})
+            .approval_gates({"write_file": {"path": Pattern("/etc/*")}})
             .holder(holder.public_key)
             .ttl(3600)
             .mint(root)
         )
         _authorize(w, holder, "write_file", {"path": "/tmp/ok"}, root.public_key)
-        with pytest.raises(GuardTriggered):
+        with pytest.raises(ApprovalGateTriggered):
             _authorize(
                 w, holder, "write_file", {"path": "/etc/shadow"}, root.public_key
             )
 
 
 # ============================================================================
-# Guard propagation via delegation
+# Approval gate propagation via delegation
 # ============================================================================
 
 
-class TestGuardPropagation:
-    def test_child_inherits_guards(self, keys):
-        """Attenuated warrants inherit parent guards scoped to their tool set."""
+class TestApprovalGatePropagation:
+    def test_child_inherits_approval_gates(self, keys):
+        """Attenuated warrants inherit parent approval gates scoped to their tool set."""
         root, _holder, approver = keys
         child_key = SigningKey.generate()
 
-        # Self-signed parent so chain verification works with authorize_one
         parent = Warrant.issue(
             keypair=root,
             capabilities={
@@ -179,7 +178,7 @@ class TestGuardPropagation:
             holder=root.public_key,
             required_approvers=[approver.public_key],
             min_approvals=1,
-            guards={"delete_file": None, "read_file": None},
+            approval_gates={"delete_file": None, "read_file": None},
         )
         child = (
             parent.grant_builder()
@@ -188,9 +187,9 @@ class TestGuardPropagation:
             .ttl(1800)
             .grant(root)
         )
-        # Child inherits read_file guard from parent (delete_file dropped since
+        # Child inherits read_file gate from parent (delete_file dropped since
         # child doesn't have that capability)
-        with pytest.raises(GuardTriggered):
+        with pytest.raises(ApprovalGateTriggered):
             _authorize(
                 child, child_key, "read_file", {"path": "/x"}, root.public_key
             )
@@ -201,9 +200,9 @@ class TestGuardPropagation:
 # ============================================================================
 
 
-class TestGuardEdgeCases:
-    def test_no_guards_no_guard_triggered(self, keys):
-        """Warrant without guards should never raise GuardTriggered."""
+class TestApprovalGateEdgeCases:
+    def test_no_gates_no_approval_gate_triggered(self, keys):
+        """Warrant without approval gates should never raise ApprovalGateTriggered."""
         root, holder, approver = keys
         w = Warrant.issue(
             keypair=root,
@@ -213,21 +212,21 @@ class TestGuardEdgeCases:
         )
         _authorize(w, holder, "delete_file", {"path": "/etc/passwd"}, root.public_key)
 
-    def test_empty_guard_map(self, keys):
-        """Empty guard map means no tools are guarded."""
+    def test_empty_approval_gate_map(self, keys):
+        """Empty approval gate map means no tools are gated."""
         root, holder, approver = keys
-        w = _mint_guarded(root, holder, approver, guards={})
+        w = _mint_gated(root, holder, approver, approval_gates={})
         _authorize(w, holder, "delete_file", {"path": "/x"}, root.public_key)
 
 
 # ============================================================================
-# GrantBuilder.guards() — attenuation
+# GrantBuilder.approval_gates() — attenuation
 # ============================================================================
 
 
-class TestGrantBuilderGuards:
-    def test_grant_builder_adds_guard_on_unguarded_parent(self, keys):
-        """Parent has no guards; child adds a guard via GrantBuilder."""
+class TestGrantBuilderApprovalGates:
+    def test_grant_builder_adds_gate_on_ungated_parent(self, keys):
+        """Parent has no approval gates; child adds a gate via GrantBuilder."""
         root, _holder, _approver = keys
         child_key = SigningKey.generate()
 
@@ -247,17 +246,17 @@ class TestGrantBuilderGuards:
             .capability("read_file")
             .holder(child_key.public_key)
             .ttl(1800)
-            .guards({"exec": None})
+            .approval_gates({"exec": None})
             .grant(root)
         )
 
-        # guard fires for exec
-        assert _evaluate_guards(child, "exec", {})
-        # guard doesn't fire for read_file (not guarded)
-        assert not _evaluate_guards(child, "read_file", {})
+        # gate fires for exec
+        assert _evaluate_approval_gates(child, "exec", {})
+        # gate doesn't fire for read_file (not gated)
+        assert not _evaluate_approval_gates(child, "read_file", {})
 
-    def test_grant_builder_inherits_and_adds_second_guard(self, keys):
-        """Parent has exec guard; child adds read_file guard as well."""
+    def test_grant_builder_inherits_and_adds_second_gate(self, keys):
+        """Parent has exec gate; child adds read_file gate as well."""
         root, _holder, approver = keys
         child_key = SigningKey.generate()
 
@@ -271,7 +270,7 @@ class TestGrantBuilderGuards:
             holder=root.public_key,
             required_approvers=[approver.public_key],
             min_approvals=1,
-            guards={"exec": None},
+            approval_gates={"exec": None},
         )
 
         child = (
@@ -280,15 +279,15 @@ class TestGrantBuilderGuards:
             .capability("read_file")
             .holder(child_key.public_key)
             .ttl(1800)
-            .guards({"read_file": None})
+            .approval_gates({"read_file": None})
             .grant(root)
         )
 
-        # both guards should be present
-        assert _evaluate_guards(child, "exec", {})
-        assert _evaluate_guards(child, "read_file", {})
+        # both gates should be present
+        assert _evaluate_approval_gates(child, "exec", {})
+        assert _evaluate_approval_gates(child, "read_file", {})
 
-    def test_grant_builder_guard_merge_whole_tool_wins(self, keys):
+    def test_grant_builder_gate_merge_whole_tool_wins(self, keys):
         """Parent: exec=per_arg; child adds exec=whole-tool → whole wins."""
         root, _holder, approver = keys
         child_key = SigningKey.generate()
@@ -300,7 +299,7 @@ class TestGrantBuilderGuards:
             holder=root.public_key,
             required_approvers=[approver.public_key],
             min_approvals=1,
-            guards={"exec": {"command": None}},  # per-arg
+            approval_gates={"exec": {"command": None}},  # per-arg
         )
 
         child = (
@@ -308,15 +307,15 @@ class TestGrantBuilderGuards:
             .capability("exec")
             .holder(child_key.public_key)
             .ttl(1800)
-            .guards({"exec": None})  # upgrade to whole-tool
+            .approval_gates({"exec": None})  # upgrade to whole-tool
             .grant(root)
         )
 
         # whole-tool wins: always fires regardless of args
-        assert _evaluate_guards(child, "exec", {})
+        assert _evaluate_approval_gates(child, "exec", {})
 
-    def test_grant_builder_no_guards_preserves_inherited(self, keys):
-        """GrantBuilder without .guards() should still preserve parent guards."""
+    def test_grant_builder_no_gates_preserves_inherited(self, keys):
+        """GrantBuilder without .approval_gates() should still preserve parent gates."""
         root, _holder, approver = keys
         child_key = SigningKey.generate()
 
@@ -327,7 +326,7 @@ class TestGrantBuilderGuards:
             holder=root.public_key,
             required_approvers=[approver.public_key],
             min_approvals=1,
-            guards={"exec": None},
+            approval_gates={"exec": None},
         )
 
         child = (
@@ -338,18 +337,18 @@ class TestGrantBuilderGuards:
             .grant(root)
         )
 
-        # inherited exec guard should be present
-        assert _evaluate_guards(child, "exec", {})
+        # inherited exec gate should be present
+        assert _evaluate_approval_gates(child, "exec", {})
 
 
 # ============================================================================
-# IssuanceBuilder.guards()
+# IssuanceBuilder.approval_gates()
 # ============================================================================
 
 
-class TestIssuanceBuildGuards:
-    def test_issuance_builder_adds_guard(self, keys):
-        """IssuanceBuilder.guards() embeds guards into the issued execution warrant."""
+class TestIssuanceBuildApprovalGates:
+    def test_issuance_builder_adds_gate(self, keys):
+        """IssuanceBuilder.approval_gates() embeds gates into the issued execution warrant."""
         root, holder, approver = keys
 
         issuer = Warrant.issue_issuer(
@@ -365,15 +364,15 @@ class TestIssuanceBuildGuards:
             .tool("read_file")
             .holder(holder.public_key)
             .ttl(1800)
-            .guards({"exec": None})
+            .approval_gates({"exec": None})
             .build(root)
         )
 
-        assert _evaluate_guards(exec_warrant, "exec", {})
-        assert not _evaluate_guards(exec_warrant, "read_file", {})
+        assert _evaluate_approval_gates(exec_warrant, "exec", {})
+        assert not _evaluate_approval_gates(exec_warrant, "read_file", {})
 
-    def test_issuance_builder_merges_guards_from_two_calls(self, keys):
-        """Calling .guards() twice on IssuanceBuilder merges both guard maps."""
+    def test_issuance_builder_merges_gates_from_two_calls(self, keys):
+        """Calling .approval_gates() twice on IssuanceBuilder merges both gate maps."""
         root, holder, _approver = keys
 
         issuer = Warrant.issue_issuer(
@@ -389,22 +388,22 @@ class TestIssuanceBuildGuards:
             .tool("read_file")
             .holder(holder.public_key)
             .ttl(1800)
-            .guards({"exec": None})
-            .guards({"read_file": None})  # second call merges
+            .approval_gates({"exec": None})
+            .approval_gates({"read_file": None})  # second call merges
             .build(root)
         )
 
-        assert _evaluate_guards(exec_warrant, "exec", {})
-        assert _evaluate_guards(exec_warrant, "read_file", {})
+        assert _evaluate_approval_gates(exec_warrant, "exec", {})
+        assert _evaluate_approval_gates(exec_warrant, "read_file", {})
 
 
 # ============================================================================
-# evaluate_guards Python binding
+# evaluate_approval_gates Python binding
 # ============================================================================
 
 
-class TestEvaluateGuardsBinding:
-    def test_evaluate_guards_no_guard_map_returns_false(self, keys):
+class TestEvaluateApprovalGatesBinding:
+    def test_evaluate_approval_gates_no_gate_map_returns_false(self, keys):
         root, holder, _ = keys
         w = Warrant.issue(
             keypair=root,
@@ -412,52 +411,52 @@ class TestEvaluateGuardsBinding:
             ttl_seconds=3600,
             holder=holder.public_key,
         )
-        assert not _evaluate_guards(w, "exec", {})
+        assert not _evaluate_approval_gates(w, "exec", {})
 
-    def test_evaluate_guards_whole_tool_fires(self, keys):
+    def test_evaluate_approval_gates_whole_tool_fires(self, keys):
         root, holder, approver = keys
-        w = _mint_guarded(root, holder, approver, guards={"delete_file": None})
-        assert _evaluate_guards(w, "delete_file", {"path": "/x"})
+        w = _mint_gated(root, holder, approver, approval_gates={"delete_file": None})
+        assert _evaluate_approval_gates(w, "delete_file", {"path": "/x"})
 
-    def test_evaluate_guards_unguarded_tool_returns_false(self, keys):
+    def test_evaluate_approval_gates_ungated_tool_returns_false(self, keys):
         root, holder, approver = keys
-        w = _mint_guarded(root, holder, approver, guards={"delete_file": None})
-        assert not _evaluate_guards(w, "read_file", {"path": "/x"})
+        w = _mint_gated(root, holder, approver, approval_gates={"delete_file": None})
+        assert not _evaluate_approval_gates(w, "read_file", {"path": "/x"})
 
-    def test_evaluate_guards_per_arg_match_fires(self, keys):
+    def test_evaluate_approval_gates_per_arg_match_fires(self, keys):
         root, holder, approver = keys
-        w = _mint_guarded(
+        w = _mint_gated(
             root, holder, approver,
-            guards={"delete_file": {"path": Pattern("/etc/*")}},
+            approval_gates={"delete_file": {"path": Pattern("/etc/*")}},
         )
-        assert _evaluate_guards(w, "delete_file", {"path": "/etc/passwd"})
+        assert _evaluate_approval_gates(w, "delete_file", {"path": "/etc/passwd"})
 
-    def test_evaluate_guards_per_arg_no_match_returns_false(self, keys):
+    def test_evaluate_approval_gates_per_arg_no_match_returns_false(self, keys):
         root, holder, approver = keys
-        w = _mint_guarded(
+        w = _mint_gated(
             root, holder, approver,
-            guards={"delete_file": {"path": Pattern("/etc/*")}},
+            approval_gates={"delete_file": {"path": Pattern("/etc/*")}},
         )
-        assert not _evaluate_guards(w, "delete_file", {"path": "/tmp/safe"})
+        assert not _evaluate_approval_gates(w, "delete_file", {"path": "/tmp/safe"})
 
 
 # ============================================================================
-# Enforcement integration: guard fires, no required_approvers → denied
+# Enforcement integration: gate fires, no required_approvers → denied
 # ============================================================================
 
 
-class TestEnforcementGuards:
-    def test_guard_fires_no_required_approvers_denied(self, keys):
-        """Guard fires but warrant has no required_approvers → denied with guard_misconfigured."""
+class TestEnforcementApprovalGates:
+    def test_gate_fires_no_required_approvers_denied(self, keys):
+        """Gate fires but warrant has no required_approvers → denied with approval_gate_misconfigured."""
         root, holder, _approver = keys
-        # Warrant with guard but WITHOUT required_approvers
+        # Warrant with gate but WITHOUT required_approvers
         w = Warrant.issue(
             keypair=root,
             capabilities={"exec": {}},
             ttl_seconds=3600,
             holder=holder.public_key,
             # No required_approvers!
-            guards={"exec": None},
+            approval_gates={"exec": None},
         )
         bound = w.bind(holder)
 
@@ -465,12 +464,12 @@ class TestEnforcementGuards:
 
         result = enforce_tool_call("exec", {}, bound)
         assert not result.allowed
-        assert result.error_type == "guard_misconfigured"
+        assert result.error_type == "approval_gate_misconfigured"
 
-    def test_guard_fires_valid_approval_allowed(self, keys):
-        """Guard fires, valid approval provided → allowed."""
+    def test_gate_fires_valid_approval_allowed(self, keys):
+        """Gate fires, valid approval provided → allowed."""
         root, holder, approver = keys
-        from tenuo.approval import ApprovalRequired, require_approval, sign_approval
+        from tenuo.approval import sign_approval
         from tenuo._enforcement import enforce_tool_call
         from tenuo_core import py_compute_request_hash as compute_hash
 
@@ -481,7 +480,7 @@ class TestEnforcementGuards:
             holder=holder.public_key,
             required_approvers=[approver.public_key],
             min_approvals=1,
-            guards={"exec": None},
+            approval_gates={"exec": None},
         )
         bound = w.bind(holder)
 
@@ -502,8 +501,8 @@ class TestEnforcementGuards:
         result = enforce_tool_call("exec", {}, bound, approvals=[signed])
         assert result.allowed
 
-    def test_guard_does_not_fire_no_approval_needed(self, keys):
-        """Guard does not fire (tool not guarded) → allowed without approval."""
+    def test_gate_does_not_fire_no_approval_needed(self, keys):
+        """Gate does not fire (tool not gated) → allowed without approval."""
         root, holder, approver = keys
         from tenuo._enforcement import enforce_tool_call
 
@@ -514,16 +513,16 @@ class TestEnforcementGuards:
             holder=holder.public_key,
             required_approvers=[approver.public_key],
             min_approvals=1,
-            guards={"exec": None},  # only exec is guarded
+            approval_gates={"exec": None},  # only exec is gated
         )
         bound = w.bind(holder)
 
-        # read_file is not guarded → should be allowed
+        # read_file is not gated → should be allowed
         result = enforce_tool_call("read_file", {}, bound)
         assert result.allowed
 
-    def test_guard_fires_no_approvals_raises_approval_required(self, keys):
-        """Guard fires, no approvals provided, no handler → ApprovalRequired."""
+    def test_gate_fires_no_approvals_raises_approval_required(self, keys):
+        """Gate fires, no approvals provided, no handler → ApprovalRequired."""
         root, holder, approver = keys
         from tenuo.approval import ApprovalRequired
         from tenuo._enforcement import enforce_tool_call
@@ -535,21 +534,20 @@ class TestEnforcementGuards:
             holder=holder.public_key,
             required_approvers=[approver.public_key],
             min_approvals=1,
-            guards={"exec": None},
+            approval_gates={"exec": None},
         )
         bound = w.bind(holder)
 
         with pytest.raises(ApprovalRequired):
             enforce_tool_call("exec", {}, bound)
 
-    def test_guard_takes_precedence_approval_policy_skipped(self, keys):
-        """When guard fires and is satisfied, approval_policy is not checked."""
+    def test_gate_takes_precedence_approval_policy_skipped(self, keys):
+        """When gate fires and is satisfied, approval_policy is not checked."""
         root, holder, approver = keys
         extra_approver = SigningKey.generate()
 
         from tenuo.approval import (
             ApprovalPolicy,
-            ApprovalRequired,
             require_approval,
             sign_approval,
             ApprovalRequest,
@@ -564,7 +562,7 @@ class TestEnforcementGuards:
             holder=holder.public_key,
             required_approvers=[approver.public_key],
             min_approvals=1,
-            guards={"exec": None},
+            approval_gates={"exec": None},
         )
         bound = w.bind(holder)
 
@@ -580,14 +578,14 @@ class TestEnforcementGuards:
         )
         signed = sign_approval(approval_request, approver)
 
-        # Policy requires a different approver (extra_approver), but guard uses
-        # warrant's required_approvers (approver). Guard fires first.
+        # Policy requires a different approver (extra_approver), but gate uses
+        # warrant's required_approvers (approver). Gate fires first.
         strict_policy = ApprovalPolicy(
             require_approval("exec"),
             trusted_approvers=[extra_approver.public_key],
         )
 
-        # Since guard is satisfied (valid approval from warrant's approver),
+        # Since gate is satisfied (valid approval from warrant's approver),
         # the strict policy is never reached → allowed
         result = enforce_tool_call(
             "exec", {}, bound,
