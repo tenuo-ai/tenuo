@@ -312,6 +312,87 @@ def _get_allowed_tools(bound_warrant: BoundWarrant) -> Optional[List[str]]:
 # =============================================================================
 
 
+def _collect_approvals_for_approval_gate(
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    bound_warrant: BoundWarrant,
+    trusted_approvers: List[Any],
+    threshold: int,
+    handler: "Optional[ApprovalHandler]",
+    approvals: Optional[List[Any]],
+) -> List[Any]:
+    """Collect and verify approvals for an approval-gate-triggered tool call.
+
+    Unlike ``_check_approval()`` (which applies policy rules and returns None on
+    success), this function always creates an ApprovalRequest — the gate always fires —
+    and **returns** the verified ``SignedApproval`` objects so the caller can forward
+    them to ``validate(approvals=...)`` to satisfy the Rust approval gate check atomically
+    with PoP verification.
+
+    Raises:
+        ApprovalRequired: If no approvals or handler.
+        ApprovalDenied: If handler denies.
+        ApprovalVerificationError: If Rust core rejects the approvals.
+    """
+    from tenuo_core import (
+        py_compute_request_hash as _compute_hash,
+    )
+    from tenuo_core import (
+        verify_approvals as _verify_approvals,
+    )
+
+    from .approval import (
+        ApprovalRequest,
+        ApprovalRequired,
+        ApprovalVerificationError,
+    )
+
+    warrant_id = getattr(bound_warrant, "id", None) or ""
+    holder_key = getattr(bound_warrant, "holder_key", None)
+    request_hash = _compute_hash(warrant_id, tool_name, tool_args, holder_key)
+    request = ApprovalRequest(
+        tool=tool_name,
+        arguments=tool_args,
+        warrant_id=warrant_id,
+        request_hash=request_hash,
+    )
+
+    collected: List[Any] = []
+
+    if approvals:
+        collected = list(approvals)
+    elif handler is not None:
+        result = handler(request)
+
+        if inspect.isawaitable(result):
+            coro = cast("Any", result)
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    result = pool.submit(asyncio.run, coro).result()
+            else:
+                result = asyncio.run(coro)
+
+        collected = result if isinstance(result, list) else [result]
+    else:
+        raise ApprovalRequired(request)
+
+    if not collected:
+        raise ApprovalRequired(request)
+
+    try:
+        _verify_approvals(request_hash, collected, trusted_approvers, threshold)
+    except Exception as e:
+        raise ApprovalVerificationError(request, reason=str(e))
+
+    return collected
+
+
 def _check_approval(
     tool_name: str,
     tool_args: Dict[str, Any],
@@ -371,7 +452,7 @@ def _check_approval(
 
     collected: List[Any] = []
 
-    # Path 1: caller-provided approvals (spec §6 — the cloud / async path)
+    # Path 1: caller-provided approvals (spec §6 — the out-of-band / async path)
     if approvals:
         collected = list(approvals)
 
@@ -509,8 +590,9 @@ def enforce_tool_call(
         approvals: List of caller-provided SignedApproval objects (spec §6).
             When a policy rule matches, these are checked first — the first
             approval whose request_hash matches is verified. This is the
-            primary path for cloud/async workflows where the approval was
-            obtained out-of-band. Takes precedence over approval_handler.
+            primary path for out-of-band/async workflows where the approval was
+            obtained externally (e.g. approval board, Slack bot, control plane API).
+            Takes precedence over approval_handler.
 
     Returns:
         EnforcementResult with allowed status and denial details.
@@ -630,10 +712,51 @@ def enforce_tool_call(
     # - Tool in warrant (including wildcard *)
     # - Proof-of-Possession signature
     # - Constraint satisfaction
+    # - Approval gate satisfaction (when gate fires + approvals provided)
     # =========================================================================
     try:
+        # =================================================================
+        # APPROVAL GATE EVALUATION (before validate — gates fire in Rust's
+        # authorize_one without approvals, causing ApprovalRequired)
+        # Must run here so we can collect+verify approvals BEFORE calling
+        # validate(), then pass them so Rust satisfies the gate atomically
+        # with the PoP check.
+        # =================================================================
+        from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
+
+        _warrant_obj = bound_warrant.warrant
+        _gate_approvals: Optional[List[Any]] = None
+
+        if _evaluate_approval_gates(_warrant_obj, tool_name, tool_args):
+            _gate_approvers = _warrant_obj.required_approvers()
+            _gate_threshold = _warrant_obj.approval_threshold()
+
+            if not _gate_approvers:
+                return EnforcementResult(
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason=(
+                        f"Approval gate triggered for '{tool_name}' but warrant has "
+                        "no required_approvers configured"
+                    ),
+                    error_type="approval_gate_misconfigured",
+                    warrant_id=warrant_id,
+                )
+
+            # Collect and verify approvals — raises if missing or invalid.
+            # Returns verified SignedApproval objects to pass to validate().
+            _gate_approvals = _collect_approvals_for_approval_gate(
+                tool_name, tool_args, bound_warrant,
+                _gate_approvers, _gate_threshold,
+                approval_handler, approvals,
+            )
+
         if verify_mode == "sign":
-            validation_result: ValidationResult = bound_warrant.validate(tool_name, tool_args)
+            # Pass approval gate approvals (if any) so Rust satisfies the gate check.
+            validation_result: ValidationResult = bound_warrant.validate(
+                tool_name, tool_args, approvals=_gate_approvals
+            )
 
             if not validation_result.success:
                 # Extract detailed failure info from ValidationResult
@@ -664,6 +787,7 @@ def enforce_tool_call(
                     tool_name,
                     tool_args,
                     signature=precomputed_signature,
+                    approvals=_gate_approvals or [],
                 )
             except Exception as chain_err:
                 denial_reason = str(chain_err)
@@ -690,6 +814,15 @@ def enforce_tool_call(
                 "args_keys": list(tool_args.keys()),
             }
         )
+
+        # Approval gate was satisfied above — skip approval_policy (one flow per call).
+        if _gate_approvals is not None:
+            return EnforcementResult(
+                allowed=True,
+                tool=tool_name,
+                arguments=tool_args,
+                warrant_id=warrant_id,
+            )
 
         # =================================================================
         # APPROVAL POLICY CHECK (after warrant authorization)

@@ -83,7 +83,7 @@ pub enum ErrorCode {
     UnsupportedApprovalVersion = 1704,
     ApprovalPayloadInvalid = 1705,
     ApprovalRequestHashMismatch = 1706,
-    GuardTriggered = 1707,
+    ApprovalRequired = 1707,
 
     // Revocation errors (1800-1899)
     WarrantRevoked = 1800,
@@ -170,7 +170,7 @@ impl ErrorCode {
             Self::UnsupportedApprovalVersion => "unsupported-approval-version",
             Self::ApprovalPayloadInvalid => "approval-payload-invalid",
             Self::ApprovalRequestHashMismatch => "approval-request-hash-mismatch",
-            Self::GuardTriggered => "guard-triggered",
+            Self::ApprovalRequired => "approval-required",
 
             // Revocation errors
             Self::WarrantRevoked => "warrant-revoked",
@@ -269,7 +269,7 @@ impl ErrorCode {
             Self::UnsupportedApprovalVersion => "Approval version not supported",
             Self::ApprovalPayloadInvalid => "Approval payload is invalid",
             Self::ApprovalRequestHashMismatch => "Approval request hash mismatch",
-            Self::GuardTriggered => "Guard triggered: approval required for this action",
+            Self::ApprovalRequired => "Approval required for this action",
 
             // Revocation errors
             Self::WarrantRevoked => "Warrant has been revoked",
@@ -598,12 +598,12 @@ pub enum Error {
     #[error("invalid approval: {0}")]
     InvalidApproval(String),
 
-    /// Guard triggered — approval required for this tool invocation.
+    /// Approval required for this tool invocation.
     ///
     /// Contains the `ApprovalRequest` with all context needed by the
     /// approval engine to obtain human approval.
-    #[error("guard triggered: approval required for tool '{tool}'")]
-    GuardTriggered {
+    #[error("approval required for tool '{tool}'")]
+    ApprovalRequired {
         tool: String,
         request: Box<crate::approval::ApprovalRequest>,
     },
@@ -734,7 +734,7 @@ impl Error {
             Self::ApprovalExpired { .. } => ErrorCode::ApprovalExpired,
             Self::InsufficientApprovals { .. } => ErrorCode::InsufficientApprovals,
             Self::InvalidApproval(_) => ErrorCode::ApprovalInvalid,
-            Self::GuardTriggered { .. } => ErrorCode::GuardTriggered,
+            Self::ApprovalRequired { .. } => ErrorCode::ApprovalRequired,
             Self::UnknownProvider(_) => ErrorCode::ApprovalInvalid,
 
             // Other Errors

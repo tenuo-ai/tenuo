@@ -67,8 +67,8 @@ TTL (Time-to-Live) Configuration:
     Resolution in sign_approval(): explicit ttl_seconds > request.suggested_ttl > 300s
 
     For inline handlers (cli_prompt), the TTL starts when the human approves.
-    For async/cloud workflows (caller-provided approvals), the TTL starts when
-    the external system signs -- use longer TTLs (hours/days) for approval
+    For out-of-band/async workflows (caller-provided approvals), the TTL starts
+    when the external system signs -- use longer TTLs (hours/days) for approval
     boards, Slack bots, or ticketing systems.
 
 Error Diagnostics:
@@ -307,7 +307,7 @@ class ApprovalPolicy:
         default_ttl: Default TTL in seconds for signed approvals created
             by handlers. Propagated to handlers via ApprovalRequest.suggested_ttl.
             None means handlers use their own default (typically 300s).
-            Set to longer values for async/cloud workflows (e.g. 86400 for 24h).
+            Set to longer values for out-of-band/async workflows (e.g. 86400 for 24h).
 
     Example:
         # 1-of-1 (single approver)
@@ -609,7 +609,7 @@ def webhook(
     def _handle(request: ApprovalRequest) -> SignedApproval:
         raise NotImplementedError(
             "Webhook approval handler is a placeholder. "
-            "Use tenuo.cloud or implement a custom handler."
+            "Implement a custom handler or use the control plane approval API."
         )
 
     return _handle

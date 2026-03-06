@@ -2203,27 +2203,32 @@ impl Authorizer {
                 self.pop_max_windows,
             )?;
 
-            // Guard evaluation: determines whether this invocation requires approval.
-            // Parse guard map once, then evaluate.
-            let guard_map =
-                crate::guard::parse_guard_map(leaf.extension(crate::guard::GUARD_EXTENSION_KEY))?;
-            let needs_approval = crate::guard::evaluate_guards(guard_map.as_ref(), tool, args)?;
+            // Approval gate evaluation: determines whether this invocation requires approval.
+            // Parse approval gate map once, then evaluate.
+            let approval_gate_map = crate::approval_gate::parse_approval_gate_map(
+                leaf.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+            )?;
+            let needs_approval = crate::approval_gate::evaluate_approval_gates(
+                approval_gate_map.as_ref(),
+                tool,
+                args,
+            )?;
 
             if needs_approval {
-                // Guard fired — verify approvers are configured. A guard without
+                // Approval gate fired — verify approvers are configured. An approval gate without
                 // required_approvers is a misconfiguration: no one can approve.
                 let approvers = match leaf.required_approvers() {
                     Some(a) if !a.is_empty() => a.clone(),
                     _ => {
                         return Err(Error::InvalidApproval(format!(
-                            "guard requires approval for tool '{}' but warrant has no required_approvers configured",
+                            "approval gate requires approval for tool '{}' but warrant has no required_approvers configured",
                             tool
                         )));
                     }
                 };
 
                 if approvals.is_empty() {
-                    // No approvals provided — emit GuardTriggered with an
+                    // No approvals provided — emit ApprovalRequired with an
                     // ApprovalRequest so the engine can obtain human approval.
                     let request_hash = crate::approval::compute_request_hash(
                         &leaf.id().to_string(),
@@ -2241,7 +2246,7 @@ impl Authorizer {
                         threshold,
                         leaf.payload.expires_at,
                     );
-                    return Err(Error::GuardTriggered {
+                    return Err(Error::ApprovalRequired {
                         tool: tool.to_string(),
                         request: Box::new(request),
                     });
@@ -2250,8 +2255,8 @@ impl Authorizer {
                 // or invalid, InsufficientApprovals propagates with diagnostics.
                 self.verify_approvals(leaf, tool, args, approvals)?;
             }
-            // needs_approval = false → tool is free (either guard map present
-            // and no guard matched, or no guard map and no required_approvers)
+            // needs_approval = false → tool is free (either approval gate map present
+            // and no approval gate matched, or no approval gate map and no required_approvers)
         }
 
         Ok(result)
@@ -2749,13 +2754,13 @@ mod tests {
 
     #[test]
     fn test_authorize_requires_approval_when_multisig() {
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
 
         let issuer_keypair = SigningKey::generate();
         let admin_keypair = SigningKey::generate();
 
-        let mut guards = GuardMap::new();
-        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
 
         let warrant = Warrant::builder()
             .capability("sensitive_action", ConstraintSet::new())
@@ -2763,7 +2768,10 @@ mod tests {
             .required_approvers(vec![admin_keypair.public_key()])
             .min_approvals(1)
             .holder(issuer_keypair.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
             .build(&issuer_keypair)
             .unwrap();
 
@@ -2774,30 +2782,30 @@ mod tests {
             .sign(&issuer_keypair, "sensitive_action", &args)
             .unwrap();
 
-        // Should FAIL without approval — guard fires, no approvals provided.
+        // Should FAIL without approval — approval gate fires, no approvals provided.
         let result =
             authorizer.authorize_one(&warrant, "sensitive_action", &args, Some(&pop_sig), &[]);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            err.to_string().contains("guard triggered"),
-            "expected GuardTriggered error, got: {}",
+            err.to_string().contains("approval required"),
+            "expected ApprovalRequired error, got: {}",
             err,
         );
-        assert_eq!(err.code(), crate::error::ErrorCode::GuardTriggered);
+        assert_eq!(err.code(), crate::error::ErrorCode::ApprovalRequired);
     }
 
     #[test]
     fn test_authorize_valid_approval() {
         use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
         use chrono::{Duration as ChronoDuration, Utc};
 
         let issuer_keypair = SigningKey::generate();
         let admin_keypair = SigningKey::generate();
 
-        let mut guards = GuardMap::new();
-        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
 
         let warrant = Warrant::builder()
             .capability("sensitive_action", ConstraintSet::new())
@@ -2805,7 +2813,10 @@ mod tests {
             .required_approvers(vec![admin_keypair.public_key()])
             .min_approvals(1)
             .holder(issuer_keypair.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
             .build(&issuer_keypair)
             .unwrap();
 
@@ -2858,15 +2869,15 @@ mod tests {
     #[test]
     fn test_authorize_wrong_approver() {
         use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
         use chrono::{Duration as ChronoDuration, Utc};
 
         let issuer_keypair = SigningKey::generate();
         let admin_keypair = SigningKey::generate();
         let other_keypair = SigningKey::generate(); // Not in required_approvers
 
-        let mut guards = GuardMap::new();
-        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
 
         let warrant = Warrant::builder()
             .capability("sensitive_action", ConstraintSet::new())
@@ -2874,7 +2885,10 @@ mod tests {
             .required_approvers(vec![admin_keypair.public_key()])
             .min_approvals(1)
             .holder(issuer_keypair.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
             .build(&issuer_keypair)
             .unwrap();
 
@@ -2926,7 +2940,7 @@ mod tests {
     #[test]
     fn test_authorize_2_of_3() {
         use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
         use chrono::{Duration as ChronoDuration, Utc};
 
         let issuer_keypair = SigningKey::generate();
@@ -2934,8 +2948,8 @@ mod tests {
         let admin2 = SigningKey::generate();
         let admin3 = SigningKey::generate();
 
-        let mut guards = GuardMap::new();
-        guards.insert("sensitive_action".into(), ToolGuard::whole_tool());
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
 
         let warrant = Warrant::builder()
             .capability("sensitive_action", ConstraintSet::new())
@@ -2947,7 +2961,10 @@ mod tests {
             ])
             .min_approvals(2)
             .holder(issuer_keypair.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
             .build(&issuer_keypair)
             .unwrap();
 
@@ -4238,18 +4255,18 @@ mod tests {
     }
 
     // =========================================================================
-    // Guard Integration Tests
+    // Approval Gate Integration Tests
     // =========================================================================
 
     #[test]
-    fn test_guard_triggered_on_guarded_tool_no_approvals() {
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+    fn test_approval_gate_triggered_on_gated_tool_no_approvals() {
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
 
         let root_key = SigningKey::generate();
         let approver_key = SigningKey::generate();
 
-        let mut guards = GuardMap::new();
-        guards.insert("email.delete".into(), ToolGuard::whole_tool());
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("email.delete".into(), ToolApprovalGate::whole_tool());
 
         let warrant = Warrant::builder()
             .capability("email.read", ConstraintSet::new())
@@ -4258,7 +4275,10 @@ mod tests {
             .required_approvers(vec![approver_key.public_key()])
             .min_approvals(1)
             .holder(root_key.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
             .build(&root_key)
             .unwrap();
 
@@ -4266,31 +4286,31 @@ mod tests {
         let args = HashMap::new();
         let sig = warrant.sign(&root_key, "email.delete", &args).unwrap();
 
-        // Guarded tool, no approvals → GuardTriggered
+        // Gated tool, no approvals → ApprovalRequired
         let result = authorizer.authorize_one(&warrant, "email.delete", &args, Some(&sig), &[]);
         let err = result.unwrap_err();
-        assert_eq!(err.code(), crate::error::ErrorCode::GuardTriggered);
+        assert_eq!(err.code(), crate::error::ErrorCode::ApprovalRequired);
 
         // The error carries the ApprovalRequest with correct metadata
-        if let Error::GuardTriggered { tool, request } = &err {
+        if let Error::ApprovalRequired { tool, request } = &err {
             assert_eq!(tool, "email.delete");
             assert_eq!(request.tool, "email.delete");
             assert_eq!(request.min_approvals, 1);
             assert_eq!(request.required_approvers.len(), 1);
         } else {
-            panic!("expected GuardTriggered, got: {}", err);
+            panic!("expected ApprovalRequired, got: {}", err);
         }
     }
 
     #[test]
-    fn test_unguarded_tool_passes_with_guard_map_present() {
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+    fn test_ungated_tool_passes_with_approval_gate_map_present() {
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
 
         let root_key = SigningKey::generate();
         let approver_key = SigningKey::generate();
 
-        let mut guards = GuardMap::new();
-        guards.insert("email.delete".into(), ToolGuard::whole_tool());
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("email.delete".into(), ToolApprovalGate::whole_tool());
 
         let warrant = Warrant::builder()
             .capability("email.read", ConstraintSet::new())
@@ -4299,7 +4319,10 @@ mod tests {
             .required_approvers(vec![approver_key.public_key()])
             .min_approvals(1)
             .holder(root_key.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
             .build(&root_key)
             .unwrap();
 
@@ -4307,22 +4330,22 @@ mod tests {
         let args = HashMap::new();
         let sig = warrant.sign(&root_key, "email.read", &args).unwrap();
 
-        // Unguarded tool with guard map present → passes (PoP only)
+        // Ungated tool with approval gate map present → passes (PoP only)
         let result = authorizer.authorize_one(&warrant, "email.read", &args, Some(&sig), &[]);
-        assert!(result.is_ok(), "unguarded tool should pass: {:?}", result);
+        assert!(result.is_ok(), "ungated tool should pass: {:?}", result);
     }
 
     #[test]
-    fn test_guarded_tool_passes_with_valid_approval() {
+    fn test_gated_tool_passes_with_valid_approval() {
         use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
         use chrono::Utc;
 
         let root_key = SigningKey::generate();
         let approver_key = SigningKey::generate();
 
-        let mut guards = GuardMap::new();
-        guards.insert("email.delete".into(), ToolGuard::whole_tool());
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("email.delete".into(), ToolApprovalGate::whole_tool());
 
         let warrant = Warrant::builder()
             .capability("email.delete", ConstraintSet::new())
@@ -4330,7 +4353,10 @@ mod tests {
             .required_approvers(vec![approver_key.public_key()])
             .min_approvals(1)
             .holder(root_key.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
             .build(&root_key)
             .unwrap();
 
@@ -4354,31 +4380,34 @@ mod tests {
         );
         let approval = SignedApproval::create(approval_payload, &approver_key);
 
-        // Guarded tool + valid approval → passes
+        // Gated tool + valid approval → passes
         let result =
             authorizer.authorize_one(&warrant, "email.delete", &args, Some(&sig), &[approval]);
         assert!(
             result.is_ok(),
-            "guarded tool with valid approval should pass: {:?}",
+            "gated tool with valid approval should pass: {:?}",
             result
         );
     }
 
     #[test]
-    fn test_guard_without_required_approvers_is_config_error() {
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+    fn test_approval_gate_without_required_approvers_is_config_error() {
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
 
         let root_key = SigningKey::generate();
 
-        let mut guards = GuardMap::new();
-        guards.insert("exec".into(), ToolGuard::whole_tool());
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("exec".into(), ToolApprovalGate::whole_tool());
 
-        // Warrant has guards but NO required_approvers — misconfiguration
+        // Warrant has approval gates but NO required_approvers — misconfiguration
         let warrant = Warrant::builder()
             .capability("exec", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .holder(root_key.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
             .build(&root_key)
             .unwrap();
 
@@ -4386,7 +4415,7 @@ mod tests {
         let args = HashMap::new();
         let sig = warrant.sign(&root_key, "exec", &args).unwrap();
 
-        // No approvals → guard fires but no approvers configured → error
+        // No approvals → approval gate fires but no approvers configured → error
         let result = authorizer.authorize_one(&warrant, "exec", &args, Some(&sig), &[]);
         let err = result.unwrap_err();
         assert!(
@@ -4397,21 +4426,24 @@ mod tests {
     }
 
     #[test]
-    fn test_guard_bypass_with_garbage_approvals_blocked() {
-        use crate::guard::{encode_guard_map, GuardMap, ToolGuard};
+    fn test_approval_gate_bypass_with_garbage_approvals_blocked() {
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
 
         let root_key = SigningKey::generate();
         let random_key = SigningKey::generate();
 
-        let mut guards = GuardMap::new();
-        guards.insert("exec".into(), ToolGuard::whole_tool());
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("exec".into(), ToolApprovalGate::whole_tool());
 
-        // Warrant has guards but NO required_approvers
+        // Warrant has approval gates but NO required_approvers
         let warrant = Warrant::builder()
             .capability("exec", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .holder(root_key.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
             .build(&root_key)
             .unwrap();
 
@@ -4419,7 +4451,7 @@ mod tests {
         let args = HashMap::new();
         let sig = warrant.sign(&root_key, "exec", &args).unwrap();
 
-        // Provide garbage approval — should NOT bypass the guard
+        // Provide garbage approval — should NOT bypass the approval gate
         let payload = crate::approval::ApprovalPayload::new(
             [0u8; 32],
             rand::random(),
@@ -4433,7 +4465,7 @@ mod tests {
             authorizer.authorize_one(&warrant, "exec", &args, Some(&sig), &[garbage_approval]);
         assert!(
             result.is_err(),
-            "guard bypass with garbage approvals must fail"
+            "approval gate bypass with garbage approvals must fail"
         );
         let err = result.unwrap_err();
         assert!(
@@ -4444,17 +4476,18 @@ mod tests {
     }
 
     #[test]
-    fn test_guard_propagation_through_delegation() {
-        use crate::guard::{
-            encode_guard_map, parse_guard_map, GuardMap, ToolGuard, GUARD_EXTENSION_KEY,
+    fn test_approval_gate_propagation_through_delegation() {
+        use crate::approval_gate::{
+            encode_approval_gate_map, parse_approval_gate_map, ApprovalGateMap, ToolApprovalGate,
+            APPROVAL_GATE_EXTENSION_KEY,
         };
 
         let root_key = SigningKey::generate();
         let child_key = SigningKey::generate();
 
-        let mut guards = GuardMap::new();
-        guards.insert("email.delete".into(), ToolGuard::whole_tool());
-        guards.insert("exec".into(), ToolGuard::whole_tool());
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("email.delete".into(), ToolApprovalGate::whole_tool());
+        approval_gates.insert("exec".into(), ToolApprovalGate::whole_tool());
 
         let parent = Warrant::builder()
             .capability("email.read", ConstraintSet::new())
@@ -4462,7 +4495,10 @@ mod tests {
             .capability("exec", ConstraintSet::new())
             .ttl(Duration::from_secs(600))
             .holder(root_key.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
             .build(&root_key)
             .unwrap();
 
@@ -4475,47 +4511,53 @@ mod tests {
             .build(&root_key)
             .unwrap();
 
-        // Child should have guards for email.delete only (exec dropped)
-        let child_guards = parse_guard_map(child.extension(GUARD_EXTENSION_KEY))
-            .unwrap()
-            .unwrap();
-        assert!(child_guards.contains_tool("email.delete"));
-        assert!(!child_guards.contains_tool("exec"));
+        // Child should have approval gates for email.delete only (exec dropped)
+        let child_approval_gates =
+            parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))
+                .unwrap()
+                .unwrap();
+        assert!(child_approval_gates.contains_tool("email.delete"));
+        assert!(!child_approval_gates.contains_tool("exec"));
     }
 
     #[test]
-    fn test_extension_cannot_override_inherited_guards() {
-        use crate::guard::{
-            encode_guard_map, parse_guard_map, GuardMap, ToolGuard, GUARD_EXTENSION_KEY,
+    fn test_extension_cannot_override_inherited_approval_gates() {
+        use crate::approval_gate::{
+            encode_approval_gate_map, parse_approval_gate_map, ApprovalGateMap, ToolApprovalGate,
+            APPROVAL_GATE_EXTENSION_KEY,
         };
 
         let root_key = SigningKey::generate();
         let child_key = SigningKey::generate();
 
-        let mut guards = GuardMap::new();
-        guards.insert("email.delete".into(), ToolGuard::whole_tool());
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("email.delete".into(), ToolApprovalGate::whole_tool());
 
         let parent = Warrant::builder()
             .capability("email.delete", ConstraintSet::new())
             .ttl(Duration::from_secs(600))
             .holder(root_key.public_key())
-            .extension("tenuo.guards", encode_guard_map(&guards).unwrap())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
             .build(&root_key)
             .unwrap();
 
-        // Attempt to override tenuo.guards via extension() — should be rejected
+        // Attempt to override tenuo.approval_gates via extension() — should be rejected
         let child = parent
             .attenuate()
             .capability("email.delete", ConstraintSet::new())
             .holder(child_key.public_key())
-            .extension("tenuo.guards", vec![])
+            .extension("tenuo.approval_gates", vec![])
             .build(&root_key)
             .unwrap();
 
-        // Guard should still be present (override was rejected)
-        let child_guards = parse_guard_map(child.extension(GUARD_EXTENSION_KEY))
-            .unwrap()
-            .unwrap();
-        assert!(child_guards.contains_tool("email.delete"));
+        // Approval gate should still be present (override was rejected)
+        let child_approval_gates =
+            parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))
+                .unwrap()
+                .unwrap();
+        assert!(child_approval_gates.contains_tool("email.delete"));
     }
 }

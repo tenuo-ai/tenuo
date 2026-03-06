@@ -7,7 +7,7 @@
 //! ## Security Limits
 //!
 //! - **Payload size**: Limited to [`MAX_WARRANT_SIZE`] (64 KB) to prevent memory exhaustion
-//! - **Constraint depth**: Limited to 16 levels to prevent stack overflow
+//! - **Constraint depth**: Limited to [`MAX_CONSTRAINT_DEPTH`](crate::MAX_CONSTRAINT_DEPTH) (32) levels to prevent stack overflow
 
 use crate::error::{Error, Result};
 use crate::warrant::Warrant;
@@ -35,6 +35,9 @@ pub const MAX_EXTENSION_VALUE_SIZE: usize = 8 * 1024;
 
 /// Maximum length of an extension key in bytes.
 pub const MAX_EXTENSION_KEY_SIZE: usize = 255;
+
+/// Maximum characters shown when truncating keys in error messages.
+pub const KEY_DISPLAY_TRUNCATION: usize = 32;
 
 /// Encode a warrant to a compact binary format.
 pub fn encode(warrant: &Warrant) -> Result<Vec<u8>> {

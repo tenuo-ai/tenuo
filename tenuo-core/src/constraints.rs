@@ -25,7 +25,7 @@
 //! ## Security: Constraint Depth Limit
 //!
 //! Recursive constraint types (`All`, `Any`, `Not`) are limited to a maximum
-//! nesting depth of [`MAX_CONSTRAINT_DEPTH`] (16) to prevent stack overflow
+//! nesting depth of [`MAX_CONSTRAINT_DEPTH`] (32) to prevent stack overflow
 //! attacks from maliciously crafted warrants.
 
 use crate::error::{Error, Result};

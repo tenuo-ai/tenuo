@@ -13,7 +13,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Union
 
-from .errors import A2AError, KeyMismatchError, WarrantExpiredError
+from .errors import A2AError, A2AErrorCode, KeyMismatchError, RegistrationDeniedError, RegistrationDisabledError, WarrantExpiredError
 from .types import (
     AgentCard,
     Message,
@@ -225,6 +225,89 @@ class A2AClient:
         self._default_warrant: Optional["Warrant"] = None
         self._default_signing_key: Optional["SigningKey"] = None
 
+    def validate_chain(
+        self,
+        chain: List[str],
+        trusted_roots: Optional[List[Any]] = None,
+    ) -> bool:
+        """Validate a warrant delegation chain.
+
+        Thin wrapper over the Rust warrant parser for client-side chain
+        validation.  Useful when the client receives a chain (e.g., from an
+        agent-card or a task response) and wants to verify its integrity before
+        trusting it.
+
+        Args:
+            chain: List of warrant tokens (base64 strings) in parent-first order,
+                   matching the ``X-Tenuo-Warrant-Chain`` header convention.
+            trusted_roots: Public keys trusted as root issuers.  If ``None``,
+                           falls back to the pinned key (``pin_key``) if set.
+
+        Returns:
+            ``True`` if the chain is structurally valid and all warrants are
+            unexpired.
+
+        Raises:
+            ValueError: If no trusted roots are available.
+            ImportError: If ``tenuo_core`` is not installed.
+            ChainValidationError: If any warrant is malformed, expired, or the
+                                   chain linkage is invalid.
+        """
+        import time
+
+        from .errors import ChainValidationError, WarrantExpiredError
+
+        roots = trusted_roots
+        if not roots and self.pin_key:
+            roots = [self.pin_key]
+        if not roots:
+            raise ValueError(
+                "validate_chain requires trusted_roots or a pinned key (set pin_key=)"
+            )
+
+        try:
+            from tenuo_core import Warrant
+        except ImportError as e:
+            raise ImportError(
+                "tenuo_core is required for chain validation"
+            ) from e
+
+        if not chain:
+            raise ChainValidationError("Empty warrant chain")
+
+        # Parse all warrants in the chain
+        chain_warrants = []
+        for i, token in enumerate(chain):
+            try:
+                w = Warrant.from_base64(token)
+                chain_warrants.append(w)
+            except Exception as e:
+                raise ChainValidationError(f"Invalid warrant at position {i}: {e}")
+
+        # Check expiry of every warrant in the chain
+        now = int(time.time())
+        for i, w in enumerate(chain_warrants):
+            exp = getattr(w, "exp", None)
+            if exp and exp < now:
+                raise WarrantExpiredError(f"Warrant at position {i} has expired")
+
+        # Verify chain linkage: each child's issuer must match its parent's holder.
+        for i in range(1, len(chain_warrants)):
+            parent = chain_warrants[i - 1]
+            child = chain_warrants[i]
+            parent_holder = getattr(parent, "sub", None) or getattr(parent, "holder", None)
+            child_issuer = getattr(child, "iss", None) or getattr(child, "issuer", None)
+            if parent_holder and child_issuer and str(parent_holder) != str(child_issuer):
+                raise ChainValidationError(
+                    f"Chain linkage broken at position {i}: "
+                    f"parent holder '{parent_holder}' != child issuer '{child_issuer}'"
+                )
+
+        # Note: cryptographic root-trust verification (issuer in trusted_roots) is
+        # performed by the Rust Authorizer on the server side.  Client-side we
+        # validate structure and expiry only.
+        return True
+
     async def _get_client(self):
         """Get or create httpx client."""
         if self._client is None:
@@ -294,6 +377,111 @@ class A2AClient:
 
         self._agent_card = card
         return card
+
+    # -------------------------------------------------------------------------
+    # Automated Registration (CSR Handshake)
+    # -------------------------------------------------------------------------
+
+    async def request_warrant(
+        self,
+        signing_key: Any,
+        capabilities: Dict[str, Any],
+        extensions: Optional[Dict[str, Any]] = None,
+        ttl_hint: int = 3600,
+    ) -> Any:
+        """
+        Request a warrant from the server via the automated CSR handshake.
+
+        Proves key ownership by sending a self-signed challenge token (TTL=120 s).
+        The server's ``registration_handler`` decides what capabilities to grant.
+
+        The signing key NEVER leaves this process — only the public key and
+        a self-signed challenge token are sent over the wire.
+
+        Args:
+            signing_key: Agent's ``SigningKey`` — proves identity, never sent
+            capabilities: Requested capabilities (server may grant a subset)
+            extensions: Optional extension data (e.g. TEE attestation quotes)
+            ttl_hint: Suggested TTL in seconds; server may choose differently
+
+        Returns:
+            ``tenuo_core.Warrant`` — ready to use directly in ``send_task()``
+
+        Raises:
+            RegistrationDisabledError: Server has no ``registration_handler``
+            RegistrationDeniedError: Handler explicitly denied the request
+            A2AError: Other registration failures
+            ImportError: If ``tenuo_core`` is not installed
+        """
+        try:
+            from tenuo_core import Warrant as _Warrant
+        except ImportError as e:
+            raise ImportError(
+                "tenuo_core is required for request_warrant. "
+                "Install with: uv pip install tenuo[a2a]"
+            ) from e
+
+        # Step 1: Create self-signed challenge warrant (proves key ownership).
+        # TTL=120s — short-lived to minimize replay window.
+        # iss is set automatically to signing_key's public key by Warrant.mint().
+        # "_csr" is a sentinel capability: the Rust core requires at least one
+        # capability but the server ignores them in challenge tokens.
+        challenge_warrant = _Warrant.mint(
+            keypair=signing_key,
+            holder=signing_key.public_key,
+            capabilities={"_csr": {}},
+            ttl_seconds=120,
+        )
+        challenge_token = challenge_warrant.to_base64()
+
+        # Step 2: Encode public key as hex
+        public_key_hex = signing_key.public_key.to_bytes().hex()
+
+        # Step 3: Build WarrantRequest params
+        from .types import WarrantRequest as _WarrantRequest
+
+        req = _WarrantRequest(
+            public_key=public_key_hex,
+            capabilities=capabilities,
+            challenge_token=challenge_token,
+            extensions=extensions or {},
+        )
+
+        # Step 4: POST agent/register
+        client = await self._get_client()
+        response = await client.post(
+            f"{self.url}/a2a",
+            json={
+                "jsonrpc": "2.0",
+                "method": "agent/register",
+                "params": req.to_dict(),
+                "id": 1,
+            },
+        )
+
+        data = response.json()
+
+        # Step 5: Map error responses to typed exceptions
+        if "error" in data:
+            error = data["error"]
+            code = error.get("code", A2AErrorCode.INTERNAL_ERROR)
+            message = error.get("message", "Registration failed")
+            error_data = error.get("data", {})
+
+            if code == A2AErrorCode.REGISTRATION_DISABLED:
+                raise RegistrationDisabledError(message, error_data)
+            elif code == A2AErrorCode.REGISTRATION_DENIED:
+                raise RegistrationDeniedError(message, error_data)
+            else:
+                raise A2AError(message, error_data)
+
+        # Step 6: Parse and return the issued warrant
+        result = data.get("result", {})
+        warrant_token = result.get("warrant")
+        if not warrant_token:
+            raise A2AError("Server returned success but no warrant token in result")
+
+        return _Warrant.from_base64(warrant_token)
 
     # -------------------------------------------------------------------------
     # Task Sending

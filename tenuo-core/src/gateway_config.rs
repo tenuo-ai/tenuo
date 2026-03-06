@@ -108,7 +108,7 @@ fn default_approval_header() -> String {
 }
 
 fn default_clock_tolerance() -> u64 {
-    30
+    crate::planes::DEFAULT_CLOCK_TOLERANCE_SECS as u64
 }
 
 impl Default for GatewaySettings {
@@ -161,6 +161,10 @@ pub struct ExtractionResult {
     pub warrant_base64: Option<String>,
     /// PoP signature (base64) extracted from `_tenuo.signature` (MCP only)
     pub signature_base64: Option<String>,
+    /// Pre-supplied approvals (base64-encoded CBOR) from `_tenuo.approvals` (MCP only).
+    /// Each entry is a base64-encoded `SignedApproval`. Pass to `authorize_one(approvals=...)`
+    /// so the Authorizer can satisfy warrant approval gates atomically with PoP verification.
+    pub approvals_base64: Vec<String>,
 }
 
 impl GatewayConfig {
@@ -227,6 +231,7 @@ impl GatewayConfig {
             tool: route.tool.clone(),
             warrant_base64: None, // HTTP uses headers, not embedded
             signature_base64: None,
+            approvals_base64: Vec::new(),
         })
     }
 
@@ -705,6 +710,7 @@ impl CompiledGatewayConfig {
             tool: route_match.route.tool.to_string(),
             warrant_base64: None, // HTTP uses headers, not embedded
             signature_base64: None,
+            approvals_base64: Vec::new(),
         })
     }
 }

@@ -398,22 +398,34 @@ Demos:
 
 ## A2A Integration (Multi-Agent)
 
-Warrant-based authorization for agent-to-agent communication:
+Warrant-based authorization for agent-to-agent communication via automated CSR handshake:
 
 ```python
-from tenuo.a2a import A2AServer, A2AClient
-from tenuo.constraints import Subpath, UrlSafe
+from tenuo.a2a import A2AServerBuilder, A2AClient
+from tenuo.constraints import UrlSafe
 
-server = A2AServer(
-    name="Research Agent",
-    url="https://research-agent.example.com",
-    public_key=my_public_key,
-    trusted_issuers=[orchestrator_key],
-)
+# Server: Define skills and decide what capabilities to grant
+server = (A2AServerBuilder()
+    .name("Research Agent")
+    .url("https://research-agent.example.com")
+    .key(my_public_key)
+    .trust(orchestrator_key)
+    .registration_handler(my_handler) # Enable CSR handshake
+    .build())
 
 @server.skill("search_papers", constraints={"sources": UrlSafe})
 async def search_papers(query: str, sources: list[str]) -> list[dict]:
     return await do_search(query, sources)
+
+# Client: Automatically fetch warrant and execute task
+client = A2AClient("https://research-agent.example.com")
+warrant = await client.request_warrant(signing_key=worker_key, capabilities={"search_papers": {}})
+result = await client.send_task(
+    skill="search_papers", 
+    arguments={"query": "AI Agents"},
+    warrant=warrant, 
+    signing_key=worker_key
+)
 ```
 
 See [A2A Integration](https://tenuo.ai/a2a) for full documentation.
@@ -519,15 +531,44 @@ warrant.capabilities   # dict of tool -> constraints
 
 _(Requires Python ≥3.10)_
 
+**Client** — connect to any MCP server with automatic warrant injection:
+
 ```python
 from tenuo.mcp import SecureMCPClient
 
-async with SecureMCPClient("python", ["mcp_server.py"]) as client:
-    tools = client.tools  # All tools wrapped with Tenuo
-    
+# Stdio (local subprocess)
+async with SecureMCPClient("python", ["server.py"]) as client:
     async with mint(Capability("read_file", path=Subpath("/data"))):
-        result = await tools["read_file"](path="/data/file.txt")
+        result = await client.tools["read_file"](path="/data/file.txt")
+
+# SSE or StreamableHTTP (remote server)
+async with SecureMCPClient(
+    url="https://mcp.example.com/mcp",
+    transport="http",          # or "sse"
+    inject_warrant=True,       # embed _tenuo in tool arguments
+) as client:
+    ...
 ```
+
+**Server** — verify warrants inside MCP tool handlers:
+
+```python
+from tenuo import Authorizer, PublicKey, CompiledMcpConfig, McpConfig
+from tenuo.mcp import MCPVerifier
+
+verifier = MCPVerifier(
+    authorizer=Authorizer(trusted_roots=[PublicKey.from_bytes(root_pub)]),
+    config=CompiledMcpConfig.compile(McpConfig.from_file("mcp-config.yaml")),
+)
+
+@mcp.tool()
+async def read_file(path: str, **kwargs) -> str:
+    clean = verifier.verify_or_raise("read_file", {"path": path, **kwargs})
+    return open(clean["path"]).read()
+```
+
+Guard-protected tools return JSON-RPC error `-32002` when approval is required.
+See `examples/mcp/` for complete examples.
 
 ## Security Considerations
 
@@ -604,7 +645,7 @@ python examples/fastapi_integration.py
 python examples/langchain/langgraph_protected.py
 
 # MCP integration
-python examples/mcp_integration.py
+python examples/mcp/mcp_client_demo.py
 ```
 
 ## Documentation

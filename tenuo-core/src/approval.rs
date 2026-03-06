@@ -414,10 +414,10 @@ pub fn compute_request_hash(
 }
 
 // ============================================================================
-// Approval Request (emitted when a guard fires)
+// Approval Request (emitted when an approval gate fires)
 // ============================================================================
 
-/// A request for human approval, emitted by the authorizer when a guard fires
+/// A request for human approval, emitted by the authorizer when an approval gate fires
 /// and no valid approval is present.
 ///
 /// This is a **convenience structure**, not a signed artifact. It provides the

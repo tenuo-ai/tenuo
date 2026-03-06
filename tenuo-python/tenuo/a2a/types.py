@@ -32,6 +32,9 @@ __all__ = [
     # Audit
     "AuditEvent",
     "AuditEventType",
+    # Registration (CSR handshake)
+    "WarrantRequest",
+    "VerifiedWarrantRequest",
     # Re-export (lazily imported via __getattr__)
     "Warrant",  # noqa: F822
 ]
@@ -333,6 +336,103 @@ class AuditEvent:
             "latency_ms": self.latency_ms,
             "reason": self.reason,
         }
+
+
+# =============================================================================
+# Registration Types (CSR Handshake)
+# =============================================================================
+
+
+@dataclass
+class WarrantRequest:
+    """
+    A request for a warrant, analogous to a Certificate Signing Request (CSR).
+
+    The requester proves key ownership by including a self-signed ``challenge_token``
+    — a Warrant minted by their own signing key with TTL ≤ 120 s. The server
+    verifies the Ed25519 signature via ``Warrant.from_base64()`` and confirms
+    that ``warrant.iss == public_key``, proving the requester controls the key
+    without any extra round-trip.
+
+    Extension points:
+        ``extensions`` carries arbitrary attestation data, e.g. TEE quotes::
+
+            {"tee_type": "sgx", "report": "<base64>", "mrenclave": "<hex>"}
+
+        The server passes extensions through to the handler unchanged.
+    """
+
+    public_key: str
+    """Hex-encoded Ed25519 public key of the requester."""
+
+    capabilities: Dict[str, Any]
+    """Requested capabilities (server handler may grant a subset)."""
+
+    challenge_token: str
+    """Self-signed challenge warrant (base64). Proves key ownership."""
+
+    extensions: Dict[str, Any] = field(default_factory=dict)
+    """Optional extension data (e.g. TEE attestation quotes)."""
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize for JSON-RPC params."""
+        return {
+            "public_key": self.public_key,
+            "capabilities": self.capabilities,
+            "challenge_token": self.challenge_token,
+            "extensions": self.extensions,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WarrantRequest":
+        """Deserialize from JSON-RPC params."""
+        if "public_key" not in data:
+            raise ValueError("WarrantRequest requires 'public_key'")
+        if "challenge_token" not in data:
+            raise ValueError("WarrantRequest requires 'challenge_token'")
+        return cls(
+            public_key=data["public_key"],
+            capabilities=data.get("capabilities", {}),
+            challenge_token=data["challenge_token"],
+            extensions=data.get("extensions", {}),
+        )
+
+
+@dataclass
+class VerifiedWarrantRequest:
+    """
+    A WarrantRequest whose key ownership has been cryptographically verified.
+
+    Passed to the ``registration_handler`` after the server has:
+
+    1. Decoded ``challenge_token`` and verified its Ed25519 signature
+    2. Confirmed ``challenge_token.iss == public_key`` (same key signed it)
+    3. Confirmed ``challenge_token`` is not expired (TTL ≤ 120 s)
+    4. Confirmed ``challenge_token`` JTI has not been seen before (single-use)
+
+    The handler decides WHAT capabilities to grant and WHETHER to grant them.
+    It calls ``issue(capabilities, ttl)`` to mint the warrant — the signing key
+    never leaves the server.
+
+    Example handler::
+
+        async def handle_reg(req: VerifiedWarrantRequest, issue: Callable) -> None:
+            if req.verified_key_hex not in ALLOWLIST:
+                raise RegistrationDeniedError("Key not pre-enrolled")
+            await issue(capabilities=req.capabilities, ttl=3600)
+    """
+
+    verified_key: Any
+    """Parsed ``tenuo_core.PublicKey`` object (cryptographically verified)."""
+
+    verified_key_hex: str
+    """Canonical hex representation of the verified key (for logging/storage)."""
+
+    capabilities: Dict[str, Any]
+    """Requested capabilities as sent by the client."""
+
+    extensions: Dict[str, Any]
+    """Optional extension data passed through from the client."""
 
 
 # =============================================================================

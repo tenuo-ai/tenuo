@@ -61,9 +61,14 @@ from tenuo_core import (  # type: ignore
     # Approval cryptography
     ApprovalPayload,
     Authorizer,
+    # Chain verification
+    ChainStep,
+    ChainVerificationResult,
     Cidr,
+    CompiledMcpConfig,
     Contains,
     Exact,
+    McpConfig,
     Not,
     NotOneOf,
     OneOf,
@@ -85,6 +90,9 @@ from tenuo_core import (  # type: ignore
 )
 from tenuo_core import (
     py_compute_request_hash as compute_request_hash,
+)
+from tenuo_core import (
+    evaluate_approval_gates,
 )
 
 # Semantic alias: Any() = Wildcard() for zero-trust constraint sets
@@ -149,7 +157,7 @@ from .exceptions import (
     AuthorizationDenied,  # Rich error with diff support
     ConfigurationError,
     ConstraintViolation,
-    GuardTriggered,
+    ApprovalGateTriggered,
     MonotonicityError,
     ScopeViolation,  # Authorization scope exceeded
     TenuoError,
@@ -210,6 +218,9 @@ __all__ = [
     # Core types
     "BoundWarrant",
     "Authorizer",
+    # Chain verification (returned by Authorizer.authorize_one / check_chain)
+    "ChainVerificationResult",
+    "ChainStep",
     # Approval cryptography
     "ApprovalPayload",
     "SignedApproval",
@@ -261,6 +272,9 @@ __all__ = [
     "MAX_WARRANT_TTL_SECS",
     "DEFAULT_WARRANT_TTL_SECS",
     "MAX_WARRANT_SIZE",
+    # MCP configuration
+    "McpConfig",
+    "CompiledMcpConfig",
     # Python-only security constraints
     "Subpath",  # Secure path containment (path traversal protection)
     "UrlSafe",  # SSRF protection (IP/domain blocking)
@@ -277,7 +291,8 @@ __all__ = [
     "MonotonicityError",
     "ConfigurationError",
     "AuthorizationDenied",  # Rich error with diff support
-    "GuardTriggered",  # Guard fired — approval required
+    "ApprovalGateTriggered",  # Approval gate fired — approval required
+    "evaluate_approval_gates",  # Check if an approval gate would fire for a tool call
     "ScopeViolation",  # Authorization scope exceeded
     # Error explanation
     "explain",

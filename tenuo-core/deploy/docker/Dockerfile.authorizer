@@ -23,7 +23,7 @@
 #   docker build -f deploy/docker/Dockerfile.authorizer -t tenuo/authorizer:latest .
 #
 # Run:
-#   docker run -p 8080:8080 -e TENUO_TRUSTED_KEYS=<hex> tenuo/authorizer:latest serve
+#   docker run -p 9090:9090 -e TENUO_TRUSTED_KEYS=<hex> tenuo/authorizer:latest serve
 
 # ============================================================================
 # Build stage

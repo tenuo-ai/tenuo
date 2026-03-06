@@ -425,6 +425,18 @@ warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_s
 | `why_denied(tool, **args)` | `WhyDenied` | Get structured denial reason |
 | `headers(keypair, tool, args)` | `dict` | Generate HTTP authorization headers |
 
+#### Cross-Language API Note
+
+The Python and Rust APIs use different names for the same operations to match each language's idioms:
+
+| Operation | Python | Rust |
+|-----------|--------|------|
+| Create new warrant | `Warrant.mint_builder()...mint(key)` | `Warrant::builder()...build(keypair)` |
+| Delegate (narrow) | `warrant.grant_builder()...grant(key)` | `warrant.narrow()...build(keypair)` |
+| Issue from issuer warrant | `warrant.issue_execution()...build(key)` | `warrant.issue_execution_warrant()...build(keypair)` |
+
+`Warrant.mint_builder()` (fluent builder) is the recommended API for creating warrants.
+
 #### Logic Checks & Debugging Methods
 
 ```python
@@ -787,6 +799,37 @@ print(authorizer.get_required_clearance("delete_file"))  # Clearance.PRIVILEGED
 |--------|-------------|
 | `require_clearance(pattern, level)` | Set minimum clearance for tool pattern |
 | `get_required_clearance(tool)` | Get required clearance level (or None) |
+
+### ChainVerificationResult
+
+Returned by `Authorizer.authorize_one()`, `verify_chain()`, and `check_chain()`. Provides full visibility into the delegation chain that was verified.
+
+```python
+from tenuo import ChainVerificationResult, ChainStep
+```
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `root_issuer` | `Optional[bytes]` | Public key of the root issuer (32 bytes), or None |
+| `chain_length` | `int` | Total number of warrants in the verified chain |
+| `leaf_depth` | `int` | Delegation depth of the leaf warrant |
+| `verified_steps` | `List[ChainStep]` | Details of each verified step in the chain |
+
+### ChainStep
+
+A single step in a verified delegation chain.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `warrant_id` | `str` | Warrant ID at this step |
+| `depth` | `int` | Delegation depth at this step |
+| `issuer` | `bytes` | Public key of the issuer at this step (32 bytes) |
+
+```python
+result = authorizer.authorize_one(warrant, "read_file", {"path": "/data/x"}, sig)
+for step in result.verified_steps:
+    print(f"  depth={step.depth} issuer={step.issuer[:4].hex()}... warrant={step.warrant_id}")
+```
 
 ---
 
@@ -1195,10 +1238,11 @@ protected = guard_tools(original, inplace=False)
 
 ## MCP Integration
 
-Native support for [Model Context Protocol](https://modelcontextprotocol.io).
+Native support for [Model Context Protocol](https://modelcontextprotocol.io) — client-side authorization and server-side verification.
 
 ```python
 from tenuo import McpConfig, CompiledMcpConfig
+from tenuo.mcp import SecureMCPClient, MCPVerifier, verify_mcp_call
 ```
 
 ### McpConfig
@@ -1218,7 +1262,71 @@ compiled = CompiledMcpConfig.compile(config)
 result = compiled.extract_constraints("filesystem_read", {"path": "/var/log/app.log"})
 ```
 
-See `examples/mcp_integration.py` for a complete example.
+### SecureMCPClient
+
+MCP client with automatic warrant injection. Supports stdio, SSE, and StreamableHTTP transports.
+
+```python
+# Stdio
+async with SecureMCPClient("python", ["server.py"]) as client:
+    result = await client.tools["read_file"](path="/data/file.txt")
+
+# SSE / StreamableHTTP
+async with SecureMCPClient(
+    url="https://mcp.example.com/mcp",
+    transport="http",  # or "sse"
+    inject_warrant=True,
+) as client:
+    result = await client.tools["read_file"](path="/data/file.txt")
+```
+
+Parameters:
+- `command`, `args`, `env` — Stdio transport (local subprocess)
+- `url`, `transport`, `headers`, `timeout` — HTTP transports (remote server)
+- `inject_warrant` — Embed `_tenuo` field in tool arguments for server-side verification
+- `config_path`, `register_config` — Load MCP config for constraint extraction
+
+### MCPVerifier
+
+Server-side warrant verification for MCP tool handlers. Framework-agnostic.
+
+```python
+from tenuo import Authorizer, PublicKey, CompiledMcpConfig, McpConfig
+from tenuo.mcp import MCPVerifier
+
+verifier = MCPVerifier(
+    authorizer=Authorizer(trusted_roots=[PublicKey.from_bytes(root_pub)]),
+    config=CompiledMcpConfig.compile(McpConfig.from_file("mcp-config.yaml")),
+)
+
+result = verifier.verify("read_file", {"path": "/data/log.txt", "_tenuo": {...}})
+result.raise_if_denied()
+execute_tool(result.clean_arguments)
+```
+
+Returns `MCPVerificationResult` with:
+- `allowed` — Whether the call is authorized
+- `clean_arguments` — Arguments with `_tenuo` stripped
+- `is_approval_required` — Whether an approval gate requires approval
+- `jsonrpc_error_code` — `-32001` (denied), `-32002` (approval required), or `-32602` (invalid params)
+- `to_jsonrpc_error()` — Format as JSON-RPC error response
+
+### verify_mcp_call
+
+Standalone convenience function for one-off verification:
+
+```python
+from tenuo.mcp import verify_mcp_call
+
+clean = verify_mcp_call(
+    authorizer=authorizer,
+    tool_name="read_file",
+    arguments=raw_arguments,
+    config=compiled_config,  # optional
+)
+```
+
+See [`examples/mcp/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/mcp) for complete examples.
 
 ---
 

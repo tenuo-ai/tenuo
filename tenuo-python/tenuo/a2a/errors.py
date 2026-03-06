@@ -40,6 +40,9 @@ __all__ = [
     "MissingSigningKeyError",
     # Configuration errors
     "ConstraintBindingError",
+    # Registration errors
+    "RegistrationDisabledError",
+    "RegistrationDeniedError",
 ]
 
 
@@ -81,6 +84,8 @@ class A2AErrorCode:
     UNKNOWN_CONSTRAINT = -32014  # -> 1504 (UnknownConstraintType)
     POP_REQUIRED = -32015  # -> 1600 (PopSignatureInvalid)
     POP_FAILED = -32016  # -> 1600 (PopSignatureInvalid)
+    REGISTRATION_DISABLED = -32017  # agent/register called but no handler configured
+    REGISTRATION_DENIED = -32018  # handler explicitly denied the warrant request
 
     @classmethod
     def to_wire_code(cls, jsonrpc_code: int) -> Optional[int]:
@@ -142,6 +147,8 @@ ERROR_MESSAGES = {
     A2AErrorCode.UNKNOWN_CONSTRAINT: "unknown_constraint",
     A2AErrorCode.POP_REQUIRED: "pop_required",
     A2AErrorCode.POP_FAILED: "pop_failed",
+    A2AErrorCode.REGISTRATION_DISABLED: "registration_disabled",
+    A2AErrorCode.REGISTRATION_DENIED: "registration_denied",
 }
 
 
@@ -470,3 +477,44 @@ class MissingSigningKeyError(A2AError):
             "Pass signing_key parameter to send_task().",
             {"reason": "signing_key_missing"},
         )
+
+
+# =============================================================================
+# Registration Errors
+# =============================================================================
+
+
+class RegistrationDisabledError(A2AError):
+    """Raised when agent/register is called but no registration_handler is configured.
+
+    The server does not accept automated agent registration. The caller must
+    obtain a warrant out-of-band (e.g., have the orchestrator operator issue
+    one manually).
+    """
+
+    code = A2AErrorCode.REGISTRATION_DISABLED
+
+
+class RegistrationDeniedError(A2AError):
+    """Raised when the registration_handler explicitly denies a warrant request.
+
+    Raise this inside a registration_handler to reject the registration.
+    The message is forwarded to the client as-is.
+
+    Example::
+
+        async def handle_reg(req: VerifiedWarrantRequest, issue: Callable) -> None:
+            if req.verified_key_hex not in ALLOWLIST:
+                raise RegistrationDeniedError("Key not pre-enrolled")
+            await issue(capabilities=req.capabilities)
+    """
+
+    code = A2AErrorCode.REGISTRATION_DENIED
+
+    def to_jsonrpc_error(self) -> Dict[str, Any]:
+        """Forward the denial reason to the client as-is."""
+        error = super().to_jsonrpc_error()
+        # Override the canonical error name with the actual denial reason so
+        # callers know *why* their registration was rejected.
+        error["message"] = str(self.message)
+        return error

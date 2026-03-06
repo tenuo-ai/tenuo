@@ -261,9 +261,9 @@ class BaseGuardBuilder(Generic[T]):
     def with_approvals(self: T, approvals: list) -> T:
         """Provide pre-obtained SignedApproval objects (spec §6).
 
-        Use this for cloud/async workflows where approvals were obtained
-        out-of-band (e.g., from Tenuo Cloud). These take precedence
-        over the approval_handler when a policy rule matches.
+        Use this for out-of-band/async workflows where approvals were obtained
+        externally (e.g., from an approval board or the control plane API).
+        These take precedence over the approval_handler when a policy rule matches.
 
         Args:
             approvals: List of SignedApproval objects.

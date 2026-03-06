@@ -80,6 +80,9 @@ from .errors import (
     # PoP (Proof-of-Possession)
     PopRequiredError,
     PopVerificationError,
+    # Registration
+    RegistrationDeniedError,
+    RegistrationDisabledError,
     ReplayDetectedError,
     RevokedError,
     # Authorization
@@ -90,7 +93,7 @@ from .errors import (
     WarrantExpiredError,
 )
 from .helpers import SimulationTrace, dry_run, explain, explain_str, simulate, visualize_chain
-from .server import A2AServer, A2AServerBuilder
+from .server import A2AServer, A2AServerBuilder, InMemoryReplayBackend, ReplayBackend, ReplayCache
 from .types import (
     AgentCard,
     # Audit
@@ -103,6 +106,9 @@ from .types import (
     TaskResult,
     TaskUpdate,
     TaskUpdateType,
+    # Registration
+    VerifiedWarrantRequest,
+    WarrantRequest,
     # Context
     current_task_warrant,
 )
@@ -111,6 +117,9 @@ __all__ = [
     # Server
     "A2AServer",
     "A2AServerBuilder",
+    "ReplayBackend",
+    "InMemoryReplayBackend",
+    "ReplayCache",  # backward-compatible alias
     # Client
     "A2AClient",
     "A2AClientBuilder",
@@ -158,4 +167,9 @@ __all__ = [
     "MissingSigningKeyError",
     "KeyMismatchError",
     "ConstraintBindingError",
+    # Registration
+    "RegistrationDisabledError",
+    "RegistrationDeniedError",
+    "WarrantRequest",
+    "VerifiedWarrantRequest",
 ]

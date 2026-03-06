@@ -539,6 +539,32 @@ class TenuoGuard:
         self._audit("tool_allowed", tool.name, args, warrant)
         return None  # Proceed with tool execution
 
+    async def async_before_tool(
+        self,
+        tool: "BaseTool",
+        args: Dict[str, Any],
+        tool_context: "ToolContext",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Async ADK before_tool_callback.
+
+        Runs ``before_tool`` in a thread-pool executor so blocking enforcement
+        (e.g., an async approval_handler awaiting human input) doesn't stall
+        the event loop.  Register this as ``before_tool_callback`` on async ADK agents.
+
+        Returns:
+            None: Allow tool execution
+            Dict: Skip tool, use this as result (denial message)
+        """
+        import asyncio
+        import functools
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            functools.partial(self.before_tool, tool, args, tool_context),
+        )
+
     def after_tool(
         self,
         tool: "BaseTool",
@@ -616,17 +642,17 @@ class TenuoGuard:
         if skill_name in self._arg_map:
             mapping = self._arg_map[skill_name]
 
-            # SECURITY: Detect if both original and remapped names are present
-            # This could indicate an attempt to bypass validation
+            # SECURITY: Reject dual-parameter attack — both original and remapped names present.
+            # An adversary could supply both to confuse which value gets validated vs. executed.
             for tool_arg, constraint_arg in mapping.items():
-                if tool_arg in args and constraint_arg in args:
-                    if tool_arg != constraint_arg:
-                        logger.warning(
-                            f"Security: Both '{tool_arg}' and '{constraint_arg}' "
-                            f"present in args for skill '{skill_name}'. This may "
-                            f"indicate a validation bypass attempt. Consider using "
-                            f"GuardBuilder.allow() instead of map_skill()."
-                        )
+                if tool_arg in args and constraint_arg in args and tool_arg != constraint_arg:
+                    raise ToolAuthorizationError(
+                        f"Both original ('{tool_arg}') and remapped ('{constraint_arg}') "
+                        f"argument names present in call to '{skill_name}' — "
+                        "possible validation bypass attempt.",
+                        skill_name,
+                        args,
+                    )
 
             for tool_arg, constraint_arg in mapping.items():
                 if tool_arg in args:
