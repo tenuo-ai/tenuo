@@ -13,8 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`MCPVerifier`**: Framework-agnostic server-side warrant verification for MCP tool handlers
 - **`verify_mcp_call()`**: Standalone convenience function for one-off verification
 - **Multi-transport client**: `SecureMCPClient` now supports SSE and StreamableHTTP transports in addition to stdio
-- **`_tenuo` field injection**: Client embeds warrant + PoP in tool arguments for server-side verification
+- **`params._meta` transport**: Warrant + PoP are carried in the MCP spec's extension point (`params._meta["tenuo"]`), keeping tool arguments clean — no schema pollution
+- **MCP session reconnection**: `SecureMCPClient` auto-reconnects on transport failures (`EOFError`, `EPIPE`, `ECONNRESET`, `anyio.ClosedResourceError`) with a single retry
 - **JSON-RPC error codes**: `-32001` (denied), `-32002` (approval required), `-32602` (invalid params)
+
+#### A2A Automated Handshake (CSR Pattern)
+- **`agent/register` endpoint**: Agents request warrants at runtime without pre-configured key sharing
+- **`WarrantRequest` / `VerifiedWarrantRequest`**: Typed dataclasses for the registration protocol
+- **Self-signed challenge token**: Proves key ownership via Ed25519 without a round-trip
+- **`issue()` oracle**: Handler receives a bound callable — the signing key never leaves the server
+- **`RegistrationDisabledError` (-32017)** / **`RegistrationDeniedError` (-32018)**: Structured errors for the registration flow
+- **`A2AClient.request_warrant()`**: Client-side method to perform the full CSR handshake
+- **`A2AServerBuilder.registration_handler()`**: Server-side configuration for the handler
 
 #### Approval Gates (renamed from Guards)
 - **`approval_gate.rs`**: Renamed guard module to approval gate for clarity — per-tool approval policy evaluation
@@ -26,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Extension validation**: Fixed gaps in warrant extension validation
 - **PoP error clarity**: `PopExpired` message now says "outside replay window" instead of ambiguous wording
 
-#### A2A Enhancements
+#### A2A Protocol
 - **Structured error types**: `TenuoA2AError`, `HandshakeError`, `VerificationError` for better error handling
 - **Typed protocol messages**: `TaskRequest`, `TaskResponse`, `StreamEvent` dataclasses
 - **Improved client**: Retry logic, connection pooling, and better error propagation
