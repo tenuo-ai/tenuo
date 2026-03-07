@@ -1041,7 +1041,7 @@ class TestOutboundInterceptorHeaderInjection:
         class FakeNextOutbound:
             def start_activity(self, input):
                 captured_input["headers"] = dict(input.headers or {})
-                return AsyncMock()()
+                return MagicMock()
 
         # Create a mock key resolver that returns the agent_key
         mock_resolver = AsyncMock()

@@ -13,8 +13,6 @@ The pattern:
 
 import pytest
 
-pytestmark = pytest.mark.asyncio
-
 
 # =============================================================================
 # Fixtures

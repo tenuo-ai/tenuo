@@ -594,9 +594,9 @@ class TestGuardBuilder:
         assert guard._skill_map == {"read_file_tool": "read_file"}
         assert guard._arg_map == {"read_file": {"file_path": "path"}}
 
-    def test_builder_tier1(self, warrant):
-        """Test Tier 1 mode via builder."""
-        guard = GuardBuilder().with_warrant(warrant).tier1().build()
+    def test_builder_no_pop_mode(self, warrant):
+        """Guardrails-only mode (require_pop=False) is configurable via TenuoGuard directly."""
+        guard = TenuoGuard(warrant=warrant, require_pop=False)
 
         assert guard._require_pop is False
 
@@ -984,8 +984,6 @@ class TestBuilderDocumentation:
             .build()
         )
 
-        # Should have correct internal state
-        assert guard._require_pop is False  # Auto-set for direct constraints
         assert "read_file" in guard._constraints
         assert "web_search" in guard._constraints
         # Note: "shell" is denied by default (not in allowlist) - no denylist needed

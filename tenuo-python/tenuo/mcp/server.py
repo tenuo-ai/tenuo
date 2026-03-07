@@ -18,18 +18,28 @@ Usage pattern
     config = CompiledMcpConfig.compile(McpConfig.from_file("mcp-config.yaml"))
     verifier = MCPVerifier(authorizer=authorizer, config=config)
 
-2. Call ``verify()`` or ``verify_or_raise()`` inside each tool handler:
+2. Call ``verify()`` or ``verify_or_raise()`` inside each tool handler.
 
-    # fastmcp example — pass params._meta from the request
-    @mcp.tool()
-    async def read_file(path: str, **kwargs) -> str:
-        clean = verifier.verify_or_raise("read_file", {"path": path, **kwargs})
-        return open(clean["path"]).read()
+   For raw ``@server.call_tool`` handlers that receive the full request object,
+   pass ``req.params._meta`` so the verifier can read the warrant from
+   ``params._meta["tenuo"]``::
+
+    @server.call_tool()
+    async def call_tool(name: str, arguments: dict) -> list:
+        # ``req`` is the full CallToolRequest — use the low-level handler form
+        meta = req.params._meta  # MCP SDK exposes this on the raw request
+        result = verifier.verify(name, arguments, meta=meta)
+        result.raise_if_denied()
+        return execute_tool(result.clean_arguments)
+
+   Note: ``fastmcp`` strips ``_meta`` before calling user handlers, so Tenuo
+   authorization requires the raw MCP SDK or a framework that exposes
+   ``params._meta``.
 
 3. For raw JSON-RPC servers, handle errors explicitly:
 
     try:
-        result = verifier.verify(tool_name, arguments)
+        result = verifier.verify(tool_name, arguments, meta=meta)
         result.raise_if_denied()
     except MCPAuthorizationError as e:
         return {"jsonrpc": "2.0", "id": req_id, "error": e.to_jsonrpc_error()}
@@ -587,7 +597,7 @@ def verify_mcp_call(
             trusted_roots=[PublicKey.from_bytes(bytes.fromhex(ISSUER_KEY_HEX))]
         )
 
-        result = verify_mcp_call("read_file", arguments, authorizer=authorizer)
+        result = verify_mcp_call("read_file", arguments, authorizer=authorizer, meta=meta)
         result.raise_if_denied()
         return read_file(result.clean_arguments["path"])
     """

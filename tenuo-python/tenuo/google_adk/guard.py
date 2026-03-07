@@ -63,7 +63,6 @@ from __future__ import annotations
 
 import json
 import logging
-from contextlib import ExitStack
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
@@ -167,20 +166,13 @@ class TenuoGuard:
         self._approvals = approvals
 
         # Handle audit log: string path or file-like object
-        self._exit_stack = ExitStack()
         self._owns_audit_log = False
         self._audit_log: Any = None
         if isinstance(audit_log, str):
-            self._audit_log = self._exit_stack.enter_context(open(audit_log, "a"))
+            self._audit_log = open(audit_log, "a")  # noqa: SIM115
             self._owns_audit_log = True
         else:
             self._audit_log = audit_log
-
-        # For context tracking
-        self._tool_context: Optional["ToolContext"] = None
-
-        # Track last denied constraint for hints
-        self._last_denial_constraint: Optional[tuple] = None  # (param, constraint)
 
     # -------------------------------------------------------------------------
     # Tool Filtering
@@ -231,29 +223,9 @@ class TenuoGuard:
         return result
 
     def _get_granted_skills(self, warrant: Any) -> set[str]:
-        """Extract set of granted skill names from warrant."""
-        skills: set[str] = set()
-
-        # Priority 1: capabilities (new format)
+        """Extract set of granted skill names from warrant capabilities."""
         caps = getattr(warrant, "capabilities", {})
-        if caps:
-            skills.update(caps.keys())
-
-        # Priority 2: grants (intermediate format)
-        grants = getattr(warrant, "grants", [])
-        for grant in grants:
-            if isinstance(grant, dict):
-                skill = grant.get("skill")
-                if skill:
-                    skills.add(skill)
-            elif isinstance(grant, str):
-                skills.add(grant)
-
-        # Priority 3: tools (legacy format)
-        tools_attr = getattr(warrant, "tools", [])
-        skills.update(tools_attr)
-
-        return skills
+        return set(caps.keys()) if caps else set()
 
     # -------------------------------------------------------------------------
     # Constraint Checking (Tier 1 Only)
@@ -285,87 +257,29 @@ class TenuoGuard:
         Check if value satisfies constraint (Tier 1 only).
 
         SECURITY: Fails closed (returns False) for unknown constraint types.
-        This follows Tenuo's "fail closed" philosophy.
 
-        NOTE: For Tier 2, use warrant.authorize() instead - it does
+        NOTE: For Tier 2, use warrant.authorize() instead — it does
         ALL constraint checking in the Rust core with PoP verification.
         """
         try:
-            constraint_type = type(constraint).__name__
-
-            # =================================================================
-            # SPECIAL CASES - Type coercion required before satisfies()
-            # =================================================================
-            # Range requires explicit string-to-number coercion
-            if constraint_type == "Range" and hasattr(constraint, "satisfies"):
+            # Range requires numeric coercion before satisfies()
+            if type(constraint).__name__ == "Range" and hasattr(constraint, "satisfies"):
                 try:
                     return constraint.satisfies(float(value))
                 except (ValueError, TypeError):
                     return False  # Non-numeric value fails Range check
 
-            # =================================================================
-            # UNIFIED INTERFACE - All Rust core constraints support satisfies()
-            # =================================================================
-            #
-            # The satisfies() method is the preferred unified interface for all
-            # constraint types. It handles type conversion internally.
-            #
+            # Unified interface: all Rust-core constraints implement satisfies()
             if hasattr(constraint, "satisfies"):
                 return constraint.satisfies(value)
 
-            # =================================================================
-            # LEGACY FALLBACKS - For older constraint versions without satisfies()
-            # =================================================================
-
-            # Subpath - filesystem path containment
-            if hasattr(constraint, "contains") and constraint_type == "Subpath":
-                return constraint.contains(str(value))
-
-            # UrlSafe - SSRF protection
-            if hasattr(constraint, "is_safe"):
-                return constraint.is_safe(str(value))
-
-            # Cidr - IP address range
-            if hasattr(constraint, "contains_ip"):
-                return constraint.contains_ip(str(value))
-
-            # Pattern/Shlex - pattern matching
-            if hasattr(constraint, "matches"):
-                return constraint.matches(str(value))
-
-            # UrlPattern - URL pattern matching
-            if hasattr(constraint, "matches_url"):
-                return constraint.matches_url(str(value))
-
-            # Range - numeric bounds
-            if hasattr(constraint, "contains") and constraint_type == "Range":
-                try:
-                    return constraint.contains(float(value))
-                except (ValueError, TypeError):
-                    return False
-
-            # OneOf - set membership
-            if hasattr(constraint, "contains") and constraint_type == "OneOf":
-                return constraint.contains(str(value))
-
-            # NotOneOf - exclusion list
-            if hasattr(constraint, "allows"):
-                return constraint.allows(str(value))
-
-            # Fallback: Exact with .value attribute
-            if hasattr(constraint, "value"):
-                return constraint.value == value
-
-            # Fallback: OneOf with .values attribute
-            if hasattr(constraint, "values"):
-                return value in constraint.values
-
-            # Unknown constraint type - FAIL CLOSED
-            logger.warning(f"Unknown constraint type '{constraint_type}' - failing closed")
+            # Unknown constraint type — fail closed
+            logger.warning(
+                f"Unknown constraint type '{type(constraint).__name__}' - failing closed"
+            )
             return False
 
         except Exception as e:
-            # Any exception during constraint check - fail closed
             logger.warning(f"Constraint check failed with exception: {e} - failing closed")
             return False
 
@@ -401,9 +315,6 @@ class TenuoGuard:
             None: Allow tool execution
             Dict: Skip tool, use this as result (denial message)
         """
-        # Store context for wrappers if needed
-        self._tool_context = tool_context
-
         # Map tool name to skill
         skill_name = self._skill_map.get(tool.name, tool.name)
 
@@ -548,22 +459,15 @@ class TenuoGuard:
         """
         Async ADK before_tool_callback.
 
-        Runs ``before_tool`` in a thread-pool executor so blocking enforcement
-        (e.g., an async approval_handler awaiting human input) doesn't stall
-        the event loop.  Register this as ``before_tool_callback`` on async ADK agents.
+        Delegates to the synchronous :meth:`before_tool` — warrant verification
+        is pure CPU/memory work that does not require async execution.
+        Register this as ``before_tool_callback`` on async ADK agents.
 
         Returns:
             None: Allow tool execution
             Dict: Skip tool, use this as result (denial message)
         """
-        import asyncio
-        import functools
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            functools.partial(self.before_tool, tool, args, tool_context),
-        )
+        return self.before_tool(tool, args, tool_context)
 
     def after_tool(
         self,
@@ -708,9 +612,6 @@ class TenuoGuard:
         constraint: Optional[Any] = None,
     ) -> Optional[Dict[str, Any]]:
         """Handle denial based on on_deny setting."""
-        # Store for hints
-        self._last_denial_constraint = (constraint_param, constraint) if constraint_param else None
-
         # Dry run mode: log but don't block
         if self._dry_run:
             logger.warning(f"DRY RUN: Would deny {tool_name} - {reason}")
@@ -774,16 +675,14 @@ class TenuoGuard:
             }
 
             if warrant:
-                # Convert keys to string representation
-                jti: Any = getattr(warrant, "jti", None) or getattr(warrant, "id", None)
-                iss: Any = getattr(warrant, "issuer", None) or getattr(warrant, "iss", None)
-                # Handle PublicKey objects
-                if jti is not None and hasattr(jti, "hex"):
-                    jti = jti.hex()
+                warrant_id: Any = getattr(warrant, "id", None)
+                iss: Any = getattr(warrant, "issuer", None)
+                if warrant_id is not None and hasattr(warrant_id, "hex"):
+                    warrant_id = warrant_id.hex()
                 if iss is not None and hasattr(iss, "hex"):
                     iss = iss.hex()
                 record["warrant"] = {
-                    "jti": str(jti) if jti else None,
+                    "id": str(warrant_id) if warrant_id else None,
                     "iss": str(iss) if iss else None,
                 }
 
@@ -960,9 +859,6 @@ class GuardBuilder:
                 self._constraints[tool_name].update(constraints)
             else:
                 self._constraints[tool_name] = constraints
-        # Tier 1 mode when using allow() without warrant
-        if self._warrant is None:
-            self._require_pop = False
         return self
 
     def map_skill(
@@ -1051,32 +947,6 @@ class GuardBuilder:
         if level not in ("full", "minimal", "silent"):
             raise ValueError(f"detail_level must be 'full', 'minimal', or 'silent', got {level!r}")
         self._denial_detail = level
-        return self
-
-    def tier1(self) -> "GuardBuilder":
-        """
-        Configure for Tier 1 (guardrails-only) mode.
-
-        Disables PoP requirement. Use for single-process scenarios only.
-
-        Returns:
-            self for chaining
-        """
-        self._require_pop = False
-        return self
-
-    def tier2(self, signing_key: "SigningKey") -> "GuardBuilder":
-        """
-        Configure for Tier 2 (PoP) mode with signing key.
-
-        Args:
-            signing_key: The signing key for Proof-of-Possession
-
-        Returns:
-            self for chaining
-        """
-        self._signing_key = signing_key
-        self._require_pop = True
         return self
 
     def dry_run(self, enabled: bool = True) -> "GuardBuilder":
