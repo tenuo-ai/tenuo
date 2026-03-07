@@ -182,8 +182,8 @@ def _mock_warrant_context():
 @pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
 class TestCallToolApprovalsInjection:
     @pytest.mark.asyncio
-    async def test_approvals_serialized_into_tenuo_field(self):
-        """Approvals are base64-encoded CBOR and injected via params._meta."""
+    async def test_approvals_serialized_into_meta_tenuo(self):
+        """Approvals are base64-encoded CBOR and injected via params._meta.tenuo."""
         client = _make_client()
         mock_warrant, mock_keypair = _mock_warrant_context()
 
@@ -240,7 +240,7 @@ class TestCallToolApprovalsInjection:
 
     @pytest.mark.asyncio
     async def test_no_approvals_omits_field(self):
-        """When approvals=None (default), _tenuo.approvals is not included."""
+        """When approvals=None (default), meta.tenuo.approvals is not included."""
         client = _make_client()
         mock_warrant, mock_keypair = _mock_warrant_context()
 
@@ -281,7 +281,7 @@ class TestCallToolApprovalsInjection:
 
     @pytest.mark.asyncio
     async def test_protected_tool_approvals_kwarg_forwarded(self):
-        """_approvals kwarg on a protected tool call flows through to _tenuo.approvals."""
+        """_approvals kwarg on a protected tool call flows through to meta.tenuo.approvals."""
         from tenuo import SigningKey, configure
         from tenuo.decorators import key_scope, warrant_scope
         from tenuo_core import Warrant
