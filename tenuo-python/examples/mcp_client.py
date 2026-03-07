@@ -88,7 +88,7 @@ async def sse_example():
         url="https://mcp.example.com/sse",
         transport="sse",
         headers={"Authorization": "Bearer <token>"},
-        inject_warrant=True,  # embed _tenuo in every tool call
+        inject_warrant=True,  # send warrant via params._meta.tenuo
     ) as client:
         print(f"Discovered tools: {list(client.tools.keys())}")
 
@@ -153,7 +153,7 @@ async def approval_gate_example():
 
     When a warrant has approval gates that require human approval for certain
     tools, the client must supply SignedApproval objects.  These are
-    serialized into _tenuo.approvals and verified server-side.
+    serialized into ``_meta.tenuo.approvals`` and verified server-side.
     """
     print("\n=== 5. Approval gate approvals ===\n")
 
@@ -177,7 +177,7 @@ async def approval_gate_example():
             result = await client.tools["transfer"](
                 amount=10_000,
                 destination="acct_123",
-                _approvals=signed_approvals,  # forwarded to _tenuo.approvals
+                _approvals=signed_approvals,  # forwarded to _meta.tenuo.approvals
             )
             print(f"transfer result: {result}")
 

@@ -10,7 +10,7 @@ Three patterns are shown:
   3. Approval-gate-triggered approval flow — re-submit protocol for gated tools
 
 The server verifies every incoming tool call against a Tenuo warrant
-embedded in ``_tenuo`` by the client (see mcp_client.py, inject_warrant=True).
+sent via ``params._meta.tenuo`` by the client (see mcp_client.py, inject_warrant=True).
 
 Prerequisites:
   pip install "tenuo[mcp]" fastmcp
@@ -66,11 +66,7 @@ def create_server_with_config():
 
     @mcp.tool()
     async def read_file(path: str, maxSize: int = 4096, **kwargs) -> str:
-        """Read a file from disk (Tenuo-protected).
-
-        The client sends ``_tenuo`` inside ``kwargs``.  MCPVerifier strips
-        it and returns only the clean tool arguments.
-        """
+        """Read a file from disk (Tenuo-protected)."""
         clean = verifier.verify_or_raise(
             "read_file", {"path": path, "maxSize": maxSize, **kwargs}
         )
@@ -142,7 +138,7 @@ def create_server_with_approval_gates():
       1. ``verifier.verify()`` returns ``result.is_approval_required == True``
       2. The server returns JSON-RPC error ``-32002`` to the client
       3. The client obtains ``SignedApproval`` objects from authorized approvers
-      4. The client re-submits the same call with approvals in ``_tenuo.approvals``
+      4. The client re-submits the same call with approvals in ``_meta.tenuo.approvals``
       5. ``verifier.verify()`` now passes — approvals satisfy the gate
 
     This example shows how to detect and handle the approval-gate-triggered case
@@ -208,8 +204,8 @@ def create_server_mixed():
 
     During migration you may want to accept both warranted and
     unwarranted calls.  Set ``require_warrant=False`` on the verifier.
-    Calls without ``_tenuo`` are allowed through (you can add your own
-    fallback AuthZ), while calls *with* a warrant are fully verified.
+    Calls without a warrant in ``_meta.tenuo`` are allowed through (you
+    can add your own fallback AuthZ), while warranted calls are fully verified.
     """
     from fastmcp import FastMCP
     from tenuo import Authorizer, PublicKey

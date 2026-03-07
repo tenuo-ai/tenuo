@@ -83,8 +83,8 @@ def _make_arguments(
     tool: str,
     tool_args: Dict[str, Any],
     approvals: list | None = None,
-) -> Dict[str, Any]:
-    """Build a full tool-arguments dict with _tenuo injected."""
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Return (tool_args, meta) where meta = {"tenuo": {...}} for params._meta."""
     tenuo: Dict[str, Any] = {
         "warrant": _encode_warrant(warrant),
         "signature": _encode_pop(warrant, key, tool, tool_args),
@@ -93,7 +93,7 @@ def _make_arguments(
         tenuo["approvals"] = [
             base64.b64encode(a.to_bytes()).decode() for a in approvals
         ]
-    return {**tool_args, "_tenuo": tenuo}
+    return dict(tool_args), {"tenuo": tenuo}
 
 
 # ---------------------------------------------------------------------------
@@ -218,9 +218,9 @@ class TestRequireWarrant:
         assert not result.allowed
         assert result.jsonrpc_error_code == -32001
 
-    def test_tenuo_not_dict_treated_as_missing(self, authorizer: Authorizer):
+    def test_tenuo_not_dict_in_meta_treated_as_missing(self, authorizer: Authorizer):
         verifier = MCPVerifier(authorizer=authorizer)
-        result = verifier.verify("read_file", {"path": "/x", "_tenuo": "not-a-dict"})
+        result = verifier.verify("read_file", {"path": "/x"}, meta={"tenuo": "not-a-dict"})
         assert not result.allowed
         assert "No warrant" in (result.denial_reason or "")
 
@@ -238,10 +238,10 @@ class TestSuccessfulVerification:
         agent_key: SigningKey,
     ):
         tool_args = {"path": "/data/log.txt"}
-        arguments = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
 
         verifier = MCPVerifier(authorizer=authorizer)
-        result = verifier.verify("read_file", arguments)
+        result = verifier.verify("read_file", arguments, meta=meta)
 
         assert result.allowed
         assert result.tool == "read_file"
@@ -254,10 +254,10 @@ class TestSuccessfulVerification:
         simple_warrant: Warrant,
         agent_key: SigningKey,
     ):
-        arguments = _make_arguments(
+        arguments, meta = _make_arguments(
             simple_warrant, agent_key, "read_file", {"path": "/data/f.txt"}
         )
-        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments)
+        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments, meta=meta)
         assert "_tenuo" not in result.clean_arguments
         assert "_tenuo" not in result.constraints
 
@@ -267,10 +267,10 @@ class TestSuccessfulVerification:
         simple_warrant: Warrant,
         agent_key: SigningKey,
     ):
-        arguments = _make_arguments(
+        arguments, meta = _make_arguments(
             simple_warrant, agent_key, "read_file", {"path": "/data/f.txt"}
         )
-        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments)
+        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments, meta=meta)
         assert result.warrant_id is not None
 
     def test_verify_or_raise_returns_clean_arguments(
@@ -280,8 +280,8 @@ class TestSuccessfulVerification:
         agent_key: SigningKey,
     ):
         tool_args = {"path": "/data/file.txt"}
-        arguments = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
-        clean = MCPVerifier(authorizer=authorizer).verify_or_raise("read_file", arguments)
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+        clean = MCPVerifier(authorizer=authorizer).verify_or_raise("read_file", arguments, meta=meta)
         assert clean == tool_args
 
     def test_warrant_with_pop_passes(
@@ -297,8 +297,8 @@ class TestSuccessfulVerification:
             holder=agent_key.public_key,
         )
         tool_args = {"path": "/data/f.txt"}
-        arguments = _make_arguments(warrant, agent_key, "read_file", tool_args)
-        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments)
+        arguments, meta = _make_arguments(warrant, agent_key, "read_file", tool_args)
+        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments, meta=meta)
         assert result.allowed
 
 
@@ -316,9 +316,9 @@ class TestDenialScenarios:
     ):
         # Warrant allows /data/*, but call uses /etc/passwd
         tool_args = {"path": "/etc/passwd"}
-        arguments = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
 
-        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments)
+        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments, meta=meta)
 
         assert not result.allowed
         assert result.jsonrpc_error_code == -32001
@@ -331,16 +331,16 @@ class TestDenialScenarios:
     ):
         # Warrant covers read_file, but caller claims list_dir
         tool_args = {"path": "/data/"}
-        arguments = _make_arguments(simple_warrant, agent_key, "list_dir", tool_args)
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "list_dir", tool_args)
 
-        result = MCPVerifier(authorizer=authorizer).verify("list_dir", arguments)
+        result = MCPVerifier(authorizer=authorizer).verify("list_dir", arguments, meta=meta)
 
         assert not result.allowed
         assert result.jsonrpc_error_code == -32001
 
     def test_malformed_warrant_base64(self, authorizer: Authorizer):
-        arguments = {"path": "/x", "_tenuo": {"warrant": "not-valid-base64!!!"}}
-        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments)
+        meta = {"tenuo": {"warrant": "not-valid-base64!!!"}}
+        result = MCPVerifier(authorizer=authorizer).verify("read_file", {"path": "/x"}, meta=meta)
         assert not result.allowed
         assert result.jsonrpc_error_code == -32001
         assert "Malformed warrant" in (result.denial_reason or "")
@@ -350,14 +350,13 @@ class TestDenialScenarios:
         authorizer: Authorizer,
         simple_warrant: Warrant,
     ):
-        arguments = {
-            "path": "/data/f.txt",
-            "_tenuo": {
+        meta = {
+            "tenuo": {
                 "warrant": simple_warrant.to_base64(),
                 "signature": "!!!not-base64!!!",
-            },
+            }
         }
-        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments)
+        result = MCPVerifier(authorizer=authorizer).verify("read_file", {"path": "/data/f.txt"}, meta=meta)
         assert not result.allowed
         assert result.jsonrpc_error_code == -32001
         assert "Malformed signature" in (result.denial_reason or "")
@@ -369,10 +368,10 @@ class TestDenialScenarios:
         agent_key: SigningKey,
     ):
         tool_args = {"path": "/data/f.txt"}
-        arguments = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
-        arguments["_tenuo"]["approvals"] = ["!!!bad!!!"]
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+        meta["tenuo"]["approvals"] = ["!!!bad!!!"]
 
-        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments)
+        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments, meta=meta)
         assert not result.allowed
         assert "Malformed approval" in (result.denial_reason or "")
 
@@ -387,8 +386,8 @@ class TestDenialScenarios:
             capabilities={"read_file": {}},
             holder=agent_key.public_key,
         )
-        arguments = _make_arguments(warrant, agent_key, "read_file", {"path": "/x"})
-        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments)
+        arguments, meta = _make_arguments(warrant, agent_key, "read_file", {"path": "/x"})
+        result = MCPVerifier(authorizer=authorizer).verify("read_file", arguments, meta=meta)
         assert not result.allowed
         assert result.jsonrpc_error_code == -32001
 
@@ -399,9 +398,9 @@ class TestDenialScenarios:
         agent_key: SigningKey,
     ):
         tool_args = {"path": "/etc/shadow"}
-        arguments = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
         with pytest.raises(MCPAuthorizationError) as exc_info:
-            MCPVerifier(authorizer=authorizer).verify_or_raise("read_file", arguments)
+            MCPVerifier(authorizer=authorizer).verify_or_raise("read_file", arguments, meta=meta)
         assert exc_info.value.jsonrpc_error_code == -32001
 
 
@@ -427,9 +426,9 @@ class TestApprovalGateTriggered:
             required_approvers=[approver_key.public_key],
             min_approvals=1,
         )
-        arguments = _make_arguments(warrant, agent_key, "transfer", {"amount": 100})
+        arguments, meta = _make_arguments(warrant, agent_key, "transfer", {"amount": 100})
 
-        result = MCPVerifier(authorizer=authorizer).verify("transfer", arguments)
+        result = MCPVerifier(authorizer=authorizer).verify("transfer", arguments, meta=meta)
 
         assert not result.allowed
         assert result.is_approval_required
@@ -471,11 +470,11 @@ class TestApprovalGateTriggered:
         )
         approval = SignedApproval.create(payload, approver_key)
 
-        arguments = _make_arguments(
+        arguments, meta = _make_arguments(
             warrant, agent_key, "transfer", tool_args, approvals=[approval]
         )
 
-        result = MCPVerifier(authorizer=authorizer).verify("transfer", arguments)
+        result = MCPVerifier(authorizer=authorizer).verify("transfer", arguments, meta=meta)
 
         assert result.allowed
         assert not result.is_approval_required
@@ -536,13 +535,10 @@ tools:
         pop_sig = _encode_pop(warrant, agent_key, "read_file", extracted_constraints)
 
         raw_body = {"path": "/data/log.txt", "maxSize": 2048}
-        arguments = {
-            **raw_body,
-            "_tenuo": {"warrant": warrant.to_base64(), "signature": pop_sig},
-        }
+        meta = {"tenuo": {"warrant": warrant.to_base64(), "signature": pop_sig}}
 
         result = MCPVerifier(authorizer=authorizer, config=mcp_config).verify(
-            "read_file", arguments
+            "read_file", raw_body, meta=meta
         )
 
         assert result.allowed
@@ -562,10 +558,10 @@ tools:
             holder=agent_key.public_key,
         )
         # Missing required 'path' field
-        arguments = _make_arguments(warrant, agent_key, "read_file", {"maxSize": 1024})
+        arguments, meta = _make_arguments(warrant, agent_key, "read_file", {"maxSize": 1024})
 
         result = MCPVerifier(authorizer=authorizer, config=mcp_config).verify(
-            "read_file", arguments
+            "read_file", arguments, meta=meta
         )
 
         assert not result.allowed
@@ -583,12 +579,12 @@ tools:
             capabilities={"unknown_tool": {}},
             holder=agent_key.public_key,
         )
-        arguments = _make_arguments(
+        arguments, meta = _make_arguments(
             warrant, agent_key, "unknown_tool", {"path": "/x"}
         )
 
         result = MCPVerifier(authorizer=authorizer, config=mcp_config).verify(
-            "unknown_tool", arguments
+            "unknown_tool", arguments, meta=meta
         )
 
         assert not result.allowed
@@ -608,8 +604,8 @@ class TestVerifyMcpCall:
         agent_key: SigningKey,
     ):
         tool_args = {"path": "/data/f.txt"}
-        arguments = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
-        result = verify_mcp_call("read_file", arguments, authorizer=authorizer)
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+        result = verify_mcp_call("read_file", arguments, authorizer=authorizer, meta=meta)
         assert result.allowed
 
     def test_standalone_denied(
@@ -619,8 +615,8 @@ class TestVerifyMcpCall:
         agent_key: SigningKey,
     ):
         tool_args = {"path": "/etc/shadow"}
-        arguments = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
-        result = verify_mcp_call("read_file", arguments, authorizer=authorizer)
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+        result = verify_mcp_call("read_file", arguments, authorizer=authorizer, meta=meta)
         assert not result.allowed
 
     def test_standalone_no_warrant(self, authorizer: Authorizer):

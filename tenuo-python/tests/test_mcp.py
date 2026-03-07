@@ -119,29 +119,23 @@ def test_extract_constraints_unknown_tool(mcp_config_file):
     assert "Tool 'unknown_tool' not defined" in str(excinfo.value)
 
 
-def test_extract_tenuo_metadata(mcp_config_file):
-    """Test that _tenuo metadata is extracted and stripped."""
+def test_extract_constraints_pure(mcp_config_file):
+    """extract_constraints only extracts constraints — no warrant/signature handling."""
     config = McpConfig.from_file(mcp_config_file)
     compiled = CompiledMcpConfig.compile(config)
 
-    # Arguments with embedded warrant/signature
-    args = {
-        "path": "/var/log/syslog",
-        "maxSize": 5000,
-        "_tenuo": {"warrant": "eyJ0eXAiOiJKV1QiLCJhbGc...", "signature": "c2lnbmF0dXJlLi4u"},
-    }
+    args = {"path": "/var/log/syslog", "maxSize": 5000}
 
     result = compiled.extract_constraints("filesystem_read", args)
 
-    # Check extracted constraints don't include _tenuo
     constraints = dict(result.constraints)
-    assert "_tenuo" not in constraints
     assert constraints["path"] == "/var/log/syslog"
     assert constraints["max_size"] == 5000
 
-    # Check warrant/signature were extracted
-    assert result.warrant_base64 == "eyJ0eXAiOiJKV1QiLCJhbGc..."
-    assert result.signature_base64 == "c2lnbmF0dXJlLi4u"
+    # Warrant/signature are always None — transport is handled by params._meta
+    assert result.warrant_base64 is None
+    assert result.signature_base64 is None
+    assert result.approvals_base64 == []
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +183,7 @@ def _mock_warrant_context():
 class TestCallToolApprovalsInjection:
     @pytest.mark.asyncio
     async def test_approvals_serialized_into_tenuo_field(self):
-        """Approvals are base64-encoded CBOR and injected as _tenuo.approvals."""
+        """Approvals are base64-encoded CBOR and injected via params._meta."""
         client = _make_client()
         mock_warrant, mock_keypair = _mock_warrant_context()
 
@@ -208,11 +202,12 @@ class TestCallToolApprovalsInjection:
                 approvals=[fake_approval],
             )
 
-        injected = client.session.call_tool.call_args[0][1]
-        assert "_tenuo" in injected
-        assert "approvals" in injected["_tenuo"]
+        meta_injected = client.session.call_tool.call_args.kwargs.get("meta")
+        assert meta_injected is not None
+        assert "tenuo" in meta_injected
+        assert "approvals" in meta_injected["tenuo"]
         expected = base64.b64encode(b"approval_cbor").decode("utf-8")
-        assert injected["_tenuo"]["approvals"] == [expected]
+        assert meta_injected["tenuo"]["approvals"] == [expected]
 
     @pytest.mark.asyncio
     async def test_multiple_approvals_all_serialized(self):
@@ -236,8 +231,9 @@ class TestCallToolApprovalsInjection:
                 approvals=approvals,
             )
 
-        injected = client.session.call_tool.call_args[0][1]
-        assert injected["_tenuo"]["approvals"] == [
+        meta_injected = client.session.call_tool.call_args.kwargs.get("meta")
+        assert meta_injected is not None
+        assert meta_injected["tenuo"]["approvals"] == [
             base64.b64encode(b"cbor_0").decode("utf-8"),
             base64.b64encode(b"cbor_1").decode("utf-8"),
         ]
@@ -259,9 +255,10 @@ class TestCallToolApprovalsInjection:
                 inject_warrant=True,
             )
 
-        injected = client.session.call_tool.call_args[0][1]
-        assert "_tenuo" in injected
-        assert "approvals" not in injected["_tenuo"]
+        meta_injected = client.session.call_tool.call_args.kwargs.get("meta")
+        assert meta_injected is not None
+        assert "tenuo" in meta_injected
+        assert "approvals" not in meta_injected["tenuo"]
 
     @pytest.mark.asyncio
     async def test_approvals_not_injected_without_inject_warrant(self):
@@ -279,8 +276,8 @@ class TestCallToolApprovalsInjection:
             approvals=[fake_approval],
         )
 
-        injected = client.session.call_tool.call_args[0][1]
-        assert "_tenuo" not in injected
+        meta_injected = client.session.call_tool.call_args.kwargs.get("meta")
+        assert meta_injected is None
 
     @pytest.mark.asyncio
     async def test_protected_tool_approvals_kwarg_forwarded(self):
@@ -309,10 +306,11 @@ class TestCallToolApprovalsInjection:
         with warrant_scope(warrant), key_scope(keypair):
             await protected(path="/data/file.txt", _approvals=[fake_approval])
 
-        injected = client.session.call_tool.call_args[0][1]
-        assert "approvals" in injected["_tenuo"]
+        meta_injected = client.session.call_tool.call_args.kwargs.get("meta")
+        assert meta_injected is not None
+        assert "approvals" in meta_injected["tenuo"]
         expected = base64.b64encode(b"approval_cbor").decode("utf-8")
-        assert injected["_tenuo"]["approvals"] == [expected]
+        assert meta_injected["tenuo"]["approvals"] == [expected]
 
     @pytest.mark.asyncio
     async def test_protected_tool_approvals_not_in_schema_args(self):
@@ -343,6 +341,7 @@ class TestCallToolApprovalsInjection:
 
         injected = client.session.call_tool.call_args[0][1]
         assert "_approvals" not in injected
+        assert "_tenuo" not in injected
 
 
 # ---------------------------------------------------------------------------

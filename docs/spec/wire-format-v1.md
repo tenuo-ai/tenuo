@@ -14,7 +14,7 @@
 
 ## Revision History
 
-- **Rev 4** (2026-03-06): Added MCP JSON-RPC error code mappings and `_tenuo` field specification to §A.2. Clarified `PopExpired` description.
+- **Rev 4** (2026-03-06): Added MCP JSON-RPC error code mappings and `params._meta` warrant transport to §A.2. Clarified `PopExpired` description.
 - **Rev 3** (2026-01-21): Verification and enforcement. Fixed `MAX_CONSTRAINT_DEPTH` (16→32), added Size Limits table, and added test vector cross-references.
 - **Rev 2** (2026-01-10): Normative specification updates.
 - **Rev 1** (2026-01-01): Initial release.
@@ -2242,15 +2242,16 @@ Some A2A errors are protocol-specific (e.g., `-32001` MISSING_WARRANT, `-32005` 
 
 #### JSON-RPC (MCP Protocol)
 
-MCP tool calls carry warrant data in a `_tenuo` field within the tool arguments. The server extracts this field, verifies the warrant chain and PoP, then executes the tool if authorized.
+MCP tool calls carry warrant data in `params._meta.tenuo` — the MCP spec's designated extension point. Tool arguments are never polluted with authorization metadata.
 
-**`_tenuo` field structure (embedded in tool arguments):**
+**`params._meta` structure:**
 
 ```json
 {
-  "tool_args": {
-    "query": "SELECT ...",
-    "_tenuo": {
+  "name": "query_database",
+  "arguments": {"query": "SELECT ..."},
+  "_meta": {
+    "tenuo": {
       "warrant": "<base64url CBOR WarrantStack>",
       "pop": "<base64url PoP signature>"
     }
@@ -2277,14 +2278,14 @@ MCP tool calls carry warrant data in a `_tenuo` field within the tool arguments.
 **Key mappings:**
 - `-32001` (DENIED) ↔ Authorization denied (missing warrant, chain invalid, constraint violation)
 - `-32002` (APPROVAL_REQUIRED) ↔ `1700` (InsufficientApprovals)
-- `-32602` (INVALID_PARAMS) ↔ Malformed or missing `_tenuo` field in tool arguments
+- `-32602` (INVALID_PARAMS) ↔ Malformed or missing `_meta.tenuo` in request params
 
 **Server-side verification flow:**
-1. Extract `_tenuo` from tool arguments
+1. Extract `_meta.tenuo` from `CallToolRequest.params`
 2. Decode warrant stack (base64url → CBOR)
 3. Verify chain against trusted roots
-4. Verify PoP against (warrant, tool, remaining args)
-5. Check constraints against remaining args (excluding `_tenuo`)
+4. Verify PoP against (warrant, tool, arguments)
+5. Check constraints against arguments
 6. Execute tool or return JSON-RPC error
 
 **Rationale:** Different protocols have different conventions:

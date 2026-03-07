@@ -20,7 +20,7 @@ Usage pattern
 
 2. Call ``verify()`` or ``verify_or_raise()`` inside each tool handler:
 
-    # fastmcp example — tool receives _tenuo from the injecting client
+    # fastmcp example — pass params._meta from the request
     @mcp.tool()
     async def read_file(path: str, **kwargs) -> str:
         clean = verifier.verify_or_raise("read_file", {"path": path, **kwargs})
@@ -46,19 +46,26 @@ client and server must share the same config so their constraint views agree.
 Warrant transport
 -----------------
 Clients inject warrants via ``SecureMCPClient(inject_warrant=True)``, which
-embeds a ``_tenuo`` field in the tool arguments::
+embeds Tenuo metadata in ``params._meta`` — the MCP spec's designated
+extension point::
 
     {
-      "path": "/data/log.txt",
-      "_tenuo": {
-        "warrant":   "<base64-encoded warrant>",
-        "signature": "<base64-encoded PoP signature>",
-        "approvals": ["<base64-encoded SignedApproval>", ...]  // optional
+      "name": "read_file",
+      "arguments": {"path": "/data/log.txt"},
+      "_meta": {
+        "tenuo": {
+          "warrant":   "<base64>",
+          "signature": "<base64>",
+          "approvals": ["<base64>", ...]
+        }
       }
     }
 
-``MCPVerifier.verify()`` strips ``_tenuo`` before returning ``clean_arguments``,
-so tool handlers never see the authorization envelope.
+Tool arguments are never polluted with authorization metadata.
+
+On the server, ``MCPVerifier.verify()`` accepts the ``_meta`` dict via its
+``meta`` parameter.  Pass ``req.params._meta`` when using a raw
+``@server.call_tool`` handler that receives the full ``CallToolRequest``.
 
 Approval gate flow
 ------------------
@@ -70,7 +77,7 @@ If a warrant embeds approval gates and the tool call triggers one::
     # result.jsonrpc_error_code  → -32002
 
 The client must obtain ``SignedApproval`` objects from authorized approvers and
-re-submit the call with those approvals serialized into ``_tenuo.approvals``.
+re-submit the call with those approvals serialized into ``_meta.tenuo.approvals``.
 
 JSON-RPC error codes
 --------------------
@@ -122,7 +129,7 @@ class MCPVerificationResult:
     """MCP tool name."""
 
     clean_arguments: Dict[str, Any]
-    """Tool arguments with ``_tenuo`` stripped — safe to pass to the tool handler."""
+    """Tool arguments safe to pass to the tool handler."""
 
     constraints: Dict[str, Any]
     """Constraint values that were checked against the warrant."""
@@ -233,7 +240,7 @@ class MCPVerifier:
 
         result = verifier.verify("transfer", arguments)
         if result.is_approval_required:
-            # Client must obtain approvals and re-submit with _tenuo.approvals
+            # Client must obtain approvals and re-submit with _meta.tenuo.approvals
             return jsonrpc_error(-32002, result.denial_reason)
     """
 
@@ -255,8 +262,8 @@ class MCPVerifier:
                 When omitted, raw tool arguments are used directly as
                 constraints — the field name must then match the warrant
                 constraint name exactly.
-            require_warrant: If ``True`` (default), calls that do not include
-                ``_tenuo.warrant`` are denied with ``-32001``.  Set ``False``
+            require_warrant: If ``True`` (default), calls without a warrant
+                in ``_meta.tenuo`` are denied with ``-32001``.  Set ``False``
                 only in mixed deployments where some tool calls legitimately
                 arrive without a Tenuo warrant (e.g., during gradual rollout).
         """
@@ -268,20 +275,25 @@ class MCPVerifier:
         self,
         tool_name: str,
         arguments: Optional[Dict[str, Any]],
+        meta: Optional[Dict[str, Any]] = None,
     ) -> MCPVerificationResult:
         """Verify a tool call against the embedded Tenuo warrant.
 
-        Extracts the warrant from ``_tenuo.warrant``, verifies the
-        Proof-of-Possession signature, satisfies guards with any pre-supplied
-        approvals from ``_tenuo.approvals``, and checks all constraints.
+        Extracts the warrant and PoP signature, verifies them, satisfies any
+        approval gates, and checks all constraints.
+
+        Authorization metadata is read from ``params._meta["tenuo"]``.  Pass
+        the ``_meta`` dict when your server framework exposes the full
+        ``CallToolRequest`` (e.g. raw ``@server.call_tool`` handlers).
 
         This method never raises — all failures are returned as a denial result.
 
         Args:
             tool_name: The MCP tool name being called.
-            arguments: Full tool arguments dict, including ``_tenuo`` if the
-                client used ``inject_warrant=True``.  ``None`` is treated as
-                an empty dict.
+            arguments: Tool arguments dict.  ``None`` is treated as an empty
+                dict.
+            meta: Contents of ``params._meta`` from the MCP request.
+                Must contain ``meta["tenuo"]`` with warrant and PoP signature.
 
         Returns:
             :class:`MCPVerificationResult` with ``allowed=True`` on success,
@@ -291,50 +303,43 @@ class MCPVerifier:
         args: Dict[str, Any] = arguments or {}
 
         # ------------------------------------------------------------------
-        # Step 1: extract constraints and _tenuo envelope
+        # Step 1: extract Tenuo envelope from params._meta
         # ------------------------------------------------------------------
+        tenuo_envelope: Dict[str, Any] = {}
+        if meta is not None and isinstance(meta.get("tenuo"), dict):
+            tenuo_envelope = meta["tenuo"]
+
         clean_arguments: Dict[str, Any]
         constraints: Dict[str, Any]
         warrant_b64: Optional[str]
         signature_b64: Optional[str]
         approvals_b64: List[str]
 
+        approvals_b64 = list(tenuo_envelope.get("approvals") or [])
+
         if self._config is not None:
             try:
                 extraction = self._config.extract_constraints(tool_name, args)
             except Exception as exc:
                 # ExtractionError — missing required field or unknown tool
-                clean_arguments = {k: v for k, v in args.items() if k != "_tenuo"}
                 return MCPVerificationResult(
                     allowed=False,
                     tool=tool_name,
-                    clean_arguments=clean_arguments,
+                    clean_arguments=dict(args),
                     constraints={},
                     denial_reason=str(exc),
                     jsonrpc_error_code=-32602,
                 )
-            clean_arguments = {k: v for k, v in args.items() if k != "_tenuo"}
+            clean_arguments = dict(args)
             constraints = dict(extraction.constraints)
-            warrant_b64 = extraction.warrant_base64
-            signature_b64 = extraction.signature_base64
-            # ExtractionResult doesn't expose approvals — read from raw _tenuo
-            tenuo_raw = args.get("_tenuo")
-            raw_approvals = tenuo_raw.get("approvals") if isinstance(tenuo_raw, dict) else None
-            approvals_b64 = list(raw_approvals) if isinstance(raw_approvals, list) else []
+            warrant_b64 = tenuo_envelope.get("warrant")
+            signature_b64 = tenuo_envelope.get("signature")
         else:
-            # Raw mode: strip _tenuo, use remaining arguments as constraints
-            clean_arguments = {k: v for k, v in args.items() if k != "_tenuo"}
-            constraints = dict(clean_arguments)
-            tenuo = args.get("_tenuo")
-            if isinstance(tenuo, dict):
-                warrant_b64 = tenuo.get("warrant")
-                signature_b64 = tenuo.get("signature")
-                raw_approvals = tenuo.get("approvals")
-                approvals_b64 = list(raw_approvals) if isinstance(raw_approvals, list) else []
-            else:
-                warrant_b64 = None
-                signature_b64 = None
-                approvals_b64 = []
+            # Raw mode: arguments are the constraints
+            clean_arguments = dict(args)
+            constraints = dict(args)
+            warrant_b64 = tenuo_envelope.get("warrant")
+            signature_b64 = tenuo_envelope.get("signature")
 
         # ------------------------------------------------------------------
         # Step 2: handle missing warrant
@@ -348,7 +353,7 @@ class MCPVerifier:
                     constraints=constraints,
                     denial_reason=(
                         "No warrant provided. Set inject_warrant=True on the "
-                        "SecureMCPClient, or include _tenuo.warrant in tool arguments."
+                        "SecureMCPClient, or pass params._meta with tenuo metadata."
                     ),
                     jsonrpc_error_code=-32001,
                 )
@@ -441,7 +446,7 @@ class MCPVerifier:
                 warrant_id=warrant_id,
                 denial_reason=(
                     f"Approval required for '{tool_name}'. "
-                    "Re-submit the call with approvals in _tenuo.approvals."
+                    "Re-submit the call with approvals in _meta.tenuo.approvals."
                 ),
                 jsonrpc_error_code=-32002,
             )
@@ -513,6 +518,7 @@ class MCPVerifier:
         self,
         tool_name: str,
         arguments: Optional[Dict[str, Any]],
+        meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Verify and return clean arguments, or raise on any denial.
 
@@ -520,10 +526,12 @@ class MCPVerifier:
 
         Args:
             tool_name: The MCP tool name.
-            arguments: Full tool arguments dict, including ``_tenuo``.
+            arguments: Tool arguments dict.
+            meta: Contents of ``params._meta`` from the MCP request, when
+                available.  See :meth:`verify` for extraction priority.
 
         Returns:
-            Clean arguments dict (``_tenuo`` stripped) if authorized.
+            Clean arguments dict if authorized.
 
         Raises:
             MCPAuthorizationError: If the call is not authorized.
@@ -535,7 +543,7 @@ class MCPVerifier:
                 clean = verifier.verify_or_raise("read_file", {"path": path, **kwargs})
                 return open(clean["path"]).read()
         """
-        return self.verify(tool_name, arguments).raise_if_denied().clean_arguments
+        return self.verify(tool_name, arguments, meta=meta).raise_if_denied().clean_arguments
 
 
 # ---------------------------------------------------------------------------
@@ -550,6 +558,7 @@ def verify_mcp_call(
     authorizer: Any,
     config: Optional[Any] = None,
     require_warrant: bool = True,
+    meta: Optional[Dict[str, Any]] = None,
 ) -> MCPVerificationResult:
     """Verify a single MCP tool call — convenience wrapper around :class:`MCPVerifier`.
 
@@ -559,12 +568,12 @@ def verify_mcp_call(
 
     Args:
         tool_name: The MCP tool name being called.
-        arguments: Full tool arguments dict, including ``_tenuo`` if the client
-            injected a warrant.  ``None`` is treated as an empty dict.
+        arguments: Tool arguments dict.  ``None`` is treated as an empty dict.
         authorizer: ``tenuo_core.Authorizer`` configured with trusted issuer keys.
         config: Optional ``tenuo_core.CompiledMcpConfig`` for constraint extraction.
-        require_warrant: If ``True`` (default), calls without ``_tenuo.warrant``
-            are denied.
+        require_warrant: If ``True`` (default), calls without a warrant are denied.
+        meta: Contents of ``params._meta`` from the MCP request, when available.
+            See :meth:`MCPVerifier.verify` for extraction priority.
 
     Returns:
         :class:`MCPVerificationResult`.
@@ -586,7 +595,7 @@ def verify_mcp_call(
         authorizer=authorizer,
         config=config,
         require_warrant=require_warrant,
-    ).verify(tool_name, arguments)
+    ).verify(tool_name, arguments, meta=meta)
 
 
 __all__ = [

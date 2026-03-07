@@ -291,10 +291,8 @@ tools:
         config_path = f.name
 
     try:
-        # Initialize client with config_path (no register_config arg)
-        # Should default to registering
-        async with SecureMCPClient(command=sys.executable, args=[str(mcp_server_script)], config_path=config_path) as _client:  # noqa: F841
-            # Check global config
+        # register_config=True opts in to global config registration
+        async with SecureMCPClient(command=sys.executable, args=[str(mcp_server_script)], config_path=config_path, register_config=True) as _client:  # noqa: F841
             conf = get_config()
             assert conf.mcp_config is not None
             # Verify it's the right config by checking compiled output or similar

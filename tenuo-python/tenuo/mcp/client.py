@@ -5,8 +5,10 @@ Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 """
 
 import asyncio
+import base64
 import logging
 import sys
+import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Literal, Optional
 
@@ -104,16 +106,13 @@ class SecureMCPClient:
 
         Common:
             config_path: Path to mcp-config.yaml (optional)
-            register_config: Register config globally for @guard. Defaults to True
-                if config_path is provided.
+            register_config: If ``True``, register the loaded config into global
+                ``TenuoConfig`` so ``@guard`` decorators can use it. Defaults to
+                ``False`` — call ``configure(mcp_config=...)`` explicitly if you
+                need global registration.
             inject_warrant: Inject warrants into tool calls for server-side
                 verification (default: False). Set True when the server runs
                 Tenuo verification.
-
-        Note:
-            If register_config=True, this mutates global Tenuo configuration.
-            Prefer calling configure(mcp_config=...) explicitly if you need
-            fine-grained control.
         """
         if not MCP_AVAILABLE:
             raise ImportError('MCP SDK not installed. Install with: uv pip install "tenuo[mcp]"')
@@ -155,9 +154,7 @@ class SecureMCPClient:
             self.mcp_config = McpConfig.from_file(config_path)
             self.compiled_config = CompiledMcpConfig.compile(self.mcp_config)
 
-            # Default logic: If config_path provided, we assume you want to register it
-            # unless explicitly disabled.
-            should_register = register_config if register_config is not None else True
+            should_register = register_config if register_config is not None else False
 
             # Optionally register with global config
             if should_register:
@@ -423,9 +420,9 @@ class SecureMCPClient:
 
         MCP Warrant Transport:
             When injection is enabled, the current warrant and PoP signature are
-            injected into arguments._tenuo before sending to the MCP server.
+            sent via ``params._meta.tenuo`` (the MCP spec extension point).
             If ``approvals`` are provided, they are serialized into
-            ``_tenuo.approvals`` so the server can satisfy any approval gate on the tool.
+            ``_meta.tenuo.approvals`` so the server can satisfy any approval gate on the tool.
 
         Args:
             tool_name: Name of the MCP tool to call
@@ -433,7 +430,7 @@ class SecureMCPClient:
             warrant_context: If True, authorize locally before sending
             inject_warrant: Override client's inject_warrant setting (default: None)
             approvals: Pre-obtained SignedApproval objects to forward to the server
-                via ``_tenuo.approvals``. Required when the tool is approval-gate-protected
+                via ``_meta.tenuo.approvals``. Required when the tool is approval-gate-protected
                 and the server performs Tenuo verification (``inject_warrant=True``).
             timeout: Maximum seconds to wait for the server response (default: 30).
                 Raises ``asyncio.TimeoutError`` if exceeded.
@@ -467,15 +464,13 @@ class SecureMCPClient:
         # Helper to perform the actual network call with optional injection
         async def _perform_call(args: Dict[str, Any]) -> Any:
             call_args = args.copy()
+            meta_payload: Optional[Dict[str, Any]] = None
 
             if should_inject:
                 warrant = warrant_scope()
                 keypair = key_scope()
 
                 if warrant is not None and keypair is not None:
-                    import base64
-                    import time
-
                     warrant_base64 = warrant.to_base64()
                     # Create PoP signature for this specific call
                     pop_sig = warrant.sign(keypair, tool_name, args, int(time.time()))
@@ -490,7 +485,7 @@ class SecureMCPClient:
                             base64.b64encode(a.to_bytes()).decode("utf-8")
                             for a in approvals
                         ]
-                    call_args["_tenuo"] = tenuo_meta
+                    meta_payload = {"tenuo": tenuo_meta}
 
             if self.session is None:
                 raise RuntimeError("Not connected to MCP server. Call connect() first.")
@@ -498,7 +493,7 @@ class SecureMCPClient:
             for attempt in range(2):
                 try:
                     response = await asyncio.wait_for(
-                        self.session.call_tool(tool_name, call_args),
+                        self.session.call_tool(tool_name, call_args, meta=meta_payload),
                         timeout=timeout,
                     )
                     return response.content
