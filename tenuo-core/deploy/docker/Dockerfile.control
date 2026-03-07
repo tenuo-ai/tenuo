@@ -14,7 +14,7 @@
 # ============================================================================
 FROM rust:1.85-bookworm as chef
 WORKDIR /app
-RUN cargo install cargo-chef
+RUN cargo install cargo-chef@0.1.76
 
 # ============================================================================
 # Planner stage - Compute recipe
