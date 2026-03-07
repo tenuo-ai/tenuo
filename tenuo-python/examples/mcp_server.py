@@ -268,8 +268,9 @@ def standalone_example():
     )
 
     # In a JSON-RPC handler:
-    arguments = {"path": "/data/file.txt"}  # would include _tenuo in production
-    result = verify_mcp_call("read_file", arguments, authorizer=authorizer)
+    arguments = {"path": "/data/file.txt"}
+    meta = None  # in production, pass params._meta from the MCP request
+    result = verify_mcp_call("read_file", arguments, authorizer=authorizer, meta=meta)
 
     if result.allowed:
         print(f"Authorized — clean args: {result.clean_arguments}")
