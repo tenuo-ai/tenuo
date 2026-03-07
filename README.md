@@ -17,7 +17,7 @@
 
 Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid debit card, as opposed to corporate Amex**: ephemeral, scoped capability tokens that expire when the task ends.
 
-A **warrant** is a signed token that says exactly which tools an agent can call, with what arguments, and for how long. Warrants are bound to a cryptographic key, verified offline in ~27μs, and can only lose authority as they're delegated — never gain it. If an agent is prompt-injected, the authority still can't escape its bounds.
+A **warrant** is a signed token specifying which tools an agent can call, under what constraints, and for how long. Bound to a cryptographic key, verified offline in ~27μs, and monotonically scoped: delegation can only narrow authority, never expand it. If an agent is prompt-injected, the warrant's bounds still hold.
 
 > **Status: v0.1 Beta** - Core semantics are stable. APIs may evolve. See [CHANGELOG](./CHANGELOG.md).
 
