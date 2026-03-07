@@ -97,12 +97,10 @@ async def main():
                     "read_file",
                     {"path": str(test_file), "max_size": 1000},
                     warrant_context=True,
-                    inject_warrant=True,  # ← Injects _tenuo field
+                    inject_warrant=True,  # ← sends warrant via params._meta.tenuo
                 )
-                print("   ✓ Warrant injected into arguments._tenuo")
+                print("   ✓ Warrant injected into params._meta.tenuo")
                 print("   (MCP server can extract and verify if configured)")
-                print("   ⚠️  Note: If the server uses strict JSON schema validation (additionalProperties: false),")
-                print("       this call might fail. Ensure your server allows the '_tenuo' field.")
 
                 # Try unauthorized call (should fail)
                 print("\n6. Testing constraint enforcement...")

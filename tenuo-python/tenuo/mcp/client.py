@@ -106,16 +106,13 @@ class SecureMCPClient:
 
         Common:
             config_path: Path to mcp-config.yaml (optional)
-            register_config: Register config globally for @guard. Defaults to True
-                if config_path is provided.
+            register_config: If ``True``, register the loaded config into global
+                ``TenuoConfig`` so ``@guard`` decorators can use it. Defaults to
+                ``False`` — call ``configure(mcp_config=...)`` explicitly if you
+                need global registration.
             inject_warrant: Inject warrants into tool calls for server-side
                 verification (default: False). Set True when the server runs
                 Tenuo verification.
-
-        Note:
-            If register_config=True, this mutates global Tenuo configuration.
-            Prefer calling configure(mcp_config=...) explicitly if you need
-            fine-grained control.
         """
         if not MCP_AVAILABLE:
             raise ImportError('MCP SDK not installed. Install with: uv pip install "tenuo[mcp]"')
@@ -157,9 +154,7 @@ class SecureMCPClient:
             self.mcp_config = McpConfig.from_file(config_path)
             self.compiled_config = CompiledMcpConfig.compile(self.mcp_config)
 
-            # Default logic: If config_path provided, we assume you want to register it
-            # unless explicitly disabled.
-            should_register = register_config if register_config is not None else True
+            should_register = register_config if register_config is not None else False
 
             # Optionally register with global config
             if should_register:

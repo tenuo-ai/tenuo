@@ -157,13 +157,13 @@ pub struct ExtractionResult {
     pub traces: Vec<ExtractionTrace>,
     /// Matched tool name
     pub tool: String,
-    /// Warrant (base64) extracted from `_tenuo.warrant` (MCP only)
+    /// Warrant (base64), if extracted from the request. Always `None` for MCP
+    /// (warrant transport uses `params._meta.tenuo` at the SDK layer).
     pub warrant_base64: Option<String>,
-    /// PoP signature (base64) extracted from `_tenuo.signature` (MCP only)
+    /// PoP signature (base64), if extracted from the request.
     pub signature_base64: Option<String>,
-    /// Pre-supplied approvals (base64-encoded CBOR) from `_tenuo.approvals` (MCP only).
-    /// Each entry is a base64-encoded `SignedApproval`. Pass to `authorize_one(approvals=...)`
-    /// so the Authorizer can satisfy warrant approval gates atomically with PoP verification.
+    /// Pre-supplied approvals (base64-encoded CBOR).
+    /// Each entry is a base64-encoded `SignedApproval`.
     pub approvals_base64: Vec<String>,
 }
 
