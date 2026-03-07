@@ -1283,7 +1283,7 @@ async with SecureMCPClient(
 Parameters:
 - `command`, `args`, `env` — Stdio transport (local subprocess)
 - `url`, `transport`, `headers`, `timeout` — HTTP transports (remote server)
-- `inject_warrant` — Embed `_tenuo` field in tool arguments for server-side verification
+- `inject_warrant` — Send warrant via `params._meta.tenuo` for server-side verification
 - `config_path`, `register_config` — Load MCP config for constraint extraction
 
 ### MCPVerifier
@@ -1299,14 +1299,14 @@ verifier = MCPVerifier(
     config=CompiledMcpConfig.compile(McpConfig.from_file("mcp-config.yaml")),
 )
 
-result = verifier.verify("read_file", {"path": "/data/log.txt", "_tenuo": {...}})
+result = verifier.verify("read_file", {"path": "/data/log.txt"}, meta=req.params._meta)
 result.raise_if_denied()
 execute_tool(result.clean_arguments)
 ```
 
 Returns `MCPVerificationResult` with:
 - `allowed` — Whether the call is authorized
-- `clean_arguments` — Arguments with `_tenuo` stripped
+- `clean_arguments` — Tool arguments safe to pass to the handler
 - `is_approval_required` — Whether an approval gate requires approval
 - `jsonrpc_error_code` — `-32001` (denied), `-32002` (approval required), or `-32602` (invalid params)
 - `to_jsonrpc_error()` — Format as JSON-RPC error response
@@ -1318,12 +1318,14 @@ Standalone convenience function for one-off verification:
 ```python
 from tenuo.mcp import verify_mcp_call
 
-clean = verify_mcp_call(
-    authorizer=authorizer,
-    tool_name="read_file",
+result = verify_mcp_call(
+    "read_file",
     arguments=raw_arguments,
+    authorizer=authorizer,
     config=compiled_config,  # optional
+    meta=request_meta,       # params._meta from the MCP request
 )
+result.raise_if_denied()
 ```
 
 See [`examples/mcp/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/mcp) for complete examples.

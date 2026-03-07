@@ -190,18 +190,21 @@ tools:
 # ============================================================
 # Warrant Transport in MCP
 # ============================================================
-# MCP doesn't have HTTP headers. Warrants travel in a reserved _tenuo field:
+# MCP doesn't have HTTP headers. Warrants travel in params._meta.tenuo
+# (the MCP spec's designated extension point):
 #
 #   {
-#     "path": "/data/file.txt",
-#     "_tenuo": {
-#       "warrant": "eyJ0eXA...",    # Base64-encoded warrant chain
-#       "signature": "c2lnXy4uLg=="  # Base64-encoded PoP signature
+#     "name": "read_file",
+#     "arguments": {"path": "/data/file.txt"},
+#     "_meta": {
+#       "tenuo": {
+#         "warrant": "eyJ0eXA...",    # Base64-encoded warrant chain
+#         "signature": "c2lnXy4uLg=="  # Base64-encoded PoP signature
+#       }
 #     }
 #   }
 #
-# The _tenuo field is automatically stripped before tool execution.
-# Tools never see it - keeps the authorization layer separate.
+# Tool arguments are never polluted with authorization metadata.
 #
 # ============================================================
 # Wildcard Extraction
