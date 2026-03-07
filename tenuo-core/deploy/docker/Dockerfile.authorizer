@@ -31,9 +31,9 @@
 # ============================================================================
 # Chef stage - Install cargo-chef
 # ============================================================================
-FROM rust:1.85-bookworm as chef
+FROM rust:1.88-bookworm as chef
 WORKDIR /app
-RUN cargo install cargo-chef@0.1.76
+RUN cargo install cargo-chef
 
 # ============================================================================
 # Planner stage - Compute recipe
