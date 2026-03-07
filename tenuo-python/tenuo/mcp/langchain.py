@@ -120,67 +120,6 @@ def _json_schema_to_python_type(schema: Dict[str, Any]) -> type:
     return type_mapping.get(schema_type, Any)
 
 
-async def guard_mcp_client(client: Any) -> List[Any]:
-    """
-    Wrap all tools from a LangChain MultiServerMCPClient with Tenuo protection.
-
-    This is an async function — call it with ``await``.
-
-    Each tool's async implementation is wrapped with ``@guard`` so every call is
-    authorized against the active Tenuo warrant before it reaches the MCP server.
-
-    Args:
-        client: ``langchain_mcp_adapters.client.MultiServerMCPClient`` instance
-            (any object with an async ``get_tools()`` method returning BaseTool objects)
-
-    Returns:
-        List of LangChain StructuredTool objects with Tenuo protection applied
-
-    Example::
-
-        async with MultiServerMCPClient({...}) as mcp:
-            tools = await guard_mcp_client(mcp)
-            agent = create_openai_tools_agent(llm, tools)
-            await agent.ainvoke({"input": "..."})
-    """
-    if not LANGCHAIN_AVAILABLE:
-        raise ImportError('LangChain not installed. Install with: uv pip install "tenuo[langchain]"')
-
-    from ..decorators import guard
-
-    lc_tools: List[Any] = await client.get_tools()
-
-    def _make_protected(name: str, original: Callable) -> Callable:
-        """Factory to avoid closure-over-loop-variable bug."""
-
-        @guard(tool=name, extract_args=lambda **kwargs: kwargs)
-        async def _guarded(**kwargs: Any) -> Any:
-            return await original(**kwargs)
-
-        _guarded.__name__ = name
-        return _guarded
-
-    protected: List[Any] = []
-    for tool in lc_tools:
-        tool_coroutine = getattr(tool, "coroutine", None)
-        if tool_coroutine is None:
-            # No async implementation — pass through unchanged
-            protected.append(tool)
-            continue
-
-        protected_coroutine = _make_protected(tool.name, tool_coroutine)
-
-        new_tool = StructuredTool(
-            name=tool.name,
-            description=tool.description or f"MCP tool: {tool.name}",
-            func=getattr(tool, "func", None),
-            coroutine=protected_coroutine,
-            args_schema=getattr(tool, "args_schema", None),  # type: ignore[arg-type]
-        )
-        protected.append(new_tool)
-
-    return protected
-
 
 class MCPToolAdapter:
     """

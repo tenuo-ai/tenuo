@@ -5,8 +5,10 @@ Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 """
 
 import asyncio
+import base64
 import logging
 import sys
+import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Literal, Optional
 
@@ -423,9 +425,9 @@ class SecureMCPClient:
 
         MCP Warrant Transport:
             When injection is enabled, the current warrant and PoP signature are
-            injected into arguments._tenuo before sending to the MCP server.
+            sent via ``params._meta.tenuo`` (the MCP spec extension point).
             If ``approvals`` are provided, they are serialized into
-            ``_tenuo.approvals`` so the server can satisfy any approval gate on the tool.
+            ``_meta.tenuo.approvals`` so the server can satisfy any approval gate on the tool.
 
         Args:
             tool_name: Name of the MCP tool to call
@@ -433,7 +435,7 @@ class SecureMCPClient:
             warrant_context: If True, authorize locally before sending
             inject_warrant: Override client's inject_warrant setting (default: None)
             approvals: Pre-obtained SignedApproval objects to forward to the server
-                via ``_tenuo.approvals``. Required when the tool is approval-gate-protected
+                via ``_meta.tenuo.approvals``. Required when the tool is approval-gate-protected
                 and the server performs Tenuo verification (``inject_warrant=True``).
             timeout: Maximum seconds to wait for the server response (default: 30).
                 Raises ``asyncio.TimeoutError`` if exceeded.
@@ -467,15 +469,13 @@ class SecureMCPClient:
         # Helper to perform the actual network call with optional injection
         async def _perform_call(args: Dict[str, Any]) -> Any:
             call_args = args.copy()
+            meta_payload: Optional[Dict[str, Any]] = None
 
             if should_inject:
                 warrant = warrant_scope()
                 keypair = key_scope()
 
                 if warrant is not None and keypair is not None:
-                    import base64
-                    import time
-
                     warrant_base64 = warrant.to_base64()
                     # Create PoP signature for this specific call
                     pop_sig = warrant.sign(keypair, tool_name, args, int(time.time()))
@@ -490,7 +490,7 @@ class SecureMCPClient:
                             base64.b64encode(a.to_bytes()).decode("utf-8")
                             for a in approvals
                         ]
-                    call_args["_tenuo"] = tenuo_meta
+                    meta_payload = {"tenuo": tenuo_meta}
 
             if self.session is None:
                 raise RuntimeError("Not connected to MCP server. Call connect() first.")
@@ -498,7 +498,7 @@ class SecureMCPClient:
             for attempt in range(2):
                 try:
                     response = await asyncio.wait_for(
-                        self.session.call_tool(tool_name, call_args),
+                        self.session.call_tool(tool_name, call_args, meta=meta_payload),
                         timeout=timeout,
                     )
                     return response.content

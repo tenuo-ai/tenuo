@@ -125,7 +125,7 @@ async def read_file(path: str, **kwargs) -> str:
     return open(clean["path"]).read()
 ```
 
-The verifier extracts `_tenuo` from arguments, verifies the warrant + PoP signature, checks constraints, and returns clean arguments (with `_tenuo` stripped).
+The verifier extracts warrant metadata from `params._meta`, verifies the warrant + PoP signature, and checks constraints.
 
 ### Pattern 3: Securing LangChain Adapters
 
@@ -375,31 +375,24 @@ To enable end-to-end authorization where the server verifies the warrant, set `i
 
 ```python
 async with SecureMCPClient(..., inject_warrant=True) as client:
-    # Warrants now travel in arguments._tenuo
+    # Warrants travel in params._meta (MCP spec extension point)
     await client.tools["read_file"](path="/tmp/test.txt")
 ```
 
-### ⚠️ Interoperability Risk: Strict Schemas
+Tenuo sends warrant metadata via `params._meta.tenuo` — the MCP spec's designated extension point. Tool arguments are never modified, so there are no schema compatibility issues:
 
-When `inject_warrant=True`, Tenuo injects a `_tenuo` field into the tool arguments:
-
-```python
-# Tenuo modifies the call payload:
+```json
 {
-  "path": "/data/file.txt",
-  "_tenuo": {
-    "warrant": "<base64>",
-    "signature": "<base64>",
-    "approvals": ["<base64>", ...]  # optional, for approval-gate-protected tools
+  "name": "read_file",
+  "arguments": {"path": "/data/file.txt"},
+  "_meta": {
+    "tenuo": {
+      "warrant": "<base64>",
+      "signature": "<base64>",
+      "approvals": ["<base64>", ...]
+    }
   }
 }
-```
-
-If the destination MCP server uses a **strict JSON Schema** validator (e.g., explicit `additionalProperties: false`), the call will fail because `_tenuo` is not in the server's known input schema.
-
-**Mitigation**:
-1. **Configure Server**: Ensure your MCP servers are configured to allow unknown properties (this is the default in most Pydantic/Zod setups unless explicitly strict).
-2. **Update Schema**: If strict validation is required, add `_tenuo` (type: object, optional) to your tool schemas.
 ```
 
 ### Manual Extraction
@@ -804,7 +797,7 @@ max_size:
 - **Secure Client** (`SecureMCPClient`): Wraps the MCP SDK with warrant injection and constraint enforcement. Supports stdio, SSE, and StreamableHTTP transports.
 - **Server Verification** (`MCPVerifier`): Framework-agnostic warrant verification for MCP server tool handlers. Works with `fastmcp`, the raw MCP SDK, or any custom server.
 - **Tool discovery**: Automatic wrapping of discovered tools with `@guard`.
-- **Warrant propagation**: Injecting warrants (+ approvals) into `_tenuo` field for end-to-end verification.
+- **Warrant propagation**: Injecting warrants (+ approvals) into `params._meta` for end-to-end verification.
 - **Constraint extraction**: Config-driven extraction from MCP arguments.
 - **Approval gate flow**: Structured JSON-RPC errors (`-32002`) for approval-gate-protected tools with retry support.
 
