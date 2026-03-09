@@ -1,9 +1,12 @@
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
 use serde_wasm_bindgen::Serializer;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use tenuo::{
+    approval_gate::{
+        self, ApprovalGateMap, ArgApprovalGate, ToolApprovalGate,
+    },
     constraints::{
         Any, Cidr, Constraint, ConstraintSet, ConstraintValue, Contains, Exact, NotOneOf, OneOf,
         Pattern, Range, RegexConstraint, Subpath, UrlPattern, UrlSafe,
@@ -138,33 +141,118 @@ pub struct DecodedWarrant {
     pub expires_at: u64,
     pub authorized_holder: String, // hex
     pub depth: u32,
+    /// Raw extensions as hex-encoded values keyed by extension name.
+    pub extensions: HashMap<String, String>,
+    /// Parsed approval gates from the `tenuo.approval_gates` extension (if present).
+    /// Map of tool_name -> gate spec: { args: null } for whole-tool, { args: { field: "all" | constraint } } for per-arg.
+    pub approval_gates: Option<JsonValue>,
+    /// Hex-encoded Ed25519 public keys of required approvers.
+    pub required_approvers: Option<Vec<String>>,
+    /// Minimum number of approvals required.
+    pub min_approvals: Option<u32>,
+}
+
+/// Convert an ApprovalGateMap to a JSON-serializable representation.
+fn approval_gate_map_to_json(gm: &ApprovalGateMap) -> JsonValue {
+    let mut map = serde_json::Map::new();
+    for (tool, gate) in gm.iter() {
+        match &gate.args {
+            None => {
+                map.insert(tool.clone(), json!({ "args": null }));
+            }
+            Some(args) => {
+                let mut args_map = serde_json::Map::new();
+                for (arg, arg_gate) in args {
+                    match arg_gate {
+                        ArgApprovalGate::All => {
+                            args_map.insert(arg.clone(), json!("all"));
+                        }
+                        ArgApprovalGate::Constraint(c) => {
+                            args_map.insert(arg.clone(), constraint_to_readable(c));
+                        }
+                    }
+                }
+                map.insert(tool.clone(), json!({ "args": JsonValue::Object(args_map) }));
+            }
+        }
+    }
+    JsonValue::Object(map)
+}
+
+/// Parse a JSON approval gates object into an ApprovalGateMap for embedding in extensions.
+fn parse_approval_gates_json(val: &serde_json::Value) -> Option<ApprovalGateMap> {
+    let obj = val.as_object()?;
+    let mut gm = ApprovalGateMap::new();
+    for (tool, gate_val) in obj {
+        if let Some(gate_obj) = gate_val.as_object() {
+            if gate_obj.get("args").map(|v| v.is_null()).unwrap_or(false) {
+                gm.insert(tool.clone(), ToolApprovalGate::whole_tool());
+            } else if let Some(args_val) = gate_obj.get("args").and_then(|v| v.as_object()) {
+                let mut args = BTreeMap::new();
+                for (arg, ag_val) in args_val {
+                    if ag_val.as_str() == Some("all") {
+                        args.insert(arg.clone(), ArgApprovalGate::All);
+                    }
+                    // Future: parse constraint-based arg gates
+                }
+                gm.insert(tool.clone(), ToolApprovalGate::with_args(args));
+            }
+        }
+    }
+    if gm.is_empty() { None } else { Some(gm) }
+}
+
+/// Extract decoded warrant fields including extensions and approval gates.
+fn extract_decoded_warrant(warrant: &Warrant) -> DecodedWarrant {
+    let capabilities: HashMap<String, HashMap<String, JsonValue>> = warrant
+        .capabilities()
+        .map(|caps| {
+            caps.iter()
+                .map(|(tool, cs)| (tool.clone(), constraint_set_to_readable(cs)))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let extensions: HashMap<String, String> = warrant
+        .extensions()
+        .iter()
+        .map(|(k, v)| (k.clone(), hex::encode(v)))
+        .collect();
+
+    let approval_gates = approval_gate::parse_approval_gate_map(
+        warrant.extension(approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+    )
+    .ok()
+    .flatten()
+    .map(|gm| approval_gate_map_to_json(&gm));
+
+    let required_approvers = warrant
+        .required_approvers()
+        .map(|keys| keys.iter().map(|k| hex::encode(k.to_bytes())).collect());
+
+    let min_approvals = warrant.min_approvals();
+
+    DecodedWarrant {
+        id: warrant.id().to_string(),
+        issuer: hex::encode(warrant.issuer().to_bytes()),
+        tools: warrant.tools(),
+        capabilities,
+        issued_at: warrant.issued_at().timestamp() as u64,
+        expires_at: warrant.expires_at().timestamp() as u64,
+        authorized_holder: hex::encode(warrant.authorized_holder().to_bytes()),
+        depth: warrant.depth(),
+        extensions,
+        approval_gates,
+        required_approvers,
+        min_approvals,
+    }
 }
 
 #[wasm_bindgen]
 pub fn decode_warrant(base64_warrant: &str) -> JsValue {
     match wire::decode_base64(base64_warrant.trim()) {
         Ok(warrant) => {
-            // Convert capabilities to human-readable format
-            let capabilities: HashMap<String, HashMap<String, JsonValue>> = warrant
-                .capabilities()
-                .map(|caps| {
-                    caps.iter()
-                        .map(|(tool, cs)| (tool.clone(), constraint_set_to_readable(cs)))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let decoded = DecodedWarrant {
-                id: warrant.id().to_string(),
-                issuer: hex::encode(warrant.issuer().to_bytes()),
-                tools: warrant.tools(),
-                capabilities,
-                issued_at: warrant.issued_at().timestamp() as u64,
-                expires_at: warrant.expires_at().timestamp() as u64,
-                authorized_holder: hex::encode(warrant.authorized_holder().to_bytes()),
-                depth: warrant.depth(),
-            };
-            // Use serialize_maps_as_objects to produce plain JS objects instead of Map
+            let decoded = extract_decoded_warrant(&warrant);
             let serializer = Serializer::new().serialize_maps_as_objects(true);
             decoded.serialize(&serializer).unwrap()
         }
@@ -718,8 +806,6 @@ pub struct BuilderWarrantResult {
 pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
     init_panic_hook();
 
-    // The frontend sends constraints as { "pattern": "value" } or { "exact": "value" } etc.
-    // We need to handle this flexible format
     #[derive(serde::Deserialize)]
     struct BuilderConfig {
         tools: HashMap<String, HashMap<String, serde_json::Value>>,
@@ -728,8 +814,15 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
         max_depth: Option<u32>,
         signing_key_hex: Option<String>,
         holder_key_hex: Option<String>,
-        /// If provided, create a delegated warrant from this parent
         parent_warrant_b64: Option<String>,
+        /// Approval gates to embed in the warrant's extensions.
+        /// JSON object: { "tool_name": { "args": null } } for whole-tool,
+        /// { "tool_name": { "args": { "field": "all" } } } for per-arg.
+        approval_gates: Option<serde_json::Value>,
+        /// Hex-encoded Ed25519 public keys of required approvers.
+        required_approvers: Option<Vec<String>>,
+        /// Minimum number of approvals required.
+        min_approvals: Option<u32>,
     }
 
     let config: BuilderConfig = match serde_wasm_bindgen::from_value(config_json) {
@@ -992,6 +1085,9 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
 
         att_builder = att_builder.ttl(Duration::from_secs(config.ttl));
 
+        // Note: AttenuationBuilder auto-inherits approval gates and required_approvers
+        // from the parent warrant. The monotonicity rules prevent weakening gates.
+
         let warrant = match att_builder.build(&issuer_key) {
             Ok(w) => w,
             Err(e) => {
@@ -1044,6 +1140,89 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
     for (tool_name, constraints) in &config.tools {
         let constraint_set = parse_constraints(constraints);
         builder = builder.capability(tool_name, constraint_set);
+    }
+
+    // Wire approval gates into extensions
+    if let Some(gates_json) = &config.approval_gates {
+        if let Some(gm) = parse_approval_gates_json(gates_json) {
+            match approval_gate::encode_approval_gate_map(&gm) {
+                Ok(encoded) => {
+                    builder = builder.extension(
+                        approval_gate::APPROVAL_GATE_EXTENSION_KEY,
+                        encoded,
+                    );
+                }
+                Err(e) => {
+                    return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+                        warrant_b64: String::new(),
+                        issuer_public_key_hex: String::new(),
+                        issuer_private_key_hex: String::new(),
+                        holder_public_key_hex: String::new(),
+                        holder_private_key_hex: String::new(),
+                        tools: tool_names,
+                        error: Some(format!("Failed to encode approval gates: {}", e)),
+                    })
+                    .unwrap();
+                }
+            }
+        }
+    }
+
+    // Wire required approvers
+    if let Some(approver_hexes) = &config.required_approvers {
+        let mut approvers = Vec::new();
+        for hex_str in approver_hexes {
+            match hex::decode(hex_str) {
+                Ok(bytes) => match <[u8; 32]>::try_from(bytes.as_slice()) {
+                    Ok(arr) => match PublicKey::from_bytes(&arr) {
+                        Ok(pk) => approvers.push(pk),
+                        Err(e) => {
+                            return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+                                warrant_b64: String::new(),
+                                issuer_public_key_hex: String::new(),
+                                issuer_private_key_hex: String::new(),
+                                holder_public_key_hex: String::new(),
+                                holder_private_key_hex: String::new(),
+                                tools: tool_names,
+                                error: Some(format!("Invalid approver key: {}", e)),
+                            })
+                            .unwrap();
+                        }
+                    },
+                    Err(_) => {
+                        return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+                            warrant_b64: String::new(),
+                            issuer_public_key_hex: String::new(),
+                            issuer_private_key_hex: String::new(),
+                            holder_public_key_hex: String::new(),
+                            holder_private_key_hex: String::new(),
+                            tools: tool_names,
+                            error: Some("Approver key must be 32 bytes".to_string()),
+                        })
+                        .unwrap();
+                    }
+                },
+                Err(_) => {
+                    return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+                        warrant_b64: String::new(),
+                        issuer_public_key_hex: String::new(),
+                        issuer_private_key_hex: String::new(),
+                        holder_public_key_hex: String::new(),
+                        holder_private_key_hex: String::new(),
+                        tools: tool_names,
+                        error: Some("Invalid approver key hex".to_string()),
+                    })
+                    .unwrap();
+                }
+            }
+        }
+        if !approvers.is_empty() {
+            builder = builder.required_approvers(approvers);
+        }
+    }
+
+    if let Some(min) = config.min_approvals {
+        builder = builder.min_approvals(min);
     }
 
     // Build and sign
@@ -1151,25 +1330,7 @@ pub fn decode_pem_chain_wasm(input: &str) -> JsValue {
             // Decode each warrant
             let mut decoded_warrants: Vec<DecodedWarrant> = vec![];
             for w in warrants_raw {
-                let capabilities: HashMap<String, HashMap<String, JsonValue>> = w
-                    .capabilities()
-                    .map(|caps| {
-                        caps.iter()
-                            .map(|(tool, cs)| (tool.clone(), constraint_set_to_readable(cs)))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                decoded_warrants.push(DecodedWarrant {
-                    id: w.id().to_string(),
-                    issuer: hex::encode(w.issuer().to_bytes()),
-                    tools: w.tools(),
-                    capabilities,
-                    issued_at: w.issued_at().timestamp() as u64,
-                    expires_at: w.expires_at().timestamp() as u64,
-                    authorized_holder: hex::encode(w.authorized_holder().to_bytes()),
-                    depth: w.depth(),
-                });
+                decoded_warrants.push(extract_decoded_warrant(w));
             }
 
             // Validate chain linkage and compute diffs
@@ -1327,5 +1488,441 @@ pub fn decode_pem_chain_wasm(input: &str) -> JsValue {
             error: Some(format!("Failed to decode: {}", e)),
         })
         .unwrap(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Approval gate evaluation
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+pub struct ApprovalGateResult {
+    pub approval_required: bool,
+    pub tool: String,
+    pub error: Option<String>,
+}
+
+/// Evaluate whether a tool call requires approval based on the warrant's embedded approval gates.
+///
+/// Returns `{ approval_required: true/false, tool, error }`.
+/// This reads `extensions["tenuo.approval_gates"]` from the warrant, parses it,
+/// and runs the gate evaluation logic from tenuo-core.
+#[wasm_bindgen]
+pub fn evaluate_approval_gates(
+    warrant_b64: &str,
+    tool: &str,
+    args_json: JsValue,
+) -> JsValue {
+    init_panic_hook();
+
+    let warrant = match wire::decode_base64(warrant_b64.trim()) {
+        Ok(w) => w,
+        Err(e) => {
+            return serde_wasm_bindgen::to_value(&ApprovalGateResult {
+                approval_required: false,
+                tool: tool.to_string(),
+                error: Some(format!("Invalid warrant: {}", e)),
+            })
+            .unwrap();
+        }
+    };
+
+    let gate_map = match approval_gate::parse_approval_gate_map(
+        warrant.extension(approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+    ) {
+        Ok(gm) => gm,
+        Err(e) => {
+            return serde_wasm_bindgen::to_value(&ApprovalGateResult {
+                approval_required: false,
+                tool: tool.to_string(),
+                error: Some(format!("Failed to parse approval gates: {}", e)),
+            })
+            .unwrap();
+        }
+    };
+
+    let args: HashMap<String, ConstraintValue> = match serde_wasm_bindgen::from_value(args_json) {
+        Ok(a) => a,
+        Err(e) => {
+            return serde_wasm_bindgen::to_value(&ApprovalGateResult {
+                approval_required: false,
+                tool: tool.to_string(),
+                error: Some(format!("Invalid arguments: {}", e)),
+            })
+            .unwrap();
+        }
+    };
+
+    let required = match approval_gate::evaluate_approval_gates(
+        gate_map.as_ref(),
+        tool,
+        &args,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            return serde_wasm_bindgen::to_value(&ApprovalGateResult {
+                approval_required: true,
+                tool: tool.to_string(),
+                error: Some(format!("Gate evaluation error (fail-safe): {}", e)),
+            })
+            .unwrap();
+        }
+    };
+
+    serde_wasm_bindgen::to_value(&ApprovalGateResult {
+        approval_required: required,
+        tool: tool.to_string(),
+        error: None,
+    })
+    .unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+    use std::time::Duration;
+    use tenuo::{
+        approval_gate::{self, ApprovalGateMap, ArgApprovalGate, ToolApprovalGate},
+        wire, SigningKey, Warrant,
+    };
+
+    fn make_approver() -> (SigningKey, String) {
+        let key = SigningKey::generate();
+        let hex = hex::encode(key.public_key().to_bytes());
+        (key, hex)
+    }
+
+    fn build_root_warrant(
+        tools: &[&str],
+        ttl_secs: u64,
+        gates: Option<&ApprovalGateMap>,
+        approvers: Option<Vec<tenuo::PublicKey>>,
+        min_approvals: Option<u32>,
+    ) -> (Warrant, SigningKey, SigningKey) {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let mut builder = Warrant::builder()
+            .ttl(Duration::from_secs(ttl_secs))
+            .holder(holder.public_key());
+        for t in tools {
+            builder = builder.capability(*t, tenuo::constraints::ConstraintSet::new());
+        }
+        if let Some(gm) = gates {
+            let encoded = approval_gate::encode_approval_gate_map(gm).unwrap();
+            builder = builder.extension(approval_gate::APPROVAL_GATE_EXTENSION_KEY, encoded);
+        }
+        if let Some(approver_list) = approvers {
+            builder = builder.required_approvers(approver_list);
+        }
+        if let Some(min) = min_approvals {
+            builder = builder.min_approvals(min);
+        }
+        let warrant = builder.build(&issuer).unwrap();
+        (warrant, issuer, holder)
+    }
+
+    // --- parse_approval_gates_json ---
+
+    #[test]
+    fn parse_whole_tool_gate() {
+        let input = json!({ "exec": { "args": null } });
+        let gm = parse_approval_gates_json(&input).unwrap();
+        assert!(gm.contains_tool("exec"));
+        assert!(gm.get("exec").unwrap().is_whole_tool());
+    }
+
+    #[test]
+    fn parse_per_arg_gate_all() {
+        let input = json!({ "exec": { "args": { "command": "all" } } });
+        let gm = parse_approval_gates_json(&input).unwrap();
+        let gate = gm.get("exec").unwrap();
+        assert!(!gate.is_whole_tool());
+        assert!(gate.args.is_some());
+        let args = gate.args.as_ref().unwrap();
+        assert!(matches!(args.get("command"), Some(ArgApprovalGate::All)));
+    }
+
+    #[test]
+    fn parse_multi_tool_gates() {
+        let input = json!({
+            "exec": { "args": null },
+            "db.delete": { "args": { "table": "all" } },
+        });
+        let gm = parse_approval_gates_json(&input).unwrap();
+        assert!(gm.contains_tool("exec"));
+        assert!(gm.contains_tool("db.delete"));
+        assert_eq!(gm.iter().count(), 2);
+    }
+
+    #[test]
+    fn parse_empty_returns_none() {
+        let input = json!({});
+        assert!(parse_approval_gates_json(&input).is_none());
+    }
+
+    #[test]
+    fn parse_invalid_json_returns_none() {
+        let input = json!("not an object");
+        assert!(parse_approval_gates_json(&input).is_none());
+    }
+
+    // --- approval_gate_map_to_json round-trip ---
+
+    #[test]
+    fn roundtrip_whole_tool() {
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::whole_tool());
+
+        let json_val = approval_gate_map_to_json(&gm);
+        let parsed = parse_approval_gates_json(&json_val).unwrap();
+        assert!(parsed.contains_tool("exec"));
+        assert!(parsed.get("exec").unwrap().is_whole_tool());
+    }
+
+    #[test]
+    fn roundtrip_per_arg_all() {
+        let mut args = BTreeMap::new();
+        args.insert("command".to_string(), ArgApprovalGate::All);
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::with_args(args));
+
+        let json_val = approval_gate_map_to_json(&gm);
+        let parsed = parse_approval_gates_json(&json_val).unwrap();
+        let gate = parsed.get("exec").unwrap();
+        assert!(matches!(
+            gate.args.as_ref().unwrap().get("command"),
+            Some(ArgApprovalGate::All)
+        ));
+    }
+
+    #[test]
+    fn roundtrip_multi_tool() {
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::whole_tool());
+        let mut args = BTreeMap::new();
+        args.insert("path".to_string(), ArgApprovalGate::All);
+        gm.insert("file.delete".to_string(), ToolApprovalGate::with_args(args));
+
+        let json_val = approval_gate_map_to_json(&gm);
+        let parsed = parse_approval_gates_json(&json_val).unwrap();
+        assert_eq!(parsed.iter().count(), 2);
+        assert!(parsed.get("exec").unwrap().is_whole_tool());
+        assert!(!parsed.get("file.delete").unwrap().is_whole_tool());
+    }
+
+    // --- extract_decoded_warrant ---
+
+    #[test]
+    fn extract_warrant_without_gates() {
+        let (w, _issuer, _holder) = build_root_warrant(&["exec"], 300, None, None, None);
+        let decoded = extract_decoded_warrant(&w);
+        assert!(decoded.approval_gates.is_none());
+        assert!(decoded.required_approvers.is_none());
+        assert!(decoded.min_approvals.is_none());
+        assert!(decoded.tools.contains(&"exec".to_string()));
+    }
+
+    #[test]
+    fn extract_warrant_with_whole_tool_gate() {
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::whole_tool());
+        let (approver_key, _) = make_approver();
+        let (w, _, _) = build_root_warrant(
+            &["exec", "file.read"],
+            300,
+            Some(&gm),
+            Some(vec![approver_key.public_key()]),
+            Some(1),
+        );
+        let decoded = extract_decoded_warrant(&w);
+
+        assert!(decoded.approval_gates.is_some());
+        let gates = decoded.approval_gates.unwrap();
+        assert!(gates.get("exec").is_some());
+
+        assert!(decoded.required_approvers.is_some());
+        assert_eq!(decoded.required_approvers.unwrap().len(), 1);
+        assert_eq!(decoded.min_approvals, Some(1));
+
+        assert!(decoded.extensions.contains_key("tenuo.approval_gates"));
+    }
+
+    #[test]
+    fn extract_warrant_preserves_tools() {
+        let (w, _, _) = build_root_warrant(&["exec", "db.read", "file.write"], 600, None, None, None);
+        let decoded = extract_decoded_warrant(&w);
+        assert_eq!(decoded.tools.len(), 3);
+        assert!(decoded.tools.contains(&"exec".to_string()));
+        assert!(decoded.tools.contains(&"db.read".to_string()));
+        assert!(decoded.tools.contains(&"file.write".to_string()));
+    }
+
+    #[test]
+    fn extract_warrant_multiple_approvers() {
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::whole_tool());
+        let (a1, _) = make_approver();
+        let (a2, _) = make_approver();
+        let (w, _, _) = build_root_warrant(
+            &["exec"],
+            300,
+            Some(&gm),
+            Some(vec![a1.public_key(), a2.public_key()]),
+            Some(2),
+        );
+        let decoded = extract_decoded_warrant(&w);
+        assert_eq!(decoded.required_approvers.as_ref().unwrap().len(), 2);
+        assert_eq!(decoded.min_approvals, Some(2));
+    }
+
+    // --- Approval gate evaluation (pure Rust, no WASM) ---
+
+    #[test]
+    fn evaluate_gated_tool_requires_approval() {
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::whole_tool());
+        let args = HashMap::new();
+        let result = approval_gate::evaluate_approval_gates(Some(&gm), "exec", &args).unwrap();
+        assert!(result);
+    }
+
+    #[test]
+    fn evaluate_ungated_tool_does_not_require_approval() {
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::whole_tool());
+        let args = HashMap::new();
+        let result = approval_gate::evaluate_approval_gates(Some(&gm), "file.read", &args).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn evaluate_no_gates_never_requires_approval() {
+        let args = HashMap::new();
+        let result = approval_gate::evaluate_approval_gates(None, "exec", &args).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn evaluate_per_arg_all_requires_approval() {
+        let mut args_gates = BTreeMap::new();
+        args_gates.insert("command".to_string(), ArgApprovalGate::All);
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::with_args(args_gates));
+
+        let mut args = HashMap::new();
+        args.insert(
+            "command".to_string(),
+            tenuo::constraints::ConstraintValue::String("rm -rf /".to_string()),
+        );
+        let result = approval_gate::evaluate_approval_gates(Some(&gm), "exec", &args).unwrap();
+        assert!(result);
+    }
+
+    #[test]
+    fn evaluate_per_arg_absent_arg_requires_approval() {
+        let mut args_gates = BTreeMap::new();
+        args_gates.insert("command".to_string(), ArgApprovalGate::All);
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::with_args(args_gates));
+
+        let args = HashMap::new(); // no "command" arg provided
+        let result = approval_gate::evaluate_approval_gates(Some(&gm), "exec", &args).unwrap();
+        assert!(result);
+    }
+
+    // --- Warrant wire-format round-trip ---
+
+    #[test]
+    fn warrant_with_gates_roundtrips_through_wire_format() {
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::whole_tool());
+        let (approver, _) = make_approver();
+        let (w, _, _) = build_root_warrant(
+            &["exec"],
+            300,
+            Some(&gm),
+            Some(vec![approver.public_key()]),
+            Some(1),
+        );
+
+        let b64 = wire::encode_base64(&w).unwrap();
+        let decoded_w = wire::decode_base64(&b64).unwrap();
+        let decoded = extract_decoded_warrant(&decoded_w);
+
+        assert!(decoded.approval_gates.is_some());
+        assert!(decoded.required_approvers.is_some());
+        assert_eq!(decoded.min_approvals, Some(1));
+    }
+
+    #[test]
+    fn delegated_warrant_inherits_gates() {
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::whole_tool());
+        let (approver, _) = make_approver();
+        let (parent, _issuer, holder) = build_root_warrant(
+            &["exec", "file.read"],
+            300,
+            Some(&gm),
+            Some(vec![approver.public_key()]),
+            Some(1),
+        );
+
+        let child_holder = SigningKey::generate();
+        let child = parent
+            .attenuate()
+            .holder(child_holder.public_key())
+            .capability("exec", tenuo::constraints::ConstraintSet::new())
+            .ttl(Duration::from_secs(200))
+            .build(&holder)
+            .unwrap();
+
+        let child_decoded = extract_decoded_warrant(&child);
+        assert!(child_decoded.approval_gates.is_some());
+        assert!(child_decoded.required_approvers.is_some());
+        assert_eq!(child_decoded.min_approvals, Some(1));
+    }
+
+    // --- create_warrant_from_config helpers (test the JSON parsing path) ---
+
+    #[test]
+    fn parse_gates_json_with_multiple_args() {
+        let input = json!({
+            "exec": { "args": { "command": "all", "env": "all" } },
+        });
+        let gm = parse_approval_gates_json(&input).unwrap();
+        let gate = gm.get("exec").unwrap();
+        let args = gate.args.as_ref().unwrap();
+        assert_eq!(args.len(), 2);
+        assert!(matches!(args.get("command"), Some(ArgApprovalGate::All)));
+        assert!(matches!(args.get("env"), Some(ArgApprovalGate::All)));
+    }
+
+    #[test]
+    fn json_output_structure_whole_tool() {
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::whole_tool());
+        let json_val = approval_gate_map_to_json(&gm);
+        let obj = json_val.as_object().unwrap();
+        let exec_gate = obj.get("exec").unwrap().as_object().unwrap();
+        assert!(exec_gate.get("args").unwrap().is_null());
+    }
+
+    #[test]
+    fn json_output_structure_per_arg() {
+        let mut args = BTreeMap::new();
+        args.insert("cmd".to_string(), ArgApprovalGate::All);
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("exec".to_string(), ToolApprovalGate::with_args(args));
+        let json_val = approval_gate_map_to_json(&gm);
+        let obj = json_val.as_object().unwrap();
+        let exec_gate = obj.get("exec").unwrap().as_object().unwrap();
+        let args_obj = exec_gate.get("args").unwrap().as_object().unwrap();
+        assert_eq!(args_obj.get("cmd").unwrap().as_str().unwrap(), "all");
     }
 }
