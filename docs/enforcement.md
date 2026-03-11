@@ -1,537 +1,263 @@
-# Enforcement Models
+# Enforcement Architecture
 
 > [!NOTE]
-> **New to Tenuo?** A quick primer:
-> - **Warrant**: A short-lived, cryptographic token that says "this agent may call these tools with these constraints"
-> - **Proof-of-Possession (PoP)**: A signature proving the requester holds the warrant's private key (prevents stolen warrants from being reused)
-> - **Attenuation**: Delegating a warrant with *narrower* permissions — you can never add permissions, only remove them
-> - **Control Plane**: The trusted service that issues warrants (you build this, or use Tenuo Cloud)
+> **Key terms:**
+> - **Warrant**: A short-lived, cryptographically signed token that says "this agent may call these tools with these constraints"
+> - **Proof-of-Possession (PoP)**: A signature proving the requester holds the warrant's private key (stolen warrants are useless without it)
+> - **Attenuation**: Delegating a warrant with *narrower* permissions: authority can only shrink, never expand
+> - **Control Plane**: The trusted service that issues root warrants (you build this, or use Tenuo Cloud)
 >
 > See [Core Concepts](./concepts.md) for a full introduction.
 
-## Overview
+Tenuo provides **action-level authorization** for AI agents. Unlike IAM (which gates identities) or LLM guardrails (which filter prompts), Tenuo gates **individual tool calls**, every argument, every invocation, using short-lived, cryptographically signed warrants.
 
-Tenuo provides **Action-Level Security** for AI Agents. But where exactly does that security live?
-
-Unlike network firewalls (which block IPs) or IAM (which blocks identities), Tenuo blocks **specific tool calls** based on cryptographic warrants.
-
-IAM Policies answer “may this identity do X?”
-Warrants answer “was this specific action authorized by a specific delegator?”
-
-You can deploy Tenuo in four enforcement models, ranging from "Drop-in Safety" to "Zero Trust Infrastructure."
-
-| Model | Enforcement Point | Protects Against |
-|-------|-------------------|------------------|
-| In-Process | Inside your Python agent | Prompt injection (confused deputy) |
-| Sidecar | Separate process, same pod | Compromised agent (RCE) |
-| Gateway | Cluster ingress (Envoy/Istio) | Centralized policy |
-| MCP Proxy | Between agent and MCP server | Unauthorized tool discovery |
-
-Choose based on your threat model. They can be combined for defense in depth.
+This page explains how Tenuo fits into production infrastructure, what threats each deployment model addresses, and how the layers compose.
 
 ---
 
-## Shared Enforcement Core
+## How It Works (30-Second Version)
 
-All in-process integrations (LangGraph, CrewAI, OpenAI, AutoGen, Google ADK) use the same underlying enforcement logic. This ensures:
+1. A control plane issues a **warrant**: a signed CBOR token that says *"this agent may call `search` and `read_file` where `path` is under `/data/reports`, for the next 5 minutes."*
+2. The agent presents this warrant when calling tools.
+3. Tenuo verifies: valid signature, unexpired, tool authorized, every argument satisfies its constraint. **Stateless, no network call.** Authorization alone takes ~27μs; constraint evaluation adds variable time depending on complexity.
+4. If any check fails, the tool call is blocked before it executes.
 
-- **Consistent behavior** across all frameworks
-- **Single code path** through the Rust core for security-critical checks
-- **Unified logging** via `tenuo.enforcement` logger
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Your Integration                         │
-│  (LangGraph / CrewAI / OpenAI / AutoGen / Google ADK)      │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│              enforce_tool_call()                            │
-│  • Allowlist filtering     • Critical tool checks          │
-│  • Constraint extraction   • Unified audit logging         │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Rust Core (tenuo_core)                         │
-│  • PoP signature verification   • Constraint validation    │
-│  • Expiration checking          • Cryptographic operations │
-└─────────────────────────────────────────────────────────────┘
-```
-
-Remote enforcement (FastAPI, A2A) uses `verify_mode` to validate precomputed signatures from clients, but still goes through the same Rust core for cryptographic verification.
+Warrants are **delegatable**: an orchestrator can attenuate (narrow) its warrant and hand it to a worker agent. Authority only shrinks, never expands. The entire delegation chain is cryptographically verifiable.
 
 ---
 
-## Tool Policies (Defense in Depth)
+## Deployment Models
 
-The Python layer includes optional policy checks that run **before** the Rust core. These are **defense-in-depth** measures—they help catch mistakes early but do not replace the cryptographic guarantees.
+Tenuo deploys at five enforcement points. Choose based on your threat model, or combine them for defense in depth.
 
-> [!IMPORTANT]
-> **These policies do NOT affect security invariants.** The Rust core is the security boundary. Policy checks are UX/operational safeguards that can be bypassed if needed. An attacker who compromises the Python process can skip these checks, but they cannot bypass the Rust core's cryptographic verification.
+| Model | Where It Runs | Threat Addressed | Trust Boundary |
+|-------|---------------|------------------|----------------|
+| **In-Process** | Inside the agent (Python decorator) | Prompt injection, confused deputy | Agent process |
+| **Sidecar** | Separate container, same pod | Agent compromise (RCE) | Pod network |
+| **Gateway** | Cluster ingress (Envoy/Istio `ext_authz`) | Centralized policy, multi-service | Gateway |
+| **MCP Proxy** | Between agent and MCP server | Unauthorized tool access | Proxy |
+| **A2A** | Between agents (JSON-RPC) | Unconstrained inter-agent delegation | Receiving agent |
 
-### Risk Levels and Critical Tools
+### In-Process: Drop-In Agent Protection
 
-Tenuo includes built-in risk classification for common tools:
-
-| Risk Level | Behavior | Example Tools |
-|------------|----------|---------------|
-| `critical` | **Denied** if no relevant constraint | `delete_file`, `http_request`, `shell_command`, `execute_sql` |
-| `high` | Warning logged | `write_file`, `send_email`, `fetch_url` |
-| `medium` | No special handling | `read_file`, `query_db` |
-| `low` | No special handling | `web_search`, `list_directory` |
-
-**Example**: A warrant granting `delete_file` with no `path` constraint will be denied by Python policy (before reaching Rust), with a helpful error:
-
-```
-Critical tool 'delete_file' requires at least one of: ['path']
-```
-
-**Why this exists**: Prevents accidentally issuing overly-permissive warrants. The Rust core would technically allow `delete_file: Wildcard()`, but that's almost certainly a mistake.
-
-### Registering Custom Tool Schemas
-
-```python
-from tenuo import ToolSchema, register_schema
-
-# Mark your custom tool as critical
-register_schema("drop_database", ToolSchema(
-    recommended_constraints=["database", "confirm"],
-    require_at_least_one=True,
-    risk_level="critical",
-    description="Drops entire database - requires explicit constraints",
-))
-```
-
-### Task-Scoped Allowlists (`allowed_tools`)
-
-Restrict tools per-task, even when the warrant grants more:
-
-```python
-from tenuo.langgraph import TenuoToolNode
-
-# Warrant allows: ["search", "read_file", "write_file", "delete_file"]
-
-# Task 1: Research phase (read-only)
-node = TenuoToolNode(tools, allowed_tools=["search", "read_file"])
-
-# Task 2: Write phase
-node = TenuoToolNode(tools, allowed_tools=["write_file"])
-
-# Task 3: Cleanup (dangerous - separate approval workflow)
-node = TenuoToolNode(tools, allowed_tools=["delete_file"])
-```
-
-**Key behavior**:
-- `allowed_tools` can only **restrict**, never expand
-- If the warrant doesn't include a tool, `allowed_tools` cannot grant it
-- This is a Python-side policy; the Rust core still verifies the warrant
-
-### Strict Mode
-
-Enable `strict=True` to require constraints on tools marked `require_at_least_one`:
-
-```python
-from tenuo.langchain import guard_tools
-
-# Fail if read_file has no path constraint
-protected = guard_tools(tools, bound, strict=True)
-```
-
-### Invariant Guarantee
-
-These policy checks **do not weaken** Tenuo's security model:
-
-| Check | Enforced By | Bypassable? | Security Impact |
-|-------|-------------|-------------|-----------------|
-| Critical tool constraints | Python | Yes (if process compromised) | None - Rust core still enforces warrant |
-| `allowed_tools` filtering | Python | Yes | None - Rust core still enforces warrant |
-| Warrant expiration | **Rust core** | No | **Security boundary** |
-| Tool in warrant | **Rust core** | No | **Security boundary** |
-| Constraint satisfaction | **Rust core** | No | **Security boundary** |
-| PoP signature | **Rust core** | No | **Security boundary** |
-
-The Rust core is the **only** security boundary. Python policies are convenience features for better DX and operational safety.
-
----
-
-## Model 1: In-Process Enforcement (The Library)
-
-*Best for: Preventing Prompt Injection in Monolithic Agents, LangChain/LangGraph, quick integration*
-
-In this model, Tenuo runs **inside** your agent's process as a Python library / decorator.
-
-* **Architecture:**
-    ```python
-    Agent (Python)
-      └─ @guard decorator (Tenuo SDK)
-           └─ Tool Implementation (Function)
-    ```
-
-**How it works:**
+The fastest path to production. Tenuo wraps tool functions inside the agent process. If the LLM is tricked by prompt injection into calling `delete_file("/etc/passwd")`, the warrant blocks it before the function body runs.
 
 ```python
 @guard(tool="delete_file")
 def delete_file(path: str):
-    os.remove(path)  # Never reached if unauthorized
-
-with warrant_scope(warrant), key_scope(keypair):
-    delete_file("/etc/passwd")  # Raises ScopeViolation
+    os.remove(path)  # Never reached without a valid warrant
 ```
 
-1. LLM generates a tool call: `delete_file("/etc/passwd")`
-2. The `@guard` decorator checks:
-   - Warrant existence
-   - Warrant validity (expiration)
-   - Tool authorization
-   - Argument constraints
-   - Proof-of-Possession signature
-3. If the warrant says `path: /data/*`, Tenuo raises `ScopeViolation`. The tool code never runs.
+Integrates with the frameworks teams already use:
 
-**Security Guarantee:** Blocks confused deputy attacks. If prompt injection tricks the LLM into calling unauthorized tools, Tenuo stops it.
+| Framework | Module | Integration |
+|-----------|--------|-------------|
+| LangGraph | `tenuo.langgraph` | `TenuoToolNode` / `TenuoMiddleware` |
+| OpenAI | `tenuo.openai` | `verify_tool_call()` |
+| CrewAI | `tenuo.crewai` | `@guard` decorator |
+| Google ADK | `tenuo.google_adk` | `TenuoPlugin` |
+| AutoGen | `tenuo.autogen` | `@guard` decorator |
+| Temporal | `tenuo.temporal` | Workflow-level warrants |
+| FastAPI | `tenuo.fastapi` | Middleware / dependency injection |
+| MCP | `tenuo.mcp` | Proxy or server-side verifier |
+| A2A | `tenuo.a2a` | Client / server |
 
-**Limitation:** If an attacker gets remote code execution (RCE) on the agent process, they can bypass Tenuo by calling tools directly. The agent process is the trust boundary. For RCE protection, use Model 2 (Sidecar).
+All integrations share a single enforcement code path through the Rust core: same behavior, same audit log, same security guarantees regardless of framework.
 
-**Variant: Web Framework Middleware**
+> [!NOTE]
+> **Limitation**: In-process enforcement cannot survive agent compromise (RCE). If an attacker gets code execution inside the agent, they can call tools directly. For that threat, add a sidecar.
 
-*Best for: Agents exposed as APIs (e.g., LangServe, Flask apps)*
+### Sidecar: Surviving Agent Compromise
 
-If your agent exposes tools as HTTP endpoints, you can enforce warrants globally using middleware. This is cleaner than decorating every single route.
+Tenuo runs as a separate container in the same Kubernetes pod. All tool traffic routes through the sidecar first. Even if the agent process is fully compromised, unauthorized calls never reach the tool service.
 
-> **Header Format:** Clients send `X-Tenuo-Warrant` (base64 CBOR) and `X-Tenuo-PoP` (base64 signature). The warrant payload can be a single warrant or a full chain (WarrantStack) — the format is self-describing.
-
-**FastAPI / Starlette:**
-
-```python
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from tenuo import Authorizer, Warrant, ScopeViolation
-
-app = FastAPI()
-
-# Initialize with your control plane's public key
-authorizer = Authorizer(trusted_roots=[control_plane_public_key])
-
-@app.middleware("http")
-async def tenuo_guard(request: Request, call_next):
-    # Skip health checks
-    if request.url.path in ["/health", "/ready"]:
-        return await call_next(request)
-    
-    # 1. Extract Warrant and PoP Signature
-    warrant_b64 = request.headers.get("X-Tenuo-Warrant")
-    pop_b64 = request.headers.get("X-Tenuo-PoP")
-    
-    if not warrant_b64:
-        return JSONResponse(status_code=401, content={"error": "Missing warrant"})
-    
-    try:
-        # Decode Warrant
-        warrant = Warrant(warrant_b64)
-        
-        # Decode Signature (if present)
-        pop_sig = base64.b64decode(pop_b64) if pop_b64 else None
-    except Exception:
-        return JSONResponse(status_code=400, content={"error": "Invalid warrant or signature"})
-    
-    # 2. Identify the Tool (Endpoint) & Arguments
-    tool_name = request.url.path  # e.g., "/tools/read_file"
-    
-    # Parse body as JSON dict (check() requires a dict)
-    try:
-        args = await request.json() if request.method in ["POST", "PUT"] else {}
-    except:
-        args = {}
-
-    # 3. Enforce (including PoP verification)
-    try:
-        authorizer.check(warrant, tool_name, args, signature=pop_sig)
-    except Exception:  # Authorizer raises generic exception on failure
-        return JSONResponse(status_code=403, content={"error": "Access denied"})
-    
-    return await call_next(request)
 ```
-
-**Flask:**
-
-```python
-from flask import Flask, request, abort
-from tenuo import Authorizer, Warrant
-import base64
-
-app = Flask(__name__)
-authorizer = Authorizer(trusted_roots=[control_plane_public_key])
-
-@app.before_request
-def check_warrant():
-    # Skip health checks
-    if request.path in ["/health", "/ready"]:
-        return
-
-    # Extract headers
-    warrant_b64 = request.headers.get("X-Tenuo-Warrant")
-    pop_b64 = request.headers.get("X-Tenuo-PoP")
-    
-    if not warrant_b64:
-        abort(401, description="Missing warrant")
-    
-    try:
-        warrant = Warrant(warrant_b64)
-        pop_sig = base64.b64decode(pop_b64) if pop_b64 else None
-        
-        args = request.get_json() or {}
-        # Verify warrant and authorize action
-        authorizer.check(warrant, request.path, args, signature=pop_sig)
-    except Exception:
-        abort(403, description="Access denied")
+┌─────────────────┐       Network        ┌──────────────────────────┐
+│  Agent (Client) │ ───────────────────► │ Tool Service Pod         │
+└─────────────────┘      (HTTP/gRPC)     │ ┌──────────────────────┐ │
+                                         │ │   Tenuo Sidecar      │ │
+                                         │ └─────────┬────────────┘ │
+                                         │           ▼              │
+                                         │ ┌──────────────────────┐ │
+                                         │ │   Tool API           │ │
+                                         │ └──────────────────────┘ │
+                                         └──────────────────────────┘
 ```
-
-**FastAPI Dependency Injection (Recommended)**
-
-For more control over which routes require warrants, use FastAPI's dependency injection:
-
-```python
-from fastapi import FastAPI, Depends, Request, HTTPException
-from tenuo import (
-    Warrant, guard,
-    warrant_scope, key_scope,
-    ScopeViolation
-)
-
-app = FastAPI()
-
-async def require_warrant(request: Request) -> Warrant:
-    """Dependency that extracts and validates warrant."""
-    warrant_b64 = request.headers.get("X-Tenuo-Warrant")
-    if not warrant_b64:
-        raise HTTPException(status_code=401, detail="Missing warrant")
-    try:
-        return Warrant(warrant_b64)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid warrant")
-
-@guard(tool="read_file")
-def read_file(path: str) -> str:
-    return open(path).read()
-
-@app.get("/files/{path:path}")
-async def get_file(path: str, warrant: Warrant = Depends(require_warrant)):
-    # Context ensures @guard can access warrant in async handlers
-    with warrant_scope(warrant), key_scope(AGENT_KEYPAIR):
-        try:
-            return {"content": read_file(path)}
-        except ScopeViolation as e:
-            raise HTTPException(status_code=403, detail=str(e))
-```
-
-This pattern is preferred when:
-- Only some routes need authorization
-- You want per-route warrant requirements  
-- You need proper async context propagation
-
-See [examples/fastapi_integration.py](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/fastapi_integration.py) for a complete example.
-
----
-
-## Model 2: Sidecar Enforcement
-
-*Best for: Microservices, Kubernetes, and High-Value Tools, zero-trust architectures*
-
-In this model, Tenuo runs **alongside** your application as a separate process (Sidecar). The Tool is not just a function; it is an API endpoint and Tenuo sits in front of it.
-
-* **Architecture:**
-    ```
-    ┌─────────────────┐       Network        ┌──────────────────────────┐
-    │  Agent (Client) │ ───────────────────► │ Tool Service Pod         │
-    └─────────────────┘      (HTTP/gRPC)     │ ┌──────────────────────┐ │
-                                             │ │   Tenuo Sidecar      │ │
-                                             │ └─────────┬────────────┘ │
-                                             │           ▼              │
-                                             │ ┌──────────────────────┐ │
-                                             │ │   Actual API Logic   │ │
-                                             │ └──────────────────────┘ │
-                                             └──────────────────────────┘
-    ```
-* **The Flow:**
-    1. Agent sends HTTP request with warrant in header (`POST /api/delete?file=/etc/passwd` + `X-Tenuo-Warrant`).
-    2. Request hits Tenuo sidecar first (via Kubernetes networking or reverse proxy) 
-    3. Sidecar validates warrant against parameters (path/body).
-    4. If denied: returns `403 Forbidden`. The request never reaches tool
-    5. If allowed: forwards request to actual tool API
-
-* **Security Guarantee:** 
-    Even if the agent is fully compromised (RCE), it cannot force unauthorized actions. The tool service is the trust boundary, not the agent.
-
-**Kubernetes deployment:**
 
 ```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: tool-service
+# Standard Kubernetes sidecar pattern
 spec:
   containers:
     - name: tenuo-authorizer
       image: tenuo/authorizer:0.1
-      ports:
-        - containerPort: 9090
+      ports: [{ containerPort: 9090 }]
     - name: tool-api
       image: your-tool:latest
       # Only accepts traffic from localhost (sidecar)
 ```
 
-**Note:** This model can also be deployed as a **Gateway**, where a single Tenuo instance protects multiple services. This simplifies management but can introduce a bottleneck.
+### Gateway: Centralized Enforcement for Multiple Services
 
-
----
-
-## Model 3: Gateway Enforcement
-
-*Best for: Protecting multiple services, centralized policy, API gateway patterns*
-
-Like sidecar, but one Tenuo instance protects many services.
+One Tenuo instance protects many backend services. Plugs into existing service mesh infrastructure via Envoy's `ext_authz` gRPC protocol. No new proxy to deploy if you already run Envoy or Istio.
 
 ```
                                     ┌─────────────────────────┐
-                                    │  Service A              │
-                              ┌────▶│  (database)             │
+                                    │  Service A (database)   │
+                              ┌────▶│                         │
 ┌──────────────┐              │     └─────────────────────────┘
-│              │   ┌──────────┴───────────┐
-│   Agents     │──▶│   Tenuo Gateway      │
-│              │   │   (ext_authz)        │
-└──────────────┘   └──────────┬───────────┘
-                              │     ┌─────────────────────────┐
-                              └────▶│  Service B              │
-                                    │  (file storage)         │
+│   Agents     │──▶ Tenuo Gateway (ext_authz) ──┤
+└──────────────┘              │     ┌─────────────────────────┐
+                              └────▶│  Service B (storage)    │
                                     └─────────────────────────┘
 ```
 
-**Envoy integration:**
+Authorization is stateless (~27μs) with no external dependencies. Tenuo adds negligible latency to the request path.
 
-Tenuo implements Envoy's `ext_authz` protocol. If you already run Envoy or Istio, no sidecar container needed.
+### MCP Proxy: Securing the Model Context Protocol
 
-```yaml
-http_filters:
-  - name: envoy.filters.http.ext_authz
-    typed_config:
-      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
-      grpc_service:
-        envoy_grpc:
-          cluster_name: tenuo-authorizer
+Tenuo sits between the agent and MCP servers. The agent never talks to raw MCP endpoints. Every `call_tool` request is authorized against the warrant before forwarding.
+
+For teams that prefer server-side verification, `MCPVerifier` runs inside the MCP server itself with no separate proxy needed. See [MCP Integration](./mcp) for both patterns.
+
+### A2A: Cryptographic Inter-Agent Delegation
+
+When an orchestrator delegates a task to a worker agent, the warrant travels with it, attenuated to only the permissions the worker needs. The worker cannot exceed its delegated scope, even if compromised.
+
+```
+┌──────────────┐  attenuated warrant  ┌──────────────┐
+│ Orchestrator │─────────────────────▶│   Worker     │
+│              │◀─────────────────────│              │
+└──────────────┘       result         └──────────────┘
 ```
 
-**How it works:**
-
-1. Request hits Envoy proxy
-2. Envoy pauses and asks Tenuo: "Is this warrant valid for `POST /admin`?"
-3. Tenuo verifies (stateless, ~27μs)
-4. Tenuo returns allow/deny
-5. Envoy forwards or blocks
-
-**Security guarantee:**
-
-Same as sidecar: tool services are protected regardless of agent compromise. Centralized enforcement simplifies management but introduces a single point of configuration.
+This is cryptographic least privilege for multi-agent systems. The orchestrator narrows the scope; the worker proves it holds the key; the Rust core verifies the chain. See [A2A Integration](./a2a) for details.
 
 ---
 
+## Defense in Depth: Layered Enforcement
 
-## Model 4: The "MCP" Pattern (Model Context Protocol)
-
-*Best for: MCP-based tool integrations, standardized agent-tool interfaces*
-
-MCP standardizes how agents talk to tools. Tenuo acts as the "Middleware" that secures this channel.
-
-* **Architecture:**
-
-```
-┌──────────────┐       ┌──────────────────┐       ┌──────────────┐
-│              │       │                  │       │              │
-│    Agent     │──MCP─▶│   Tenuo Proxy    │──MCP─▶│  MCP Server  │
-│              │       │                  │       │  (filesystem,│
-│              │       │  Validates       │       │   database)  │
-│              │◀──────│  warrant before  │◀──────│              │
-│              │       │  forwarding      │       │              │
-└──────────────┘       └──────────────────┘       └──────────────┘
-```
-
-**How it works:**
-
-```python
-from tenuo.mcp import SecureMCPClient
-
-async with SecureMCPClient("python", ["mcp_server.py"]) as client:
-    tools = client.tools
-    
-    # Every call goes through Tenuo authorization
-    with warrant_scope(warrant), key_scope(keypair):
-        await tools["read_file"](path="/data/report.txt")  # Checked
-        await tools["read_file"](path="/etc/passwd")       # Denied
-```
-
-1. Agent connects to Tenuo proxy (not raw MCP server)
-2. Agent sends MCP `call_tool` request
-3. Proxy extracts arguments, verifies warrant
-4. If valid: forwards to real MCP server
-5. If denied: returns error, MCP server never sees request
-
-**Security guarantee:**
-
-Protects MCP tool access. The proxy is the trust boundary.
-
-**Alternative:** For server-side verification without a proxy, use `MCPVerifier` inside the MCP server itself. Set `inject_warrant=True` on the client to send the warrant via `params._meta.tenuo`, and verify it in each tool handler. See [MCP Integration](./mcp) for details.
-
----
-
-## Combining Models (Defense in Depth)
-
-Enforcement Models aren't mutually exclusive. Layer them:
+These models compose. A production deployment can layer in-process enforcement (catches prompt injection at the source) with a sidecar (catches anything that slips past a compromised agent):
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Agent Process                                      │
-│                                                     │
-│    @guard ──────────────────────────────────┐    │
-│    (Model 1: catches confused deputy)          │    │
-│                                                │    │
-└────────────────────────────────────────────────┼────┘
-                                                 │
-                                                 ▼
+│    @guard ─────────────────────────────────┐     │
+│    (catches confused deputy)                  │     │
+└───────────────────────────────────────────────┼─────┘
+                                                │
+                                                ▼
 ┌─────────────────────────────────────────────────────┐
 │  Tenuo Sidecar                                      │
-│  (Model 2: catches compromised agent)               │
-└────────────────────────────────────────────────┬────┘
-                                                 │
-                                                 ▼
+│  (catches compromised agent)                        │
+└───────────────────────────────────────────────┬─────┘
+                                                │
+                                                ▼
 ┌─────────────────────────────────────────────────────┐
-│  Tool Service                                       │
-│  (Protected by both layers)                         │
+│  Tool Service (protected by both layers)            │
 └─────────────────────────────────────────────────────┘
 ```
 
-- Model 1 catches prompt injection before it leaves the agent
-- Model 2 catches anything that gets past a compromised agent
+Combine with Kubernetes Network Policies for complete coverage: Tenuo prevents unauthorized tool usage *through* your API; network policies prevent bypassing your API entirely.
 
-Belt and suspenders.
+---
 
+## The Constraint Layer
+
+Warrants don't just authorize tool names. They constrain every argument. A few examples:
+
+```python
+# SSRF-safe URL validation: blocks private IPs, metadata endpoints,
+# ambiguous IP representations, with explicit domain allow/deny lists
+url = UrlSafe(allow_domains=["api.github.com"], deny_domains=["*.evil.com"])
+
+# Filesystem path containment (symlink-safe)
+path = Subpath("/data/reports")
+
+# Shell command safety: binary allowlist + injection prevention
+cmd = Shlex(allow=["npm", "docker"])
+
+# Composable value constraints
+model = OneOf(["gpt-4o", "gpt-4o-mini"])
+max_tokens = Range(0, 1000)
+```
+
+18 built-in constraint types cover values, numeric ranges, network addresses, filesystem paths, shell commands, URL patterns, regex, CIDR ranges, and composable boolean logic (`All`, `AnyOf`, `Not`). An extension range (type IDs 128-255) allows custom constraints without protocol changes.
+
+Every constraint supports **monotonic attenuation**: delegated warrants can only tighten constraints, never loosen them. And the runtime is **fail-closed**: unrecognized constraint types are denied, never silently dropped.
+
+See [Constraints](./constraints) for the full reference.
+
+---
+
+## Security Architecture
+
+### What's in the Rust Core (the Security Boundary)
+
+All security-critical logic runs in a single Rust library (`tenuo_core`), compiled to both native and WASM:
+
+| Check | Guarantee |
+|-------|-----------|
+| **Ed25519 signature verification** | Warrants cannot be forged or tampered with |
+| **Proof-of-Possession** | Stolen warrants are useless without the private key |
+| **Expiration enforcement** | TTL checked on every call; expired warrants are rejected |
+| **Constraint evaluation** | Every argument validated against the warrant's constraints |
+| **Chain validation** | Full delegation chain verified from root to leaf |
+| **Attenuation enforcement** | Child warrants cannot exceed parent's scope |
+
+Authorization (signature + expiration + tool lookup) takes ~27μs, with **zero external dependencies**. Constraint evaluation adds variable time depending on complexity. No database, no auth server, no token introspection endpoint. A warrant is entirely self-contained.
+
+### What's in the Python Layer (Defense in Depth)
+
+The Python SDK adds an additional enforcement layer via `@guard` with `Annotated[]` type hints:
+
+```python
+@guard(tool="fetch_data")
+def fetch_data(url: Annotated[str, UrlSafe(allow_domains=["*.example.com"])]):
+    return requests.get(url).text
+```
+
+This checks constraints at the Python level *before* the Rust core. Even if a warrant is overly broad, the annotation catches it. This is a defense-in-depth measure. The Rust core is the trust boundary; the Python layer is a safety net.
+
+---
+
+## Why Tenuo
+
+| | Tenuo | Token-Based IAM | LLM Guardrails |
+|---|-------|-----------------|----------------|
+| **Granularity** | Per-tool, per-argument | Per-identity | Per-prompt |
+| **Delegation** | Monotonic attenuation (cryptographic chain) | Static roles | N/A |
+| **Authorization latency** | ~27μs (stateless, offline) | Requires auth server roundtrip | Requires LLM inference |
+| **Tamper resistance** | Ed25519 signatures + Proof-of-Possession | Bearer token (stealable) | None |
+| **Audit trail** | Cryptographic proof of who authorized what | Log-based | None |
+| **Infrastructure fit** | K8s sidecar, Envoy `ext_authz`, MCP, A2A | Framework-specific | Framework-specific |
+| **Runtime targets** | Native (Rust) + WASM (browser/edge) | Server-only | Server-only |
+
+**Stateless verification** means horizontal scaling without coordination. No shared state, no cache invalidation, no token introspection endpoints. Each verifier is independent.
+
+**WASM support** means the same Rust core runs in browsers, edge functions, and serverless environments. Warrants can be built and validated anywhere WebAssembly runs.
 
 ---
 
 ## Summary
 
-| Goal | Model |
-|------|-------|
-| Protect LangChain/LangGraph agent from prompt injection | Model 1 (In-Process) |
-| Protect internal APIs from any caller | Model 2 (Sidecar) |
-| Centralized auth for multiple services | Model 3 (Gateway) |
-| Secure MCP tool access | Model 4 (MCP Proxy) |
-| Maximum security | Combine Model 1 + Model 2 |
+Every deployment model verifies warrants, so each one blocks unauthorized tool calls regardless of how the call originated. The difference is where the enforcement point sits and what additional threats it covers:
+
+| Deployment Model | Blocks prompt injection | Also covers |
+|------------------|:-----------------------:|-------------|
+| In-Process (`@guard`) | Yes | Fastest integration, framework-native |
+| Sidecar | Yes | Agent compromise (RCE) |
+| Gateway (Envoy `ext_authz`) | Yes | Centralized multi-service policy |
+| MCP Proxy / server-side verifier | Yes | Unauthorized tool discovery |
+| A2A | Yes | Unconstrained inter-agent delegation |
+| In-Process + Sidecar + Network Policy | Yes | Maximum coverage (defense in depth) |
 
 ---
 
 ## See Also
 
-- [Kubernetes Deployment](./kubernetes) — Full sidecar and gateway patterns
-- [Proxy Configs](./proxy-configs) — Envoy, Istio, nginx configurations
-- [Security](./security) — Threat model and best practices
-- [LangChain Integration](./langchain) — Tool protection for LangChain
+- [Security](./security): Full threat model, PoP, key management, best practices
+- [Constraints](./constraints): Complete constraint type reference
+- [MCP Integration](./mcp): MCP proxy and server-side verification
+- [A2A Integration](./a2a): Agent-to-agent delegation
+- [Kubernetes Deployment](./kubernetes): Sidecar and gateway patterns
+- [Proxy Configs](./proxy-configs): Envoy, Istio, nginx configurations
