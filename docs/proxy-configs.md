@@ -316,7 +316,7 @@ async def handle_task(user_request: str):
     with warrant_scope(warrant), key_scope(keypair):
         result = await agent.invoke({"input": user_request})
     
-    # Warrant expires automatically — no cleanup needed
+    # Warrant expires automatically, no cleanup needed
     return result
 ```
 

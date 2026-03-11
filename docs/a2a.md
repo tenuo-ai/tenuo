@@ -154,7 +154,7 @@ async def read_file(path: str) -> str:
 
 A2A supports an automated handshake for agent registration, eliminating the need for out-of-band key sharing. This follows the Certificate Signing Request (CSR) pattern.
 
-The connecting agent dynamically generates a self-signed challenge token to crypographically prove key ownership. The server verifies this signature and uses a registered handler to decide what capabilities to grant, minting a fresh delegation warrant on the fly. 
+The connecting agent dynamically generates a self-signed challenge token to cryptographically prove key ownership. The server verifies this signature and uses a registered handler to decide what capabilities to grant, minting a fresh delegation warrant on the fly. 
 
 **Server (Control Plane / Parent Agent):**
 

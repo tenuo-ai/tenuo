@@ -270,7 +270,7 @@ async def worker():
         await process_item()
 ```
 
-**Tradeoff:** Worker now has direct control plane access. This weakens isolation — a compromised worker can request warrants directly. Use only when orchestrator push isn't feasible.
+**Tradeoff:** Worker now has direct control plane access. This weakens isolation; a compromised worker can request warrants directly. Use only when orchestrator push isn't feasible.
 
 **Mitigations if you must use this:**
 - Rate limit warrant requests per worker
@@ -432,8 +432,8 @@ Authority is bound to the task (warrant minted per-request). Verification is sta
 
 ## Next Steps
 
-- [Quick Start](./quickstart) — Get running in 5 minutes
-- [Enforcement Models](./enforcement) — In-process, sidecar, gateway, MCP
-- [Protocol Specification](./spec/protocol-spec-v1) — Wire format and verification rules
-- [Security](./security) — Detailed threat model
-- [Related Work](./related-work) — CaMeL, FIDES, and other approaches
+- [Quick Start](./quickstart): Get running in 5 minutes
+- [Enforcement Models](./enforcement): In-process, sidecar, gateway, MCP
+- [Protocol Specification](./spec/protocol-spec-v1): Wire format and verification rules
+- [Security](./security): Detailed threat model
+- [Related Work](./related-work): CaMeL, FIDES, and other approaches

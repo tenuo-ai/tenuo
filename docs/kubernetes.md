@@ -119,7 +119,7 @@ async def handle_task(user_request: str):
     with warrant_scope(warrant), key_scope(keypair):
         result = await agent.invoke(user_request)
     
-    # Warrant expires — no cleanup
+    # Warrant expires, no cleanup needed
 ```
 
 📄 **Full code:** [proxy-configs.md#control-plane-fetch](./proxy-configs.md#control-plane-fetch)
@@ -351,7 +351,7 @@ spec:
 
 ## See Also
 
-- [Proxy Configs Reference](./proxy-configs.md) — Full Envoy, Istio, nginx configs
+- [Proxy Configs Reference](./proxy-configs.md): Full Envoy, Istio, nginx configs
 - [Envoy Quickstart](https://github.com/tenuo-ai/tenuo/tree/main/quickstart/envoy)
 - [Istio Quickstart](https://github.com/tenuo-ai/tenuo/tree/main/quickstart/istio)
-- [Enforcement Models](./enforcement) — In-process, sidecar, gateway, MCP patterns
+- [Enforcement Models](./enforcement): In-process, sidecar, gateway, MCP patterns

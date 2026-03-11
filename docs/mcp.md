@@ -1,6 +1,6 @@
 ## MCP Integration
 
-Tenuo provides full Model Context Protocol (MCP) integration with cryptographic authorization — both **client-side** (protecting outgoing tool calls) and **server-side** (verifying warrants inside tool handlers).
+Tenuo provides full Model Context Protocol (MCP) integration with cryptographic authorization, both **client-side** (protecting outgoing tool calls) and **server-side** (verifying warrants inside tool handlers).
 
 **Full Stack**: Connect to MCP servers → Discover tools → Auto-protect with warrants → Execute securely → Verify on the server.
 
@@ -379,7 +379,7 @@ async with SecureMCPClient(..., inject_warrant=True) as client:
     await client.tools["read_file"](path="/tmp/test.txt")
 ```
 
-Tenuo sends warrant metadata via `params._meta.tenuo` — the MCP spec's designated extension point. Tool arguments are never modified, so there are no schema compatibility issues:
+Tenuo sends warrant metadata via `params._meta.tenuo`, the MCP spec's designated extension point. Tool arguments are never modified, so there are no schema compatibility issues:
 
 ```json
 {
@@ -810,9 +810,9 @@ max_size:
 
 ## Examples
 
-- [`tenuo-python/examples/mcp/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/mcp) — Client demos, LangChain/CrewAI/A2A integrations
-- [`tenuo-python/examples/mcp_client.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/mcp_client.py) — Multi-transport client patterns
-- [`tenuo-python/examples/mcp_server.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/mcp_server.py) — Server-side MCPVerifier patterns
+- [`tenuo-python/examples/mcp/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/mcp): Client demos, LangChain/CrewAI/A2A integrations
+- [`tenuo-python/examples/mcp_client.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/mcp_client.py): Multi-transport client patterns
+- [`tenuo-python/examples/mcp_server.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/mcp_server.py): Server-side MCPVerifier patterns
 
 ---
 

