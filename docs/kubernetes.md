@@ -354,4 +354,4 @@ spec:
 - [Proxy Configs Reference](./proxy-configs.md): Full Envoy, Istio, nginx configs
 - [Envoy Quickstart](https://github.com/tenuo-ai/tenuo/tree/main/quickstart/envoy)
 - [Istio Quickstart](https://github.com/tenuo-ai/tenuo/tree/main/quickstart/istio)
-- [Enforcement Models](./enforcement): In-process, sidecar, gateway, MCP patterns
+- [Enforcement Architecture](./enforcement): In-process, sidecar, gateway, MCP patterns

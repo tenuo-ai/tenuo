@@ -302,20 +302,54 @@ protected_executor = auto_protect(executor)
 result = protected_executor.invoke({"input": "Search for AI news"})
 ```
 
-**Option 2: Explicit Warrant Control**
+**Option 2: `SecureAgentExecutor` (Drop-in Replacement)**
+
+```python
+from tenuo.langchain import SecureAgentExecutor
+from tenuo import configure, mint, Capability, SigningKey
+
+configure(issuer_key=SigningKey.generate(), dev_mode=True)
+
+executor = SecureAgentExecutor(agent=agent, tools=tools)
+
+async with mint(Capability("search"), Capability("calculator")):
+    result = await executor.ainvoke({"input": "Calculate 2+2"})
+```
+
+**Option 3: `guard_tools()` and `guard_agent()` (Fine Control)**
+
+```python
+from tenuo import Warrant, SigningKey, Capability
+from tenuo.langchain import guard_tools, guard_agent
+
+keypair = SigningKey.generate()
+
+# guard_tools: wrap tools, manage context yourself
+protected_tools = guard_tools([search_tool, calculator], issuer_key=keypair)
+
+# guard_agent: wrap entire executor with built-in context
+protected_executor = guard_agent(
+    executor,
+    issuer_key=keypair,
+    capabilities=[Capability("search"), Capability("calculator")],
+)
+
+result = protected_executor.invoke({"input": "Search for AI news"})
+```
+
+**Option 4: Explicit BoundWarrant**
 
 ```python
 from tenuo import Warrant, SigningKey
-from tenuo.langchain import guard_tools
+from tenuo.langchain import guard
 
-key = SigningKey.generate()
+keypair = SigningKey.generate()
 warrant = (Warrant.mint_builder()
-    .capability("search")
-    .holder(key.public_key)
-    .ttl(300)
-    .mint(key))
+    .tool("search")
+    .mint(keypair))
+bound = warrant.bind(keypair)
 
-protected_tools = guard_tools([search_tool, calculator], warrant, key)
+protected_tools = guard([DuckDuckGoSearchRun()], bound)
 ```
 
 See [LangChain Integration](./langchain) for full documentation.
@@ -353,13 +387,39 @@ See [Google ADK Integration](./google-adk) for full documentation.
 
 ### LangGraph
 
-Use `warrant_scope()` to narrow warrants per node:
+**Option 1: `TenuoToolNode` + `guard_node()` (Recommended)**
+
+```python
+from tenuo import Warrant, SigningKey, KeyRegistry
+from tenuo.langgraph import guard_node, TenuoToolNode, load_tenuo_keys
+from langchain_core.tools import tool
+
+load_tenuo_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER, etc.
+
+@tool
+def search(query: str) -> str:
+    """Search the web."""
+    return f"Results for {query}"
+
+tool_node = TenuoToolNode([search])
+
+def my_agent(state):
+    return {"messages": [...]}
+
+graph.add_node("agent", guard_node(my_agent, key_id="worker"))
+graph.add_node("tools", tool_node)
+
+state = {"warrant": str(warrant), "messages": [...]}
+config = {"configurable": {"tenuo_key_id": "worker"}}
+result = graph.invoke(state, config=config)
+```
+
+**Option 2: `warrant_scope()` (Manual Narrowing)**
 
 ```python
 from tenuo import warrant_scope, key_scope, Pattern
 
 async def researcher_node(state, warrant, signing_key):
-    # Narrow warrant for this node
     node_warrant = warrant.grant_builder()
         .capability("search", query=Pattern("*public*"))
         .grant(signing_key)
@@ -414,107 +474,6 @@ async def search(
 ):
     # ctx.warrant is verified, ctx.args contains extracted arguments
     return {"results": [...]}
-```
-
-### LangChain
-
-**Option 1: `auto_protect()` (Zero Config)**
-
-```python
-from tenuo.langchain import auto_protect
-
-# Wrap your executor - defaults to audit mode
-protected_executor = auto_protect(executor)
-
-# Run normally
-result = protected_executor.invoke({"input": "Search for AI news"})
-```
-
-**Option 2: `SecureAgentExecutor` (Drop-in Replacement)**
-
-```python
-from tenuo.langchain import SecureAgentExecutor
-from tenuo import configure, mint, Capability, SigningKey
-
-configure(issuer_key=SigningKey.generate(), dev_mode=True)
-
-# Drop-in replacement for AgentExecutor
-executor = SecureAgentExecutor(agent=agent, tools=tools)
-
-# Run with authorization context
-async with mint(Capability("search"), Capability("calculator")):
-    result = await executor.ainvoke({"input": "Calculate 2+2"})
-```
-
-**Option 3: `guard_tools()` and `guard_agent()` (Fine Control)**
-
-```python
-from tenuo import Warrant, SigningKey, Capability
-from tenuo.langchain import guard_tools, guard_agent
-
-keypair = SigningKey.generate()
-
-# guard_tools: wrap tools, manage context yourself
-protected_tools = guard_tools([search_tool, calculator], issuer_key=keypair)
-
-# guard_agent: wrap entire executor with built-in context
-protected_executor = guard_agent(
-    executor,
-    issuer_key=keypair,
-    capabilities=[Capability("search"), Capability("calculator")],
-)
-
-# Now authorization is automatic
-result = protected_executor.invoke({"input": "Search for AI news"})
-```
-
-**Option 4: Explicit BoundWarrant**
-
-```python
-from tenuo import Warrant, SigningKey
-from tenuo.langchain import guard
-
-keypair = SigningKey.generate()
-warrant = (Warrant.mint_builder()
-    .tool("search")
-    .mint(keypair))
-bound = warrant.bind(keypair)
-
-# Pass bound warrant explicitly
-protected_tools = guard([DuckDuckGoSearchRun()], bound)
-```
-
-### LangGraph
-
-```python
-from tenuo import Warrant, SigningKey, KeyRegistry
-from tenuo.langgraph import guard_node, TenuoToolNode, load_tenuo_keys
-from langchain_core.tools import tool  # LangChain tool decorator
-
-# 1. Load keys from environment (convention: TENUO_KEY_*)
-load_tenuo_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER, etc.
-
-# 2. Define your tools
-@tool
-def search(query: str) -> str:
-    """Search the web."""
-    return f"Results for {query}"
-
-# 3. Create secure tool node
-tool_node = TenuoToolNode([search])
-
-# 4. Wrap pure nodes with guard()
-def my_agent(state):
-    # Pure function - no Tenuo imports needed
-    return {"messages": [...]}
-
-graph.add_node("agent", guard_node(my_agent, key_id="worker"))
-graph.add_node("tools", tool_node)
-
-# 5. Run with warrant in state (str() = base64, safe for JSON serialization)
-state = {"warrant": str(warrant), "messages": [...]}
-config = {"configurable": {"tenuo_key_id": "worker"}}
-result = graph.invoke(state, config=config)
 ```
 
 ---

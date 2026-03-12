@@ -7,22 +7,9 @@
 > - **Attenuation**: Delegating a warrant with *narrower* permissions: authority can only shrink, never expand
 > - **Control Plane**: The trusted service that issues root warrants (you build this, or use Tenuo Cloud)
 >
-> See [Core Concepts](./concepts.md) for a full introduction.
+> See [Concepts](./concepts) for a full introduction.
 
-Tenuo provides **action-level authorization** for AI agents. Unlike IAM (which gates identities) or LLM guardrails (which filter prompts), Tenuo gates **individual tool calls**, every argument, every invocation, using short-lived, cryptographically signed warrants.
-
-This page explains how Tenuo fits into production infrastructure, what threats each deployment model addresses, and how the layers compose.
-
----
-
-## How It Works (30-Second Version)
-
-1. A control plane issues a **warrant**: a signed CBOR token that says *"this agent may call `search` and `read_file` where `path` is under `/data/reports`, for the next 5 minutes."*
-2. The agent presents this warrant when calling tools.
-3. Tenuo verifies: valid signature, unexpired, tool authorized, every argument satisfies its constraint. **Stateless, no network call.** Authorization alone takes ~27μs; constraint evaluation adds variable time depending on complexity.
-4. If any check fails, the tool call is blocked before it executes.
-
-Warrants are **delegatable**: an orchestrator can attenuate (narrow) its warrant and hand it to a worker agent. Authority only shrinks, never expands. The entire delegation chain is cryptographically verifiable.
+This page covers how Tenuo deploys into production infrastructure: the five enforcement points, how they compose for defense in depth, and the security architecture of the Rust core. For the problem/solution overview and how warrants work, see [Concepts](./concepts).
 
 ---
 
@@ -30,12 +17,14 @@ Warrants are **delegatable**: an orchestrator can attenuate (narrow) its warrant
 
 Tenuo deploys at five enforcement points. Choose based on your threat model, or combine them for defense in depth.
 
-| Model | Where It Runs | Threat Addressed | Trust Boundary |
-|-------|---------------|------------------|----------------|
-| **In-Process** | Inside the agent (Python decorator) | Prompt injection, confused deputy | Agent process |
+Every model verifies warrants, so **all five block unauthorized tool calls** — including prompt injection and confused deputy attacks. The difference is where the enforcement point sits and what additional threats it covers.
+
+| Model | Where It Runs | Additional Threat Coverage | Trust Boundary |
+|-------|---------------|---------------------------|----------------|
+| **In-Process** | Inside the agent (Python decorator) | Fastest path; framework-native integration | Agent process |
 | **Sidecar** | Separate container, same pod | Agent compromise (RCE) | Pod network |
-| **Gateway** | Cluster ingress (Envoy/Istio `ext_authz`) | Centralized policy, multi-service | Gateway |
-| **MCP Proxy** | Between agent and MCP server | Unauthorized tool access | Proxy |
+| **Gateway** | Cluster ingress (Envoy/Istio `ext_authz`) | Centralized policy across multiple services | Gateway |
+| **MCP Proxy** | Between agent and MCP server | Unauthorized tool discovery | Proxy |
 | **A2A** | Between agents (JSON-RPC) | Unconstrained inter-agent delegation | Receiving agent |
 
 ### In-Process: Drop-In Agent Protection
@@ -161,34 +150,6 @@ Combine with Kubernetes Network Policies for complete coverage: Tenuo prevents u
 
 ---
 
-## The Constraint Layer
-
-Warrants don't just authorize tool names. They constrain every argument. A few examples:
-
-```python
-# SSRF-safe URL validation: blocks private IPs, metadata endpoints,
-# ambiguous IP representations, with explicit domain allow/deny lists
-url = UrlSafe(allow_domains=["api.github.com"], deny_domains=["*.evil.com"])
-
-# Filesystem path containment (symlink-safe)
-path = Subpath("/data/reports")
-
-# Shell command safety: binary allowlist + injection prevention
-cmd = Shlex(allow=["npm", "docker"])
-
-# Composable value constraints
-model = OneOf(["gpt-4o", "gpt-4o-mini"])
-max_tokens = Range(0, 1000)
-```
-
-18 built-in constraint types cover values, numeric ranges, network addresses, filesystem paths, shell commands, URL patterns, regex, CIDR ranges, and composable boolean logic (`All`, `AnyOf`, `Not`). An extension range (type IDs 128-255) allows custom constraints without protocol changes.
-
-Every constraint supports **monotonic attenuation**: delegated warrants can only tighten constraints, never loosen them. And the runtime is **fail-closed**: unrecognized constraint types are denied, never silently dropped.
-
-See [Constraints](./constraints) for the full reference.
-
----
-
 ## Security Architecture
 
 ### What's in the Rust Core (the Security Boundary)
@@ -220,24 +181,6 @@ This checks constraints at the Python level *before* the Rust core. Even if a wa
 
 ---
 
-## Why Tenuo
-
-| | Tenuo | Token-Based IAM | LLM Guardrails |
-|---|-------|-----------------|----------------|
-| **Granularity** | Per-tool, per-argument | Per-identity | Per-prompt |
-| **Delegation** | Monotonic attenuation (cryptographic chain) | Static roles | N/A |
-| **Authorization latency** | ~27μs (stateless, offline) | Requires auth server roundtrip | Requires LLM inference |
-| **Tamper resistance** | Ed25519 signatures + Proof-of-Possession | Bearer token (stealable) | None |
-| **Audit trail** | Cryptographic proof of who authorized what | Log-based | None |
-| **Infrastructure fit** | K8s sidecar, Envoy `ext_authz`, MCP, A2A | Framework-specific | Framework-specific |
-| **Runtime targets** | Native (Rust) + WASM (browser/edge) | Server-only | Server-only |
-
-**Stateless verification** means horizontal scaling without coordination. No shared state, no cache invalidation, no token introspection endpoints. Each verifier is independent.
-
-**WASM support** means the same Rust core runs in browsers, edge functions, and serverless environments. Warrants can be built and validated anywhere WebAssembly runs.
-
----
-
 ## Summary
 
 Every deployment model verifies warrants, so each one blocks unauthorized tool calls regardless of how the call originated. The difference is where the enforcement point sits and what additional threats it covers:
@@ -255,8 +198,9 @@ Every deployment model verifies warrants, so each one blocks unauthorized tool c
 
 ## See Also
 
-- [Security](./security): Full threat model, PoP, key management, best practices
+- [Concepts](./concepts): Problem/solution, warrants, threat model, why Tenuo
 - [Constraints](./constraints): Complete constraint type reference
+- [Security](./security): Full threat model, PoP, key management, best practices
 - [MCP Integration](./mcp): MCP proxy and server-side verification
 - [A2A Integration](./a2a): Agent-to-agent delegation
 - [Kubernetes Deployment](./kubernetes): Sidecar and gateway patterns

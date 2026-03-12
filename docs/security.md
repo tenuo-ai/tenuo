@@ -578,7 +578,7 @@ def tenuo_strict():
 ## See Also
 
 - [AI Agent Patterns](./ai-agents): P-LLM/Q-LLM, prompt injection defense, multi-agent security
-- [Enforcement Models](./enforcement): In-process, sidecar, gateway deployment patterns
+- [Enforcement Architecture](./enforcement): In-process, sidecar, gateway deployment patterns
 - [Argument Extraction](./argument-extraction): How tool arguments are extracted and validated
 - [Protocol Specification](./spec/protocol-spec-v1): Full protocol details
 - [Proxy Configs](./proxy-configs): Envoy, Istio, nginx integration

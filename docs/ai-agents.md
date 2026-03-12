@@ -233,7 +233,7 @@ Human approval for sensitive operations is coming soon via Tenuo Cloud. The cryp
 - [API Reference](api-reference.md) - Full Python SDK documentation
 - [Security Model](security.md) - Deeper dive into cryptographic guarantees
 - [Constraints](constraints.md) - All constraint types for fine-grained authorization
-- [Enforcement Models](enforcement.md) - In-process, sidecar, gateway deployment patterns
+- [Enforcement Architecture](./enforcement) - In-process, sidecar, gateway deployment patterns
 
 ---
 

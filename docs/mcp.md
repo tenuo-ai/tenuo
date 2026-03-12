@@ -140,7 +140,7 @@ client = MultiServerMCPClient({...})
 mcp_tools = await client.get_tools()
 
 # 2. Wrap with Tenuo protection
-secure_tools = guard(mcp_tools, bound)
+secure_tools = guard_tools(mcp_tools, bound)
 
 # ... use secure_tools in your agent
 ```

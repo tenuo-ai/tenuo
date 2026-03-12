@@ -661,7 +661,7 @@ This enables:
 | -32008 | 1501 | Constraint violation |
 | -32010 | 1405 | Chain invalid |
 
-See [wire format specification](/docs/spec/wire-format-v1#appendix-a-error-codes) for the complete list.
+See [wire format specification](./spec/wire-format-v1#appendix-a-error-codes) for the complete list.
 
 ---
 
@@ -772,9 +772,9 @@ if __name__ == "__main__":
 
 ## API Reference
 
-See [API Reference](/api-reference) for complete type signatures.
+See [API Reference](./api-reference) for complete type signatures.
 
 ## Protocol Specification
 
-For the wire format and protocol details, see the [Protocol Spec](/spec/protocol-spec-v1) and [Wire Format](/spec/wire-format-v1).
+For the wire format and protocol details, see the [Protocol Spec](./spec/protocol-spec-v1) and [Wire Format](./spec/wire-format-v1).
 

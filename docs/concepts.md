@@ -49,6 +49,17 @@ When a worker has a warrant for `read_file("/data/q3.pdf")` with 60s TTL, prompt
 
 **The agent has identity (keypair), not authority. Authority arrives with each task.**
 
+## How It Works
+
+1. A control plane issues a **warrant**: a signed CBOR token that says *"this agent may call `search` and `read_file` where `path` is under `/data/reports`, for the next 5 minutes."*
+2. The agent presents this warrant when calling tools.
+3. Tenuo verifies: valid signature, unexpired, tool authorized, every argument satisfies its constraint. **Stateless, no network call.** Authorization alone takes ~27μs; constraint evaluation adds variable time depending on complexity.
+4. If any check fails, the tool call is blocked before it executes.
+
+Warrants are **delegatable**: an orchestrator can attenuate (narrow) its warrant and hand it to a worker agent. Authority only shrinks, never expands. The entire delegation chain is cryptographically verifiable.
+
+---
+
 ## Core Invariants
 
 Tenuo enforces six guarantees:
@@ -110,6 +121,8 @@ The injection succeeded at the LLM level. **Authorization stopped the action.**
 
 For container compromise, Tenuo still limits damage to the current warrant's scope and TTL.
 
+---
+
 ## Key Concepts
 
 ### Warrants
@@ -142,12 +155,11 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 | **Execution** | Yes | Yes (if depth < max_depth) | Workers, Q-LLM |
 | **Issuer** | No | Yes (if depth < max_depth) | P-LLM, Planner, Control plane |
 
-> **Terminal State**: A warrant becomes terminal when `depth >= max_depth`. Terminal warrants can execute tools (if execution type) but cannot delegate further. This applies to **both** execution and issuer warrants—neither can delegate once terminal.
+> **Terminal State**: A warrant becomes terminal when `depth >= max_depth`. Terminal warrants can execute tools (if execution type) but cannot delegate further. This applies to **both** execution and issuer warrants—neither can delegate once terminal. Terminal state is enforced automatically during attenuation.
 
 **Root Execution Warrant**: The first execution warrant in a task chain, typically minted by the control plane. Starts at `depth=0` and can be attenuated.
 
 ```python
-# Root Execution Warrant: The first execution warrant in a task chain
 from tenuo import Warrant, Capability, Subpath
 
 root = (Warrant.mint_builder()
@@ -160,9 +172,6 @@ root = (Warrant.mint_builder()
 **Issuer Warrant**: A warrant that *cannot execute tools* but can *issue new execution warrants*. Held by supervisory nodes (P-LLM, planners) that delegate but don't act.
 
 ```python
-# Issuer warrants delegate authority to grant tools.
-# Use grant_builder() for delegation:
-
 orchestrator_warrant = (Warrant.mint_builder()
     .capability("read_file", path=Subpath("/data"))
     .capability("write_file", path=Subpath("/data"))
@@ -170,7 +179,6 @@ orchestrator_warrant = (Warrant.mint_builder()
     .ttl(3600)
     .mint(control_plane_key))
 
-# Delegate narrower scope to worker
 worker_warrant = (orchestrator_warrant.grant_builder()
     .capability("read_file", path=Subpath("/data/reports"))
     .holder(worker_key.public_key)
@@ -179,105 +187,6 @@ worker_warrant = (orchestrator_warrant.grant_builder()
 ```
 
 Root execution warrants start tasks. Delegation narrows scope for workers.
-
-
-### Warrant Lifecycle
-
-Warrants are **immutable and short-lived by design**. There is no renewal API.
-
-#### Why No Renewal?
-
-| Renewal model | Tenuo model |
-|---------------|-------------|
-| Extend expiry of existing token | Issue new warrant per phase |
-| Authority persists | Authority re-evaluated at each boundary |
-| Single audit event | Clear audit trail per phase |
-
-Renewal implies long-lived authority. Tenuo's model is the opposite: authority is scoped to a task phase and dies with it.
-
-#### Patterns for Long-Running Work
-
-***Pattern 1: Phase Decomposition (Recommended)***
-
-The orchestrator decomposes work into phases. Each phase gets a fresh warrant.
-```python
-async def orchestrator(task: str):
-    for phase in planner.decompose(task):
-        # Delegate with narrower scope for each phase
-        warrant = (orchestrator_warrant.grant_builder()
-            .capability(phase.tool, **phase.constraints)
-            .ttl(60)
-            .holder(worker_key.public_key)
-            .grant(orchestrator_key))
-        await worker.execute(phase, warrant)
-        # Warrant expires. Next phase gets a new one.
-```
-
-This is the [CaMeL](https://arxiv.org/abs/2503.18813) model: the privileged planner issues scoped tokens to workers for each action.
-
-**Best for:** LangGraph, multi-agent orchestration, batch processing.
-
-
-***Pattern 2: Orchestrator Push***
-
-For streaming workers, the orchestrator periodically pushes fresh warrants.
-```python
-async def orchestrator():
-    while task_active:
-        # Push fresh warrant before expiry
-        warrant = (orchestrator_warrant.grant_builder()
-            .ttl(300)
-            .holder(worker_key.public_key)
-            .grant(orchestrator_key))
-        await worker.update_warrant(warrant)
-        await asyncio.sleep(240)  # Push before expiry
-
-async def worker():
-    while True:
-        # Warrant context updated externally by orchestrator
-        await process_next_item()
-```
-
-**Best for:** Queue consumers, long-running workers with external coordination.
-
-
-***Pattern 3: Sidecar Refresh***
-
-A sidecar container manages warrant refresh transparently. Worker code is unchanged.
-```yaml
-containers:
-  - name: warrant-refresher
-    image: tenuo/refresher:0.1
-    env:
-      - name: ORCHESTRATOR_URL
-        value: "http://orchestrator:8080"
-      - name: REFRESH_INTERVAL
-        value: "240"
-  - name: worker
-    # Worker reads warrant from shared volume or localhost
-```
-
-**Best for:** Platform teams managing many workers, retrofitting existing code.
-
-***Pattern 4: Worker Pull (Use With Caution)***
-
-Worker requests its own warrant refresh.
-```python
-async def worker():
-    while True:
-        if warrant.expires_soon():
-            warrant = await control_plane.get_warrant(...)
-        await process_item()
-```
-
-**Tradeoff:** Worker now has direct control plane access. This weakens isolation; a compromised worker can request warrants directly. Use only when orchestrator push isn't feasible.
-
-**Mitigations if you must use this:**
-- Rate limit warrant requests per worker
-- Scope worker's control plane access to specific tools
-- Monitor for anomalous request patterns
-
-
 
 ### Monotonic Attenuation
 
@@ -289,10 +198,6 @@ Authority can only **shrink**, never expand:
 | **Constraints** | Child constraints must be tighter |
 | **TTL** | Child cannot outlive parent |
 | **Depth** | `max_depth` can only decrease |
-
-### Terminal Warrants
-
-A warrant is **terminal** when `depth >= max_depth`. Terminal execution warrants can execute tools but cannot delegate. Terminal issuer warrants cannot delegate either. This is enforced automatically during attenuation—you don't need to explicitly mark a warrant as terminal.
 
 ### Stateless Verification
 
@@ -308,84 +213,69 @@ Unlike traditional IAM or mTLS, the Authorizer **does not need to know the worke
 
 This enables **elastic scaling**: you can spin up 1,000 new worker nodes with fresh keys, and they are immediately authorized to execute tasks as long as they hold a valid warrant chain. No database updates, no config pushes, no "service account" provisioning.
 
-## Architecture (v0.1)
+---
 
-### SDK Integration (In-Process)
+## Deployment Models
 
+Tenuo deploys at five enforcement points. Every model verifies warrants, so **all five block unauthorized tool calls** — including prompt injection and confused deputy attacks. Choose based on your threat model, or combine them for defense in depth.
+
+| Model | Where It Runs | Additional Threat Coverage | Trust Boundary |
+|-------|---------------|---------------------------|----------------|
+| **In-Process** | Inside the agent (Python decorator) | Fastest path; framework-native integration | Agent process |
+| **Sidecar** | Separate container, same pod | Agent compromise (RCE) | Pod network |
+| **Gateway** | Cluster ingress (Envoy/Istio `ext_authz`) | Centralized policy across multiple services | Gateway |
+| **MCP Proxy** | Between agent and MCP server | Unauthorized tool discovery | Proxy |
+| **A2A** | Between agents (JSON-RPC) | Unconstrained inter-agent delegation | Receiving agent |
+
+Integrates with the frameworks teams already use:
+
+| Framework | Module | Integration |
+|-----------|--------|-------------|
+| LangGraph | `tenuo.langgraph` | `TenuoToolNode` / `TenuoMiddleware` |
+| OpenAI | `tenuo.openai` | `verify_tool_call()` |
+| CrewAI | `tenuo.crewai` | `@guard` decorator |
+| Google ADK | `tenuo.google_adk` | `TenuoPlugin` |
+| AutoGen | `tenuo.autogen` | `@guard` decorator |
+| Temporal | `tenuo.temporal` | Workflow-level warrants |
+| FastAPI | `tenuo.fastapi` | Middleware / dependency injection |
+| MCP | `tenuo.mcp` | Proxy or server-side verifier |
+| A2A | `tenuo.a2a` | Client / server |
+
+These models compose. A production deployment can layer in-process enforcement (catches prompt injection at the source) with a sidecar (catches anything that slips past a compromised agent). See [Enforcement Architecture](./enforcement) for deployment diagrams, configuration, and defense-in-depth patterns.
+
+## The Constraint Layer
+
+Warrants don't just authorize tool names. They constrain every argument:
+
+```python
+url = UrlSafe(allow_domains=["api.github.com"], deny_domains=["*.evil.com"])
+path = Subpath("/data/reports")
+cmd = Shlex(allow=["npm", "docker"])
+model = OneOf(["gpt-4o", "gpt-4o-mini"])
+max_tokens = Range(0, 1000)
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           YOUR APPLICATION                                   │
-│                                                                              │
-│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                  │
-│   │ SigningKey  │     │   Warrant   │     │  Authorizer │                  │
-│   │ (identity)  │     │  (authority)│     │  (verify)   │                  │
-│   └──────┬──────┘     └──────┬──────┘     └──────┬──────┘                  │
-│          │                   │                   │                          │
-│          └───────────────────┴───────────────────┘                          │
-│                              │                                              │
-│                              ▼                                              │
-│   ┌─────────────────────────────────────────────────────────────────────┐  │
-│   │                     PROTECTED TOOLS                                  │  │
-│   │   @guard decorator or guard() wrapper                             │  │
-│   │   → Checks warrant → Verifies PoP → Allows or denies                │  │
-│   └─────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
 
-### Gateway Integration (Service Mesh)
+18 built-in constraint types cover values, numeric ranges, network addresses, filesystem paths, shell commands, URL patterns, regex, CIDR ranges, and composable boolean logic (`All`, `AnyOf`, `Not`). Every constraint supports **monotonic attenuation**: delegated warrants can only tighten constraints, never loosen them. The runtime is **fail-closed**: unrecognized constraint types are denied, never silently dropped.
 
-Tenuo integrates with existing service meshes via external authorization:
+See [Constraints](./constraints) for the full reference.
 
-```
-┌────────────┐     ┌─────────────┐     ┌─────────────────┐     ┌─────────┐
-│   Client   │────▶│ Envoy/Istio │────▶│ tenuo-authorizer│────▶│ Backend │
-│            │     │             │     │   (sidecar)     │     │         │
-│ X-Tenuo-   │     │  ext_authz  │     │                 │     │         │
-│ Warrant    │     │  filter     │     │ 200 OK / 403    │     │         │
-└────────────┘     └─────────────┘     └─────────────────┘     └─────────┘
-```
+---
 
-Supported integrations: Envoy, Istio, nginx, Kubernetes sidecars. See [Proxy Configs](./proxy-configs).
+## Why Tenuo
 
-### Integration Layers
+| | Tenuo | Token-Based IAM | LLM Guardrails |
+|---|-------|-----------------|----------------|
+| **Granularity** | Per-tool, per-argument | Per-identity | Per-prompt |
+| **Delegation** | Monotonic attenuation (cryptographic chain) | Static roles | N/A |
+| **Authorization latency** | ~27μs (stateless, offline) | Requires auth server roundtrip | Requires LLM inference |
+| **Tamper resistance** | Ed25519 signatures + Proof-of-Possession | Bearer token (stealable) | None |
+| **Audit trail** | Cryptographic proof of who authorized what | Log-based | None |
+| **Infrastructure fit** | K8s sidecar, Envoy `ext_authz`, MCP, A2A | Framework-specific | Framework-specific |
+| **Runtime targets** | Native (Rust) + WASM (browser/edge) | Server-only | Server-only |
 
-Tenuo provides three levels of abstraction. Start at the top and drop down when you need more control:
+**Stateless verification** means horizontal scaling without coordination. No shared state, no cache invalidation, no token introspection endpoints. Each verifier is independent.
 
-| Layer | Examples | Use When |
-|-------|----------|----------|
-| **Drop-in** | `TenuoToolNode`, `SecureAgentExecutor`, `TenuoGuard` | Quick start, PoCs, standard LangChain/LangGraph/FastAPI flows |
-| **Composable** | `guard()`, `Authorizer.check()`, `BoundWarrant.validate()` | Custom execution flows, non-standard tool patterns |
-| **Protocol** | Wire format, `X-Tenuo-Warrant` header, CBOR encoding | Building new framework integrations, cross-language |
-
-**Graduating between layers:**
-- If `TenuoToolNode` doesn't fit your graph structure → use `guard()` to wrap tools manually
-- If `guard()` is too opinionated → call `Authorizer.check()` directly
-- If you're building a new integration (Go, Rust, etc.) → implement the [wire format](./spec/wire-format-v1)
-
-### What v0.1 Provides
-
-| Component | Description |
-|-----------|-------------|
-| **SigningKey** | Ed25519 identity for signing |
-| **Warrant** | Capability token with tools, constraints, TTL |
-| **Authorizer** | Local verification (no network) |
-| **@guard** | Decorator for tool protection |
-| **guard()** | Wrap LangChain/LangGraph tools |
-| **mint / grant** | Context managers for scoped authority |
-| **tenuo-authorizer** | External authorization service for gateway integration |
-
-> **Context vs State**: Context (`warrant_scope`) is a convenience layer for tool protection within a single process. For distributed systems, serialized state, or multi-agent workflows, warrants must travel in request state. **Context is convenience; state is the security boundary.**
-
-### What's NOT in v0.1
-
-| Component | Status |
-|-----------|--------|
-| Control plane | Optional; can run fully embedded |
-| Revocation service | Planned for v0.2 |
-| Context-aware constraints | Spec under development |
-| Multi-sig with identity binding | Partial (notary in v0.2) |
-| A2A (Agent-to-Agent) | Available since v0.1.0-beta.6 |
-| TypeScript/Node SDK | Planned for v0.2 |
+**WASM support** means the same Rust core runs in browsers, edge functions, and serverless environments. Warrants can be built and validated anywhere WebAssembly runs.
 
 ---
 
@@ -426,14 +316,15 @@ See [Related Work](./related-work) for comparison with Macaroons, Biscuit, UCAN,
 
 ## Summary
 
-Authority is bound to the task (warrant minted per-request). Verification is stateless (local, no runtime control plane). PoP is mandatory (stolen warrant is useless). Application code stays clean (context managers, decorators). The threat model is honest (protects LLM, not shell access).
+Authority is bound to the task (warrant minted per-request). Verification is stateless (local, no runtime control plane). PoP is mandatory (stolen warrants are useless). Every deployment model — from a Python decorator to a Kubernetes sidecar to an Envoy gateway — enforces the same guarantees through a single Rust core. The threat model is honest (protects against prompt injection and confused deputy, not shell access).
 
 **The agent has identity (keypair), not authority. Authority arrives with each task.**
 
 ## Next Steps
 
 - [Quick Start](./quickstart): Get running in 5 minutes
-- [Enforcement Models](./enforcement): In-process, sidecar, gateway, MCP
+- [Enforcement Architecture](./enforcement): Deployment diagrams, defense-in-depth, security architecture
+- [Constraints](./constraints): Complete constraint type reference
 - [Protocol Specification](./spec/protocol-spec-v1): Wire format and verification rules
 - [Security](./security): Detailed threat model
 - [Related Work](./related-work): CaMeL, FIDES, and other approaches

@@ -116,6 +116,27 @@ Tenuo implements this separation: models propose actions, the authorizer enforce
 
 ---
 
+## Intelligent AI Delegation
+
+**Paper**: [Intelligent AI Delegation](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero, 2026)
+
+This paper proposes a framework for adaptive AI delegation — a sequence of decisions involving task allocation that incorporates transfer of authority, responsibility, accountability, role boundaries, and trust mechanisms between agents (human and AI).
+
+**Relationship to Tenuo:**
+
+Tenuo provides the cryptographic enforcement primitive for the delegation model this paper describes. Where the paper defines *what* safe delegation requires (authority transfer, bounded scope, trust establishment), Tenuo implements the *how*:
+
+| Delegation Concept | Tenuo Mechanism |
+|--------------------|-----------------|
+| Transfer of authority | Warrant attenuation (monotonic narrowing) |
+| Role boundaries | Per-tool, per-argument constraints |
+| Trust establishment | PoP binding + cryptographic chain verification |
+| Accountability | Audit trail via delegation chain |
+
+The paper's vision of "delegation networks" maps to Tenuo's multi-agent warrant chains, where each delegation step is cryptographically verifiable and authority can only shrink.
+
+---
+
 ## Prior Art
 
 Tenuo builds on established capability-based authorization patterns:
@@ -187,6 +208,7 @@ If you reference Tenuo in academic work:
   url = {https://github.com/tenuo-ai/tenuo}
 }
 ```
+
 ---
 
 ## See Also
