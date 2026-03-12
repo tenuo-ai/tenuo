@@ -22,7 +22,7 @@ import asyncio
 import uuid
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Optional
 
 import pytest
 
@@ -253,8 +253,8 @@ async def _run_workflow(
     arg,
     *,
     send_headers: bool = True,
-    workflow_args: list[Any] | None = None,
-    workflows: list[Any] | None = None,
+    workflow_args: Optional[List[Any]] = None,
+    workflows: Optional[List[Any]] = None,
 ):
     """Start a worker + run a single workflow, return the result."""
     control, agent = keys

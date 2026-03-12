@@ -2953,7 +2953,12 @@ class TenuoActivityInboundInterceptor:
                 if info.attempt <= 1:
                     global _pop_dedup_last_evict
                     base_dedup = warrant.dedup_key(tool_name, args)
-                    dedup_key = f"{base_dedup}:{info.workflow_id}:{info.activity_id}"
+                    # Include run ID so continue-as-new workflows don't
+                    # false-positive as PoP replays across runs.
+                    dedup_key = (
+                        f"{base_dedup}:{info.workflow_id}:"
+                        f"{info.workflow_run_id}:{info.activity_id}"
+                    )
                     now = datetime.now(timezone.utc).timestamp()
                     ttl = float(warrant.dedup_ttl_secs())
                     with _store_lock:
