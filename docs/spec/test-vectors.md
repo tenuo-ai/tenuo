@@ -493,7 +493,7 @@ assert_eq!(billing.cost_center, 4201);
 
 **Scenario:** Transporting a 3-level delegation chain as a single CBOR array.
 
-A `WarrantStack` is a CBOR array of warrants ordered Root --> Leaf:
+A `WarrantStack` is a CBOR array of warrants ordered Root → Leaf:
 
 ```
 type WarrantStack = Vec<SignedWarrant>;
