@@ -451,6 +451,63 @@ class TestAuditEvents:
         assert events[0].denial_reason
 
 
+# -- Dry-run shadow mode ------------------------------------------------------
+
+class TestDryRunMode:
+    def test_denied_activity_executes_in_dry_run(
+        self, warrant, agent_key, control_key, headers_dict
+    ):
+        events = []
+        cfg = TenuoInterceptorConfig(
+            key_resolver=EnvKeyResolver(),
+            on_denial="raise",
+            dry_run=True,
+            trusted_roots=[control_key.public_key],
+            audit_callback=events.append,
+        )
+        ti = TenuoInterceptor(cfg)
+        wf = "wf-dry-deny"
+        act_headers = _make_activity_headers(
+            headers_dict, warrant, agent_key, "read_file", {"path": "/etc/shadow"}
+        )
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="executed")
+        nxt.init = MagicMock()
+        ai = ti.intercept_activity(nxt)
+        info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
+        inp = FakeExecuteActivityInput(
+            fn=lambda path: path, args=("/etc/shadow",), headers=act_headers
+        )
+        with patch("temporalio.activity.info") as mock_info:
+            mock_info.return_value = info
+            result = _run(ai.execute_activity(inp))
+
+        assert result == "executed"
+        assert nxt.execute_activity.call_count == 1
+        assert any(e.decision == "DENY" for e in events)
+
+    def test_missing_warrant_executes_in_dry_run(self):
+        cfg = TenuoInterceptorConfig(
+            key_resolver=EnvKeyResolver(),
+            on_denial="raise",
+            dry_run=True,
+            require_warrant=True,
+        )
+        ti = TenuoInterceptor(cfg)
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="executed")
+        nxt.init = MagicMock()
+        ai = ti.intercept_activity(nxt)
+        info = FakeActivityInfo(activity_type="read_file", workflow_id="wf-dry-none")
+        inp = FakeExecuteActivityInput(fn=lambda: None, args=())
+        with patch("temporalio.activity.info") as mock_info:
+            mock_info.return_value = info
+            result = _run(ai.execute_activity(inp))
+
+        assert result == "executed"
+        assert nxt.execute_activity.call_count == 1
+
+
 # -- Parallel activities (race condition regression) -------------------------
 
 class TestParallelActivities:

@@ -1051,6 +1051,14 @@ class TenuoInterceptorConfig:
     - "skip": Silent denial, return None
     """
 
+    dry_run: bool = False
+    """
+    Shadow mode for integration evaluation. When True, authorization denials
+    are NOT enforced: Tenuo emits denial audit/log signals but allows activity
+    execution to continue. This setting is for staging and rollout validation
+    only and must not be used in production.
+    """
+
     tool_mappings: Dict[str, str] = field(default_factory=dict)
     """
     Optional explicit activity-to-tool mappings.
@@ -1192,6 +1200,12 @@ class TenuoInterceptorConfig:
     """
 
     def __post_init__(self) -> None:
+        if self.dry_run:
+            logger.warning(
+                "TenuoInterceptorConfig: dry_run=True enables shadow mode and "
+                "does not enforce authorization denials. Do not use in production."
+            )
+
         # F1: enforce strict_mode invariants before anything else
         if self.strict_mode and not self.trusted_roots:
             raise ValueError(
@@ -2860,19 +2874,37 @@ class TenuoActivityInboundInterceptor:
         except ChainValidationError:
             raise  # Re-raise validation errors
 
+        async def _deny_or_continue(tool: str, reason: str) -> Optional[Any]:
+            if self._config.dry_run:
+                logger.warning(
+                    "DRY-RUN mode: would deny activity %s in workflow %s (%s); "
+                    "executing anyway. Not for production.",
+                    tool,
+                    info.workflow_id,
+                    reason,
+                )
+                return await self._next.execute_activity(input)
+
+            if self._config.on_denial == "log":
+                logger.warning(f"Authorization denied for {tool}: {reason}")
+            return None
+
         # If no warrant, check require_warrant config (fail-closed by default)
         if warrant is None:
             if self._config.require_warrant:
                 # Fail-closed: deny activities without warrant
                 logger.warning(f"No warrant for activity {info.activity_type}, denying (require_warrant=True)")
-                if self._config.on_denial == "raise":
+                if self._config.on_denial == "raise" and not self._config.dry_run:
                     raise ConstraintViolation(
                         tool=info.activity_type,
                         arguments={},
                         constraint="No warrant provided (require_warrant=True)",
                         warrant_id="none",
                     )
-                return None
+                return await _deny_or_continue(
+                    tool=info.activity_type,
+                    reason="No warrant provided (require_warrant=True)",
+                )
             else:
                 # Opt-in mode: allow without warrant
                 logger.debug(
@@ -2904,12 +2936,15 @@ class TenuoActivityInboundInterceptor:
                 reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
                 constraint="max_chain_depth_exceeded",
             )
-            if self._config.on_denial == "raise":
+            if self._config.on_denial == "raise" and not self._config.dry_run:
                 raise ChainValidationError(
                     reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
                     depth=chain_depth,
                 )
-            return None
+            return await _deny_or_continue(
+                tool=tool_name,
+                reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
+            )
 
         # --- Full Authorizer path (with PoP verification) ---
         if self._authorizer is not None:
@@ -3009,16 +3044,14 @@ class TenuoActivityInboundInterceptor:
                         args=args,
                         reason=str(e),
                     )
-                    if self._config.on_denial == "raise":
+                    if self._config.on_denial == "raise" and not self._config.dry_run:
                         raise ConstraintViolation(
                             tool=tool_name,
                             arguments=args,
                             constraint=str(e),
                             warrant_id=warrant.id,
                         )
-                    elif self._config.on_denial == "log":
-                        logger.warning(f"Authorization denied for {tool_name}: {e}")
-                    return None
+                    return await _deny_or_continue(tool=tool_name, reason=str(e))
                 else:
                     # Internal error — always propagate regardless of on_denial.
                     logger.error(
@@ -3038,12 +3071,12 @@ class TenuoActivityInboundInterceptor:
                     args=args,
                     reason="Warrant expired",
                 )
-                if self._config.on_denial == "raise":
+                if self._config.on_denial == "raise" and not self._config.dry_run:
                     raise WarrantExpired(
                         warrant_id=warrant.id,
                         expired_at=warrant.expires_at(),
                     )
-                return None
+                return await _deny_or_continue(tool=tool_name, reason="Warrant expired")
 
             # Check tool is in capabilities
             tools = warrant.tools or []
@@ -3056,14 +3089,17 @@ class TenuoActivityInboundInterceptor:
                     reason=f"Tool '{tool_name}' not in warrant capabilities",
                     constraint="tool_not_allowed",
                 )
-                if self._config.on_denial == "raise":
+                if self._config.on_denial == "raise" and not self._config.dry_run:
                     raise ConstraintViolation(
                         tool=tool_name,
                         arguments=args,
                         constraint=f"Tool not in warrant capabilities: {tools}",
                         warrant_id=warrant.id,
                     )
-                return None
+                return await _deny_or_continue(
+                    tool=tool_name,
+                    reason=f"Tool '{tool_name}' not in warrant capabilities",
+                )
 
             # Check constraints — returns None on success, violation string on failure
             try:
@@ -3077,14 +3113,17 @@ class TenuoActivityInboundInterceptor:
                         reason=f"Constraint violated: {violation}",
                         constraint="constraint_violated",
                     )
-                    if self._config.on_denial == "raise":
+                    if self._config.on_denial == "raise" and not self._config.dry_run:
                         raise ConstraintViolation(
                             tool=tool_name,
                             arguments=args,
                             constraint=str(violation),
                             warrant_id=warrant.id,
                         )
-                    return None
+                    return await _deny_or_continue(
+                        tool=tool_name,
+                        reason=f"Constraint violated: {violation}",
+                    )
 
             except ConstraintViolation:
                 raise
@@ -3097,14 +3136,17 @@ class TenuoActivityInboundInterceptor:
                     args=args,
                     reason=f"Constraint check error: {e}",
                 )
-                if self._config.on_denial == "raise":
+                if self._config.on_denial == "raise" and not self._config.dry_run:
                     raise ConstraintViolation(
                         tool=tool_name,
                         arguments=args,
                         constraint=f"Constraint check failed: {e}",
                         warrant_id=warrant.id,
                     )
-                return None
+                return await _deny_or_continue(
+                    tool=tool_name,
+                    reason=f"Constraint check error: {e}",
+                )
 
             # Lightweight approval gate check (no cryptographic verification of
             # approvals — the full path handles that).  If a gate fires
@@ -3121,7 +3163,7 @@ class TenuoActivityInboundInterceptor:
                                "configure trusted_roots for full approval verification)",
                         constraint="approval_gate_triggered",
                     )
-                    if self._config.on_denial == "raise":
+                    if self._config.on_denial == "raise" and not self._config.dry_run:
                         raise ConstraintViolation(
                             tool=tool_name,
                             arguments=args,
@@ -3129,7 +3171,10 @@ class TenuoActivityInboundInterceptor:
                                        "Use trusted_roots for full approval gate support.",
                             warrant_id=warrant.id,
                         )
-                    return None
+                    return await _deny_or_continue(
+                        tool=tool_name,
+                        reason=f"Approval gate triggered for '{tool_name}'",
+                    )
             except ConstraintViolation:
                 raise
             except ImportError:

@@ -202,9 +202,13 @@ warrant = await client.request_warrant(signing_key=worker_key, capabilities={"se
 result = await client.send_task(skill="search", warrant=warrant, signing_key=worker_key)
 ```
 
-**Temporal** — Durable workflows with warrant-based activity authorization
+**Temporal** -- Durable workflows with warrant-based activity authorization
 ```python
-from tenuo.temporal import AuthorizedWorkflow, TenuoInterceptor, TenuoInterceptorConfig
+from tenuo.temporal import (
+    AuthorizedWorkflow,
+    TenuoClientInterceptor,
+    execute_workflow_authorized,
+)
 
 @workflow.defn
 class MyWorkflow(AuthorizedWorkflow):
@@ -213,6 +217,18 @@ class MyWorkflow(AuthorizedWorkflow):
         return await self.execute_authorized_activity(
             read_file, args=[path], start_to_close_timeout=timedelta(seconds=30),
         )
+
+client_interceptor = TenuoClientInterceptor()
+result = await execute_workflow_authorized(
+    client=client,
+    client_interceptor=client_interceptor,
+    workflow_run_fn=MyWorkflow.run,
+    workflow_id="wf-123",
+    warrant=warrant,
+    key_id="agent1",
+    args=["/data/report.txt"],
+    task_queue="my-queue",
+)
 ```
 
 See full Temporal examples: [`demo.py`](tenuo-python/examples/temporal/demo.py) | [`multi_warrant.py`](tenuo-python/examples/temporal/multi_warrant.py) | [`delegation.py`](tenuo-python/examples/temporal/delegation.py)

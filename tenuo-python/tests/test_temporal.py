@@ -488,6 +488,7 @@ class TestTenuoInterceptorConfig:
         config = TenuoInterceptorConfig(key_resolver=resolver)
 
         assert config.on_denial == "raise"
+        assert config.dry_run is False
         assert config.tool_mappings == {}
         assert config.audit_callback is None
         assert config.audit_allow is True
@@ -502,6 +503,7 @@ class TestTenuoInterceptorConfig:
         config = TenuoInterceptorConfig(
             key_resolver=resolver,
             on_denial="log",
+            dry_run=True,
             tool_mappings={"fetch": "read_file"},
             audit_callback=callback,
             audit_allow=False,
@@ -510,6 +512,7 @@ class TestTenuoInterceptorConfig:
         )
 
         assert config.on_denial == "log"
+        assert config.dry_run is True
         assert config.tool_mappings == {"fetch": "read_file"}
         assert config.audit_callback is callback
         assert config.audit_allow is False

@@ -182,6 +182,66 @@ This works in both single-process demos and distributed deployments where client
 
 ---
 
+## API Ergonomics
+
+Use one of these patterns based on your needs:
+
+### Recommended (default): `execute_workflow_authorized(...)`
+
+This is the safest and simplest way to start authorized workflows. It binds headers to a specific workflow ID and immediately executes the workflow.
+
+```python
+result = await execute_workflow_authorized(
+    client=client,
+    client_interceptor=client_interceptor,
+    workflow_run_fn=DataProcessingWorkflow.run,
+    workflow_id="process-001",
+    warrant=warrant,
+    key_id="agent-key-1",
+    args=["/data/input/report.txt", "/data/output/report.txt"],
+    task_queue="data-processing",
+)
+```
+
+### Advanced: `set_headers_for_workflow(...)` + `client.execute_workflow(...)`
+
+Use this when you need manual control over start timing or custom wrappers.
+
+```python
+client_interceptor.set_headers_for_workflow(
+    "process-001",
+    tenuo_headers(warrant, "agent-key-1"),
+)
+result = await client.execute_workflow(
+    DataProcessingWorkflow.run,
+    id="process-001",
+    args=["/data/input/report.txt", "/data/output/report.txt"],
+    task_queue="data-processing",
+)
+```
+
+### Deprecated: `set_headers(...)`
+
+`set_headers(...)` remains for backward compatibility but is deprecated for concurrent usage. Prefer workflow-ID-bound APIs.
+
+---
+
+## Cross-Process Contract
+
+For distributed deployments (separate client and worker processes), the integration contract is:
+
+| Component | Responsibility | Required |
+|-----------|----------------|----------|
+| Client | Start workflows with Tenuo headers (`execute_workflow_authorized` or `set_headers_for_workflow`) | Yes |
+| Workflow worker | Register `TenuoInterceptor` and passthrough modules (`tenuo`, `tenuo_core`) | Yes |
+| Activity worker | Receive propagated headers and enforce PoP/constraints | Yes |
+| Key management | Resolve `key_id` to signing key using `KeyResolver` | Yes |
+| Trusted roots | Provide `trusted_roots` and enable `strict_mode=True` in production | Yes |
+
+If any required part is missing, execution fails closed.
+
+---
+
 ## Configuration
 
 ### Key Management (REQUIRED)
@@ -324,6 +384,7 @@ from tenuo.temporal import TenuoInterceptorConfig
 config = TenuoInterceptorConfig(
     key_resolver=EnvKeyResolver(),        # Required: key resolution strategy
     on_denial="raise",                    # "raise" | "log" | "skip"
+    dry_run=False,                        # Shadow mode only; never for production
     trusted_roots=[control_key.public_key],  # Enables Authorizer + PoP verification
     strict_mode=True,                     # Raise ValueError at startup if trusted_roots absent
     require_warrant=True,                 # Fail-closed: deny if no warrant
@@ -344,15 +405,43 @@ config = TenuoInterceptorConfig(
 Control what happens when authorization fails:
 
 ```python
-# "raise" (default): raise ConstraintViolation  -- workflow fails fast
-# "log":             log the denial and continue execution
-# "skip":            silently return None
+# "raise" (default): raise ConstraintViolation
+# "log":             log denial and block (return None)
+# "skip":            silently block (return None)
 config = TenuoInterceptorConfig(
     key_resolver=resolver,
     on_denial="raise",
 )
 ```
 
+### Dry run (staging only, not production)
+
+Use `dry_run=True` to run in shadow mode while you validate policies. In this mode,
+authorization denials are recorded (audit/log), but activities are still executed.
+
+```python
+config = TenuoInterceptorConfig(
+    key_resolver=resolver,
+    trusted_roots=[root_key.public_key],
+    dry_run=True,   # shadow mode for rollout validation only
+    on_denial="raise",  # ignored for authorization denials while dry_run=True
+)
+```
+
+> **Warning:** `dry_run=True` disables enforcement for authorization denials. Use only in non-production environments.
+
+
+---
+
+## Compatibility
+
+| Component | Supported | Notes |
+|-----------|-----------|-------|
+| Temporal Python SDK | `temporalio>=1.4.0` | Tested in CI with live Temporal integration job |
+| Python | 3.9 - 3.14 | Full matrix in CI; Temporal live tests run on Python 3.12 |
+| Runtime mode | Single-process and distributed client/worker | Both supported |
+
+Feature availability may depend on SDK surface area. Core activity/workflow authorization and child-workflow delegation are primary supported paths.
 
 ---
 
@@ -595,6 +684,15 @@ config = TenuoInterceptorConfig(
 # - tenuo_temporal_authorization_latency_seconds_bucket{tool}
 ```
 
+### Suggested Alerts
+
+For production integration monitoring, alert on:
+
+- sustained increase in `*_activities_denied_total`
+- spikes in `POP_VERIFICATION_FAILED` / replay-related denials
+- key resolver failures (`KEY_NOT_FOUND`, resolver exceptions)
+- sudden drop in authorized activity volume
+
 ---
 
 ## Security Model
@@ -633,6 +731,20 @@ from tenuo.temporal import (
 )
 ```
 
+## Failure Semantics (Integrator View)
+
+| Failure Type | Where It Surfaces | Typical Exception | Recommended Handling |
+|--------------|-------------------|-------------------|----------------------|
+| Missing/invalid warrant headers | Activity execution | `ConstraintViolation` / `ChainValidationError` | Treat as non-retryable config/integration error |
+| Invalid PoP or replay | Activity execution | `PopVerificationError` | Non-retryable unless request context is regenerated |
+| Expired warrant | Activity execution | `WarrantExpired` | Refresh/mint new warrant, then retry |
+| Key resolution failure | Activity execution | `KeyResolutionError` | Retry only for transient backend failures |
+| Startup misconfiguration (`strict_mode=True`) | Worker startup | `ValueError` | Fix config before deployment |
+
+When `dry_run=True`, these authorization denials are converted to audit/log-only
+signals and execution continues. Use this only for staging validation and rollout
+analysis, never as a production steady state.
+
 ---
 
 ## Best Practices
@@ -646,6 +758,30 @@ from tenuo.temporal import (
 7. **Use @unprotected** sparingly - only for truly internal operations
 8. **Attenuate warrants** for child workflows to enforce least privilege
 9. **Keep TTLs short** for sensitive operations (minutes, not hours)
+10. **Never run `dry_run=True` in production** - use it only for staging rollout validation
+
+---
+
+## Migration Path (from plain Temporal)
+
+1. **Worker hardening**: add `TenuoInterceptor` + sandbox passthrough modules.
+2. **Start path**: switch workflow start calls to `execute_workflow_authorized(...)`.
+3. **Progressive rollout**: enable on one task queue/tenant, then expand.
+
+### Rollback
+
+If needed, you can temporarily route traffic to an unprotected queue while preserving the existing workflow code. Keep this as an operational fallback, not a steady-state mode.
+
+---
+
+## Integration QA Coverage
+
+Current test coverage is split across:
+
+- `tests/test_temporal_live.py`: live Temporal server, serialization/header propagation, delegation, continue-as-new paths
+- `tests/test_temporal_e2e.py`: mocked infra with real Tenuo objects, outbound/inbound interceptor behavior, PoP, child headers, Nexus header propagation path
+
+This gives confidence for both protocol correctness and runtime integration behavior.
 
 ---
 
