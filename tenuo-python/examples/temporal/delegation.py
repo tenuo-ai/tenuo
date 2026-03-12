@@ -328,22 +328,30 @@ async def main():
 
         # -- Stage 1: Ingest (read-only warrant) --
         logger.info("  Stage 1: Ingest (read-only)")
-        client_interceptor.set_headers(tenuo_headers(ingest_warrant, "ingest"))
+        ingest_id = f"ingest-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            ingest_id,
+            tenuo_headers(ingest_warrant, "ingest"),
+        )
         data = await client.execute_workflow(
             IngestWorkflow.run,
             arg=str(source_dir),
-            id=f"ingest-{uuid.uuid4().hex[:8]}",
+            id=ingest_id,
             task_queue=task_queue,
         )
         logger.info(f"  Ingested {len(data)} files")
 
         # -- Stage 2: Transform (write-only warrant) --
         logger.info("  Stage 2: Transform (write-only)")
-        client_interceptor.set_headers(tenuo_headers(transform_warrant, "transform"))
+        transform_id = f"transform-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            transform_id,
+            tenuo_headers(transform_warrant, "transform"),
+        )
         result = await client.execute_workflow(
             TransformWorkflow.run,
             args=[str(output_dir), data],
-            id=f"transform-{uuid.uuid4().hex[:8]}",
+            id=transform_id,
             task_queue=task_queue,
         )
         logger.info(f"  Result: {result}")
@@ -394,13 +402,15 @@ async def main():
         output2_dir = data_dir / "output2"
         output2_dir.mkdir(parents=True, exist_ok=True)
 
-        client_interceptor.set_headers(
-            tenuo_headers(broad_warrant, "orchestrator")
+        orchestrator_id = f"orchestrator-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            orchestrator_id,
+            tenuo_headers(broad_warrant, "orchestrator"),
         )
         result = await client.execute_workflow(
             OrchestratorWorkflow.run,
             args=[str(source_dir), str(output2_dir)],
-            id=f"orchestrator-{uuid.uuid4().hex[:8]}",
+            id=orchestrator_id,
             task_queue=task_queue,
         )
         logger.info(f"  Result: {result}")
@@ -423,14 +433,16 @@ async def main():
                 .ttl(60)
                 .mint(control_key)
             )
-            client_interceptor.set_headers(
-                tenuo_headers(write_only_warrant, "writeonly")
+            bad_reader_id = f"bad-reader-{uuid.uuid4().hex[:8]}"
+            client_interceptor.set_headers_for_workflow(
+                bad_reader_id,
+                tenuo_headers(write_only_warrant, "writeonly"),
             )
             # ReaderChild needs read_file + list_directory, but warrant only has write_file
             await client.execute_workflow(
                 ReaderChild.run,
                 arg=str(source_dir),
-                id=f"bad-reader-{uuid.uuid4().hex[:8]}",
+                id=bad_reader_id,
                 task_queue=task_queue,
             )
             logger.error("  BUG: should have been denied")

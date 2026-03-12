@@ -22,6 +22,7 @@ import asyncio
 import uuid
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -47,6 +48,7 @@ from tenuo.temporal import (  # noqa: E402
     TenuoInterceptor,
     TenuoInterceptorConfig,
     tenuo_execute_activity,
+    tenuo_execute_child_workflow,
     tenuo_headers,
 )
 
@@ -145,6 +147,47 @@ class UnauthorizedPathWorkflow:
         )
 
 
+@workflow.defn
+class ChildReadWorkflow:
+    @workflow.run
+    async def run(self, path: str) -> str:
+        return await tenuo_execute_activity(
+            read_file,
+            args=[path],
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+
+
+@workflow.defn
+class ParentDelegationWorkflow:
+    @workflow.run
+    async def run(self, path: str) -> str:
+        return await tenuo_execute_child_workflow(
+            ChildReadWorkflow.run,
+            args=[path],
+            id=f"child-{workflow.info().workflow_id}",
+            tools=["read_file"],
+            ttl_seconds=120,
+            task_queue=workflow.info().task_queue,
+        )
+
+
+@workflow.defn
+class ContinueAsNewEchoWorkflow:
+    @workflow.run
+    async def run(self, msg: str, run_no: int = 0) -> str:
+        echoed = await tenuo_execute_activity(
+            echo,
+            args=[msg],
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+        if run_no == 0:
+            workflow.continue_as_new(args=[msg, 1])
+        return f"{echoed}:{run_no}"
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -210,6 +253,8 @@ async def _run_workflow(
     arg,
     *,
     send_headers: bool = True,
+    workflow_args: list[Any] | None = None,
+    workflows: list[Any] | None = None,
 ):
     """Start a worker + run a single workflow, return the result."""
     control, agent = keys
@@ -219,9 +264,11 @@ async def _run_workflow(
     key_dict = {"agent1": agent}
 
     client_interceptor = TenuoClientInterceptor()
+    workflow_id = f"live-{uuid.uuid4().hex[:8]}"
     if send_headers:
-        client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent1")
+        client_interceptor.set_headers_for_workflow(
+            workflow_id,
+            tenuo_headers(warrant, "agent1"),
         )
 
     events: list[TemporalAuditEvent] = []
@@ -250,7 +297,7 @@ async def _run_workflow(
     worker = Worker(
         raw_client,
         task_queue=task_queue,
-        workflows=[wf_class],
+        workflows=workflows or [wf_class],
         activities=[echo, read_file, list_directory],
         interceptors=[interceptor],  # type: ignore[list-item]
         workflow_runner=sandbox_runner,
@@ -259,8 +306,8 @@ async def _run_workflow(
     async with worker:
         result = await raw_client.execute_workflow(
             wf_class.run,
-            args=[arg],
-            id=f"live-{uuid.uuid4().hex[:8]}",
+            args=workflow_args if workflow_args is not None else [arg],
+            id=workflow_id,
             task_queue=task_queue,
             execution_timeout=timedelta(seconds=120),
         )
@@ -327,3 +374,38 @@ class TestLiveDenial:
                 await _run_workflow(
                     env, keys, warrant, UnauthorizedPathWorkflow, "/etc",
                 )
+
+
+@pytest.mark.temporal_live
+class TestLiveDelegationAndContinuation:
+    @pytest.mark.asyncio
+    async def test_child_workflow_delegation_roundtrip(self, keys, warrant, demo_dir):
+        async with await WorkflowEnvironment.start_local() as env:
+            result, events = await _run_workflow(
+                env,
+                keys,
+                warrant,
+                ParentDelegationWorkflow,
+                str(demo_dir / "a.txt"),
+                workflows=[ParentDelegationWorkflow, ChildReadWorkflow],
+            )
+        assert result == "alpha"
+        allow_events = [e for e in events if e.decision == "ALLOW"]
+        assert len(allow_events) >= 1
+
+    @pytest.mark.asyncio
+    async def test_continue_as_new_keeps_authorization(self, keys, warrant, demo_dir):
+        async with await WorkflowEnvironment.start_local() as env:
+            result, events = await _run_workflow(
+                env,
+                keys,
+                warrant,
+                ContinueAsNewEchoWorkflow,
+                "hello",
+                workflow_args=["hello", 0],
+                workflows=[ContinueAsNewEchoWorkflow],
+            )
+        # Second run (run_no=1) returns this value if headers were preserved.
+        assert result == "echo:hello:1"
+        allow_events = [e for e in events if e.decision == "ALLOW"]
+        assert len(allow_events) >= 2

@@ -32,9 +32,8 @@ Setup (required):
     will fail with ``ImportError: PyO3 modules compiled for CPython 3.8
     or older may only be initialized once per interpreter process``.
 
-    See ``examples/temporal/demo.py`` for a complete working example, or
-    ``examples/temporal/authorized_workflow_demo.py`` for the simpler
-    ``AuthorizedWorkflow`` base-class pattern.
+    See ``examples/temporal/demo.py`` for a complete working example of
+    both transparent activity authorization and ``AuthorizedWorkflow``.
 
 Overview:
     This module provides seamless integration between Tenuo's warrant-based
@@ -113,19 +112,21 @@ Troubleshooting:
 
     ``TenuoContextError: No Tenuo headers in store``
         The workflow was started without ``tenuo_headers()``.  Make sure the
-        client calls ``TenuoClientInterceptor.set_headers(tenuo_headers(...))``
-        before ``client.execute_workflow()``.
+        client calls ``TenuoClientInterceptor.set_headers_for_workflow(
+        workflow_id, tenuo_headers(...))`` before ``client.execute_workflow()``.
 
     ``ConstraintViolation: No warrant provided (require_warrant=True)``
         The activity interceptor received no warrant.  Common causes:
-        (a) ``set_headers()`` was never called, (b) headers were cleared
-        between workflows, or (c) the ``TenuoClientInterceptor`` is missing
-        from the client's interceptor list.
+        (a) ``set_headers()`` / ``set_headers_for_workflow()`` was never
+        called, (b) headers were cleared before start, or (c) the
+        ``TenuoClientInterceptor`` is missing from the client's interceptor
+        list.
 
     ``ConstraintViolation: ... Incorrect padding`` or ``signature must be 64 bytes``
-        PoP encoding mismatch.  Ensure you're using ``tenuo_execute_activity()``
-        or ``AuthorizedWorkflow.execute_authorized_activity()`` — do **not**
-        call ``workflow.execute_activity()`` directly for protected activities.
+        PoP/header encoding mismatch. Ensure the worker has
+        ``TenuoInterceptor(...)`` registered and that Tenuo headers are
+        injected at workflow start. ``workflow.execute_activity()`` is
+        supported when the interceptor is installed.
 
     ``WarrantExpired: Warrant '...' expired at ...``
         The warrant's TTL has elapsed.  Mint a new warrant with a longer
@@ -140,6 +141,7 @@ import hashlib
 import json
 import logging
 import threading
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1230,22 +1232,84 @@ class TenuoClientInterceptor:
         client = await Client.connect("localhost:7233",
                                       interceptors=[client_interceptor])
 
-        # Before starting a workflow, set the headers:
-        client_interceptor.set_headers(tenuo_headers(warrant, key_id))
+        # Before starting a workflow, bind headers to a workflow ID:
+        client_interceptor.set_headers_for_workflow(
+            "wf-123",
+            tenuo_headers(warrant, key_id),
+        )
 
         await client.execute_workflow(MyWorkflow.run, ...)
     """
 
     def __init__(self) -> None:
-        self._headers: Dict[str, bytes] = {}
+        # One-shot headers for the next workflow start (legacy API).
+        self._next_headers: Dict[str, bytes] = {}
+        # Preferred API: deterministic mapping by workflow ID.
+        self._headers_by_workflow_id: Dict[str, Dict[str, bytes]] = {}
+        self._lock = threading.Lock()
 
     def set_headers(self, headers: Dict[str, bytes]) -> None:
-        """Set Tenuo headers for the *next* workflow start."""
-        self._headers = headers
+        """Set one-shot headers for the next workflow start.
+
+        This legacy API is consumed once by the next ``start_workflow`` call.
+        For concurrent callers, prefer ``set_headers_for_workflow()``.
+        """
+        warnings.warn(
+            "TenuoClientInterceptor.set_headers() is deprecated for concurrent use. "
+            "Use set_headers_for_workflow(workflow_id, headers) or "
+            "execute_workflow_authorized(...).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        with self._lock:
+            self._next_headers = dict(headers)
+
+    def set_headers_for_workflow(self, workflow_id: str, headers: Dict[str, bytes]) -> None:
+        """Set headers for a specific workflow ID.
+
+        This is concurrency-safe and deterministic for multi-tenant clients.
+        The headers are consumed once when that workflow ID is started.
+        """
+        if not workflow_id:
+            raise ValueError("workflow_id must be a non-empty string")
+        with self._lock:
+            self._headers_by_workflow_id[workflow_id] = dict(headers)
 
     def clear_headers(self) -> None:
-        """Clear headers (e.g. after a workflow is started)."""
-        self._headers = {}
+        """Clear all pending headers."""
+        with self._lock:
+            self._next_headers = {}
+            self._headers_by_workflow_id.clear()
+
+    async def execute_workflow_authorized(
+        self,
+        client: Any,
+        workflow_run_fn: Any,
+        *,
+        workflow_id: str,
+        warrant: Any,
+        key_id: str,
+        args: Optional[List[Any]] = None,
+        compress: bool = True,
+        **execute_kwargs: Any,
+    ) -> Any:
+        """Bind headers and execute a workflow in one call.
+
+        This helper is the safest way to start authorized workflows from shared
+        clients because it binds headers to a specific workflow ID before the
+        start request is issued.
+        """
+        return await execute_workflow_authorized(
+            client=client,
+            client_interceptor=self,
+            workflow_run_fn=workflow_run_fn,
+            workflow_id=workflow_id,
+            warrant=warrant,
+            key_id=key_id,
+            args=args,
+            compress=compress,
+            **execute_kwargs,
+        )
 
     # --- Temporal client interceptor interface ---
 
@@ -1276,16 +1340,27 @@ class _TenuoClientOutbound:
         return getattr(self._next, name)
 
     async def start_workflow(self, input: Any) -> Any:
-        if self._parent._headers:
+        workflow_id: str = getattr(input, "id", None) or ""
+
+        selected_headers: Dict[str, bytes] = {}
+        with self._parent._lock:
+            # Prefer explicit workflow-ID binding when available.
+            if workflow_id and workflow_id in self._parent._headers_by_workflow_id:
+                selected_headers = self._parent._headers_by_workflow_id.pop(workflow_id)
+            # Fallback: consume one-shot "next workflow" headers.
+            elif self._parent._next_headers:
+                selected_headers = self._parent._next_headers
+                self._parent._next_headers = {}
+
+        if selected_headers:
             try:
                 from temporalio.api.common.v1 import Payload  # type: ignore
             except ImportError:
                 raise TenuoContextError("temporalio not installed")
 
-            workflow_id: str = getattr(input, "id", None) or ""
             raw_store: Dict[str, bytes] = {}
 
-            for k, v in self._parent._headers.items():
+            for k, v in selected_headers.items():
                 raw = v if isinstance(v, bytes) else str(v).encode("utf-8")
                 input.headers = {**(input.headers or {}), k: Payload(data=raw)}
                 if k.startswith("x-tenuo-"):
@@ -1299,6 +1374,41 @@ class _TenuoClientOutbound:
                     _workflow_headers_store[workflow_id] = raw_store
 
         return await self._next.start_workflow(input)
+
+
+async def execute_workflow_authorized(
+    *,
+    client: Any,
+    client_interceptor: TenuoClientInterceptor,
+    workflow_run_fn: Any,
+    workflow_id: str,
+    warrant: Any,
+    key_id: str,
+    args: Optional[List[Any]] = None,
+    compress: bool = True,
+    **execute_kwargs: Any,
+) -> Any:
+    """Execute a workflow with deterministic per-workflow header binding.
+
+    This utility binds Tenuo headers to ``workflow_id`` using
+    ``set_headers_for_workflow`` and immediately invokes
+    ``client.execute_workflow``.
+    """
+    if "id" in execute_kwargs:
+        raise ValueError(
+            "Pass workflow_id via execute_workflow_authorized(..., workflow_id=...). "
+            "Do not also pass id= in execute_kwargs."
+        )
+    client_interceptor.set_headers_for_workflow(
+        workflow_id,
+        tenuo_headers(warrant, key_id, compress=compress),
+    )
+    return await client.execute_workflow(
+        workflow_run_fn,
+        args=args or [],
+        id=workflow_id,
+        **execute_kwargs,
+    )
 
 
 # =============================================================================
@@ -3306,6 +3416,7 @@ __all__ = [
     "attenuated_headers",  # Phase 3
     # Workflow helpers
     "tenuo_execute_activity",
+    "execute_workflow_authorized",
     "tenuo_execute_child_workflow",
     "set_activity_approvals",
     # Context accessors

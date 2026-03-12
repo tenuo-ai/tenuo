@@ -185,35 +185,47 @@ async def main():
 
         # --- Workflow A: reads project-a ---
         logger.info("=== Workflow A: reading project-a ===")
-        client_interceptor.set_headers(tenuo_headers(warrant_a, "agentA"))
+        wf_a_id = f"wf-a-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            wf_a_id,
+            tenuo_headers(warrant_a, "agentA"),
+        )
         result_a = await client.execute_workflow(
             ScopedReadWorkflow.run,
             args=["/tmp/tenuo-demo/project-a"],
-            id=f"wf-a-{uuid.uuid4().hex[:8]}",
+            id=wf_a_id,
             task_queue=task_queue,
         )
         logger.info(f"Result A: {result_a}\n")
 
         # --- Workflow B: reads project-b ---
         logger.info("=== Workflow B: reading project-b ===")
-        client_interceptor.set_headers(tenuo_headers(warrant_b, "agentB"))
+        wf_b_id = f"wf-b-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            wf_b_id,
+            tenuo_headers(warrant_b, "agentB"),
+        )
         result_b = await client.execute_workflow(
             ScopedReadWorkflow.run,
             args=["/tmp/tenuo-demo/project-b"],
-            id=f"wf-b-{uuid.uuid4().hex[:8]}",
+            id=wf_b_id,
             task_queue=task_queue,
         )
         logger.info(f"Result B: {result_b}\n")
 
         # --- Cross-access: Workflow A tries project-b (should be denied) ---
         logger.info("=== Cross-access: Warrant A on project-b (should be denied) ===")
-        client_interceptor.set_headers(tenuo_headers(warrant_a, "agentA"))
+        wf_cross_id = f"wf-cross-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            wf_cross_id,
+            tenuo_headers(warrant_a, "agentA"),
+        )
         try:
             from temporalio.client import WorkflowFailureError
             await client.execute_workflow(
                 ScopedReadWorkflow.run,
                 args=["/tmp/tenuo-demo/project-b"],
-                id=f"wf-cross-{uuid.uuid4().hex[:8]}",
+                id=wf_cross_id,
                 task_queue=task_queue,
             )
             logger.error("BUG: cross-access should have been denied")

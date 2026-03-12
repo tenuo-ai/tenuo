@@ -215,7 +215,7 @@ class MyWorkflow(AuthorizedWorkflow):
         )
 ```
 
-See full Temporal examples: [`authorized_workflow_demo.py`](tenuo-python/examples/temporal/authorized_workflow_demo.py) | [`multi_warrant.py`](tenuo-python/examples/temporal/multi_warrant.py) | [`delegation.py`](tenuo-python/examples/temporal/delegation.py)
+See full Temporal examples: [`demo.py`](tenuo-python/examples/temporal/demo.py) | [`multi_warrant.py`](tenuo-python/examples/temporal/multi_warrant.py) | [`delegation.py`](tenuo-python/examples/temporal/delegation.py)
 
 **FastAPI** — Extracts warrant from headers, verifies PoP offline
 ```python

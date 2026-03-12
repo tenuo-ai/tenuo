@@ -257,28 +257,30 @@ async def main():
 
         # ── Authorized sequential access ─────────────────────────
         logger.info("=== Sequential access (path=/tmp/tenuo-demo) ===")
-        client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent1")
+        research_id = f"research-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            research_id,
+            tenuo_headers(warrant, "agent1"),
         )
-
         result = await client.execute_workflow(
             ResearchWorkflow.run,
             args=[str(demo_dir)],
-            id=f"research-{uuid.uuid4().hex[:8]}",
+            id=research_id,
             task_queue=task_queue,
         )
         logger.info(f"Result: {result}\n")
 
         # ── Parallel activity execution ──────────────────────────
         logger.info("=== Parallel activities (asyncio.gather) ===")
-        client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent1")
+        parallel_id = f"parallel-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            parallel_id,
+            tenuo_headers(warrant, "agent1"),
         )
-
         result = await client.execute_workflow(
             ParallelResearchWorkflow.run,
             args=[str(demo_dir)],
-            id=f"parallel-{uuid.uuid4().hex[:8]}",
+            id=parallel_id,
             task_queue=task_queue,
         )
         logger.info(f"Result: {result}\n")

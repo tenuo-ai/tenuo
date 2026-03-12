@@ -57,6 +57,7 @@ from tenuo.temporal import (
     TenuoInterceptorConfig,
     TenuoClientInterceptor,
     EnvKeyResolver,
+    execute_workflow_authorized,
     tenuo_headers,
     tenuo_execute_activity,
 )
@@ -132,6 +133,7 @@ async def main():
             key_resolver=EnvKeyResolver(),
             on_denial="raise",
             trusted_roots=[control_key.public_key],  # enables Authorizer + PoP
+            strict_mode=True,  # Production hardening
         )
     )
 
@@ -152,14 +154,14 @@ async def main():
             )
         ),
     ):
-        # Set warrant headers (only key_id, NOT the private key)
-        client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent-key-1")  # Only key ID transmitted
-        )
-        result = await client.execute_workflow(
-            DataProcessingWorkflow.run,
+        result = await execute_workflow_authorized(
+            client=client,
+            client_interceptor=client_interceptor,
+            workflow_run_fn=DataProcessingWorkflow.run,
+            workflow_id="process-001",
+            warrant=warrant,
+            key_id="agent-key-1",
             args=["/data/input/report.txt", "/data/output/report.txt"],
-            id="process-001",
             task_queue="data-processing",
         )
 ```
@@ -202,6 +204,7 @@ resolver = VaultKeyResolver(
 config = TenuoInterceptorConfig(
     key_resolver=resolver,  # REQUIRED
     trusted_roots=[root_key.public_key],
+    strict_mode=True,       # Production: fail startup if trusted_roots missing
 )
 ```
 
@@ -223,7 +226,11 @@ resolver = AWSSecretsManagerKeyResolver(
     cache_ttl=300,
 )
 
-config = TenuoInterceptorConfig(key_resolver=resolver)
+config = TenuoInterceptorConfig(
+    key_resolver=resolver,
+    trusted_roots=[root_key.public_key],
+    strict_mode=True,  # Production hardening
+)
 ```
 
 Store keys in AWS:
@@ -246,7 +253,11 @@ resolver = GCPSecretManagerKeyResolver(
     cache_ttl=300,
 )
 
-config = TenuoInterceptorConfig(key_resolver=resolver)
+config = TenuoInterceptorConfig(
+    key_resolver=resolver,
+    trusted_roots=[root_key.public_key],
+    strict_mode=True,  # Production hardening
+)
 ```
 
 Store keys in GCP:
@@ -269,7 +280,10 @@ resolver = EnvKeyResolver(
     warn_in_production=True,  # Default; set False to suppress explicitly
 )
 
-config = TenuoInterceptorConfig(key_resolver=resolver)
+config = TenuoInterceptorConfig(
+    key_resolver=resolver,
+    # Dev-only: strict_mode intentionally omitted for local convenience
+)
 ```
 
 Set environment variable:
@@ -295,7 +309,11 @@ resolver = CompositeKeyResolver(
     warn_on_fallback=True,  # Log a WARNING whenever a fallback resolver is used
 )
 
-config = TenuoInterceptorConfig(key_resolver=resolver)
+config = TenuoInterceptorConfig(
+    key_resolver=resolver,
+    trusted_roots=[root_key.public_key],
+    strict_mode=True,  # Production hardening
+)
 ```
 
 ### Interceptor Config
@@ -635,8 +653,7 @@ from tenuo.temporal import (
 
 | Example | Description |
 |---------|-------------|
-| [`authorized_workflow_demo.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/authorized_workflow_demo.py) | **Recommended starting point.** AuthorizedWorkflow base class with parallel reads and fail-fast validation |
-| [`demo.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/demo.py) | Lower-level `tenuo_execute_activity()` API with sequential + parallel reads |
+| [`demo.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/demo.py) | **Recommended starting point.** Includes transparent `workflow.execute_activity()` and `AuthorizedWorkflow` patterns |
 | [`multi_warrant.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/multi_warrant.py) | Multi-tenant isolation: separate warrants per workflow |
 | [`delegation.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/delegation.py) | Per-stage pipeline authorization with least-privilege warrants |
 
@@ -665,11 +682,17 @@ transform_warrant = (
 )
 
 # Switch warrant between stages
-client_interceptor.set_headers(tenuo_headers(ingest_warrant, "ingest"))
-data = await client.execute_workflow(IngestWorkflow.run, ...)
+client_interceptor.set_headers_for_workflow(
+    "ingest-run-001",
+    tenuo_headers(ingest_warrant, "ingest"),
+)
+data = await client.execute_workflow(IngestWorkflow.run, id="ingest-run-001", ...)
 
-client_interceptor.set_headers(tenuo_headers(transform_warrant, "transform"))
-await client.execute_workflow(TransformWorkflow.run, ...)
+client_interceptor.set_headers_for_workflow(
+    "transform-run-001",
+    tenuo_headers(transform_warrant, "transform"),
+)
+await client.execute_workflow(TransformWorkflow.run, id="transform-run-001", ...)
 ```
 
 ---

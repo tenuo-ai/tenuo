@@ -96,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`AuthorizedWorkflow`**: Base class with fail-fast validation and automatic PoP
 - **`TenuoClientInterceptor`**: Client-side warrant header injection
 - **Live integration tests**: 36 tests including 5 against an in-process Temporal server
-- **Examples**: `authorized_workflow_demo.py`, `multi_warrant.py`, `delegation.py`
+- **Examples**: `demo.py`, `multi_warrant.py`, `delegation.py`
 
 ### Fixed
 - Broken header propagation in distributed Temporal deployments
