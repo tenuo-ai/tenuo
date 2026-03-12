@@ -272,8 +272,8 @@ def send_email(to: str) -> str:
     return f"Sent to {to}"
 
 with mint_sync(Capability("send_email", to=Pattern("*@company.com"))):
-    send_email(to="alice@company.com")       # ✓ Authorized
-    send_email(to="attacker@evil.com")        # ✗ Denied
+    send_email(to="alice@company.com")       # Authorized
+    send_email(to="attacker@evil.com")        # Denied
 ```
 
 ### Approval Policies
@@ -286,11 +286,11 @@ Every approval is cryptographically signed. There is no unsigned `approved=True`
 
 | Property | Detail |
 |---|---|
-| **Binding** | SHA-256 hash of (warrant, tool, arguments, holder) — approval cannot be reused for a different action |
-| **Signature** | Ed25519 by the approver's key — no unsigned approval path exists |
-| **Scope** | Single action — approving one transfer does not approve the next |
-| **Expiry** | Time-bound — an approval left pending does not remain valid indefinitely |
-| **Approver identity** | Approver key must be in the policy's allowed set — not any key can approve |
+| **Binding** | SHA-256 hash of (warrant, tool, arguments, holder)  -- approval cannot be reused for a different action |
+| **Signature** | Ed25519 by the approver's key  -- no unsigned approval path exists |
+| **Scope** | Single action  -- approving one transfer does not approve the next |
+| **Expiry** | Time-bound  -- an approval left pending does not remain valid indefinitely |
+| **Approver identity** | Approver key must be in the policy's allowed set  -- not any key can approve |
 
 The approval flow integrates with existing human-in-the-loop patterns (Slack, email, dashboard) while producing the same cryptographic evidence as the rest of the authorization chain. The approval decision is part of the receipt, not a separate audit trail.
 

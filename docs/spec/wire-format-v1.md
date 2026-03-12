@@ -15,7 +15,7 @@
 ## Revision History
 
 - **Rev 4** (2026-03-06): Added MCP JSON-RPC error code mappings and `params._meta` warrant transport to §A.2. Clarified `PopExpired` description.
-- **Rev 3** (2026-01-21): Verification and enforcement. Fixed `MAX_CONSTRAINT_DEPTH` (16→32), added Size Limits table, and added test vector cross-references.
+- **Rev 3** (2026-01-21): Verification and enforcement. Fixed `MAX_CONSTRAINT_DEPTH` (16-->32), added Size Limits table, and added test vector cross-references.
 - **Rev 2** (2026-01-10): Normative specification updates.
 - **Rev 1** (2026-01-01): Initial release.
 
@@ -492,8 +492,9 @@ pub enum ConstraintType {
     UrlSafe = 18,
     // Future standard types: 19-127
     
-    // Experimental / private use (128-255)
+    // Experimental / extension constraints (128-255)
     // See "Constraint Type Ranges" below
+    Shlex = 128,      // Shell command safety (extension)
 }
 
 pub enum Constraint {
@@ -558,12 +559,18 @@ pub enum Constraint {
     UrlSafe {
         schemes: Vec<String>,           // Default: ["http", "https"]
         allow_domains: Option<Vec<String>>,  // Domain allowlist
+        deny_domains: Option<Vec<String>>,   // Domain denylist (checked after allow; deny wins)
         allow_ports: Option<Vec<u16>>,  // Port allowlist
         block_private: bool,            // Default: true
         block_loopback: bool,           // Default: true
         block_metadata: bool,           // Default: true
         block_reserved: bool,           // Default: true
         block_internal_tlds: bool,      // Default: false
+    },
+
+    /// Shell command safety -- extension constraint (conservative approximation)
+    Shlex {
+        allow: Vec<String>,             // Allowed binary names or paths (literal, no globs)
     },
     
     /// Unknown constraint type (deserialized but not understood)
@@ -597,7 +604,13 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 | 15 | Cel | `{expr: string}` | CEL expression |
 | 16 | Wildcard | `null` | Matches anything |
 | 17 | Subpath | `{root: string, case_sensitive?: bool, allow_equal?: bool}` | Path containment |
-| 18 | UrlSafe | `{schemes?: [string], allow_domains?: [string], ...}` | SSRF protection |
+| 18 | UrlSafe | `{schemes?: [string], allow_domains?: [string], deny_domains?: [string], ...}` | SSRF protection |
+
+**Extension constraints (128-255):**
+
+| ID | Name | Value Format | Description |
+|----|------|-------------|-------------|
+| 128 | Shlex | `{allow: [string]}` | Shell command safety (see notes) |
 
 **Range precision note:** `Range` (ID 3) uses `f64` bounds. Converting `i64` values larger than 2^53 (9,007,199,254,740,992) to `f64` loses precision. For practical use cases (monetary amounts, counts, file sizes), this is not a concern. For very large integer constraints (e.g., snowflake IDs), use `Exact` or `OneOf` instead.
 
@@ -648,6 +661,8 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 | **Subpath** | Exact | IFF | `parent.contains(child.path)` |
 | **UrlSafe** | UrlSafe | IFF | All child restrictions ≥ parent restrictions (see field rules) |
 | **UrlSafe** | Exact | IFF | `parent.is_safe(child.url)` |
+| **Shlex** | Shlex | IFF | `child.allow ⊆ parent.allow` |
+| **Shlex** | Exact | IFF | `parent.matches(child.value)` |
 
 **All unlisted (Parent, Child) pairs are INVALID and MUST be rejected.**
 
@@ -729,10 +744,10 @@ Pattern constraints support different levels of attenuation based on wildcard co
 Patterns with wildcards on both sides of a substring (e.g., `"*mid*"`, `"*-prod-*"`, `"prefix-*-suffix"`) are **supported for matching** but require **exact equality for attenuation**.
 
 **Pattern classification:**
-- `"*mid*"` → Two wildcards (`*` at start and end) → **Complex** type
-- `"prefix-*-suffix"` → Wildcard in middle → **Complex** type
-- `/data/*/file.txt` → Wildcard surrounded by literals → **Complex** type
-- `/*/reports/*.pdf` → Multiple wildcards → **Complex** type
+- `"*mid*"` -- Two wildcards (`*` at start and end) -- **Complex** type
+- `"prefix-*-suffix"` -- Wildcard in middle -- **Complex** type
+- `/data/*/file.txt` -- Wildcard surrounded by literals -- **Complex** type
+- `/*/reports/*.pdf` -- Multiple wildcards -- **Complex** type
 
 **Matching behavior:** All these patterns work correctly for runtime matching using standard glob semantics.
 
@@ -741,34 +756,34 @@ Patterns with wildcards on both sides of a substring (e.g., `"*mid*"`, `"*-prod-
 **Examples of valid attenuation:**
 ```python
 parent: Pattern("*-prod-*")
-child:  Pattern("*-prod-*")  # ✓ Identical pattern
+child:  Pattern("*-prod-*")  # Identical pattern
 
 parent: Pattern("*safe*")
-child:  Pattern("*safe*")     # ✓ Identical pattern
+child:  Pattern("*safe*")     # Identical pattern
 ```
 
 **Examples of rejected attenuation:**
 ```python
 parent: Pattern("*-prod-*")
-child:  Pattern("db-prod-*")        # ✗ Different structure
-child:  Pattern("*-prod-primary")   # ✗ Different structure
-child:  Pattern("db-prod-primary")  # ✗ Different type (exact)
+child:  Pattern("db-prod-*")        # Different structure
+child:  Pattern("*-prod-primary")   # Different structure
+child:  Pattern("db-prod-primary")  # Different type (exact)
 
 parent: Pattern("/data/*/file.txt")
-child:  Pattern("/data/reports/file.txt")  # ✗ More specific but different type
+child:  Pattern("/data/reports/file.txt")  # More specific but different type
 ```
 
 **Rationale:** Determining subset relationships for complex glob patterns requires full pattern evaluation, which is undecidable in the general case. Requiring equality prevents attenuation bugs while still allowing useful matching patterns.
 
 **When to use bidirectional wildcards:**
-- ✅ Resource naming: `"*-prod-*"`, `"*-safe-*"`
-- ✅ Content matching: `"*error*"`, `"*admin*"`
-- ✅ File patterns: `"report-*-2024.pdf"`, `"/logs/*/error.log"`
+- Resource naming: `"*-prod-*"`, `"*-safe-*"`
+- Content matching: `"*error*"`, `"*admin*"`
+- File patterns: `"report-*-2024.pdf"`, `"/logs/*/error.log"`
 
 **When NOT to use:**
-- ❌ Need attenuation → Use simpler patterns (`"prefix-*"`, `"*-suffix"`)
-- ❌ Complex logic → Use `Regex()` for clarity
-- ❌ Unrestricted access → Use `Wildcard()`
+- Need attenuation --> Use simpler patterns (`"prefix-*"`, `"*-suffix"`)
+- Complex logic --> Use `Regex()` for clarity
+- Unrestricted access --> Use `Wildcard()`
 
 **Conservative rule:** For patterns with multiple wildcards, internal wildcards, or complex structures, attenuation is only valid if the patterns are identical. Subset relationships for complex globs are undecidable without full evaluation.
 
@@ -788,11 +803,31 @@ child:  Pattern("/data/reports/file.txt")  # ✗ More specific but different typ
 |-------|------|
 | `schemes` | Child must be subset of parent (fewer schemes allowed) |
 | `allow_domains` | Child must be subset of parent (fewer domains) |
+| `deny_domains` | Child must be superset of parent (can only add denials) |
 | `allow_ports` | Child must be subset of parent (fewer ports) |
 | `block_private` | `false` to `true` only (can add blocks, not remove) |
 | `block_loopback` | `false` to `true` only |
 | `block_metadata` | `false` to `true` only |
 | `block_reserved` | `false` to `true` only |
+
+#### UrlSafe `deny_domains` Evaluation Order (Normative)
+
+Implementations MUST evaluate UrlSafe fields in this order:
+
+1. Scheme check, host extraction, port check, loopback/metadata/internal TLD checks.
+2. If host is an IP address: check against `block_private`, `block_loopback`, `block_metadata`, `block_reserved`.
+3. If host is a hostname: check `allow_domains` (reject if not matched).
+4. **`deny_domains` check (MUST run for both IPs and hostnames):** If `deny_domains` is set and the host matches any denied pattern, **REJECT**. Patterns are matched as strings against the host, so `deny_domains: ["169.254.169.254"]` blocks that IP address and `deny_domains: ["*.evil.com"]` blocks hostnames.
+
+**Deny wins on overlap:** A host that matches both `allow_domains` and `deny_domains` is blocked. This is a security-critical invariant -- implementations that skip `deny_domains` checking or only run it for hostnames silently widen the constraint's authority.
+
+#### Shlex Attenuation Rules (Extension, type ID 128)
+
+| Field | Rule |
+|-------|------|
+| `allow` | Child must be subset of parent (fewer binaries allowed). Entries are literal strings, no globs. |
+
+**Shlex evaluation model:** Shlex is an extension constraint with implementation-specific evaluation behavior. The Rust `matches()` performs whitespace tokenization and rejects any shell metacharacter (`|`, `&`, `;`, `$`, `` ` ``, `<`, `>`, `(`, `)`, control chars). It does NOT handle POSIX quoting rules. Python's full `shlex` parsing with `punctuation_chars=True` accepts safely-quoted operators (e.g., `ls "foo; bar"`). The Rust layer is intentionally more restrictive, acting as a fail-closed pre-filter in the warrant verification path. Python's full evaluation is the authoritative runtime gate for annotated `@guard` constraints. Verifiers that do not implement Shlex MUST reject warrants containing it (fail closed via Unknown variant).
 
 **Implementations MUST reject attenuations not explicitly permitted in this matrix.**
 
@@ -806,7 +841,7 @@ child:  Pattern("/data/reports/file.txt")  # ✗ More specific but different typ
 | 1–18 | Core constraints (implemented) |
 | 19–32 | Reserved for common patterns |
 | 33–127 | Future standard constraints |
-| 128–255 | Experimental / private use |
+| 128–255 | Extension / experimental constraints |
 
 **Reserved IDs (19-32):**
 
@@ -817,13 +852,19 @@ child:  Pattern("/data/reports/file.txt")  # ✗ More specific but different typ
 | 21 | RateLimit | Planned: call frequency limits |
 | 22-32 | Future patterns | Unassigned |
 
-**Standard range (1–127):** Constraints defined in this specification and future Tenuo releases. All compliant verifiers must implement these.
+**Standard range (1–127):** Constraints defined in this specification and future Tenuo releases. All compliant verifiers MUST implement these.
 
-**Experimental range (128–255):** For internal testing, proprietary extensions, or organization-specific constraints. These fail authorization on standard verifiers. Use for:
+**Extension range (128–255):** For constraints with implementation-specific behavior, proprietary extensions, or experimental types. Verifiers that do not implement a given extension type MUST reject warrants containing it (fail closed via Unknown variant). Use for:
 
+- Constraints where evaluation semantics vary by implementation (e.g., Shlex)
+- Proprietary extensions that don't need interoperability
 - Testing new constraint types before proposing standardization
-- Building proprietary extensions that don't need interoperability
-- Organization-internal constraints
+
+**Assigned extension IDs:**
+
+| ID | Name | Description |
+|----|------|-------------|
+| 128 | Shlex | Shell command safety. Binary allowlist + metacharacter rejection. See Shlex Attenuation Rules. |
 
 ### Unknown constraint handling
 
@@ -1175,9 +1216,9 @@ Both `SignedWarrant` and `WarrantStack` are represented as CBOR Arrays.
 - `WarrantStack`: `Array(N)` where element 0 is a `SignedWarrant` (**Array**).
 
 **Parsers MUST inspect the first element's CBOR major type** to distinguish them:
-- If element 0 has major type 0 (unsigned integer) or 1 (negative integer) → `SignedWarrant`
-- If element 0 has major type 4 (array) → `WarrantStack`
-- Any other major type → Invalid, MUST reject
+- If element 0 has major type 0 (unsigned integer) or 1 (negative integer) --> `SignedWarrant`
+- If element 0 has major type 4 (array) --> `WarrantStack`
+- Any other major type --> Invalid, MUST reject
 
 **CBOR major types reference (RFC 8949 §3):**
 - Major type 0: unsigned integer (0..2^64-1)
@@ -1895,10 +1936,10 @@ See [Appendix A](#appendix-a-error-code-reference) for the complete error code l
 ### 20.10 Implementation Hardening
 
 **Fail closed:**
-- Unknown constraint types → deny
-- Unknown warrant versions → deny
-- Parse errors → deny
-- Missing required fields → deny
+- Unknown constraint types --> deny
+- Unknown warrant versions --> deny
+- Parse errors --> deny
+- Missing required fields --> deny
 
 **Input validation:**
 - Validate all string lengths
@@ -1979,7 +2020,8 @@ For each constraint type, test:
 15. Cel: Expression true, expression false, invalid CEL
 16. Wildcard: Always matches
 17. Subpath: Within, outside, traversal attempt
-18. UrlSafe: Valid URL, private IP, metadata endpoint
+18. UrlSafe: Valid URL, private IP, metadata endpoint, deny_domains
+128. Shlex (extension): Allowed binary, rejected metacharacter, roundtrip
 
 #### 21.6 Edge Cases
 - [ ] Empty tool map (valid)
@@ -2020,8 +2062,8 @@ For each constraint type, test:
 - [ ] Verify approval_version and payload version handling
 
 #### 21.10 Serialization
-- [ ] Round-trip: sign → serialize → deserialize → verify
-- [ ] Deterministic CBOR (same input → same bytes)
+- [ ] Round-trip: sign --> serialize --> deserialize --> verify
+- [ ] Deterministic CBOR (same input --> same bytes)
 - [ ] Reject indefinite-length encodings
 - [ ] Reject duplicate map keys (if supported)
 - [ ] Base64 URL-safe encoding/decoding
@@ -2205,12 +2247,12 @@ Uses both numeric codes and kebab-case string names for maximum compatibility:
 ```
 
 **Key mappings:**
-- `1100` (SignatureInvalid) → `"signature-invalid"`
-- `1300` (WarrantExpired) → `"warrant-expired"`
-- `1501` (ConstraintViolation) → `"constraint-violation"`
-- `1800` (WarrantRevoked) → `"warrant-revoked"`
-- `1405` (ChainBroken) → `"chain-broken"`
-- `1402` (DepthExceeded) → `"depth-exceeded"`
+- `1100` (SignatureInvalid) --> `"signature-invalid"`
+- `1300` (WarrantExpired) --> `"warrant-expired"`
+- `1501` (ConstraintViolation) --> `"constraint-violation"`
+- `1800` (WarrantRevoked) --> `"warrant-revoked"`
+- `1405` (ChainBroken) --> `"chain-broken"`
+- `1402` (DepthExceeded) --> `"depth-exceeded"`
 
 #### JSON-RPC (A2A Protocol)
 
@@ -2231,18 +2273,18 @@ Uses standard JSON-RPC negative codes (-32001 to -32099) with canonical code in 
 ```
 
 **Key mappings:**
-- `-32002` (INVALID_SIGNATURE) ↔ `1100` (SignatureInvalid)
-- `-32004` (EXPIRED) ↔ `1300` (WarrantExpired)
-- `-32008` (CONSTRAINT_VIOLATION) ↔ `1501` (ConstraintViolation)
-- `-32009` (REVOKED) ↔ `1800` (WarrantRevoked)
-- `-32010` (CHAIN_INVALID) ↔ `1405` (ChainBroken)
-- `-32016` (POP_FAILED) ↔ `1600` (PopSignatureInvalid)
+- `-32002` (INVALID_SIGNATURE) <--> `1100` (SignatureInvalid)
+- `-32004` (EXPIRED) <--> `1300` (WarrantExpired)
+- `-32008` (CONSTRAINT_VIOLATION) <--> `1501` (ConstraintViolation)
+- `-32009` (REVOKED) <--> `1800` (WarrantRevoked)
+- `-32010` (CHAIN_INVALID) <--> `1405` (ChainBroken)
+- `-32016` (POP_FAILED) <--> `1600` (PopSignatureInvalid)
 
 Some A2A errors are protocol-specific (e.g., `-32001` MISSING_WARRANT, `-32005` AUDIENCE_MISMATCH) and have no wire format equivalent.
 
 #### JSON-RPC (MCP Protocol)
 
-MCP tool calls carry warrant data in `params._meta.tenuo` — the MCP spec's designated extension point. Tool arguments are never polluted with authorization metadata.
+MCP tool calls carry warrant data in `params._meta.tenuo` -- the MCP spec's designated extension point. Tool arguments are never polluted with authorization metadata.
 
 **`params._meta` structure:**
 
@@ -2276,13 +2318,13 @@ MCP tool calls carry warrant data in `params._meta.tenuo` — the MCP spec's des
 ```
 
 **Key mappings:**
-- `-32001` (DENIED) ↔ Authorization denied (missing warrant, chain invalid, constraint violation)
-- `-32002` (APPROVAL_REQUIRED) ↔ `1700` (InsufficientApprovals)
-- `-32602` (INVALID_PARAMS) ↔ Malformed or missing `_meta.tenuo` in request params
+- `-32001` (DENIED) <--> Authorization denied (missing warrant, chain invalid, constraint violation)
+- `-32002` (APPROVAL_REQUIRED) <--> `1700` (InsufficientApprovals)
+- `-32602` (INVALID_PARAMS) <--> Malformed or missing `_meta.tenuo` in request params
 
 **Server-side verification flow:**
 1. Extract `_meta.tenuo` from `CallToolRequest.params`
-2. Decode warrant stack (base64url → CBOR)
+2. Decode warrant stack (base64url --> CBOR)
 3. Verify chain against trusted roots
 4. Verify PoP against (warrant, tool, arguments)
 5. Check constraints against arguments

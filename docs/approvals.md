@@ -2,7 +2,7 @@
 
 > **Cryptographically verified human-in-the-loop authorization for AI agent tool calls.**
 
-Warrants define *what* an agent can do. Approval policies define *when* a human must confirm before execution. Every approval is cryptographically signed — there is no unsigned path.
+Warrants define *what* an agent can do. Approval policies define *when* a human must confirm before execution. Every approval is cryptographically signed - there is no unsigned path.
 
 ---
 
@@ -85,12 +85,12 @@ The `ApprovalPayload` contains:
 
 When `enforce_tool_call()` receives `SignedApproval`(s) from a handler, the Rust core verifies each one:
 
-1. **Signature** — Ed25519 signature check
-2. **Hash match** — `payload.request_hash == expected_hash` (prevents reuse across calls)
-3. **Expiry** — `payload.expires_at > now` (with 30-second clock tolerance for distributed systems)
-4. **Key trust** — `signed.approver_key in policy.trusted_approvers` (prevents rogue approvers)
-5. **Deduplication** — one vote per approver key (prevents double-counting)
-6. **Threshold** — valid approval count >= `policy.threshold` (m-of-n satisfaction)
+1. **Signature** - Ed25519 signature check
+2. **Hash match** - `payload.request_hash == expected_hash` (prevents reuse across calls)
+3. **Expiry** - `payload.expires_at > now` (with 30-second clock tolerance for distributed systems)
+4. **Key trust** - `signed.approver_key in policy.trusted_approvers` (prevents rogue approvers)
+5. **Deduplication** - one vote per approver key (prevents double-counting)
+6. **Threshold** - valid approval count >= `policy.threshold` (m-of-n satisfaction)
 
 For **1-of-1** failures, the Rust core returns the specific rejection reason (e.g., "request hash mismatch", "approval expired"). For **m-of-n** failures, it returns a summary of all rejection reasons (e.g., "required 2, received 1 [rejected: 1 expired, 1 not trusted]").
 
@@ -328,7 +328,7 @@ from tenuo import require_approval
 # Always requires approval
 require_approval("delete_user")
 
-# Conditional — only when amount > 10K
+# Conditional - only when amount > 10K
 require_approval("transfer", when=lambda args: args["amount"] > 10_000)
 
 # With description (shown to the approver)
@@ -371,8 +371,8 @@ policy = ApprovalPolicy(
 
 | Handler | Signs? | Use Case |
 |---------|--------|----------|
-| `cli_prompt(approver_key=key)` | Yes | Local development — prompts in terminal |
-| `auto_approve(approver_key=key)` | Yes | Testing — signs everything automatically |
+| `cli_prompt(approver_key=key)` | Yes | Local development - prompts in terminal |
+| `auto_approve(approver_key=key)` | Yes | Testing - signs everything automatically |
 | `auto_deny(reason=...)` | No (raises) | Dry-run / audit mode |
 | `tenuo.approval.webhook(url=...)` | Placeholder | Tenuo Cloud integration (not yet in public API) |
 
@@ -458,11 +458,11 @@ from tenuo.approval import (
 | `ApprovalVerificationError` | Crypto verification failed | `request`, `reason` |
 
 `ApprovalVerificationError` reasons include:
-- `"invalid signature: ..."` — Ed25519 signature check failed
-- `"request hash mismatch (approval was signed for a different request)"` — replay attempt
-- `"approval expired (beyond clock tolerance)"` — `expires_at` in the past (with 30s tolerance)
-- `"approver not in trusted set"` — untrusted key
-- `"duplicate approval from same approver"` — same key signed twice
+- `"invalid signature: ..."` - Ed25519 signature check failed
+- `"request hash mismatch (approval was signed for a different request)"` - replay attempt
+- `"approval expired (beyond clock tolerance)"` - `expires_at` in the past (with 30s tolerance)
+- `"approver not in trusted set"` - untrusted key
+- `"duplicate approval from same approver"` - same key signed twice
 
 For m-of-n failures, `InsufficientApprovals` is raised with a diagnostic summary:
 ```
@@ -506,6 +506,6 @@ Warrants are the security boundary. Approvals are defense in depth. Even if the 
 
 ## See Also
 
-- [Enforcement Architecture](./enforcement) — Where approvals fit in the enforcement pipeline
-- [AI Agents Security](ai-agents.md) — The 4-layer defense strategy
-- [Concepts](concepts.md) — Warrants, PoP, attenuation
+- [Enforcement Architecture](./enforcement) - Where approvals fit in the enforcement pipeline
+- [AI Agents Security](ai-agents.md) - The 4-layer defense strategy
+- [Concepts](concepts.md) - Warrants, PoP, attenuation

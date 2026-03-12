@@ -343,10 +343,10 @@ plugins:
 
 | Strategy | Where | Stateful? | Best For |
 |----------|-------|-----------|----------|
-| Parameter constraints | Warrant | ❌ No | Limiting per-call cost |
-| Short TTLs + terminal | Warrant | ❌ No | Time-boxing exposure |
-| Orchestrator budget | Application | ✅ In-memory | Task-level budgets |
-| Gateway rate limiting | Infrastructure | ✅ Yes | Hard call limits |
+| Parameter constraints | Warrant | No | Limiting per-call cost |
+| Short TTLs + terminal | Warrant | No | Time-boxing exposure |
+| Orchestrator budget | Application | In-memory | Task-level budgets |
+| Gateway rate limiting | Infrastructure | Yes | Hard call limits |
 
 **Design principle:** Tenuo handles **authorization** (what CAN be done). Your infrastructure handles **rate limiting** (how MANY times). This keeps warrant verification fast (~27μs), offline, and stateless.
 
@@ -388,9 +388,9 @@ read_file("/data/test.txt")
 ```
 
 **When to use:**
-- ✅ **Development/staging** - Catch integration bugs early
-- ✅ **CI/CD** - Fail tests if warrant context is missing  
-- ⚠️ **Production** - Only if you want hard failures
+- **Development/staging** - Catch integration bugs early
+- **CI/CD** - Fail tests if warrant context is missing  
+- **Production** - Only if you want hard failures
 
 ### Warning Mode
 
@@ -429,16 +429,16 @@ configure(
 ### Async Context Sharp Edges
 
 ```python
-# ✅ Works correctly
+# Works correctly
 async with mint(Capability("search")):
     result = await search("query")
 
-# ❌ Context not propagated (task created BEFORE context)
+# Context not propagated (task created BEFORE context)
 task = asyncio.create_task(search("query"))
 async with mint(Capability("search")):
     await task  # Task runs without context
 
-# ✅ Fix: create task INSIDE context
+# Fix: create task INSIDE context
 async with mint(Capability("search")):
     task = asyncio.create_task(search("query"))
     await task

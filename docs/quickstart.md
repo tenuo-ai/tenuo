@@ -20,14 +20,14 @@ Tenuo is a capability-based authorization library for AI agent workflows. It use
                         ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Tenuo Layer                                            │
-│  ✓ Does this warrant allow "restart" on "staging-web"?  │
-│  ✓ Is the delegation chain valid?                       │
-│  ✓ Is the holder's signature correct?                   │
+│  - Does this warrant allow "restart" on "staging-web"?  │
+│  - Is the delegation chain valid?                       │
+│  - Is the holder's signature correct?                   │
 └───────────────────────┬─────────────────────────────────┘
                         ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Infrastructure IAM (AWS / K8s / etc.)                  │
-│  ✓ Does this service account have permission?           │
+│  - Does this service account have permission?           │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -65,7 +65,7 @@ Three things to understand:
 
 **The flow:**
 ```
-mint(Capability(...)) → agent calls tool → @guard checks warrant → ✅ or ❌
+mint(Capability(...)) → agent calls tool → @guard checks warrant → allowed or denied
 ```
 
 If the LLM is prompt-injected, it can request anything. But the warrant only allows what you scoped. The injection succeeds at the LLM level; authorization stops the action.
@@ -76,7 +76,7 @@ If the LLM is prompt-injected, it can request anything. But the warrant only all
 
 ### Copy-Paste Example (Works Immediately)
 
-This example runs without any setup—just copy and paste:
+This example runs without any setup -- just copy and paste:
 
 ```python
 from tenuo import configure, mint_sync, Capability, Subpath, SigningKey, guard
@@ -92,10 +92,10 @@ def read_file(path: str) -> str:
 
 # 3. Scope authority to tasks
 with mint_sync(Capability("read_file", path=Subpath("/data"))):
-    print(read_file("/data/reports/q3.pdf"))  # ✅ Allowed
+    print(read_file("/data/reports/q3.pdf"))  # Allowed
     
     try:
-        read_file("/etc/passwd")  # ❌ Blocked
+        read_file("/etc/passwd")  # Blocked
     except AuthorizationDenied as e:
         print(f"Blocked: {e}")
 ```
@@ -155,7 +155,7 @@ for item in items:
     headers = bound.headers("process", {"item": item})
     # Make API call with headers...
 
-# ⚠️ BoundWarrant should NOT be stored in state/cache (contains key)
+# BoundWarrant should NOT be stored in state/cache (contains key)
 ```
 
 #### Pattern 3: Environment-Based Setup
@@ -172,7 +172,7 @@ def search(query: str) -> str:
     return f"Results for {query}"
 
 with mint_sync(Capability("search")):
-    print(search("hello"))  # ✅ Works
+    print(search("hello"))  # Works
 ```
 
 **Environment variables:**
@@ -244,8 +244,8 @@ In audit mode, this still allows execution but logs authorization checks.
 **Step 3: Test with scoped warrants**
 ```python
 with mint_sync(Capability("delete_file", path=Subpath("/tmp"))):
-    delete_file("/tmp/test.txt")  # ✅ Would be allowed
-    delete_file("/etc/passwd")    # ⚠️ Logged as violation
+    delete_file("/tmp/test.txt")  # Would be allowed
+    delete_file("/etc/passwd")    # Logged as violation
 ```
 
 **Step 4: Enable enforce mode**
@@ -597,10 +597,10 @@ See [Constraints](./constraints) for the full list.
 
 ## Next Steps
 
-- **[AI Agent Patterns](./ai-agents)** — P-LLM/Q-LLM, prompt injection defense
-- **[Concepts](./concepts)** — Why Tenuo? Threat model, core invariants
-- **[AutoGen](./autogen)** — Protect AutoGen AgentChat tools
-- **[LangChain](./langchain)** — Protect LangChain tools
-- **[LangGraph](./langgraph)** — Scope LangGraph nodes
-- **[FastAPI](./fastapi)** — Zero-boilerplate API protection
-- **[Security](./security)** — Threat model, best practices
+- **[AI Agent Patterns](./ai-agents)** -- P-LLM/Q-LLM, prompt injection defense
+- **[Concepts](./concepts)** -- Why Tenuo? Threat model, core invariants
+- **[AutoGen](./autogen)** -- Protect AutoGen AgentChat tools
+- **[LangChain](./langchain)** -- Protect LangChain tools
+- **[LangGraph](./langgraph)** -- Scope LangGraph nodes
+- **[FastAPI](./fastapi)** -- Zero-boilerplate API protection
+- **[Security](./security)** -- Threat model, best practices

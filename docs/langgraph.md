@@ -5,7 +5,7 @@ description: Secure LangGraph workflows with Tenuo
 
 # Tenuo LangGraph Integration
 
-> **Status**: ✅ Implemented (v0.1)
+> **Status**: Implemented (v0.1)
 
 ---
 
@@ -119,9 +119,9 @@ result = agent.invoke({
 | Feature | TenuoMiddleware | TenuoToolNode |
 |---------|-----------------|---------------|
 | **Integration** | Native LangChain middleware API | Custom node replacement |
-| **Tool filtering** | ✅ Auto-hides unauthorized tools from LLM | ❌ |
-| **New graphs** | ✅ Recommended | Legacy support |
-| **Existing graphs** | Requires migration to `create_agent()` | ✅ Drop-in |
+| **Tool filtering** | Auto-hides unauthorized tools from LLM | No |
+| **New graphs** | Recommended | Legacy support |
+| **Existing graphs** | Requires migration to `create_agent()` | Drop-in |
 
 **Middleware benefits:**
 - **Framework-agnostic pattern**: Same middleware concept as FastAPI, MCP
@@ -160,12 +160,12 @@ result = graph.invoke(state, config={"configurable": {"tenuo_key_id": "worker"}}
 
 ### Keys Stay Out of State
 
-**The Problem**: LangGraph checkpoints state to databases (Redis, Postgres, etc.). If you put a `SigningKey` in state, your private key gets persisted—a serious security risk.
+**The Problem**: LangGraph checkpoints state to databases (Redis, Postgres, etc.). If you put a `SigningKey` in state, your private key gets persisted --a serious security risk.
 
 **The Solution**: Warrants travel in state (they're just signed claims, no secrets). Keys stay in `KeyRegistry` (in-memory only). Only a string `key_id` flows through config.
 
 ```python
-# ✅ CORRECT: Warrant as string in state, key_id in config
+# CORRECT: Warrant as string in state, key_id in config
 state = {"warrant": str(warrant), "messages": [...]}  # str() = base64, safe for JSON
 config = {"configurable": {"tenuo_key_id": "worker"}}  # Just a string ID
 graph.invoke(state, config=config)
@@ -173,8 +173,8 @@ graph.invoke(state, config=config)
 # At execution, TenuoToolNode looks up the key from KeyRegistry
 # Key never leaves memory, never hits the checkpoint database
 
-# ❌ WRONG: Key in state (gets persisted to database!)
-state = {"warrant": warrant, "key": signing_key}  # 💀 Security risk!
+# WRONG: Key in state (gets persisted to database!)
+state = {"warrant": warrant, "key": signing_key}  # Security risk!
 ```
 
 ### Convention Over Configuration
@@ -203,7 +203,7 @@ load_tenuo_keys()  # Registers all TENUO_KEY_* vars
 
 ### `TenuoMiddleware`
 
-**Recommended** — Middleware for securing LangGraph agents with automatic authorization.
+**Recommended**  -- Middleware for securing LangGraph agents with automatic authorization.
 
 ```python
 from tenuo.langgraph import TenuoMiddleware
@@ -582,10 +582,10 @@ This prevents attackers from learning your constraint boundaries.
 `BoundWarrant` contains a private key and will raise `TypeError` if serialization is attempted:
 
 ```python
-# ❌ This will fail
+# This will fail
 state["bound_warrant"] = bound_warrant  # TypeError on checkpoint
 
-# ✅ Correct: unbind before storing
+# Correct: unbind before storing
 state["warrant"] = bound_warrant.warrant  # Just the warrant (serializable)
 ```
 
@@ -594,15 +594,15 @@ state["warrant"] = bound_warrant.warrant  # Just the warrant (serializable)
  `allows()` is for UX hints only:
  
  ```python
- # ✅ OK for UI hints
+ # OK for UI hints
  if bound_warrant.allows("delete"):
      show_delete_button()
  
- # ❌ WRONG: Not a security check!
+ # WRONG: Not a security check!
  if bound_warrant.allows("delete"):
      delete_database()  # No PoP verification happened!
  
- # ✅ Correct: Use validate()
+ # Correct: Use validate()
  if bound_warrant.validate("delete", args):
      delete_database()
  ```
@@ -669,8 +669,8 @@ tool_node = TenuoToolNode(
 
 ## See Also
 
-- [LangChain Integration](./langchain) — Tool protection for LangChain
-- [Human Approvals](./approvals) — Approval policy guide
-- [FastAPI Integration](./fastapi) — Zero-boilerplate API protection
-- [Security](./security) — Threat model, best practices
-- [API Reference](./api-reference) — Full Python API documentation
+- [LangChain Integration](./langchain)  -- Tool protection for LangChain
+- [Human Approvals](./approvals)  -- Approval policy guide
+- [FastAPI Integration](./fastapi)  -- Zero-boilerplate API protection
+- [Security](./security)  -- Threat model, best practices
+- [API Reference](./api-reference)  -- Full Python API documentation

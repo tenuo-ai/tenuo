@@ -6,11 +6,11 @@ Tenuo provides three main integrations. This guide helps you choose the right on
 
 ## TL;DR
 
-- **Using OpenAI?** → [`tenuo.openai`](./openai.md)
-- **Using CrewAI?** → [`tenuo.crewai`](./crewai.md)
-- **Using Google ADK?** → [`tenuo.google_adk`](./google-adk.md)
-- **Agents in separate services?** → Add [`tenuo.a2a`](./a2a.md)
-- **Need crypto?** → Use Tier 2
+- **Using OpenAI?** --> [`tenuo.openai`](./openai.md)
+- **Using CrewAI?** --> [`tenuo.crewai`](./crewai.md)
+- **Using Google ADK?** --> [`tenuo.google_adk`](./google-adk.md)
+- **Agents in separate services?** --> Add [`tenuo.a2a`](./a2a.md)
+- **Need crypto?** --> Use Tier 2
 
 Read below for details.
 
@@ -20,17 +20,17 @@ Read below for details.
 
 ### 1. What runtime/framework are you using?
 
-- **OpenAI SDK** (`openai.OpenAI`, `openai.AsyncOpenAI`) → Use [`tenuo.openai`](./openai.md)
-- **CrewAI** (`crewai.Crew`, `crewai.Agent`) → Use [`tenuo.crewai`](./crewai.md)
-- **Google ADK** (`google.adk.agents.Agent`) → Use [`tenuo.google_adk`](./google-adk.md)
-- **LangChain, Autogen, etc.** → See [Framework Integrations](./integrations.md)
-- **Custom/other** → Use [Warrant API](./warrants.md) directly
+- **OpenAI SDK** (`openai.OpenAI`, `openai.AsyncOpenAI`) --> Use [`tenuo.openai`](./openai.md)
+- **CrewAI** (`crewai.Crew`, `crewai.Agent`) --> Use [`tenuo.crewai`](./crewai.md)
+- **Google ADK** (`google.adk.agents.Agent`) --> Use [`tenuo.google_adk`](./google-adk.md)
+- **LangChain, Autogen, etc.** --> See [Framework Integrations](./integrations.md)
+- **Custom/other** --> Use [Warrant API](./warrants.md) directly
 
 ### 2. Do you have multiple agents communicating across processes?
 
 - **Yes**, agents are separate services (microservices, distributed system):
   - Use [`tenuo.a2a`](./a2a.md) **in addition to** your runtime integration
-  - Example: Orchestrator (ADK) → Worker (OpenAI) via HTTP
+  - Example: Orchestrator (ADK) --> Worker (OpenAI) via HTTP
 
 - **No**, single process or same-process multi-agent:
   - Just use your runtime integration (OpenAI or ADK)
@@ -108,7 +108,7 @@ agent = Agent(
 
 ---
 
-### Microservices (Orchestrator → Workers)
+### Microservices (Orchestrator --> Workers)
 
 **Use**: `tenuo.a2a` + runtime integration
 
@@ -157,19 +157,19 @@ async def search_papers(query: str, sources: list[str]) -> list[dict]:
 |---------|--------|--------|-----|-----|
 | **Runtime** | OpenAI SDK | CrewAI | Google ADK | Any (HTTP) |
 | **Deployment** | Single/multi process | Single/multi process | Single/multi process | Distributed |
-| **Tier 1 (Guardrails)** | ✅ | ✅ | ✅ | N/A (Tier 2 required) |
-| **Tier 2 (Warrant + PoP)** | ✅ | ✅ | ✅ | ✅ |
-| **Delegation** | ❌ | ✅ `WarrantDelegator` | ❌ | ✅ (discovery) |
-| **Agent Namespacing** | ❌ | ✅ `role::tool` | ❌ | N/A |
-| **Streaming** | ✅ | ❌ | ✅ | ❌ |
-| **Seal Mode** | ❌ | ✅ | ❌ | N/A |
+| **Tier 1 (Guardrails)** | Yes | Yes | Yes | N/A (Tier 2 required) |
+| **Tier 2 (Warrant + PoP)** | Yes | Yes | Yes | Yes |
+| **Delegation** | No | Yes `WarrantDelegator` | No | Yes (discovery) |
+| **Agent Namespacing** | No | Yes `role::tool` | No | N/A |
+| **Streaming** | Yes | No | Yes | No |
+| **Seal Mode** | No | Yes | No | N/A |
 | **Learning Curve** | Easy | Easy | Medium | Steep |
 
 ---
 
 ## Migration Paths
 
-###  Tier 1 → Tier 2 (Adding Crypto)
+### Tier 1 --> Tier 2 (Adding Crypto)
 
 **Before** (Guardrails):
 ```python
@@ -190,7 +190,7 @@ client = guard(
 
 ---
 
-### Single-Process → Distributed (Adding A2A)
+### Single-Process --> Distributed (Adding A2A)
 
 **Before** (Direct function calls):
 ```python
@@ -211,7 +211,7 @@ result = await client.send_task("search_papers", {...}, warrant=task_warrant)
 
 ---
 
-### OpenAI → ADK (Changing Runtime)
+### OpenAI --> ADK (Changing Runtime)
 
 **Constraints stay the same**:
 ```python
@@ -238,7 +238,7 @@ agent = Agent(tools=guard.filter_tools([...]), before_tool_callback=guard.before
 | Combination | Use When | Pattern |
 |-------------|----------|---------|
 | **OpenAI + A2A** | Workers are separate OpenAI services | Each service has `tenuo.openai` guard + orchestrator uses `A2AClient` |
-| **ADK + A2A** | ADK orchestrator → various worker services | ADK uses `GuardBuilder` + `A2AClient` for delegation |
+| **ADK + A2A** | ADK orchestrator --> various worker services | ADK uses `GuardBuilder` + `A2AClient` for delegation |
 | **OpenAI + ADK + A2A** | Mixed runtimes in distributed system | Each agent uses its runtime integration, A2A is network layer |
 
 ---
@@ -252,8 +252,8 @@ agent = Agent(tools=guard.filter_tools([...]), before_tool_callback=guard.before
 4. Add A2A only when distributing to separate services
 
 **Rule of thumb**:
-- Same language + same process → Runtime integration only
-- Cross-service → Add A2A
+- Same language + same process --> Runtime integration only
+- Cross-service --> Add A2A
 
 **Get help**:
 - [Discord](https://discord.gg/tenuo)

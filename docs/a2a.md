@@ -276,20 +276,20 @@ Proof-of-Possession adds an additional security layer by requiring the client to
 ### When to Use PoP
 
 **Require PoP when:**
-- ✅ Agents communicate over untrusted networks (Internet, shared infrastructure)
-- ✅ Compliance requires cryptographic proof of authorization
-- ✅ Protection against warrant theft is critical
-- ✅ Multi-hop delegation across organizational boundaries
+- Agents communicate over untrusted networks (Internet, shared infrastructure)
+- Compliance requires cryptographic proof of authorization
+- Protection against warrant theft is critical
+- Multi-hop delegation across organizational boundaries
 
 **PoP is optional when:**
-- ⚠️ All agents run on trusted infrastructure (same data center, VPC)
-- ⚠️ Network isolation provides security (private network, mTLS)
-- ⚠️ Performance is critical and risk is low (microsecond latency matters)
+- All agents run on trusted infrastructure (same data center, VPC)
+- Network isolation provides security (private network, mTLS)
+- Performance is critical and risk is low (microsecond latency matters)
 
 **Never skip PoP when:**
-- ❌ Agents are on the public Internet
-- ❌ Warrants have long TTLs (hours/days)
-- ❌ Untrusted intermediaries exist in the call chain
+- Agents are on the public Internet
+- Warrants have long TTLs (hours/days)
+- Untrusted intermediaries exist in the call chain
 
 ### How PoP Works
 
@@ -502,7 +502,7 @@ async def read_file(path: str) -> str:
 
 ```python
 # This raises ConstraintBindingError at startup:
-@server.skill("read_file", constraints={"file_path": Subpath})  # ❌ "file_path" not a param
+@server.skill("read_file", constraints={"file_path": Subpath})  # "file_path" not a param
 async def read_file(path: str) -> str:  # param is "path"
     ...
 ```

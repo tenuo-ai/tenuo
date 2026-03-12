@@ -85,7 +85,7 @@ See [charts/tenuo-authorizer/README.md](https://github.com/tenuo-ai/tenuo/tree/m
 
 | Pattern | Warrant Scope | Complexity | Best For |
 |---------|---------------|------------|----------|
-| **Control Plane Fetch** | Per-task | Medium | Task-scoped authority ✅ |
+| **Control Plane Fetch** | Per-task | Medium | Task-scoped authority |
 | **Request Header** | Per-request | Medium | Ingress injects warrants |
 | **Environment Variable** | Per-pod | Low | Batch jobs, prototyping |
 
@@ -96,7 +96,7 @@ Is warrant scope static for the pod lifetime?
 ├── Yes → Environment Variable (simple, but loses task-scoping)
 └── No  → Does your ingress/mesh inject warrants?
           ├── Yes → Request Header
-          └── No  → Control Plane Fetch ✅ (recommended)
+          └── No  → Control Plane Fetch (recommended)
 ```
 
 ---
@@ -122,7 +122,7 @@ async def handle_task(user_request: str):
     # Warrant expires, no cleanup needed
 ```
 
-📄 **Full code:** [proxy-configs.md#control-plane-fetch](./proxy-configs.md#control-plane-fetch)
+**Full code:** [proxy-configs.md#control-plane-fetch](./proxy-configs.md#control-plane-fetch)
 
 ---
 
@@ -140,7 +140,7 @@ async def tenuo_middleware(request: Request, call_next):
         return await call_next(request)
 ```
 
-📄 **Full code:** [proxy-configs.md#request-header](./proxy-configs.md#request-header)
+**Full code:** [proxy-configs.md#request-header](./proxy-configs.md#request-header)
 
 ---
 
@@ -159,19 +159,19 @@ env:
       key: WARRANT_BASE64
 ```
 
-📄 **Full code:** [proxy-configs.md#environment-variable](./proxy-configs.md#environment-variable)
+**Full code:** [proxy-configs.md#environment-variable](./proxy-configs.md#environment-variable)
 
-### ⚠️ Anti-Pattern Warning
+### Anti-Pattern Warning
 
 Long-lived warrants in environment variables defeat Tenuo's purpose:
 
 ```yaml
-# ❌ 24-hour warrant in env var = IAM with extra steps
+# 24-hour warrant in env var = IAM with extra steps
 env:
   - name: TENUO_WARRANT_BASE64
     value: "eyJ..."  # TTL: 86400s
 
-# ✅ Short-lived, per-task warrants from control plane
+# Short-lived, per-task warrants from control plane
 ```
 
 ---
@@ -251,7 +251,7 @@ Rotate signing keys without downtime.
 | Strategy | Security | Complexity |
 |----------|----------|------------|
 | Per-pod | Best | High |
-| Per-deployment | Good | Medium ✅ |
+| Per-deployment | Good | Medium |
 | Shared | Weak | Low |
 
 ---
@@ -294,7 +294,7 @@ kubectl logs -l app=tenuo-authorizer --since=1h | \
 ```yaml
 env:
 - name: DEBUG_MODE
-  value: "true"  # ⚠️ Non-production only
+  value: "true"  # Non-production only
 ```
 
 Denied responses include `X-Tenuo-Deny-Reason`:

@@ -75,7 +75,7 @@ agent = Agent(
 )
 
 # Unauthorized calls are blocked
-# agent.execute("Read /etc/passwd") → ConstraintViolation!
+# agent.execute("Read /etc/passwd") -- ConstraintViolation!
 ```
 
 ### Zero-Config Entry Points
@@ -225,11 +225,11 @@ Tenuo provides semantic constraints that block specific attack vectors:
 > **Any unlisted argument is REJECTED**.
 
 ```python
-# ❌ Blocks call with 'timeout' arg because it's unknown
+# Blocks call with 'timeout' arg because it's unknown
 guard = GuardBuilder().allow("api_call", url=UrlSafe()).build()
-# agent calls api_call(url="...", timeout=30) → UnlistedArgument!
+# agent calls api_call(url="...", timeout=30) -- UnlistedArgument!
 
-# ✅ Explicitly allow unknown args
+# Explicitly allow unknown args
 guard = GuardBuilder().allow("api_call", url=UrlSafe(), timeout=Wildcard()).build()
 ```
 
@@ -268,13 +268,13 @@ Delegation is blocked if:
 ```python
 # Manager has: search(query=Pattern("arxiv:*"))
 
-# ❌ Fails: widening constraint
+# Fails: widening constraint
 delegator.delegate(
     ...,
     attenuations={"search": {"query": Pattern("*")}},  # EscalationAttempt!
 )
 
-# ❌ Fails: new tool
+# Fails: new tool
 delegator.delegate(
     ...,
     attenuations={"delete_all": {"target": Wildcard()}},  # EscalationAttempt!
@@ -298,8 +298,8 @@ guard = (GuardBuilder()
 protected = guard.protect(original_tool)
 
 # Now:
-# protected.func()       → goes through guard ✅
-# original_tool.func()   → raises RuntimeError ✅
+# protected.func()       -- goes through guard
+# original_tool.func()   -- raises RuntimeError
 ```
 
 > [!WARNING]
@@ -391,8 +391,8 @@ result = crew.kickoff(inputs={"topic": "AI safety"})
 
 | Method | Description |
 |--------|-------------|
-| `.policy({})` | Map agent role → allowed tools |
-| `.constraints({})` | Map agent role → tool → constraints |
+| `.policy({})` | Map agent role to allowed tools |
+| `.constraints({})` | Map agent role to tool to constraints |
 | `.with_issuer(warrant, key)` | Set warrant issuer for Tier 2 |
 | `.on_denial(mode)` | Denial handling mode |
 | `.audit(callback)` | Audit callback for all agents |
@@ -506,7 +506,7 @@ Check configuration before production:
 ```python
 warnings = guard.validate()
 for warning in warnings:
-    print(f"⚠️ {warning}")
+    print(f"WARNING: {warning}")
 ```
 
 ---

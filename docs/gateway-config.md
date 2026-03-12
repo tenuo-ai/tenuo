@@ -7,7 +7,7 @@ description: YAML configuration reference for Tenuo authorizer
 
 The gateway configuration file defines how the Tenuo authorizer maps HTTP requests to tools and extracts constraint values.
 
-> ⚠️ **Important**: This configuration is for **argument extraction**, not **authorization policy**.
+> **Important**: This configuration is for **argument extraction**, not **authorization policy**.
 >
 > - **Extraction**: Defines *where* to find data in an HTTP request (path, body, etc.).
 > - **Policy**: Defines *what* values are allowed. This is encoded in the **Warrant**, not this file.
@@ -44,7 +44,7 @@ routes:
     tool: "tool_name"
 ```
 
-> See [Argument Extraction → Gateway Integration](./argument-extraction#gateway-integration-http-requests) for detailed extraction mechanics and security considerations.
+> See [Argument Extraction -- Gateway Integration](./argument-extraction#gateway-integration-http-requests) for detailed extraction mechanics and security considerations.
 
 ---
 
@@ -60,7 +60,7 @@ routes:
 
 > **Note**: The gateway accepts both single warrants and full chains (WarrantStack) in the `X-Tenuo-Warrant` header. It automatically detects the content type.
 
-> ⚠️ **Security Warning**: Never enable `debug_mode` in production! It exposes internal authorization details that could help attackers understand your security model.
+> **Security Warning**: Never enable `debug_mode` in production! It exposes internal authorization details that could help attackers understand your security model.
 
 ### Debug Mode
 
@@ -120,10 +120,10 @@ tools:
 
 | Source | Description | Example |
 |--------|-------------|---------|
-| `path` | URL path parameter from route pattern | `/{cluster}/scale` → `cluster` |
-| `query` | Query string parameter | `?dry_run=true` → `dry_run` |
+| `path` | URL path parameter from route pattern | `/{cluster}/scale` --> `cluster` |
+| `query` | Query string parameter | `?dry_run=true` --> `dry_run` |
 | `header` | HTTP header value | `X-API-Key: abc123` |
-| `body` | JSON body field (dot notation) | `{"spec": {"replicas": 5}}` → `spec.replicas` |
+| `body` | JSON body field (dot notation) | `{"spec": {"replicas": 5}}` --> `spec.replicas` |
 | `literal` | Static value | Always returns configured value |
 
 ### Type Conversion
@@ -131,9 +131,9 @@ tools:
 | Type | Description | Example |
 |------|-------------|---------|
 | `string` | Default, no conversion | `"hello"` |
-| `integer` | Parse as integer | `"42"` → `42` |
-| `float` | Parse as float | `"3.14"` → `3.14` |
-| `boolean` | Parse as boolean | `"true"` → `true` |
+| `integer` | Parse as integer | `"42"` --> `42` |
+| `float` | Parse as float | `"3.14"` --> `3.14` |
+| `boolean` | Parse as boolean | `"true"` --> `true` |
 
 ---
 
@@ -303,8 +303,8 @@ For production use, the configuration is compiled into optimized data structures
 
 ## See Also
 
-- [Proxy Configurations](./proxy-configs.md) — Envoy, Istio, nginx integration
-- [Kubernetes Integration](./kubernetes.md) — Deployment patterns
-- [CLI Reference](./cli) — Command-line usage
-- [AI Agent Patterns](./ai-agents) — P-LLM/Q-LLM, security patterns
-- [Protocol Specification](./spec/protocol-spec-v1) — Warrant format and verification
+- [Proxy Configurations](./proxy-configs.md)  -- Envoy, Istio, nginx integration
+- [Kubernetes Integration](./kubernetes.md)  -- Deployment patterns
+- [CLI Reference](./cli)  -- Command-line usage
+- [AI Agent Patterns](./ai-agents)  -- P-LLM/Q-LLM, security patterns
+- [Protocol Specification](./spec/protocol-spec-v1)  -- Warrant format and verification

@@ -208,7 +208,7 @@ pop_sig = warrant.sign(control_key, "filesystem_read", dict(result.constraints))
 authorizer = Authorizer(trusted_roots=[control_key.public_key])
 authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop_sig))
 
-# ✓ Authorized - proceed to execute tool
+# Authorized - proceed to execute tool
 ```
 
 ---
@@ -306,7 +306,7 @@ MCP tool calls provide an `arguments` JSON object. Use:
 - **`from: body`** - Extract from arguments (recommended)
 - **`from: literal`** - Use default value
 
-❌ **Don't use**: `from: path`, `from: query`, `from: header` (HTTP-only)
+**Don't use**: `from: path`, `from: query`, `from: header` (HTTP-only)
 
 ### Example: Filesystem Tool
 
@@ -771,7 +771,7 @@ arguments = {"path": "/var/log/app.log"}
 constraints = {"path": Subpath("/var/log")}
 
 # MCP call:
-arguments = {"path": "/etc/passwd"}  # ❌ Not under /var/log
+arguments = {"path": "/etc/passwd"}  # Not under /var/log
 
 # Fix: Narrow MCP call or broaden warrant
 ```

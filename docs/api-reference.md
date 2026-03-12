@@ -101,7 +101,7 @@ configure(
 - `trusted_roots` required
 - All warrants must chain to a trusted root
 - PoP mandatory
-- Missing warrants → `Unauthorized` error
+- Missing warrants --> `Unauthorized` error
 
 **Development Mode** (`dev_mode=True`):
 - `trusted_roots` optional
@@ -109,12 +109,12 @@ configure(
 - `allow_passthrough=True` skips authorization entirely (dangerous)
 
 **Strict Mode** (`strict_mode=True`):
-- Missing warrant → `RuntimeError` (panic/crash)
+- Missing warrant --> `RuntimeError` (panic/crash)
 - Catches integration bugs (missing decorators, forgotten context)
 - **Recommended for CI/CD**
 
 **Warning Mode** (`warn_on_missing_warrant=True`):
-- Missing warrant → Python warning + audit log
+- Missing warrant --> Python warning + audit log
 - Surfaces integration issues without breaking tests
 - **Recommended for development/staging**
 
@@ -227,11 +227,11 @@ from tenuo import SigningKey
 |-----------------|---------|-------------|
 | `public_key` | `PublicKey` | Get the public key (property) |
 | `public_key_bytes()` | `bytes` | Get public key as bytes (32 bytes) |
-| `secret_key_bytes()` | `bytes` | Get secret key as bytes (32 bytes) ⚠️ |
+| `secret_key_bytes()` | `bytes` | Get secret key as bytes (32 bytes) |
 | `sign(message: bytes)` | `Signature` | Sign a message |
 | `to_pem()` | `str` | Convert the keypair to a PEM string |
 
-⚠️ **Security Warning**: `secret_key_bytes()` copies secret material to Python memory. Minimize use.
+**Security Warning**: `secret_key_bytes()` copies secret material to Python memory. Minimize use.
 
 ---
 
@@ -298,7 +298,7 @@ from tenuo import Warrant
 | `Warrant.mint_builder()` | Create a fluent builder for new warrants |
 | `warrant.grant_builder()` | Create a fluent builder for delegation |
 
-#### `Warrant.mint_builder()` — Creating New Warrants
+#### `Warrant.mint_builder()` - Creating New Warrants
 
 ```python
 from tenuo import Warrant, Pattern
@@ -319,7 +319,7 @@ warrant = (Warrant.mint_builder()
 | `.ttl(seconds)` | Set time-to-live |
 | `.mint(key)` | Sign and create the warrant |
 
-#### `warrant.grant_builder()` — Delegation
+#### `warrant.grant_builder()` - Delegation
 
 ```python
 # Delegate with narrower scope
@@ -367,7 +367,7 @@ issuer = (Warrant.mint_builder()
 
 | Method | Description |
 |--------|-------------|
-| `.capability(tool, constraints)` | Add a capability (tool + constraints) — **recommended** |
+| `.capability(tool, constraints)` | Add a capability (tool + constraints) - **recommended** |
 | `.tool(str)` | Set single tool (legacy, for single-tool warrants) |
 | `.constraint(field, value)` | Add a constraint (legacy, applies to current tool) |
 | `.ttl(seconds)` | Set time-to-live |
@@ -471,8 +471,8 @@ The SDK uses two headers for warrant transport:
 | `X-Tenuo-PoP` | Proof-of-Possession | Base64-encoded signature |
 
 **Key point:** The payload is self-describing. A single header can carry:
-- **Single warrant** — CBOR map `{id: ..., tools: ...}`
-- **Warrant chain** — CBOR array `[parent, ..., leaf]` (WarrantStack)
+- **Single warrant** - CBOR map `{id: ..., tools: ...}`
+- **Warrant chain** - CBOR array `[parent, ..., leaf]` (WarrantStack)
 
 The gateway auto-detects the format (Warrant vs WarrantStack), so `X-Tenuo-Warrant` works for both. See [Gateway Configuration](./gateway-config.md) for details.
 
@@ -494,7 +494,7 @@ print(repr(warrant))
 # <Warrant id=tnu_wrt_019b... tools=[a, b, c, +3 more] ttl=0:04:59>
 ```
 
-⚠️ **Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew. For sensitive operations, implement deduplication using `warrant.dedup_key(tool, args)`. See [Protocol: Replay Protection](./protocol#replay-protection).
+**Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew. For sensitive operations, implement deduplication using `warrant.dedup_key(tool, args)`. See [Protocol: Replay Protection](./protocol#replay-protection).
 
 #### Principle of Least Authority (POLA)
 
@@ -712,7 +712,7 @@ All setter methods are **dual-purpose**: call with argument to set (returns self
 | `diff()` | `str` | Preview changes (human-readable) |
 | `delegate(signing_key)` | `Warrant` | Issue child with receipt |
 
-> ⚠️ **POLA**: The builder starts with NO capabilities. Use `capability()` to grant specific tools, or `inherit_all()` to explicitly inherit all parent capabilities.
+> **POLA**: The builder starts with NO capabilities. Use `capability()` to grant specific tools, or `inherit_all()` to explicitly inherit all parent capabilities.
 
 #### Examples
 
@@ -770,7 +770,7 @@ Authorizer(
 
 #### Tool Clearance Requirements (Optional)
 
-The Authorizer can *optionally* enforce minimum clearance levels per tool as defense in depth. Clearance is a coarse-grained policy overlay—**not a security boundary**. Capabilities and monotonicity provide the cryptographic guarantees; clearance adds organizational convenience.
+The Authorizer can *optionally* enforce minimum clearance levels per tool as defense in depth. Clearance is a coarse-grained policy overlay - **not a security boundary**. Capabilities and monotonicity provide the cryptographic guarantees; clearance adds organizational convenience.
 
 ```python
 from tenuo import Authorizer, Clearance
@@ -791,7 +791,7 @@ print(authorizer.get_required_clearance("delete_file"))  # Clearance.PRIVILEGED
 - `"prefix_*"` - Prefix pattern (e.g., `admin_*` matches `admin_users`, `admin_config`)
 - `"*"` - Default for all tools (recommended for defense in depth)
 
-**Lookup precedence:** Exact match → Glob pattern → Default `*` → No requirement (check skipped)
+**Lookup precedence:** Exact match --> Glob pattern --> Default `*` --> No requirement (check skipped)
 
 **Security note:** If no clearance requirement is configured for a tool, the check is skipped. Configure a default `"*"` pattern for defense in depth.
 
@@ -911,11 +911,11 @@ Regex("^[a-z0-9_]+$")     # Matches lowercase alphanumeric with underscores
 Regex(".*\\.pdf$")        # Matches files ending in .pdf
 ```
 
-> **⚠️ Attenuation Limitation**: Regex patterns cannot be narrowed during attenuation. Child must use the **same pattern** as parent, or attenuate to `Exact()`. This is due to the undecidability of regex subset checking. See [Constraints → Regex Narrowing](./constraints#regex-narrowing) for details.
+> **Attenuation Limitation**: Regex patterns cannot be narrowed during attenuation. Child must use the **same pattern** as parent, or attenuate to `Exact()`. This is due to the undecidability of regex subset checking. See [Constraints --> Regex Narrowing](./constraints#regex-narrowing) for details.
 
 ### Wildcard
 
-Matches any value. Use sparingly—prefer explicit constraints.
+Matches any value. Use sparingly - prefer explicit constraints.
 
 ```python
 Wildcard()                # Matches anything
@@ -964,7 +964,7 @@ CEL('net_in_cidr(ip, "10.0.0.0/8")')  # From private network
 - **Time**: `time_now(null)`, `time_is_expired(ts)`, `time_since(ts)`
 - **Network**: `net_in_cidr(ip, cidr)`, `net_is_private(ip)`
 
-See [Constraints → CEL](./constraints#cel-common-expression-language) for full documentation and examples.
+See [Constraints --> CEL](./constraints#cel-common-expression-language) for full documentation and examples.
 
 **Security:**
 - Sandboxed execution (no arbitrary code)
@@ -990,21 +990,21 @@ from tenuo.templates import FileReader, FileWriter
 
 # Read-only access to a directory
 async with mint(FileReader.in_directory("/data/reports")) as w:
-    content = read_file("/data/reports/q4.txt")  # ✓ allowed
-    content = read_file("/etc/passwd")  # ✗ denied
+    content = read_file("/data/reports/q4.txt")  # allowed
+    content = read_file("/etc/passwd")  # denied
 
 # Read a specific file only
 async with mint(FileReader.exact_file("/config/app.json")) as w:
-    content = read_file("/config/app.json")  # ✓ allowed
+    content = read_file("/config/app.json")  # allowed
 
 # Read files with specific extensions
 async with mint(FileReader.extensions("/docs", [".md", ".txt"])) as w:
-    read_file("/docs/readme.md")  # ✓ allowed
-    read_file("/docs/data.json")  # ✗ denied
+    read_file("/docs/readme.md")  # allowed
+    read_file("/docs/data.json")  # denied
 
 # Write access (use with caution)
 async with mint(FileWriter.in_directory("/tmp/agent-output")) as w:
-    write_file("/tmp/agent-output/report.txt", data)  # ✓ allowed
+    write_file("/tmp/agent-output/report.txt", data)  # allowed
 ```
 
 ### Database Templates
@@ -1014,16 +1014,16 @@ from tenuo.templates import DatabaseReader, DatabaseWriter
 
 # Read from specific tables
 async with mint(DatabaseReader.tables(["users", "products"])) as w:
-    query("SELECT * FROM users")  # ✓ allowed
-    query("SELECT * FROM transactions")  # ✗ denied
+    query("SELECT * FROM users")  # allowed
+    query("SELECT * FROM transactions")  # denied
 
 # Read with row limit (prevent data exfiltration)
 async with mint(DatabaseReader.with_row_limit(["users"], max_rows=10)) as w:
-    query("SELECT * FROM users LIMIT 10")  # ✓ allowed
+    query("SELECT * FROM users LIMIT 10")  # allowed
 
 # Full-table access within a schema
 async with mint(DatabaseReader.schema("public")) as w:
-    query("SELECT * FROM public.users")  # ✓ allowed
+    query("SELECT * FROM public.users")  # allowed
 ```
 
 ### Web Access Templates
@@ -1033,12 +1033,12 @@ from tenuo.templates import WebSearcher, ApiClient
 
 # Web search with domain restrictions
 async with mint(WebSearcher.domains(["api.openai.com", "*.google.com"])) as w:
-    search("openai docs", domain="api.openai.com")  # ✓ allowed
+    search("openai docs", domain="api.openai.com")  # allowed
 
 # API client with method restrictions
 async with mint(ApiClient.readonly("api.example.com")) as w:
-    get("/users")  # ✓ allowed
-    post("/users", {...})  # ✗ denied
+    get("/users")  # allowed
+    post("/users", {...})  # denied
 ```
 
 ### Agent Templates
@@ -1173,9 +1173,9 @@ Tenuo provides three APIs for protecting tools. Choose based on your use case:
 
 > [!TIP]
 > **Quick Decision Tree:**
-> - Using LangChain? → `guard()` from `tenuo.langchain`
-> - Protecting your own function? → `@guard` decorator
-> - Need to wrap many tools at once? → `guard_tools()`
+> - Using LangChain? --> `guard()` from `tenuo.langchain`
+> - Protecting your own function? --> `@guard` decorator
+> - Need to wrap many tools at once? --> `guard_tools()`
 
 ---
 
@@ -1205,7 +1205,7 @@ guard_tools(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `tools` | `List[Any]` | — | List of LangChain/callable tools |
+| `tools` | `List[Any]` | -- | List of LangChain/callable tools |
 | `inplace` | `bool` | `True` | Mutate original list (False = return new list) |
 | `strict` | `bool` | `False` | Fail on tools missing required constraints |
 | `schemas` | `Dict[str, ToolSchema]` | `None` | Custom tool schemas |
@@ -1238,7 +1238,7 @@ protected = guard_tools(original, inplace=False)
 
 ## MCP Integration
 
-Native support for [Model Context Protocol](https://modelcontextprotocol.io) — client-side authorization and server-side verification.
+Native support for [Model Context Protocol](https://modelcontextprotocol.io) - client-side authorization and server-side verification.
 
 ```python
 from tenuo import McpConfig, CompiledMcpConfig
@@ -1281,10 +1281,10 @@ async with SecureMCPClient(
 ```
 
 Parameters:
-- `command`, `args`, `env` — Stdio transport (local subprocess)
-- `url`, `transport`, `headers`, `timeout` — HTTP transports (remote server)
-- `inject_warrant` — Send warrant via `params._meta.tenuo` for server-side verification
-- `config_path`, `register_config` — Load MCP config for constraint extraction
+- `command`, `args`, `env` - Stdio transport (local subprocess)
+- `url`, `transport`, `headers`, `timeout` - HTTP transports (remote server)
+- `inject_warrant` - Send warrant via `params._meta.tenuo` for server-side verification
+- `config_path`, `register_config` - Load MCP config for constraint extraction
 
 ### MCPVerifier
 
@@ -1305,11 +1305,11 @@ execute_tool(result.clean_arguments)
 ```
 
 Returns `MCPVerificationResult` with:
-- `allowed` — Whether the call is authorized
-- `clean_arguments` — Tool arguments safe to pass to the handler
-- `is_approval_required` — Whether an approval gate requires approval
-- `jsonrpc_error_code` — `-32001` (denied), `-32002` (approval required), or `-32602` (invalid params)
-- `to_jsonrpc_error()` — Format as JSON-RPC error response
+- `allowed` - Whether the call is authorized
+- `clean_arguments` - Tool arguments safe to pass to the handler
+- `is_approval_required` - Whether an approval gate requires approval
+- `jsonrpc_error_code` - `-32001` (denied), `-32002` (approval required), or `-32602` (invalid params)
+- `to_jsonrpc_error()` - Format as JSON-RPC error response
 
 ### verify_mcp_call
 
@@ -1379,7 +1379,7 @@ query_db("SELECT *")
 #                        ↑ defaults included
 ```
 
-✅ **Security:** Defaults are always included (prevents bypass via omission).
+**Security:** Defaults are always included (prevents bypass via omission).
 
 **Custom extraction:**
 ```python
@@ -1833,14 +1833,14 @@ Validate a warrant against specific tool and arguments.
 tenuo validate --warrant eyJ3... --tool read_file --args '{"path": "/data/report.txt"}'
 
 # Output:
-# ✅ Authorization would succeed
+# Authorization would succeed
 #   Tool: read_file
 #   Path: /data/report.txt matches Pattern("/data/*")
 
 tenuo validate --warrant eyJ3... --tool read_file --args '{"path": "/etc/passwd"}'
 
 # Output:
-# ❌ Authorization would fail
+# Authorization would fail
 #   Tool: read_file
 #   Path: /etc/passwd does NOT match Pattern("/data/*")
 ```
@@ -1873,11 +1873,11 @@ from tenuo import AuthorizationDenied, ConstraintResult, Pattern
 # Example error output:
 # Access denied for tool 'read_file'
 #
-#   ❌ path:
+#   path:
 #      Expected: Pattern("/data/*")
 #      Received: '/etc/passwd'
 #      Reason: Pattern does not match
-#   ✅ size: OK
+#   size: OK
 
 # Create from constraint check
 error = AuthorizationDenied.from_constraint_check(
@@ -1974,7 +1974,7 @@ def process_warrant(w: AnyWarrant) -> None:
 
 ## See Also
 
-- [AI Agent Patterns](./ai-agents) — P-LLM/Q-LLM, prompt injection defense
-- [Constraints Guide](./constraints) — Detailed constraint usage
-- [Security](./security) — Threat model and protections
-- [Examples](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples) — Python usage examples
+- [AI Agent Patterns](./ai-agents) - P-LLM/Q-LLM, prompt injection defense
+- [Constraints Guide](./constraints) - Detailed constraint usage
+- [Security](./security) - Threat model and protections
+- [Examples](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples) - Python usage examples

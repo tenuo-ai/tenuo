@@ -78,11 +78,11 @@ except TenuoError as e:
 
 **Output:**
 ```
-❌ CONSTRAINT_VIOLATION: Argument 'path' violated constraint
+CONSTRAINT_VIOLATION: Argument 'path' violated constraint
    Constraint: Pattern("/data/*")
    Value: /etc/passwd
    
-💡 How to fix:
+How to fix:
    - Request a path matching the pattern "/data/*"
    - Example: /data/reports/q3.csv
 ```
@@ -116,8 +116,8 @@ Warrant tnu_wrt_019b482c...
   Depth: 2
 
 Chain:
-  [0] Root (control_plane) → issued to orchestrator
-  [1] orchestrator → delegated to worker
+  [0] Root (control_plane) --> issued to orchestrator
+  [1] orchestrator --> delegated to worker
   [2] worker (current)
 ```
 
@@ -166,7 +166,7 @@ See [CLI Reference](./cli) for full command documentation.
 
 ## Explorer Playground
 
-**[🔬 Tenuo Explorer](https://tenuo.ai/explorer/)** — Interactive warrant debugging:
+**[Tenuo Explorer](https://tenuo.ai/explorer/)** -- Interactive warrant debugging:
 
 - **Decode** any warrant visually
 - **Test authorization** with different arguments
@@ -378,7 +378,7 @@ warrant.expires_at      # "2025-12-22T15:00:00Z"
 
 ## Logic Checks (UX Only)
 
-⚠️ **These are NOT security checks** - use for UI hints only:
+**These are NOT security checks** - use for UI hints only:
 
 ```python
 # Check if tool is in warrant
@@ -392,11 +392,11 @@ if warrant.allows("read_file", args={"path": "/data/file.txt"}):
 
 **Never use for authorization decisions:**
 ```python
-# ❌ WRONG
+# WRONG
 if warrant.allows("delete"):
     delete_database()  # No PoP verification!
 
-# ✅ CORRECT
+# CORRECT
 if bound.validate("delete", {"id": "123"}):
     delete_database()
 ```
@@ -456,7 +456,7 @@ Use this ID to find detailed logs on the server side.
 
 ## See Also
 
-- [Security](./security) — Threat model, best practices
-- [API Reference](./api-reference) — Full Python API documentation
-- [Constraints](./constraints) — Constraint types and behavior
+- [Security](./security)  -- Threat model, best practices
+- [API Reference](./api-reference)  -- Full Python API documentation
+- [Constraints](./constraints)  -- Constraint types and behavior
 

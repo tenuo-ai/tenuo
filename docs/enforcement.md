@@ -17,7 +17,7 @@ This page covers how Tenuo deploys into production infrastructure: the five enfo
 
 Tenuo deploys at five enforcement points. Choose based on your threat model, or combine them for defense in depth.
 
-Every model verifies warrants, so **all five block unauthorized tool calls** — including prompt injection and confused deputy attacks. The difference is where the enforcement point sits and what additional threats it covers.
+Every model verifies warrants, so **all five block unauthorized tool calls** -- including prompt injection and confused deputy attacks. The difference is where the enforcement point sits and what additional threats it covers.
 
 | Model | Where It Runs | Additional Threat Coverage | Trust Boundary |
 |-------|---------------|---------------------------|----------------|

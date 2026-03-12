@@ -145,7 +145,7 @@ Full benchmark source code is available in [`warrant_benchmarks.rs`](https://git
 
 1. **Fast-fail on invalid requests:** Wrong tool names and missing PoP signatures are rejected in **~200 nanoseconds**, before expensive crypto operations.
 2. **Constraint violations are cheap:** Pattern matching failures cost ~200ns, making it impractical to DoS via constraint violations.
-3. **Only sophisticated attacks are expensive:** Invalid PoP signatures (forgery attempts) cost ~113µs to detect, but this is unavoidable—you must verify the signature to know it's invalid.
+3. **Only sophisticated attacks are expensive:** Invalid PoP signatures (forgery attempts) cost ~113µs to detect, but this is unavoidable --you must verify the signature to know it's invalid.
 
 **Attack cost analysis:**
 - Sending 1 million invalid tool names: ~200ms total (negligible)
@@ -182,6 +182,6 @@ Tenuo's Rust core is `no_std` compatible and can run in resource-constrained env
 
 ## See Also
 
-- [Protocol Specification](./spec/protocol-spec-v1) — How warrants work
-- [Security Model](./security.md) — Why PoP is mandatory
-- [Integration Guide](./quickstart.md) — Getting started
+- [Protocol Specification](./spec/protocol-spec-v1)  -- How warrants work
+- [Security Model](./security.md)  -- Why PoP is mandatory
+- [Integration Guide](./quickstart.md)  -- Getting started

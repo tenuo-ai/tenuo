@@ -241,16 +241,16 @@ Tier 2 adds cryptographic verification for distributed systems and untrusted exe
 > Once you add **any** constraint to a tool, Tenuo switches to a "closed-world" model for that tool.
 >
 > This means **ANY argument not explicitly listed in your constraints will be REJECTED**.
-> Tenuo does not silently ignore extra arguments—it blocks them to prevent "shadow argument" attacks.
+> Tenuo does not silently ignore extra arguments --it blocks them to prevent "shadow argument" attacks.
 >
 > ```python
-> # ❌ Blocks call with 'timeout' arg because it's unknown
+> # Blocks call with 'timeout' arg because it's unknown
 > guard = GuardBuilder().allow("api_call", url=UrlSafe()).build()
 >
-> # ✅ Explicitly allow unknown args (less secure)
+> # Explicitly allow unknown args (less secure)
 > guard = GuardBuilder().allow("api_call", url=UrlSafe(), _allow_unknown=True).build()
 >
-> # ✅ Or allow specific field with Wildcard
+> # Or allow specific field with Wildcard
 > from tenuo.constraints import Wildcard
 > guard = GuardBuilder().allow("api_call", url=UrlSafe(), timeout=Wildcard()).build()
 > ```
@@ -271,9 +271,9 @@ from tenuo.constraints import Subpath
 # Secure: Normalizes paths before checking
 guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
 
-# Blocks: /data/../etc/passwd → normalizes to /etc/passwd → outside /data
-# Blocks: /data/./../../etc/passwd → same
-# Allows: /data/reports/file.txt → inside /data
+# Blocks: /data/../etc/passwd -- normalizes to /etc/passwd -- outside /data
+# Blocks: /data/./../../etc/passwd -- same
+# Allows: /data/reports/file.txt -- inside /data
 ```
 
 ### UrlSafe: SSRF Protection
@@ -557,10 +557,10 @@ def handle_request(user_id):
 | Feature | Tier 1 (Direct) | Tier 2 (Warrant + PoP) |
 |---------|-----------------|------------------------|
 | **Setup** | `.allow()` builder | Warrant issuance + signing key |
-| **Cryptographic proof** | ❌ No | ✅ Yes (Ed25519 signatures) |
-| **Protection against insider threats** | ❌ No | ✅ Yes |
-| **Multi-agent delegation** | ❌ No | ✅ Yes (attenuation chains) |
-| **Audit trail** | ✅ Events only | ✅ Cryptographic receipts |
+| **Cryptographic proof** | No | Yes (Ed25519 signatures) |
+| **Protection against insider threats** | No | Yes |
+| **Multi-agent delegation** | No | Yes (attenuation chains) |
+| **Audit trail** | Events only | Cryptographic receipts |
 | **Performance** | Fast (no crypto) | Slightly slower (signature checks) |
 | **Use case** | Prototyping, single-process | Production, distributed agents |
 
@@ -716,9 +716,9 @@ python demo_distributed.py --no-services # Simulation mode
 2. **Investigation Phase**: Analyst queries threat DB via A2A
 3. **Response Phase**: Analyst delegates to Responder with attenuated warrant
 4. **Attack Defense**:
-   - Prompt injection tries to block entire Internet → blocked by Exact constraint
-   - Forged warrant → blocked by signature verification
-   - Privilege escalation → blocked by monotonicity checks
+   - Prompt injection tries to block entire Internet -- blocked by Exact constraint
+   - Forged warrant -- blocked by signature verification
+   - Privilege escalation -- blocked by monotonicity checks
 
 ### When to Use ADK + A2A
 

@@ -78,8 +78,8 @@ A complete defense may use both:
 
 **Example combined flow:**
 
-1. Agent reads file → FIDES labels data as `confidential:internal`
-2. Agent wants to send email → Tenuo checks warrant allows `send_email`
+1. Agent reads file --> FIDES labels data as `confidential:internal`
+2. Agent wants to send email --> Tenuo checks warrant allows `send_email`
 3. FIDES checks: can `confidential:internal` data flow to email recipient?
 4. Both must approve for action to proceed
 
@@ -110,7 +110,7 @@ This paper provides empirical validation of the architectural pattern Tenuo impl
 | Unnecessary execution cost | **-78%** | baseline |
 | Catastrophic action recurrence | **0** | 4.3 mean repetitions |
 
-**Core thesis**: Prompt injection, hallucination, and repeated failures are manifestations of a single architectural flaw—coupling generation with execution authority. Separating these concerns provides structural guarantees that persist under adversarial conditions.
+**Core thesis**: Prompt injection, hallucination, and repeated failures are manifestations of a single architectural flaw -- coupling generation with execution authority. Separating these concerns provides structural guarantees that persist under adversarial conditions.
 
 Tenuo implements this separation: models propose actions, the authorizer enforces constraints.
 
@@ -120,7 +120,7 @@ Tenuo implements this separation: models propose actions, the authorizer enforce
 
 **Paper**: [Intelligent AI Delegation](https://arxiv.org/abs/2602.11865) (Tomašev, Franklin, Osindero, 2026)
 
-This paper proposes a framework for adaptive AI delegation — a sequence of decisions involving task allocation that incorporates transfer of authority, responsibility, accountability, role boundaries, and trust mechanisms between agents (human and AI).
+This paper proposes a framework for adaptive AI delegation -- a sequence of decisions involving task allocation that incorporates transfer of authority, responsibility, accountability, role boundaries, and trust mechanisms between agents (human and AI).
 
 **Relationship to Tenuo:**
 
@@ -151,10 +151,10 @@ Tenuo builds on established capability-based authorization patterns:
 
 Biscuit is excellent. Both Tenuo and Biscuit support offline attenuation with similar mechanisms. Tenuo differs in:
 
-1. **Threat model** — Designed specifically for AI agents processing untrusted input
-2. **PoP binding** — Mandatory proof-of-possession (Biscuit has optional third-party caveats)
-3. **Constraint types** — Purpose-built for tool authorization (Pattern, Range, OneOf)
-4. **Authorization model** — Closed-form constraint predicates vs Datalog policies
+1. **Threat model** -- Designed specifically for AI agents processing untrusted input
+2. **PoP binding** -- Mandatory proof-of-possession (Biscuit has optional third-party caveats)
+3. **Constraint types** -- Purpose-built for tool authorization (Pattern, Range, OneOf)
+4. **Authorization model** -- Closed-form constraint predicates vs Datalog policies
 
 If you need general-purpose capability tokens with flexible policy logic, consider Biscuit.  
 If you need AI agent authorization with prompt injection defense, use Tenuo.
@@ -182,7 +182,7 @@ The approaches are complementary: model-level defenses reduce the likelihood of 
 | Input filtering | Detect/block malicious prompts | Evasion attacks |
 | Output filtering | Detect/block harmful outputs | Post-hoc, reactive |
 | Instruction hierarchy | System vs user prompt priority | Model-dependent |
-| **Capability-based** | Limit what actions are possible | ✅ Tenuo's approach |
+| **Capability-based** | Limit what actions are possible | Tenuo's approach |
 
 ---
 
@@ -213,6 +213,6 @@ If you reference Tenuo in academic work:
 
 ## See Also
 
-- [Concepts](./concepts) — Why Tenuo? Problem/solution overview
-- [Protocol Specification](./spec/protocol-spec-v1) — How warrants work
-- [Security](./security) — Detailed threat model
+- [Concepts](./concepts) -- Why Tenuo? Problem/solution overview
+- [Protocol Specification](./spec/protocol-spec-v1) -- How warrants work
+- [Security](./security) -- Detailed threat model

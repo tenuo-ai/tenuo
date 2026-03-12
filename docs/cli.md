@@ -37,7 +37,7 @@ python -m tenuo --help
 
 Initialize a new Tenuo project for **local development**. Generates a root key and config file.
 
-> 💡 **For local development.** Root keys (issuer keys) grant unlimited authority—in production, protect them with a secrets manager (Vault, K8s Secrets, cloud KMS).
+> **For local development.** Root keys (issuer keys) grant unlimited authority -- in production, protect them with a secrets manager (Vault, K8s Secrets, cloud KMS).
 
 ```
 tenuo init
@@ -50,15 +50,15 @@ tenuo init
 **Example:**
 ```bash
 $ tenuo init
-🚀 Initializing Tenuo project (development mode)...
-✅ Received root_key (ed25519) -> .env
-✅ Created tenuo_config.py with sensible defaults
+Initializing Tenuo project (development mode)...
+Received root_key (ed25519) -> .env
+Created tenuo_config.py with sensible defaults
 
-🎉 Ready! Next steps:
+Ready! Next steps:
    tenuo mint --tool read_file --ttl 1h   # Create a test warrant
    tenuo decode <warrant>                 # Inspect it
 
-💡 Tip: Root keys grant unlimited authority—protect them with a secrets manager in production.
+Tip: Root keys grant unlimited authority -- protect them with a secrets manager in production.
 ```
 
 ---
@@ -156,14 +156,14 @@ $ tenuo validate $WARRANT --tool read_file --args '{"path": "/data/report.txt"}'
 Verifying warrant for tool: read_file
   Warrant ID: wrt_abc123
   Tools: read_file, search
-  ✅ AUTHORIZED
+  AUTHORIZED
 
 # Check unauthorized path
 $ tenuo validate $WARRANT --tool read_file --args '{"path": "/etc/passwd"}'
 Verifying warrant for tool: read_file
   Warrant ID: wrt_abc123
   Tools: read_file, search
-  ❌ DENIED: Arguments do not satisfy constraints
+  DENIED: Arguments do not satisfy constraints
 ```
 
 **Exit codes:**
@@ -226,6 +226,6 @@ capabilities:
 
 ## See Also
 
-- [Python SDK](../tenuo-python/README.md) — Full programmatic API for warrant issuance, delegation, and verification
-- [Quick Start](./quickstart.md) — Getting started with Tenuo
-- [API Reference](./api-reference.md) — Complete Python API documentation
+- [Python SDK](../tenuo-python/README.md)  -- Full programmatic API for warrant issuance, delegation, and verification
+- [Quick Start](./quickstart.md)  -- Getting started with Tenuo
+- [API Reference](./api-reference.md)  -- Complete Python API documentation

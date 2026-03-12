@@ -5,9 +5,9 @@ description: Tool protection for LangChain agents
 
 # Tenuo LangChain Integration
 
-> **Status**: ✅ Implemented  
+> **Status**: Implemented  
 
-📊 **Visual guide**: See the [LangChain Infographic](./langchain-infographic.html) for where Tenuo fits in your agent stack.
+**Visual guide**: See the [LangChain Infographic](./langchain-infographic.html) for where Tenuo fits in your agent stack.
 
 ## Overview
 
@@ -52,10 +52,10 @@ def search(query: str) -> str:
 async def main():
     # Scope authority: only "weather*" queries allowed
     async with mint(Capability("search", query=Pattern("weather*"))):
-        print(search.invoke({"query": "weather NYC"}))  # ✅ Works
+        print(search.invoke({"query": "weather NYC"}))  # Works
         
         try:
-            search.invoke({"query": "stock prices"})   # ❌ Blocked
+            search.invoke({"query": "stock prices"})   # Blocked
         except Exception as e:
             print(f"Blocked: {e}")
 
@@ -124,8 +124,8 @@ def read_file(file_path: str) -> str:
 # Execute with BoundWarrant as context manager
 bound = warrant.bind(key)
 with bound:
-    content = read_file("/tmp/test.txt")  # ✅ Authorized
-    content = read_file("/etc/passwd")    # ❌ Blocked
+    content = read_file("/tmp/test.txt")  # Authorized
+    content = read_file("/etc/passwd")    # Blocked
 ```
 
 ---
@@ -200,13 +200,13 @@ def read_file(path: str): ...
 
 # Task 1: warrant allows /projects/acme/*
 with warrant_for_acme.bind(key):
-    read_file("/projects/acme/report.pdf")  # ✅ Allowed
-    read_file("/projects/beta/secret.pdf")  # ❌ Blocked
+    read_file("/projects/acme/report.pdf")  # Allowed
+    read_file("/projects/beta/secret.pdf")  # Blocked
 
 # Task 2: warrant allows /projects/beta/*  
 with warrant_for_beta.bind(key):
-    read_file("/projects/acme/report.pdf")  # ❌ Blocked
-    read_file("/projects/beta/secret.pdf")  # ✅ Allowed
+    read_file("/projects/acme/report.pdf")  # Blocked
+    read_file("/projects/beta/secret.pdf")  # Allowed
 ```
 
 ### Authorization Flow
@@ -546,8 +546,8 @@ tools = guard(
 
 ## See Also
 
-- [LangGraph Integration](./langgraph) — Multi-agent graph security
-- [Human Approvals](./approvals) — Approval policy guide
-- [Argument Extraction](./argument-extraction) — How extraction works
-- [Security](./security) — Threat model, best practices
-- [API Reference](./api-reference) — Full Python API documentation
+- [LangGraph Integration](./langgraph)  -- Multi-agent graph security
+- [Human Approvals](./approvals)  -- Approval policy guide
+- [Argument Extraction](./argument-extraction)  -- How extraction works
+- [Security](./security)  -- Threat model, best practices
+- [API Reference](./api-reference)  -- Full Python API documentation

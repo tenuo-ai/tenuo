@@ -272,16 +272,16 @@ client = guard(
 > Once you add **any** constraint to a tool, Tenuo switches to a "closed-world" model for that tool.
 >
 > This means **ANY argument not explicitly listed in your constraints will be REJECTED**.
-> Tenuo does not silently ignore extra arguments—it blocks them to prevent "shadow argument" attacks.
+> Tenuo does not silently ignore extra arguments --it blocks them to prevent "shadow argument" attacks.
 >
 > ```python
-> # ❌ Blocks call with 'timeout' arg because it's unknown
+> # Blocks call with 'timeout' arg because it's unknown
 > constraints={"api_call": {"url": UrlSafe()}}
 >
-> # ✅ Explicitly allow unknown args (less secure)
+> # Explicitly allow unknown args (less secure)
 > constraints={"api_call": {"url": UrlSafe(), "_allow_unknown": True}}
 >
-> # ✅ Or allow specific field with Wildcard
+> # Or allow specific field with Wildcard
 > constraints={"api_call": {"url": UrlSafe(), "timeout": Wildcard()}}
 > ```
 

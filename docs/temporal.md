@@ -22,7 +22,7 @@ Tenuo integrates with [Temporal](https://temporal.io) to bring warrant-based aut
 - **PoP replay protection**: In-memory dedup cache prevents signature replay attacks
 - **Continue-as-new support**: Warrant headers survive workflow continuation
 - **Fail-closed**: Missing or invalid warrants block execution by default
-- **🔒 Secure key management**: Private keys NEVER transmitted in headers - resolved from Vault/KMS/Secret Manager
+- **Secure key management**: Private keys NEVER transmitted in headers - resolved from Vault/KMS/Secret Manager
 - **Enterprise key resolvers**: `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, `GCPSecretManagerKeyResolver`, `CompositeKeyResolver`
 
 ---
@@ -71,7 +71,7 @@ async def write_file(path: str, content: str) -> str:
     Path(path).write_text(content)
     return f"Wrote {len(content)} bytes"
 
-# Define workflow — use AuthorizedWorkflow for automatic PoP calculation
+# Define workflow  -- use AuthorizedWorkflow for automatic PoP calculation
 @workflow.defn
 class DataProcessingWorkflow(AuthorizedWorkflow):
     @workflow.run
@@ -154,7 +154,7 @@ async def main():
     ):
         # Set warrant headers (only key_id, NOT the private key)
         client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent-key-1")  # ✅ Only key ID transmitted
+            tenuo_headers(warrant, "agent-key-1")  # Only key ID transmitted
         )
         result = await client.execute_workflow(
             DataProcessingWorkflow.run,
@@ -166,7 +166,7 @@ async def main():
 
 > **Important:** `tenuo` and `tenuo_core` must be configured as passthrough modules in Temporal's workflow sandbox. Without this, PoP verification will fail with `ImportError: PyO3 modules compiled for CPython 3.8 or older may only be initialized once per interpreter process`.
 
-> **🔒 Security:** Private keys are **NEVER** transmitted in headers. Only the `key_id` is sent. Workers use `KeyResolver` to fetch the actual signing key from secure storage (Vault, AWS Secrets Manager, GCP Secret Manager, etc.).
+> **Security:** Private keys are **NEVER** transmitted in headers. Only the `key_id` is sent. Workers use `KeyResolver` to fetch the actual signing key from secure storage (Vault, AWS Secrets Manager, GCP Secret Manager, etc.).
 
 **What happens:**
 1. `TenuoClientInterceptor` injects warrant + key_id into workflow headers (NO private key)
@@ -184,7 +184,7 @@ This works in both single-process demos and distributed deployments where client
 
 ### Key Management (REQUIRED)
 
-**🔒 Security Requirement:** Tenuo NEVER transmits private keys in headers. Workers must be configured with a `KeyResolver` to fetch signing keys from secure storage.
+**Security Requirement:** Tenuo NEVER transmits private keys in headers. Workers must be configured with a `KeyResolver` to fetch signing keys from secure storage.
 
 #### Production: Vault
 
@@ -200,7 +200,7 @@ resolver = VaultKeyResolver(
 )
 
 config = TenuoInterceptorConfig(
-    key_resolver=resolver,  # ✅ REQUIRED
+    key_resolver=resolver,  # REQUIRED
     trusted_roots=[root_key.public_key],
 )
 ```
@@ -262,7 +262,7 @@ gcloud secrets create tenuo-keys-agent-2024 \
 ```python
 from tenuo.temporal import EnvKeyResolver
 
-# ⚠️ DEVELOPMENT ONLY - DO NOT USE IN PRODUCTION
+# DEVELOPMENT ONLY - DO NOT USE IN PRODUCTION
 # A WARNING is emitted at first key resolution unless TENUO_ENV=development.
 resolver = EnvKeyResolver(
     prefix="TENUO_KEY_",
@@ -326,7 +326,7 @@ config = TenuoInterceptorConfig(
 Control what happens when authorization fails:
 
 ```python
-# "raise" (default): raise ConstraintViolation — workflow fails fast
+# "raise" (default): raise ConstraintViolation  -- workflow fails fast
 # "log":             log the denial and continue execution
 # "skip":            silently return None
 config = TenuoInterceptorConfig(
@@ -375,7 +375,7 @@ class PipelineWorkflow:
         )
 ```
 
-Both automatically sign PoP challenges — you never need to call `warrant.sign()` directly in Temporal workflows.
+Both automatically sign PoP challenges  -- you never need to call `warrant.sign()` directly in Temporal workflows.
 
 ### PoP Challenge Format
 
@@ -425,7 +425,7 @@ class ParentWorkflow:
         return result
 ```
 
-The wrapper calls `attenuated_headers()` internally and injects the attenuated warrant via the outbound workflow interceptor — Temporal's `execute_child_workflow()` does not accept a `headers` kwarg directly.
+The wrapper calls `attenuated_headers()` internally and injects the attenuated warrant via the outbound workflow interceptor  -- Temporal's `execute_child_workflow()` does not accept a `headers` kwarg directly.
 
 ### Delegation Chain Verification
 

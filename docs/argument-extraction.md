@@ -34,7 +34,7 @@ Tenuo enforces constraints by comparing **tool arguments** against **warrant con
 
 ### Extraction vs. Policy
 
-> ⚠️ **Crucial Distinction**: YAML configuration (for Gateway and MCP) is for **argument extraction**, not **authorization policy**.
+> **Crucial Distinction**: YAML configuration (for Gateway and MCP) is for **argument extraction**, not **authorization policy**.
 >
 > - **Extraction (YAML)**: Tells Tenuo *where* to find the "path" or "amount" in a request (e.g., "look in the JSON body at key `maxSize`").
 > - **Policy (Warrants)**: Tells Tenuo *what* values are allowed (e.g., "max_size must be less than 1000").
@@ -253,9 +253,9 @@ Body extraction uses dot notation for nested fields:
 | `name` | `{"name": "value"}` |
 | `spec.replicas` | `{"spec": {"replicas": 5}}` |
 | `metadata.labels.env` | `{"metadata": {"labels": {"env": "prod"}}}` |
-| `items[0].id` | `{"items": [{"id": "123"}]}` (⚠️ array index NOT supported in v0.1) |
+| `items[0].id` | `{"items": [{"id": "123"}]}` (array index NOT supported in v0.1) |
 
-⚠️ **Note**: Array indexing is not supported. Use `items` to extract the entire array.
+**Note**: Array indexing is not supported. Use `items` to extract the entire array.
 
 ### Type Safety
 
@@ -319,7 +319,7 @@ See [MCP Integration](./mcp) for full details.
 
 ### 1. Default Values MUST Be Checked
 
-❌ **Vulnerable:**
+**Vulnerable:**
 ```python
 # Wrong: If max_size is omitted, it's not checked
 @guard(tool="read_file", extract_args=lambda path, **kw: {"path": path})
@@ -327,7 +327,7 @@ def read_file(path: str, max_size: int = 999999):
     ...
 ```
 
-✅ **Secure:**
+**Secure:**
 ```python
 # Automatic extraction includes defaults
 @guard(tool="read_file")
@@ -342,7 +342,7 @@ def read_file(path: str, max_size: int = 1000):
 
 If a parameter is security-relevant (affects what the tool does), it MUST be extractable:
 
-❌ **Vulnerable:**
+**Vulnerable:**
 ```python
 @guard(tool="query", extract_args=lambda query, **kw: {"query": query})
 def query_db(query: str, table: str = "users"):
@@ -350,7 +350,7 @@ def query_db(query: str, table: str = "users"):
     ...
 ```
 
-✅ **Secure:**
+**Secure:**
 ```python
 @guard(tool="query")  # Automatic extraction includes both
 def query_db(query: str, table: str = "users"):
@@ -385,7 +385,7 @@ except TypeError as e:
 For gateway integration, ensure **all security-relevant request components** are extracted:
 
 ```yaml
-# ✅ Complete extraction
+# Complete extraction
 tools:
   transfer:
     constraints:
@@ -421,7 +421,7 @@ def search(query: str, max_results: int = 10):
 # Extraction: automatic, includes defaults
 ```
 
-✅ **Recommendation:** Use automatic extraction unless you have a specific reason not to.
+**Recommendation:** Use automatic extraction unless you have a specific reason not to.
 
 ### Pattern 2: Parameter Renaming
 
@@ -502,7 +502,7 @@ def read_file(path: str):
 
 **Cause:** Using `extract_args` without including defaults.
 
-❌ **Vulnerable:**
+**Vulnerable:**
 ```python
 @guard(tool="query", extract_args=lambda query, **kw: {"query": query})
 def query_db(query: str, limit: int = 999999):  # Dangerous default
@@ -510,7 +510,7 @@ def query_db(query: str, limit: int = 999999):  # Dangerous default
 # If caller omits limit, it's not extracted → uses 999999 unchecked
 ```
 
-✅ **Secure (automatic):**
+**Secure (automatic):**
 ```python
 @guard(tool="query")
 def query_db(query: str, limit: int = 100):
@@ -527,7 +527,7 @@ def query_db(query: str, limit: int = 100):
 **Fix:** This is correct behavior - if we can't bind arguments, we can't authorize:
 ```python
 # Function signature: read_file(path: str)
-read_file()  # Missing required arg → TypeError → Authorization denied ✅
+read_file()  # Missing required arg → TypeError → Authorization denied
 ```
 
 ---
@@ -576,7 +576,7 @@ tenuo extract \
 
 ## Best Practices
 
-### ✅ DO
+### DO
 
 1. **Use automatic extraction** unless you have a specific reason for custom logic
 2. **Test with defaults** - ensure default values satisfy constraints
@@ -584,7 +584,7 @@ tenuo extract \
 4. **Document constraint keys** - ensure tool params match constraint names
 5. **Test extraction** - use `tenuo extract` for gateway configs
 
-### ❌ DON'T
+### DON'T
 
 1. **Don't omit security-relevant parameters** from `extract_args`
 2. **Don't bypass defaults** - always include them in extraction
@@ -616,10 +616,10 @@ except TypeError as e:
 ```
 
 **Security properties:**
-- ✅ Handles positional, keyword, and default arguments
-- ✅ Fails closed if binding fails
-- ✅ Audit logged for debugging
-- ✅ Raises immediately (doesn't let function execute)
+- Handles positional, keyword, and default arguments
+- Fails closed if binding fails
+- Audit logged for debugging
+- Raises immediately (doesn't let function execute)
 
 ### Gateway Extraction (extraction.rs)
 
@@ -646,10 +646,10 @@ pub fn extract(&self, ctx: &RequestContext) -> Option<ConstraintValue> {
 ```
 
 **Security properties:**
-- ✅ Headers are case-insensitive (pre-lowercased)
-- ✅ Body extraction is compiled (not regex, safe)
-- ✅ Type conversion with failure handling
-- ✅ Required fields enforced (`extract_all` returns error if missing)
+- Headers are case-insensitive (pre-lowercased)
+- Body extraction is compiled (not regex, safe)
+- Type conversion with failure handling
+- Required fields enforced (`extract_all` returns error if missing)
 
 ---
 

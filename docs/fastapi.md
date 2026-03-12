@@ -5,7 +5,7 @@ description: Zero-boilerplate API protection for FastAPI
 
 # Tenuo FastAPI Integration
 
-> **Status**: ✅ Implemented (v0.1)
+> **Status**: Implemented (v0.1)
 
 ---
 
@@ -37,22 +37,22 @@ You have internal APIs that AI agents call. Different agents do different tasks 
 
 | Time | Agent | Task | Warrant | API Call | Result |
 |------|-------|------|---------|----------|--------|
-| 9:00 | A | "Research Q3 for Acme" | `search`, query=`"acme *"`, TTL=10min | `/search?query=acme+earnings` | ✅ |
-| 9:00 | B | "Draft email to CFO" | `send_email`, to=`*@acme.com`, TTL=5min | `/email` to `cfo@acme.com` | ✅ |
-| 9:02 | A | Same task | Same warrant | `/search?query=competitor+salaries` | ❌ Pattern mismatch |
-| 9:02 | B | Same task | Same warrant | `/email` to `leak@gmail.com` | ❌ Pattern mismatch |
-| 9:06 | B | (idle) | Warrant expired | `/email` to `cfo@acme.com` | ❌ Expired |
-| 9:08 | A | Same task | Still valid | `/search?query=acme+q3` | ✅ |
-| 9:15 | A | (idle) | Warrant expired | `/search?query=anything` | ❌ Expired |
+| 9:00 | A | "Research Q3 for Acme" | `search`, query=`"acme *"`, TTL=10min | `/search?query=acme+earnings` | Pass |
+| 9:00 | B | "Draft email to CFO" | `send_email`, to=`*@acme.com`, TTL=5min | `/email` to `cfo@acme.com` | Pass |
+| 9:02 | A | Same task | Same warrant | `/search?query=competitor+salaries` | DENIED: Pattern mismatch |
+| 9:02 | B | Same task | Same warrant | `/email` to `leak@gmail.com` | DENIED: Pattern mismatch |
+| 9:06 | B | (idle) | Warrant expired | `/email` to `cfo@acme.com` | DENIED: Expired |
+| 9:08 | A | Same task | Still valid | `/search?query=acme+q3` | Pass |
+| 9:15 | A | (idle) | Warrant expired | `/search?query=anything` | DENIED: Expired |
 
 **What Tenuo solves:**
 
 | Problem | How Tenuo Handles It |
 |---------|---------------------|
-| **Temporal mismatch** — Agent was authorized 10 min ago, is it still? | Warrants have TTL. Expired = denied. |
-| **Context mismatch** — Agent was authorized for Task A, now doing Task B | Each task gets its own warrant with specific constraints. |
-| **Provenance** — Who authorized this agent? Can we trace the chain? | Warrant is signed. Chain of custody is cryptographically verifiable. |
-| **Prompt injection** — Agent is tricked into doing something malicious | Doesn't matter. Warrant only allows what the task intended. |
+| **Temporal mismatch**  -- Agent was authorized 10 min ago, is it still? | Warrants have TTL. Expired = denied. |
+| **Context mismatch**  -- Agent was authorized for Task A, now doing Task B | Each task gets its own warrant with specific constraints. |
+| **Provenance**  -- Who authorized this agent? Can we trace the chain? | Warrant is signed. Chain of custody is cryptographically verifiable. |
+| **Prompt injection**  -- Agent is tricked into doing something malicious | Doesn't matter. Warrant only allows what the task intended. |
 
 Your API verifies the warrant. The proof is in the token.
 
@@ -470,12 +470,12 @@ async def transfer(
 Each route should specify the minimum tool(s) required:
 
 ```python
-# ✅ Good: specific tool
+# Good: specific tool
 @app.get("/users")
 async def get_users(ctx: SecurityContext = Depends(TenuoGuard("list_users"))):
     ...
 
-# ❌ Bad: overly permissive
+# Bad: overly permissive
 @app.get("/users")
 async def get_users(ctx: SecurityContext = Depends(TenuoGuard("admin_users"))):
     # Each endpoint should have one specific tool
@@ -485,8 +485,8 @@ async def get_users(ctx: SecurityContext = Depends(TenuoGuard("admin_users"))):
 
 ## See Also
 
-- [Quickstart](./quickstart) — Get running in 5 minutes
-- [Security](./security) — Threat model, best practices
-- [API Reference](./api-reference) — Full Python API documentation
-- [LangChain](./langchain) — Tool protection for LangChain
+- [Quickstart](./quickstart)  -- Get running in 5 minutes
+- [Security](./security)  -- Threat model, best practices
+- [API Reference](./api-reference)  -- Full Python API documentation
+- [LangChain](./langchain)  -- Tool protection for LangChain
 
