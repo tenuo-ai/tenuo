@@ -836,8 +836,8 @@ proptest! {
             let deserialized_result = deserialized.check_constraints(tool, &args);
 
             match (&original_result, &deserialized_result) {
-                (Ok(()), Ok(())) => {} // Both accept
-                (Err(_), Err(_)) => {} // Both reject
+                (Ok(()), Ok(())) => {}
+                (Err(_), Err(_)) => {}
                 (Ok(()), Err(e)) => {
                     prop_assert!(
                         false,
@@ -858,6 +858,355 @@ proptest! {
                     );
                 }
             }
+        }
+    }
+}
+
+// ============================================================================
+// Property 4: Closed-world (zero-trust) semantics
+//
+// When a ConstraintSet has constraints and allow_unknown=false (default),
+// any argument key not explicitly listed MUST be rejected.
+// When allow_unknown=true, extra keys are permitted.
+// During attenuation, allow_unknown=false -> allow_unknown=true is forbidden.
+// ============================================================================
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2000))]
+
+    /// Closed-world rejects unknown fields when constraints exist.
+    #[test]
+    fn prop_closed_world_rejects_unknown_fields(
+        known_field in atom_strategy(),
+        unknown_field in "[f-z]{2,6}",
+        constraint in leaf_constraint_strategy(),
+        value in value_strategy(),
+    ) {
+        prop_assume!(known_field != unknown_field);
+
+        let mut cs = ConstraintSet::new();
+        cs.insert(known_field.clone(), constraint);
+        // allow_unknown defaults to false
+
+        let mut args_with_unknown: HashMap<String, ConstraintValue> = HashMap::new();
+        args_with_unknown.insert(unknown_field.clone(), value);
+
+        let result = cs.matches(&args_with_unknown);
+        prop_assert!(
+            result.is_err(),
+            "Closed-world ConstraintSet must reject unknown field '{}'\n\
+             known fields: [{}]",
+            unknown_field, known_field
+        );
+    }
+
+    /// allow_unknown=true permits extra fields.
+    #[test]
+    fn prop_open_world_allows_unknown_fields(
+        known_field in atom_strategy(),
+        unknown_field in "[f-z]{2,6}",
+        constraint in leaf_constraint_strategy(),
+        value in value_strategy(),
+        known_value in value_strategy(),
+    ) {
+        prop_assume!(known_field != unknown_field);
+
+        let mut cs = ConstraintSet::new();
+        cs.insert(known_field.clone(), constraint.clone());
+        cs.set_allow_unknown(true);
+
+        // The unknown field alone shouldn't cause rejection
+        // (known field may still reject based on its constraint)
+        let mut args: HashMap<String, ConstraintValue> = HashMap::new();
+        args.insert(known_field.clone(), known_value.clone());
+        args.insert(unknown_field.clone(), value);
+
+        let result = cs.matches(&args);
+        // If it fails, it must be because the known constraint rejected its
+        // value, NOT because of the unknown field
+        if result.is_err() {
+            let known_only: HashMap<String, ConstraintValue> =
+                [(known_field.clone(), known_value)].into_iter().collect();
+            prop_assert!(
+                cs.matches(&known_only).is_err(),
+                "allow_unknown=true rejected due to unknown field, not constraint"
+            );
+        }
+    }
+
+    /// Attenuation cannot widen allow_unknown from false to true.
+    #[test]
+    fn prop_allow_unknown_cannot_widen(
+        field in atom_strategy(),
+        parent_constraint in leaf_constraint_strategy(),
+        child_constraint in leaf_constraint_strategy(),
+    ) {
+        let mut parent_cs = ConstraintSet::new();
+        parent_cs.insert(field.clone(), parent_constraint);
+        // parent: allow_unknown = false (default)
+
+        let mut child_cs = ConstraintSet::new();
+        child_cs.insert(field, child_constraint);
+        child_cs.set_allow_unknown(true);
+
+        prop_assert!(
+            parent_cs.validate_attenuation(&child_cs).is_err(),
+            "allow_unknown=false -> true must be rejected during attenuation"
+        );
+    }
+
+    /// Attenuation can narrow allow_unknown from true to false.
+    #[test]
+    fn prop_allow_unknown_can_narrow(
+        field in atom_strategy(),
+        constraint in leaf_constraint_strategy(),
+    ) {
+        let mut parent_cs = ConstraintSet::new();
+        parent_cs.insert(field.clone(), constraint.clone());
+        parent_cs.set_allow_unknown(true);
+
+        let mut child_cs = ConstraintSet::new();
+        child_cs.insert(field, constraint);
+        // child: allow_unknown = false (default, more restrictive)
+
+        prop_assert!(
+            parent_cs.validate_attenuation(&child_cs).is_ok(),
+            "allow_unknown=true -> false should be accepted (narrowing)"
+        );
+    }
+}
+
+/// Closed-world property survives wire round-trip.
+#[test]
+fn closed_world_survives_wire_roundtrip() {
+    let kp = SigningKey::generate();
+
+    // Build warrant with closed-world ConstraintSet
+    let mut cs = ConstraintSet::new();
+    cs.insert(
+        "path",
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    // allow_unknown=false (default)
+
+    let warrant = Warrant::builder()
+        .capability("read_file", cs)
+        .ttl(Duration::from_secs(3600))
+        .holder(kp.public_key())
+        .build(&kp)
+        .unwrap();
+
+    let bytes = wire::encode(&warrant).unwrap();
+    let decoded = wire::decode(&bytes).unwrap();
+
+    // Known field, valid value: should pass
+    let mut good_args = HashMap::new();
+    good_args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/report.csv".to_string()),
+    );
+    assert!(decoded.check_constraints("read_file", &good_args).is_ok());
+
+    // Unknown field: must be rejected (closed-world)
+    let mut bad_args = HashMap::new();
+    bad_args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/report.csv".to_string()),
+    );
+    bad_args.insert(
+        "extra_field".to_string(),
+        ConstraintValue::String("injected".to_string()),
+    );
+    assert!(
+        decoded.check_constraints("read_file", &bad_args).is_err(),
+        "Closed-world must reject unknown fields after wire round-trip"
+    );
+}
+
+/// allow_unknown=true survives wire round-trip.
+#[test]
+fn allow_unknown_survives_wire_roundtrip() {
+    let kp = SigningKey::generate();
+
+    let mut cs = ConstraintSet::new();
+    cs.insert(
+        "path",
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    cs.set_allow_unknown(true);
+
+    let warrant = Warrant::builder()
+        .capability("read_file", cs)
+        .ttl(Duration::from_secs(3600))
+        .holder(kp.public_key())
+        .build(&kp)
+        .unwrap();
+
+    let bytes = wire::encode(&warrant).unwrap();
+    let decoded = wire::decode(&bytes).unwrap();
+
+    // Unknown field with allow_unknown=true: should pass
+    let mut args = HashMap::new();
+    args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/report.csv".to_string()),
+    );
+    args.insert(
+        "extra_field".to_string(),
+        ConstraintValue::String("allowed".to_string()),
+    );
+    assert!(
+        decoded.check_constraints("read_file", &args).is_ok(),
+        "allow_unknown=true must survive wire round-trip"
+    );
+}
+
+// ============================================================================
+// Property 5: TTL / expiration survives wire round-trip
+//
+// A warrant's expires_at timestamp must be identical after encode -> decode.
+// Combined with the existing invariant that child.expires_at <= parent.expires_at,
+// this guarantees temporal monotonicity is preserved across the wire boundary.
+// ============================================================================
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(1000))]
+
+    /// expires_at is preserved exactly through wire round-trip.
+    #[test]
+    fn prop_ttl_survives_wire_roundtrip(
+        ttl_secs in 1u64..86400,
+        tool in "[a-z_]{1,10}",
+    ) {
+        let kp = SigningKey::generate();
+
+        let warrant = Warrant::builder()
+            .capability(&tool, ConstraintSet::new())
+            .ttl(Duration::from_secs(ttl_secs))
+            .holder(kp.public_key())
+            .build(&kp)
+            .unwrap();
+
+        let original_expires = warrant.expires_at();
+
+        let bytes = wire::encode(&warrant).unwrap();
+        let decoded = wire::decode(&bytes).unwrap();
+
+        prop_assert_eq!(
+            decoded.expires_at(),
+            original_expires,
+            "expires_at must survive wire round-trip"
+        );
+    }
+
+    /// TTL monotonicity after attenuation + wire round-trip: the child's
+    /// expiration (after decode) never exceeds the parent's expiration.
+    #[test]
+    fn prop_ttl_monotonicity_survives_wire(
+        parent_ttl in 600u64..3600,
+        child_ttl in 1u64..7200,
+    ) {
+        let parent_kp = SigningKey::generate();
+        let child_kp = SigningKey::generate();
+
+        let parent = Warrant::builder()
+            .capability("tool", ConstraintSet::new())
+            .ttl(Duration::from_secs(parent_ttl))
+            .holder(child_kp.public_key())
+            .build(&parent_kp)
+            .unwrap();
+
+        let child = parent
+            .attenuate()
+            .inherit_all()
+            .ttl(Duration::from_secs(child_ttl))
+            .holder(child_kp.public_key())
+            .build(&child_kp)
+            .unwrap();
+
+        // Wire round-trip both
+        let parent_decoded = wire::decode(&wire::encode(&parent).unwrap()).unwrap();
+        let child_decoded = wire::decode(&wire::encode(&child).unwrap()).unwrap();
+
+        prop_assert!(
+            child_decoded.expires_at() <= parent_decoded.expires_at(),
+            "child.expires_at ({}) must <= parent.expires_at ({}) after wire round-trip",
+            child_decoded.expires_at(),
+            parent_decoded.expires_at()
+        );
+    }
+}
+
+/// Expired warrant is still expired after wire round-trip (no time travel).
+#[test]
+fn expired_warrant_stays_expired_after_roundtrip() {
+    let kp = SigningKey::generate();
+
+    let warrant = Warrant::builder()
+        .capability("tool", ConstraintSet::new())
+        .ttl(Duration::from_secs(1))
+        .holder(kp.public_key())
+        .build(&kp)
+        .unwrap();
+
+    // Wait for expiration
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(warrant.is_expired(), "warrant should be expired");
+
+    let bytes = wire::encode(&warrant).unwrap();
+    let decoded = wire::decode(&bytes).unwrap();
+
+    assert!(
+        decoded.is_expired(),
+        "expired warrant must remain expired after wire round-trip"
+    );
+}
+
+// ============================================================================
+// Property 6: Constants enforcement survives wire boundary
+//
+// MAX_CONSTRAINT_DEPTH and MAX_WARRANT_SIZE are checked during decode.
+// ============================================================================
+
+/// Oversized payloads are rejected at decode time.
+#[test]
+fn oversized_warrant_rejected_on_decode() {
+    let huge = vec![0u8; wire::MAX_WARRANT_SIZE + 1];
+    assert!(
+        wire::decode(&huge).is_err(),
+        "Payloads exceeding MAX_WARRANT_SIZE must be rejected"
+    );
+}
+
+/// Deeply nested constraints are rejected at decode time.
+#[test]
+fn deep_constraint_nesting_rejected_on_decode() {
+    let kp = SigningKey::generate();
+
+    // Build a constraint nested beyond MAX_CONSTRAINT_DEPTH
+    let mut c = Constraint::Exact(Exact::new("leaf"));
+    for _ in 0..40 {
+        c = Constraint::Not(Not::new(c));
+    }
+
+    let mut cs = ConstraintSet::new();
+    cs.insert("field", c);
+
+    let warrant = Warrant::builder()
+        .capability("tool", cs)
+        .ttl(Duration::from_secs(3600))
+        .holder(kp.public_key())
+        .build(&kp);
+
+    // Either build rejects it, or encode+decode rejects it
+    match warrant {
+        Err(_) => {} // Build caught it
+        Ok(w) => {
+            let bytes = wire::encode(&w).unwrap();
+            assert!(
+                wire::decode(&bytes).is_err(),
+                "Deeply nested constraints must be rejected on decode"
+            );
         }
     }
 }
