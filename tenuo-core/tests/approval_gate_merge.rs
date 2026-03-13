@@ -12,9 +12,10 @@ use tenuo::{
         encode_approval_gate_map, evaluate_approval_gates, merge_approval_gate_maps,
         ApprovalGateMap, ArgApprovalGate, ToolApprovalGate,
     },
-    constraints::ConstraintSet,
+    constraints::{ConstraintSet, ConstraintValue, Subpath},
     crypto::SigningKey,
     warrant::{OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant, WarrantType},
+    wire,
 };
 
 // ---------------------------------------------------------------------------
@@ -111,22 +112,34 @@ fn test_unit_merge_per_arg_union() {
 
 #[test]
 fn test_unit_merge_per_arg_base_survives_conflict() {
-    // base: exec={a=All}, additional: exec={a=All} → exec={a=All} (base wins on duplicate)
-    let mut args_a = BTreeMap::new();
-    args_a.insert("a".into(), ArgApprovalGate::All);
+    // base: exec={path=Constraint(Subpath("/etc"))}, additional: exec={path=All}
+    // additional's All is MORE restrictive than base's Constraint, but base wins.
+    // Merge semantics are "base is authoritative" not "stricter wins": the additional
+    // gate cannot overwrite the parent's established gate for the same argument.
+    let mut args_base = BTreeMap::new();
+    args_base.insert(
+        "path".into(),
+        ArgApprovalGate::Constraint(Subpath::new("/etc").unwrap().into()),
+    );
     let mut base = ApprovalGateMap::new();
-    base.insert("exec".into(), ToolApprovalGate::with_args(args_a));
+    base.insert("exec".into(), ToolApprovalGate::with_args(args_base));
 
-    let mut args_b = BTreeMap::new();
-    args_b.insert("a".into(), ArgApprovalGate::All);
+    let mut args_additional = BTreeMap::new();
+    args_additional.insert("path".into(), ArgApprovalGate::All);
     let mut additional = ApprovalGateMap::new();
-    additional.insert("exec".into(), ToolApprovalGate::with_args(args_b));
+    additional.insert("exec".into(), ToolApprovalGate::with_args(args_additional));
 
     let merged = merge_approval_gate_maps(&base, &additional);
     let gate = merged.get("exec").unwrap();
     let args = gate.args.as_ref().unwrap();
     assert_eq!(args.len(), 1);
-    assert!(args.contains_key("a"));
+    // Base's Constraint must survive — All from additional must not overwrite it.
+    match args.get("path").unwrap() {
+        ArgApprovalGate::Constraint(_) => {}
+        ArgApprovalGate::All => {
+            panic!("additional's All must not overwrite base's Constraint gate")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -472,4 +485,202 @@ fn test_issuance_builder_adds_gate() {
     let args: HashMap<String, tenuo::constraints::ConstraintValue> = HashMap::new();
     let fires = evaluate_approval_gates(Some(&issued_gates), "exec", &args).unwrap();
     assert!(fires, "gate should fire for exec");
+}
+
+#[test]
+fn test_evaluate_approval_gates_per_arg_constraint_fires() {
+    // End-to-end: child adds a Constraint gate via attenuation, then evaluate fires
+    // only for values that match the constraint — not for non-matching values.
+    let root_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
+    let parent = make_warrant_with_tools(&root_kp, &["file_write"], None);
+
+    let mut attn = OwnedAttenuationBuilder::new(parent);
+    attn.inherit_all();
+    attn.set_holder(child_kp.public_key());
+    attn.set_ttl(Duration::from_secs(1800));
+
+    let mut arg_gates = BTreeMap::new();
+    arg_gates.insert(
+        "path".into(),
+        ArgApprovalGate::Constraint(Subpath::new("/etc").unwrap().into()),
+    );
+    let mut gate_map = ApprovalGateMap::new();
+    gate_map.insert("file_write".into(), ToolApprovalGate::with_args(arg_gates));
+    let gate_bytes = encode_approval_gate_map(&gate_map).unwrap();
+    attn.set_approval_gates_extension(gate_bytes).unwrap();
+
+    let child = attn.build(&root_kp).unwrap();
+    let child_gates = tenuo::approval_gate::parse_approval_gate_map(
+        child.extension(tenuo::APPROVAL_GATE_EXTENSION_KEY),
+    )
+    .unwrap();
+
+    // /etc/hosts is under /etc → constraint matches → gate fires
+    let mut sensitive_args = HashMap::new();
+    sensitive_args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/etc/hosts".to_string()),
+    );
+    let fires =
+        evaluate_approval_gates(child_gates.as_ref(), "file_write", &sensitive_args).unwrap();
+    assert!(fires, "gate should fire for path under /etc");
+
+    // /workspace/foo.txt is not under /etc → constraint does not match → gate does not fire
+    let mut safe_args = HashMap::new();
+    safe_args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/workspace/foo.txt".to_string()),
+    );
+    let no_fire = evaluate_approval_gates(child_gates.as_ref(), "file_write", &safe_args).unwrap();
+    assert!(!no_fire, "gate should not fire for path outside /etc");
+}
+
+#[test]
+fn test_evaluate_approval_gates_none_branch_standalone() {
+    // evaluate_approval_gates(None, "exec", &args) is not tested as a standalone None test
+    let args: HashMap<String, tenuo::constraints::ConstraintValue> = HashMap::new();
+    let fires = evaluate_approval_gates(None, "exec", &args).unwrap();
+    // No gates defined anywhere means no gate restriction fires
+    assert!(!fires, "None gate map should default to open (no fire)");
+}
+
+#[test]
+fn test_gate_monotonicity_child_cannot_drop_with_empty_map() {
+    // parent has exec gate
+    // child inherits exec, then calls set_approval_gates_extension(empty_map)
+    // child.gates("exec") should still be Some (gate was inherited, cannot be silently dropped)
+    let root_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
+
+    let mut parent_gates = ApprovalGateMap::new();
+    parent_gates.insert("exec".into(), ToolApprovalGate::whole_tool());
+    let gate_bytes = encode_approval_gate_map(&parent_gates).unwrap();
+
+    let mut builder = Warrant::builder();
+    builder = builder.capability("exec", ConstraintSet::new());
+    builder = builder.ttl(Duration::from_secs(3600));
+    builder = builder.holder(root_kp.public_key());
+    builder = builder.extension(tenuo::APPROVAL_GATE_EXTENSION_KEY, gate_bytes);
+    let parent = builder.build(&root_kp).unwrap();
+
+    let mut attn = OwnedAttenuationBuilder::new(parent);
+    attn.inherit_all();
+    attn.set_holder(child_kp.public_key());
+    attn.set_ttl(Duration::from_secs(1800));
+
+    // Child attempts to maliciously drop the gate by supplying an empty map
+    let empty_gates = ApprovalGateMap::new();
+    let empty_gate_bytes = encode_approval_gate_map(&empty_gates).unwrap();
+    attn.set_approval_gates_extension(empty_gate_bytes).unwrap();
+
+    let child = attn.build(&root_kp).unwrap();
+
+    let child_gates = tenuo::approval_gate::parse_approval_gate_map(
+        child.extension(tenuo::APPROVAL_GATE_EXTENSION_KEY),
+    )
+    .unwrap()
+    .unwrap();
+
+    // The monotonic merge should ensure the parent's gate survived
+    assert!(
+        child_gates.contains_tool("exec"),
+        "Monotonicity Failure: exec gate was silently dropped by child empty map"
+    );
+    assert!(child_gates.get("exec").unwrap().is_whole_tool());
+}
+
+#[test]
+fn test_gate_wire_roundtrip() {
+    // warrant with gate extension -> encode -> decode -> gates still present
+    let root_kp = SigningKey::generate();
+
+    let mut parent_gates = ApprovalGateMap::new();
+    parent_gates.insert("exec".into(), ToolApprovalGate::whole_tool());
+    let gate_bytes = encode_approval_gate_map(&parent_gates).unwrap();
+
+    let parent = Warrant::builder()
+        .capability("exec", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .holder(root_kp.public_key())
+        .extension(tenuo::APPROVAL_GATE_EXTENSION_KEY, gate_bytes)
+        .build(&root_kp)
+        .unwrap();
+
+    // Serialize to bytes (wire format)
+    let wire_bytes = wire::encode(&parent).unwrap();
+
+    // Deserialize
+    let decoded_warrant = wire::decode(&wire_bytes).unwrap();
+
+    let decoded_gates = tenuo::approval_gate::parse_approval_gate_map(
+        decoded_warrant.extension(tenuo::APPROVAL_GATE_EXTENSION_KEY),
+    )
+    .unwrap()
+    .unwrap();
+
+    assert!(
+        decoded_gates.contains_tool("exec"),
+        "exec gate should survive serialization round-trip"
+    );
+    assert!(decoded_gates.get("exec").unwrap().is_whole_tool());
+}
+
+#[test]
+fn test_issuance_builder_merge_with_existing_gates() {
+    // Issuer already has gates issuing a warrant that also specifies gates
+    // (merge via issuance path).
+    let issuer_kp = SigningKey::generate();
+    let holder_kp = SigningKey::generate();
+
+    let mut parent_gates = ApprovalGateMap::new();
+    parent_gates.insert("read".into(), ToolApprovalGate::whole_tool());
+    let parent_gate_bytes = encode_approval_gate_map(&parent_gates).unwrap();
+
+    let issuer = Warrant::builder()
+        .r#type(WarrantType::Issuer)
+        .issuable_tools(vec![
+            "exec".to_string(),
+            "read".to_string(),
+            "write".to_string(),
+        ])
+        .ttl(Duration::from_secs(3600))
+        .holder(issuer_kp.public_key())
+        .extension(tenuo::APPROVAL_GATE_EXTENSION_KEY, parent_gate_bytes)
+        .build(&issuer_kp)
+        .unwrap();
+
+    let mut builder = OwnedIssuanceBuilder::new(issuer);
+    builder.set_tool("exec", ConstraintSet::new());
+    builder.set_tool("read", ConstraintSet::new());
+    builder.set_holder(holder_kp.public_key());
+    builder.set_ttl(Duration::from_secs(1800));
+
+    let mut child_gates = ApprovalGateMap::new();
+    child_gates.insert("exec".into(), ToolApprovalGate::whole_tool());
+    let child_gate_bytes = encode_approval_gate_map(&child_gates).unwrap();
+    builder
+        .set_approval_gates_extension(child_gate_bytes)
+        .unwrap();
+
+    let issued = builder.build(&issuer_kp).unwrap();
+
+    let issued_gates = tenuo::approval_gate::parse_approval_gate_map(
+        issued.extension(tenuo::APPROVAL_GATE_EXTENSION_KEY),
+    )
+    .unwrap()
+    .unwrap();
+
+    // read was inherited from parent, exec was added by child
+    assert!(
+        issued_gates.contains_tool("read"),
+        "inherited gate should be merged"
+    );
+    assert!(
+        issued_gates.contains_tool("exec"),
+        "explicit child gate should be merged"
+    );
+
+    // write is dropped since tool was not in the child capability set
+    assert!(!issued_gates.contains_tool("write"));
 }
