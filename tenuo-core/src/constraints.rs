@@ -622,21 +622,16 @@ impl Constraint {
                     })
                 }
             }
-            // OneOf can narrow to NotOneOf (carving holes from the allowed set)
-            (Constraint::OneOf(parent), Constraint::NotOneOf(child)) => {
-                // Warn if this would result in an empty set (paradox)
-                let remaining: Vec<_> = parent
-                    .values
-                    .iter()
-                    .filter(|v| !child.excluded.contains(v))
-                    .collect();
-                if remaining.is_empty() {
-                    return Err(Error::EmptyResultSet {
-                        parent_type: "OneOf".to_string(),
-                        count: parent.values.len(),
-                    });
-                }
-                Ok(())
+            // OneOf -> NotOneOf is FORBIDDEN: NotOneOf matches any value not in
+            // its exclusion set, which includes values outside the parent's
+            // allowlist. Since only the leaf constraint is checked at verification
+            // time, this would be a privilege escalation.
+            // Use OneOf(subset) instead to narrow an allowlist.
+            (Constraint::OneOf(_), Constraint::NotOneOf(_)) => {
+                Err(Error::IncompatibleConstraintTypes {
+                    parent_type: "OneOf".to_string(),
+                    child_type: "NotOneOf".to_string(),
+                })
             }
 
             // NotOneOf can add more exclusions (carving more holes)
@@ -2002,7 +1997,14 @@ impl UrlPattern {
     pub fn validate_attenuation(&self, child: &UrlPattern) -> Result<()> {
         // Check scheme narrowing
         if !self.schemes.is_empty() {
-            // Parent has scheme restrictions
+            // Parent restricts schemes; child with empty schemes (= any) would widen
+            if child.schemes.is_empty() {
+                return Err(Error::UrlSchemeExpanded {
+                    parent: self.schemes.join(","),
+                    child: "*".to_string(),
+                });
+            }
+            // Each child scheme must be in parent's set
             for child_scheme in &child.schemes {
                 if !self.schemes.contains(child_scheme) {
                     return Err(Error::UrlSchemeExpanded {
@@ -3515,10 +3517,13 @@ impl CelConstraint {
     /// Create an attenuated CEL constraint from a parent.
     ///
     /// The child expression is automatically formatted as:
-    /// `(parent_expression) && new_predicate`
+    /// `(parent_expression) && (new_predicate)`
+    ///
+    /// The additional predicate is wrapped in parentheses to prevent
+    /// operator precedence attacks with `||`.
     pub fn attenuate(parent: &CelConstraint, additional_predicate: &str) -> Self {
         Self {
-            expression: format!("({}) && {}", parent.expression, additional_predicate),
+            expression: format!("({}) && ({})", parent.expression, additional_predicate),
             parent_expression: Some(parent.expression.clone()),
         }
     }
@@ -3558,21 +3563,27 @@ impl CelConstraint {
 
     /// Validate that `child` is a valid attenuation.
     ///
-    /// Child CEL constraints must take the form: `(parent_expression) && new_predicate`
+    /// Child CEL constraints must take the form: `(parent_expression) && (new_predicate)`
     ///
     /// This ensures monotonicity: the child can only add restrictions, not remove them.
     /// Whitespace variations are allowed (e.g., `&&` vs ` && `).
     ///
+    /// The remainder after `&&` MUST be wrapped in parentheses to prevent
+    /// operator precedence attacks. Without parens, `(parent) && x || y`
+    /// parses as `((parent) && x) || y`, which is NOT a subset of `parent`.
+    ///
     /// # Security Note on Monotonicity
     /// Tenuo currently enforces **Syntactic Monotonicity** for CEL, not Semantic Monotonicity.
     ///
-    /// - **Allowed**: `parent && new_check` (Syntactically stricter)
+    /// - **Allowed**: `(parent) && (new_check)` (Syntactically stricter)
     /// - **Rejected**: `stricter_check` (Semantically stricter but not syntactically derived)
+    /// - **Rejected**: `(parent) && x || y` (Precedence bypass: `||` escapes conjunction)
     ///
     /// Example:
     /// - Parent: `net.in_cidr(ip, '10.0.0.0/8')`
-    /// - Child: `net.in_cidr(ip, '10.1.0.0/16')` -> **REJECTED** (cannot prove subset relation easily)
-    /// - Child: `(net.in_cidr(ip, '10.0.0.0/8')) && net.in_cidr(ip, '10.1.0.0/16')` -> **ALLOWED**
+    /// - Child: `net.in_cidr(ip, '10.1.0.0/16')` -> **REJECTED** (cannot prove subset)
+    /// - Child: `(net.in_cidr(ip, '10.0.0.0/8')) && (net.in_cidr(ip, '10.1.0.0/16'))` -> **ALLOWED**
+    /// - Child: `(net.in_cidr(ip, '10.0.0.0/8')) && true || false` -> **REJECTED** (no parens)
     pub fn validate_attenuation(&self, child: &CelConstraint) -> Result<()> {
         // Same expression is always valid (after normalizing whitespace)
         if normalize_cel_whitespace(&child.expression) == normalize_cel_whitespace(&self.expression)
@@ -3580,15 +3591,28 @@ impl CelConstraint {
             return Ok(());
         }
 
-        // Child must be a conjunction with parent
-        // Normalize both to handle whitespace variations
+        // Child must be a conjunction with parent: (parent) && (extra)
         let child_normalized = normalize_cel_whitespace(&child.expression);
-        let expected_prefix = format!("({})&&", normalize_cel_whitespace(&self.expression));
+        let parent_normalized = normalize_cel_whitespace(&self.expression);
+        let expected_prefix = format!("({})&&", parent_normalized);
 
         if !child_normalized.starts_with(&expected_prefix) {
             return Err(Error::MonotonicityViolation(format!(
-                "child CEL must be '({}) && <predicate>', got '{}'",
+                "child CEL must be '({}) && (<predicate>)', got '{}'",
                 self.expression, child.expression
+            )));
+        }
+
+        // Extract the remainder after "(parent)&&"
+        let remainder = &child_normalized[expected_prefix.len()..];
+
+        // The remainder MUST be wrapped in balanced parentheses.
+        // Without this, `(parent) && x || y` parses as `((parent) && x) || y`
+        // due to && binding tighter than ||, which is NOT a subset of parent.
+        if !has_balanced_outer_parens(remainder) {
+            return Err(Error::MonotonicityViolation(format!(
+                "child CEL predicate must be parenthesized: '({}) && (<predicate>)', got '({}) && {}'",
+                self.expression, self.expression, remainder
             )));
         }
 
@@ -3603,6 +3627,36 @@ impl CelConstraint {
 /// Removes spaces around operators to allow flexible formatting.
 fn normalize_cel_whitespace(expr: &str) -> String {
     expr.split_whitespace().collect::<Vec<_>>().join("")
+}
+
+/// Check that a string is wrapped in balanced outer parentheses.
+///
+/// Returns true if `s` starts with `(`, ends with `)`, and the opening
+/// paren's matching close is the final character (not an inner group).
+///
+/// Examples:
+/// - `"(x>0)"` -> true
+/// - `"(x>0)&&(y<10)"` -> false (closing paren of first group is not at end)
+/// - `"x>0"` -> false (no outer parens)
+/// - `"(x>0)||(y<10)"` -> false
+fn has_balanced_outer_parens(s: &str) -> bool {
+    if !s.starts_with('(') || !s.ends_with(')') {
+        return false;
+    }
+    let mut depth = 0i32;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 && i != s.len() - 1 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 impl From<CelConstraint> for Constraint {
@@ -4422,31 +4476,44 @@ mod tests {
     }
 
     #[test]
-    fn test_oneof_to_notoneof_carving_holes() {
-        // Parent allows: [a, b, c, d]
-        // Child excludes: [b] -> effectively allows [a, c, d]
+    fn test_oneof_to_notoneof_forbidden() {
+        // OneOf -> NotOneOf is a privilege escalation: NotOneOf(["b"]) would
+        // accept "e" which is outside the parent's OneOf(["a","b","c","d"]).
+        // Use OneOf(["a","c","d"]) instead.
         let parent = Constraint::OneOf(OneOf::new(vec!["a", "b", "c", "d"]));
         let child = Constraint::NotOneOf(NotOneOf::new(vec!["b"]));
 
-        assert!(parent.validate_attenuation(&child).is_ok());
+        let result = parent.validate_attenuation(&child);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::IncompatibleConstraintTypes {
+                parent_type,
+                child_type,
+            } => {
+                assert_eq!(parent_type, "OneOf");
+                assert_eq!(child_type, "NotOneOf");
+            }
+            e => panic!("Expected IncompatibleConstraintTypes, got {:?}", e),
+        }
     }
 
     #[test]
-    fn test_oneof_to_notoneof_paradox_detection() {
-        // Parent allows: [a, b]
-        // Parent allows: [a, b]
-        // Child excludes: [a, b] -> empty set (paradox!)
+    fn test_oneof_to_notoneof_full_exclusion_also_forbidden() {
+        // Even excluding all values is blocked at the type level now.
         let parent = Constraint::OneOf(OneOf::new(vec!["a", "b"]));
         let child = Constraint::NotOneOf(NotOneOf::new(vec!["a", "b"]));
 
         let result = parent.validate_attenuation(&child);
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::EmptyResultSet { parent_type, count } => {
+            Error::IncompatibleConstraintTypes {
+                parent_type,
+                child_type,
+            } => {
                 assert_eq!(parent_type, "OneOf");
-                assert_eq!(count, 2);
+                assert_eq!(child_type, "NotOneOf");
             }
-            e => panic!("Expected EmptyResultSet, got {:?}", e),
+            e => panic!("Expected IncompatibleConstraintTypes, got {:?}", e),
         }
     }
 
@@ -5031,6 +5098,26 @@ mod tests {
         let child = UrlPattern::new("http://api.example.com/*").unwrap();
 
         assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[test]
+    fn test_url_pattern_attenuation_wildcard_scheme_widening_blocked() {
+        // Parent restricts to HTTPS; child uses *:// (empty schemes = any)
+        // This would be a privilege escalation (HTTP downgrade attack)
+        let parent = UrlPattern::new("https://api.example.com/*").unwrap();
+        let child = UrlPattern::new("*://api.example.com/*").unwrap();
+        assert!(child.schemes.is_empty());
+
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[test]
+    fn test_url_pattern_attenuation_wildcard_to_specific_allowed() {
+        // Parent allows any scheme; child restricts to HTTPS (narrowing)
+        let parent = UrlPattern::new("*://api.example.com/*").unwrap();
+        let child = UrlPattern::new("https://api.example.com/*").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_ok());
     }
 
     #[test]
@@ -5882,5 +5969,138 @@ mod tests {
         assert!(!sh
             .matches(&ConstraintValue::String("npm install".into()))
             .unwrap());
+    }
+
+    // ========================================================================
+    // CEL Attenuation Tests
+    // ========================================================================
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_cel_attenuation_equal() {
+        let parent = CelConstraint::new("amount < 10000");
+        let child = CelConstraint::new("amount < 10000");
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_cel_attenuation_valid_conjunction() {
+        let parent = CelConstraint::new("amount < 10000");
+        let child = CelConstraint::new("(amount < 10000) && (amount > 0)");
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_cel_attenuation_valid_conjunction_whitespace() {
+        let parent = CelConstraint::new("amount < 10000");
+        let child = CelConstraint::new("( amount < 10000 ) && ( amount > 0 )");
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_cel_attenuation_valid_nested_conjunction() {
+        let parent = CelConstraint::new("amount < 10000");
+        let child = CelConstraint::new("(amount < 10000) && (amount > 0 && currency == 'USD')");
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_cel_attenuation_or_bypass_blocked() {
+        // SECURITY: This is the privilege escalation attack.
+        // Without balanced-parens check, (parent) && true || evil
+        // parses as ((parent) && true) || evil, which is NOT ⊆ parent.
+        let parent = CelConstraint::new("amount < 10000");
+
+        // Unparenthesized remainder with ||
+        let child = CelConstraint::new("(amount < 10000) && true || amount < 1000000");
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_cel_attenuation_bare_predicate_blocked() {
+        // Remainder must be parenthesized
+        let parent = CelConstraint::new("amount < 10000");
+        let child = CelConstraint::new("(amount < 10000) && amount > 0");
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_cel_attenuation_or_inside_parens_ok() {
+        // (parent) && (x || y) IS safe because the || is inside the conjunction operand
+        let parent = CelConstraint::new("amount < 10000");
+        let child =
+            CelConstraint::new("(amount < 10000) && (currency == 'USD' || currency == 'EUR')");
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_cel_attenuation_different_expression_rejected() {
+        let parent = CelConstraint::new("amount < 10000");
+        let child = CelConstraint::new("amount < 5000");
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_cel_attenuate_helper_uses_parens() {
+        let parent = CelConstraint::new("amount < 10000");
+        let child = CelConstraint::attenuate(&parent, "amount > 0");
+        assert_eq!(child.expression, "(amount < 10000) && (amount > 0)");
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_balanced_outer_parens() {
+        // Simple cases
+        assert!(has_balanced_outer_parens("(x>0)"));
+        assert!(has_balanced_outer_parens("(x>0&&y<10)"));
+
+        // || at depth > 0 is contained (safe)
+        assert!(has_balanced_outer_parens("(x>0||(y<10&&z==1))"));
+        assert!(has_balanced_outer_parens("(f(x)||g(x))"));
+        assert!(has_balanced_outer_parens("(f(x,y)||g(a,b)&&h(c))"));
+
+        // Depth drops to 0 before end = outer parens don't wrap everything
+        assert!(!has_balanced_outer_parens("(x>0)&&(y<10)"));
+        assert!(!has_balanced_outer_parens("(x>0)||evil"));
+        assert!(!has_balanced_outer_parens("(x>0)extra"));
+
+        // No outer parens at all
+        assert!(!has_balanced_outer_parens("x>0"));
+        assert!(!has_balanced_outer_parens(""));
+    }
+
+    // ========================================================================
+    // Not / Any attenuation rejection tests
+    // ========================================================================
+
+    #[test]
+    fn test_not_attenuation_rejected() {
+        let parent = Constraint::Not(Not::new(Constraint::Exact(Exact::new("admin"))));
+        let child = Constraint::Not(Not::new(Constraint::Exact(Exact::new("admin"))));
+        assert!(
+            parent.validate_attenuation(&child).is_err(),
+            "Not -> Not attenuation must be rejected (direction is unsound)"
+        );
+    }
+
+    #[test]
+    fn test_any_attenuation_rejected() {
+        let parent = Constraint::Any(Any::new(vec![
+            Constraint::Exact(Exact::new("a")),
+            Constraint::Exact(Exact::new("b")),
+        ]));
+        let child = Constraint::Any(Any::new(vec![Constraint::Exact(Exact::new("a"))]));
+        assert!(
+            parent.validate_attenuation(&child).is_err(),
+            "Any -> Any attenuation must be rejected (not implemented)"
+        );
     }
 }

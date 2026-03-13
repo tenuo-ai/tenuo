@@ -501,7 +501,7 @@ pub enum Constraint {
     /// Exact string match
     Exact(String),
     
-    /// Glob pattern (*, **, ?)
+    /// Glob pattern (*, ?, [abc])
     Pattern(String),
     
     /// Numeric range (uses f64; see precision note below)
@@ -588,7 +588,7 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 | ID | Type | Value Shape | Notes |
 |----|------|-------------|-------|
 | 1 | Exact | `{value: any}` | Exact value match |
-| 2 | Pattern | `{pattern: string}` | Glob (`*`, `?`, `**`) |
+| 2 | Pattern | `{pattern: string}` | Glob (`*`, `?`, `[abc]`) |
 | 3 | Range | `{min?: f64, max?: f64}` | Numeric bounds |
 | 4 | OneOf | `{values: [any]}` | Allowed set |
 | 5 | Regex | `{pattern: string}` | Regex pattern |
@@ -643,7 +643,7 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 | **Regex** | Exact | IFF | `parent.matches(child.value)` |
 | **OneOf** | OneOf | IFF | `child.values ⊆ parent.values` |
 | **OneOf** | Exact | IFF | `child.value ∈ parent.values` |
-| **OneOf** | NotOneOf | IFF | `parent.values - child.excluded ≠ ∅` (MUST reject if empty; no valid values remain) |
+| **OneOf** | NotOneOf | NO | `NotOneOf` accepts values outside the parent's allowlist (privilege escalation). Use `OneOf(subset)` instead. |
 | **NotOneOf** | NotOneOf | IFF | `parent.excluded ⊆ child.excluded` (can only add exclusions) |
 | **Range** | Range | IFF | `child.min ≥ parent.min ∧ child.max ≤ parent.max` (see inclusivity rules) |
 | **Range** | Exact | IFF | `parent.contains(child.value)` (numeric) |
@@ -654,9 +654,9 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 | **Contains** | Contains | IFF | `parent.required ⊆ child.required` (can only add requirements) |
 | **Subset** | Subset | IFF | `child.allowed ⊆ parent.allowed` (can only shrink allowed set) |
 | **All** | All | IFF | Each parent clause has corresponding child clause that is ≤ strict; may add clauses |
-| **Any** | Any | IFF | Child clauses ⊆ parent clauses; remaining clauses not weakened |
-| **Not** | Not | IFF | `child.inner` is valid attenuation of `parent.inner` |
-| **Cel** | Cel | IFF | `child.expr == parent.expr + " && extra"` (conjunction only) |
+| **Any** | Any | NO | Not implemented. Subset checking for disjunctions is not provably sound without full evaluation. |
+| **Not** | Not | NO | Negation reverses the subset direction (`Not(B) ⊆ Not(A)` requires `A ⊆ B`, not `B ⊆ A`), making safe attenuation infeasible. |
+| **Cel** | Cel | IFF | `child.expr == "(parent.expr) && (extra)"` (parenthesized conjunction only; bare `||` after `&&` is rejected) |
 | **Subpath** | Subpath | IFF | `child.root` is subpath of `parent.root` |
 | **Subpath** | Exact | IFF | `parent.contains(child.path)` |
 | **UrlSafe** | UrlSafe | IFF | All child restrictions ≥ parent restrictions (see field rules) |
@@ -729,15 +729,9 @@ Pattern constraints support different levels of attenuation based on wildcard co
    child: Pattern("https://search.example.com/api/*")  # Still 1 wildcard, can attenuate
    ```
 
-**`**` (Double-Star) Pattern:** The `**` pattern is **reserved and discouraged**. While `**` conceptually means "match all paths," it creates security risks:
-- **Overly permissive**: Makes it too easy to grant unrestricted access
-- **Attenuation ambiguity**: Unclear if `**` is "broader" or "equal" to `*`
-- **Foot-gun potential**: Users may use `**` when they mean specific scoping
+**`**` (Double-Star) Pattern:** `**` is parsed by the underlying glob engine but behaves identically to `*` in Tenuo's context (string matching, not filesystem traversal). Since there is no path separator semantics, `**` provides no benefit over `*` and is classified as `Complex` (2 star characters), which means it only supports equality-based attenuation.
 
-**Recommended alternatives:**
-- Use `Wildcard()` constraint for explicit unrestricted access
-- Use specific patterns like `/data/*/file` or `/path/**/*.txt` for structured paths
-- Implementations MAY reject `Pattern("**")` with an error directing users to `Wildcard()`
+**Recommendation:** Avoid `**` in patterns. Use `*` for single-wildcard matching or `Wildcard()` for unrestricted access.
 
 #### Bidirectional Wildcard Patterns
 
