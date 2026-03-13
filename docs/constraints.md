@@ -1126,7 +1126,7 @@ CEL("(((((a && b) || (c && d)) && ((e || f) && (g || h))) || ...) ...")
 ##### Best Practices
 - **Keep expressions simple** - prefer built-in constraint types when possible
 - **Test expressions** before deployment with representative inputs
-- **Use syntactic attenuation** - child must be `(parent) && X` for safety
+- **Use syntactic attenuation** - child must be `(parent) && (X)` for safety
 
 ##### Important Notes
 - CEL expressions **must return boolean**. Non-boolean results cause `CelError`.
@@ -1159,12 +1159,15 @@ When attenuating a warrant, child constraints must be **contained** within paren
 | `AnyOf()` | Not supported (use `All` or restructure) |
 | `Not()` | Not supported (use positive constraints) |
 | `CEL()` | CEL (parenthesized conjunction with parent) |
+| `Subpath()` | Subpath (narrower root), Exact (if path contained) |
+| `UrlSafe()` | UrlSafe (more restrictive), Exact (if URL is safe) |
+| `Shlex()` | Shlex (fewer allowed binaries), Exact (if command matches) |
 
 **Key Limitations**:
 - **Regex**: Cannot narrow to different regex patterns (undecidable subset problem)
 - **Exact**: Cannot change value at all
 - **Range**: If parent bound is exclusive, child cannot make it inclusive at the same value (would widen)
-- **No attenuation TO Wildcard**: Would re-widen authority
+- **No attenuation TO Wildcard** (from non-Wildcard parents): Would re-widen authority
 - **Not**: Attenuation not supported. Negation reverses the subset direction (`Not(B) ⊆ Not(A)` requires `A ⊆ B`, not `B ⊆ A`), making safe attenuation infeasible. Use positive constraints (OneOf, Pattern) instead.
 - **AnyOf (OR)**: Attenuation not supported. Subset checking for disjunctions requires full evaluation. Use `All` with structured constraints instead.
 - **CEL**: Child must be `(parent) && (extra)`. The extra predicate must be parenthesized to prevent `||` precedence bypass.
@@ -1185,6 +1188,9 @@ Some constraint types can contain different types during attenuation:
 | `UrlPattern("https://*.example.com/*")` | `UrlPattern("https://api.example.com/v1/*")` | Child pattern is narrower |
 | `OneOf(["a","b","c"])` | `Exact("b")` | Child value is in parent set |
 | `OneOf(["a","b","c"])` | `OneOf(["a","b"])` | Subset of parent set |
+| `Subpath("/data")` | `Exact("/data/file.txt")` | Child path within parent root |
+| `UrlSafe()` | `Exact("https://api.example.com/v1")` | Child URL passes safety check |
+| `Shlex(allow=["ls"])` | `Exact("ls -la")` | Child command passes shlex check |
 
 #### Special Rules
 
@@ -1266,7 +1272,7 @@ child = Subset(["a", "b"])  # OK - allows fewer
 - `Pattern` -> `Range`: String matching vs numeric bounds
 - `OneOf` -> `Pattern`: Set membership vs glob matching
 - `OneOf` -> `NotOneOf`: `NotOneOf` accepts values outside the parent's allowlist (privilege escalation). Use `OneOf(subset)` instead.
-- Any type -> `Wildcard`: Would expand permissions
+- Non-Wildcard -> `Wildcard`: Would expand permissions
 
 ### Pattern Narrowing
 
@@ -1635,10 +1641,10 @@ client = auto_guard(
 
 Tenuo enforces constraints by comparing tool arguments against warrant constraints. The extraction mechanism varies by integration but follows the same principles:
 
-1. **Extract all arguments** -- no argument should be hidden from authorization
-2. **Include defaults** -- default values must be checked (cannot bypass via omission)
-3. **Fail securely** -- if extraction fails, authorization is denied
-4. **Type safety** -- arguments converted to appropriate types for constraint checking
+1. **Extract all arguments** - no argument should be hidden from authorization
+2. **Include defaults** - default values must be checked (cannot bypass via omission)
+3. **Fail securely** - if extraction fails, authorization is denied
+4. **Type safety** - arguments converted to appropriate types for constraint checking
 
 ### Python SDK (`@guard`)
 

@@ -215,7 +215,7 @@ authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop
 
 ## LangChain + MCP Integration
 
-Tenuo integrates seamlessly with [`langchain-mcp-adapters`](https://github.com/langchain-ai/langchainjs/tree/main/libs/langchain-mcp-adapters/).
+Tenuo integrates seamlessly with [`langchain-mcp-adapters`](https://github.com/langchain-ai/langchain-mcp-adapters).
 
 **Pattern**: LangChain `MultiServerMCPClient` → Tenuo Authorization → MCP Server
 
@@ -527,7 +527,7 @@ Always require PoP signatures for MCP tool calls:
 
 ```python
 # Create PoP signature
-pop_sig = warrant.sign(keypair, tool, args)
+pop_sig = warrant.sign(signing_key, tool, args)
 
 # Authorize with signature
 authorizer.check(warrant, tool, args, bytes(pop_sig))

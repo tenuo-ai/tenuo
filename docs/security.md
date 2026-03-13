@@ -186,7 +186,7 @@ For the full threat model (what Tenuo protects against and what it does not), se
 
 ### Defense in Depth: Network Policies
 
-Tenuo handles authorization -- what an agent is *allowed* to do. For exfiltration prevention, use Kubernetes Network Policies:
+Tenuo handles authorization - what an agent is *allowed* to do. For exfiltration prevention, use Kubernetes Network Policies:
 
 ```yaml
 # Restrict agent egress to only approved services

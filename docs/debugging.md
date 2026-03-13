@@ -269,7 +269,7 @@ print(f"TTL remaining: {warrant.ttl_remaining}")
 from tenuo import warrant_scope, key_scope
 
 # Wrap your call
-with warrant_scope(warrant), key_scope(keypair):
+with warrant_scope(warrant), key_scope(signing_key):
     protected_function()
 ```
 
@@ -284,16 +284,16 @@ protected = guard(tools, warrant.bind(key))
 
 **Error:** `PoP signature invalid`
 
-**Cause:** The keypair used to sign doesn't match the warrant's holder.
+**Cause:** The signing key used doesn't match the warrant's holder.
 
 **Debug:**
 ```python
 print(f"Warrant holder: {warrant.holder}")
-print(f"Key public: {keypair.public_key}")
+print(f"Key public: {signing_key.public_key}")
 # Compare - should be equal
 ```
 
-**Fix:** Use the correct keypair.
+**Fix:** Use the correct signing key.
 
 ---
 
@@ -412,7 +412,7 @@ if bound.validate("delete", {"id": "123"}):
 | `unknown field not allowed` | Closed-world mode active | Add constraint or `_allow_unknown` |
 | `Warrant expired` | TTL exceeded | Get fresh warrant |
 | `No warrant in context` | Missing context | Use `warrant_scope()` |
-| `PoP signature invalid` | Wrong key | Use holder's keypair |
+| `PoP signature invalid` | Wrong key | Use holder's signing key |
 | `MonotonicityViolation` | Tried to expand scope | Scopes only shrink |
 | `Key 'X' not found` | Key not in registry | Register key or `load_tenuo_keys()` |
 

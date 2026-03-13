@@ -638,10 +638,10 @@ diagnose(warrant)  # Prints warrant details, TTL, constraints, etc.
 
 ## Next Steps
 
-- **[AI Agent Patterns](./ai-agents)** -- P-LLM/Q-LLM, prompt injection defense
-- **[Concepts](./concepts)** -- Why Tenuo? Threat model, core invariants
-- **[AutoGen](./autogen)** -- Protect AutoGen AgentChat tools
-- **[LangChain](./langchain)** -- Protect LangChain tools
-- **[LangGraph](./langgraph)** -- Scope LangGraph nodes
-- **[FastAPI](./fastapi)** -- Zero-boilerplate API protection
-- **[Security](./security)** -- Threat model, best practices
+- **[AI Agent Patterns](./ai-agents)** - P-LLM/Q-LLM, prompt injection defense
+- **[Concepts](./concepts)** - Why Tenuo? Threat model, core invariants
+- **[AutoGen](./autogen)** - Protect AutoGen AgentChat tools
+- **[LangChain](./langchain)** - Protect LangChain tools
+- **[LangGraph](./langgraph)** - Scope LangGraph nodes
+- **[FastAPI](./fastapi)** - Zero-boilerplate API protection
+- **[Security](./security)** - Threat model, best practices

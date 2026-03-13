@@ -332,14 +332,16 @@ child = (parent.grant_builder()
     .grant(parent_key))  # Parent holder signs
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `issuable_tools` | `List[str]` | Tools this warrant can issue |
-| `keypair` | `SigningKey` | Issuer's keypair |
-| `constraint_bounds` | `dict` | Optional constraint bounds |
-| `max_issue_depth` | `int` | Max depth for issued warrants |
-| `ttl_seconds` | `int` | Time-to-live in seconds |
-| `holder` | `PublicKey` | Optional holder (defaults to issuer) |
+| Method | Description |
+|--------|-------------|
+| `.issuer()` | Switch to issuer mode |
+| `.issuable_tools(tools)` | Set tools this warrant can issue |
+| `.constraint_bound(field, constraint)` | Set constraint bounds |
+| `.max_issue_depth(depth)` | Max depth for issued warrants |
+| `.clearance(level)` | Set clearance level |
+| `.holder(public_key)` | Set authorized holder |
+| `.ttl(seconds)` | Time-to-live in seconds |
+| `.mint(signing_key)` | Sign and create the warrant |
 
 #### `Warrant.mint_builder()` - Fluent API
 
@@ -416,7 +418,7 @@ warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_s
 | `attenuate(constraints, keypair, ttl_seconds=None, holder=None)` | `Warrant` | Create narrower child warrant |
 | `grant_builder()` | `GrantBuilder` | Create builder for delegation/attenuation |
 | `issue()` | `IssuanceBuilder` | Create execution warrant from issuer warrant |
-| `delegate(holder, tools=None, **constraints)` | `Warrant` | Convenience method to delegate (requires context) |
+| `grant(allow, to=None, ttl=None, **constraints)` | `Warrant` | Convenience method to delegate (requires context) |
 
 | `verify(public_key)` | `bool` | Verify signature against issuer |
 | `sign(keypair, tool, args)` | `bytes` | Sign action (Proof-of-Possession) |
@@ -622,7 +624,7 @@ bound = warrant.bind(keypair)
 |--------|---------|-------------|
 | `validate(tool, args)` | `ValidationResult` | Full security check (PoP + constraints) |
 | `allows(tool, args=None)` | `bool` | Logic check (no PoP) |
-| `delegate(holder, tools=None, **constraints)` | `BoundWarrant` | Delegate (uses bound key) |
+| `grant(allow, to=None, ttl=None, **constraints)` | `BoundWarrant` | Delegate (uses bound key) |
 | `headers(tool, args)` | `dict` | HTTP headers (uses bound key) |
 | `unbind()` | `tuple[Warrant, SigningKey]` | Extract warrant and key |
 | `why_denied(tool, **args)` | `WhyDenied` | Get denial reason |
@@ -862,7 +864,7 @@ Glob-style pattern matching.
 
 ```python
 Pattern("staging-*")      # Matches staging-web, staging-db
-Pattern("/tmp/**")        # Recursive: matches /tmp/foo/bar/file.txt
+Pattern("/tmp/*")         # Matches /tmp/foo, /tmp/bar
 Pattern("*-safe")         # Suffix: matches image-safe
 ```
 

@@ -342,7 +342,7 @@ except TenuoError as e:
 | `SignatureInvalid` | 1100 | Bad PoP signature | Check signing key |
 | `RevokedError` | 1800 | Warrant revoked | Request new warrant |
 
-See [wire format specification](/docs/spec/wire-format-v1#appendix-a-error-codes) for the complete list.
+See [wire format specification](./spec/wire-format-v1#appendix-a-error-codes) for the complete list.
 
 ---
 
