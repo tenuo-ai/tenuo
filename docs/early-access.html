@@ -201,8 +201,8 @@
 
         .checkbox-label {
             display: flex;
-            align-items: flex-start;
-            gap: 10px;
+            align-items: baseline;
+            gap: 8px;
             font-size: 0.85rem;
             color: var(--muted);
             cursor: pointer;
@@ -210,9 +210,11 @@
         }
 
         .checkbox-label input[type="checkbox"] {
-            margin-top: 3px;
             accent-color: var(--accent);
             flex-shrink: 0;
+            width: 14px;
+            height: 14px;
+            translate: 0 2px;
         }
 
         .checkbox-label a {
