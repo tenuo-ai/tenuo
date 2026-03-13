@@ -283,34 +283,73 @@
             flex-shrink: 0;
         }
 
-        /* Beta note */
-        .beta-note {
-            max-width: 580px;
-            margin: 0 auto 48px;
-            padding: 24px 28px;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            background: var(--surface);
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
         }
 
-        .beta-note h3 {
+        .modal-overlay.open {
+            display: flex;
+        }
+
+        .modal-card {
+            max-width: 520px;
+            width: calc(100% - 48px);
+            padding: 32px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            position: relative;
+            animation: modal-in 0.15s ease-out;
+        }
+
+        @keyframes modal-in {
+            from { opacity: 0; transform: scale(0.96) translateY(8px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 12px;
+            right: 16px;
+            background: none;
+            border: none;
+            color: var(--muted);
+            font-size: 1.4rem;
+            cursor: pointer;
+            line-height: 1;
+            padding: 4px;
+        }
+
+        .modal-close:hover {
+            color: var(--text);
+        }
+
+        .modal-card h3 {
             font-size: 0.95rem;
             font-weight: 600;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }
 
-        .beta-note p {
+        .modal-card p {
             font-size: 0.85rem;
             color: var(--muted);
             line-height: 1.7;
         }
 
-        .beta-note a {
+        .modal-card a {
             color: var(--accent);
             text-decoration: none;
         }
 
-        .beta-note a:hover {
+        .modal-card a:hover {
             text-decoration: underline;
         }
 
@@ -426,7 +465,7 @@
                     <div class="form-group checkbox-group">
                         <label class="checkbox-label">
                             <input type="checkbox" id="acknowledge" required>
-                            <span>I understand this is a <a href="#beta-note">private beta</a> with no uptime or support guarantees, and I agree to report bugs or issues I encounter.</span>
+                            <span>I understand this is a <a href="#" id="beta-link">private beta</a> with no uptime or support guarantees, and I agree to report bugs or issues I encounter.</span>
                         </label>
                     </div>
 
@@ -452,11 +491,6 @@
             </div>
         </div>
 
-        <div id="beta-note" class="beta-note">
-            <h3>About the private beta</h3>
-            <p>Tenuo Cloud is under active development. During the beta period, things may break, APIs may change, and we may need to reset environments. We do our best to keep the service running smoothly, but we can't make guarantees around uptime, data retention, or SLAs yet. If reliability is critical for your use case today, <a href="/quickstart">self-hosting</a> gives you full control.</p>
-        </div>
-
         <div class="oss-note">
             <p>Tenuo is open source and free to self-host. Get started in minutes.</p>
             <a href="/quickstart">Get started with self-hosted &rarr;</a>
@@ -467,6 +501,14 @@
             <a href="/quickstart">Docs</a> · 
             <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
         </footer>
+    </div>
+
+    <div id="beta-modal" class="modal-overlay">
+        <div class="modal-card">
+            <button class="modal-close" aria-label="Close">&times;</button>
+            <h3>About the private beta</h3>
+            <p>Tenuo Cloud is under active development. During the beta period, things may break, APIs may change, and we may need to reset environments. We do our best to keep the service running smoothly, but we can't make guarantees around uptime, data retention, or SLAs yet. If reliability is critical for your use case today, <a href="/quickstart">self-hosting</a> gives you full control.</p>
+        </div>
     </div>
 
     <script>
@@ -499,6 +541,20 @@
                 btn.textContent = 'Request Early Access';
                 alert('Something went wrong. Please try again or email team@tenuo.ai');
             }
+        });
+
+        const modal = document.getElementById('beta-modal');
+        document.getElementById('beta-link').addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            modal.classList.add('open');
+        });
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal || e.target.classList.contains('modal-close'))
+                modal.classList.remove('open');
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') modal.classList.remove('open');
         });
     </script>
 
