@@ -104,8 +104,10 @@ fn range_strategy() -> impl Strategy<Value = Constraint> {
 
 fn pattern_strategy() -> impl Strategy<Value = Constraint> {
     prop_oneof![
-        atom_strategy().prop_map(|s| Constraint::Pattern(Pattern::new(&format!("{}*", s)).unwrap())),
-        atom_strategy().prop_map(|s| Constraint::Pattern(Pattern::new(&format!("*{}", s)).unwrap())),
+        atom_strategy()
+            .prop_map(|s| Constraint::Pattern(Pattern::new(&format!("{}*", s)).unwrap())),
+        atom_strategy()
+            .prop_map(|s| Constraint::Pattern(Pattern::new(&format!("*{}", s)).unwrap())),
         Just(Constraint::Pattern(Pattern::new("*").unwrap())),
     ]
 }
@@ -386,10 +388,7 @@ fn exhaustive_notoneof_notoneof_soundness() {
             }
         }
     }
-    eprintln!(
-        "exhaustive_notoneof_notoneof: checked {} triples",
-        checked
-    );
+    eprintln!("exhaustive_notoneof_notoneof: checked {} triples", checked);
 }
 
 /// For OneOf x NotOneOf (cross-type): exhaustively verify it's ALWAYS rejected.
@@ -407,7 +406,8 @@ fn exhaustive_oneof_notoneof_always_rejected() {
                 "OneOf -> NotOneOf must ALWAYS be rejected\n\
                  parent: OneOf({:?})\n\
                  child:  NotOneOf({:?})",
-                parent_set, child_set
+                parent_set,
+                child_set
             );
         }
     }
@@ -437,10 +437,7 @@ fn exhaustive_subset_subset_soundness() {
             }
         }
     }
-    eprintln!(
-        "exhaustive_subset_subset: checked {} triples",
-        checked
-    );
+    eprintln!("exhaustive_subset_subset: checked {} triples", checked);
 }
 
 /// For Contains x Contains: exhaustively verify.
@@ -466,10 +463,7 @@ fn exhaustive_contains_contains_soundness() {
             }
         }
     }
-    eprintln!(
-        "exhaustive_contains_contains: checked {} triples",
-        checked
-    );
+    eprintln!("exhaustive_contains_contains: checked {} triples", checked);
 }
 
 /// Verify that Not -> Not attenuation is always rejected (code is sound,
