@@ -1,10 +1,11 @@
 use proptest::prelude::*;
 use tenuo::constraints::*;
 
-/// This test suite acts as a Conformance Oracle.
-/// It bridges the formal Alloy/Z3 verification models with the Rust implementation.
-/// Every test exactly corresponds to a formal mathematical theorem proven in `z3_bounds.py`
-/// or `aat_constraints.als`, ensuring the Rust runtime is a perfect reflection of the math.
+/// This test suite provides empirical assurance for the Tenuo constraint engines.
+/// It bridges the abstract Alloy/Z3 verification models with the Rust implementation
+/// using bounded fuzzing. Rather than proving perfect semantic equivalence,
+/// it documents conservative runtime deviations (like Any->Any) and confirms
+/// rejection of generated malformed structural boundaries.
 
 #[test]
 fn test_alloy_all_and_any_conformance() {
