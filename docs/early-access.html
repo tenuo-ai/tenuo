@@ -194,6 +194,36 @@
             cursor: not-allowed;
         }
 
+        /* Checkbox */
+        .checkbox-group {
+            margin-bottom: 24px !important;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 0.85rem;
+            color: var(--muted);
+            cursor: pointer;
+            line-height: 1.5;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            margin-top: 3px;
+            accent-color: var(--accent);
+            flex-shrink: 0;
+        }
+
+        .checkbox-label a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .checkbox-label a:hover {
+            text-decoration: underline;
+        }
+
         /* Success state */
         .form-success {
             display: none;
@@ -251,6 +281,37 @@
             background: var(--accent);
             border-radius: 50%;
             flex-shrink: 0;
+        }
+
+        /* Beta note */
+        .beta-note {
+            max-width: 580px;
+            margin: 0 auto 48px;
+            padding: 24px 28px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+        }
+
+        .beta-note h3 {
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .beta-note p {
+            font-size: 0.85rem;
+            color: var(--muted);
+            line-height: 1.7;
+        }
+
+        .beta-note a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .beta-note a:hover {
+            text-decoration: underline;
         }
 
         /* OSS note */
@@ -362,6 +423,20 @@
                         <textarea id="building" name="building" placeholder="AI agent that manages cloud infrastructure..." rows="3"></textarea>
                     </div>
 
+                    <div class="form-group checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="acknowledge" required>
+                            <span>I understand this is a <a href="#beta-note">private beta</a> with no uptime or support guarantees, and I agree to report bugs or issues I encounter.</span>
+                        </label>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="acceptable-use" required>
+                            <span>I won't use the platform for illegal activity, abuse, or bad faith purposes.</span>
+                        </label>
+                    </div>
+
                     <button type="submit" class="submit-btn">Request Early Access</button>
                 </form>
 
@@ -375,6 +450,11 @@
                     <p>We'll be in touch soon. In the meantime, you can <a href="/quickstart" style="color: var(--accent);">self-host Tenuo</a> today.</p>
                 </div>
             </div>
+        </div>
+
+        <div id="beta-note" class="beta-note">
+            <h3>About the private beta</h3>
+            <p>Tenuo Cloud is under active development. During the beta period, things may break, APIs may change, and we may need to reset environments. We do our best to keep the service running smoothly, but we can't make guarantees around uptime, data retention, or SLAs yet. If reliability is critical for your use case today, <a href="/quickstart">self-hosting</a> gives you full control.</p>
         </div>
 
         <div class="oss-note">
