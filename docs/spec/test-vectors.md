@@ -1,5 +1,3 @@
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s
-     Running `target/debug/generate_test_vectors`
 # Tenuo Protocol Test Vectors
 
 **Version:** 1.0
