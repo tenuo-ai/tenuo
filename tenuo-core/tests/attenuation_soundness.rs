@@ -1,19 +1,27 @@
 //! Formal verification of attenuation soundness via property-based testing.
 //!
-//! Core invariant (monotonicity):
-//!   For all values v, if validate_attenuation(parent, child) = Ok,
-//!   then child.matches(v) = true implies parent.matches(v) = true.
+//! Three properties are verified:
 //!
-//! In other words: a child constraint can never accept a value that its
-//! parent would reject. Violation of this property is a privilege escalation.
+//! 1. **Monotonicity**: For all values v, if validate_attenuation(parent, child) = Ok,
+//!    then child.matches(v) = true implies parent.matches(v) = true.
+//!    A child constraint can never accept a value the parent rejects.
 //!
-//! This test generates random (parent, child) constraint pairs, checks whether
-//! attenuation is accepted, and then fuzzes with random values to verify the
-//! implication holds. For finite-domain types (OneOf, NotOneOf, Exact, Subset,
-//! Contains), we also run exhaustive checks over a small universe.
+//! 2. **Normalization idempotence**: Serializing a constraint (or full warrant) to
+//!    CBOR and deserializing it back produces an object whose re-serialization is
+//!    byte-identical. This guarantees signatures remain valid after round-trips.
+//!
+//! 3. **Constraint soundness (mint vs enforce)**: Minting a warrant with constraints,
+//!    encoding to wire format, decoding, then enforcing with `check_constraints`
+//!    produces the same accept/reject decision as calling `matches()` on the
+//!    original in-memory constraint. No semantic drift across the wire boundary.
 
 use proptest::prelude::*;
+use std::collections::HashMap;
+use std::time::Duration;
 use tenuo::constraints::*;
+use tenuo::crypto::SigningKey;
+use tenuo::warrant::Warrant;
+use tenuo::wire;
 
 // ============================================================================
 // Universe of test values (small enough for exhaustive checking)
@@ -605,4 +613,257 @@ fn regression_not_not_unsound() {
     let escalation = ConstraintValue::String("a".to_string());
     assert!(child.matches(&escalation).unwrap());
     assert!(!parent.matches(&escalation).unwrap());
+}
+
+// ============================================================================
+// Property 2: Normalization idempotence
+//
+// serialize(deserialize(serialize(x))) == serialize(x)
+//
+// If this fails, signatures break after a decode/re-encode round-trip,
+// or two nodes disagree on a warrant's canonical form.
+// ============================================================================
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2000))]
+
+    /// Constraint CBOR round-trip produces byte-identical output.
+    #[test]
+    fn prop_constraint_cbor_idempotent(
+        constraint in leaf_constraint_strategy(),
+    ) {
+        let bytes1 = wire::to_vec(&constraint).unwrap();
+        let decoded: Constraint = ciborium::de::from_reader(&bytes1[..]).unwrap();
+        let bytes2 = wire::to_vec(&decoded).unwrap();
+        prop_assert_eq!(
+            &bytes1, &bytes2,
+            "CBOR normalization not idempotent!\n\
+             original:     {:?}\n\
+             round-tripped: {:?}",
+            constraint, decoded
+        );
+    }
+
+    /// ConstraintSet CBOR round-trip produces byte-identical output.
+    #[test]
+    fn prop_constraint_set_cbor_idempotent(
+        constraints in prop::collection::vec(
+            (atom_strategy(), leaf_constraint_strategy()), 1..=4
+        ),
+    ) {
+        let mut cs = ConstraintSet::new();
+        for (field, constraint) in constraints {
+            cs.insert(field, constraint);
+        }
+
+        let bytes1 = wire::to_vec(&cs).unwrap();
+        let decoded: ConstraintSet = ciborium::de::from_reader(&bytes1[..]).unwrap();
+        let bytes2 = wire::to_vec(&decoded).unwrap();
+        prop_assert_eq!(&bytes1, &bytes2, "ConstraintSet CBOR not idempotent");
+    }
+
+    /// Full warrant wire format round-trip: encode -> decode -> re-encode
+    /// produces byte-identical CBOR.
+    #[test]
+    fn prop_warrant_wire_idempotent(
+        tool_name in "[a-z_]{1,12}",
+        field_name in "[a-z]{1,6}",
+        constraint in leaf_constraint_strategy(),
+        ttl_secs in 60u64..3600,
+    ) {
+        let kp = SigningKey::generate();
+        let mut cs = ConstraintSet::new();
+        cs.insert(field_name, constraint);
+
+        let warrant = Warrant::builder()
+            .capability(&tool_name, cs)
+            .ttl(Duration::from_secs(ttl_secs))
+            .holder(kp.public_key())
+            .build(&kp)
+            .unwrap();
+
+        let bytes1 = wire::encode(&warrant).unwrap();
+        let decoded = wire::decode(&bytes1).unwrap();
+        let bytes2 = wire::encode(&decoded).unwrap();
+        prop_assert_eq!(
+            &bytes1, &bytes2,
+            "Warrant wire format not idempotent (len {} vs {})",
+            bytes1.len(), bytes2.len()
+        );
+    }
+}
+
+/// ConstraintValue CBOR idempotence (exhaustive for small universe).
+#[test]
+fn exhaustive_constraint_value_cbor_idempotent() {
+    let values = vec![
+        ConstraintValue::String("hello".to_string()),
+        ConstraintValue::String("".to_string()),
+        ConstraintValue::Integer(0),
+        ConstraintValue::Integer(-1),
+        ConstraintValue::Integer(i64::MAX),
+        ConstraintValue::Float(0.0),
+        ConstraintValue::Float(-1.5),
+        ConstraintValue::Float(f64::MAX),
+        ConstraintValue::Boolean(true),
+        ConstraintValue::Boolean(false),
+        ConstraintValue::List(vec![
+            ConstraintValue::String("a".to_string()),
+            ConstraintValue::Integer(42),
+        ]),
+        ConstraintValue::List(vec![]),
+    ];
+
+    for v in &values {
+        let bytes1 = wire::to_vec(v).unwrap();
+        let decoded: ConstraintValue = ciborium::de::from_reader(&bytes1[..]).unwrap();
+        let bytes2 = wire::to_vec(&decoded).unwrap();
+        assert_eq!(
+            bytes1, bytes2,
+            "ConstraintValue CBOR not idempotent for {:?}",
+            v
+        );
+    }
+}
+
+// ============================================================================
+// Property 3: Constraint soundness (mint-time vs enforcement-time)
+//
+// For a warrant minted with constraint C on field F:
+//   original C.matches(v) == deserialized_warrant.check_constraints(tool, {F: v})
+//
+// Any divergence means the enforcement layer silently accepts (or rejects)
+// values that the minted policy disagrees with.
+// ============================================================================
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(3000))]
+
+    /// Constraint semantics survive the wire round-trip: mint -> encode ->
+    /// decode -> enforce must agree with in-memory matches().
+    #[test]
+    fn prop_enforcement_agrees_with_matches(
+        constraint in leaf_constraint_strategy(),
+        values in prop::collection::vec(value_strategy(), 10..=20),
+    ) {
+        let tool = "test_tool";
+        let field = "arg";
+        let kp = SigningKey::generate();
+
+        let mut cs = ConstraintSet::new();
+        cs.insert(field, constraint.clone());
+
+        let warrant = Warrant::builder()
+            .capability(tool, cs)
+            .ttl(Duration::from_secs(3600))
+            .holder(kp.public_key())
+            .build(&kp)
+            .unwrap();
+
+        // Wire round-trip
+        let bytes = wire::encode(&warrant).unwrap();
+        let deserialized = wire::decode(&bytes).unwrap();
+
+        for value in &values {
+            let in_memory_result = constraint.matches(value);
+
+            let mut args = HashMap::new();
+            args.insert(field.to_string(), value.clone());
+            let enforcement_result = deserialized.check_constraints(tool, &args);
+
+            match in_memory_result {
+                Ok(true) => {
+                    prop_assert!(
+                        enforcement_result.is_ok(),
+                        "ENFORCEMENT DRIFT: constraint.matches(v) = true, \
+                         but check_constraints rejected after wire round-trip!\n\
+                         constraint: {:?}\n\
+                         value: {:?}\n\
+                         error: {:?}",
+                        constraint, value, enforcement_result.err()
+                    );
+                }
+                Ok(false) => {
+                    prop_assert!(
+                        enforcement_result.is_err(),
+                        "ENFORCEMENT DRIFT: constraint.matches(v) = false, \
+                         but check_constraints accepted after wire round-trip!\n\
+                         constraint: {:?}\n\
+                         value: {:?}",
+                        constraint, value
+                    );
+                }
+                Err(_) => {
+                    // In-memory evaluation error (type mismatch, etc.)
+                    // Enforcement may also error or reject; both are fine
+                }
+            }
+        }
+    }
+
+    /// Same property but with multiple constraints per tool, testing
+    /// ConstraintSet-level interaction across the wire boundary.
+    #[test]
+    fn prop_multi_field_enforcement_agrees(
+        constraints in prop::collection::vec(
+            (atom_strategy(), leaf_constraint_strategy()), 1..=3
+        ),
+        values in prop::collection::vec(
+            prop::collection::vec(
+                (atom_strategy(), value_strategy()), 1..=5
+            ), 5..=10
+        ),
+    ) {
+        let tool = "multi_tool";
+        let kp = SigningKey::generate();
+
+        let mut cs = ConstraintSet::new();
+        for (field, constraint) in &constraints {
+            cs.insert(field.clone(), constraint.clone());
+        }
+
+        let warrant = Warrant::builder()
+            .capability(tool, cs.clone())
+            .ttl(Duration::from_secs(3600))
+            .holder(kp.public_key())
+            .build(&kp)
+            .unwrap();
+
+        let bytes = wire::encode(&warrant).unwrap();
+        let deserialized = wire::decode(&bytes).unwrap();
+
+        for value_set in &values {
+            let mut args: HashMap<String, ConstraintValue> = HashMap::new();
+            for (k, v) in value_set {
+                args.insert(k.clone(), v.clone());
+            }
+
+            let original_result = cs.matches(&args);
+            let deserialized_result = deserialized.check_constraints(tool, &args);
+
+            match (&original_result, &deserialized_result) {
+                (Ok(()), Ok(())) => {} // Both accept
+                (Err(_), Err(_)) => {} // Both reject
+                (Ok(()), Err(e)) => {
+                    prop_assert!(
+                        false,
+                        "ENFORCEMENT DRIFT: ConstraintSet.matches() = Ok, \
+                         but check_constraints rejected!\n\
+                         args: {:?}\n\
+                         error: {:?}",
+                        args, e
+                    );
+                }
+                (Err(_), Ok(())) => {
+                    prop_assert!(
+                        false,
+                        "ENFORCEMENT DRIFT: ConstraintSet.matches() = Err, \
+                         but check_constraints accepted!\n\
+                         args: {:?}",
+                        args
+                    );
+                }
+            }
+        }
+    }
 }
