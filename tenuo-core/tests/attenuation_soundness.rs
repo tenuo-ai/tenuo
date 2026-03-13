@@ -53,11 +53,44 @@ fn list_value_strategy() -> impl Strategy<Value = ConstraintValue> {
         .prop_map(ConstraintValue::List)
 }
 
+fn command_value_strategy() -> impl Strategy<Value = ConstraintValue> {
+    prop_oneof![
+        prop::sample::select(
+            &[
+                "ls",
+                "cat /etc/passwd",
+                "echo hello",
+                "grep -r foo",
+                "wc -l"
+            ][..]
+        )
+        .prop_map(|s| ConstraintValue::String(s.to_string())),
+        // Include values with shell metacharacters (Shlex should reject these)
+        prop::sample::select(&["ls; rm -rf /", "cat | grep", "echo $(whoami)", "ls && cat"][..])
+            .prop_map(|s| ConstraintValue::String(s.to_string())),
+    ]
+}
+
+fn url_value_strategy() -> impl Strategy<Value = ConstraintValue> {
+    prop_oneof![prop::sample::select(
+        &[
+            "https://api.example.com/data",
+            "http://localhost/admin",
+            "https://10.0.0.1/internal",
+            "ftp://files.example.com/pub",
+            "https://169.254.169.254/latest/meta-data/",
+        ][..]
+    )
+    .prop_map(|s| ConstraintValue::String(s.to_string())),]
+}
+
 fn value_strategy() -> impl Strategy<Value = ConstraintValue> {
     prop_oneof![
         3 => string_value_strategy(),
         1 => numeric_value_strategy(),
         1 => list_value_strategy(),
+        1 => command_value_strategy(),
+        1 => url_value_strategy(),
     ]
 }
 
@@ -89,8 +122,8 @@ fn range_strategy() -> impl Strategy<Value = Constraint> {
         any::<bool>(),
         any::<bool>(),
     )
-        .prop_filter("at least one bound", |(min, max, _, _)| {
-            min.is_some() || max.is_some()
+        .prop_filter("at least one bound, not inverted", |(min, max, _, _)| {
+            (min.is_some() || max.is_some()) && min.is_none_or(|mn| max.is_none_or(|mx| mn <= mx))
         })
         .prop_map(|(min, max, min_inc, max_inc)| {
             Constraint::Range(Range {
@@ -131,6 +164,22 @@ fn wildcard_strategy() -> impl Strategy<Value = Constraint> {
     Just(Constraint::Wildcard(Wildcard::new()))
 }
 
+fn shlex_strategy() -> impl Strategy<Value = Constraint> {
+    prop::collection::vec(
+        prop::sample::select(&["ls", "cat", "echo", "grep", "wc"][..]),
+        1..=3,
+    )
+    .prop_map(|cmds| {
+        Constraint::Shlex(Shlex::new(
+            cmds.into_iter().map(String::from).collect::<Vec<_>>(),
+        ))
+    })
+}
+
+fn urlsafe_strategy() -> impl Strategy<Value = Constraint> {
+    Just(Constraint::UrlSafe(UrlSafe::new()))
+}
+
 fn all_strategy() -> impl Strategy<Value = Constraint> {
     prop::collection::vec(leaf_constraint_strategy(), 1..=3)
         .prop_map(|cs| Constraint::All(All::new(cs)))
@@ -157,6 +206,8 @@ fn leaf_constraint_strategy() -> impl Strategy<Value = Constraint> {
         1 => subset_strategy(),
         1 => subpath_strategy(),
         1 => wildcard_strategy(),
+        1 => shlex_strategy(),
+        1 => urlsafe_strategy(),
     ]
 }
 
@@ -172,6 +223,8 @@ fn constraint_strategy() -> impl Strategy<Value = Constraint> {
         1 => subset_strategy(),
         1 => subpath_strategy(),
         1 => wildcard_strategy(),
+        1 => shlex_strategy(),
+        1 => urlsafe_strategy(),
         1 => all_strategy(),
         1 => not_strategy(),
         1 => any_of_strategy(),
@@ -204,10 +257,9 @@ fn assert_monotonicity(parent: &Constraint, child: &Constraint, value: &Constrai
 
     // child.matches(v) = true AND attenuation was accepted
     // => parent.matches(v) MUST be true
-    let parent_accepts = match parent.matches(value) {
-        Ok(b) => b,
-        Err(_) => return, // Evaluation error, skip
-    };
+    // Err is treated as reject (fail-closed): if parent can't evaluate
+    // but child accepted, that's a soundness violation.
+    let parent_accepts = parent.matches(value).unwrap_or_default();
 
     assert!(
         parent_accepts,
@@ -251,6 +303,8 @@ proptest! {
             (contains_strategy(), contains_strategy()),
             (subset_strategy(), subset_strategy()),
             (subpath_strategy(), subpath_strategy()),
+            (shlex_strategy(), shlex_strategy()),
+            (urlsafe_strategy(), urlsafe_strategy()),
             (wildcard_strategy(), constraint_strategy()),
         ],
         values in prop::collection::vec(value_strategy(), 20..=40),
@@ -318,10 +372,6 @@ proptest! {
             );
         }
 
-        // Verify the parent itself is sound (trivial: same = same)
-        assert!(parent.validate_attenuation(&parent).is_ok() ||
-            // Some types don't support self-attenuation (Not, Any)
-            parent.validate_attenuation(&parent).is_err());
     }
 }
 
@@ -875,21 +925,28 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(2000))]
 
     /// Closed-world rejects unknown fields when constraints exist.
+    /// Uses Wildcard for the known field so it always passes, isolating
+    /// the test to unknown-field rejection specifically.
     #[test]
     fn prop_closed_world_rejects_unknown_fields(
         known_field in atom_strategy(),
         unknown_field in "[f-z]{2,6}",
-        constraint in leaf_constraint_strategy(),
-        value in value_strategy(),
+        known_value in value_strategy(),
+        unknown_value in value_strategy(),
     ) {
         prop_assume!(known_field != unknown_field);
 
         let mut cs = ConstraintSet::new();
-        cs.insert(known_field.clone(), constraint);
-        // allow_unknown defaults to false
+        cs.insert(known_field.clone(), Constraint::Wildcard(Wildcard::new()));
 
-        let mut args_with_unknown: HashMap<String, ConstraintValue> = HashMap::new();
-        args_with_unknown.insert(unknown_field.clone(), value);
+        // Sanity: known field alone passes
+        let known_only: HashMap<String, ConstraintValue> =
+            [(known_field.clone(), known_value.clone())].into_iter().collect();
+        prop_assert!(cs.matches(&known_only).is_ok(), "known field alone must pass");
+
+        // Adding an unknown field must cause rejection
+        let mut args_with_unknown = known_only;
+        args_with_unknown.insert(unknown_field.clone(), unknown_value);
 
         let result = cs.matches(&args_with_unknown);
         prop_assert!(
