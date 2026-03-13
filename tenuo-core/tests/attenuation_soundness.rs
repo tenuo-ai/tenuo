@@ -178,7 +178,9 @@ fn shlex_strategy() -> impl Strategy<Value = Constraint> {
 
 fn urlsafe_strategy() -> impl Strategy<Value = Constraint> {
     prop_oneof![
+        // No restrictions beyond the secure defaults
         Just(Constraint::UrlSafe(UrlSafe::new())),
+        // Domain allowlist only
         Just(Constraint::UrlSafe(UrlSafe::with_domains(vec![
             "api.example.com",
         ]))),
@@ -186,6 +188,21 @@ fn urlsafe_strategy() -> impl Strategy<Value = Constraint> {
             "*.example.com",
             "api.other.com",
         ]))),
+        // deny_domains only (child must preserve all parent deny entries)
+        Just(Constraint::UrlSafe(UrlSafe {
+            deny_domains: Some(vec!["evil.com".to_string()]),
+            ..UrlSafe::new()
+        })),
+        Just(Constraint::UrlSafe(UrlSafe {
+            deny_domains: Some(vec!["evil.com".to_string(), "*.malware.org".to_string(),]),
+            ..UrlSafe::new()
+        })),
+        // allow_domains + deny_domains: deny wins over the allowlist
+        Just(Constraint::UrlSafe(UrlSafe {
+            allow_domains: Some(vec!["*.example.com".to_string()]),
+            deny_domains: Some(vec!["evil.example.com".to_string()]),
+            ..UrlSafe::new()
+        })),
     ]
 }
 
@@ -332,6 +349,8 @@ proptest! {
             range_strategy(),
             subpath_strategy(),
             shlex_strategy(),
+            contains_strategy(),
+            subset_strategy(),
             wildcard_strategy(),
         ],
         child in exact_strategy(),
