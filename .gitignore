@@ -79,6 +79,7 @@ docs/explorer/
 # Alloy model checker
 alloy.jar
 aat_constraints/
+verification/aat_constraints/
 
 # IDE AI settings
 .cursor/
