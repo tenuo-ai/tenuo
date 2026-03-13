@@ -1,7 +1,13 @@
 module aat_constraints
 
+// --- Universe of Values ---
 sig Value {}
 
+sig ListValue extends Value {
+    elements: set Value
+}
+
+// --- Constraint Definition ---
 abstract sig Constraint {
     accepts: set Value
 }
@@ -28,19 +34,14 @@ sig NotOneOf extends Constraint {
     accepts = Value - denied
 }
 
-// Model for list values used by Contains and Subset
-sig ListValue extends Value {
-    elements: set Value
-}
-
-// Model for "Contains" (List must contain specified values)
+// "Contains" (List must contain specified values)
 sig Contains extends Constraint {
     required: set Value
 } {
     accepts = { l: ListValue | required in l.elements }
 }
 
-// Model for "Subset" (List is a subset of allowed values)
+// "Subset" (List is a subset of allowed values)
 sig Subset extends Constraint {
     allowed_superset: set Value
 } {
@@ -54,18 +55,19 @@ sig Not extends Constraint {
 }
 
 sig Any extends Constraint {
-    clauses: set Constraint
+    any_clauses: set Constraint
 } {
-    accepts = { v: Value | some c: clauses | v in c.@accepts }
+    accepts = { v: Value | some c: any_clauses | v in c.@accepts }
 }
 
 sig All extends Constraint {
-    clauses: set Constraint
+    all_clauses: set Constraint
 } {
-    accepts = { v: Value | all c: clauses | v in c.@accepts }
+    accepts = { v: Value | all c: all_clauses | v in c.@accepts }
 }
 
 
+// --- Single Step Bounded Unrolling for Recursive Subsumption ---
 pred subsumes_step[parent, child: Constraint, sub: Constraint->Constraint] {
     child in Exact => {
         parent in Exact    => child.target = parent.target else
@@ -83,6 +85,7 @@ pred subsumes_step[parent, child: Constraint, sub: Constraint->Constraint] {
         cannot_subsume[]
     } else
     child in NotOneOf => {
+        // NotOneOf must strictly grow the denied set to shrink the accepted set
         parent in NotOneOf => parent.denied in child.denied else
         parent in Wildcard => always_true[] else
         cannot_subsume[]
@@ -98,18 +101,31 @@ pred subsumes_step[parent, child: Constraint, sub: Constraint->Constraint] {
         cannot_subsume[]
     } else
     child in Not => {
+        parent in Not => {
+            // Subsumption logic is reversed for NOT
+            child.inner -> parent.inner in sub
+        } else
         parent in Wildcard => always_true[] else
         cannot_subsume[]
     } else
     child in Any => {
+        parent in Any => {
+            // "Type-keyed positional matching" - removing clauses allowed, adding forbidden.
+            // Modeled as: An injective mapping from child clauses to parent clauses.
+            // Every child clause must attenuate exactly one distinct parent clause.
+            all c: child.any_clauses | one p: parent.any_clauses | p -> c in sub
+            all p: parent.any_clauses | lone c: child.any_clauses | p -> c in sub
+        } else
         parent in Wildcard => always_true[] else
         cannot_subsume[]
     } else
     child in All => {
         parent in All => {
-            all c_parent: parent.(All <: clauses) | 
-                some c_child: child.(All <: clauses) | 
-                    c_parent -> c_child in sub
+            // "Type-keyed positional matching" - Every parent clause must be matched
+            // to a distinct child clause that attenuates it.
+            // Modeled as: An injective mapping from parent clauses to child clauses.
+            all p: parent.all_clauses | one c: child.all_clauses | p -> c in sub
+            all c: child.all_clauses | lone p: parent.all_clauses | p -> c in sub
         } else
         parent in Wildcard => always_true[] else
         cannot_subsume[]
@@ -120,24 +136,20 @@ pred subsumes_step[parent, child: Constraint, sub: Constraint->Constraint] {
 fun sub1 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, none->none]} }
 fun sub2 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, sub1]} }
 fun sub3 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, sub2]} }
+fun sub4 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, sub3]} }
 
 pred always_true[] {}
 pred cannot_subsume[] { some none }
 
-// Use depth 3 for verification
+// --- Induction Limits & Claims ---
+// The following assertion explicitly states that IF the structural 
+// depth-bound relations (up to depth 4 nesting) determine that child attenuates parent, 
+// THEN the logical constraint capability is mathematically monotone (child ⊆ parent).
 assert CapabilityMonotonicity {
     all parent, child: Constraint |
-        parent->child in sub3 => (child.accepts in parent.accepts)
+        parent->child in sub4 => (child.accepts in parent.accepts)
 }
 
-// The implementation is intentionally conservative: it rejects some
-// semantically safe attenuations (e.g. NotOneOf->Exact, cross-type pairs)
-// to keep the lattice simple and auditable. This predicate enumerates the
-// conservatism gap rather than asserting its absence.
-pred conservatism_gap[parent, child: Constraint] {
-    child.accepts in parent.accepts
-    parent->child not in sub3
-}
-
+// We prove this mathematically by asking Alloy to search the entire state space combinatorics 
+// up to 8 Constraints and 8 Values. If unsatisfiable, no counterexample exists inside this bound.
 check CapabilityMonotonicity for 8 Constraint, 8 Value
-run conservatism_gap for 8 Constraint, 8 Value
