@@ -789,7 +789,7 @@ from tenuo import NotOneOf
 NotOneOf(["admin", "root"])
 ```
 
-**Security**: Always prefer `OneOf` (allowlist) over `NotOneOf` (denylist). `NotOneOf` should only be used to "carve holes" in a parent's positive constraint.
+**Security**: Always prefer `OneOf` (allowlist) over `NotOneOf` (denylist). `NotOneOf` can only appear in root warrants or attenuate from another `NotOneOf` or `Wildcard` parent. Attenuating from `OneOf` to `NotOneOf` is **forbidden** because `NotOneOf` accepts values outside the parent's allowlist. To narrow an `OneOf`, use `OneOf(subset)` instead.
 
 ---
 
@@ -889,6 +889,9 @@ AnyOf([
 > - `AnyOf([...])` - OR composite: at least one constraint must match
 > - `Any()` - Alias for `Wildcard()`: allows any value for a specific field in zero-trust mode
 
+> [!WARNING]
+> **Attenuation not supported.** `AnyOf -> AnyOf` attenuation is rejected because subset checking for disjunctions is not provably sound without full evaluation. `AnyOf` can only appear in root warrants or be attenuated from `Wildcard`. To narrow alternatives, restructure using `All` with typed constraints.
+
 ---
 
 ### Not
@@ -902,7 +905,8 @@ from tenuo import Not, Exact
 Not(Exact("production"))
 ```
 
-**Security**: Use sparingly. Prefer positive allowlists.
+> [!WARNING]
+> **Attenuation not supported.** `Not -> Not` attenuation is rejected because negation reverses the subset direction: `Not(B) ⊆ Not(A)` requires `A ⊆ B` (the inner must widen, not narrow), making safe attenuation infeasible. Use positive constraints (OneOf, Pattern) instead.
 
 ---
 
@@ -1032,7 +1036,7 @@ parent = (Warrant.mint_builder()
     .ttl(3600)
     .mint(key))
 
-# Child: Add additional constraint (auto-AND'd)
+# Child: Add additional constraint (auto-AND'd with parens)
 child = (parent.grant_builder()
     .capability("spend", budget_rule=CEL("currency == 'USD'"))
     .grant(key))
@@ -1044,7 +1048,13 @@ child = (parent.grant_builder()
 
 Tenuo enforces **Syntactic Monotonicity** for CEL, not Semantic Monotonicity.
 
-Child expression must **literally** be `(parent) && new_predicate`. It cannot be a semantically equivalent but differently structured expression.
+Child expression must **literally** be `(parent) && (new_predicate)`. Both the parent and the additional predicate must be parenthesized. It cannot be a semantically equivalent but differently structured expression.
+
+> [!IMPORTANT]
+> The additional predicate **must** be wrapped in parentheses. Without them,
+> `(parent) && x || y` is parsed by CEL as `((parent) && x) || y` due to
+> operator precedence (`&&` binds tighter than `||`), which is NOT a subset
+> of the parent expression.
 
 ```python
 from tenuo import Warrant, CEL
@@ -1062,12 +1072,19 @@ child = (parent.grant_builder()
     .grant(key))
 # Even though 10.1.0.0/16 is subset of 10.0.0.0/8, this is REJECTED
 
-# ALLOWED: Syntactically derived (AND'd)
+# ALLOWED: Syntactically derived with parenthesized predicate
 child = (parent.grant_builder()
     .capability("api_call", 
-        network=CEL("(net_in_cidr(ip, '10.0.0.0/8')) && net_in_cidr(ip, '10.1.0.0/16')"))
+        network=CEL("(net_in_cidr(ip, '10.0.0.0/8')) && (net_in_cidr(ip, '10.1.0.0/16'))"))
     .grant(key))
-# Now it's ALLOWED because it's (parent) && additional_check
+# Now it's ALLOWED because it's (parent) && (additional_check)
+
+# REJECTED: Unparenthesized remainder (precedence bypass)
+child = (parent.grant_builder()
+    .capability("api_call",
+        network=CEL("(net_in_cidr(ip, '10.0.0.0/8')) && true || false"))
+    .grant(key))
+# REJECTED: "true || false" is not parenthesized
 ```
 
 #### Why Syntactic?
@@ -1077,7 +1094,7 @@ Semantic analysis (proving one expression is strictly narrower) requires:
 - Understanding domain semantics (CIDR blocks, time logic, etc.)
 - Potential false negatives or security holes
 
-Syntactic monotonicity is **conservative but secure**: If the child is `(parent) && X`, it's guaranteed to be narrower or equal.
+Syntactic monotonicity is **conservative but secure**: If the child is `(parent) && (X)`, the parenthesized conjunction is guaranteed to be narrower or equal regardless of what `X` evaluates to.
 
 **Recommendation**: Use simpler constraint types (Pattern, Range, OneOf) when possible. Reserve CEL for truly complex logic that can't be expressed otherwise.
 
@@ -1109,7 +1126,7 @@ CEL("(((((a && b) || (c && d)) && ((e || f) && (g || h))) || ...) ...")
 ##### Best Practices
 - **Keep expressions simple** - prefer built-in constraint types when possible
 - **Test expressions** before deployment with representative inputs
-- **Use syntactic attenuation** - child must be `(parent) && X` for safety
+- **Use syntactic attenuation** - child must be `(parent) && (X)` for safety
 
 ##### Important Notes
 - CEL expressions **must return boolean**. Non-boolean results cause `CelError`.
@@ -1131,7 +1148,7 @@ When attenuating a warrant, child constraints must be **contained** within paren
 | `Pattern()` | Pattern (if narrower), Exact (if matches) |
 | `Regex()` | **Same** Regex only, Exact (if matches) |
 | `Exact()` | Same Exact only |
-| `OneOf()` | OneOf (subset), NotOneOf, Exact (if in set) |
+| `OneOf()` | OneOf (subset), Exact (if in set) |
 | `NotOneOf()` | NotOneOf (more exclusions) |
 | `Range()` | Range (narrower bounds), Exact (if in range) |
 | `Cidr()` | Cidr (subnet), Exact (if IP in network) |
@@ -1139,15 +1156,21 @@ When attenuating a warrant, child constraints must be **contained** within paren
 | `Contains()` | Contains (more required values) |
 | `Subset()` | Subset (fewer allowed values) |
 | `All()` | All (more constraints) |
-| `AnyOf()` | AnyOf (fewer alternatives) |
-| `CEL()` | CEL (conjunction with parent) |
+| `AnyOf()` | Not supported (use `All` or restructure) |
+| `Not()` | Not supported (use positive constraints) |
+| `CEL()` | CEL (parenthesized conjunction with parent) |
+| `Subpath()` | Subpath (narrower root), Exact (if path contained) |
+| `UrlSafe()` | UrlSafe (more restrictive), Exact (if URL is safe) |
+| `Shlex()` | Shlex (fewer allowed binaries), Exact (if command matches) |
 
 **Key Limitations**:
 - **Regex**: Cannot narrow to different regex patterns (undecidable subset problem)
 - **Exact**: Cannot change value at all
 - **Range**: If parent bound is exclusive, child cannot make it inclusive at the same value (would widen)
-- **No attenuation TO Wildcard**: Would re-widen authority
-- **Not**: Attenuation not supported (use positive constraints instead)
+- **No attenuation TO Wildcard** (from non-Wildcard parents): Would re-widen authority
+- **Not**: Attenuation not supported. Negation reverses the subset direction (`Not(B) ⊆ Not(A)` requires `A ⊆ B`, not `B ⊆ A`), making safe attenuation infeasible. Use positive constraints (OneOf, Pattern) instead.
+- **AnyOf (OR)**: Attenuation not supported. Subset checking for disjunctions requires full evaluation. Use `All` with structured constraints instead.
+- **CEL**: Child must be `(parent) && (extra)`. The extra predicate must be parenthesized to prevent `||` precedence bypass.
 
 ### Cross-Type Containment
 
@@ -1164,7 +1187,10 @@ Some constraint types can contain different types during attenuation:
 | `UrlPattern("https://*.example.com/*")` | `Exact("https://api.example.com/v1")` | Child URL matches parent pattern |
 | `UrlPattern("https://*.example.com/*")` | `UrlPattern("https://api.example.com/v1/*")` | Child pattern is narrower |
 | `OneOf(["a","b","c"])` | `Exact("b")` | Child value is in parent set |
-| `OneOf(["a","b","c"])` | `NotOneOf(["c"])` | Carves holes (allows `a`, `b`) |
+| `OneOf(["a","b","c"])` | `OneOf(["a","b"])` | Subset of parent set |
+| `Subpath("/data")` | `Exact("/data/file.txt")` | Child path within parent root |
+| `UrlSafe()` | `Exact("https://api.example.com/v1")` | Child URL passes safety check |
+| `Shlex(allow=["ls"])` | `Exact("ls -la")` | Child command passes shlex check |
 
 #### Special Rules
 
@@ -1224,9 +1250,9 @@ child = Exact("150")  # FAILS - 150 > 100
 parent = OneOf(["read", "write", "delete"])
 child = Exact("read")  # OK - "read" is in set
 
-# OneOf -> NotOneOf: carve holes from allowed set
+# OneOf -> OneOf (subset): remove values you don't need
 parent = OneOf(["staging", "production", "dev"])
-child = NotOneOf(["production"])  # OK - allows staging, dev only
+child = OneOf(["staging", "dev"])  # OK - subset of parent
 
 # NotOneOf -> NotOneOf: must exclude MORE values
 parent = NotOneOf(["admin"])
@@ -1245,7 +1271,8 @@ child = Subset(["a", "b"])  # OK - allows fewer
 
 - `Pattern` -> `Range`: String matching vs numeric bounds
 - `OneOf` -> `Pattern`: Set membership vs glob matching
-- Any type -> `Wildcard`: Would expand permissions
+- `OneOf` -> `NotOneOf`: `NotOneOf` accepts values outside the parent's allowlist (privilege escalation). Use `OneOf(subset)` instead.
+- Non-Wildcard -> `Wildcard`: Would expand permissions
 
 ### Pattern Narrowing
 
@@ -1439,18 +1466,24 @@ async with mint(Capability("query", table=OneOf(["users", "orders"]))):
 | `*` | Match any characters | `staging-*` --> `staging-web` |
 | `?` | Match single character | `env-?` --> `env-a` |
 | `[abc]` | Character class | `[abc].txt` --> `a.txt` |
-| `{a,b}` | Alternation | `{dev,staging}-*` --> `dev-web` |
+| `[!abc]` | Negated character class | `[!0-9]*` --> non-numeric start |
+
+> [!WARNING]
+> **Not supported:** `{a,b}` brace alternation is **not** supported. Curly braces are treated as literal characters. Use `AnyOf` for alternation.
 
 **Common mistakes:**
 ```python
 # WRONG: Pipe is not OR in glob
 Pattern("weather *|news *")  # Treats | as literal character
 
-# CORRECT: Use curly braces for alternation
-Pattern("{weather,news} *")
+# WRONG: Braces are not alternation in Tenuo patterns
+Pattern("{dev,staging}-*")  # Matches literal "{dev,staging}-web", not "dev-web"
 
-# CORRECT: Or use AnyOf() for complex cases
-AnyOf([Pattern("weather *"), Pattern("news *")])
+# CORRECT: Use AnyOf() for alternation
+AnyOf([Pattern("dev-*"), Pattern("staging-*")])
+
+# CORRECT: Or use OneOf for known values
+OneOf(["dev-web", "staging-web"])
 ```
 
 ### Prefer Explicit Over Permissive
@@ -1476,8 +1509,8 @@ Attenuation validation works best with simple prefix/suffix patterns:
 Pattern("/data/*")           # Parent
 Pattern("/data/reports/*")   # Child (narrower)
 
-# Complex patterns - attenuation may be conservative
-Pattern("*-{prod,staging}-*")  # Harder to validate containment
+# Complex patterns - attenuation requires exact equality
+Pattern("pre-*-suf")  # Middle wildcard, conservative validation
 ```
 
 ### Use Exact/OneOf for High-Security Cases
@@ -1608,10 +1641,10 @@ client = auto_guard(
 
 Tenuo enforces constraints by comparing tool arguments against warrant constraints. The extraction mechanism varies by integration but follows the same principles:
 
-1. **Extract all arguments** -- no argument should be hidden from authorization
-2. **Include defaults** -- default values must be checked (cannot bypass via omission)
-3. **Fail securely** -- if extraction fails, authorization is denied
-4. **Type safety** -- arguments converted to appropriate types for constraint checking
+1. **Extract all arguments** - no argument should be hidden from authorization
+2. **Include defaults** - default values must be checked (cannot bypass via omission)
+3. **Fail securely** - if extraction fails, authorization is denied
+4. **Type safety** - arguments converted to appropriate types for constraint checking
 
 ### Python SDK (`@guard`)
 

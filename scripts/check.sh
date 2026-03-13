@@ -115,6 +115,7 @@ cargo test --test revocation
 cargo test --test parental_revocation
 cargo test --test test_object_extraction
 cargo test --test red_team
+cargo test --test attenuation_soundness
 # Note: enrollment_flow requires network access, skipped locally
 cd ..
 

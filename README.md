@@ -392,7 +392,7 @@ We're planning a TypeScript/Node SDK for v0.2. If you're interested in leading o
 
 ## Deploying to Production?
 
-Self-hosted is free forever. For a managed control plane with observability and revocation management, [request early access](https://tenuo.ai/pricing.html) to Tenuo Cloud.
+Self-hosted is free forever. For a managed control plane with observability and revocation management, [request early access](https://tenuo.ai/early-access.html) to Tenuo Cloud.
 
 ---
 

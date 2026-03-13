@@ -269,13 +269,14 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
             child_expr = getattr(child_value, "expression", None)
             if child_expr is None:
                 return False
-            # CEL monotonicity: child must be (parent) && additional_predicate
-            # or exactly the same expression
+            # CEL monotonicity: child must be (parent) && (predicate)
+            # or exactly the same expression.
+            # The predicate MUST be parenthesized to prevent || precedence bypass:
+            # (parent) && x || y parses as ((parent) && x) || y, NOT parent && (x || y)
             if parent_expr == child_expr:
                 return True
-            # Check if child is conjunction with parent
-            expected_prefix = f"({parent_expr}) &&"
-            return child_expr.startswith(expected_prefix)
+            expected_prefix = f"({parent_expr}) && ("
+            return child_expr.startswith(expected_prefix) and child_expr.endswith(")")
         else:
             return False
 

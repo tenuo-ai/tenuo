@@ -28,7 +28,7 @@ from tenuo import (
     Wildcard,
 )
 from tenuo.constraints import Constraints
-from tenuo.exceptions import EmptyResultSet, PatternExpanded, WildcardExpansion
+from tenuo.exceptions import IncompatibleConstraintTypes, PatternExpanded, WildcardExpansion
 
 
 @pytest.mark.security
@@ -211,13 +211,20 @@ class TestMonotonicity:
         assert child_exp <= parent_exp, "Child TTL should be clamped to parent's"
         print("  [Result] Attack 28 blocked (TTL clamped to parent's remaining time)")
 
-    def test_attack_34_oneof_notoneof_paradox(self, keypair):
+    def test_attack_34_oneof_to_notoneof_escalation(self, keypair):
         """
-        Attack: Create empty result set via OneOf + NotOneOf.
+        Attack: Attenuate OneOf to NotOneOf to escape the allowlist.
 
-        Defense: EmptyResultSet detected and rejected.
+        OneOf(["read","write"]) -> NotOneOf(["write"]) looks like it
+        narrows to just "read", but NotOneOf(["write"]) also accepts
+        "delete", "admin", etc. -- anything not in the exclusion set.
+        Since only the leaf constraint is checked at verification time,
+        this is a privilege escalation.
+
+        Defense: IncompatibleConstraintTypes -- OneOf -> NotOneOf is
+        unconditionally forbidden. Use OneOf(subset) instead.
         """
-        print("\n--- Attack 34: OneOf/NotOneOf Paradox ---")
+        print("\n--- Attack 34: OneOf -> NotOneOf Privilege Escalation ---")
 
         parent = Warrant.issue(
             keypair=keypair,
@@ -225,13 +232,19 @@ class TestMonotonicity:
             ttl_seconds=3600,
         )
 
-        print("  [Attack 34] Attempting to exclude all parent values...")
-        with pytest.raises(EmptyResultSet):
+        print("  [Attack 34a] Attempting partial exclusion (escalation vector)...")
+        with pytest.raises(IncompatibleConstraintTypes):
+            builder = parent.grant_builder()
+            builder.capability("action", {"type": NotOneOf(["write"])})
+            builder.grant(keypair)
+
+        print("  [Attack 34b] Attempting full exclusion (also blocked)...")
+        with pytest.raises(IncompatibleConstraintTypes):
             builder = parent.grant_builder()
             builder.capability("action", {"type": NotOneOf(["read", "write"])})
             builder.grant(keypair)
 
-        print("  [Result] Attack 34 blocked (Empty result set detected)")
+        print("  [Result] Attack 34 blocked (OneOf -> NotOneOf forbidden)")
 
     def test_attack_37_notoneof_without_positive(self, keypair):
         """

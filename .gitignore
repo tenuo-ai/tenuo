@@ -76,6 +76,10 @@ docs/reference/
 docs/vendor/
 docs/explorer/
 
+# Alloy model checker
+alloy.jar
+aat_constraints/
+
 # Claude IDE settings
 .claude/
 
