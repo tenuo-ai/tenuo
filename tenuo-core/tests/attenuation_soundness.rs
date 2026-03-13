@@ -359,7 +359,6 @@ proptest! {
     #[test]
     fn prop_wider_child_rejected(
         parent in oneof_strategy(),
-        _values in prop::collection::vec(string_value_strategy(), 20..=40),
     ) {
         // Wildcard is always wider than any non-wildcard
         let child = Constraint::Wildcard(Wildcard::new());
@@ -944,8 +943,6 @@ proptest! {
         known_value in value_strategy(),
         unknown_value in value_strategy(),
     ) {
-        prop_assume!(known_field != unknown_field);
-
         let mut cs = ConstraintSet::new();
         cs.insert(known_field.clone(), Constraint::Wildcard(Wildcard::new()));
 
@@ -976,8 +973,6 @@ proptest! {
         value in value_strategy(),
         known_value in value_strategy(),
     ) {
-        prop_assume!(known_field != unknown_field);
-
         let mut cs = ConstraintSet::new();
         cs.insert(known_field.clone(), constraint.clone());
         cs.set_allow_unknown(true);

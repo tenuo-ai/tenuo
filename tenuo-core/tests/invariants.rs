@@ -363,8 +363,8 @@ proptest! {
             prop_assert_eq!(warrant.max_depth(), Some(initial_max_depth), "max_depth is inherited");
         }
 
-        // After max_depth delegations, warrant should be terminal
-        prop_assert!(warrant.is_terminal() || warrant.depth() == initial_max_depth,
+        // After max_depth delegations, warrant should be terminal AND at max depth
+        prop_assert!(warrant.is_terminal() && warrant.depth() == initial_max_depth,
             "warrant should be terminal when depth reaches max_depth");
     }
 }
