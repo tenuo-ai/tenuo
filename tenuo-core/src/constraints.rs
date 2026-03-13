@@ -104,7 +104,13 @@ pub mod constraint_type_id {
     /// Wire format: `[18, { "schemes": [string], "block_private": bool, ... }]`
     pub const URL_SAFE: u8 = 18;
     // 19-127: Future standard types
-    // 128-255: Experimental / private use
+
+    // Experimental / extension constraints (128-255)
+    /// Shell command safety (binary allowlist + metacharacter rejection).
+    /// Extension constraint: Rust provides conservative approximation,
+    /// Python shlex is authoritative at runtime.
+    /// Wire format: `[128, { "allow": ["npm", "docker"] }]`
+    pub const SHLEX: u8 = 128;
 }
 
 /// A constraint on an argument value.
@@ -194,6 +200,11 @@ pub enum Constraint {
     /// Wire type ID: 18
     UrlSafe(UrlSafe),
 
+    /// Shell command safety constraint (extension).
+    /// Validates commands use allowed binaries and contain no shell metacharacters.
+    /// Wire type ID: 128 (extension range)
+    Shlex(Shlex),
+
     /// Unknown constraint type (deserialized but not understood).
     /// Used for forward compatibility. Always fails authorization.
     Unknown { type_id: u8, payload: Vec<u8> },
@@ -277,6 +288,10 @@ impl Serialize for Constraint {
             }
             Constraint::UrlSafe(v) => {
                 tup.serialize_element(&URL_SAFE)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Shlex(v) => {
+                tup.serialize_element(&SHLEX)?;
                 tup.serialize_element(v)?;
             }
             Constraint::Unknown { type_id, payload } => {
@@ -420,6 +435,12 @@ impl<'de> serde::Deserialize<'de> for Constraint {
                             .ok_or_else(|| A::Error::invalid_length(1, &self))?;
                         Constraint::UrlSafe(v)
                     }
+                    SHLEX => {
+                        let v: Shlex = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Shlex(v)
+                    }
                     // Unknown type ID (ID 6 reserved for future IntRange with i64 bounds)
                     _ => {
                         // Try to read value as raw bytes for preservation
@@ -471,6 +492,7 @@ impl Constraint {
             | Constraint::Cel(_)
             | Constraint::Subpath(_)
             | Constraint::UrlSafe(_)
+            | Constraint::Shlex(_)
             | Constraint::Unknown { .. } => 0,
 
             // Recursive types: 1 + max child depth
@@ -525,6 +547,7 @@ impl Constraint {
             Constraint::Cel(c) => c.matches(value),
             Constraint::Subpath(s) => s.matches(value),
             Constraint::UrlSafe(u) => u.matches(value),
+            Constraint::Shlex(sh) => sh.matches(value),
             Constraint::Unknown { type_id, .. } => Err(Error::ConstraintNotSatisfied {
                 field: "constraint".to_string(),
                 reason: format!("unknown constraint type ID {}", type_id),
@@ -753,6 +776,32 @@ impl Constraint {
                 }
             }
 
+            // Shlex can narrow to Shlex (fewer binaries) or Exact
+            (Constraint::Shlex(parent), Constraint::Shlex(child)) => {
+                parent.validate_attenuation(child)
+            }
+            (Constraint::Shlex(parent), Constraint::Exact(child_exact)) => {
+                match child_exact.value.as_str() {
+                    Some(cmd_str) => {
+                        if parent.matches(&ConstraintValue::String(cmd_str.to_string()))? {
+                            Ok(())
+                        } else {
+                            Err(Error::ConstraintNotSatisfied {
+                                field: "command".to_string(),
+                                reason: format!(
+                                    "command '{}' rejected by Shlex constraint",
+                                    cmd_str
+                                ),
+                            })
+                        }
+                    }
+                    None => Err(Error::IncompatibleConstraintTypes {
+                        parent_type: "Shlex".to_string(),
+                        child_type: "Exact (non-string)".to_string(),
+                    }),
+                }
+            }
+
             // Any other combination is invalid
             _ => Err(Error::IncompatibleConstraintTypes {
                 parent_type: self.type_name().to_string(),
@@ -781,6 +830,7 @@ impl Constraint {
             Constraint::Cel(_) => "Cel",
             Constraint::Subpath(_) => "Subpath",
             Constraint::UrlSafe(_) => "UrlSafe",
+            Constraint::Shlex(_) => "Shlex",
             Constraint::Unknown { .. } => "Unknown",
         }
     }
@@ -2445,6 +2495,13 @@ pub struct UrlSafe {
     /// If set, only these domains are allowed (supports *.example.com)
     #[serde(default)]
     pub allow_domains: Option<Vec<String>>,
+    /// If set, these domains/IPs are explicitly blocked (supports *.evil.com).
+    /// Checked after all other validation. Applies to both hostnames and IP
+    /// addresses (matched as strings), so `deny_domains: ["169.254.169.254"]`
+    /// blocks that IP even though it would also be caught by `block_metadata`.
+    /// A host in both `allow_domains` and `deny_domains` is blocked (deny wins).
+    #[serde(default)]
+    pub deny_domains: Option<Vec<String>>,
     /// If set, only these ports are allowed
     #[serde(default)]
     pub allow_ports: Option<Vec<u16>>,
@@ -2497,6 +2554,7 @@ impl UrlSafe {
         Self {
             schemes: default_schemes(),
             allow_domains: None,
+            deny_domains: None,
             allow_ports: None,
             block_private: true,
             block_loopback: true,
@@ -2514,6 +2572,7 @@ impl UrlSafe {
         Self {
             schemes: default_schemes(),
             allow_domains: Some(domains.into_iter().map(Into::into).collect()),
+            deny_domains: None,
             allow_ports: None,
             block_private: true,
             block_loopback: true,
@@ -2605,11 +2664,20 @@ impl UrlSafe {
                 return Ok(false);
             }
 
-            // Check domain allowlist
+            // Check domain allowlist (hostnames only — IPs use block_* flags)
             if let Some(ref domains) = self.allow_domains {
                 if !self.check_domain_allowed(&host, domains) {
                     return Ok(false);
                 }
+            }
+        }
+
+        // Check domain denylist AFTER all other checks.
+        // Runs for both IPs (as string) and hostnames so that
+        // deny_domains: ["169.254.169.254"] works as expected.
+        if let Some(ref denied) = self.deny_domains {
+            if self.check_domain_allowed(&host, denied) {
+                return Ok(false);
             }
         }
 
@@ -2968,6 +3036,28 @@ impl UrlSafe {
             }
         }
 
+        // Child must preserve all parent deny_domains (can only add more)
+        if let Some(ref parent_denied) = self.deny_domains {
+            match &child.deny_domains {
+                None => {
+                    return Err(Error::MonotonicityViolation(
+                        "child must have deny_domains if parent does".to_string(),
+                    ));
+                }
+                Some(child_denied) => {
+                    for pd in parent_denied {
+                        let pd_lower = pd.to_lowercase();
+                        if !child_denied.iter().any(|cd| cd.to_lowercase() == pd_lower) {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "child removes denied domain '{}' from parent",
+                                pd
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -2986,6 +3076,9 @@ impl std::fmt::Display for UrlSafe {
         }
         if let Some(ref domains) = self.allow_domains {
             opts.push(format!("allow_domains={:?}", domains));
+        }
+        if let Some(ref domains) = self.deny_domains {
+            opts.push(format!("deny_domains={:?}", domains));
         }
         if !self.block_private {
             opts.push("block_private=false".to_string());
@@ -3011,6 +3104,128 @@ impl std::fmt::Display for UrlSafe {
 impl From<UrlSafe> for Constraint {
     fn from(u: UrlSafe) -> Self {
         Constraint::UrlSafe(u)
+    }
+}
+
+// ============================================================================
+// Shlex Constraint (Shell command safety)
+// ============================================================================
+
+/// Characters that are dangerous in a shell context.
+///
+/// Includes control characters (null, newline, CR, etc.), expansion triggers
+/// ($, backtick), and operator characters (|, &, ;, <, >, parens).
+const SHELL_DANGEROUS_CHARS: &[char] = &[
+    '\0', '\n', '\r', '\x0b', '\x0c', '\x07', '\x08', '\x7f', // Control
+    '$', '`', // Expansion
+    '|', '&', ';', '<', '>', '(', ')', // Operators
+];
+
+/// Shell command safety constraint.
+///
+/// Validates that a command string uses only allowed binaries and contains
+/// no shell metacharacters. This is a **conservative approximation** that
+/// fails closed on anything a POSIX shell might interpret specially.
+///
+/// # Rust vs Python evaluation
+///
+/// The Rust `matches()` performs whitespace tokenization and rejects any
+/// character in `SHELL_DANGEROUS_CHARS`. It does NOT handle POSIX quoting.
+/// Python's `Shlex.matches()` uses full `shlex` parsing with
+/// `punctuation_chars=True`, so it accepts safely-quoted operators like
+/// `ls "foo; bar"` that Rust would reject.
+///
+/// The Rust layer is intentionally more restrictive, acting as a fail-closed
+/// pre-filter in the warrant verification path. Python's full evaluation is
+/// the authoritative runtime gate for annotated constraints in `@guard`.
+///
+/// # Wire Format
+///
+/// ```text
+/// [128, { "allow": ["npm", "docker"] }]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Shlex {
+    /// Allowed binary names or full paths. Literal strings only (no globs).
+    pub allow: Vec<String>,
+}
+
+impl Shlex {
+    /// Create a new Shlex constraint with the given binary allowlist.
+    pub fn new(allow: Vec<impl Into<String>>) -> Self {
+        Self {
+            allow: allow.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Conservative command matching (fail-closed approximation).
+    ///
+    /// Rejects any command containing shell metacharacters, then whitespace-splits
+    /// and checks the first token against the allowlist. This is strictly more
+    /// restrictive than Python's POSIX shlex parsing.
+    pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        let cmd = match value.as_str() {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+
+        if cmd.is_empty() {
+            return Ok(false);
+        }
+
+        // Reject any shell-dangerous character
+        for ch in cmd.chars() {
+            if SHELL_DANGEROUS_CHARS.contains(&ch) {
+                return Ok(false);
+            }
+        }
+
+        // Whitespace tokenization (no quoting awareness — conservative)
+        let tokens: Vec<&str> = cmd.split_whitespace().collect();
+        if tokens.is_empty() {
+            return Ok(false);
+        }
+
+        // Binary allowlist: check full path and basename.
+        // Reject path traversal (../) to prevent allowlist bypass.
+        let binary = tokens[0];
+        if binary.contains("..") {
+            return Ok(false);
+        }
+        let bin_name = binary.rsplit('/').next().unwrap_or(binary);
+        if !self.allow.iter().any(|a| a == binary || a == bin_name) {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    /// Validate that `child` is a valid attenuation (child is more restrictive).
+    ///
+    /// Pure set operation: child `allow` must be a subset of parent `allow`.
+    pub fn validate_attenuation(&self, child: &Shlex) -> Result<()> {
+        for bin in &child.allow {
+            if !self.allow.contains(bin) {
+                return Err(Error::MonotonicityViolation(format!(
+                    "child allows binary '{}' not in parent allowlist",
+                    bin
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for Shlex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Shlex(allow={:?})", self.allow)
+    }
+}
+
+impl From<Shlex> for Constraint {
+    fn from(s: Shlex) -> Self {
+        Constraint::Shlex(s)
     }
 }
 
@@ -4580,6 +4795,14 @@ mod tests {
         );
         test_constraint(Constraint::Cel(CelConstraint::new("x > 0")), CEL, "Cel");
         test_constraint(Constraint::Wildcard(Wildcard::new()), WILDCARD, "Wildcard");
+        test_constraint(
+            Constraint::Subpath(Subpath::new("/data").unwrap()),
+            SUBPATH,
+            "Subpath",
+        );
+        test_constraint(Constraint::UrlSafe(UrlSafe::new()), URL_SAFE, "UrlSafe");
+        // Shlex (type ID 128) tested separately in test_shlex_roundtrip_cbor
+        // because the helper assumes single-byte CBOR type IDs (0-23).
     }
 
     /// Test that unknown type IDs deserialize to Unknown variant and fail closed.
@@ -5320,5 +5543,344 @@ mod tests {
         // Regular hostnames still work
         assert!(us.is_safe("https://example.com/").unwrap());
         assert!(us.is_safe("https://10example.com/").unwrap()); // Not an IP pattern
+    }
+
+    // ========================================================================
+    // UrlSafe deny_domains tests
+    // ========================================================================
+
+    #[test]
+    fn test_url_safe_deny_domains_basic() {
+        let us = UrlSafe {
+            deny_domains: Some(vec!["evil.com".to_string(), "*.malware.org".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(!us.is_safe("https://evil.com/payload").unwrap());
+        assert!(!us.is_safe("https://sub.malware.org/c2").unwrap());
+        assert!(us.is_safe("https://example.com/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_deny_domains_blocks_ip_addresses() {
+        // deny_domains runs for both hostnames and IPs (matched as strings)
+        let us = UrlSafe {
+            deny_domains: Some(vec!["169.254.169.254".to_string()]),
+            block_metadata: false, // disable block_metadata to isolate the deny test
+            ..UrlSafe::new()
+        };
+        assert!(!us
+            .is_safe("http://169.254.169.254/latest/meta-data/")
+            .unwrap());
+        assert!(us.is_safe("https://example.com/").unwrap());
+
+        // Deny a private IP (with block_private disabled to isolate)
+        let us2 = UrlSafe {
+            deny_domains: Some(vec!["10.0.0.1".to_string()]),
+            block_private: false,
+            ..UrlSafe::new()
+        };
+        assert!(!us2.is_safe("http://10.0.0.1/admin").unwrap());
+        assert!(us2.is_safe("http://10.0.0.2/admin").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_deny_overrides_allow() {
+        let us = UrlSafe {
+            allow_domains: Some(vec!["*.example.com".to_string()]),
+            deny_domains: Some(vec!["evil.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(us.is_safe("https://good.example.com/").unwrap());
+        assert!(!us.is_safe("https://evil.example.com/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_deny_domains_attenuation() {
+        let parent = UrlSafe {
+            deny_domains: Some(vec!["evil.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        // Child keeps the deny — valid
+        let child_ok = UrlSafe {
+            deny_domains: Some(vec!["evil.com".to_string(), "also-bad.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(parent.validate_attenuation(&child_ok).is_ok());
+
+        // Child removes the deny — invalid
+        let child_bad = UrlSafe::new();
+        assert!(parent.validate_attenuation(&child_bad).is_err());
+
+        // Child has deny but removes a parent entry — invalid
+        let child_bad2 = UrlSafe {
+            deny_domains: Some(vec!["other.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(parent.validate_attenuation(&child_bad2).is_err());
+    }
+
+    // ========================================================================
+    // Shlex tests
+    // ========================================================================
+
+    #[test]
+    fn test_shlex_basic_allow() {
+        let sh = Shlex::new(vec!["npm", "docker"]);
+        assert!(sh
+            .matches(&ConstraintValue::String("npm install express".into()))
+            .unwrap());
+        assert!(sh
+            .matches(&ConstraintValue::String("docker run alpine".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("rm -rf /".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_rejects_metacharacters() {
+        let sh = Shlex::new(vec!["npm"]);
+        assert!(!sh
+            .matches(&ConstraintValue::String("npm install; rm -rf /".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("npm install | cat".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("npm install && echo pwned".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("npm install $(whoami)".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("npm install `whoami`".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("npm > /etc/passwd".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("npm < /etc/shadow".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_rejects_control_chars() {
+        let sh = Shlex::new(vec!["npm"]);
+        assert!(!sh
+            .matches(&ConstraintValue::String("npm\n rm -rf /".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("npm\0evil".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("npm\rinstall".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_empty_and_non_string() {
+        let sh = Shlex::new(vec!["npm"]);
+        assert!(!sh.matches(&ConstraintValue::String("".into())).unwrap());
+        assert!(!sh.matches(&ConstraintValue::Integer(42)).unwrap());
+        assert!(!sh.matches(&ConstraintValue::Null).unwrap());
+    }
+
+    #[test]
+    fn test_shlex_path_binary() {
+        let sh = Shlex::new(vec!["npm", "/usr/bin/git"]);
+        assert!(sh
+            .matches(&ConstraintValue::String("/usr/bin/git status".into()))
+            .unwrap());
+        assert!(sh
+            .matches(&ConstraintValue::String("npm install".into()))
+            .unwrap());
+        // Basename match: "git" matches because /usr/bin/git's basename is "git"
+        // but "git" is not in the allowlist, only "/usr/bin/git"
+        assert!(!sh
+            .matches(&ConstraintValue::String("git status".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_roundtrip_cbor() {
+        let sh = Shlex::new(vec!["npm", "docker"]);
+        let constraint = Constraint::Shlex(sh.clone());
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&constraint, &mut bytes).unwrap();
+
+        // CBOR 2-element array (0x82), then type ID 128 encoded as 0x18 0x80
+        assert_eq!(bytes[0], 0x82);
+        assert_eq!(bytes[1], 0x18); // CBOR uint8 prefix
+        assert_eq!(bytes[2], 0x80); // 128
+
+        let decoded: Constraint = ciborium::de::from_reader(&bytes[..]).unwrap();
+        assert_eq!(constraint, decoded);
+    }
+
+    #[test]
+    fn test_shlex_attenuation_valid() {
+        let parent = Shlex::new(vec!["npm", "docker", "git"]);
+        // Child narrows to subset
+        let child = Shlex::new(vec!["npm"]);
+        assert!(parent.validate_attenuation(&child).is_ok());
+
+        // Equal sets are valid
+        let child2 = Shlex::new(vec!["npm", "docker", "git"]);
+        assert!(parent.validate_attenuation(&child2).is_ok());
+    }
+
+    #[test]
+    fn test_shlex_attenuation_invalid_expansion() {
+        let parent = Shlex::new(vec!["npm"]);
+        // Child adds binary not in parent
+        let child = Shlex::new(vec!["npm", "rm"]);
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[test]
+    fn test_shlex_constraint_attenuation_dispatch() {
+        let parent = Constraint::Shlex(Shlex::new(vec!["npm", "docker"]));
+        let child = Constraint::Shlex(Shlex::new(vec!["npm"]));
+        assert!(parent.validate_attenuation(&child).is_ok());
+
+        let bad_child = Constraint::Shlex(Shlex::new(vec!["npm", "rm"]));
+        assert!(parent.validate_attenuation(&bad_child).is_err());
+
+        // Shlex can attenuate to Exact if the value matches
+        let exact_child = Constraint::Exact(Exact::new("npm install express"));
+        assert!(parent.validate_attenuation(&exact_child).is_ok());
+
+        let bad_exact = Constraint::Exact(Exact::new("rm -rf /"));
+        assert!(parent.validate_attenuation(&bad_exact).is_err());
+    }
+
+    // ========================================================================
+    // Shlex corner cases (Rust conservative approximation)
+    // ========================================================================
+
+    #[test]
+    fn test_shlex_quoted_operators_rejected_by_rust() {
+        // Python shlex accepts these (operators inside quotes are safe).
+        // Rust's conservative check rejects ANY metacharacter regardless of quoting.
+        // This is the intentional asymmetry documented in the spec.
+        let sh = Shlex::new(vec!["ls"]);
+        assert!(!sh
+            .matches(&ConstraintValue::String(r#"ls "foo; bar""#.into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String(r#"ls 'foo|bar'"#.into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String(r#"echo "$(date)""#.into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_whitespace_only() {
+        let sh = Shlex::new(vec!["npm"]);
+        assert!(!sh.matches(&ConstraintValue::String("   ".into())).unwrap());
+        assert!(!sh.matches(&ConstraintValue::String("\t\t".into())).unwrap());
+    }
+
+    #[test]
+    fn test_shlex_unicode_binary_names() {
+        let sh = Shlex::new(vec!["café"]);
+        assert!(sh
+            .matches(&ConstraintValue::String("café --help".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("evil --help".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_path_traversal_in_binary() {
+        let sh = Shlex::new(vec!["npm"]);
+        // Path traversal doesn't bypass the allowlist — basename check
+        // matches "npm" but "../npm" is checked as full path first
+        assert!(!sh
+            .matches(&ConstraintValue::String("../npm install".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("/usr/../bin/npm install".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_binary_with_spaces_in_arguments() {
+        let sh = Shlex::new(vec!["npm"]);
+        // Multiple spaces between args are fine (split_whitespace handles it)
+        assert!(sh
+            .matches(&ConstraintValue::String("npm   install   express".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_tab_separated() {
+        let sh = Shlex::new(vec!["npm"]);
+        // Tabs are whitespace, split_whitespace handles them
+        assert!(sh
+            .matches(&ConstraintValue::String("npm\tinstall\texpress".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_backslash_not_rejected() {
+        // Backslash is NOT in SHELL_DANGEROUS_CHARS — it's a quoting mechanism
+        // but not a command separator or expansion trigger. The conservative
+        // approach accepts it, which means `ls foo\ bar` passes Rust but would
+        // need Python's full shlex to determine if it's safe.
+        let sh = Shlex::new(vec!["ls"]);
+        assert!(sh
+            .matches(&ConstraintValue::String(r"ls foo\ bar".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_tilde_not_rejected() {
+        // Tilde expansion (~) is shell-specific but not dangerous in the same
+        // way as $, `, etc. It expands to a directory, not arbitrary code.
+        // Conservative choice: allow it. Document as known gap.
+        let sh = Shlex::new(vec!["ls"]);
+        assert!(sh
+            .matches(&ConstraintValue::String("ls ~/Documents".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_hash_not_rejected() {
+        // # starts a comment in shell but is not a command injection vector.
+        let sh = Shlex::new(vec!["echo"]);
+        assert!(sh
+            .matches(&ConstraintValue::String("echo hello #world".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_exclamation_not_rejected() {
+        // ! is history expansion in interactive bash but NOT in sh/scripts.
+        // Conservative choice: allow it. If needed, callers can use a narrower
+        // constraint or the Python Shlex which handles this.
+        let sh = Shlex::new(vec!["echo"]);
+        assert!(sh
+            .matches(&ConstraintValue::String("echo hello!".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_double_dash_not_dangerous() {
+        let sh = Shlex::new(vec!["npm"]);
+        assert!(sh
+            .matches(&ConstraintValue::String("npm install -- --save".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_empty_allow_list() {
+        // Empty allow = nothing matches
+        let sh = Shlex { allow: vec![] };
+        assert!(!sh
+            .matches(&ConstraintValue::String("npm install".into()))
+            .unwrap());
     }
 }

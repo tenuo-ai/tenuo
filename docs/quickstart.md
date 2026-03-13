@@ -258,6 +258,77 @@ Now violations are blocked. Roll out to a subset of traffic first if needed.
 
 ---
 
+## Choosing Your Integration
+
+### Quick Decision Tree
+
+**1. What runtime/framework are you using?**
+
+- **OpenAI SDK** (`openai.OpenAI`, `openai.AsyncOpenAI`) --> Use [`tenuo.openai`](./openai)
+- **CrewAI** (`crewai.Crew`, `crewai.Agent`) --> Use [`tenuo.crewai`](./crewai)
+- **Google ADK** (`google.adk.agents.Agent`) --> Use [`tenuo.google_adk`](./google-adk)
+- **LangChain / LangGraph / AutoGen** --> See [Framework Integrations](#framework-integrations) below
+- **Custom/other** --> Use [API Reference](./api-reference) directly
+
+**2. Do you have multiple agents communicating across processes?**
+
+- **Yes**, agents are separate services (microservices, distributed system):
+  - Use [`tenuo.a2a`](./a2a) **in addition to** your runtime integration
+- **No**, single process or same-process multi-agent:
+  - Just use your runtime integration
+
+**3. Do you need cryptographic verifiability?**
+
+- **Yes** (distributed, untrusted executor, audit requirements): Use **Tier 2** (Warrant + PoP)
+- **No** (single-process, trusted environment, prototyping): Use **Tier 1** (Guardrails)
+
+### Comparison
+
+| Feature | OpenAI | CrewAI | ADK | A2A |
+|---------|--------|--------|-----|-----|
+| **Runtime** | OpenAI SDK | CrewAI | Google ADK | Any (HTTP) |
+| **Deployment** | Single/multi process | Single/multi process | Single/multi process | Distributed |
+| **Tier 1 (Guardrails)** | Yes | Yes | Yes | N/A (Tier 2 required) |
+| **Tier 2 (Warrant + PoP)** | Yes | Yes | Yes | Yes |
+| **Delegation** | No | Yes `WarrantDelegator` | No | Yes (discovery) |
+| **Streaming** | Yes | No | Yes | No |
+| **Learning Curve** | Easy | Easy | Medium | Steep |
+
+### Migration Paths
+
+**Tier 1 --> Tier 2 (Adding Crypto):**
+
+```python
+# Before (Guardrails):
+client = guard(openai.OpenAI(), allow_tools=[...], constraints={...})
+
+# After (Warrant + PoP) - minimal change:
+client = guard(openai.OpenAI(), warrant=my_warrant, signing_key=agent_key)
+```
+
+**Single-Process --> Distributed (Adding A2A):**
+
+```python
+# Before (Direct function calls):
+result = worker.search_papers(query, sources)
+
+# After (A2A - worker runs as separate service):
+client = A2AClient("https://worker.svc", signing_key=orchestrator_key)
+result = await client.send_task("search_papers", {...}, warrant=task_warrant)
+```
+
+**Combining integrations:**
+
+| Combination | Use When |
+|-------------|----------|
+| **OpenAI + A2A** | Workers are separate OpenAI services |
+| **ADK + A2A** | ADK orchestrator --> various worker services |
+| **OpenAI + ADK + A2A** | Mixed runtimes in distributed system |
+
+**Rule of thumb**: Same language + same process --> runtime integration only. Cross-service --> add A2A.
+
+---
+
 ## Framework Integrations
 
 ### OpenAI
@@ -420,10 +491,10 @@ result = graph.invoke(state, config=config)
 from tenuo import warrant_scope, key_scope, Pattern
 
 async def researcher_node(state, warrant, signing_key):
-    node_warrant = warrant.grant_builder()
+    node_warrant = (warrant.grant_builder()
         .capability("search", query=Pattern("*public*"))
-        .grant(signing_key)
-    
+        .grant(signing_key))
+
     with warrant_scope(node_warrant), key_scope(signing_key):
         results = await search(state["query"])
     return {"results": results}
@@ -504,19 +575,18 @@ warrant = (Warrant.mint_builder()
 
 ```python
 # ── ORCHESTRATOR ──
-# Has its own key, only needs worker's PUBLIC key
-from tenuo import PublicKey
+from tenuo import SigningKey, PublicKey
+orchestrator_key = SigningKey.from_env("ORCH_KEY")
 worker_pubkey = PublicKey.from_env("WORKER_PUBKEY")
 
 # Child warrant has narrower scope
-worker_warrant = warrant.grant(
-    to=worker_pubkey,
-    allow="manage_infrastructure",
-    ttl=300,
-    key=key,  # Parent signs
-    cluster=Pattern("staging-web"),  # Narrowed (constraint as kwarg)
-    replicas=Range.max_value(10),    # Reduced
-)
+worker_warrant = (warrant.grant_builder()
+    .capability("manage_infrastructure",
+        cluster=Pattern("staging-web"),
+        replicas=Range.max_value(10))
+    .holder(worker_pubkey)
+    .ttl(300)
+    .grant(orchestrator_key))
 
 # Send to worker: send_to_worker(str(worker_warrant))
 ```
@@ -548,7 +618,7 @@ print(f"Authorized: {authorized}")  # True
 Use `why_denied()` for detailed diagnostics:
 
 ```python
-result = warrant.why_denied("read_file", path="/etc/passwd")
+result = warrant.why_denied("read_file", {"path": "/etc/passwd"})
 if result.denied:
     print(f"Denied: {result.deny_code}")
     print(f"Field: {result.field}")
@@ -563,35 +633,6 @@ diagnose(warrant)  # Prints warrant details, TTL, constraints, etc.
 ```
 
 **Interactive Debugging**: Paste your warrant in the [Explorer Playground](https://tenuo.ai/explorer/) to decode it, inspect constraints, and test authorization - warrants contain only signed claims, not secrets, so they're safe to share.
-
----
-
-## Key Concepts
-
-| Concept | Description |
-|---------|-------------|
-| **Warrant** | Signed token granting specific capabilities |
-| **Attenuation** | Creating a child warrant with narrower scope |
-| **Constraints** | Rules limiting what a warrant can authorize (`Pattern`, `Range`, `Exact`, etc.) |
-| **PoP** | Proof-of-Possession: signature proving holder identity |
-| **BoundWarrant** | Warrant + SigningKey for convenience (non-serializable) |
-
-## Constraint Types
-
-| Type | Example | Matches |
-|------|---------|---------|
-| `Exact` | `Exact("prod")` | Only "prod" |
-| `Pattern` | `Pattern("staging-*")` | "staging-web", "staging-db" |
-| `OneOf` | `OneOf(["a", "b"])` | "a" or "b" |
-| `Range` | `Range(min=0, max=1000)` | 0 to 1000 |
-| `Regex` | `Regex(r"^user_\d+$")` | "user_123", "user_456" |
-
-See [Constraints](./constraints) for the full list.
-
-> [!WARNING]
-> **Trust Cliff**: Once you add **any** constraint, unknown arguments are rejected.
-> Use `_allow_unknown=True` to opt out, or use `Wildcard()` to explicitly allow specific fields.
-> See [Closed-World Mode](./constraints#closed-world-mode-trust-cliff) for details.
 
 ---
 

@@ -1736,6 +1736,7 @@ impl PyUrlSafe {
     #[pyo3(signature = (
         allow_schemes=None,
         allow_domains=None,
+        deny_domains=None,
         allow_ports=None,
         block_private=true,
         block_loopback=true,
@@ -1747,6 +1748,7 @@ impl PyUrlSafe {
     fn new(
         allow_schemes: Option<Vec<String>>,
         allow_domains: Option<Vec<String>>,
+        deny_domains: Option<Vec<String>>,
         allow_ports: Option<Vec<u16>>,
         block_private: bool,
         block_loopback: bool,
@@ -1758,6 +1760,7 @@ impl PyUrlSafe {
             inner: UrlSafe {
                 schemes: allow_schemes.unwrap_or_else(|| vec!["http".into(), "https".into()]),
                 allow_domains,
+                deny_domains,
                 allow_ports,
                 block_private,
                 block_loopback,
@@ -1807,6 +1810,9 @@ impl PyUrlSafe {
         if let Some(ref domains) = self.inner.allow_domains {
             opts.push(format!("allow_domains={:?}", domains));
         }
+        if let Some(ref domains) = self.inner.deny_domains {
+            opts.push(format!("deny_domains={:?}", domains));
+        }
         if let Some(ref ports) = self.inner.allow_ports {
             opts.push(format!("allow_ports={:?}", ports));
         }
@@ -1847,6 +1853,12 @@ impl PyUrlSafe {
     #[getter]
     fn allow_domains(&self) -> Option<Vec<String>> {
         self.inner.allow_domains.clone()
+    }
+
+    /// Denied domains (if set).
+    #[getter]
+    fn deny_domains(&self) -> Option<Vec<String>> {
+        self.inner.deny_domains.clone()
     }
 
     /// Allowed ports (if set).
@@ -1903,6 +1915,103 @@ impl PyUrlSafe {
     ///     >>> child = UrlSafe(allow_domains=["api.example.com"])
     ///     >>> parent.validate_attenuation(child)  # OK
     fn validate_attenuation(&self, child: &PyUrlSafe) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+}
+
+/// Shell command safety constraint (Rust core).
+///
+/// Validates that a command uses only allowed binaries and contains no shell
+/// metacharacters. The Rust implementation is a conservative approximation
+/// (whitespace tokenization, no quoting). Python's ``Shlex`` class provides
+/// full POSIX shlex parsing for annotated ``@guard`` constraints.
+///
+/// Example (Python):
+///
+/// ```text
+/// shlex = Shlex(allow=["npm", "docker"])
+/// shlex.matches("npm install express")   # True
+/// shlex.matches("npm install; rm -rf /") # False (semicolon)
+/// shlex.matches("bash -c 'evil'")        # False (not in allowlist)
+/// ```
+#[pyclass(name = "Shlex")]
+#[derive(Clone)]
+pub struct PyShlex {
+    pub(crate) inner: crate::constraints::Shlex,
+}
+
+#[pymethods]
+impl PyShlex {
+    /// Create a new Shlex constraint.
+    ///
+    /// Args:
+    ///     allow: List of allowed binary names or full paths (literal strings, no globs).
+    ///
+    /// Example:
+    ///     >>> from tenuo import Shlex
+    ///     >>> shlex = Shlex(allow=["npm", "docker"])
+    ///     >>> shlex.matches("npm install express")
+    ///     True
+    ///     >>> shlex.matches("rm -rf /")
+    ///     False
+    #[new]
+    #[pyo3(signature = (allow))]
+    fn new(allow: Vec<String>) -> PyResult<Self> {
+        if allow.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Shlex requires at least one allowed binary",
+            ));
+        }
+        Ok(Self {
+            inner: crate::constraints::Shlex { allow },
+        })
+    }
+
+    /// Check if a command string is safe to execute (conservative approximation).
+    ///
+    /// Rejects any command containing shell metacharacters (|, &, ;, $, `, etc.),
+    /// then checks the first whitespace-delimited token against the allowlist.
+    ///
+    /// Args:
+    ///     command: Shell command string to validate.
+    ///
+    /// Returns:
+    ///     True if the command passes the conservative check, False otherwise.
+    fn matches(&self, command: &str) -> PyResult<bool> {
+        let cv = ConstraintValue::String(command.to_string());
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Unified constraint check.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Shlex(allow={:?})", self.inner.allow)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    /// Allowed binaries.
+    #[getter]
+    fn allow(&self) -> Vec<String> {
+        self.inner.allow.clone()
+    }
+
+    /// Validate that another Shlex is a valid attenuation (narrowing) of this one.
+    ///
+    /// Args:
+    ///     child: The child Shlex to validate.
+    ///
+    /// Raises:
+    ///     MonotonicityError: If child would expand capabilities.
+    fn validate_attenuation(&self, child: &PyShlex) -> PyResult<()> {
         self.inner
             .validate_attenuation(&child.inner)
             .map_err(to_py_err)
@@ -2091,6 +2200,11 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<PyObjec
             #[allow(deprecated)]
             Ok(PyUrlSafe { inner: u.clone() }.into_py(py))
         }
+        Constraint::Shlex(sh) =>
+        {
+            #[allow(deprecated)]
+            Ok(PyShlex { inner: sh.clone() }.into_py(py))
+        }
     }
 }
 
@@ -2130,9 +2244,11 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
         Ok(Constraint::Subpath(s.inner))
     } else if let Ok(u) = obj.extract::<PyUrlSafe>() {
         Ok(Constraint::UrlSafe(u.inner))
+    } else if let Ok(sh) = obj.extract::<PyShlex>() {
+        Ok(Constraint::Shlex(sh.inner))
     } else {
         Err(PyValueError::new_err(
-            "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard, Subpath, or UrlSafe",
+            "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard, Subpath, UrlSafe, or Shlex",
         ))
     }
 }
@@ -5500,6 +5616,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWildcard>()?;
     m.add_class::<PySubpath>()?;
     m.add_class::<PyUrlSafe>()?;
+    m.add_class::<PyShlex>()?;
     m.add_class::<PyCel>()?;
     m.add_class::<PyNotOneOf>()?;
     m.add_class::<PyContains>()?;

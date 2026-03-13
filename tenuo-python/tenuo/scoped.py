@@ -350,17 +350,9 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     # =========================================================================
     if parent_type == "Shlex":
         if child_type == "Shlex":
-            # Child allowed_bins must be subset of parent allowed_bins
             p_bins: set = getattr(parent_value, "allowed_bins", set())
             c_bins: set = getattr(child_value, "allowed_bins", set())
-            if not c_bins.issubset(p_bins):
-                return False
-            # Child cannot relax block_globs
-            p_block_globs = getattr(parent_value, "block_globs", False)
-            c_block_globs = getattr(child_value, "block_globs", False)
-            if p_block_globs and not c_block_globs:
-                return False
-            return True
+            return c_bins.issubset(p_bins)
         elif child_type == "Exact":
             # Exact command must pass parent's matches check
             return parent_value.matches(child_str)

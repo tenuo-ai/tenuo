@@ -9,7 +9,7 @@ use tenuo::{
     },
     constraints::{
         Any, Cidr, Constraint, ConstraintSet, ConstraintValue, Contains, Exact, NotOneOf, OneOf,
-        Pattern, Range, RegexConstraint, Subpath, UrlPattern, UrlSafe,
+        Pattern, Range, RegexConstraint, Shlex, Subpath, UrlPattern, UrlSafe,
     },
     wire, Authorizer, PublicKey, SigningKey, Warrant,
 };
@@ -78,6 +78,9 @@ fn constraint_to_readable(constraint: &Constraint) -> JsonValue {
             if let Some(ref domains) = u.allow_domains {
                 obj.insert("allow_domains".to_string(), json!(domains));
             }
+            if let Some(ref domains) = u.deny_domains {
+                obj.insert("deny_domains".to_string(), json!(domains));
+            }
             if let Some(ref ports) = u.allow_ports {
                 obj.insert("allow_ports".to_string(), json!(ports));
             }
@@ -98,6 +101,9 @@ fn constraint_to_readable(constraint: &Constraint) -> JsonValue {
             } else {
                 json!({ "url_safe": JsonValue::Object(obj) })
             }
+        }
+        Constraint::Shlex(sh) => {
+            json!({ "shlex": { "allow": &sh.allow } })
         }
         Constraint::Unknown { type_id, .. } => json!({ "unknown": format!("type_id={}", type_id) }),
         _ => json!({ "unknown": "future_variant" }),
@@ -871,7 +877,7 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
 
     // Helper to parse constraints from JSON into ConstraintSet
     let parse_constraints =
-        |constraints: &HashMap<String, serde_json::Value>| -> ConstraintSet {
+        |constraints: &HashMap<String, serde_json::Value>| -> Result<ConstraintSet, String> {
             let mut constraint_set = ConstraintSet::new();
             for (field, constraint_value) in constraints {
                 if let Some(obj) = constraint_value.as_object() {
@@ -1028,32 +1034,60 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                     // UrlSafe constraint (SSRF protection)
                     else if obj.contains_key("url_safe") || obj.contains_key("urlsafe") {
                         let url_safe_obj = obj.get("url_safe").or_else(|| obj.get("urlsafe"));
-                        // Handle { url_safe: {} } or { url_safe: { allow_domains: [...] } }
                         if let Some(inner) = url_safe_obj.and_then(|v| v.as_object()) {
+                            let mut us = UrlSafe::new();
                             if let Some(domains_arr) = inner.get("allow_domains").and_then(|v| v.as_array()) {
                                 let domains: Vec<String> = domains_arr
                                     .iter()
                                     .filter_map(|d| d.as_str().map(|s| s.to_string()))
                                     .collect();
                                 if !domains.is_empty() {
-                                    constraint_set.insert(
-                                        field.clone(),
-                                        Constraint::UrlSafe(UrlSafe::with_domains(domains)),
-                                    );
-                                } else {
-                                    constraint_set.insert(field.clone(), Constraint::UrlSafe(UrlSafe::new()));
+                                    us.allow_domains = Some(domains);
                                 }
-                            } else {
-                                constraint_set.insert(field.clone(), Constraint::UrlSafe(UrlSafe::new()));
                             }
+                            if let Some(deny_arr) = inner.get("deny_domains").and_then(|v| v.as_array()) {
+                                let denied: Vec<String> = deny_arr
+                                    .iter()
+                                    .filter_map(|d| d.as_str().map(|s| s.to_string()))
+                                    .collect();
+                                if !denied.is_empty() {
+                                    us.deny_domains = Some(denied);
+                                }
+                            }
+                            constraint_set.insert(field.clone(), Constraint::UrlSafe(us));
                         } else {
-                            // Simple { url_safe: {} } or { url_safe: true }
                             constraint_set.insert(field.clone(), Constraint::UrlSafe(UrlSafe::new()));
                         }
                     }
+                    // Shlex constraint (shell command safety)
+                    else if obj.contains_key("shlex") {
+                        let shlex_obj = obj.get("shlex");
+                        if let Some(inner) = shlex_obj.and_then(|v| v.as_object()) {
+                            if let Some(allow_arr) = inner.get("allow").and_then(|v| v.as_array()) {
+                                let allow: Vec<String> = allow_arr
+                                    .iter()
+                                    .filter_map(|a| a.as_str().map(|s| s.to_string()))
+                                    .collect();
+                                if !allow.is_empty() {
+                                    constraint_set.insert(
+                                        field.clone(),
+                                        Constraint::Shlex(Shlex { allow }),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    // Unrecognized constraint key: fail closed
+                    else {
+                        let keys: Vec<&String> = obj.keys().collect();
+                        return Err(format!(
+                            "unrecognized constraint key(s) {:?} for field '{}'; refusing to silently drop",
+                            keys, field
+                        ));
+                    }
                 }
             }
-            constraint_set
+            Ok(constraint_set)
         };
 
     // Check if we're creating a delegated warrant or a root warrant
@@ -1079,7 +1113,21 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
         let mut att_builder = parent.attenuate().holder(holder_key.public_key());
 
         for (tool_name, constraints) in &config.tools {
-            let constraint_set = parse_constraints(constraints);
+            let constraint_set = match parse_constraints(constraints) {
+                Ok(cs) => cs,
+                Err(e) => {
+                    return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+                        warrant_b64: String::new(),
+                        issuer_public_key_hex: String::new(),
+                        issuer_private_key_hex: String::new(),
+                        holder_public_key_hex: String::new(),
+                        holder_private_key_hex: String::new(),
+                        tools: vec![],
+                        error: Some(format!("Constraint parse error: {}", e)),
+                    })
+                    .unwrap();
+                }
+            };
             att_builder = att_builder.capability(tool_name, constraint_set);
         }
 
@@ -1138,7 +1186,21 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
         .holder(holder_key.public_key());
 
     for (tool_name, constraints) in &config.tools {
-        let constraint_set = parse_constraints(constraints);
+        let constraint_set = match parse_constraints(constraints) {
+            Ok(cs) => cs,
+            Err(e) => {
+                return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+                    warrant_b64: String::new(),
+                    issuer_public_key_hex: String::new(),
+                    issuer_private_key_hex: String::new(),
+                    holder_public_key_hex: String::new(),
+                    holder_private_key_hex: String::new(),
+                    tools: vec![],
+                    error: Some(format!("Constraint parse error: {}", e)),
+                })
+                .unwrap();
+            }
+        };
         builder = builder.capability(tool_name, constraint_set);
     }
 

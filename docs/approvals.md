@@ -506,6 +506,6 @@ Warrants are the security boundary. Approvals are defense in depth. Even if the 
 
 ## See Also
 
-- [Enforcement Architecture](./enforcement) - Where approvals fit in the enforcement pipeline
+- [Enforcement Architecture](enforcement.md) - Where approvals fit in the enforcement pipeline
 - [AI Agents Security](ai-agents.md) - The 4-layer defense strategy
 - [Concepts](concepts.md) - Warrants, PoP, attenuation

@@ -204,23 +204,23 @@ class TestShlexTypeChecks:
         assert not constraint.matches(["ls", "-la"])
 
 
-class TestShlexGlobBlocking:
-    """Tests for optional glob blocking."""
+class TestShlexGlobsAllowed:
+    """Glob characters are always allowed (block_globs was removed)."""
 
-    def test_blocks_glob_asterisk(self):
-        """Asterisk should be blocked when block_globs=True."""
-        constraint = Shlex(allow=["ls"], block_globs=True)
-        assert not constraint.matches("ls *")
+    def test_glob_asterisk_allowed(self):
+        """Asterisk glob passes — not a shell injection vector."""
+        constraint = Shlex(allow=["ls"])
+        assert constraint.matches("ls *")
 
-    def test_blocks_glob_question(self):
-        """Question mark should be blocked when block_globs=True."""
-        constraint = Shlex(allow=["ls"], block_globs=True)
-        assert not constraint.matches("ls file?.txt")
+    def test_glob_question_allowed(self):
+        """Question mark glob passes."""
+        constraint = Shlex(allow=["ls"])
+        assert constraint.matches("ls file?.txt")
 
-    def test_blocks_glob_bracket(self):
-        """Bracket should be blocked when block_globs=True."""
-        constraint = Shlex(allow=["ls"], block_globs=True)
-        assert not constraint.matches("ls file[12].txt")
+    def test_glob_bracket_allowed(self):
+        """Bracket glob passes."""
+        constraint = Shlex(allow=["ls"])
+        assert constraint.matches("ls file[12].txt")
 
 
 class TestShlexEdgeCases:
@@ -262,11 +262,11 @@ class TestShlexRepr:
         assert "Shlex" in r
         assert "allow=" in r
 
-    def test_repr_with_block_globs(self):
-        """Repr with block_globs option."""
-        constraint = Shlex(allow=["ls"], block_globs=True)
+    def test_repr_no_extra_options(self):
+        """Repr is clean with no extra options."""
+        constraint = Shlex(allow=["ls"])
         r = repr(constraint)
-        assert "block_globs=True" in r
+        assert r == "Shlex(allow=['ls'])"
 
 
 # =============================================================================
@@ -745,6 +745,87 @@ class TestShlexAllowlistVariations:
         constraint = Shlex(allow=["script.sh"])
         assert constraint.matches("script.sh arg1")
         assert constraint.matches("./script.sh arg1")
+
+
+class TestShlexRustPythonAsymmetry:
+    """Tests documenting intentional differences between Rust and Python Shlex.
+
+    Python Shlex (this class) uses full POSIX shlex parsing with
+    punctuation_chars=True. Rust Shlex uses conservative whitespace
+    splitting and rejects any shell metacharacter at the character level.
+
+    These tests document cases where Python ACCEPTS but Rust REJECTS.
+    This is the intended behavior: Rust is a fail-closed pre-filter in
+    the warrant verification path, Python is authoritative at runtime.
+    """
+
+    def test_quoted_semicolons_accepted_by_python(self):
+        """Python accepts quoted operators; Rust would reject (contains ';')."""
+        constraint = Shlex(allow=["ls"])
+        assert constraint.matches('ls "foo; bar"')
+        assert constraint.matches("ls 'foo; bar'")
+
+    def test_quoted_pipes_accepted_by_python(self):
+        """Python accepts quoted pipes; Rust would reject (contains '|')."""
+        constraint = Shlex(allow=["grep"])
+        assert constraint.matches('grep "a|b" file')
+
+    def test_quoted_ampersands_accepted_by_python(self):
+        """Python accepts quoted ampersands; Rust would reject (contains '&')."""
+        constraint = Shlex(allow=["echo"])
+        assert constraint.matches('echo "AT&T"')
+
+    def test_quoted_angle_brackets_accepted_by_python(self):
+        """Python accepts quoted redirects; Rust would reject (contains '<', '>')."""
+        constraint = Shlex(allow=["echo"])
+        assert constraint.matches('echo "<html>"')
+
+
+class TestShlexKnownGaps:
+    """Tests documenting known limitations of the Shlex constraint.
+
+    These are cases that Shlex intentionally does NOT protect against.
+    Use proc_jail for comprehensive protection.
+    """
+
+    def test_tilde_expansion_allowed(self):
+        """Tilde expands to home directory. Not a code execution vector."""
+        constraint = Shlex(allow=["ls"])
+        assert constraint.matches("ls ~/secrets")
+
+    def test_brace_expansion_allowed(self):
+        """Bash brace expansion is allowed. Not a direct injection vector."""
+        constraint = Shlex(allow=["echo"])
+        assert constraint.matches("echo {a,b,c}")
+
+    def test_history_expansion_allowed(self):
+        """! is history expansion in interactive shells only."""
+        constraint = Shlex(allow=["echo"])
+        assert constraint.matches("echo !!")
+
+    def test_backslash_treated_as_escape(self):
+        """Backslash is a quoting mechanism, not blocked as metacharacter."""
+        constraint = Shlex(allow=["ls"])
+        assert constraint.matches(r"ls foo\ bar")
+
+    def test_argument_injection_not_prevented(self):
+        """Shlex validates SYNTAX not SEMANTICS. Argument injection is out of scope.
+
+        Tools that interpret arguments as commands (git --upload-pack, find -exec,
+        tar --checkpoint-action) are not caught. Use proc_jail for this.
+        """
+        constraint = Shlex(allow=["git"])
+        assert constraint.matches("git clone --upload-pack=id repo")
+
+    def test_unicode_line_separators_not_blocked(self):
+        """Unicode line/paragraph separators (U+2028, U+2029) pass through.
+
+        POSIX shells don't interpret these as newlines, but some environments
+        might. Document as known gap.
+        """
+        constraint = Shlex(allow=["ls"])
+        assert constraint.matches("ls\u2028file")
+        assert constraint.matches("ls\u2029file")
 
 
 class TestShlexCrossPlatform:

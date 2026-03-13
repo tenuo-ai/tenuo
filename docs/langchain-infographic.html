@@ -451,7 +451,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                         </p>
                         <ul style="color: var(--text-secondary); margin-left: 24px; line-height: 1.8;">
                             <li>Retrieves warrant from ContextVar (set by callback/middleware)</li>
-                            <li>Extracts tool arguments for constraint checking</li>
+                            <li>Extracts tool arguments automatically via <code style="color: var(--accent-cyan);">inspect.signature()</code></li>
                             <li>Verifies warrant authorizes this specific tool + arguments</li>
                             <li>Checks constraints (e.g., file_path matches Pattern("/tmp/*"))</li>
                             <li>All happens <strong>offline</strong> in ~27μs</li>
@@ -459,10 +459,9 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                     </div>
                     <div class="code-block">
                         <pre><span class="comment"># Your tool function - protected by @guard</span>
-<span class="keyword">from</span> tenuo <span class="keyword">import</span> guard, warrant_scope
+<span class="keyword">from</span> tenuo <span class="keyword">import</span> guard, warrant_scope, key_scope
 
-<span class="decorator">@guard</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>, 
-          <span class="function">extract_args</span>=<span class="keyword">lambda</span> file_path, **kwargs: {<span class="string">"file_path"</span>: file_path})
+<span class="decorator">@guard</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>)
 <span class="keyword">def</span> <span class="function">read_file</span>(<span class="type">file_path</span>: <span class="type">str</span>) -> <span class="type">str</span>:
     <span class="comment"># Tenuo checks authorization BEFORE this code runs</span>
     <span class="comment"># If authorized, function executes normally</span>
@@ -698,11 +697,10 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                     <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 1: Decorate Your
                         Tool Functions</h4>
                     <div class="code-block" style="font-size: 0.85rem;">
-                        <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> guard, Warrant, Pattern, SigningKey
+                        <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> guard, Warrant, Pattern, SigningKey, warrant_scope, key_scope
 
 <span class="comment"># Decorate your tool functions with @guard</span>
-<span class="decorator">@guard</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>,
-          <span class="function">extract_args</span>=<span class="keyword">lambda</span> file_path, **kwargs: {<span class="string">"file_path"</span>: file_path})
+<span class="decorator">@guard</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>)
 <span class="keyword">def</span> <span class="function">read_file</span>(<span class="type">file_path</span>: <span class="type">str</span>) -> <span class="type">str</span>:
     <span class="string">"""Read a file. Protected by Tenuo."""</span>
     <span class="keyword">with</span> <span class="function">open</span>(<span class="type">file_path</span>, <span class="string">'r'</span>) <span class="keyword">as</span> f:
@@ -729,7 +727,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
 ]
 
 <span class="comment"># Create agent</span>
-<span class="type">llm</span> = <span class="function">ChatOpenAI</span>(<span class="keyword">model</span>=<span class="string">"gpt-3.5-turbo"</span>)
+<span class="type">llm</span> = <span class="function">ChatOpenAI</span>(<span class="keyword">model</span>=<span class="string">"gpt-4o-mini"</span>)
 <span class="type">agent</span> = <span class="function">create_openai_tools_agent</span>(<span class="type">llm</span>, <span class="type">tools</span>)
 <span class="type">agent_executor</span> = <span class="function">AgentExecutor</span>(<span class="keyword">agent</span>=<span class="type">agent</span>, <span class="keyword">tools</span>=<span class="type">tools</span>)</pre>
                     </div>
@@ -744,11 +742,11 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
 
 <span class="comment"># Create warrant (in production, from control plane)</span>
 <span class="type">keypair</span> = <span class="function">SigningKey.generate</span>()
-<span class="type">warrant</span> = (<span class="function">Warrant.builder</span>()
+<span class="type">warrant</span> = (<span class="function">Warrant.mint_builder</span>()
     .<span class="function">capability</span>(<span class="string">"read_file"</span>, {<span class="string">"file_path"</span>: <span class="function">Pattern</span>(<span class="string">"/tmp/*"</span>)})
     .<span class="function">holder</span>(<span class="type">keypair</span>.public_key)
     .<span class="function">ttl</span>(<span class="number">3600</span>)
-    .<span class="function">issue</span>(<span class="type">keypair</span>))
+    .<span class="function">mint</span>(<span class="type">keypair</span>))
 
 <span class="comment"># Set warrant AND keypair in context before running agent</span>
 <span class="keyword">with</span> <span class="function">warrant_scope</span>(<span class="type">warrant</span>), <span class="function">key_scope</span>(<span class="type">keypair</span>):

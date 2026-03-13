@@ -54,7 +54,7 @@ dedup_key = warrant.dedup_key(tool, args)
 if cache.exists(dedup_key):  # Redis, memcached, or in-memory
     raise ReplayError("Duplicate request")
     
-authorizer.check(warrant, tool, args)
+authorizer.authorize(warrant, tool, args)
 cache.set(dedup_key, "1", ttl=120)  # 120s covers the ~2min window
 ```
 
@@ -182,37 +182,11 @@ All Tenuo integrations enforce these invariants (see [Integration Guide](../tenu
 
 ## Threat Model
 
-### What Tenuo Protects Against
+For the full threat model (what Tenuo protects against and what it does not), see [Concepts](./concepts#threat-model). This section covers operational security details.
 
-**Prompt injection**: Even if the LLM is tricked, attenuated scope limits damage.
+### Defense in Depth: Network Policies
 
-**Confused deputy**: A node can only use tools in its warrant.
-
-**Credential theft**: Warrant is useless without the private key (PoP).
-
-**Stale permissions**: TTL forces expiration.
-
-**Privilege escalation**: Monotonic attenuation means a child can never exceed its parent.
-
-**Replay attacks**: Timestamp windows (~2 min) prevent signature reuse.
-
-### What Tenuo Does NOT Protect Against
-
-**Container compromise**: If an attacker has both signing key and warrant, they have full access within that scope. Use separate containers with separate keys.
-
-**Malicious node code**: Same trust boundary as auth logic. Use code review and sandboxing.
-
-**Control plane compromise**: Can mint arbitrary warrants. Secure your control plane.
-
-**Raw API calls**: Bypass Tenuo entirely.
-    
-**Mitigations:**
-1.  **Wrapper usage** - All tools must be protected with `@guard` or `guard()`.
-2.  **Network Policies** - Restrict egress to prevent data exfiltration.
-
-#### Defense in Depth: Network Policies
-
-Tenuo handles **authorization** - what an agent is *allowed* to do. For **exfiltration prevention**, use Kubernetes Network Policies:
+Tenuo handles authorization -- what an agent is *allowed* to do. For exfiltration prevention, use Kubernetes Network Policies:
 
 ```yaml
 # Restrict agent egress to only approved services
@@ -230,12 +204,16 @@ spec:
   - to:
     - podSelector:
         matchLabels:
-          app: tool-proxy  # Only allow calls to protected tool proxy
+          app: tool-proxy
 ```
 
-**Tenuo + Network Policies = complete coverage:**
-- Tenuo: Prevents unauthorized tool usage *through* your API
-- Network Policies: Prevents bypassing your API entirely
+Tenuo prevents unauthorized tool usage *through* your API. Network policies prevent bypassing your API entirely.
+
+### Operational Checklist
+
+1. All tools must be protected with `@guard` or `guard()`.
+2. Restrict egress to prevent data exfiltration.
+3. For agent compromise resilience, deploy sidecar or gateway enforcement (see [Enforcement Architecture](./enforcement)).
 
 ---
 
@@ -288,14 +266,14 @@ Issue terminal warrants (cannot be delegated) for each expensive call:
 
 ```python
 async def safe_expensive_call(tool_name: str, params: dict):
-    # One warrant per operation - orchestrator controls issuance
     single_use = (Warrant.mint_builder()
-        .capability(tool_name, params)
-        .ttl(30)        # 30 second window
-        .terminal()     # max_depth=0, cannot delegate
-        .mint(key))
-    
-    async with grant(single_use):
+        .capability(tool_name, **params)
+        .holder(worker_key.public_key)
+        .ttl(30)
+        .terminal()
+        .mint(issuer_key))
+
+    with warrant_scope(single_use), key_scope(worker_key):
         return await execute_tool(tool_name, params)
 ```
 
@@ -314,14 +292,14 @@ class BudgetedOrchestrator:
         
         self.remaining_calls -= 1
         
-        # Fresh short-lived warrant for this call
         warrant = (Warrant.mint_builder()
-            .capability(task.tool, task.constraints)
+            .capability(task.tool, **task.constraints)
+            .holder(self.worker_key.public_key)
             .ttl(30)
             .terminal()
             .mint(self.key))
-        
-        async with grant(warrant):
+
+        with warrant_scope(warrant), key_scope(self.worker_key):
             return await task.execute()
 ```
 
@@ -457,35 +435,35 @@ root_key = SigningKey.from_env("TENUO_ROOT_KEY")
 warrant = (Warrant.mint_builder()...mint(root_key))
 ```
 
-| | |
-|---|---|
-| **Pros** | Zero infrastructure overhead |
-| **Cons** | RCE on orchestrator exposes root key |
-| **Use case** | Local dev, CI/CD, non-critical agents |
+| Aspect | Detail |
+|--------|--------|
+| Pros | Zero infrastructure overhead |
+| Cons | RCE on orchestrator exposes root key |
+| Use case | Local dev, CI/CD, non-critical agents |
 
 ### Level 2: Isolated Signing Service (Production)
 
 ```
-Orchestrator  →  gRPC/mTLS  →  Signing Service (holds key)
+Orchestrator  -->  gRPC/mTLS  -->  Signing Service (holds key)
 ```
 
-| | |
-|---|---|
-| **Pros** | Key isolation; RCE can only request warrants |
-| **Cons** | One additional service to run |
-| **Use case** | Production Kubernetes, standard SaaS |
+| Aspect | Detail |
+|--------|--------|
+| Pros | Key isolation; RCE can only request warrants |
+| Cons | One additional service to run |
+| Use case | Production Kubernetes, standard SaaS |
 
 ### Level 3: Hardware Root of Trust (High Assurance)
 
 ```
-Orchestrator  →  AWS KMS / GCP KMS / HSM  →  Signed warrant
+Orchestrator  -->  AWS KMS / GCP KMS / HSM  -->  Signed warrant
 ```
 
-| | |
-|---|---|
-| **Pros** | Key is non-exportable; instant revocation via IAM |
-| **Cons** | ~50-100ms issuance latency |
-| **Use case** | FinTech, HealthTech, regulated industries |
+| Aspect | Detail |
+|--------|--------|
+| Pros | Key is non-exportable; instant revocation via IAM |
+| Cons | ~50-100ms issuance latency |
+| Use case | FinTech, HealthTech, regulated industries |
 
 ---
 
@@ -577,10 +555,9 @@ def tenuo_strict():
 
 ## See Also
 
+- [Concepts](./concepts): Problem/solution, threat model, core invariants
 - [AI Agent Patterns](./ai-agents): P-LLM/Q-LLM, prompt injection defense, multi-agent security
-- [Enforcement Architecture](./enforcement): In-process, sidecar, gateway deployment patterns
-- [Argument Extraction](./argument-extraction): How tool arguments are extracted and validated
+- [Enforcement Architecture](./enforcement): Deployment patterns and proxy configurations
+- [Constraints](./constraints): Constraint types, argument extraction, gateway configuration
 - [Protocol Specification](./spec/protocol-spec-v1): Full protocol details
-- [Proxy Configs](./proxy-configs): Envoy, Istio, nginx integration
-- [API Reference](./api-reference): Function signatures
-- [Constraints](./constraints): Constraint types and usage
+- [API Reference](./api-reference): Python SDK, CLI, and performance benchmarks

@@ -548,6 +548,6 @@ tools = guard(
 
 - [LangGraph Integration](./langgraph)  -- Multi-agent graph security
 - [Human Approvals](./approvals)  -- Approval policy guide
-- [Argument Extraction](./argument-extraction)  -- How extraction works
+- [Argument Extraction](./constraints#argument-extraction)  -- How extraction works
 - [Security](./security)  -- Threat model, best practices
 - [API Reference](./api-reference)  -- Full Python API documentation

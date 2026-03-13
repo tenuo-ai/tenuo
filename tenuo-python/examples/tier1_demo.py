@@ -6,7 +6,7 @@ and managing authority scopes.
 
 ⚠️  IMPORTANT: This demo uses Tier 1 guardrails (no cryptography).
     For production systems, use Tier 2 (Warrant + PoP) to protect against
-    insider threats and container compromise. See examples/openai_warrant.py.
+    insider threats and container compromise. See examples/openai/warrant.py.
 """
 
 import asyncio

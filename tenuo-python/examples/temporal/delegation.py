@@ -303,6 +303,7 @@ async def main():
             on_denial="raise",
             audit_callback=on_audit,
             trusted_roots=[control_key.public_key],
+            strict_mode=True,
             activity_fns=[read_file, write_file, list_directory],
         )
     )
@@ -335,7 +336,7 @@ async def main():
         )
         data = await client.execute_workflow(
             IngestWorkflow.run,
-            arg=str(source_dir),
+            args=[str(source_dir)],
             id=ingest_id,
             task_queue=task_queue,
         )
@@ -358,12 +359,17 @@ async def main():
 
         # -- Verify: transform warrant cannot read source --
         logger.info("  Verify: transform warrant cannot read (should be denied)")
+        bad_id = f"bad-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            bad_id,
+            tenuo_headers(transform_warrant, "transform"),
+        )
         try:
             from temporalio.client import WorkflowFailureError
             await client.execute_workflow(
                 IngestWorkflow.run,
-                arg=str(source_dir),
-                id=f"bad-{uuid.uuid4().hex[:8]}",
+                args=[str(source_dir)],
+                id=bad_id,
                 task_queue=task_queue,
             )
             logger.error("  BUG: should have been denied")
@@ -441,7 +447,7 @@ async def main():
             # ReaderChild needs read_file + list_directory, but warrant only has write_file
             await client.execute_workflow(
                 ReaderChild.run,
-                arg=str(source_dir),
+                args=[str(source_dir)],
                 id=bad_reader_id,
                 task_queue=task_queue,
             )

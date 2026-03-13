@@ -122,7 +122,7 @@ async def handle_task(user_request: str):
     # Warrant expires, no cleanup needed
 ```
 
-**Full code:** [proxy-configs.md#control-plane-fetch](./proxy-configs.md#control-plane-fetch)
+**Full code:** [Enforcement: Proxy Configurations](./enforcement#proxy-configurations)
 
 ---
 
@@ -140,7 +140,7 @@ async def tenuo_middleware(request: Request, call_next):
         return await call_next(request)
 ```
 
-**Full code:** [proxy-configs.md#request-header](./proxy-configs.md#request-header)
+**Full code:** [Enforcement: Proxy Configurations](./enforcement#proxy-configurations)
 
 ---
 
@@ -159,7 +159,7 @@ env:
       key: WARRANT_BASE64
 ```
 
-**Full code:** [proxy-configs.md#environment-variable](./proxy-configs.md#environment-variable)
+**Full code:** [Enforcement: Proxy Configurations](./enforcement#proxy-configurations)
 
 ### Anti-Pattern Warning
 
@@ -199,7 +199,7 @@ containers:
 
 ### As Gateway
 
-See [Envoy config](./proxy-configs.md#envoy) or [Istio config](./proxy-configs.md#istio).
+See [Proxy Configurations](./enforcement#proxy-configurations) for Envoy and Istio configs.
 
 ---
 
@@ -351,7 +351,7 @@ spec:
 
 ## See Also
 
-- [Proxy Configs Reference](./proxy-configs.md): Full Envoy, Istio, nginx configs
+- [Proxy Configurations](./enforcement#proxy-configurations): Full Envoy, Istio, nginx configs
 - [Envoy Quickstart](https://github.com/tenuo-ai/tenuo/tree/main/quickstart/envoy)
 - [Istio Quickstart](https://github.com/tenuo-ai/tenuo/tree/main/quickstart/istio)
 - [Enforcement Architecture](./enforcement): In-process, sidecar, gateway, MCP patterns

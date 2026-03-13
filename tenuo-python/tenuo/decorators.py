@@ -187,7 +187,7 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
       - UrlSafe.is_safe()      -> Rust core
       - Cidr.contains_ip()     -> Rust core
       - Pattern.matches()      -> Rust core
-      - Shlex.matches()        -> Rust core
+      - Shlex.matches()        -> Python shlex (full POSIX parsing)
       - Range.contains()       -> Rust core
       - Exact.matches()        -> Rust core
       - OneOf.contains()       -> Rust core
@@ -213,7 +213,7 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
         if hasattr(constraint, "matches") and constraint_type == "Pattern":
             return constraint.matches(value)
 
-        # Shlex - shell command validation (Rust core via Python shlex)
+        # Shlex - shell command validation (Python full shlex parsing)
         if hasattr(constraint, "matches") and constraint_type == "Shlex":
             return constraint.matches(str(value))
 

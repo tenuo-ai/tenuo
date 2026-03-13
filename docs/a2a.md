@@ -219,7 +219,7 @@ card = await client.discover()
 task_warrant = (my_warrant
     .grant_builder()
     .capability("search_papers", sources=UrlSafe(allow_domains=["arxiv.org"]))
-    .audience(card.public_key)
+    .holder(card.public_key)
     .ttl(300)
     .build(my_signing_key))
 
@@ -734,7 +734,7 @@ async def delegate_research(topic: str, my_warrant, my_key, target_pubkey):
     task_warrant = (my_warrant
         .grant_builder()
         .capability("search_papers", sources=UrlSafe(allow_domains=["arxiv.org"]))
-        .audience(target_pubkey)
+        .holder(target_pubkey)
         .ttl(300)
         .build(my_key))
     

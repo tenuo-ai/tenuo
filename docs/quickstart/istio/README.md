@@ -148,7 +148,7 @@ kubectl get configmap istio -n istio-system -o yaml | grep -A10 extensionProvide
 
 - [Envoy Quickstart](../envoy/) - Standalone proxy alternative
 - [Kubernetes Guide](../../kubernetes) - Production patterns
-- [Proxy Configs](../../proxy-configs) - Full Istio config reference
+- [Proxy Configurations](../../enforcement#proxy-configurations) - Full Istio config reference
 
 ## Clean Up
 
