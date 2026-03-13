@@ -6,7 +6,7 @@ This uses Tier 1 (no cryptography) - runtime constraint checking only.
 
 ⚠️  PRODUCTION WARNING: Tier 1 is suitable for prototyping and single-process scenarios.
     For production systems where insider threats or container compromise are concerns,
-    use Tier 2 (Warrant + PoP). See examples/openai_warrant.py for cryptographic protection.
+    use Tier 2 (Warrant + PoP). See examples/openai/warrant.py for cryptographic protection.
 
 With Constraints (Builder - Recommended):
     client = (GuardBuilder(openai.OpenAI())
@@ -370,11 +370,8 @@ def demo_shlex_protection():
         action = "SAFE" if result else "BLOCKED"
         print(f"  {status} {cmd:<25} -> {action:<8} ({desc})")
 
-    print("\nShlex with glob blocking:")
-    strict = Shlex(allow=["ls"], block_globs=True)
-    print("  Shlex(allow=['ls'], block_globs=True)")
-    print(f"    ls -la /tmp:   {'SAFE' if strict.matches('ls -la /tmp') else 'BLOCKED'}")
-    print(f"    ls *.txt:      {'SAFE' if strict.matches('ls *.txt') else 'BLOCKED'} (globs blocked)")
+    print("\nShlex allows globs (not an injection vector):")
+    print(f"    ls *.txt:      {'SAFE' if constraint.matches('ls *.txt') else 'BLOCKED'}")
 
     print()
 
@@ -558,7 +555,7 @@ def main():
 
     print("=" * 60)
     print("For Tier 2 (cryptographic warrants with PoP), see:")
-    print("  - tenuo-python/examples/openai_warrant.py")
+    print("  - tenuo-python/examples/openai/warrant.py")
     print("=" * 60)
 
 

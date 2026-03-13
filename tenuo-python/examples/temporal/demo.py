@@ -21,7 +21,7 @@ The TenuoInterceptor automatically computes PoP with deterministic timestamps
 wall-clock time and cause replay failures.
 
 Requirements:
-    pip install temporalio tenuo
+    pip install "tenuo[temporal]"
 
 Usage:
     temporal server start-dev   # Terminal 1
@@ -55,6 +55,7 @@ from tenuo.temporal import (
     TenuoClientInterceptor,
     TenuoInterceptor,
     TenuoInterceptorConfig,
+    execute_workflow_authorized,
     tenuo_headers,
 )
 
@@ -231,6 +232,7 @@ async def main():
             on_denial="raise",
             audit_callback=on_audit,
             trusted_roots=[control_key.public_key],
+            strict_mode=True,
             activity_fns=[read_file, write_file, list_directory],
         )
     )
@@ -255,42 +257,48 @@ async def main():
     ):
         logger.info("Worker started\n")
 
-        # ── Authorized sequential access ─────────────────────────
+        # ── Authorized sequential access (recommended API) ────────
         logger.info("=== Sequential access (path=/tmp/tenuo-demo) ===")
-        client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent1")
-        )
-
-        result = await client.execute_workflow(
-            ResearchWorkflow.run,
+        result = await execute_workflow_authorized(
+            client=client,
+            client_interceptor=client_interceptor,
+            workflow_run_fn=ResearchWorkflow.run,
+            workflow_id=f"research-{uuid.uuid4().hex[:8]}",
+            warrant=warrant,
+            key_id="agent1",
             args=[str(demo_dir)],
-            id=f"research-{uuid.uuid4().hex[:8]}",
             task_queue=task_queue,
         )
         logger.info(f"Result: {result}\n")
 
         # ── Parallel activity execution ──────────────────────────
         logger.info("=== Parallel activities (asyncio.gather) ===")
-        client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent1")
+        parallel_id = f"parallel-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            parallel_id,
+            tenuo_headers(warrant, "agent1"),
         )
-
         result = await client.execute_workflow(
             ParallelResearchWorkflow.run,
             args=[str(demo_dir)],
-            id=f"parallel-{uuid.uuid4().hex[:8]}",
+            id=parallel_id,
             task_queue=task_queue,
         )
         logger.info(f"Result: {result}\n")
 
-        # ── Unauthorized access ──────────────────────────────────
+        # ── Unauthorized access (path outside warrant scope) ─────
         logger.info("=== Unauthorized access (path=/etc) ===")
+        unauth_id = f"unauth-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            unauth_id,
+            tenuo_headers(warrant, "agent1"),
+        )
         try:
             from temporalio.client import WorkflowFailureError
             await client.execute_workflow(
                 ResearchWorkflow.run,
                 args=["/etc"],  # outside warrant scope
-                id=f"unauth-{uuid.uuid4().hex[:8]}",
+                id=unauth_id,
                 task_queue=task_queue,
             )
             logger.error("BUG: should have been denied!")

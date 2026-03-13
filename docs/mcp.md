@@ -297,7 +297,7 @@ with mint_sync(Capability("filesystem_read", path="/var/log/*")):
 
 Define how to extract constraints from MCP tool call arguments.
 
-> Remember: This configuration defines extraction, not policy. It tells Tenuo where to find the arguments in the JSON-RPC call. The actual limits (e.g., which paths are allowed) are defined in the Warrant. See [Argument Extraction](./argument-extraction) for a deep dive.
+> Remember: This configuration defines extraction, not policy. It tells Tenuo where to find the arguments in the JSON-RPC call. The actual limits (e.g., which paths are allowed) are defined in the Warrant. See [Argument Extraction](./constraints#argument-extraction) for a deep dive.
 
 ### Extraction Sources
 
@@ -740,7 +740,7 @@ except TenuoError as e:
 | `ConfigurationError` | 1201 | Extraction failed | Check `extraction_config` |
 | `ExpiredError` | 1300 | TTL exceeded | Request fresh warrant |
 
-See [wire format specification](/docs/spec/wire-format-v1#appendix-a-error-codes) for the complete list.
+See [wire format specification](./spec/wire-format-v1#appendix-a-error-codes) for the complete list.
 
 ---
 
@@ -819,6 +819,6 @@ max_size:
 ## See Also
 
 - [API Reference → MCP Integration](./api-reference#mcp)
-- [Argument Extraction](./argument-extraction)
+- [Argument Extraction](./constraints#argument-extraction)
 - [Constraints Guide](./constraints)
 - [Security Best Practices](./security)

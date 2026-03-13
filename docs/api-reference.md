@@ -26,8 +26,10 @@ Complete API documentation for the Tenuo Python SDK. For wire format details, se
 - [Decorators & Context](#decorators--context)
 - [LangChain Integration](#langchain-integration)
 - [LangGraph Integration](#langgraph-integration)
+- [FastAPI Integration](#fastapi-integration)
 - [Testing Utilities](#testing-utilities)
 - [CLI](#cli)
+- [Performance Benchmarks](#performance-benchmarks)
 - [Exceptions](#exceptions)
 - [Audit Logging](#audit-logging)
 - [Type Protocols](#type-protocols)
@@ -474,7 +476,7 @@ The SDK uses two headers for warrant transport:
 - **Single warrant** - CBOR map `{id: ..., tools: ...}`
 - **Warrant chain** - CBOR array `[parent, ..., leaf]` (WarrantStack)
 
-The gateway auto-detects the format (Warrant vs WarrantStack), so `X-Tenuo-Warrant` works for both. See [Gateway Configuration](./gateway-config.md) for details.
+The gateway auto-detects the format (Warrant vs WarrantStack), so `X-Tenuo-Warrant` works for both. See [Gateway Configuration](./constraints#gateway-configuration-reference) for details.
 
 | Class | Description |
 |-------|-------------|
@@ -494,7 +496,7 @@ print(repr(warrant))
 # <Warrant id=tnu_wrt_019b... tools=[a, b, c, +3 more] ttl=0:04:59>
 ```
 
-**Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew. For sensitive operations, implement deduplication using `warrant.dedup_key(tool, args)`. See [Protocol: Replay Protection](./protocol#replay-protection).
+**Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew. For sensitive operations, implement deduplication using `warrant.dedup_key(tool, args)`. See [Protocol: Replay Protection](./spec/protocol-spec-v1#replay-protection).
 
 #### Principle of Least Authority (POLA)
 
@@ -710,7 +712,7 @@ All setter methods are **dual-purpose**: call with argument to set (returns self
 | `intent(text)` / `intent()` | `GrantBuilder` / `str` | Set/get intent |
 | `terminal()` | `GrantBuilder` | Make warrant terminal (no further delegation) |
 | `diff()` | `str` | Preview changes (human-readable) |
-| `delegate(signing_key)` | `Warrant` | Issue child with receipt |
+| `grant(signing_key)` | `Warrant` | Finalize and sign the child warrant |
 
 > **POLA**: The builder starts with NO capabilities. Use `capability()` to grant specific tools, or `inherit_all()` to explicitly inherit all parent capabilities.
 
@@ -1406,7 +1408,7 @@ def read_file(file_path: str):
 # Extracted as: {path: "..."}
 ```
 
-See [Argument Extraction](./argument-extraction) for comprehensive documentation.
+See [Argument Extraction](./constraints#argument-extraction) for comprehensive documentation.
 
 #### Patterns
 
@@ -1513,10 +1515,10 @@ from tenuo import warrant_scope, key_scope, Pattern
 
 async def researcher_node(state, warrant, signing_key):
     # Narrow scope for this node
-    node_warrant = warrant.grant_builder()
+    node_warrant = (warrant.grant_builder()
         .capability("search", query=Pattern("*public*"))
-        .grant(signing_key)
-    
+        .grant(signing_key))
+
     with warrant_scope(node_warrant), key_scope(signing_key):
         results = await search(state["query"])
     return {"results": results}
@@ -1564,63 +1566,61 @@ key = registry.get("api", namespace="tenant-123")
 
 ---
 
+## FastAPI Integration
+
+Middleware and dependency injection for FastAPI applications.
+
+```python
+from tenuo.fastapi import TenuoGuard, SecurityContext, require_warrant
+```
+
+### `TenuoGuard` (Middleware)
+
+Global middleware that extracts warrants/keys from headers and manages request context.
+
+```python
+from fastapi import FastAPI
+from tenuo import configure, SigningKey
+from tenuo.fastapi import TenuoGuard
+
+app = FastAPI()
+
+app.add_middleware(
+    TenuoGuard,
+    # Optional config overrides
+    # trusted_roots=[...],
+    # verbose_errors=True
+)
+```
+
+### Dependencies
+
+#### `require_warrant`
+
+Dependency that enforces presence of a valid warrant. Returns `SecurityContext`.
+
+```python
+@app.get("/secure")
+async def secure_endpoint(
+    ctx: SecurityContext = Depends(require_warrant)
+):
+    return {"warrant_id": ctx.warrant_id}
+```
+
+### `SecurityContext`
+
+Context object injected into route handlers.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `warrant` | `AnyWarrant` | The verified warrant object |
+| `warrant_id` | `str` | Unique warrant ID |
+| `fields` | `dict` | Custom warrant fields |
+| `key_id` | `str \| None` | ID of the signing key (if registered) |
+
 ---
- 
- ## FastAPI Integration
- 
- Middleware and dependency injection for FastAPI applications.
- 
- ```python
- from tenuo.fastapi import TenuoGuard, SecurityContext, require_warrant
- ```
- 
- ### `TenuoGuard` (Middleware)
- 
- Global middleware that extracts warrants/keys from headers and manages request context.
- 
- ```python
- from fastapi import FastAPI
- from tenuo import configure, SigningKey
- from tenuo.fastapi import TenuoGuard
- 
- app = FastAPI()
- 
- app.add_middleware(
-     TenuoGuard,
-     # Optional config overrides
-     # trusted_roots=[...], 
-     # verbose_errors=True
- )
- ```
- 
- ### Dependencies
- 
- #### `require_warrant`
- 
- Dependency that enforces presence of a valid warrant. Returns `SecurityContext`.
- 
- ```python
- @app.get("/secure")
- async def secure_endpoint(
-     ctx: SecurityContext = Depends(require_warrant)
- ):
-     return {"warrant_id": ctx.warrant_id}
- ```
- 
- ### `SecurityContext`
- 
- Context object injected into route handlers.
- 
- | Property | Type | Description |
- |----------|------|-------------|
- | `warrant` | `AnyWarrant` | The verified warrant object |
- | `warrant_id` | `str` | Unique warrant ID |
- | `fields` | `dict` | Custom warrant fields |
- | `key_id` | `str \| None` | ID of the signing key (if registered) |
- 
- ---
- 
- ## Testing Utilities
+
+## Testing Utilities
 
 Utilities for testing code that uses Tenuo authorization.
 
@@ -1761,23 +1761,88 @@ headers = deterministic_headers(warrant, key, "read_file", {"path": "/data/x"})
 
 ## CLI
 
-Command-line tools for Tenuo operations.
+Developer utilities for inspecting warrants, analyzing logs, and initializing projects. The CLI is included with the Python package:
+
+```bash
+uv pip install tenuo
+tenuo --help
+```
+
+### `tenuo init`
+
+Initialize a new Tenuo project for local development. Generates a root key and config file.
+
+> **For local development.** Root keys (issuer keys) grant unlimited authority. In production, protect them with a secrets manager (Vault, K8s Secrets, cloud KMS).
+
+```bash
+$ tenuo init
+Initializing Tenuo project (development mode)...
+Received root_key (ed25519) -> .env
+Created tenuo_config.py with sensible defaults
+
+Ready! Next steps:
+   tenuo mint --tool read_file --ttl 1h   # Create a test warrant
+   tenuo decode <warrant>                 # Inspect it
+```
+
+### `tenuo mint`
+
+Create a test warrant. Uses `TENUO_ROOT_KEY` from environment (set by `tenuo init`).
+
+```bash
+tenuo mint --tool <TOOL> [--tool <TOOL>...] [--ttl <TTL>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--tool`, `-t` | Tool to authorize (repeatable, required) |
+| `--ttl` | Time-to-live (default: `1h`). Examples: `1h`, `30m`, `300s` |
+
+### `tenuo decode`
+
+Decode and inspect a warrant or warrant stack. Auto-detects whether the input is a single warrant or a multi-warrant chain.
+
+```bash
+tenuo decode <warrant_base64>
+```
+
+**Output:**
+```
+Warrant ID: wrt_abc123
+Issuer: pk_xyz...
+Holder: pk_abc...
+Tools: ["search", "read_file"]
+TTL: 3600s (59m remaining)
+Constraints:
+  read_file.path: Pattern("/data/*")
+```
+
+### `tenuo validate`
+
+Check if a tool call would be authorized by a warrant.
+
+```bash
+tenuo validate <WARRANT> --tool <TOOL> [--args <JSON>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--tool`, `-t` | Tool name to check (required) |
+| `--args`, `-a` | Tool arguments as JSON (default: `{}`) |
+
+Exit codes: `0` = authorized, `1` = denied or error.
 
 ### `tenuo discover`
 
-Analyze audit logs and generate capability definitions. **Essential for gradual adoption.**
+Analyze audit logs and generate capability definitions. Useful for migrating existing systems to Tenuo.
 
 ```bash
-# Analyze logs and generate YAML capabilities
-tenuo discover --input audit.log --output capabilities.yaml
-
-# Generate Python code instead
-tenuo discover --input audit.log --format python
+tenuo discover --input <LOG_FILE> [--output FILE] [--format yaml|python]
 ```
 
 **How it works:**
 
-1. Deploy your app with `mode="audit"` (logs tool calls but doesn't block)
+1. Deploy your app with `mode="audit"` (logs tool calls but does not block)
 2. Run the app normally for a period
 3. Use `discover` to analyze logs and generate minimal capabilities
 4. Review and refine the generated capabilities
@@ -1796,53 +1861,17 @@ capabilities:
     operation: Exact("SELECT")
 ```
 
-**Example Output (Python):**
+### `tenuo extract`
 
-```python
-from tenuo import Capability, Pattern, OneOf, Exact
-
-capabilities = [
-    Capability("search", query=Pattern("*")),
-    Capability("read_file", path=OneOf(["/data/reports/*", "/data/docs/*"])),
-    Capability("query", table=OneOf(["users", "products"]), operation=Exact("SELECT")),
-]
-```
-
-### `tenuo decode`
-
-Decode and inspect a warrant (warrants contain no secrets, safe to share).
+Test gateway argument extraction rules against a sample request.
 
 ```bash
-tenuo decode eyJ3YXJyYW50IjoiLi4uIn0=
-
-# Output:
-# Warrant ID: wrt_abc123
-# Issuer: pk_xyz...
-# Holder: pk_abc...
-# Tools: ["search", "read_file"]
-# TTL: 3600s (59m remaining)
-# Constraints:
-#   read_file.path: Pattern("/data/*")
-```
-
-### `tenuo validate`
-
-Validate a warrant against specific tool and arguments.
-
-```bash
-tenuo validate --warrant eyJ3... --tool read_file --args '{"path": "/data/report.txt"}'
-
-# Output:
-# Authorization would succeed
-#   Tool: read_file
-#   Path: /data/report.txt matches Pattern("/data/*")
-
-tenuo validate --warrant eyJ3... --tool read_file --args '{"path": "/etc/passwd"}'
-
-# Output:
-# Authorization would fail
-#   Tool: read_file
-#   Path: /etc/passwd does NOT match Pattern("/data/*")
+tenuo extract \
+    --config ./gateway.yaml \
+    --request '{"spec": {"replicas": 5}}' \
+    --path /api/v1/clusters/prod/scale \
+    --method POST \
+    --verbose
 ```
 
 ---
@@ -1972,9 +2001,78 @@ def process_warrant(w: AnyWarrant) -> None:
 
 ---
 
+## Performance Benchmarks
+
+> **TL;DR:** Full authorization (verify + constraints + PoP) takes ~55us. Denials fail in ~200ns. Tenuo will never be your bottleneck.
+
+Benchmarks measure the core operations using [Criterion.rs](https://github.com/bheisler/criterion.rs) on Apple M3 Max. These are microbenchmarks measuring individual Rust operations in isolation.
+
+### The Hot Path (Verification + Authorization)
+
+This runs on every single tool call.
+
+| Operation | Time (mean) | Description |
+|-----------|-------------|-------------|
+| `warrant_verify` | **26.6 us** | Full crypto signature check + TTL validation |
+| `warrant_authorize` | **28.0 us** | Constraint logic + Proof-of-Possession verification |
+| **Total Overhead** | **~54.6 us** | End-to-end authorization latency |
+
+### Denial Performance
+
+Fast denials prevent DoS attacks. If authorization failures are slow, attackers can exhaust resources with invalid requests.
+
+| Denial Type | Time (mean) | Code Path |
+|-------------|-------------|-----------|
+| Wrong tool | **114 ns** | Early rejection (tool name check) |
+| Constraint violation | **192 ns** | Pattern matching failure |
+| Missing PoP | **192 ns** | Missing signature check |
+| Invalid PoP | **109 us** | Cryptographic verification failure |
+
+Most attacks fail in sub-microsecond time, making DoS via invalid requests impractical.
+
+### Control Plane (Issuance)
+
+| Operation | Time (mean) | Description |
+|-----------|-------------|-------------|
+| `warrant_create_minimal` | **13.5 us** | Ed25519 signing (minimal warrant) |
+| `warrant_create_with_constraints` | **15.5 us** | Warrant with Pattern + Range constraints |
+| `warrant_attenuate` | **30.8 us** | Parent verification + child signing |
+
+### Wire Format
+
+| Operation | Time (mean) | Description |
+|-----------|-------------|-------------|
+| `wire_encode` | **1.12 us** | Serialization to CBOR binary format |
+| `wire_decode` | **8.53 us** | Deserialization from CBOR |
+| `wire_encode_base64` | **1.42 us** | CBOR + Base64 encoding |
+| `wire_decode_base64` | **8.85 us** | Base64 + CBOR decoding |
+
+### Delegation Depth
+
+Performance scales linearly with chain depth.
+
+| Chain Depth | Measured Time | Notes |
+|-------------|---------------|-------|
+| 1 (Root) | ~27 us | Single warrant verification |
+| 8 | ~251 us | Benchmark-tested depth |
+
+> The protocol allows up to 64 delegation levels (`MAX_DELEGATION_DEPTH`). The benchmark tests depth 8 as a representative worst case (~31us per additional level).
+
+### Run It Yourself
+
+```bash
+git clone https://github.com/tenuo-ai/tenuo
+cd tenuo/tenuo-core
+cargo bench --bench warrant_benchmarks
+```
+
+Full benchmark source: [`warrant_benchmarks.rs`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-core/benches/warrant_benchmarks.rs).
+
+---
+
 ## See Also
 
 - [AI Agent Patterns](./ai-agents) - P-LLM/Q-LLM, prompt injection defense
-- [Constraints Guide](./constraints) - Detailed constraint usage
+- [Constraints](./constraints) - Constraint types, argument extraction, gateway configuration
 - [Security](./security) - Threat model and protections
 - [Examples](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples) - Python usage examples

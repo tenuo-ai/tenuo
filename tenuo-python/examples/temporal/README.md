@@ -36,7 +36,22 @@ python demo.py                   # Terminal 2
 
 ## Transparent Authorization Pattern
 
-The TenuoInterceptor computes Proof-of-Possession signatures transparently - just use standard Temporal APIs:
+Recommended start path: use `execute_workflow_authorized(...)` for deterministic header binding in concurrent clients.
+
+```python
+result = await execute_workflow_authorized(
+    client=client,
+    client_interceptor=client_interceptor,
+    workflow_run_fn=MyWorkflow.run,
+    workflow_id="wf-123",
+    warrant=warrant,
+    key_id="agent1",
+    args=[path],
+    task_queue="my-queue",
+)
+```
+
+Inside workflows, the TenuoInterceptor computes Proof-of-Possession signatures transparently - use standard Temporal APIs:
 
 ```python
 @workflow.defn
@@ -76,7 +91,7 @@ This is an authorization decision (choosing what scope and duration to delegate)
 
 **How it works:**
 1. Reads the parent warrant from workflow context
-2. Calls `parent_warrant.attenuate(tools=..., ttl_seconds=...)` internally
+2. Derives a narrowed child warrant internally (monotonic attenuation)
 3. Validates that requested tools are a subset of parent's tools
 4. Injects the attenuated child warrant via the outbound interceptor
 5. Child workflow receives ONLY the narrowed capabilities
@@ -97,6 +112,7 @@ interceptor = TenuoInterceptor(
         key_resolver=EnvKeyResolver(),
         on_denial="raise",
         trusted_roots=[control_key.public_key],
+        strict_mode=True,  # Production: fail startup if trusted_roots missing
         audit_callback=on_audit,
     )
 )
@@ -120,7 +136,7 @@ worker = Worker(
 ```
 Client                    Workflow                    Activity
   |                          |                           |
-  |-- set_headers()          |                           |
+  |-- set_headers_for_workflow() |                      |
   |-- execute_workflow() --->|                           |
   |                          |                           |
   |                    Inbound interceptor:              |
@@ -168,7 +184,7 @@ pytest tests/test_temporal_e2e.py -v    # 31 integration tests
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `ImportError: PyO3 modules ... initialized once` | Missing passthrough modules | Add `with_passthrough_modules("tenuo", "tenuo_core")` to sandbox config |
-| `TenuoContextError: No Tenuo headers in store` | Workflow started without headers | Call `client_interceptor.set_headers(tenuo_headers(...))` before `execute_workflow` |
+| `TenuoContextError: No Tenuo headers in store` | Workflow started without headers | Use `execute_workflow_authorized(...)` or call `set_headers_for_workflow(workflow_id, tenuo_headers(...))` before `execute_workflow` |
 | `ConstraintViolation: No warrant provided` | Headers not reaching worker | Ensure `TenuoClientInterceptor` is in the client's interceptor list |
 | Activity denied despite valid warrant | PoP computation failed | Check worker logs for WARNING messages from outbound interceptor |
 

@@ -10,11 +10,11 @@ Requirements:
 
 Usage:
     # Demo mode (no API key needed)
-    python openai_async.py
+    python async_patterns.py
 
     # With real OpenAI API
     export OPENAI_API_KEY="sk-..."
-    python openai_async.py
+    python async_patterns.py
 """
 
 import asyncio

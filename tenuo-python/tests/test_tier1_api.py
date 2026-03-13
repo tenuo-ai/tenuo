@@ -629,21 +629,13 @@ class TestConstraintContainment:
         child = Shlex(allow=["rm"])
         assert not _is_constraint_contained(child, parent)
 
-    def test_shlex_block_globs_narrowing(self):
-        """Shlex() -> Shlex(block_globs=True) is allowed (more restrictive)."""
+    def test_shlex_equal_sets_allowed(self):
+        """Shlex with identical allow is valid attenuation."""
         from tenuo import Shlex
 
-        parent = Shlex(allow=["ls"], block_globs=False)
-        child = Shlex(allow=["ls"], block_globs=True)
+        parent = Shlex(allow=["ls"])
+        child = Shlex(allow=["ls"])
         assert _is_constraint_contained(child, parent)
-
-    def test_shlex_block_globs_widening_blocked(self):
-        """Shlex(block_globs=True) -> Shlex() is blocked (less restrictive)."""
-        from tenuo import Shlex
-
-        parent = Shlex(allow=["ls"], block_globs=True)
-        child = Shlex(allow=["ls"], block_globs=False)
-        assert not _is_constraint_contained(child, parent)
 
     # -------------------------------------------------------------------------
     # Cidr Constraints (IP Network Containment)

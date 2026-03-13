@@ -18,6 +18,7 @@ Covers:
 import asyncio
 import base64
 import time
+import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -39,6 +40,7 @@ from tenuo.temporal import (  # noqa: E402
     TenuoClientInterceptor,
     TenuoInterceptor,
     TenuoInterceptorConfig,
+    execute_workflow_authorized,
     _extract_warrant_from_headers,
     _pop_dedup_cache,
     _store_lock,
@@ -183,6 +185,71 @@ class TestTenuoClientInterceptor:
         _run(
             out.start_workflow(FakeStartWorkflowInput(id="wf-empty")))
         assert "wf-empty" not in _workflow_headers_store
+
+    def test_set_headers_is_one_shot(self, headers_dict):
+        """Legacy set_headers() applies once, then is consumed."""
+        ci = TenuoClientInterceptor()
+        ci.set_headers(headers_dict)
+        nxt = MagicMock()
+        nxt.start_workflow = AsyncMock(return_value="h")
+        out = ci.intercept_client(nxt)
+
+        _run(out.start_workflow(FakeStartWorkflowInput(id="wf-once-1")))
+        _run(out.start_workflow(FakeStartWorkflowInput(id="wf-once-2")))
+
+        assert "wf-once-1" in _workflow_headers_store
+        assert "wf-once-2" not in _workflow_headers_store
+
+    def test_set_headers_emits_deprecation_warning(self, headers_dict):
+        ci = TenuoClientInterceptor()
+        with warnings.catch_warnings(record=True) as got:
+            warnings.simplefilter("always")
+            ci.set_headers(headers_dict)
+        assert any(issubclass(w.category, DeprecationWarning) for w in got)
+
+    def test_set_headers_for_workflow_binds_by_id(self, headers_dict):
+        """Workflow-specific headers are deterministic for concurrent callers."""
+        ci = TenuoClientInterceptor()
+
+        headers_a = dict(headers_dict)
+        headers_a[TENUO_KEY_ID_HEADER] = b"agentA"
+        headers_b = dict(headers_dict)
+        headers_b[TENUO_KEY_ID_HEADER] = b"agentB"
+
+        ci.set_headers_for_workflow("wf-a", headers_a)
+        ci.set_headers_for_workflow("wf-b", headers_b)
+
+        nxt = MagicMock()
+        nxt.start_workflow = AsyncMock(return_value="h")
+        out = ci.intercept_client(nxt)
+
+        # Start in reverse order to prove binding is by workflow ID.
+        _run(out.start_workflow(FakeStartWorkflowInput(id="wf-b")))
+        _run(out.start_workflow(FakeStartWorkflowInput(id="wf-a")))
+
+        assert _workflow_headers_store["wf-a"][TENUO_KEY_ID_HEADER] == b"agentA"
+        assert _workflow_headers_store["wf-b"][TENUO_KEY_ID_HEADER] == b"agentB"
+
+    def test_execute_workflow_authorized_helper(self, warrant):
+        ci = TenuoClientInterceptor()
+        client = MagicMock()
+        client.execute_workflow = AsyncMock(return_value="ok")
+
+        result = _run(
+            execute_workflow_authorized(
+                client=client,
+                client_interceptor=ci,
+                workflow_run_fn=lambda p: p,
+                workflow_id="wf-helper",
+                warrant=warrant,
+                key_id="agent1",
+                args=["/tmp/demo/f.txt"],
+            )
+        )
+        assert result == "ok"
+        # The helper should schedule deterministic headers for the target ID.
+        with ci._lock:  # type: ignore[attr-defined]
+            assert "wf-helper" in ci._headers_by_workflow_id  # type: ignore[attr-defined]
 
 
 # -- tenuo_headers() with real objects ---------------------------------------
@@ -382,6 +449,63 @@ class TestAuditEvents:
         assert len(events) == 1
         assert events[0].decision == "DENY"
         assert events[0].denial_reason
+
+
+# -- Dry-run shadow mode ------------------------------------------------------
+
+class TestDryRunMode:
+    def test_denied_activity_executes_in_dry_run(
+        self, warrant, agent_key, control_key, headers_dict
+    ):
+        events = []
+        cfg = TenuoInterceptorConfig(
+            key_resolver=EnvKeyResolver(),
+            on_denial="raise",
+            dry_run=True,
+            trusted_roots=[control_key.public_key],
+            audit_callback=events.append,
+        )
+        ti = TenuoInterceptor(cfg)
+        wf = "wf-dry-deny"
+        act_headers = _make_activity_headers(
+            headers_dict, warrant, agent_key, "read_file", {"path": "/etc/shadow"}
+        )
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="executed")
+        nxt.init = MagicMock()
+        ai = ti.intercept_activity(nxt)
+        info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
+        inp = FakeExecuteActivityInput(
+            fn=lambda path: path, args=("/etc/shadow",), headers=act_headers
+        )
+        with patch("temporalio.activity.info") as mock_info:
+            mock_info.return_value = info
+            result = _run(ai.execute_activity(inp))
+
+        assert result == "executed"
+        assert nxt.execute_activity.call_count == 1
+        assert any(e.decision == "DENY" for e in events)
+
+    def test_missing_warrant_executes_in_dry_run(self):
+        cfg = TenuoInterceptorConfig(
+            key_resolver=EnvKeyResolver(),
+            on_denial="raise",
+            dry_run=True,
+            require_warrant=True,
+        )
+        ti = TenuoInterceptor(cfg)
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="executed")
+        nxt.init = MagicMock()
+        ai = ti.intercept_activity(nxt)
+        info = FakeActivityInfo(activity_type="read_file", workflow_id="wf-dry-none")
+        inp = FakeExecuteActivityInput(fn=lambda: None, args=())
+        with patch("temporalio.activity.info") as mock_info:
+            mock_info.return_value = info
+            result = _run(ai.execute_activity(inp))
+
+        assert result == "executed"
+        assert nxt.execute_activity.call_count == 1
 
 
 # -- Parallel activities (race condition regression) -------------------------

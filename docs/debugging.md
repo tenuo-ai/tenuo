@@ -160,7 +160,7 @@ tenuo validate "eyJ0eXAi..." --tool read_file --args '{"path": "/data/file.txt"}
 tenuo version
 ```
 
-See [CLI Reference](./cli) for full command documentation.
+See [CLI Reference](./api-reference#cli) for full command documentation.
 
 ---
 

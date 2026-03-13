@@ -581,6 +581,70 @@ jobs:
           
           echo "✅ No deprecated API patterns found in docs"
 
+      - name: Validate Temporal docs consistency
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          root = Path(".")
+          errors: list[str] = []
+
+          docs_temporal = root / "docs/temporal.md"
+          readme = root / "README.md"
+          temporal_py = root / "tenuo-python/tenuo/temporal.py"
+
+          # Guard against stale example name regressions.
+          stale_token = "authorized_workflow_demo.py"
+          for p in (docs_temporal, readme, temporal_py, root / "CHANGELOG.md"):
+              txt = p.read_text(encoding="utf-8")
+              if stale_token in txt:
+                  errors.append(f"{p}: contains stale reference '{stale_token}'")
+
+          # Validate referenced temporal example files actually exist.
+          link_re = re.compile(r"\(([^)]*tenuo-python/examples/temporal/[^)#]+)(?:#[^)]+)?\)")
+          for p in (docs_temporal, readme):
+              txt = p.read_text(encoding="utf-8")
+              for match in link_re.finditer(txt):
+                  rel = match.group(1)
+                  if rel.startswith("http://") or rel.startswith("https://"):
+                      continue
+                  rel = rel.lstrip("./")
+                  target = root / rel
+                  if not target.exists():
+                      errors.append(f"{p}: broken Temporal example link -> {rel}")
+
+          # Production snippets in docs/temporal.md should use strict mode
+          # with trusted roots.
+          temporal_text = docs_temporal.read_text(encoding="utf-8")
+          production_heads = [
+              "#### Production: Vault",
+              "#### Production: AWS Secrets Manager",
+              "#### Production: GCP Secret Manager",
+              "#### Composite Resolver (Fallback Chain)",
+          ]
+          for head in production_heads:
+              start = temporal_text.find(head)
+              if start == -1:
+                  errors.append(f"{docs_temporal}: missing section '{head}'")
+                  continue
+              next_h = temporal_text.find("#### ", start + len(head))
+              block = temporal_text[start: next_h if next_h != -1 else len(temporal_text)]
+              if "strict_mode=True" not in block:
+                  errors.append(f"{docs_temporal}: section '{head}' missing strict_mode=True")
+              if "trusted_roots=[root_key.public_key]" not in block:
+                  errors.append(f"{docs_temporal}: section '{head}' missing trusted_roots=[root_key.public_key]")
+
+          if errors:
+              print("Temporal docs consistency check failed:")
+              for e in errors:
+                  print(f"- {e}")
+              sys.exit(1)
+
+          print("Temporal docs consistency checks passed.")
+          PY
+
   # ============================================================================
   # CODE COVERAGE
   # ============================================================================

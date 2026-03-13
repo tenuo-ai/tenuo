@@ -167,11 +167,13 @@ Here is how the integration works:
 
 ```python
 # 1. Define what the agent can do
-warrant = Warrant.mint_builder()
+warrant = (
+    Warrant.mint_builder()
     .capability("navigate", url=UrlPattern("https://safe.com/*"))
     .capability("fill", element=OneOf(["search_box"]))
-    .holder(agent_keypair.public_key)  # ← Use public key for holder
+    .holder(agent_keypair.public_key)
     .mint(user_keypair)
+)
 
 # 2. Wrap your agent (see wrapper.py for implementation)
 # Must provide the keypair that matches the warrant's holder

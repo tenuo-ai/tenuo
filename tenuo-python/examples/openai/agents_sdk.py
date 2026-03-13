@@ -227,7 +227,7 @@ def demo_agents_sdk_integration():
         print("To run this demo:")
         print("  1. uv pip install openai-agents")
         print("  2. export OPENAI_API_KEY=your-key")
-        print("  3. python openai_agents_sdk.py")
+        print("  3. python agents_sdk.py")
         print()
         return
 

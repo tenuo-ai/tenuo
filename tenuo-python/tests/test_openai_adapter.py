@@ -3355,27 +3355,16 @@ class TestShlexOpenAIIntegration:
         assert "cmd" in builder._constraints["run_command"]
         assert isinstance(builder._constraints["run_command"]["cmd"], Shlex)
 
-    def test_shlex_with_block_globs(self):
-        """Shlex with block_globs=True rejects glob characters."""
+    def test_shlex_allows_globs(self):
+        """Shlex allows glob characters (block_globs was removed)."""
         from tenuo import Shlex
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import verify_tool_call
 
-        # Without block_globs, globs are allowed
         result = verify_tool_call(
             tool_name="run_command",
             arguments={"cmd": "ls *.txt"},
             allow_tools=["run_command"],
             deny_tools=None,
-            constraints={"run_command": {"cmd": Shlex(allow=["ls"], block_globs=False)}},
+            constraints={"run_command": {"cmd": Shlex(allow=["ls"])}},
         )
         assert result is None
-
-        # With block_globs, globs are blocked
-        with pytest.raises(ConstraintViolation):
-            verify_tool_call(
-                tool_name="run_command",
-                arguments={"cmd": "ls *.txt"},
-                allow_tools=["run_command"],
-                deny_tools=None,
-                constraints={"run_command": {"cmd": Shlex(allow=["ls"], block_globs=True)}},
-            )

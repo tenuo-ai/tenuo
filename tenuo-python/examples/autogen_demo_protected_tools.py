@@ -5,7 +5,7 @@ AutoGen AgentChat demo: research pipeline (PROTECTED - tools).
 Architecture:
     User -> Orchestrator -> Paper Search Agent -> Summarizer Agent
 
-This mirrors the flow in examples/a2a_demo.py and adds Tenuo protections.
+This mirrors the flow in examples/a2a/demo.py and adds Tenuo protections.
 In this version, URL access is restricted by an allowlist and file reads
 are restricted to a safe subpath (no attenuation yet).
 

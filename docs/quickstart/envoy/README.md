@@ -95,7 +95,7 @@ kubectl get pods -n tenuo-system
 
 - [Istio Quickstart](../istio/) - Service mesh alternative
 - [Kubernetes Guide](../../kubernetes) - Production patterns
-- [Proxy Configs](../../proxy-configs) - Full Envoy config reference
+- [Proxy Configurations](../../enforcement#proxy-configurations) - Full Envoy config reference
 
 ## Clean Up
 

@@ -196,12 +196,233 @@ Every deployment model verifies warrants, so each one blocks unauthorized tool c
 
 ---
 
+## Proxy Configurations
+
+Copy-paste-ready configurations for integrating Tenuo authorization at the network layer.
+
+### Envoy External Authorization
+
+Tenuo integrates with Envoy as an external authorization service via `ext_authz`.
+
+```
++---------+     +---------+     +-------------+     +---------+
+| Client  |---->|  Envoy  |---->| Tenuo Authz |     | Backend |
+|         |     |         |     |   (9090)    |     |         |
++---------+     |         |<----|  200 or 403 |     |         |
+                |         |     +-------------+     |         |
+                |         |------------------------>|         |
+                |         |  (only if 200)          |         |
+                +---------+                         +---------+
+```
+
+#### gRPC Mode
+
+```yaml
+# envoy.yaml
+static_resources:
+  listeners:
+  - name: main
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 8080
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: backend
+              domains: ["*"]
+              routes:
+              - match: { prefix: "/" }
+                route: { cluster: backend }
+          http_filters:
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              grpc_service:
+                envoy_grpc:
+                  cluster_name: tenuo-authorizer
+                timeout: 0.25s
+              include_peer_certificate: true
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+  - name: tenuo-authorizer
+    connect_timeout: 0.25s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    http2_protocol_options: {}
+    load_assignment:
+      cluster_name: tenuo-authorizer
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: tenuo-authorizer
+                port_value: 9090
+
+  - name: backend
+    connect_timeout: 0.5s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: backend
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: backend
+                port_value: 8080
+```
+
+#### HTTP Mode (Alternative)
+
+```yaml
+- name: envoy.filters.http.ext_authz
+  typed_config:
+    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+    http_service:
+      server_uri:
+        uri: http://tenuo-authorizer:9090
+        cluster: tenuo-authorizer
+        timeout: 0.25s
+      authorization_request:
+        allowed_headers:
+          patterns:
+          - exact: x-tenuo-warrant
+          - exact: x-tenuo-pop
+          - exact: content-type
+      authorization_response:
+        allowed_upstream_headers:
+          patterns:
+          - exact: x-tenuo-warrant-id
+```
+
+### Istio Integration
+
+Add Tenuo as an external authorization provider in Istio's mesh config:
+
+```yaml
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  meshConfig:
+    extensionProviders:
+    - name: tenuo-ext-authz
+      envoyExtAuthzGrpc:
+        service: tenuo-authorizer.tenuo-system.svc.cluster.local
+        port: 9090
+```
+
+Then apply an AuthorizationPolicy:
+
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: tenuo-authz
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: my-agent
+  action: CUSTOM
+  provider:
+    name: tenuo-ext-authz
+  rules:
+  - to:
+    - operation:
+        paths: ["/api/*"]
+```
+
+### nginx Integration
+
+```nginx
+upstream backend {
+    server localhost:8080;
+}
+
+upstream tenuo {
+    server localhost:9090;
+}
+
+server {
+    listen 80;
+
+    location = /_tenuo_auth {
+        internal;
+        proxy_pass http://tenuo/authorize;
+        proxy_pass_request_body on;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Tenuo-Warrant $http_x_tenuo_warrant;
+        proxy_set_header X-Tenuo-PoP $http_x_tenuo_pop;
+    }
+
+    location /api/ {
+        auth_request /_tenuo_auth;
+        error_page 401 403 = @denied;
+        proxy_pass http://backend;
+    }
+
+    location @denied {
+        return 403 '{"error": "authorization_denied"}';
+        add_header Content-Type application/json;
+    }
+
+    location /health {
+        proxy_pass http://backend;
+    }
+}
+```
+
+### Docker Compose (Local Development)
+
+```yaml
+version: '3.8'
+
+services:
+  agent:
+    build: .
+    environment:
+      - TENUO_KEYPAIR_PEM=${TENUO_KEYPAIR_PEM}
+    depends_on:
+      - tenuo-authorizer
+
+  tenuo-authorizer:
+    image: tenuo/authorizer:0.1
+    ports:
+      - "9090:9090"
+    environment:
+      - TRUSTED_ISSUERS=${CONTROL_PLANE_PUBLIC_KEY}
+    volumes:
+      - ./gateway.yaml:/etc/tenuo/gateway.yaml:ro
+
+  control-plane:
+    image: tenuo/demo-control-plane:0.1
+    ports:
+      - "8080:8080"
+    environment:
+      - SIGNING_KEY=${CONTROL_PLANE_PRIVATE_KEY}
+```
+
+---
+
 ## See Also
 
 - [Concepts](./concepts): Problem/solution, warrants, threat model, why Tenuo
-- [Constraints](./constraints): Complete constraint type reference
+- [Constraints](./constraints): Complete constraint type reference and argument extraction
 - [Security](./security): Full threat model, PoP, key management, best practices
 - [MCP Integration](./mcp): MCP proxy and server-side verification
 - [A2A Integration](./a2a): Agent-to-agent delegation
 - [Kubernetes Deployment](./kubernetes): Sidecar and gateway patterns
-- [Proxy Configs](./proxy-configs): Envoy, Istio, nginx configurations

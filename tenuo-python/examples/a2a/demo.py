@@ -11,16 +11,16 @@ Each delegation attenuates the warrant. Attacks are blocked by constraints.
 
 Run:
     # Default: run both normal and attack scenarios
-    python a2a_demo.py
+    python demo.py
 
     # Non-interactive (for CI/testing)
-    python a2a_demo.py --non-interactive
+    python demo.py --non-interactive
 
     # Just normal flow
-    python a2a_demo.py run
+    python demo.py run
 
     # Just attack simulation
-    python a2a_demo.py attack
+    python demo.py attack
 
 Requires:
     uv pip install tenuo[a2a]

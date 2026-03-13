@@ -415,7 +415,7 @@ This is essential for distributed systems where you can't
 trust the executor to honestly report what tools it called.
 
 For simpler single-process scenarios, use Tier 1 guardrails:
-  - See: tenuo-python/examples/openai_guardrails.py
+  - See: tenuo-python/examples/openai/guardrails.py
 """)
 
 

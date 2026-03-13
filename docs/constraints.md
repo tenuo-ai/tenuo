@@ -14,14 +14,13 @@ description: How to use constraints to scope authority precisely
 Constraints are key-value pairs that restrict what a warrant authorizes. When a tool is invoked, Tenuo checks that the arguments satisfy the warrant's constraints.
 
 ```python
-from tenuo import Warrant, Pattern, Range
+from tenuo import Warrant, Subpath, Pattern, Range, guard
 
 # Create warrant with per-tool constraints
 warrant = (Warrant.mint_builder()
     .capability("read_file",
-        path=Subpath("/data"),         # Path must be under /data/ (secure)
-        max_size=Range.max_value(1000) # Size must be ≤ 1000
-    )
+        path=Subpath("/data"),
+        max_size=Range.max_value(1000))
     .holder(worker_pubkey)
     .ttl(3600)
     .mint(key))
@@ -1182,13 +1181,14 @@ Some constraint types can contain different types during attenuation:
 
 To ensure system stability and prevent denial-of-service attacks, the following hard limits are enforced:
 
-- **Max Constraint Depth**: **32 levels**. (e.g. `Not(Not(...))` nested 32 times).
+- **Max Constraint Depth**: **32 levels** (e.g. `Not(Not(...))` nested 32 times).
 - **Max Constraint Size**: Generally bounded by the 64KB Max Warrant Size.
 
 For most use cases, depth 32 is more than sufficient. Generated policies from automated systems should respect this limit.
 
+---
 
-**Examples:**
+### Attenuation Examples
 
 ```python
 # Wildcard -> Anything: Wildcard is the universal parent
@@ -1241,8 +1241,9 @@ parent = Subset(["a", "b", "c"])
 child = Subset(["a", "b"])  # OK - allows fewer
 ```
 
-#### Incompatible Cross-Types
-- `Pattern` -> `Range`: String matching vs numeric bounds  
+### Incompatible Cross-Types
+
+- `Pattern` -> `Range`: String matching vs numeric bounds
 - `OneOf` -> `Pattern`: Set membership vs glob matching
 - Any type -> `Wildcard`: Would expand permissions
 
@@ -1603,10 +1604,247 @@ client = auto_guard(
 
 ---
 
+## Argument Extraction
+
+Tenuo enforces constraints by comparing tool arguments against warrant constraints. The extraction mechanism varies by integration but follows the same principles:
+
+1. **Extract all arguments** -- no argument should be hidden from authorization
+2. **Include defaults** -- default values must be checked (cannot bypass via omission)
+3. **Fail securely** -- if extraction fails, authorization is denied
+4. **Type safety** -- arguments converted to appropriate types for constraint checking
+
+### Python SDK (`@guard`)
+
+The `@guard` decorator extracts arguments automatically using Python's `inspect.signature()` API.
+
+**Automatic extraction (default):**
+
+```python
+@guard(tool="read_file")
+def read_file(path: str, max_size: int = 1000):
+    with open(path) as f:
+        return f.read()[:max_size]
+
+read_file("/data/file.txt")        # args: {path: "/data/file.txt", max_size: 1000}
+read_file("/data/file.txt", 500)   # args: {path: "/data/file.txt", max_size: 500}
+```
+
+Default values are always included. This prevents bypasses via omission.
+
+**Manual extraction (`extract_args`):**
+
+```python
+@guard(
+    tool="transfer",
+    extract_args=lambda from_account, to_account, amount, **kw: {
+        "source": from_account,
+        "destination": to_account,
+        "amount": amount
+    }
+)
+def transfer(from_account: str, to_account: str, amount: float, memo: str = ""):
+    ...
+```
+
+If `extract_args` is provided, Tenuo trusts it completely. Ensure it extracts all security-relevant arguments.
+
+**Parameter renaming (`mapping`):**
+
+```python
+@guard(
+    tool="transfer",
+    mapping={"from_account": "source", "to_account": "destination"}
+)
+def transfer(from_account: str, to_account: str, amount: float):
+    ...
+# Extracted as: {source: "...", destination: "...", amount: ...}
+```
+
+### Gateway and MCP Extraction
+
+> **Crucial Distinction**: YAML configuration (for Gateway and MCP) is for **argument extraction**, not **authorization policy**.
+>
+> - **Extraction (YAML)**: Tells Tenuo *where* to find the "path" or "amount" in a request (e.g., "look in the JSON body at key `maxSize`").
+> - **Policy (Warrants)**: Tells Tenuo *what* values are allowed (e.g., "max_size must be less than 1000").
+
+The `tenuo-authorizer` extracts constraints from HTTP requests using YAML configuration:
+
+```yaml
+tools:
+  scale_cluster:
+    constraints:
+      cluster:
+        from: path           # From URL path params
+        path: "cluster"
+
+      replicas:
+        from: body           # From JSON body
+        path: "spec.replicas"
+        type: integer
+
+      dry_run:
+        from: query          # From query string
+        path: "dry_run"
+        type: boolean
+
+      tenant_id:
+        from: header         # From HTTP header
+        path: "X-Tenant-Id"
+
+      environment:
+        from: literal        # Static value
+        value: "production"
+
+routes:
+  - pattern: "/api/v1/clusters/{cluster}/scale"
+    method: ["POST"]
+    tool: "scale_cluster"
+```
+
+**Extraction sources:**
+
+| Source | Description | Example |
+|--------|-------------|---------|
+| `path` | URL path parameter from route pattern | `/{cluster}/scale` --> `cluster` |
+| `query` | Query string parameter | `?dry_run=true` --> `dry_run` |
+| `header` | HTTP header value | `X-API-Key: abc123` |
+| `body` | JSON body field (dot notation) | `{"spec": {"replicas": 5}}` --> `spec.replicas` |
+| `literal` | Static value | Always returns configured value |
+
+**Type conversion:**
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `string` | Default, no conversion | `"hello"` |
+| `integer` | Parse as integer | `"42"` --> `42` |
+| `float` | Parse as float | `"3.14"` --> `3.14` |
+| `boolean` | Parse as boolean | `"true"` --> `true` |
+
+Body extraction uses dot notation for nested fields: `spec.replicas` matches `{"spec": {"replicas": 5}}`.
+
+### Extraction Security
+
+**Default values must be checked:**
+
+```python
+# Vulnerable: extract_args omits max_size
+@guard(tool="read_file", extract_args=lambda path, **kw: {"path": path})
+def read_file(path: str, max_size: int = 999999): ...
+
+# Secure: automatic extraction includes defaults
+@guard(tool="read_file")
+def read_file(path: str, max_size: int = 1000): ...
+```
+
+**All security-relevant parameters must be extractable:**
+
+```python
+# Vulnerable: table not extracted, attacker can query any table
+@guard(tool="query", extract_args=lambda query, **kw: {"query": query})
+def query_db(query: str, table: str = "users"): ...
+
+# Secure: automatic extraction includes both
+@guard(tool="query")
+def query_db(query: str, table: str = "users"): ...
+```
+
+**Extraction failures block authorization** (fail closed). If `inspect.signature().bind()` raises `TypeError`, the call is denied and an audit event is logged.
+
+---
+
+## Gateway Configuration Reference
+
+The gateway configuration file defines how the Tenuo authorizer maps HTTP requests to tools and extracts constraint values.
+
+### Basic Structure
+
+```yaml
+version: "1"
+
+settings:
+  warrant_header: "X-Tenuo-Warrant"
+  pop_header: "X-Tenuo-PoP"
+  clock_tolerance_secs: 30
+  trusted_roots:
+    - "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
+
+tools:
+  tool_name:
+    description: "Human-readable description"
+    constraints:
+      field_name:
+        from: path|query|header|body|literal
+        path: "json.path.to.value"
+        required: true|false
+        type: string|integer|float|boolean
+
+routes:
+  - pattern: "/api/v1/{param}/{action}"
+    method: ["GET", "POST"]
+    tool: "tool_name"
+```
+
+### Settings
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `warrant_header` | string | `X-Tenuo-Warrant` | HTTP header containing base64-encoded warrant or WarrantStack |
+| `pop_header` | string | `X-Tenuo-PoP` | HTTP header containing base64-encoded PoP signature |
+| `clock_tolerance_secs` | int | `30` | Seconds of tolerance for expiration checks |
+| `trusted_roots` | list | `[]` | Hex-encoded public keys of trusted control planes |
+| `debug_mode` | bool | `false` | Enable detailed deny reasons in response headers |
+
+> **Security Warning**: Never enable `debug_mode` in production. It exposes internal authorization details that could help attackers understand your security model.
+
+### Routes
+
+Routes map HTTP requests to tools:
+
+```yaml
+routes:
+  - pattern: "/api/v1/clusters/{cluster}/scale"
+    method: ["POST"]
+    tool: "scale_cluster"
+
+  - pattern: "/api/v1/files/{path}"
+    method: ["GET", "POST", "DELETE"]
+    tool: "manage_files"
+
+  - pattern: "/api/v1/admin/{action}"
+    method: ["POST"]
+    tool: "admin_action"
+    extra_constraints:
+      admin_key:
+        from: header
+        path: "X-Admin-Key"
+        required: true
+```
+
+Patterns use `{param}` placeholders. Method list can be empty to match any method.
+
+### Performance
+
+Route matching uses O(log n) radix tree (matchit), method matching uses O(1) bitmask, and constraint extraction uses pre-compiled paths.
+
+### Validation
+
+The authorizer validates configuration on startup:
+
+```bash
+$ tenuo-authorizer serve --config gateway.yaml
+
+# Validation errors:
+# - routes[2]: Tool 'undefined_tool' is not defined
+# - tools.read_file.constraints.path: Body extraction requires a path
+```
+
+---
+
 ## See Also
 
 - [Explorer Playground](https://tenuo.ai/explorer/): Test constraints interactively
 - [AI Agent Patterns](./ai-agents): P-LLM/Q-LLM, prompt injection defense
-- [API Reference](./api-reference): Full constraint API
+- [API Reference](./api-reference): Full constraint API and CLI reference
 - [Security](./security): How constraints fit into the security model
 - [LangGraph Integration](./langgraph): Using constraints with LangGraph
+- [Enforcement Architecture](./enforcement): Deployment models and proxy configurations

@@ -311,7 +311,7 @@ class Constraints(Dict[str, Any]):
 
 
 # =============================================================================
-# Shlex Constraint (Python-only, Tier 1)
+# Shlex Constraint (Python full evaluation + Rust conservative approximation)
 # =============================================================================
 
 
@@ -398,22 +398,15 @@ class Shlex:
         "\x7f",  # DEL - terminal manipulation
     }
 
-    # Glob characters (optional blocking)
-    GLOB_CHARS: Set[str] = {"*", "?", "["}
-
     def __init__(
         self,
         allow: List[str],
-        *,
-        block_globs: bool = False,
     ):
         """Initialize the Shlex constraint.
 
         Args:
             allow: List of allowed binary names or full paths.
                    e.g., ["ls", "/usr/bin/git"]
-            block_globs: If True, reject glob characters (*, ?, [).
-                         Default False since globs are often legitimate.
 
         Raises:
             ValueError: If allow list is empty.
@@ -422,7 +415,6 @@ class Shlex:
             raise ValueError("Shlex requires at least one allowed binary")
 
         self.allowed_bins: Set[str] = set(allow)
-        self.block_globs = block_globs
 
     def matches(self, value: Any) -> bool:
         """Check if command string is safe to execute.
@@ -455,13 +447,6 @@ class Shlex:
             if char in value:
                 logger.debug(f"Shlex rejected expansion char '{char}' in: {value!r}")
                 return False
-
-        # R6: Optional glob check
-        if self.block_globs:
-            for char in self.GLOB_CHARS:
-                if char in value:
-                    logger.debug(f"Shlex rejected glob char '{char}' in: {value!r}")
-                    return False
 
         # R2: "High-definition" parsing with punctuation_chars
         # This splits unquoted operators into separate tokens:
@@ -505,11 +490,7 @@ class Shlex:
         return True
 
     def __repr__(self) -> str:
-        opts = []
-        if self.block_globs:
-            opts.append("block_globs=True")
-        opts_str = f", {', '.join(opts)}" if opts else ""
-        return f"Shlex(allow={sorted(self.allowed_bins)!r}{opts_str})"
+        return f"Shlex(allow={sorted(self.allowed_bins)!r})"
 
 
 # =============================================================================
@@ -520,7 +501,7 @@ __all__ = [
     # Security constraints (from Rust)
     "Subpath",
     "UrlSafe",
-    # Security constraints (Python)
+    # Security constraints (Python full evaluation, Rust conservative approximation)
     "Shlex",
     # Helper functions
     "ensure_constraint",

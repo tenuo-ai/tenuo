@@ -1,21 +1,21 @@
 # AI Agent Security Patterns
 
-> **TL;DR:** Tenuo provides cryptographic authorization for AI agents. It **contains** prompt injection damage, **prevents** privilege escalation, and **enforces** the P-LLM/Q-LLM separation pattern. This guide explains what it does and what it doesn't.
+> **TL;DR:** Tenuo provides cryptographic authorization for AI agents. It **contains** prompt injection damage to warrant scope, **prevents** privilege escalation, and **enforces** the P-LLM/Q-LLM separation pattern.
 
 ---
 
 ## At a Glance
 
-| Tenuo Guarantees | Tenuo Does Not Guarantee |
-|------------------|--------------------------|
-| Cryptographic Authorization | Prompt Injection Prevention |
-| Capability Bounds (structural limits) | Semantic Intent Verification |
-| Self-Issuance Prevention | Content-Based DLP |
-| Monotonic Attenuation | Reasoning Verification |
-| Proof-of-Possession | Collusion Detection |
-| Offline Verification | |
+| What Tenuo Does | What Tenuo Does Not Do |
+|-----------------|------------------------|
+| Contains prompt injection blast radius | Detect or filter prompt injections |
+| Enforces structural capability bounds | Verify semantic intent |
+| Prevents privilege escalation (monotonic attenuation) | Content-based DLP |
+| Binds warrants to key holders (Proof-of-Possession) | Detect collusion between agents |
+| Prevents self-issuance (holder != issuer) | Verify reasoning quality |
+| Verifies offline, no central service needed | |
 
-**Bottom line:** Tenuo is **Layer 2** in a defense-in-depth strategy.
+Prompt injection is an input problem. Tenuo is an authorization layer. It does not stop an LLM from being tricked, but it stops a tricked LLM from doing damage outside its warrant scope. This is containment, not prevention, and it is the most robust defense available because it does not depend on detecting the attack.
 
 ---
 
@@ -114,54 +114,49 @@ bad_warrant = (planner_warrant.grant_builder()
 
 ## Security Principles
 
-Tenuo implements a **capability-based security model** built on three pillars:
+Tenuo implements a capability-based security model built on three pillars. For full details on each, see [Concepts](./concepts#core-invariants).
 
-### 1. Principle of Least Authority (POLA)
-Agents receive only the **minimum capabilities** needed for their specific task. No ambient authority.
-
-### 2. Monotonic Attenuation
-Authority can only **decrease** through delegation, never increase.
-
-> [!TIP]
-> **"You cannot give what you do not have."**
-> If an agent has read access to `/data/*`, it cannot issue a warrant for `/etc/*`. This is cryptographically enforced.
-
-### 3. Confused Deputy Prevention
-Warrants interact with **Proof-of-Possession**. A warrant is useless without the matching private key, preventing an attacker from using a legitimate agent's warrant.
+1. **Principle of Least Authority (POLA)** -- Agents receive only the minimum capabilities needed for their specific task. No ambient authority.
+2. **Monotonic Attenuation** -- Authority can only decrease through delegation, never increase. If an agent has read access to `/data/*`, it cannot issue a warrant for `/etc/*`.
+3. **Confused Deputy Prevention** -- The holder must prove possession of the corresponding private key (PoP) on every tool call. A stolen or intercepted warrant is useless without the key.
 
 ---
 
 ## Defense Against Prompt Injection
 
-Prompt injection is inevitable. Tenuo focuses on **containment**.
+Prompt injection tricks an LLM into executing unintended actions. Detection-based defenses (input filters, output monitors) are useful but brittle because they must recognize every possible attack. Tenuo takes a different approach: it limits what the agent can do regardless of what the agent intends.
 
-### Threat Model
+### How Containment Works
 
 ```
 User Input ("Ignore previous instructions...")
-    │
-    ▼
-┌─────────────────┐
-│ LLM Agent       │ ← Compromised!
-│ (Attacker ctl)  │
-└─────────────────┘
-    │
-    ▼ Attempts malicious tool call
-┌─────────────────┐
-│ Tool Gateway    │ ← Tenuo BLOCKS here
-│ (Enforced)      │
-└─────────────────┘
+    |
+    v
++---------------------+
+| LLM Agent           | <-- Compromised by injection
+| (attacker-controlled)|
++---------------------+
+    |
+    v  Attempts malicious tool call
++---------------------+
+| Tenuo Enforcement   | <-- Checks warrant, PoP, constraints
+| (Rust core)         |
++---------------------+
+    |
+    x  BLOCKED: tool/args not in warrant scope
 ```
 
-### Containment Matrix
+The attack succeeds at the LLM level (the agent "wants" to comply) but fails at the authorization level (the warrant does not permit it).
 
-| Attack Attempt | Tenuo Response |
-|----------------|----------------|
-| Call unauthorized tool | Blocked (not in warrant) |
-| Exceed parameter bounds | Blocked (constraint violation) |
-| Escalate privileges | Blocked (monotonicity check) |
-| Use expired warrant | Blocked (TTL check) |
-| Impersonate agent | Blocked (PoP signature failure) |
+### What Gets Blocked
+
+| Attack Attempt | Why It Fails |
+|----------------|--------------|
+| Call a tool not in the warrant | Tool not listed in capabilities |
+| Call an allowed tool with out-of-scope arguments | Constraint violation (e.g., Subpath, UrlSafe) |
+| Escalate to broader permissions | Monotonic attenuation: child scope is always a subset of parent |
+| Reuse a stolen warrant | PoP: signature requires the holder's private key |
+| Act after the task window | TTL enforced on every call |
 
 ---
 
@@ -194,46 +189,43 @@ Trust flows down the chain. Each step creates a narrower scope of authority.
 └─────────────────────────────┘
 ```
 
-### Clearance Levels (Optional Safety Net)
+### Clearance Levels (Optional)
 
-Clearance levels provide a **coarse-grained policy overlay** at the gateway. They're useful for:
-- Catching accidentally over-permissive warrants
-- Organizational policy enforcement ("all admin tools require System clearance")
-- Quick kill-switches during incidents
-
-> [!NOTE]
-> Clearance levels are **not a security boundary**. Capabilities and monotonicity provide that. Clearance levels are an optional layer for operational convenience.
+Clearance levels add a coarse-grained policy overlay at the gateway, useful for catching accidentally over-permissive warrants and organizational policy enforcement. They are not a security boundary; capabilities and monotonicity provide that.
 
 ---
 
-## Recommendations for Complete Security
+## Defense in Depth
 
-Tenuo is powerful, but it is not a silver bullet. Use the **4-Layer Defense Strategy**:
+Tenuo is the authorization layer. Combine it with other layers for full coverage:
 
-1.  **Layer 1: Input Sanitization** (Filter known attacks)
-2.  **Layer 2: Tenuo Authorization** (Cryptographic containment)
-3.  **Layer 3: Output Monitoring** (DLP and anomaly detection)
-4.  **Layer 4: Human Oversight** (Approval for sensitive ops)
+| Layer | Purpose | Examples |
+|-------|---------|----------|
+| Input filtering | Reduce attack surface | Prompt guards, input validation |
+| **Tenuo authorization** | **Contain blast radius** | **Warrants, PoP, constraints** |
+| Output monitoring | Detect anomalies after execution | DLP, logging, anomaly detection |
+| Human oversight | Approve sensitive operations | Approval gates (built into Tenuo) |
 
-### Layer 4: Human Oversight
-
-Human approval for sensitive operations is coming soon via Tenuo Cloud. The cryptographic foundation (Ed25519 signed approvals bound to exact call parameters) is built into the Rust core. Stay tuned.
+Tenuo is the only layer that provides a hard structural bound. The other layers are probabilistic (they try to detect attacks) while Tenuo is deterministic (it enforces what is permitted).
 
 ### Checklist
-- [ ] Use **P-LLM/Q-LLM** separation for complex tasks.
-- [ ] Set **short TTLs** (minutes, not hours).
-- [ ] Make worker warrants **terminal** (prevent further delegation).
-- [ ] Log all **denied** authorization attempts as potential attacks.
+
+- [ ] Use **P-LLM/Q-LLM** separation for complex tasks
+- [ ] Set **short TTLs** (minutes, not hours)
+- [ ] Make worker warrants **terminal** (prevent further delegation)
+- [ ] Log all **denied** authorization attempts as potential attacks
+- [ ] Use **approval gates** for sensitive operations
 
 ---
 
 ## See Also
 
-- [Quickstart](quickstart.md) - Get started with Tenuo in 5 minutes
-- [API Reference](api-reference.md) - Full Python SDK documentation
-- [Security Model](security.md) - Deeper dive into cryptographic guarantees
-- [Constraints](constraints.md) - All constraint types for fine-grained authorization
-- [Enforcement Architecture](./enforcement) - In-process, sidecar, gateway deployment patterns
+- [Concepts](./concepts) - Problem/solution, threat model, core invariants
+- [Quickstart](./quickstart) - Get started with Tenuo in 5 minutes
+- [Security Model](./security) - Operational security, key management, best practices
+- [Constraints](./constraints) - Constraint types, argument extraction, gateway configuration
+- [Enforcement Architecture](./enforcement) - Deployment patterns and proxy configurations
+- [API Reference](./api-reference) - Python SDK, CLI, and performance benchmarks
 
 ---
 

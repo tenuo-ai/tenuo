@@ -5,7 +5,7 @@ AutoGen AgentChat demo: research pipeline (UNPROTECTED).
 Architecture:
     User -> Orchestrator -> Paper Search Agent -> Summarizer Agent
 
-This mirrors the flow in examples/a2a_demo.py but removes all Tenuo protections.
+This mirrors the flow in examples/a2a/demo.py but removes all Tenuo protections.
 It is intended to show the agentic workflow only.
 
 Run:

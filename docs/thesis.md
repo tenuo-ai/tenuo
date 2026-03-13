@@ -84,7 +84,7 @@ The structural failure is that **the authorization architecture provides no cont
 
 ### The delegation chain problem
 
-The authorization gap exists independently of adversarial scenarios. Even without prompt injection, delegation complexity alone requires explicit containment. When Agent A delegates to Agent B:
+The authorization gap exists independently of adversarial scenarios. Even without prompt injection, delegation complexity alone requires explicit containment ([Tomasev et al., 2025](https://arxiv.org/abs/2602.11865)). When Agent A delegates to Agent B:
 
 1. What authority does B inherit?
 2. Can B delegate further to Agent C?
@@ -401,6 +401,14 @@ Tenuo and CaMeL share the capability-based intuition but operate at different la
 
 The approaches are complementary: CaMeL can prevent the agent from *deciding* to exfiltrate data. Tenuo can prevent the *execution* of that decision even if CaMeL is not present, and carries that protection across delegation hops, organizational boundaries, and async execution contexts that CaMeL's single-process model does not address.
 
+### Intelligent AI Delegation
+
+[Intelligent AI Delegation](https://arxiv.org/abs/2602.11865) (Tomasev et al., 2025) proposes a comprehensive framework for delegation in multi-agent systems, centered on dynamic assessment, adaptive execution, structural transparency, scalable market coordination, and systemic resilience. The paper identifies **permission handling** as a core requirement, specifically calling for privilege attenuation (delegated authority must narrow at each hop), just-in-time scoping, and automated revocation. It proposes Delegation Capability Tokens based on Macaroons or Biscuits with cryptographic caveats that chain restrictions through delegation graphs.
+
+Tenuo implements several of the primitives this framework requires. Warrants are the delegation capability tokens with cryptographic attenuation. Receipts provide the structural transparency and verifiable task completion the paper identifies as prerequisites for accountability in long delegation chains. The paper's analysis of the confused deputy problem, authority gradients, and zones of indifference in agentic systems reinforces the architectural argument for per-action, per-task authorization rather than session-scoped credentials.
+
+Where the framework describes the *what* (requirements for safe delegation), Tenuo provides a concrete *how* (warrant-based authorization with offline verification) that can serve as the authorization layer within the broader delegation protocols the paper envisions.
+
 ### Warrant constraints subsume existing policy models
 
 A common objection: "We already have RBAC and ABAC. Why add another authorization layer?"
@@ -463,7 +471,7 @@ Multi-agent systems are where the authorization gap becomes critical. Delegation
 
 ### The security gap is quantified
 
-Deloitte found only 21% of companies have a mature governance model for autonomous agents, even as adoption accelerates ([Deloitte](https://www.deloitte.com/us/en/what-we-do/capabilities/applied-artificial-intelligence/content/state-of-ai-in-the-enterprise.html)). Gartner predicts 25% of enterprise cybersecurity breaches will be traced back to AI agent abuse by 2028 ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2024-10-22-gartner-unveils-top-predictions-for-it-organizations-and-users-in-2025-and-beyond)), and separately forecasts that over 40% of agentic AI projects will be canceled by end of 2027 due to escalating costs, unclear value, or **inadequate risk controls** ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)). NIST launched an [AI Agent Standards Initiative](https://www.nist.gov/news-events/news/2026/02/announcing-ai-agent-standards-initiative-interoperable-and-secure) in February 2026, explicitly identifying agent authorization, delegation, and audit as open problems requiring industry demonstration.
+Deloitte found only 21% of companies have a mature governance model for autonomous agents, even as adoption accelerates ([Deloitte](https://www.deloitte.com/us/en/what-we-do/capabilities/applied-artificial-intelligence/content/state-of-ai-in-the-enterprise.html)). The [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) (2026), peer-reviewed by 100+ industry experts, catalogs the most critical security risks for autonomous AI systems, several of which (excessive agency, insecure delegation, insufficient authorization) map directly to the authorization gap. Gartner predicts 25% of enterprise cybersecurity breaches will be traced back to AI agent abuse by 2028 ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2024-10-22-gartner-unveils-top-predictions-for-it-organizations-and-users-in-2025-and-beyond)), and separately forecasts that over 40% of agentic AI projects will be canceled by end of 2027 due to escalating costs, unclear value, or **inadequate risk controls** ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)). NIST launched an [AI Agent Standards Initiative](https://www.nist.gov/news-events/news/2026/02/announcing-ai-agent-standards-initiative-interoperable-and-secure) in February 2026, explicitly identifying agent authorization, delegation, and audit as open problems requiring industry demonstration.
 
 Authorization infrastructure is a prerequisite for agents reaching production.
 
@@ -493,7 +501,7 @@ The concept of KYA (verifiable agent identity, provable authorization chains, an
 - **Visa and Mastercard**: Building agent trust frameworks for agentic commerce.
 - **NIST**: AI Agent Standards Initiative with active RFIs for security (March 2026) and identity/authorization (April 2026).
 - **Singapore IMDA**: Model AI Governance Framework for Agentic AI (Jan 2026) identifies dynamic agent authorization and recursive delegation as open gaps requiring new infrastructure.
-- **OWASP**: MCP security guide (Feb 2026) defines signed tool manifests, capability-scoped tokens, and immutable audit trails as minimum requirements.
+- **OWASP**: The [Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) (2026) identifies the most critical security risks facing autonomous AI systems, developed through peer review with 100+ experts. Separately, the MCP security guide (Feb 2026) defines signed tool manifests, capability-scoped tokens, and immutable audit trails as minimum requirements.
 - **Financial services**: HIPAA audit requirements, SOC 2 compliance, SEC reporting, all converging on the need to demonstrate authorization provenance for autonomous actions.
 
 Warrant chains provide native KYA compliance. The query *"who authorized what, under which constraints, through which delegation path, and when?"* is answered by the receipt chain. No log reconstruction. No forensic inference.
@@ -513,16 +521,6 @@ Organizations with queryable authorization chains will pass audits faster. This 
 | **Agent-level compromise** | A compromised agent acting within its authorized scope passes warrant checks. | Tight constraints bound the blast radius. Warrants limit damage even when the agent is compromised. |
 | **Identity and authentication** | Warrants assume agent identity is already established. Tenuo is not a replacement for Okta, Auth0, or SPIFFE. | Tenuo operates as the layer between identity and execution. Integrates with existing identity infrastructure. |
 | **Execution isolation** | Warrants authorize actions, not execution environments. A container escape bypasses the authorization boundary. | Sandboxing and authorization are complementary controls. Warrants constrain what actions are authorized; sandboxes constrain where code runs. |
-
-### Market and technical risks
-
-| Risk | If this happens | Our position |
-|---|---|---|
-| **Adoption timing** | Enterprises delay production agent deployments. Market for authorization infrastructure contracts. | Target companies where agents are already in production, not planning to be. Orchestration platforms and fintech agent teams are deploying today. |
-| **Platform incumbents** | OpenAI, Anthropic, or hyperscalers build capability-based authorization natively. | Open-source core and 9 framework integrations make Tenuo a natural integration target. Incumbents will build for their own stack, not cross-platform. |
-| **Regulatory uncertainty** | KYA requirements do not materialize. Compliance driver weakens. | Audit requirements for autonomous systems are increasing across EU AI Act, NIST, and financial regulators. The trend is acceleration, not retreat. |
-| **Key management complexity** | Per-agent keys and rotation add operational burden relative to bearer tokens. | Tenuo Cloud handles key lifecycle for enterprise deployments. Short TTLs reduce the window of key compromise. |
-| **Developer adoption** | Capability-based security learning curve slows adoption. | SDK provides secure defaults in a few lines of code. Existing RBAC/ABAC mental models map directly to warrant constraints. |
 
 ---
 
@@ -562,4 +560,4 @@ Talk to us: [calendly.com/tenuo/30min](https://calendly.com/tenuo/30min)
 
 ---
 
-*Tenuo builds on decades of capability-based security research: [Macaroons](https://research.google/pubs/pub41892/) (Google, 2014), [Biscuit](https://www.biscuitsec.org/) (Clever Cloud), [UCAN](https://ucan.xyz/) (Fission), and recent work on agent security including [CaMeL](https://arxiv.org/abs/2503.18813) (Debenedetti et al., 2025). The ideas in this document evolved through the [Agentic Security series](https://niyikiza.com/categories/agentic-security/) on Vectors, starting in December 2025.*
+*Tenuo builds on decades of capability-based security research: [Macaroons](https://research.google/pubs/pub41892/) (Google, 2014), [Biscuit](https://www.biscuitsec.org/) (Clever Cloud), [UCAN](https://ucan.xyz/) (Fission), and recent work on agent security including [CaMeL](https://arxiv.org/abs/2503.18813) (Debenedetti et al., 2025) and [Intelligent AI Delegation](https://arxiv.org/abs/2602.11865) (Tomasev et al., 2025). The ideas in this document evolved through the [Agentic Security series](https://niyikiza.com/categories/agentic-security/) on Vectors, starting in December 2025.*
