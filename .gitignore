@@ -80,7 +80,8 @@ docs/explorer/
 alloy.jar
 aat_constraints/
 
-# Claude IDE settings
+# IDE AI settings
+.cursor/
 .claude/
 
 # Demo/presentation scripts (local only)
