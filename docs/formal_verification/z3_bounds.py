@@ -23,20 +23,38 @@ def prove_theorem(theorem_name, hypothesis, child_accepts, parent_accepts):
 
 
 def run_range_proofs():
-    print("\n--- Range Constraints ---")
-    parent_min, parent_max, child_exact = Ints('parent_min parent_max child_exact')
-    value = Int('value')
+    print("\n--- Range Constraints (Numeric Encodings) ---")
     
     # Range -> Exact
-    # Rigorously prove that if the Exact value is bounded by min/max, 
-    # it is mathematically impossible for the child to accept any value the parent rejects.
-    hyp_exact = And(child_exact >= parent_min, child_exact <= parent_max)
+    parent_min_1, parent_max_1, child_exact = Ints('parent_min_1 parent_max_1 child_exact')
+    value_1 = Int('value_1')
     
-    # Child only accepts the exact value. Parent accepts any value in bounds.
-    child_accepts = (value == child_exact)
-    parent_accepts = And(value >= parent_min, value <= parent_max)
+    hyp_exact = And(child_exact >= parent_min_1, child_exact <= parent_max_1)
+    child_accepts_1 = (value_1 == child_exact)
+    parent_accepts_1 = And(value_1 >= parent_min_1, value_1 <= parent_max_1)
+    prove_theorem("Range Subsumes Exact (Strict Value Bound Proof)", hyp_exact, child_accepts_1, parent_accepts_1)
     
-    prove_theorem("Range Subsumes Exact (Strict Value Bound Proof)", hyp_exact, child_accepts, parent_accepts)
+    # Range -> Range subsets numeric algebra
+    # Prove that child limits strictly bounded within parent limits enforce monotonicity
+    # across numeric boundaries without overflow/underflow gaps.
+    parent_min, parent_max, child_min, child_max = BitVecs('parent_min parent_max child_min child_max', 64)
+    val = BitVec('val', 64)
+    
+    valid_parent = parent_min <= parent_max
+    valid_child = child_min <= child_max
+    
+    # Subsumption logic: child min must be >= parent min, child max <= parent max
+    hyp_range = And(
+        valid_parent,
+        valid_child,
+        child_min >= parent_min,
+        child_max <= parent_max
+    )
+    
+    child_accepts = And(val >= child_min, val <= child_max)
+    parent_accepts = And(val >= parent_min, val <= parent_max)
+    
+    prove_theorem("Range vs Range Algebraic Subset (64-bit Integers)", hyp_range, child_accepts, parent_accepts)
 
 
 def run_cidr_proofs():
@@ -115,9 +133,6 @@ def run_url_proofs():
     parent_domain, child_domain = Strings('parent_domain child_domain')
     parent_path, child_path = Strings('parent_path child_path')
     
-    # Real URL verification asserts the Domain matches as a suffix (e.g. `api.example.com` ends with `example.com`)
-    # AND Path matches as prefix.
-    # Tenuo validates that parent domain is suffix of child domain, AND parent path is prefix of child path.
     hyp_url = And(
         Length(v_url) < 100,
         Length(parent_domain) < 20,
@@ -137,8 +152,25 @@ def run_url_proofs():
         SuffixOf(parent_domain, v_url),
         PrefixOf(parent_path, v_url)
     )
-    
     prove_theorem("UrlPattern Suffix/Prefix Transitivity", hyp_url, child_accepts, parent_accepts)
+    
+    print("\n--- UrlSafe Set Algebra ---")
+    # We model UrlSafe evaluation using abstract uninterpreted sets of allowed/denied domains
+    InParentAllow = Function('InParentAllow', StringSort(), BoolSort())
+    InParentDeny = Function('InParentDeny', StringSort(), BoolSort())
+    InChildAllow = Function('InChildAllow', StringSort(), BoolSort())
+    InChildDeny = Function('InChildDeny', StringSort(), BoolSort())
+    
+    # Child's allowed domains must be a subset of Parent's allowed domains
+    # Child's denied domains must be a superset of Parent's denied domains
+    hyp_urlsafe = ForAll([v_url], And(
+        Implies(InChildAllow(v_url), InParentAllow(v_url)),
+        Implies(InParentDeny(v_url), InChildDeny(v_url))
+    ))
+    
+    child_accepts_safe = And(InChildAllow(v_url), Not(InChildDeny(v_url)))
+    parent_accepts_safe = And(InParentAllow(v_url), Not(InParentDeny(v_url)))
+    prove_theorem("UrlSafe Allow/Deny Set Invariants", hyp_urlsafe, child_accepts_safe, parent_accepts_safe)
 
 def run_string_proofs():
     print("\n--- Subpath, Regex, Pattern String Bounding ---")

@@ -206,20 +206,6 @@ fn urlsafe_strategy() -> impl Strategy<Value = Constraint> {
     ]
 }
 
-fn all_strategy() -> impl Strategy<Value = Constraint> {
-    prop::collection::vec(leaf_constraint_strategy(), 1..=3)
-        .prop_map(|cs| Constraint::All(All::new(cs)))
-}
-
-fn not_strategy() -> impl Strategy<Value = Constraint> {
-    leaf_constraint_strategy().prop_map(|c| Constraint::Not(Not::new(c)))
-}
-
-fn any_of_strategy() -> impl Strategy<Value = Constraint> {
-    prop::collection::vec(leaf_constraint_strategy(), 1..=3)
-        .prop_map(|cs| Constraint::Any(Any::new(cs)))
-}
-
 /// Leaf constraints (no recursion) for use inside All/Not/AnyOf.
 fn leaf_constraint_strategy() -> impl Strategy<Value = Constraint> {
     prop_oneof![
@@ -235,6 +221,31 @@ fn leaf_constraint_strategy() -> impl Strategy<Value = Constraint> {
         1 => shlex_strategy(),
         1 => urlsafe_strategy(),
     ]
+}
+
+/// Composite leaf constraint strategy allowing up to 1 layer of recursive depth
+/// so `All`, `Any`, and `Not` statements can be nested like `All(All(Exact("a")))`.
+fn composite_leaf_constraint_strategy() -> impl Strategy<Value = Constraint> {
+    prop_oneof![
+        3 => leaf_constraint_strategy(),
+        1 => prop::collection::vec(leaf_constraint_strategy(), 1..=2).prop_map(|cs| Constraint::All(All::new(cs))),
+        1 => prop::collection::vec(leaf_constraint_strategy(), 1..=2).prop_map(|cs| Constraint::Any(Any::new(cs))),
+        1 => leaf_constraint_strategy().prop_map(|c| Constraint::Not(Not::new(c))),
+    ]
+}
+
+fn all_strategy() -> impl Strategy<Value = Constraint> {
+    prop::collection::vec(composite_leaf_constraint_strategy(), 1..=3)
+        .prop_map(|cs| Constraint::All(All::new(cs)))
+}
+
+fn not_strategy() -> impl Strategy<Value = Constraint> {
+    composite_leaf_constraint_strategy().prop_map(|c| Constraint::Not(Not::new(c)))
+}
+
+fn any_of_strategy() -> impl Strategy<Value = Constraint> {
+    prop::collection::vec(composite_leaf_constraint_strategy(), 1..=3)
+        .prop_map(|cs| Constraint::Any(Any::new(cs)))
 }
 
 /// Full constraint strategy including composites.
@@ -331,6 +342,7 @@ proptest! {
             (subpath_strategy(), subpath_strategy()),
             (shlex_strategy(), shlex_strategy()),
             (urlsafe_strategy(), urlsafe_strategy()),
+            (all_strategy(), all_strategy()),
             (wildcard_strategy(), constraint_strategy()),
         ],
         values in prop::collection::vec(value_strategy(), 20..=40),
@@ -356,6 +368,16 @@ proptest! {
         child in exact_strategy(),
         values in prop::collection::vec(value_strategy(), 20..=40),
     ) {
+        let is_invalid_parent_type = matches!(
+            parent,
+            Constraint::Subpath(_) | Constraint::Shlex(_) | Constraint::UrlSafe(_) |
+            Constraint::Contains(_) | Constraint::Subset(_)
+        );
+        let result = parent.validate_attenuation(&child);
+        if is_invalid_parent_type {
+            prop_assert!(result.is_err(), "Gap 6: explicit rejection of cross-type to exact");
+        }
+
         for value in &values {
             assert_monotonicity(&parent, &child, value);
         }
@@ -546,6 +568,8 @@ fn exhaustive_contains_contains_soundness() {
 
 /// Verify that Not -> Not attenuation is always rejected (code is sound,
 /// spec was wrong before we fixed it).
+/// Note: Implementation is more conservative than spec: rejects even identity case,
+/// pending JCS-canonical comparison implementation.
 #[test]
 fn exhaustive_not_not_always_rejected() {
     for atom in ATOMS {
@@ -572,6 +596,8 @@ fn exhaustive_not_not_always_rejected() {
 }
 
 /// Verify that AnyOf -> AnyOf attenuation is always rejected.
+/// Note: Implementation is more conservative than spec: rejects even identity case,
+/// pending JCS-canonical comparison implementation.
 #[test]
 fn exhaustive_anyof_anyof_always_rejected() {
     let constraints: Vec<Constraint> = ATOMS

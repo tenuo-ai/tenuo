@@ -162,17 +162,21 @@ fun sub1 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, none
 fun sub2 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, sub1]} }
 fun sub3 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, sub2]} }
 fun sub4 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, sub3]} }
+fun sub5 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, sub4]} }
+fun sub6 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, sub5]} }
+fun sub7 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, sub6]} }
+fun sub8 : Constraint->Constraint { {p, c: Constraint | subsumes_step[p, c, sub7]} }
 
 pred always_true[] {}
 pred cannot_subsume[] { some none }
 
 // --- Induction Limits & Claims ---
 // The following assertion explicitly states that IF the structural 
-// depth-bound relations (up to depth 4 nesting) determine that child attenuates parent, 
+// depth-bound relations (up to depth 8 nesting) determine that child attenuates parent, 
 // THEN the logical constraint capability is mathematically monotone (child ⊆ parent).
 assert CapabilityMonotonicity {
     all parent, child: Constraint |
-        parent->child in sub4 => (child.accepts in parent.accepts)
+        parent->child in sub8 => (child.accepts in parent.accepts)
 }
 
 // We prove this mathematically by asking Alloy to search the entire state space combinatorics 
