@@ -177,7 +177,16 @@ fn shlex_strategy() -> impl Strategy<Value = Constraint> {
 }
 
 fn urlsafe_strategy() -> impl Strategy<Value = Constraint> {
-    Just(Constraint::UrlSafe(UrlSafe::new()))
+    prop_oneof![
+        Just(Constraint::UrlSafe(UrlSafe::new())),
+        Just(Constraint::UrlSafe(UrlSafe::with_domains(vec![
+            "api.example.com",
+        ]))),
+        Just(Constraint::UrlSafe(UrlSafe::with_domains(vec![
+            "*.example.com",
+            "api.other.com",
+        ]))),
+    ]
 }
 
 fn all_strategy() -> impl Strategy<Value = Constraint> {
@@ -322,6 +331,7 @@ proptest! {
             pattern_strategy(),
             range_strategy(),
             subpath_strategy(),
+            shlex_strategy(),
             wildcard_strategy(),
         ],
         child in exact_strategy(),

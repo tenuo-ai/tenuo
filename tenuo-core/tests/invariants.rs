@@ -389,7 +389,7 @@ proptest! {
                 .build(&kp)
                 .unwrap();
 
-            let id = warrant.id().to_string().to_string();
+            let id = warrant.id().to_string();
             prop_assert!(!ids.contains(&id), "Duplicate warrant ID: {}", id);
             ids.insert(id);
         }
