@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6be2083759f0795d097c5ecaa5f1808ba64e7aa3edd349e003101e5e66dbd538 # shrinks to domain = "a0A.com", path = "/0a"
+cc f756cf25e05a352e13c5d39f180bf7aee82599ea62a3b1bed8de8d933c0fa31c # shrinks to parent_expr = "a", child_inject = "a", operator = "", malformed_parens = ")"
+cc 63e9f93362b580b5c2cab5e05c0e440e75164956efcb79381962496d29684a80 # shrinks to parent_str = "aA", prefix = "aa", suffix = "AA"
+cc b8e0b1355bbb599130c44fb2e9bda8bdb4c51482c5ec6c1e7297b77cd3975a42 # shrinks to leaves = [Exact(Exact { value: Integer(40) }), Exact(Exact { value: Integer(40) })], extra_child = Exact(Exact { value: Integer(0) })

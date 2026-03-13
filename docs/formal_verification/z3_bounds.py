@@ -52,11 +52,14 @@ def run_cidr_proofs():
     # A mask `m` is a valid CIDR mask if there exists `k` (0..32) such that `m == (0xFFFFFFFF << k)`.
     # Since we operate dynamically, a general bitmask subset check evaluates identically:
     valid_cidr_parent = (parent_mask & (~parent_mask + 1)) == ((~parent_mask) + 1)
+    valid_cidr_child = (child_mask & (~child_mask + 1)) == ((~child_mask) + 1) # Added to constrain child as well
     
-    # Hyp: Child mask must be stricter (more zeros at LSB -> `child_mask & parent_mask == parent_mask`)
+    # Hyp: BOTH masks must be valid CIDR masks. 
+    # Child mask must be stricter (more zeros at LSB -> `child_mask & parent_mask == parent_mask`)
     # And child's network address must fall into parent's network
     hyp_cidr = And(
         valid_cidr_parent,
+        valid_cidr_child,
         (child_net & parent_mask) == (parent_net & parent_mask),
         (child_mask & parent_mask) == parent_mask
     )

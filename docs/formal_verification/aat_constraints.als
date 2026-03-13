@@ -111,9 +111,21 @@ pred subsumes_step[parent, child: Constraint, sub: Constraint->Constraint] {
     child in Any => {
         parent in Any => {
             // "Type-keyed positional matching" - removing clauses allowed, adding forbidden.
-            // Modeled as: An injective mapping from child clauses to parent clauses.
-            // Every child clause must attenuate exactly one distinct parent clause.
-            all c: child.any_clauses | one p: parent.any_clauses | p -> c in sub
+            // Modeled as: An injective mapping from child clauses to parent clauses
+            // WHERE the child clause and the matched parent clause MUST be the exact same type.
+            all c: child.any_clauses | one p: parent.any_clauses | {
+                p -> c in sub
+                // Enforce strict Type-Keying:
+                (p in Exact <=> c in Exact)
+                (p in Wildcard <=> c in Wildcard)
+                (p in OneOf <=> c in OneOf)
+                (p in NotOneOf <=> c in NotOneOf)
+                (p in Contains <=> c in Contains)
+                (p in Subset <=> c in Subset)
+                (p in Not <=> c in Not)
+                (p in Any <=> c in Any)
+                (p in All <=> c in All)
+            }
             all p: parent.any_clauses | lone c: child.any_clauses | p -> c in sub
         } else
         parent in Wildcard => always_true[] else
@@ -124,7 +136,20 @@ pred subsumes_step[parent, child: Constraint, sub: Constraint->Constraint] {
             // "Type-keyed positional matching" - Every parent clause must be matched
             // to a distinct child clause that attenuates it.
             // Modeled as: An injective mapping from parent clauses to child clauses.
-            all p: parent.all_clauses | one c: child.all_clauses | p -> c in sub
+            // WHERE the parent clause and matched child clause MUST be the exact same type.
+            all p: parent.all_clauses | one c: child.all_clauses | {
+                p -> c in sub
+                // Enforce strict Type-Keying:
+                (p in Exact <=> c in Exact)
+                (p in Wildcard <=> c in Wildcard)
+                (p in OneOf <=> c in OneOf)
+                (p in NotOneOf <=> c in NotOneOf)
+                (p in Contains <=> c in Contains)
+                (p in Subset <=> c in Subset)
+                (p in Not <=> c in Not)
+                (p in Any <=> c in Any)
+                (p in All <=> c in All)
+            }
             all c: child.all_clauses | lone p: parent.all_clauses | p -> c in sub
         } else
         parent in Wildcard => always_true[] else
