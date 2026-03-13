@@ -5,7 +5,7 @@ Formal Verification proves that Tenuo's Protocol properties—monotonicity, cons
 ### A Tripartite Approach to Assurance
 
 1. **Alloy Analyzer Models (`aat_constraints.als`)**
-   We utilize structural analysis to prove that topological capability relationships (`All`, `Any`, `Not`) securely enforce recursive subsets up to a bounded induction limit. Our models verify that strict **type-keyed positional mapping** securely prevents logical privilege expansion. *Note: The model and the Rust runtime currently diverge slightly; for example, the Rust runtime conservatively fails `Any -> Any` subset evaluations rather than performing NP-hard subsumption checks, which is documented by our conformance oracle.*
+   We utilize structural analysis to prove that topological capability relationships (`All`, `Any`, `Not`) securely enforce recursive subsets up to a bounded induction limit. Our models verify that strict **type-keyed positional mapping** securely prevents logical privilege expansion. *Note: The model and the Rust runtime currently diverge slightly; for example, the Rust runtime conservatively fails `Any -> Any` subset evaluations rather than performing NP-hard subsumption checks, which is documented by our conformance oracle. The identity case is also rejected as a conservative choice; this diverges from spec Section 4.5.*
 
 2. **Z3 String and Numeric Bounds (`z3_bounds.py`)**
    SMT solving is deployed to prove complex algebraic boundaries for values executing over string and numeric theories. This covers:

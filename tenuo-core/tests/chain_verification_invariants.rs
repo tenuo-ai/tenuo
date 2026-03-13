@@ -504,6 +504,60 @@ fn test_verify_chain_rejects_i2_violation_depth_exceeds_max() {
     );
 }
 
+/// Test: Verifier rejects chain where child extends parent's max_depth (I2 escalation violation)
+#[test]
+fn test_verify_chain_rejects_i2_violation_child_extends_max_depth() {
+    let root_keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    // Create parent with max_depth = 1 (can only delegate once)
+    let parent = Warrant::builder()
+        .capability("test", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .max_depth(1) // Only 1 level of delegation allowed
+        .holder(root_keypair.public_key())
+        .build(&root_keypair)
+        .unwrap();
+
+    // Forge a child that maliciously extends max_depth back up
+    let forged_payload = WarrantPayload {
+        version: 1,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::new_random(),
+        tools: parent.payload.tools.clone(),
+        holder: child_keypair.public_key(),
+        issuer: root_keypair.public_key(),
+        issued_at: parent.payload.issued_at,
+        expires_at: expires_at_secs(&parent),
+        max_depth: 10, // ESCALATION: Child trying to re-enable infinite delegation
+        depth: 1,      // Correct depth increment
+        parent_hash: Some(hash_payload(&parent)),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let forged_child = forge_warrant(forged_payload, &root_keypair);
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", root_keypair.public_key());
+
+    let result = data_plane.verify_chain(&[parent.clone(), forged_child]);
+    assert!(
+        result.is_err(),
+        "Chain where child extends max_depth must be rejected"
+    );
+    
+    let err = result.unwrap_err().to_string();
+    println!("✅ I2 violation (escalating max_depth) correctly rejected: {}", err);
+}
+
 // =============================================================================
 // I5: Cryptographic Linkage - signature and parent_hash
 // =============================================================================

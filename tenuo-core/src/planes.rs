@@ -974,6 +974,13 @@ impl DataPlane {
                 parent_max
             )));
         }
+        if child.effective_max_depth() > parent_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "I2 violated: child max_depth {} exceeds parent's max_depth {}",
+                child.effective_max_depth(),
+                parent_max
+            )));
+        }
 
         // I3: TTL Monotonicity - Check expiration doesn't exceed parent
         if child.expires_at() > parent.expires_at() {
@@ -2012,6 +2019,13 @@ impl Authorizer {
             return Err(Error::ChainVerificationFailed(format!(
                 "child depth {} exceeds parent's max_depth {}",
                 child.depth(),
+                parent_max
+            )));
+        }
+        if child.effective_max_depth() > parent_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "child max_depth {} exceeds parent's max_depth {}",
+                child.effective_max_depth(),
                 parent_max
             )));
         }

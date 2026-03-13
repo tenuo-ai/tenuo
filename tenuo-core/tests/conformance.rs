@@ -207,7 +207,9 @@ proptest! {
 
             // Note: Rust codebase explicitly falls back to `IncompatibleConstraintTypes`
             // in ANY -> ANY strict check because calculating NP-Hard ANY subsumptions
-            // is skipped in the safe path. The conformance oracle asserts this expected failure.
+            // is skipped in the safe path. The identity case is also rejected as a
+            // conservative choice; this diverges from spec Section 4.5.
+            // The conformance oracle asserts this expected failure.
             prop_assert!(parent_any.validate_attenuation(&child_any).is_err(), "Rust Any->Any conservatively fails.");
         }
     }

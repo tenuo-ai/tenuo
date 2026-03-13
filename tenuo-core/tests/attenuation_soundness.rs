@@ -629,6 +629,55 @@ fn exhaustive_anyof_anyof_always_rejected() {
     }
 }
 
+/// Exhaustively test f64 boundary conditions (NaN, infinity, subnormals)
+/// which are mathematically distinct from 64-bit integer SMT proofs.
+#[test]
+fn exhaustive_f64_boundaries_soundness() {
+    let bounds = vec![
+        None,
+        Some(0.0),
+        Some(-0.0),
+        Some(1.0),
+        Some(-1.0),
+        Some(f64::INFINITY),
+        Some(f64::NEG_INFINITY),
+        Some(f64::NAN),
+    ];
+    let values = vec![
+        ConstraintValue::Float(0.0),
+        ConstraintValue::Float(-0.0),
+        ConstraintValue::Float(1.0),
+        ConstraintValue::Float(-1.0),
+        ConstraintValue::Float(f64::INFINITY),
+        ConstraintValue::Float(f64::NEG_INFINITY),
+        ConstraintValue::Float(f64::NAN),
+    ];
+
+    for parent_min in &bounds {
+        for parent_max in &bounds {
+            let is_parent_valid = (parent_min.is_some() || parent_max.is_some()) 
+                && parent_min.is_none_or(|mn| parent_max.is_none_or(|mx| mn <= mx));
+            if is_parent_valid {
+                let parent = Constraint::Range(Range { min: *parent_min, max: *parent_max, min_inclusive: true, max_inclusive: true });
+                
+                for child_min in &bounds {
+                    for child_max in &bounds {
+                        let is_child_valid = (child_min.is_some() || child_max.is_some()) 
+                            && child_min.is_none_or(|mn| child_max.is_none_or(|mx| mn <= mx));
+                        if is_child_valid {
+                            let child = Constraint::Range(Range { min: *child_min, max: *child_max, min_inclusive: true, max_inclusive: true });
+                            
+                            for value in &values {
+                                assert_monotonicity(&parent, &child, value);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ============================================================================
 // Regression tests: validate the harness catches known pre-fix bugs
 // ============================================================================

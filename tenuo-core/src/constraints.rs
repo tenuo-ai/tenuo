@@ -1541,6 +1541,11 @@ impl Range {
     /// - Child max must be <= parent max
     /// - If parent bound is exclusive, child cannot make it inclusive (would widen)
     pub fn validate_attenuation(&self, child: &Range) -> Result<()> {
+        if self.min.is_some_and(|v| v.is_nan()) || self.max.is_some_and(|v| v.is_nan()) ||
+           child.min.is_some_and(|v| v.is_nan()) || child.max.is_some_and(|v| v.is_nan()) {
+            return Err(Error::InvalidRange("NaN bounds cannot be explicitly validated for attenuation".to_string()));
+        }
+
         // Child min must be >= parent min
         match (self.min, child.min) {
             (Some(parent_min), Some(child_min)) => {
