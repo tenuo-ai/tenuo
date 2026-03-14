@@ -78,6 +78,7 @@ docs/explorer/
 
 # Alloy model checker
 alloy.jar
+# Alloy solver output (source lives in docs/formal_verification/aat_constraints.als)
 aat_constraints/
 verification/aat_constraints/
 
