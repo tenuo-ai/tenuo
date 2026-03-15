@@ -1230,7 +1230,7 @@ li > p:last-of-type:only-child {
 </tr></thead>
 <tfoot><tr>
 <td class="left">Niyikiza</td>
-<td class="center">Expires 15 September 2026</td>
+<td class="center">Expires 16 September 2026</td>
 <td class="right">[Page]</td>
 </tr></tfoot>
 </table>
@@ -1248,7 +1248,7 @@ li > p:last-of-type:only-child {
 <dt class="label-intended-status">Intended Status:</dt>
 <dd class="intended-status">Standards Track</dd>
 <dt class="label-expires">Expires:</dt>
-<dd class="expires"><time datetime="2026-09-15">15 September 2026</time></dd>
+<dd class="expires"><time datetime="2026-09-16">16 September 2026</time></dd>
 <dt class="label-authors">Author:</dt>
 <dd class="authors">
 <div class="author">
@@ -1405,7 +1405,7 @@ li > p:last-of-type:only-child {
             <p id="section-toc.1-1.4.1"><a href="#section-4" class="auto internal xref">4</a>.  <a href="#name-attenuation-invariants" class="internal xref">Attenuation Invariants</a></p>
 <ul class="compact toc ulBare ulEmpty">
 <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.4.2.1">
-                <p id="section-toc.1-1.4.2.1.1"><a href="#section-4.1" class="auto internal xref">4.1</a>.  <a href="#name-capability-lattice-model" class="internal xref">Capability Lattice Model</a></p>
+                <p id="section-toc.1-1.4.2.1.1"><a href="#section-4.1" class="auto internal xref">4.1</a>.  <a href="#name-capability-lattice-model-no" class="internal xref">Capability Lattice Model (Non-Normative)</a></p>
 </li>
               <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.4.2.2">
                 <p id="section-toc.1-1.4.2.2.1"><a href="#section-4.2" class="auto internal xref">4.2</a>.  <a href="#name-i1-delegation-authority" class="internal xref">I1: Delegation Authority</a></p>
@@ -1707,7 +1707,7 @@ server enforces the scope reduction. This requires a synchronous
 round-trip to the authorization server at each delegation hop. In
 multi-agent chains, this makes the authorization server a participant in
 every delegation decision, coupling the delegation topology to
-authorization server (AS) availability and requiring AS participation in each delegation decision. RFC 8693 supports
+authorization server (AS) availability. RFC 8693 supports
 representing prior delegation actors via nested <code>act</code> claims, but those
 claims are informational for access control decisions rather than a
 cryptographically self-verifiable attenuation chain. The AS mediates
@@ -2773,10 +2773,10 @@ anchor.<a href="#section-3.7.3-7" class="pilcrow">¶</a></p>
 <p id="section-4-1">A derived token is valid if and only if it satisfies all of the
 following invariants. Enforcement points MUST verify all invariants and
 MUST reject any chain that violates any invariant.<a href="#section-4-1" class="pilcrow">¶</a></p>
-<div id="capability-lattice-model">
+<div id="capability-lattice-model-non-normative">
 <section id="section-4.1">
-        <h3 id="name-capability-lattice-model">
-<a href="#section-4.1" class="section-number selfRef">4.1. </a><a href="#name-capability-lattice-model" class="section-name selfRef">Capability Lattice Model</a>
+        <h3 id="name-capability-lattice-model-no">
+<a href="#section-4.1" class="section-number selfRef">4.1. </a><a href="#name-capability-lattice-model-no" class="section-name selfRef">Capability Lattice Model (Non-Normative)</a>
         </h3>
 <p id="section-4.1-1">The attenuation invariants in this section are instances of a single
 abstract structure: a capability lattice. This subsection states that
@@ -4909,21 +4909,28 @@ checks.<a href="#appendix-B.6-4" class="pilcrow">¶</a></p>
         </h3>
 <p id="appendix-B.7-1">Deployments may need to convey additional signed metadata through the
 delegation chain, such as a request trace identifier, a tenant context
-used for logging or routing, or a human-readable subject identifier. This specification does not define a mechanism for such
-metadata, but the JWT format accommodates it naturally.<a href="#appendix-B.7-1" class="pilcrow">¶</a></p>
+used for logging or routing, or a human-readable subject identifier.
+This specification does not define a mechanism for such metadata, but
+the JWT format accommodates it naturally.<a href="#appendix-B.7-1" class="pilcrow">¶</a></p>
 <p id="appendix-B.7-2">Implementations MAY include additional JWT claims in AATs beyond those
 defined in Section 3. Claims used for passthrough metadata SHOULD use
 collision-resistant names (e.g., reverse domain notation such as
-<code>com.example.trace_id</code>) and SHOULD NOT encode tool permissions or argument constraints that
-this specification models in <code>authorization_details</code>.<a href="#appendix-B.7-2" class="pilcrow">¶</a></p>
+<code>com.example.trace_id</code>) and SHOULD NOT encode tool permissions or
+argument constraints that this specification models in
+<code>authorization_details</code>.<a href="#appendix-B.7-2" class="pilcrow">¶</a></p>
 <p id="appendix-B.7-3">Because additional claims are included in the token's JWS signature,
 they are integrity-protected within each individual token. However,
 this specification's chain verification algorithm (Section 6) does not
 enforce preservation of unrecognized claims across derivation steps.
-Deployments that require chain-wide preservation of passthrough
-metadata MUST define and enforce their own derivation and verification
-rules for those claims, either through deployment-specific policy or
-in a companion profile.<a href="#appendix-B.7-3" class="pilcrow">¶</a></p>
+Enforcement points MUST ignore unrecognized top-level JWT claims; the
+fail-closed rule (Section 3.4) applies only to unrecognized constraint
+types within <code>authorization_details</code>. A token carrying a
+<code>com.example.trace_id</code> claim MUST NOT be rejected solely because the
+enforcement point does not recognize that claim. Deployments that
+require chain-wide preservation of passthrough metadata MUST define
+and enforce their own derivation and verification rules for those
+claims, either through deployment-specific policy or in a companion
+profile.<a href="#appendix-B.7-3" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="ttl-guidance">

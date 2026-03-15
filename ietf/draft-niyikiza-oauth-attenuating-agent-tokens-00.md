@@ -3,6 +3,7 @@ title: Attenuating Authorization Tokens for Agentic Delegation Chains
 abbrev: Attenuating Agent Tokens
 docname: draft-niyikiza-oauth-attenuating-agent-tokens-00
 category: std
+consensus: true
 submissiontype: IETF
 ipr: trust200902
 date: 2026-03
@@ -236,7 +237,7 @@ server enforces the scope reduction. This requires a synchronous
 round-trip to the authorization server at each delegation hop. In
 multi-agent chains, this makes the authorization server a participant in
 every delegation decision, coupling the delegation topology to
-authorization server (AS) availability and requiring AS participation in each delegation decision. RFC 8693 supports
+authorization server (AS) availability. RFC 8693 supports
 representing prior delegation actors via nested `act` claims, but those
 claims are informational for access control decisions rather than a
 cryptographically self-verifiable attenuation chain. The AS mediates
@@ -1042,7 +1043,7 @@ A derived token is valid if and only if it satisfies all of the
 following invariants. Enforcement points MUST verify all invariants and
 MUST reject any chain that violates any invariant.
 
-## Capability Lattice Model
+## Capability Lattice Model (Non-Normative)
 
 The attenuation invariants in this section are instances of a single
 abstract structure: a capability lattice. This subsection states that
@@ -2560,23 +2561,30 @@ checks.
 
 Deployments may need to convey additional signed metadata through the
 delegation chain, such as a request trace identifier, a tenant context
-used for logging or routing, or a human-readable subject identifier. This specification does not define a mechanism for such
-metadata, but the JWT format accommodates it naturally.
+used for logging or routing, or a human-readable subject identifier.
+This specification does not define a mechanism for such metadata, but
+the JWT format accommodates it naturally.
 
 Implementations MAY include additional JWT claims in AATs beyond those
 defined in Section 3. Claims used for passthrough metadata SHOULD use
 collision-resistant names (e.g., reverse domain notation such as
-`com.example.trace_id`) and SHOULD NOT encode tool permissions or argument constraints that
-this specification models in `authorization_details`.
+`com.example.trace_id`) and SHOULD NOT encode tool permissions or
+argument constraints that this specification models in
+`authorization_details`.
 
 Because additional claims are included in the token's JWS signature,
 they are integrity-protected within each individual token. However,
 this specification's chain verification algorithm (Section 6) does not
 enforce preservation of unrecognized claims across derivation steps.
-Deployments that require chain-wide preservation of passthrough
-metadata MUST define and enforce their own derivation and verification
-rules for those claims, either through deployment-specific policy or
-in a companion profile.
+Enforcement points MUST ignore unrecognized top-level JWT claims; the
+fail-closed rule (Section 3.4) applies only to unrecognized constraint
+types within `authorization_details`. A token carrying a
+`com.example.trace_id` claim MUST NOT be rejected solely because the
+enforcement point does not recognize that claim. Deployments that
+require chain-wide preservation of passthrough metadata MUST define
+and enforce their own derivation and verification rules for those
+claims, either through deployment-specific policy or in a companion
+profile.
 
 ## TTL Guidance
 
