@@ -433,14 +433,14 @@ argument constraints relative to the delegation token.
 **Execution Tokens** (`aat_type: "execution"`) authorize tool
 invocation. They enumerate specific tools and the argument constraints
 that apply to each. Execution tokens are presented to enforcement points
-at tool call boundaries.
+at tool invocation boundaries.
 
 The separation between delegation and execution authority is a
 structural property of the token, not a policy decision left to
 enforcement points. This moves the authorization boundary from something
 an enforcement point must judge to something any verifier can read
-directly from the chain, and enables the key separation requirement in
-Section 8.12 to be structurally enforced rather than conventional.
+directly from the chain, and enables type-transition key separation
+(Section 8.12) to be structurally enforced rather than conventional.
 
 Any type transition is permitted, provided `del_depth < del_max_depth`
 in the parent token. A holder of either token type may derive a child
@@ -456,7 +456,8 @@ between planning authority and invocation authority: an entity that
 delegates cannot use the same key to invoke, and an entity that invokes
 cannot use the same key to delegate. When `aat_type` is preserved across
 a derivation step, same-key derivation is permitted. The security
-rationale for the key restriction is discussed in Section 8.12.
+rationale for type-transition key separation is discussed in Section
+8.12.
 
 A root issuer MAY issue an execution token directly, bypassing the
 delegation step, when an agent requires immediate tool invocation
@@ -480,42 +481,9 @@ their absence carries the semantics described in the table.
 | `del_max_depth` | integer | REQUIRED | Maximum delegation depth permitted in this chain. MUST be a non-negative integer not exceeding the implementation's MAX_DELEGATION_DEPTH (Section 4.3). |
 | `par_hash` | string | MUST (derived) / MUST NOT (root) | Base64url-encoded SHA-256 digest of the parent token's JWS Signing Input, using base64url encoding without padding as defined in {{RFC7515}} Appendix C. MUST be absent in root tokens. MUST be present in all derived tokens. |
 | `authorization_details` | array | REQUIRED | Tool capability claims. Format defined in Section 3.3. |
-| `ext` | object | OPTIONAL | Root-established signed metadata. MAY only be set in root tokens; derived tokens MUST NOT introduce `ext` if the parent does not contain it. When present, MUST be semantically preserved across derivation: the child's `ext` MUST contain the same keys and values as the parent's. Keys are strings; reverse domain notation is RECOMMENDED (e.g., `com.example.trace_id`). Values are arbitrary JSON. |
 
 Implementations MUST support Ed25519 {{RFC8032}} for token signing and
 verification. Implementations MAY support additional algorithms.
-
-The protocol standardizes attenuation over known authorization
-constraints. However, deployments may also rely on additional signed
-metadata whose integrity must survive derivation unchanged, for example
-a request trace identifier or a tenant context that enforcement points
-use for logging or routing. Without a standard mechanism for preserving
-such metadata across the chain, those semantics would either be lost or
-pushed into non-interoperable side channels. The `ext` claim exists to
-preserve root-established signed context without weakening the
-protocol's fail-closed verification model: the only safe generic rule
-at the protocol layer is preservation, not reinterpretation. Like the
-tool set in `authorization_details`, `ext` follows the principle that
-the root token establishes the ceiling: only the root issuer may
-introduce `ext`, and derived tokens MUST preserve it unchanged or omit
-it entirely if the root did not set it.
-
-Enforcement points verify semantic equality of `ext` objects by
-comparing JCS-canonicalized representations ({{RFC8785}}) of the parent
-and child values. Because both objects are independently signed by their
-respective token signatures, JCS comparison provides equivalent
-integrity verification without requiring a dedicated hash claim. Keys
-beginning with `aat.` are reserved for future use by this specification
-and MUST NOT be defined by third parties.
-
-`ext` is not a bypass of the attenuation model. It is not a place to put
-authorization semantics that should be modeled as constraints, and it is
-not a generic policy engine. Authorization-relevant logic that belongs
-in `authorization_details` MUST NOT be placed in `ext` and will not be
-enforced by any conforming enforcement point. `ext` is also not
-selectively mutable: the object is preserved in full or not at all.
-Deployments requiring chain-level metadata that varies per hop MUST use
-separate, purpose-specific mechanisms outside this specification.
 
 This specification uses `iss` with two distinct but related semantics
 that together enable offline chain verification. For root tokens, `iss`
@@ -541,7 +509,8 @@ possession of the private key corresponding to `cnf.jwk`. Including a
 `sub` claim would introduce an additional identity binding that is not
 cryptographically enforced by this specification and could be set
 arbitrarily by any delegating party. Implementations that require a
-human-readable subject identifier MAY carry one in the `ext` object.
+human-readable subject identifier MAY convey one in additional JWT
+claims outside this specification (see Appendix B).
 
 ## Capability Claims via `authorization_details`
 
@@ -1111,7 +1080,7 @@ Token lifetime (I3) is a mandatory attenuation dimension orthogonal to
 the capability lattice. A derived token with `C(child) == C(parent)` is
 still strictly more constrained if its `exp` is earlier than its
 parent's. Time-to-live (TTL) bounds are enforced independently of
-capability monotonicity. Both must hold for a chain to be valid.
+capability monotonicity. Both MUST hold for a chain to be valid.
 
 Invariants I1 through I6 are the normative enforcement mechanism for
 this property. I4 (Section 4.5) directly enforces `C(child) ⊆
@@ -1442,7 +1411,7 @@ Each derived token is cryptographically bound to its parent by including
 the SHA-256 digest of the parent token's JWS Signing Input in the
 `par_hash` claim. The JWS Signing Input is the ASCII string
 `BASE64URL(JWS Protected Header) || '.' || BASE64URL(JWS Payload)` as
-defined in {{RFC7515}} Section 7.2.
+defined in {{RFC7515}} Section 5.1.
 
 This binding prevents chain splicing: an attacker cannot substitute a
 different parent token to weaken the attenuation constraints visible at
@@ -1618,7 +1587,7 @@ Algorithm:
    k. Verify root.iss is present and is a URI. If absent or
       not a URI-formatted string, DENY.
    l. Verify root.cnf is present, contains a `jwk` member, and
-      that the `jwk` encodes a public key (must not contain a
+      that the `jwk` encodes a public key (MUST NOT contain a
       private key parameter such as `d` for EC/OKP keys or
       `p`, `q` for RSA keys). If absent or invalid, DENY.
    m. Verify root.authorization_details is present and is a
@@ -1642,8 +1611,9 @@ Algorithm:
           string. If absent or not a string, DENY.
       b2. Verify child.cnf is present, contains a `jwk`
           member, and that the `jwk` encodes a public key
-          (must not contain a private key parameter such as
-          `d` for EC/OKP keys). If absent or invalid, DENY.
+          (MUST NOT contain a private key parameter such as
+          `d` for EC/OKP keys or `p`, `q` for RSA keys). If
+          absent or invalid, DENY.
       b3. Verify child.authorization_details is present and
           is a non-empty array. If absent or empty, DENY.
       b4. Verify child.del_depth and child.del_max_depth are
@@ -1691,13 +1661,6 @@ Algorithm:
       (type-transition key separation). Implementations MUST
       compare thumbprints, not raw JWK objects, to prevent
       bypasses through key serialization variance.
-   r. If parent.ext is present, verify child.ext is present
-      and semantically equal to parent.ext. Implementations
-      MUST compare the JCS-canonicalized ({{RFC8785}})
-      representations of both objects. If the canonical
-      forms differ, DENY. If parent.ext is absent and
-      child.ext is present, DENY (ext can only originate
-      in the root token).
 
 5. (Defense in depth) Verify len(chain) equals
    leaf.del_depth + 1. A mismatch indicates a malformed
@@ -1815,18 +1778,7 @@ A holder of any AAT whose `del_depth` is strictly less than
    value MUST be a public key; private key material MUST NOT
    appear in this field.
 
-10. If the parent token contains an `ext` claim, include the
-    same `ext` object in the child token. The child's `ext`
-    MUST be semantically equal to the parent's: same keys, same
-    values. If the parent does not contain an `ext` claim, the
-    child MUST NOT introduce one; `ext` can only originate in
-    the root token. Implementations SHOULD serialize `ext` using
-    JCS ({{RFC8785}}) for determinism, but any serialization
-    that produces a semantically equivalent JSON object is
-    conforming. The enforcement point verifies semantic equality
-    via JCS comparison (Section 6, step 4r).
-
-11. Sign the token with the private key corresponding to the
+10. Sign the token with the private key corresponding to the
     parent token's `cnf.jwk`. The `iss` claim MUST be set to
     the base64url-encoded SHA-256 JWK Thumbprint of that
     signing key without padding, as defined in {{RFC7638}} and
@@ -2204,7 +2156,6 @@ JSON Web Token Claims Registry {{RFC7519}}.
 | `del_depth` | Delegation chain depth | IETF | This document |
 | `del_max_depth` | Maximum delegation chain depth | IETF | This document |
 | `par_hash` | Parent token JWS Signing Input hash | IETF | This document |
-| `ext` | Root-established signed metadata | IETF | This document |
 
 The `tools` map is not a top-level JWT claim; it is a member nested
 inside the `authorization_details` array entry with `type:
@@ -2493,21 +2444,20 @@ protocol rather than as a sequence of policy blocks.
 
 ## Algorithm Recommendations
 
-- Signing algorithm: Implementations MUST support Ed25519
-  {{RFC8032}} for token signing and verification.
-  Implementations MAY support additional
-  algorithms. EdDSA provides compact 64-byte signatures suitable for
-  constrained agent environments. The JWS `alg` header value for Ed25519
-  is `"EdDSA"`. Enforcement points MUST maintain an explicit allowlist
-  of accepted `alg` values and MUST reject any token whose `alg` header
-  is not on that allowlist. The `alg` value MUST be consistent with the
-  verifying key's type; see Section 6 for the normative key/algorithm
-  consistency requirement.
-- Key representation: JWK {{RFC7517}} with `"kty": "OKP"` and `"crv":
-  "Ed25519"`.
-- Token identifier: UUIDv7 RECOMMENDED for `jti` values,
-  providing time-ordered identifiers without central
-  coordination.
+- **Signing algorithm:** Ed25519 {{RFC8032}}. Implementations MUST
+  support Ed25519 and MAY support additional algorithms. EdDSA provides
+  compact 64-byte signatures suitable for constrained agent
+  environments. The JWS `alg` header value for Ed25519 is `"EdDSA"`.
+- **Key representation:** JWK {{RFC7517}} with `"kty": "OKP"` and
+  `"crv": "Ed25519"`.
+- **Token identifier:** UUIDv7 RECOMMENDED for `jti` values, providing
+  time-ordered identifiers without central coordination.
+
+Enforcement points MUST maintain an explicit allowlist of accepted `alg`
+values and MUST reject any token whose `alg` header is not on that
+allowlist. The `alg` value MUST be consistent with the verifying key's
+type; see Section 6 for the normative key/algorithm consistency
+requirement.
 
 Post-quantum migration: the `cnf.jwk` key type is not hardcoded to
 Ed25519. Implementations SHOULD be designed to support key type
@@ -2606,6 +2556,28 @@ Implementations SHOULD prefer `exact` and `one_of` constraints over
 produce significantly more compact tokens and simpler subsumption
 checks.
 
+## Signed Passthrough Metadata
+
+Deployments may need to convey additional signed metadata through the
+delegation chain, such as a request trace identifier, a tenant context
+used for logging or routing, or a human-readable subject identifier. This specification does not define a mechanism for such
+metadata, but the JWT format accommodates it naturally.
+
+Implementations MAY include additional JWT claims in AATs beyond those
+defined in Section 3. Claims used for passthrough metadata SHOULD use
+collision-resistant names (e.g., reverse domain notation such as
+`com.example.trace_id`) and SHOULD NOT encode tool permissions or argument constraints that
+this specification models in `authorization_details`.
+
+Because additional claims are included in the token's JWS signature,
+they are integrity-protected within each individual token. However,
+this specification's chain verification algorithm (Section 6) does not
+enforce preservation of unrecognized claims across derivation steps.
+Deployments that require chain-wide preservation of passthrough
+metadata MUST define and enforce their own derivation and verification
+rules for those claims, either through deployment-specific policy or
+in a companion profile.
+
 ## TTL Guidance
 
 The normative requirement is only that derived tokens cannot outlive
@@ -2693,7 +2665,7 @@ COSE_Sign1 verification for JWS signature verification.
 
 CBOR encoding offers meaningful size advantages over base64url-encoded
 JSON for token payloads. In typical AAT payloads with several constraint
-entries, CBOR encoding reduces token size by 30–50% relative to compact
+entries, CBOR encoding reduces token size by 30-50% relative to compact
 JWT serialization. For high-throughput agent pipelines or
 resource-constrained edge deployments, this difference is operationally
 significant.
@@ -2718,7 +2690,7 @@ any AAT or PoP token structure.
 JWT uses string claim names. CWT uses integer claim keys for registered
 claims to achieve compact encoding. The AAT-specific claims defined in
 Section 3 — namely `aat_type`, `del_depth`, `del_max_depth`, `par_hash`,
-`ext`, `aat_tool`, `hta`, and `aat_id` — require integer key assignments
+`aat_tool`, `hta`, and `aat_id` — require integer key assignments
 in the IANA CWT Claims Registry {{RFC8392}} before a normative CWT
 profile can be published.
 
