@@ -16,7 +16,6 @@ author:
     email: niki@tenuo.ai
 
 normative:
-  RFC2119:
   RFC3986:   # Uniform Resource Identifier (URI): Generic Syntax
   RFC7515:   # JWS
   RFC7517:   # JWK
@@ -24,8 +23,6 @@ normative:
   RFC7638:   # JWK Thumbprint
   RFC7800:   # Proof-of-Possession Key Semantics for JWTs
   RFC8032:   # EdDSA
-  RFC8126:   # Guidelines for Writing an IANA Considerations Section
-  RFC8174:
   RFC8785:   # JSON Canonicalization Scheme (JCS)
   RFC8414:   # OAuth 2.0 Authorization Server Metadata
   RFC9396:   # Rich Authorization Requests
@@ -33,6 +30,7 @@ normative:
   RFC6749:   # OAuth 2.0 Authorization Framework
 
 informative:
+  RFC8126:   # Guidelines for Writing an IANA Considerations Section
   RFC8392:   # CBOR Web Token (CWT)
   RFC8693:   # OAuth 2.0 Token Exchange
   RFC9052:   # CBOR Object Signing and Encryption (COSE)
@@ -160,7 +158,7 @@ cryptographically enforced and verifiable offline by any party holding
 the trust anchor's public key.
 
 This specification extends the Rich Authorization Requests format
-{{RFC9396}} with delegation-chain semantics and defines a typed
+(RFC 9396) with delegation-chain semantics and defines a typed
 constraint vocabulary for tool-level argument restrictions. The
 accompanying chain verification algorithm enforces the monotonic
 attenuation invariant at each delegation step and requires no network
@@ -324,10 +322,7 @@ behavior. AATs realize one protocol-layer approach to that goal.
 
 # Terminology
 
-The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
-"SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
-"OPTIONAL" in this document are to be interpreted as described in BCP 14
-{{RFC2119}} {{RFC8174}}.
+{::boilerplate bcp14-tagged}
 
 **Attenuating Authorization Token (AAT):** A signed JWT as defined in
 this document. An AAT encodes tool-level capability claims and supports
@@ -633,15 +628,15 @@ Appendix C).
 
 | `constraint_type` | Additional Members | Semantics |
 |---|---|---|
-| `exact` | `value` (any scalar) | Argument must equal `value` exactly. |
-| `pattern` | `value` (string) | Argument must match the glob pattern. See below for syntax. |
-| `range` | `min` (number, optional), `max` (number, optional), `min_inclusive` (boolean, optional, default true), `max_inclusive` (boolean, optional, default true) | Argument must be a number satisfying the specified bounds. Both bounds are optional. `min_inclusive` and `max_inclusive` control whether the respective bound is included in the valid range; both default to true (closed interval). |
-| `one_of` | `values` (array) | Argument must be a member of `values`. |
-| `not_one_of` | `excluded` (array) | Argument must not be a member of `excluded`. |
-| `contains` | `required` (array) | Argument, which MUST be an array, must contain every element listed in `required`. |
-| `subset` | `allowed` (array) | Argument, which MUST be an array, must be a subset of `allowed`. |
-| `regex` | `pattern` (string) | Argument must match the regular expression. See below for dialect and subsumption notes. |
-| `cel` | `expression` (string) | Argument must satisfy the Common Expression Language (CEL) expression, which MUST return a boolean. See below for subsumption rules. |
+| `exact` | `value` (any scalar) | Argument MUST equal `value` exactly. |
+| `pattern` | `value` (string) | Argument MUST match the glob pattern. See below for syntax. |
+| `range` | `min` (number, optional), `max` (number, optional), `min_inclusive` (boolean, optional, default true), `max_inclusive` (boolean, optional, default true) | Argument MUST be a number satisfying the specified bounds. Both bounds are optional. `min_inclusive` and `max_inclusive` control whether the respective bound is included in the valid range; both default to true (closed interval). |
+| `one_of` | `values` (array) | Argument MUST be a member of `values`. |
+| `not_one_of` | `excluded` (array) | Argument MUST NOT be a member of `excluded`. |
+| `contains` | `required` (array) | Argument, which MUST be an array, MUST contain every element listed in `required`. |
+| `subset` | `allowed` (array) | Argument, which MUST be an array, MUST be a subset of `allowed`. |
+| `regex` | `pattern` (string) | Argument MUST match the regular expression. See below for dialect and subsumption notes. |
+| `cel` | `expression` (string) | Argument MUST satisfy the Common Expression Language (CEL) expression, which MUST return a boolean. See below for subsumption rules. |
 | `wildcard` | (none) | Any value is accepted. |
 | `all` | `constraints` (array) | Logical AND of nested constraints. See Section 4.5 for subsumption rules. |
 | `any` | `constraints` (array) | Logical OR of nested constraints. See Section 4.5 for subsumption rules. |
@@ -672,7 +667,10 @@ for the security rationale.
 Enforcement points MUST reject invocations where any argument violates
 its associated constraint. Enforcement points MUST deny authorization if
 they encounter a `constraint_type` they do not recognize (fail-closed
-behavior).
+behavior). This fail-closed rule applies only to constraint types within
+`authorization_details`. Enforcement points MUST ignore unrecognized
+top-level JWT claims; a token MUST NOT be rejected solely because it
+contains claims outside those defined in this specification.
 
 Composite constraint types (`all`, `any`, `not`) are recursive.
 MAX_CONSTRAINT_DEPTH is an implementation-defined finite integer
@@ -2341,7 +2339,7 @@ issuance.
 
 --- back
 
-# Comparison with Related OAuth Mechanisms
+# Comparison with Related OAuth Mechanisms (Non-Normative)
 
 ## Token Exchange (RFC 8693)
 
@@ -2441,30 +2439,27 @@ itself, making the chain independently verifiable as a delegation
 protocol rather than as a sequence of policy blocks.
 
 
-# Implementation Notes
+# Implementation Notes (Non-Normative)
 
 ## Algorithm Recommendations
 
-- **Signing algorithm:** Ed25519 {{RFC8032}}. Implementations MUST
-  support Ed25519 and MAY support additional algorithms. EdDSA provides
-  compact 64-byte signatures suitable for constrained agent
-  environments. The JWS `alg` header value for Ed25519 is `"EdDSA"`.
+- **Signing algorithm:** Ed25519 {{RFC8032}}. The normative requirement
+  is in Section 3.2. EdDSA provides compact 64-byte signatures suitable
+  for constrained agent environments. The JWS `alg` header value for
+  Ed25519 is `"EdDSA"`.
 - **Key representation:** JWK {{RFC7517}} with `"kty": "OKP"` and
   `"crv": "Ed25519"`.
-- **Token identifier:** UUIDv7 RECOMMENDED for `jti` values, providing
-  time-ordered identifiers without central coordination.
+- **Token identifier:** UUIDv7 is recommended for `jti` values,
+  providing time-ordered identifiers without central coordination.
 
-Enforcement points MUST maintain an explicit allowlist of accepted `alg`
-values and MUST reject any token whose `alg` header is not on that
-allowlist. The `alg` value MUST be consistent with the verifying key's
-type; see Section 6 for the normative key/algorithm consistency
-requirement.
+The algorithm allowlist requirement is normatively defined in Section 6
+(steps 3a and 4a) and discussed in Section 8.14.
 
 Post-quantum migration: the `cnf.jwk` key type is not hardcoded to
-Ed25519. Implementations SHOULD be designed to support key type
+Ed25519. Implementations should be designed to support key type
 migration. NIST finalized ML-DSA (FIPS 204, formerly Dilithium) in 2024
 as a post-quantum digital signature standard. Deployments with long-term
-security requirements SHOULD design their key management infrastructure
+security requirements should design their key management infrastructure
 to support algorithm migration without requiring changes to token
 structure.
 
@@ -2483,27 +2478,27 @@ guidance.
 
 Implementations that process AATs alongside conventional OAuth tokens —
 for example, in policy engines, token introspection endpoints, or API
-gateways — MUST NOT assume `iss` is always a URI. For root tokens, `iss`
-is a URI and behaves as expected by standard OAuth tooling. For derived
-tokens, `iss` is a base64url-encoded JWK Thumbprint, which will not
-parse as a URI and will not match any issuer in a conventional issuer
-registry.
+gateways — must not assume `iss` is always a URI (see Section 3.2 for
+the normative definition). For root tokens, `iss` is a URI and behaves
+as expected by standard OAuth tooling. For derived tokens, `iss` is a
+base64url-encoded JWK Thumbprint, which will not parse as a URI and
+will not match any issuer in a conventional issuer registry.
 
-Middleware that routes or policy-evaluates based on `iss` SHOULD detect
-AAT chains (for example, by checking for the `aat_type` claim) and apply
-chain-aware processing rather than single-token `iss` lookup. Token
-introspection endpoints that expose `iss` SHOULD document this dual
-semantics behavior. Federation systems that use `iss` to resolve public
-keys MUST NOT attempt to resolve a derived token's `iss` as an issuer
-URI; the verification key for derived tokens is `parent.cnf.jwk`,
-resolved from the preceding chain link.
+Middleware that routes or policy-evaluates based on `iss` should detect
+AAT chains (for example, by checking for the `aat_type` claim) and
+apply chain-aware processing rather than single-token `iss` lookup.
+Token introspection endpoints that expose `iss` should document this
+dual semantics behavior. Federation systems that use `iss` to resolve
+public keys must not attempt to resolve a derived token's `iss` as an
+issuer URI; the verification key for derived tokens is
+`parent.cnf.jwk`, resolved from the preceding chain link.
 
 ## Relationship to WIMSE
 
 The WIMSE architecture {{WIMSE-ARCH}} and service-to-service protocol
 {{WIMSE-S2S}} address workload identity and authentication for entities
 that hold and present AATs. A WIMSE workload credential identifies an
-agent; the `iss` claim in a root AAT issued to that agent MAY reference
+agent; the `iss` claim in a root AAT issued to that agent may reference
 the agent's WIMSE workload identifier. The two specifications are
 complementary: WIMSE establishes workload identity and authentication;
 this specification defines a holder-derivable, invocation-scoped
@@ -2523,7 +2518,7 @@ significantly deeper chains. The implementation ceiling should reflect
 the maximum depth the deployment actually needs, not an arbitrary
 conservative default.
 
-Regardless of the implementation ceiling, issuers SHOULD set
+Regardless of the implementation ceiling, issuers should set
 `del_max_depth` in individual tokens to the minimum depth the specific
 workflow requires. A grant with a lower `del_max_depth` than the
 implementation ceiling is always permitted and limits blast radius if a
@@ -2548,11 +2543,11 @@ deployment constraints:
 | Maximum tool name length | 256 bytes |
 | Maximum constraint value length | 4 KB |
 
-Deployments SHOULD document their enforced limits. Interoperating
-parties SHOULD verify that their respective limits are compatible before
+Deployments should document their enforced limits. Interoperating
+parties should verify that their respective limits are compatible before
 deployment.
 
-Implementations SHOULD prefer `exact` and `one_of` constraints over
+Implementations should prefer `exact` and `one_of` constraints over
 `pattern`, `regex`, or `cel` where the policy permits, as these types
 produce significantly more compact tokens and simpler subsumption
 checks.
@@ -2565,10 +2560,10 @@ used for logging or routing, or a human-readable subject identifier.
 This specification does not define a mechanism for such metadata, but
 the JWT format accommodates it naturally.
 
-Implementations MAY include additional JWT claims in AATs beyond those
-defined in Section 3. Claims used for passthrough metadata SHOULD use
+Implementations may include additional JWT claims in AATs beyond those
+defined in Section 3. Claims used for passthrough metadata should use
 collision-resistant names (e.g., reverse domain notation such as
-`com.example.trace_id`) and SHOULD NOT encode tool permissions or
+`com.example.trace_id`) and should not encode tool permissions or
 argument constraints that this specification models in
 `authorization_details`.
 
@@ -2576,15 +2571,14 @@ Because additional claims are included in the token's JWS signature,
 they are integrity-protected within each individual token. However,
 this specification's chain verification algorithm (Section 6) does not
 enforce preservation of unrecognized claims across derivation steps.
-Enforcement points MUST ignore unrecognized top-level JWT claims; the
-fail-closed rule (Section 3.4) applies only to unrecognized constraint
-types within `authorization_details`. A token carrying a
-`com.example.trace_id` claim MUST NOT be rejected solely because the
-enforcement point does not recognize that claim. Deployments that
-require chain-wide preservation of passthrough metadata MUST define
-and enforce their own derivation and verification rules for those
-claims, either through deployment-specific policy or in a companion
-profile.
+Per Section 3.4, enforcement points ignore unrecognized top-level JWT
+claims; the fail-closed rule applies only to constraint types within
+`authorization_details`. A token carrying a `com.example.trace_id`
+claim will not be rejected solely for containing that claim.
+Deployments that require chain-wide preservation of passthrough
+metadata must define and enforce their own derivation and verification
+rules for those claims, either through deployment-specific policy or
+in a companion profile.
 
 ## TTL Guidance
 
@@ -2629,7 +2623,7 @@ by enforcement points applying the normative strategy, even if a human
 reviewer could determine that subsumption holds.
 
 Implementers requiring richer policy expressiveness without sacrificing
-subsumption decidability SHOULD consider languages that were designed
+subsumption decidability should consider languages that were designed
 specifically for authorization use cases and that provide formal
 containment algorithms as a first-class operation. Such languages are
 better positioned to provide conforming extension constraint
@@ -2653,7 +2647,7 @@ only that whatever language is used, the resulting extension constraint
 registration satisfies the three properties defined in Section 3.5.1:
 decidable, sound, and deterministic.
 
-# CBOR/CWT Profile (Non-Normative)
+# CBOR/CWT Profile
 
 The claim semantics, attenuation invariants, constraint subsumption
 rules, and chain verification algorithm defined in this document are

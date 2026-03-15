@@ -145,12 +145,13 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    10. References  . . . . . . . . . . . . . . . . . . . . . . . . .  56
      10.1.  Normative References . . . . . . . . . . . . . . . . . .  56
      10.2.  Informative References . . . . . . . . . . . . . . . . .  58
-   Appendix A.  Comparison with Related OAuth Mechanisms . . . . . .  60
+   Appendix A.  Comparison with Related OAuth Mechanisms
+           (Non-Normative) . . . . . . . . . . . . . . . . . . . . .  60
      A.1.  Token Exchange (RFC 8693) . . . . . . . . . . . . . . . .  60
      A.2.  Rich Authorization Requests (RFC 9396)  . . . . . . . . .  60
      A.3.  DPoP (RFC 9449) . . . . . . . . . . . . . . . . . . . . .  60
      A.4.  Biscuit . . . . . . . . . . . . . . . . . . . . . . . . .  61
-   Appendix B.  Implementation Notes . . . . . . . . . . . . . . . .  62
+   Appendix B.  Implementation Notes (Non-Normative) . . . . . . . .  62
      B.1.  Algorithm Recommendations . . . . . . . . . . . . . . . .  62
      B.2.  Performance . . . . . . . . . . . . . . . . . . . . . . .  63
      B.3.  Handling iss Dual Semantics in Middleware . . . . . . . .  63
@@ -161,7 +162,6 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
      B.8.  TTL Guidance  . . . . . . . . . . . . . . . . . . . . . .  65
    Appendix C.  Policy Languages with Decidable Containment
            (Non-Normative) . . . . . . . . . . . . . . . . . . . . .  66
-   Appendix D.  CBOR/CWT Profile (Non-Normative) . . . . . . . . . .  67
 
 
 
@@ -170,6 +170,7 @@ Niyikiza                Expires 16 September 2026               [Page 3]
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
+   Appendix D.  CBOR/CWT Profile . . . . . . . . . . . . . . . . . .  67
      D.1.  CWT Representation  . . . . . . . . . . . . . . . . . . .  67
      D.2.  Deterministic Encoding  . . . . . . . . . . . . . . . . .  67
      D.3.  Claim Key Assignments . . . . . . . . . . . . . . . . . .  68
@@ -211,7 +212,6 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
    The following diagram shows the delegation flow this specification
    enables:
-
 
 
 
@@ -367,8 +367,9 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
    The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
    "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
-   "OPTIONAL" in this document are to be interpreted as described in BCP
-   14 [RFC2119] [RFC8174].
+   "OPTIONAL" in this document are to be interpreted as described in
+   BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all
+   capitals, as shown here.
 
    *Attenuating Authorization Token (AAT):* A signed JWT as defined in
    this document.  An AAT encodes tool-level capability claims and
@@ -384,7 +385,6 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    authority ceiling for all derived tokens.  A root token is a
    positional role, not a distinct aat_type value: the two aat_type
    values are "delegation" and "execution".
-
 
 
 
@@ -865,14 +865,14 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    +=================+=====================+===========================+
    | constraint_type | Additional Members  | Semantics                 |
    +=================+=====================+===========================+
-   | exact           | value (any scalar)  | Argument must equal       |
+   | exact           | value (any scalar)  | Argument MUST equal       |
    |                 |                     | value exactly.            |
    +-----------------+---------------------+---------------------------+
-   | pattern         | value (string)      | Argument must match the   |
+   | pattern         | value (string)      | Argument MUST match the   |
    |                 |                     | glob pattern.  See        |
    |                 |                     | below for syntax.         |
    +-----------------+---------------------+---------------------------+
-   | range           | min (number,        | Argument must be a        |
+   | range           | min (number,        | Argument MUST be a        |
    |                 | optional), max      | number satisfying the     |
    |                 | (number, optional), | specified bounds.  Both   |
    |                 | min_inclusive       | bounds are optional.      |
@@ -884,10 +884,10 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    |                 |                     | default to true (closed   |
    |                 |                     | interval).                |
    +-----------------+---------------------+---------------------------+
-   | one_of          | values (array)      | Argument must be a        |
+   | one_of          | values (array)      | Argument MUST be a        |
    |                 |                     | member of values.         |
    +-----------------+---------------------+---------------------------+
-   | not_one_of      | excluded (array)    | Argument must not be a    |
+   | not_one_of      | excluded (array)    | Argument MUST NOT be a    |
    |                 |                     | member of excluded.       |
    +-----------------+---------------------+---------------------------+
 
@@ -899,20 +899,20 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
    | contains        | required (array)    | Argument, which MUST be   |
-   |                 |                     | an array, must contain    |
+   |                 |                     | an array, MUST contain    |
    |                 |                     | every element listed in   |
    |                 |                     | required.                 |
    +-----------------+---------------------+---------------------------+
    | subset          | allowed (array)     | Argument, which MUST be   |
-   |                 |                     | an array, must be a       |
+   |                 |                     | an array, MUST be a       |
    |                 |                     | subset of allowed.        |
    +-----------------+---------------------+---------------------------+
-   | regex           | pattern (string)    | Argument must match the   |
+   | regex           | pattern (string)    | Argument MUST match the   |
    |                 |                     | regular expression.       |
    |                 |                     | See below for dialect     |
    |                 |                     | and subsumption notes.    |
    +-----------------+---------------------+---------------------------+
-   | cel             | expression (string) | Argument must satisfy     |
+   | cel             | expression (string) | Argument MUST satisfy     |
    |                 |                     | the Common Expression     |
    |                 |                     | Language (CEL)            |
    |                 |                     | expression, which MUST    |
@@ -973,7 +973,11 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    Enforcement points MUST reject invocations where any argument
    violates its associated constraint.  Enforcement points MUST deny
    authorization if they encounter a constraint_type they do not
-   recognize (fail-closed behavior).
+   recognize (fail-closed behavior).  This fail-closed rule applies only
+   to constraint types within authorization_details.  Enforcement points
+   MUST ignore unrecognized top-level JWT claims; a token MUST NOT be
+   rejected solely because it contains claims outside those defined in
+   this specification.
 
    Composite constraint types (all, any, not) are recursive.
    MAX_CONSTRAINT_DEPTH is an implementation-defined finite integer
@@ -998,10 +1002,6 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    point that does not recognize a registered extension type MUST deny
    authorization (Section 3.5.2), but it is not required to implement
    that type.
-
-
-
-
 
 
 
@@ -3138,11 +3138,6 @@ Niyikiza                Expires 16 September 2026              [Page 56]
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
-   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
-              Requirement Levels", BCP 14, RFC 2119,
-              DOI 10.17487/RFC2119, March 1997,
-              <https://www.rfc-editor.org/info/rfc2119>.
-
    [RFC3986]  Berners-Lee, T., Fielding, R., and L. Masinter, "Uniform
               Resource Identifier (URI): Generic Syntax", STD 66,
               RFC 3986, DOI 10.17487/RFC3986, January 2005,
@@ -3174,26 +3169,6 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
               DOI 10.17487/RFC8032, January 2017,
               <https://www.rfc-editor.org/info/rfc8032>.
 
-   [RFC8126]  Cotton, M., Leiba, B., and T. Narten, "Guidelines for
-              Writing an IANA Considerations Section in RFCs", BCP 26,
-              RFC 8126, DOI 10.17487/RFC8126, June 2017,
-              <https://www.rfc-editor.org/info/rfc8126>.
-
-   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
-              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
-              May 2017, <https://www.rfc-editor.org/info/rfc8174>.
-
-
-
-
-
-
-
-Niyikiza                Expires 16 September 2026              [Page 57]
-
-Internet-Draft          Attenuating Agent Tokens              March 2026
-
-
    [RFC8785]  Rundgren, A., Jordan, B., and S. Erdtman, "JSON
               Canonicalization Scheme (JCS)", RFC 8785,
               DOI 10.17487/RFC8785, June 2020,
@@ -3209,6 +3184,16 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
               DOI 10.17487/RFC9396, May 2023,
               <https://www.rfc-editor.org/info/rfc9396>.
 
+
+
+
+
+
+Niyikiza                Expires 16 September 2026              [Page 57]
+
+Internet-Draft          Attenuating Agent Tokens              March 2026
+
+
    [RFC9562]  Davis, K., Peabody, B., and P. Leach, "Universally Unique
               IDentifiers (UUIDs)", RFC 9562, DOI 10.17487/RFC9562, May
               2024, <https://www.rfc-editor.org/info/rfc9562>.
@@ -3217,7 +3202,21 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
               RFC 6749, DOI 10.17487/RFC6749, October 2012,
               <https://www.rfc-editor.org/info/rfc6749>.
 
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <https://www.rfc-editor.org/info/rfc2119>.
+
+   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
+              May 2017, <https://www.rfc-editor.org/info/rfc8174>.
+
 10.2.  Informative References
+
+   [RFC8126]  Cotton, M., Leiba, B., and T. Narten, "Guidelines for
+              Writing an IANA Considerations Section in RFCs", BCP 26,
+              RFC 8126, DOI 10.17487/RFC8126, June 2017,
+              <https://www.rfc-editor.org/info/rfc8126>.
 
    [RFC8392]  Jones, M., Wahlstroem, E., Erdtman, S., and H. Tschofenig,
               "CBOR Web Token (CWT)", RFC 8392, DOI 10.17487/RFC8392,
@@ -3241,6 +3240,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    [BISCUIT]  Eclipse Foundation, "Biscuit: Distributed Authorization
               Tokens", n.d., <https://doc.biscuitsec.org/reference/
               specifications.html>.
+
 
 
 
@@ -3320,7 +3320,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
               Solver", TACAS 2008, LNCS 4963, 2008,
               <https://github.com/Z3Prover/z3>.
 
-Appendix A.  Comparison with Related OAuth Mechanisms
+Appendix A.  Comparison with Related OAuth Mechanisms (Non-Normative)
 
 A.1.  Token Exchange (RFC 8693)
 
@@ -3435,34 +3435,34 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    model itself, making the chain independently verifiable as a
    delegation protocol rather than as a sequence of policy blocks.
 
-Appendix B.  Implementation Notes
+Appendix B.  Implementation Notes (Non-Normative)
 
 B.1.  Algorithm Recommendations
 
-   *  *Signing algorithm:* Ed25519 [RFC8032].  Implementations MUST
-      support Ed25519 and MAY support additional algorithms.  EdDSA
-      provides compact 64-byte signatures suitable for constrained agent
-      environments.  The JWS alg header value for Ed25519 is "EdDSA".
+   *  *Signing algorithm:* Ed25519 [RFC8032].  The normative requirement
+      is in Section 3.2.  EdDSA provides compact 64-byte signatures
+      suitable for constrained agent environments.  The JWS alg header
+      value for Ed25519 is "EdDSA".
 
    *  *Key representation:* JWK [RFC7517] with "kty": "OKP" and "crv":
       "Ed25519".
 
-   *  *Token identifier:* UUIDv7 RECOMMENDED for jti values, providing
-      time-ordered identifiers without central coordination.
+   *  *Token identifier:* UUIDv7 is recommended for jti values,
+      providing time-ordered identifiers without central coordination.
 
-   Enforcement points MUST maintain an explicit allowlist of accepted
-   alg values and MUST reject any token whose alg header is not on that
-   allowlist.  The alg value MUST be consistent with the verifying key's
-   type; see Section 6 for the normative key/algorithm consistency
-   requirement.
+   The algorithm allowlist requirement is normatively defined in
+   Section 6 (steps 3a and 4a) and discussed in Section 8.14.
 
    Post-quantum migration: the cnf.jwk key type is not hardcoded to
-   Ed25519.  Implementations SHOULD be designed to support key type
+   Ed25519.  Implementations should be designed to support key type
    migration.  NIST finalized ML-DSA (FIPS 204, formerly Dilithium) in
    2024 as a post-quantum digital signature standard.  Deployments with
-   long-term security requirements SHOULD design their key management
+   long-term security requirements should design their key management
    infrastructure to support algorithm migration without requiring
    changes to token structure.
+
+
+
 
 
 
@@ -3489,18 +3489,18 @@ B.3.  Handling iss Dual Semantics in Middleware
 
    Implementations that process AATs alongside conventional OAuth tokens
    — for example, in policy engines, token introspection endpoints, or
-   API gateways — MUST NOT assume iss is always a URI.  For root tokens,
-   iss is a URI and behaves as expected by standard OAuth tooling.  For
-   derived tokens, iss is a base64url-encoded JWK Thumbprint, which will
-   not parse as a URI and will not match any issuer in a conventional
-   issuer registry.
+   API gateways — must not assume iss is always a URI (see Section 3.2
+   for the normative definition).  For root tokens, iss is a URI and
+   behaves as expected by standard OAuth tooling.  For derived tokens,
+   iss is a base64url-encoded JWK Thumbprint, which will not parse as a
+   URI and will not match any issuer in a conventional issuer registry.
 
-   Middleware that routes or policy-evaluates based on iss SHOULD detect
+   Middleware that routes or policy-evaluates based on iss should detect
    AAT chains (for example, by checking for the aat_type claim) and
    apply chain-aware processing rather than single-token iss lookup.
-   Token introspection endpoints that expose iss SHOULD document this
+   Token introspection endpoints that expose iss should document this
    dual semantics behavior.  Federation systems that use iss to resolve
-   public keys MUST NOT attempt to resolve a derived token's iss as an
+   public keys must not attempt to resolve a derived token's iss as an
    issuer URI; the verification key for derived tokens is
    parent.cnf.jwk, resolved from the preceding chain link.
 
@@ -3509,7 +3509,7 @@ B.4.  Relationship to WIMSE
    The WIMSE architecture [WIMSE-ARCH] and service-to-service protocol
    [WIMSE-S2S] address workload identity and authentication for entities
    that hold and present AATs.  A WIMSE workload credential identifies
-   an agent; the iss claim in a root AAT issued to that agent MAY
+   an agent; the iss claim in a root AAT issued to that agent may
    reference the agent's WIMSE workload identifier.  The two
    specifications are complementary: WIMSE establishes workload identity
    and authentication; this specification defines a holder-derivable,
@@ -3538,7 +3538,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    The implementation ceiling should reflect the maximum depth the
    deployment actually needs, not an arbitrary conservative default.
 
-   Regardless of the implementation ceiling, issuers SHOULD set
+   Regardless of the implementation ceiling, issuers should set
    del_max_depth in individual tokens to the minimum depth the specific
    workflow requires.  A grant with a lower del_max_depth than the
    implementation ceiling is always permitted and limits blast radius if
@@ -3573,8 +3573,8 @@ B.6.  Implementation Size Limits
 
                                  Table 10
 
-   Deployments SHOULD document their enforced limits.  Interoperating
-   parties SHOULD verify that their respective limits are compatible
+   Deployments should document their enforced limits.  Interoperating
+   parties should verify that their respective limits are compatible
    before deployment.
 
 
@@ -3586,7 +3586,7 @@ Niyikiza                Expires 16 September 2026              [Page 64]
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
-   Implementations SHOULD prefer exact and one_of constraints over
+   Implementations should prefer exact and one_of constraints over
    pattern, regex, or cel where the policy permits, as these types
    produce significantly more compact tokens and simpler subsumption
    checks.
@@ -3599,10 +3599,10 @@ B.7.  Signed Passthrough Metadata
    identifier.  This specification does not define a mechanism for such
    metadata, but the JWT format accommodates it naturally.
 
-   Implementations MAY include additional JWT claims in AATs beyond
+   Implementations may include additional JWT claims in AATs beyond
    those defined in Section 3.  Claims used for passthrough metadata
-   SHOULD use collision-resistant names (e.g., reverse domain notation
-   such as com.example.trace_id) and SHOULD NOT encode tool permissions
+   should use collision-resistant names (e.g., reverse domain notation
+   such as com.example.trace_id) and should not encode tool permissions
    or argument constraints that this specification models in
    authorization_details.
 
@@ -3610,13 +3610,12 @@ B.7.  Signed Passthrough Metadata
    they are integrity-protected within each individual token.  However,
    this specification's chain verification algorithm (Section 6) does
    not enforce preservation of unrecognized claims across derivation
-   steps.  Enforcement points MUST ignore unrecognized top-level JWT
-   claims; the fail-closed rule (Section 3.4) applies only to
-   unrecognized constraint types within authorization_details.  A token
-   carrying a com.example.trace_id claim MUST NOT be rejected solely
-   because the enforcement point does not recognize that claim.
-   Deployments that require chain-wide preservation of passthrough
-   metadata MUST define and enforce their own derivation and
+   steps.  Per Section 3.4, enforcement points ignore unrecognized top-
+   level JWT claims; the fail-closed rule applies only to constraint
+   types within authorization_details.  A token carrying a
+   com.example.trace_id claim will not be rejected solely for containing
+   that claim.  Deployments that require chain-wide preservation of
+   passthrough metadata must define and enforce their own derivation and
    verification rules for those claims, either through deployment-
    specific policy or in a companion profile.
 
@@ -3634,6 +3633,7 @@ B.8.  TTL Guidance
    The operational cost of short TTLs is re-issuance frequency; this
    cost is low when the root issuer is available and derivation is
    offline.
+
 
 
 
@@ -3670,7 +3670,7 @@ Appendix C.  Policy Languages with Decidable Containment (Non-Normative)
    if a human reviewer could determine that subsumption holds.
 
    Implementers requiring richer policy expressiveness without
-   sacrificing subsumption decidability SHOULD consider languages that
+   sacrificing subsumption decidability should consider languages that
    were designed specifically for authorization use cases and that
    provide formal containment algorithms as a first-class operation.
    Such languages are better positioned to provide conforming extension
@@ -3702,7 +3702,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    constraint registration satisfies the three properties defined in
    Section 3.5.1: decidable, sound, and deterministic.
 
-Appendix D.  CBOR/CWT Profile (Non-Normative)
+Appendix D.  CBOR/CWT Profile
 
    The claim semantics, attenuation invariants, constraint subsumption
    rules, and chain verification algorithm defined in this document are

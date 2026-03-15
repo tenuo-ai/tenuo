@@ -1553,7 +1553,7 @@ li > p:last-of-type:only-child {
             </ul>
 </li>
           <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.11">
-            <p id="section-toc.1-1.11.1"><a href="#appendix-A" class="auto internal xref">Appendix A</a>.  <a href="#name-comparison-with-related-oau" class="internal xref">Comparison with Related OAuth Mechanisms</a></p>
+            <p id="section-toc.1-1.11.1"><a href="#appendix-A" class="auto internal xref">Appendix A</a>.  <a href="#name-comparison-with-related-oau" class="internal xref">Comparison with Related OAuth Mechanisms (Non-Normative)</a></p>
 <ul class="compact toc ulBare ulEmpty">
 <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.11.2.1">
                 <p id="section-toc.1-1.11.2.1.1"><a href="#appendix-A.1" class="auto internal xref">A.1</a>.  <a href="#name-token-exchange-rfc-8693" class="internal xref">Token Exchange (RFC 8693)</a></p>
@@ -1570,7 +1570,7 @@ li > p:last-of-type:only-child {
             </ul>
 </li>
           <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.12">
-            <p id="section-toc.1-1.12.1"><a href="#appendix-B" class="auto internal xref">Appendix B</a>.  <a href="#name-implementation-notes" class="internal xref">Implementation Notes</a></p>
+            <p id="section-toc.1-1.12.1"><a href="#appendix-B" class="auto internal xref">Appendix B</a>.  <a href="#name-implementation-notes-non-no" class="internal xref">Implementation Notes (Non-Normative)</a></p>
 <ul class="compact toc ulBare ulEmpty">
 <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.12.2.1">
                 <p id="section-toc.1-1.12.2.1.1"><a href="#appendix-B.1" class="auto internal xref">B.1</a>.  <a href="#name-algorithm-recommendations" class="internal xref">Algorithm Recommendations</a></p>
@@ -1602,7 +1602,7 @@ li > p:last-of-type:only-child {
             <p id="section-toc.1-1.13.1"><a href="#appendix-C" class="auto internal xref">Appendix C</a>.  <a href="#name-policy-languages-with-decid" class="internal xref">Policy Languages with Decidable Containment (Non-Normative)</a></p>
 </li>
           <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.14">
-            <p id="section-toc.1-1.14.1"><a href="#appendix-D" class="auto internal xref">Appendix D</a>.  <a href="#name-cbor-cwt-profile-non-normat" class="internal xref">CBOR/CWT Profile (Non-Normative)</a></p>
+            <p id="section-toc.1-1.14.1"><a href="#appendix-D" class="auto internal xref">Appendix D</a>.  <a href="#name-cbor-cwt-profile" class="internal xref">CBOR/CWT Profile</a></p>
 <ul class="compact toc ulBare ulEmpty">
 <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.14.2.1">
                 <p id="section-toc.1-1.14.2.1.1"><a href="#appendix-D.1" class="auto internal xref">D.1</a>.  <a href="#name-cwt-representation" class="internal xref">CWT Representation</a></p>
@@ -1810,10 +1810,10 @@ behavior. AATs realize one protocol-layer approach to that goal.<a href="#sectio
       <h2 id="name-terminology">
 <a href="#section-2" class="section-number selfRef">2. </a><a href="#name-terminology" class="section-name selfRef">Terminology</a>
       </h2>
-<p id="section-2-1">The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
-"SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
-"OPTIONAL" in this document are to be interpreted as described in BCP 14
-<span>[<a href="#RFC2119" class="cite xref">RFC2119</a>]</span> <span>[<a href="#RFC8174" class="cite xref">RFC8174</a>]</span>.<a href="#section-2-1" class="pilcrow">¶</a></p>
+<p id="section-2-1">The key words "<span class="bcp14">MUST</span>", "<span class="bcp14">MUST NOT</span>", "<span class="bcp14">REQUIRED</span>", "<span class="bcp14">SHALL</span>", "<span class="bcp14">SHALL NOT</span>", "<span class="bcp14">SHOULD</span>", "<span class="bcp14">SHOULD NOT</span>", "<span class="bcp14">RECOMMENDED</span>", "<span class="bcp14">NOT RECOMMENDED</span>",
+"<span class="bcp14">MAY</span>", and "<span class="bcp14">OPTIONAL</span>" in this document are to be interpreted as
+described in BCP 14 <span>[<a href="#RFC2119" class="cite xref">RFC2119</a>]</span> <span>[<a href="#RFC8174" class="cite xref">RFC8174</a>]</span> when, and only when, they
+appear in all capitals, as shown here.<a href="#section-2-1" class="pilcrow">¶</a></p>
 <p id="section-2-2"><strong>Attenuating Authorization Token (AAT):</strong> A signed JWT as defined in
 this document. An AAT encodes tool-level capability claims and supports
 offline derivation of child tokens with authority equal to or narrower
@@ -1849,13 +1849,13 @@ token holder may derive child tokens with authority equal to or narrower
 than their own, subject to the depth limit of the chain.<a href="#section-2-8" class="pilcrow">¶</a></p>
 <p id="section-2-9"><strong>Tool:</strong> An addressable function or API operation that an agent may
 invoke. A tool is identified by a string identifier. Tool identifiers
-SHOULD be URIs (<span>[<a href="#RFC3986" class="cite xref">RFC3986</a>]</span>); see Section 3.3.1 for requirements. Tool
-identifiers MUST NOT contain characters that are subject to Unicode
+<span class="bcp14">SHOULD</span> be URIs (<span>[<a href="#RFC3986" class="cite xref">RFC3986</a>]</span>); see Section 3.3.1 for requirements. Tool
+identifiers <span class="bcp14">MUST NOT</span> contain characters that are subject to Unicode
 normalization (such as combining characters or characters with multiple
 canonical forms), as normalization-sensitive identifiers can produce
 inconsistent matching behavior across implementations.<a href="#section-2-9" class="pilcrow">¶</a></p>
 <p id="section-2-10"><strong>Argument Constraint:</strong> A predicate over a tool argument value that the
-argument MUST satisfy for the invocation to be authorized. Constraints
+argument <span class="bcp14">MUST</span> satisfy for the invocation to be authorized. Constraints
 are evaluated at the enforcement point before invocation.<a href="#section-2-10" class="pilcrow">¶</a></p>
 <p id="section-2-11"><strong>Capability Claim:</strong> The set of (tool, argument constraints) pairs
 encoded in an AAT's <code>authorization_details</code> claim.<a href="#section-2-11" class="pilcrow">¶</a></p>
@@ -1865,7 +1865,7 @@ Attenuation is the only permitted direction of derivation.<a href="#section-2-12
 <p id="section-2-13"><strong>Chain:</strong> An ordered sequence of AATs from root to leaf, where each
 token was derived from its predecessor.<a href="#section-2-13" class="pilcrow">¶</a></p>
 <p id="section-2-14"><strong>Leaf Token:</strong> The last token in a chain. The leaf token is the one
-presented to the enforcement point for authorization. A leaf token MUST
+presented to the enforcement point for authorization. A leaf token <span class="bcp14">MUST</span>
 have <code>aat_type: "execution"</code>. The PoP JWT is signed by the private key
 corresponding to the leaf token's <code>cnf.jwk</code>.<a href="#section-2-14" class="pilcrow">¶</a></p>
 <p id="section-2-15"><strong>Enforcement Point (EP):</strong> The component that receives a tool
@@ -1895,12 +1895,12 @@ private key.<a href="#section-2-17" class="pilcrow">¶</a></p>
 <code>aat_type</code> claim.<a href="#section-3.1-1" class="pilcrow">¶</a></p>
 <p id="section-3.1-2"><strong>Delegation Tokens</strong> (<code>aat_type: "delegation"</code>) enumerate the tools for
 which the holder may derive child tokens; they do not authorize tool
-invocation. A delegation token holder MUST NOT present a delegation
+invocation. A delegation token holder <span class="bcp14">MUST NOT</span> present a delegation
 token to an enforcement point to invoke a tool. Root delegation tokens
 are typically issued by a root issuer to orchestrating agents, but
 delegation tokens may also appear at intermediate hops in a chain,
 derived from a parent delegation token with narrower scope. A child
-token derived from a delegation token MUST NOT authorize tools absent
+token derived from a delegation token <span class="bcp14">MUST NOT</span> authorize tools absent
 from the delegation token's <code>authorization_details</code>. The capability
 monotonicity invariant (I4, Section 4.5) applies at every delegation
 step: derived tokens can only narrow the authorized tool set and
@@ -1922,7 +1922,7 @@ and argument constraints. The capability monotonicity invariant (I4,
 Section 4.5) applies at every derivation step regardless of the type
 transition.<a href="#section-3.1-5" class="pilcrow">¶</a></p>
 <p id="section-3.1-6">A derived token whose <code>aat_type</code> differs from its parent's <code>aat_type</code>
-MUST have a <code>cnf.jwk</code> whose JWK Thumbprint (<span>[<a href="#RFC7638" class="cite xref">RFC7638</a>]</span>) differs from
+          <span class="bcp14">MUST</span> have a <code>cnf.jwk</code> whose JWK Thumbprint (<span>[<a href="#RFC7638" class="cite xref">RFC7638</a>]</span>) differs from
 the parent's <code>cnf.jwk</code> thumbprint. This ensures structural separation
 between planning authority and invocation authority: an entity that
 delegates cannot use the same key to invoke, and an entity that invokes
@@ -1930,7 +1930,7 @@ cannot use the same key to delegate. When <code>aat_type</code> is preserved acr
 a derivation step, same-key derivation is permitted. The security
 rationale for type-transition key separation is discussed in Section
 8.12.<a href="#section-3.1-6" class="pilcrow">¶</a></p>
-<p id="section-3.1-7">A root issuer MAY issue an execution token directly, bypassing the
+<p id="section-3.1-7">A root issuer <span class="bcp14">MAY</span> issue an execution token directly, bypassing the
 delegation step, when an agent requires immediate tool invocation
 authority without intermediate planning authority.<a href="#section-3.1-7" class="pilcrow">¶</a></p>
 </section>
@@ -1941,7 +1941,7 @@ authority without intermediate planning authority.<a href="#section-3.1-7" class
 <a href="#section-3.2" class="section-number selfRef">3.2. </a><a href="#name-common-claims" class="section-name selfRef">Common Claims</a>
         </h3>
 <p id="section-3.2-1">The following claims appear in both token types. All claims listed as
-REQUIRED MUST be present. Claims listed as OPTIONAL MAY be omitted;
+<span class="bcp14">REQUIRED</span> <span class="bcp14">MUST</span> be present. Claims listed as <span class="bcp14">OPTIONAL</span> <span class="bcp14">MAY</span> be omitted;
 their absence carries the semantics described in the table.<a href="#section-3.2-1" class="pilcrow">¶</a></p>
 <table class="center" id="table-1">
           <caption><a href="#table-1" class="selfRef">Table 1</a></caption>
@@ -1959,55 +1959,69 @@ their absence carries the semantics described in the table.<a href="#section-3.2
                 <code>jti</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">string</td>
-              <td class="text-left" rowspan="1" colspan="1">REQUIRED</td>
-              <td class="text-left" rowspan="1" colspan="1">Unique token identifier. SHOULD be a UUIDv7 value. When a UUID is used, it MUST be encoded as a lowercase hyphenated string in the form <code>xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx</code> per <span>[<a href="#RFC9562" class="cite xref">RFC9562</a>]</span>.</td>
+              <td class="text-left" rowspan="1" colspan="1">
+                <span class="bcp14">REQUIRED</span>
+</td>
+              <td class="text-left" rowspan="1" colspan="1">Unique token identifier. <span class="bcp14">SHOULD</span> be a UUIDv7 value. When a UUID is used, it <span class="bcp14">MUST</span> be encoded as a lowercase hyphenated string in the form <code>xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx</code> per <span>[<a href="#RFC9562" class="cite xref">RFC9562</a>]</span>.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>iss</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">string</td>
-              <td class="text-left" rowspan="1" colspan="1">REQUIRED</td>
-              <td class="text-left" rowspan="1" colspan="1">Identifier of the entity that signed this token. For root tokens, MUST be a URI identifying the root issuer. For derived tokens, MUST be the base64url-encoded SHA-256 JWK Thumbprint of the signing key without padding, as defined in <span>[<a href="#RFC7638" class="cite xref">RFC7638</a>]</span> and <span>[<a href="#RFC7515" class="cite xref">RFC7515</a>]</span> Appendix C.</td>
+              <td class="text-left" rowspan="1" colspan="1">
+                <span class="bcp14">REQUIRED</span>
+</td>
+              <td class="text-left" rowspan="1" colspan="1">Identifier of the entity that signed this token. For root tokens, <span class="bcp14">MUST</span> be a URI identifying the root issuer. For derived tokens, <span class="bcp14">MUST</span> be the base64url-encoded SHA-256 JWK Thumbprint of the signing key without padding, as defined in <span>[<a href="#RFC7638" class="cite xref">RFC7638</a>]</span> and <span>[<a href="#RFC7515" class="cite xref">RFC7515</a>]</span> Appendix C.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>iat</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">NumericDate</td>
-              <td class="text-left" rowspan="1" colspan="1">REQUIRED</td>
-              <td class="text-left" rowspan="1" colspan="1">Time at which the token was issued. MUST NOT be more than MAX_IAT_SKEW in the future relative to the verifier's clock (see Section 4.4). In a chain, a child token's <code>iat</code> MUST NOT be earlier than its parent's <code>iat</code>.</td>
+              <td class="text-left" rowspan="1" colspan="1">
+                <span class="bcp14">REQUIRED</span>
+</td>
+              <td class="text-left" rowspan="1" colspan="1">Time at which the token was issued. <span class="bcp14">MUST NOT</span> be more than MAX_IAT_SKEW in the future relative to the verifier's clock (see Section 4.4). In a chain, a child token's <code>iat</code> <span class="bcp14">MUST NOT</span> be earlier than its parent's <code>iat</code>.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>exp</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">NumericDate</td>
-              <td class="text-left" rowspan="1" colspan="1">REQUIRED</td>
-              <td class="text-left" rowspan="1" colspan="1">Time at which the token expires. MUST be greater than <code>iat</code>. MUST NOT exceed <code>iat</code> plus MAX_TOKEN_LIFETIME (see Section 4.4).</td>
+              <td class="text-left" rowspan="1" colspan="1">
+                <span class="bcp14">REQUIRED</span>
+</td>
+              <td class="text-left" rowspan="1" colspan="1">Time at which the token expires. <span class="bcp14">MUST</span> be greater than <code>iat</code>. <span class="bcp14">MUST NOT</span> exceed <code>iat</code> plus MAX_TOKEN_LIFETIME (see Section 4.4).</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>cnf</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">object</td>
-              <td class="text-left" rowspan="1" colspan="1">REQUIRED</td>
-              <td class="text-left" rowspan="1" colspan="1">Confirmation claim <span>[<a href="#RFC7800" class="cite xref">RFC7800</a>]</span>. MUST contain <code>jwk</code> with the holder's public key. The <code>jwk</code> value MUST be a public key; private key material MUST NOT appear in this field.</td>
+              <td class="text-left" rowspan="1" colspan="1">
+                <span class="bcp14">REQUIRED</span>
+</td>
+              <td class="text-left" rowspan="1" colspan="1">Confirmation claim <span>[<a href="#RFC7800" class="cite xref">RFC7800</a>]</span>. <span class="bcp14">MUST</span> contain <code>jwk</code> with the holder's public key. The <code>jwk</code> value <span class="bcp14">MUST</span> be a public key; private key material <span class="bcp14">MUST NOT</span> appear in this field.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>aat_type</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">string</td>
-              <td class="text-left" rowspan="1" colspan="1">REQUIRED</td>
-              <td class="text-left" rowspan="1" colspan="1">Token type. MUST be <code>"delegation"</code> or <code>"execution"</code>.</td>
+              <td class="text-left" rowspan="1" colspan="1">
+                <span class="bcp14">REQUIRED</span>
+</td>
+              <td class="text-left" rowspan="1" colspan="1">Token type. <span class="bcp14">MUST</span> be <code>"delegation"</code> or <code>"execution"</code>.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>del_depth</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">integer</td>
-              <td class="text-left" rowspan="1" colspan="1">REQUIRED</td>
+              <td class="text-left" rowspan="1" colspan="1">
+                <span class="bcp14">REQUIRED</span>
+</td>
               <td class="text-left" rowspan="1" colspan="1">Delegation depth. 0 for root tokens. Incremented by exactly 1 at each derivation step (see Section 4.3).</td>
             </tr>
             <tr>
@@ -2015,29 +2029,34 @@ their absence carries the semantics described in the table.<a href="#section-3.2
                 <code>del_max_depth</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">integer</td>
-              <td class="text-left" rowspan="1" colspan="1">REQUIRED</td>
-              <td class="text-left" rowspan="1" colspan="1">Maximum delegation depth permitted in this chain. MUST be a non-negative integer not exceeding the implementation's MAX_DELEGATION_DEPTH (Section 4.3).</td>
+              <td class="text-left" rowspan="1" colspan="1">
+                <span class="bcp14">REQUIRED</span>
+</td>
+              <td class="text-left" rowspan="1" colspan="1">Maximum delegation depth permitted in this chain. <span class="bcp14">MUST</span> be a non-negative integer not exceeding the implementation's MAX_DELEGATION_DEPTH (Section 4.3).</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>par_hash</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">string</td>
-              <td class="text-left" rowspan="1" colspan="1">MUST (derived) / MUST NOT (root)</td>
-              <td class="text-left" rowspan="1" colspan="1">Base64url-encoded SHA-256 digest of the parent token's JWS Signing Input, using base64url encoding without padding as defined in <span>[<a href="#RFC7515" class="cite xref">RFC7515</a>]</span> Appendix C. MUST be absent in root tokens. MUST be present in all derived tokens.</td>
+              <td class="text-left" rowspan="1" colspan="1">
+                <span class="bcp14">MUST</span> (derived) / <span class="bcp14">MUST NOT</span> (root)</td>
+              <td class="text-left" rowspan="1" colspan="1">Base64url-encoded SHA-256 digest of the parent token's JWS Signing Input, using base64url encoding without padding as defined in <span>[<a href="#RFC7515" class="cite xref">RFC7515</a>]</span> Appendix C. <span class="bcp14">MUST</span> be absent in root tokens. <span class="bcp14">MUST</span> be present in all derived tokens.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>authorization_details</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">array</td>
-              <td class="text-left" rowspan="1" colspan="1">REQUIRED</td>
+              <td class="text-left" rowspan="1" colspan="1">
+                <span class="bcp14">REQUIRED</span>
+</td>
               <td class="text-left" rowspan="1" colspan="1">Tool capability claims. Format defined in Section 3.3.</td>
             </tr>
           </tbody>
         </table>
-<p id="section-3.2-3">Implementations MUST support Ed25519 <span>[<a href="#RFC8032" class="cite xref">RFC8032</a>]</span> for token signing and
-verification. Implementations MAY support additional algorithms.<a href="#section-3.2-3" class="pilcrow">¶</a></p>
+<p id="section-3.2-3">Implementations <span class="bcp14">MUST</span> support Ed25519 <span>[<a href="#RFC8032" class="cite xref">RFC8032</a>]</span> for token signing and
+verification. Implementations <span class="bcp14">MAY</span> support additional algorithms.<a href="#section-3.2-3" class="pilcrow">¶</a></p>
 <p id="section-3.2-4">This specification uses <code>iss</code> with two distinct but related semantics
 that together enable offline chain verification. For root tokens, <code>iss</code>
 is a URI identifying the root issuer, consistent with conventional OAuth
@@ -2050,7 +2069,7 @@ confirm that <code>derived.iss</code> equals the thumbprint of <code>parent.cnf.
 without any external lookup. A URI in <code>iss</code> for derived tokens would
 require a network call to resolve the key, defeating offline chain
 verification. Implementations that perform token introspection or
-identity federation SHOULD be aware of this dual semantics and MUST NOT
+identity federation <span class="bcp14">SHOULD</span> be aware of this dual semantics and <span class="bcp14">MUST NOT</span>
 assume <code>iss</code> is always a URI.<a href="#section-3.2-5" class="pilcrow">¶</a></p>
 <p id="section-3.2-6">This specification intentionally omits the <code>sub</code> claim. In conventional
 OAuth tokens, <code>sub</code> identifies the resource owner or principal on whose
@@ -2060,7 +2079,7 @@ possession of the private key corresponding to <code>cnf.jwk</code>. Including a
 <code>sub</code> claim would introduce an additional identity binding that is not
 cryptographically enforced by this specification and could be set
 arbitrarily by any delegating party. Implementations that require a
-human-readable subject identifier MAY convey one in additional JWT
+human-readable subject identifier <span class="bcp14">MAY</span> convey one in additional JWT
 claims outside this specification (see Appendix B).<a href="#section-3.2-6" class="pilcrow">¶</a></p>
 </section>
 </div>
@@ -2070,8 +2089,8 @@ claims outside this specification (see Appendix B).<a href="#section-3.2-6" clas
 <a href="#section-3.3" class="section-number selfRef">3.3. </a><a href="#name-capability-claims-via-autho" class="section-name selfRef">Capability Claims via <code>authorization_details</code></a>
         </h3>
 <p id="section-3.3-1">This specification profiles <span>[<a href="#RFC9396" class="cite xref">RFC9396</a>]</span> for tool-level capability
-claims. Each entry in the <code>authorization_details</code> array MUST have <code>type</code>
-set to <code>"attenuating_agent_token"</code>. The entry MUST include a <code>tools</code>
+claims. Each entry in the <code>authorization_details</code> array <span class="bcp14">MUST</span> have <code>type</code>
+set to <code>"attenuating_agent_token"</code>. The entry <span class="bcp14">MUST</span> include a <code>tools</code>
 member that maps tool names to argument constraint sets.<a href="#section-3.3-1" class="pilcrow">¶</a></p>
 <div class="lang-json sourcecode" id="section-3.3-2">
 <pre>
@@ -2101,29 +2120,29 @@ member that maps tool names to argument constraint sets.<a href="#section-3.3-1"
 that the tool is authorized without argument restrictions.<a href="#section-3.3-3" class="pilcrow">¶</a></p>
 <p id="section-3.3-4">When a tool entry contains one or more argument constraints, the
 enforcement point operates in closed-world mode for that tool
-invocation: any argument not named in the constraint map MUST be
-rejected. A constrained argument that is absent from the invocation MUST
+invocation: any argument not named in the constraint map <span class="bcp14">MUST</span> be
+rejected. A constrained argument that is absent from the invocation <span class="bcp14">MUST</span>
 also be rejected: the presence of a constraint on an argument asserts
 that the issuer has reasoned about that argument, and an invocation that
 omits it has not been validated against that reasoning. This is a
 security property, not a configuration option.<a href="#section-3.3-4" class="pilcrow">¶</a></p>
-<p id="section-3.3-5">Issuers who wish to permit an argument to be omitted MUST NOT include a
+<p id="section-3.3-5">Issuers who wish to permit an argument to be omitted <span class="bcp14">MUST NOT</span> include a
 constraint for it in the constraint map. There is no "optional
 constraint" mechanism; the constraint map is a closed specification of
 the required invocation shape. To authorize an argument without
 restricting its value, use a <code>wildcard</code> constraint (see below).<a href="#section-3.3-5" class="pilcrow">¶</a></p>
 <p id="section-3.3-6">A token issuer that wishes to allow unconstrained arguments alongside
-constrained ones MUST explicitly include a <code>wildcard</code> constraint for
+constrained ones <span class="bcp14">MUST</span> explicitly include a <code>wildcard</code> constraint for
 each argument that should be unrestricted. A <code>wildcard</code> constraint
 satisfies closed-world mode while permitting any value for that argument
-(see Section 3.4). Enforcement points MUST enforce closed-world mode and
-MUST NOT permit unconstrained arguments when any constraint is present
+(see Section 3.4). Enforcement points <span class="bcp14">MUST</span> enforce closed-world mode and
+<span class="bcp14">MUST NOT</span> permit unconstrained arguments when any constraint is present
 for the tool (see Section 6, step 6b).<a href="#section-3.3-6" class="pilcrow">¶</a></p>
-<p id="section-3.3-7">The <code>authorization_details</code> array MAY contain entries of other types
+<p id="section-3.3-7">The <code>authorization_details</code> array <span class="bcp14">MAY</span> contain entries of other types
 alongside <code>attenuating_agent_token</code> entries, consistent with the
 extensibility model of <span>[<a href="#RFC9396" class="cite xref">RFC9396</a>]</span>. Enforcement points implementing this
 specification process only entries with <code>type</code> set to
-<code>attenuating_agent_token</code> and MUST ignore entries of other types. An
+<code>attenuating_agent_token</code> and <span class="bcp14">MUST</span> ignore entries of other types. An
 <code>authorization_details</code> array containing multiple entries with <code>type:
 "attenuating_agent_token"</code> is invalid; the tools map in a single entry
 provides sufficient structure for all tool-level capability claims.<a href="#section-3.3-7" class="pilcrow">¶</a></p>
@@ -2134,17 +2153,17 @@ provides sufficient structure for all tool-level capability claims.<a href="#sec
           </h4>
 <p id="section-3.3.1-1">Tool identifiers are the keys of the <code>tools</code> map in an
 <code>authorization_details</code> entry. The following requirements apply.<a href="#section-3.3.1-1" class="pilcrow">¶</a></p>
-<p id="section-3.3.1-2">Tool identifiers MUST be unique within the <code>tools</code> map of a single
+<p id="section-3.3.1-2">Tool identifiers <span class="bcp14">MUST</span> be unique within the <code>tools</code> map of a single
 token. An <code>authorization_details</code> entry containing duplicate tool
-identifier keys is malformed and MUST be rejected.<a href="#section-3.3.1-2" class="pilcrow">¶</a></p>
-<p id="section-3.3.1-3">Tool identifiers SHOULD be URIs (<span>[<a href="#RFC3986" class="cite xref">RFC3986</a>]</span>). URI-format identifiers
+identifier keys is malformed and <span class="bcp14">MUST</span> be rejected.<a href="#section-3.3.1-2" class="pilcrow">¶</a></p>
+<p id="section-3.3.1-3">Tool identifiers <span class="bcp14">SHOULD</span> be URIs (<span>[<a href="#RFC3986" class="cite xref">RFC3986</a>]</span>). URI-format identifiers
 provide namespace isolation across agents and prevent semantic collision
 when multiple agents in a deployment expose tools with identical local
 names.<a href="#section-3.3.1-3" class="pilcrow">¶</a></p>
-<p id="section-3.3.1-4">When URI-format identifiers are used, the URI SHOULD be scoped to the
+<p id="section-3.3.1-4">When URI-format identifiers are used, the URI <span class="bcp14">SHOULD</span> be scoped to the
 authority of the agent that exposes the tool. The authority component
-SHOULD correspond to the agent's workload identity or a domain
-controlled by the agent's operator. The URI SHOULD include a version
+<span class="bcp14">SHOULD</span> correspond to the agent's workload identity or a domain
+controlled by the agent's operator. The URI <span class="bcp14">SHOULD</span> include a version
 component or content hash to ensure that all parties in the chain reason
 about the same tool schema. For example:<a href="#section-3.3.1-4" class="pilcrow">¶</a></p>
 <div class="alignLeft art-text artwork" id="section-3.3.1-5">
@@ -2152,9 +2171,9 @@ about the same tool schema. For example:<a href="#section-3.3.1-4" class="pilcro
 https://billing-agent.example.com/tools/charge/v2
 </pre><a href="#section-3.3.1-5" class="pilcrow">¶</a>
 </div>
-<p id="section-3.3.1-6">Tool identifiers that are not URIs MAY be used in single-agent
+<p id="section-3.3.1-6">Tool identifiers that are not URIs <span class="bcp14">MAY</span> be used in single-agent
 deployments where namespace collision is not a concern. Deployments
-spanning multiple agents or trust domains SHOULD use URI-format
+spanning multiple agents or trust domains <span class="bcp14">SHOULD</span> use URI-format
 identifiers.<a href="#section-3.3.1-6" class="pilcrow">¶</a></p>
 <p id="section-3.3.1-7">A tool identifier carries no inherent authorization semantics beyond
 naming a capability. The root issuer is responsible for verifying that
@@ -2173,7 +2192,7 @@ before minting a root token (Section 3.7.3).<a href="#section-3.3.1-7" class="pi
 <p id="section-3.4-1">Each argument constraint is an object with a <code>constraint_type</code> member
 and type-specific members. The following constraint types are defined
 normatively. The <code>check</code> predicate and <code>subsumes</code> relation for each type
-are normative: two independent implementations MUST produce identical
+are normative: two independent implementations <span class="bcp14">MUST</span> produce identical
 results when evaluating either predicate against the same inputs.<a href="#section-3.4-1" class="pilcrow">¶</a></p>
 <p id="section-3.4-2">For constraint types where this specification does not define a general
 containment algorithm (specifically <code>pattern</code>, <code>regex</code>, <code>cel</code>, <code>not</code>,
@@ -2182,7 +2201,7 @@ strategy. The strategy is sound: it never incorrectly accepts a
 non-subsuming constraint. It is conservative: it may reject constraints
 that are semantically subsuming but cannot be proven so syntactically.
 Deployments requiring richer policy expressiveness with full subsumption
-support SHOULD use a registered extension constraint type built on a
+support <span class="bcp14">SHOULD</span> use a registered extension constraint type built on a
 language with a decidable containment algorithm (see Section 3.5 and
 Appendix C).<a href="#section-3.4-2" class="pilcrow">¶</a></p>
 <table class="center" id="table-2">
@@ -2201,7 +2220,7 @@ Appendix C).<a href="#section-3.4-2" class="pilcrow">¶</a></p>
 </td>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>value</code> (any scalar)</td>
-              <td class="text-left" rowspan="1" colspan="1">Argument must equal <code>value</code> exactly.</td>
+              <td class="text-left" rowspan="1" colspan="1">Argument <span class="bcp14">MUST</span> equal <code>value</code> exactly.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -2209,7 +2228,7 @@ Appendix C).<a href="#section-3.4-2" class="pilcrow">¶</a></p>
 </td>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>value</code> (string)</td>
-              <td class="text-left" rowspan="1" colspan="1">Argument must match the glob pattern. See below for syntax.</td>
+              <td class="text-left" rowspan="1" colspan="1">Argument <span class="bcp14">MUST</span> match the glob pattern. See below for syntax.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -2217,7 +2236,7 @@ Appendix C).<a href="#section-3.4-2" class="pilcrow">¶</a></p>
 </td>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>min</code> (number, optional), <code>max</code> (number, optional), <code>min_inclusive</code> (boolean, optional, default true), <code>max_inclusive</code> (boolean, optional, default true)</td>
-              <td class="text-left" rowspan="1" colspan="1">Argument must be a number satisfying the specified bounds. Both bounds are optional. <code>min_inclusive</code> and <code>max_inclusive</code> control whether the respective bound is included in the valid range; both default to true (closed interval).</td>
+              <td class="text-left" rowspan="1" colspan="1">Argument <span class="bcp14">MUST</span> be a number satisfying the specified bounds. Both bounds are optional. <code>min_inclusive</code> and <code>max_inclusive</code> control whether the respective bound is included in the valid range; both default to true (closed interval).</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -2225,7 +2244,7 @@ Appendix C).<a href="#section-3.4-2" class="pilcrow">¶</a></p>
 </td>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>values</code> (array)</td>
-              <td class="text-left" rowspan="1" colspan="1">Argument must be a member of <code>values</code>.</td>
+              <td class="text-left" rowspan="1" colspan="1">Argument <span class="bcp14">MUST</span> be a member of <code>values</code>.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -2233,7 +2252,7 @@ Appendix C).<a href="#section-3.4-2" class="pilcrow">¶</a></p>
 </td>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>excluded</code> (array)</td>
-              <td class="text-left" rowspan="1" colspan="1">Argument must not be a member of <code>excluded</code>.</td>
+              <td class="text-left" rowspan="1" colspan="1">Argument <span class="bcp14">MUST NOT</span> be a member of <code>excluded</code>.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -2241,7 +2260,7 @@ Appendix C).<a href="#section-3.4-2" class="pilcrow">¶</a></p>
 </td>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>required</code> (array)</td>
-              <td class="text-left" rowspan="1" colspan="1">Argument, which MUST be an array, must contain every element listed in <code>required</code>.</td>
+              <td class="text-left" rowspan="1" colspan="1">Argument, which <span class="bcp14">MUST</span> be an array, <span class="bcp14">MUST</span> contain every element listed in <code>required</code>.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -2249,7 +2268,7 @@ Appendix C).<a href="#section-3.4-2" class="pilcrow">¶</a></p>
 </td>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>allowed</code> (array)</td>
-              <td class="text-left" rowspan="1" colspan="1">Argument, which MUST be an array, must be a subset of <code>allowed</code>.</td>
+              <td class="text-left" rowspan="1" colspan="1">Argument, which <span class="bcp14">MUST</span> be an array, <span class="bcp14">MUST</span> be a subset of <code>allowed</code>.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -2257,7 +2276,7 @@ Appendix C).<a href="#section-3.4-2" class="pilcrow">¶</a></p>
 </td>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>pattern</code> (string)</td>
-              <td class="text-left" rowspan="1" colspan="1">Argument must match the regular expression. See below for dialect and subsumption notes.</td>
+              <td class="text-left" rowspan="1" colspan="1">Argument <span class="bcp14">MUST</span> match the regular expression. See below for dialect and subsumption notes.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -2265,7 +2284,7 @@ Appendix C).<a href="#section-3.4-2" class="pilcrow">¶</a></p>
 </td>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>expression</code> (string)</td>
-              <td class="text-left" rowspan="1" colspan="1">Argument must satisfy the Common Expression Language (CEL) expression, which MUST return a boolean. See below for subsumption rules.</td>
+              <td class="text-left" rowspan="1" colspan="1">Argument <span class="bcp14">MUST</span> satisfy the Common Expression Language (CEL) expression, which <span class="bcp14">MUST</span> return a boolean. See below for subsumption rules.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -2305,30 +2324,33 @@ glob syntax. <code>*</code> matches any sequence of characters not containing a
 path separator. <code>?</code> matches any single character. <code>[abc]</code> matches any
 single character in the set. <code>[!abc]</code> matches any single character not
 in the set. The token <code>**</code> (double-star) has no defined semantics in
-this specification and MUST NOT appear in pattern values. Brace
+this specification and <span class="bcp14">MUST NOT</span> appear in pattern values. Brace
 alternation (e.g., <code>{a,b}</code>) has no defined semantics in this
-specification and MUST NOT appear in pattern values; deployments
-requiring alternation SHOULD use <code>any</code> with multiple <code>pattern</code>
+specification and <span class="bcp14">MUST NOT</span> appear in pattern values; deployments
+requiring alternation <span class="bcp14">SHOULD</span> use <code>any</code> with multiple <code>pattern</code>
 constraints. See Section 4.5 for subsumption rules.<a href="#section-3.4-4" class="pilcrow">¶</a></p>
 <p id="section-3.4-5"><strong>Regex dialect and subsumption.</strong> The <code>regex</code> constraint does not
-standardize a dialect; implementations MUST document the dialect they
+standardize a dialect; implementations <span class="bcp14">MUST</span> document the dialect they
 support. This specification does not define a portable containment
 algorithm for regular expressions; equality of pattern strings is the
 normative conservative subsumption strategy. See Section 4.5.<a href="#section-3.4-5" class="pilcrow">¶</a></p>
-<p id="section-3.4-6"><strong>CEL check predicate.</strong> The <code>cel</code> expression MUST evaluate to a
+<p id="section-3.4-6"><strong>CEL check predicate.</strong> The <code>cel</code> expression <span class="bcp14">MUST</span> evaluate to a
 boolean. The subsumption strategy for <code>cel</code> uses balanced-parentheses
 conjunction; see Section 4.5 for the normative rules and Section 8.13
 for the security rationale.<a href="#section-3.4-6" class="pilcrow">¶</a></p>
-<p id="section-3.4-7">Enforcement points MUST reject invocations where any argument violates
-its associated constraint. Enforcement points MUST deny authorization if
+<p id="section-3.4-7">Enforcement points <span class="bcp14">MUST</span> reject invocations where any argument violates
+its associated constraint. Enforcement points <span class="bcp14">MUST</span> deny authorization if
 they encounter a <code>constraint_type</code> they do not recognize (fail-closed
-behavior).<a href="#section-3.4-7" class="pilcrow">¶</a></p>
+behavior). This fail-closed rule applies only to constraint types within
+<code>authorization_details</code>. Enforcement points <span class="bcp14">MUST</span> ignore unrecognized
+top-level JWT claims; a token <span class="bcp14">MUST NOT</span> be rejected solely because it
+contains claims outside those defined in this specification.<a href="#section-3.4-7" class="pilcrow">¶</a></p>
 <p id="section-3.4-8">Composite constraint types (<code>all</code>, <code>any</code>, <code>not</code>) are recursive.
 MAX_CONSTRAINT_DEPTH is an implementation-defined finite integer
 specifying the maximum nesting depth of a constraint tree.
-Implementations MUST enforce a finite MAX_CONSTRAINT_DEPTH to prevent
+Implementations <span class="bcp14">MUST</span> enforce a finite MAX_CONSTRAINT_DEPTH to prevent
 resource exhaustion from pathologically deep constraint trees. A value
-of 32 is RECOMMENDED. Enforcement points MUST reject any constraint tree
+of 32 is <span class="bcp14">RECOMMENDED</span>. Enforcement points <span class="bcp14">MUST</span> reject any constraint tree
 whose nesting depth exceeds MAX_CONSTRAINT_DEPTH.<a href="#section-3.4-8" class="pilcrow">¶</a></p>
 <p id="section-3.4-9">Domain-specific constraint types such as path containment, URL safety,
 or IP range matching may be registered in the extension registry
@@ -2340,13 +2362,13 @@ or IP range matching may be registered in the extension registry
         <h3 id="name-extension-constraint-regist">
 <a href="#section-3.5" class="section-number selfRef">3.5. </a><a href="#name-extension-constraint-regist" class="section-name selfRef">Extension Constraint Registry</a>
         </h3>
-<p id="section-3.5-1">Implementations MAY define extension constraint types beyond those
-listed in Section 3.4. Extension constraint types MUST be registered in
+<p id="section-3.5-1">Implementations <span class="bcp14">MAY</span> define extension constraint types beyond those
+listed in Section 3.4. Extension constraint types <span class="bcp14">MUST</span> be registered in
 the IANA AAT Constraint Type Registry defined in Section 9.3. The
 registry exists to preserve security and interoperability in the
 presence of domain-specific constraints; it is not a requirement that
 all implementations support arbitrary extensions. An enforcement point
-that does not recognize a registered extension type MUST deny
+that does not recognize a registered extension type <span class="bcp14">MUST</span> deny
 authorization (Section 3.5.2), but it is not required to implement that
 type.<a href="#section-3.5-1" class="pilcrow">¶</a></p>
 <div id="attenuation-compliance-requirement">
@@ -2356,52 +2378,52 @@ type.<a href="#section-3.5-1" class="pilcrow">¶</a></p>
           </h4>
 <p id="section-3.5.1-1">The capability monotonicity invariant (I4, Section 4.5) applies to
 extension constraint types without exception. An extension constraint
-type MUST NOT be registered unless its registration defines all of the
+type <span class="bcp14">MUST NOT</span> be registered unless its registration defines all of the
 following.<a href="#section-3.5.1-1" class="pilcrow">¶</a></p>
-<p id="section-3.5.1-2"><strong>A subsumption verification procedure.</strong> The registration MUST provide
+<p id="section-3.5.1-2"><strong>A subsumption verification procedure.</strong> The registration <span class="bcp14">MUST</span> provide
 a complete, formal definition of what it means for one instance of the
 constraint to be at least as restrictive as another instance of the same
-constraint type. This procedure MUST satisfy three properties:<a href="#section-3.5.1-2" class="pilcrow">¶</a></p>
+constraint type. This procedure <span class="bcp14">MUST</span> satisfy three properties:<a href="#section-3.5.1-2" class="pilcrow">¶</a></p>
 <ol start="1" type="1" class="normal type-1" id="section-3.5.1-3">
 <li id="section-3.5.1-3.1">
-              <p id="section-3.5.1-3.1.1"><strong>Decidable.</strong> The procedure MUST terminate in finite time for
-all inputs. It MUST NOT require solving problems that are
+              <p id="section-3.5.1-3.1.1"><strong>Decidable.</strong> The procedure <span class="bcp14">MUST</span> terminate in finite time for
+all inputs. It <span class="bcp14">MUST NOT</span> require solving problems that are
 undecidable or computationally intractable in the general
 case. If the constraint language used by the type is not
 closed under decidable containment analysis, the registration
-MUST prescribe a conservative syntactic strategy and MUST
+<span class="bcp14">MUST</span> prescribe a conservative syntactic strategy and <span class="bcp14">MUST</span>
 formally justify that the strategy is sound (never accepts
 a non-subsuming pair).<a href="#section-3.5.1-3.1.1" class="pilcrow">¶</a></p>
 </li>
             <li id="section-3.5.1-3.2">
-              <p id="section-3.5.1-3.2.1"><strong>Sound.</strong> The procedure MUST NOT return true unless the
+              <p id="section-3.5.1-3.2.1"><strong>Sound.</strong> The procedure <span class="bcp14">MUST NOT</span> return true unless the
 semantic subsumption relation holds. That is, if the procedure
 returns true for (C_parent, C_child), then for all argument
 values v: C_child.check(v) implies C_parent.check(v). The
-procedure MAY be conservative: it MAY return false for
+procedure <span class="bcp14">MAY</span> be conservative: it <span class="bcp14">MAY</span> return false for
 semantically subsuming pairs that it cannot verify, but it
-MUST NOT return true for non-subsuming pairs.<a href="#section-3.5.1-3.2.1" class="pilcrow">¶</a></p>
+<span class="bcp14">MUST NOT</span> return true for non-subsuming pairs.<a href="#section-3.5.1-3.2.1" class="pilcrow">¶</a></p>
 </li>
             <li id="section-3.5.1-3.3">
               <p id="section-3.5.1-3.3.1"><strong>Deterministic.</strong> Two independent implementations of the
-procedure MUST produce identical results for the same inputs.
-The procedure MUST be specified precisely enough to ensure
+procedure <span class="bcp14">MUST</span> produce identical results for the same inputs.
+The procedure <span class="bcp14">MUST</span> be specified precisely enough to ensure
 this. Ambiguity in the specification of the procedure is
 grounds for rejection of the registration.<a href="#section-3.5.1-3.3.1" class="pilcrow">¶</a></p>
 </li>
           </ol>
 <p id="section-3.5.1-4">This specification does not prescribe the internal mechanism of the
-subsumption verification procedure. Registrations MAY use structural
+subsumption verification procedure. Registrations <span class="bcp14">MAY</span> use structural
 comparison of token claims, formal type-checking, proof-carrying tokens,
 or any other mechanism that satisfies the three properties above. See
 Appendix C for non-normative guidance on policy languages with decidable
 containment algorithms.<a href="#section-3.5.1-4" class="pilcrow">¶</a></p>
-<p id="section-3.5.1-5"><strong>Cross-type subsumption rules.</strong> The registration MUST specify, for
+<p id="section-3.5.1-5"><strong>Cross-type subsumption rules.</strong> The registration <span class="bcp14">MUST</span> specify, for
 each core constraint type defined in Section 3.4, whether a derived
 token may substitute an instance of the extension type for a parent
 constraint of that core type (or vice versa), and if so, under what
 conditions. Any (parent type, child type) pair not explicitly declared
-valid MUST be treated as invalid by enforcement points.<a href="#section-3.5.1-5" class="pilcrow">¶</a></p>
+valid <span class="bcp14">MUST</span> be treated as invalid by enforcement points.<a href="#section-3.5.1-5" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="enforcement-point-obligations">
@@ -2410,27 +2432,27 @@ valid MUST be treated as invalid by enforcement points.<a href="#section-3.5.1-5
 <a href="#section-3.5.2" class="section-number selfRef">3.5.2. </a><a href="#name-enforcement-point-obligatio" class="section-name selfRef">Enforcement Point Obligations</a>
           </h4>
 <p id="section-3.5.2-1">When an enforcement point encounters an extension constraint type during
-chain verification, it MUST:<a href="#section-3.5.2-1" class="pilcrow">¶</a></p>
+chain verification, it <span class="bcp14">MUST</span>:<a href="#section-3.5.2-1" class="pilcrow">¶</a></p>
 <ol start="1" type="1" class="normal type-1" id="section-3.5.2-2">
 <li id="section-3.5.2-2.1">
               <p id="section-3.5.2-2.1.1">Locate the registered subsumption verification procedure for
-that type. If no registration exists, the enforcement point MUST
+that type. If no registration exists, the enforcement point <span class="bcp14">MUST</span>
 reject the chain (fail-closed).<a href="#section-3.5.2-2.1.1" class="pilcrow">¶</a></p>
 </li>
             <li id="section-3.5.2-2.2">
               <p id="section-3.5.2-2.2.1">Evaluate the subsumption relation at every chain link where
 the constraint appears, as part of the I4 check. A chain link
 where the derived constraint does not subsume the parent
-constraint MUST be rejected.<a href="#section-3.5.2-2.2.1" class="pilcrow">¶</a></p>
+constraint <span class="bcp14">MUST</span> be rejected.<a href="#section-3.5.2-2.2.1" class="pilcrow">¶</a></p>
 </li>
             <li id="section-3.5.2-2.3">
               <p id="section-3.5.2-2.3.1">Evaluate the constraint's <code>check</code> predicate against the
 presented argument value during authorization. If the predicate
-returns false, the invocation MUST be denied.<a href="#section-3.5.2-2.3.1" class="pilcrow">¶</a></p>
+returns false, the invocation <span class="bcp14">MUST</span> be denied.<a href="#section-3.5.2-2.3.1" class="pilcrow">¶</a></p>
 </li>
           </ol>
 <p id="section-3.5.2-3">An enforcement point that does not implement a registered extension
-constraint type MUST deny authorization rather than skip the constraint.
+constraint type <span class="bcp14">MUST</span> deny authorization rather than skip the constraint.
 The presence of an unrecognized constraint type in a token represents a
 restriction the issuer intended to enforce. Silently omitting that check
 would violate the attenuation guarantee.<a href="#section-3.5.2-3" class="pilcrow">¶</a></p>
@@ -2447,7 +2469,7 @@ constraint registration. It is not defined normatively in this document.<a href=
 <p id="section-3.5.3-3"><strong>Additional members:</strong> <code>root</code> (string, required). An absolute path
 prefix.<a href="#section-3.5.3-3" class="pilcrow">¶</a></p>
 <p id="section-3.5.3-4"><strong><code>check</code> predicate:</strong> The argument, after resolving all <code>.</code> and <code>..</code>
-components and removing redundant separators, MUST begin with <code>root</code>.
+components and removing redundant separators, <span class="bcp14">MUST</span> begin with <code>root</code>.
 The normalization step is part of the predicate; implementations that
 compare raw argument strings without normalization do not conform to
 this registration.<a href="#section-3.5.3-4" class="pilcrow">¶</a></p>
@@ -2464,10 +2486,10 @@ normatively in this document.<a href="#section-3.5.3-7" class="pilcrow">¶</a></
 <p id="section-3.5.3-8"><strong>Type name:</strong> <code>cidr</code><a href="#section-3.5.3-8" class="pilcrow">¶</a></p>
 <p id="section-3.5.3-9"><strong>Additional members:</strong> <code>network</code> (string, required). An IPv4 or IPv6
 network in CIDR notation.<a href="#section-3.5.3-9" class="pilcrow">¶</a></p>
-<p id="section-3.5.3-10"><strong><code>check</code> predicate:</strong> The argument MUST be a valid IPv4 or IPv6 address
+<p id="section-3.5.3-10"><strong><code>check</code> predicate:</strong> The argument <span class="bcp14">MUST</span> be a valid IPv4 or IPv6 address
 string that falls within <code>network</code> after normalization of IPv6-mapped
 IPv4 addresses, octal notation, and URL-encoded hostnames.
-Implementations MUST normalize address representations before comparison
+Implementations <span class="bcp14">MUST</span> normalize address representations before comparison
 to prevent encoding bypasses.<a href="#section-3.5.3-10" class="pilcrow">¶</a></p>
 <p id="section-3.5.3-11"><strong><code>subsumes</code> relation:</strong> <code>subsumes(C_parent, C_child)</code> is true if and
 only if <code>C_child.network</code> is a subnet of <code>C_parent.network</code>.<a href="#section-3.5.3-11" class="pilcrow">¶</a></p>
@@ -2481,13 +2503,13 @@ default <code>["http", "https"]</code>); <code>allow_domains</code> (array of st
 optional); <code>deny_domains</code> (array of strings, optional); <code>block_private</code>
 (boolean, optional, default true); <code>block_loopback</code> (boolean, optional,
 default true); <code>block_metadata</code> (boolean, optional, default true).<a href="#section-3.5.3-14" class="pilcrow">¶</a></p>
-<p id="section-3.5.3-15"><strong><code>check</code> predicate:</strong> The argument MUST be a URL whose scheme appears
+<p id="section-3.5.3-15"><strong><code>check</code> predicate:</strong> The argument <span class="bcp14">MUST</span> be a URL whose scheme appears
 in <code>allow_schemes</code>. If <code>block_private</code>, <code>block_loopback</code>, or
-<code>block_metadata</code> are true, the resolved host MUST NOT be a private,
+<code>block_metadata</code> are true, the resolved host <span class="bcp14">MUST NOT</span> be a private,
 loopback, or cloud metadata address respectively, after normalization of
 all known IP encoding forms (decimal, hex, octal, IPv6-mapped,
-URL-encoded). If <code>allow_domains</code> is non-empty, the host MUST match at
-least one entry. If <code>deny_domains</code> is non-empty, the host MUST NOT match
+URL-encoded). If <code>allow_domains</code> is non-empty, the host <span class="bcp14">MUST</span> match at
+least one entry. If <code>deny_domains</code> is non-empty, the host <span class="bcp14">MUST NOT</span> match
 any entry. <code>deny_domains</code> takes precedence over <code>allow_domains</code> on
 overlap.<a href="#section-3.5.3-15" class="pilcrow">¶</a></p>
 <p id="section-3.5.3-16"><strong><code>subsumes</code> relation:</strong> <code>subsumes(C_parent, C_child)</code> is true if and
@@ -2624,7 +2646,7 @@ window.<a href="#section-3.6.2-3.5.1" class="pilcrow">¶</a></p>
           <h4 id="name-root-issuer-discovery">
 <a href="#section-3.7.1" class="section-number selfRef">3.7.1. </a><a href="#name-root-issuer-discovery" class="section-name selfRef">Root Issuer Discovery</a>
           </h4>
-<p id="section-3.7.1-1">A root issuer that supports AAT issuance SHOULD advertise this
+<p id="section-3.7.1-1">A root issuer that supports AAT issuance <span class="bcp14">SHOULD</span> advertise this
 capability in its RFC 8414 server metadata document using the following
 metadata parameter.<a href="#section-3.7.1-1" class="pilcrow">¶</a></p>
 <table class="center" id="table-3">
@@ -2653,13 +2675,13 @@ Authorization Server Metadata registry (Section 9.4).<a href="#section-3.7.1-3" 
           <h4 id="name-agent-token-request">
 <a href="#section-3.7.2" class="section-number selfRef">3.7.2. </a><a href="#name-agent-token-request" class="section-name selfRef">Agent Token Request</a>
           </h4>
-<p id="section-3.7.2-1">An agent requesting a root AAT MUST include a <code>cnf</code> parameter in its
+<p id="section-3.7.2-1">An agent requesting a root AAT <span class="bcp14">MUST</span> include a <code>cnf</code> parameter in its
 token endpoint request (in the OAuth 2.0 sense, the agent acts as the
 client for this request). This specification treats <code>cnf</code> as a profiled
 use of the key confirmation object structure defined in <span>[<a href="#RFC7800" class="cite xref">RFC7800</a>]</span>
 Section 3.1; its semantics are fully specified by that document. This
 document requests registration of <code>cnf</code> as an OAuth token endpoint
-request parameter (Section 9.6). The value MUST be a JSON object
+request parameter (Section 9.6). The value <span class="bcp14">MUST</span> be a JSON object
 containing a <code>jwk</code> member with the agent's public key in JWK format
 <span>[<a href="#RFC7517" class="cite xref">RFC7517</a>]</span>. This is the key that the root issuer will bind into the
 root token's <code>cnf.jwk</code> claim.<a href="#section-3.7.2-1" class="pilcrow">¶</a></p>
@@ -2675,7 +2697,7 @@ grant_type=client_credentials
 &amp;cnf=%7B%22jwk%22%3A%7B%22kty%22%3A%22OKP%22%2C...%7D%7D
 </pre><a href="#section-3.7.2-2" class="pilcrow">¶</a>
 </div>
-<p id="section-3.7.2-3">The request MUST also include <code>authorization_details</code> in RAR format
+<p id="section-3.7.2-3">The request <span class="bcp14">MUST</span> also include <code>authorization_details</code> in RAR format
 <span>[<a href="#RFC9396" class="cite xref">RFC9396</a>]</span> with <code>type</code> set to <code>attenuating_agent_token</code>, enumerating
 the tools and argument constraints the agent is requesting authority to
 invoke or delegate.<a href="#section-3.7.2-3" class="pilcrow">¶</a></p>
@@ -2692,7 +2714,7 @@ invoke or delegate.<a href="#section-3.7.2-3" class="pilcrow">¶</a></p>
               <p id="section-3.7.3-2.1.1">Sets <code>iss</code> to the AS's own URI.<a href="#section-3.7.3-2.1.1" class="pilcrow">¶</a></p>
 </li>
             <li id="section-3.7.3-2.2">
-              <p id="section-3.7.3-2.2.1">Sets <code>jti</code> to a unique token identifier, RECOMMENDED to be
+              <p id="section-3.7.3-2.2.1">Sets <code>jti</code> to a unique token identifier, <span class="bcp14">RECOMMENDED</span> to be
 a UUIDv7 value per <span>[<a href="#RFC9562" class="cite xref">RFC9562</a>]</span>.<a href="#section-3.7.3-2.2.1" class="pilcrow">¶</a></p>
 </li>
             <li id="section-3.7.3-2.3">
@@ -2710,23 +2732,23 @@ to absent.<a href="#section-3.7.3-2.5.1" class="pilcrow">¶</a></p>
 </li>
             <li id="section-3.7.3-2.6">
               <p id="section-3.7.3-2.6.1">Sets <code>cnf.jwk</code> to the public key submitted in the agent's
-<code>cnf</code> request parameter. The root issuer MUST validate that
+<code>cnf</code> request parameter. The root issuer <span class="bcp14">MUST</span> validate that
 the submitted key is well-formed and is a public key. The
-root issuer SHOULD require the agent to demonstrate
+root issuer <span class="bcp14">SHOULD</span> require the agent to demonstrate
 possession of the corresponding private key, for example via
 a signed proof-of-possession assertion in the token request.<a href="#section-3.7.3-2.6.1" class="pilcrow">¶</a></p>
 </li>
             <li id="section-3.7.3-2.7">
               <p id="section-3.7.3-2.7.1">Sets <code>authorization_details</code> to the capability claims
-granted, which MAY be a subset of what the agent requested.<a href="#section-3.7.3-2.7.1" class="pilcrow">¶</a></p>
+granted, which <span class="bcp14">MAY</span> be a subset of what the agent requested.<a href="#section-3.7.3-2.7.1" class="pilcrow">¶</a></p>
 </li>
             <li id="section-3.7.3-2.8">
               <p id="section-3.7.3-2.8.1">For each URI-format tool identifier in the requested
-<code>authorization_details</code>, the root issuer SHOULD verify that
+<code>authorization_details</code>, the root issuer <span class="bcp14">SHOULD</span> verify that
 the requesting agent's identity, as established by the
 agent's client authentication credentials, corresponds to
 the authority component of each claimed tool URI. If this
-verification fails, the root issuer MUST reject the request.
+verification fails, the root issuer <span class="bcp14">MUST</span> reject the request.
 The mechanism by which agent identity is mapped to tool URI
 authority is deployment-specific and outside the scope of
 this specification.<a href="#section-3.7.3-2.8.1" class="pilcrow">¶</a></p>
@@ -2747,7 +2769,7 @@ this specification.<a href="#section-3.7.3-2.8.1" class="pilcrow">¶</a></p>
 </pre><a href="#section-3.7.3-4" class="pilcrow">¶</a>
 </div>
 <p id="section-3.7.3-5">The <code>token_type</code> value <code>"aat"</code> is registered in Section 9.5. Clients
-MUST NOT treat the returned token as a bearer token for use with
+<span class="bcp14">MUST NOT</span> treat the returned token as a bearer token for use with
 arbitrary resource servers. Its only valid use is as the root of an AAT
 delegation chain presented to an enforcement point per Section 6.<a href="#section-3.7.3-5" class="pilcrow">¶</a></p>
 <p id="section-3.7.3-6">Note: this specification defines token endpoint issuance for
@@ -2771,8 +2793,8 @@ anchor.<a href="#section-3.7.3-7" class="pilcrow">¶</a></p>
 <a href="#section-4" class="section-number selfRef">4. </a><a href="#name-attenuation-invariants" class="section-name selfRef">Attenuation Invariants</a>
       </h2>
 <p id="section-4-1">A derived token is valid if and only if it satisfies all of the
-following invariants. Enforcement points MUST verify all invariants and
-MUST reject any chain that violates any invariant.<a href="#section-4-1" class="pilcrow">¶</a></p>
+following invariants. Enforcement points <span class="bcp14">MUST</span> verify all invariants and
+<span class="bcp14">MUST</span> reject any chain that violates any invariant.<a href="#section-4-1" class="pilcrow">¶</a></p>
 <div id="capability-lattice-model-non-normative">
 <section id="section-4.1">
         <h3 id="name-capability-lattice-model-no">
@@ -2810,7 +2832,7 @@ root authorized.<a href="#section-4.1-6" class="pilcrow">¶</a></p>
 the capability lattice. A derived token with <code>C(child) == C(parent)</code> is
 still strictly more constrained if its <code>exp</code> is earlier than its
 parent's. Time-to-live (TTL) bounds are enforced independently of
-capability monotonicity. Both MUST hold for a chain to be valid.<a href="#section-4.1-7" class="pilcrow">¶</a></p>
+capability monotonicity. Both <span class="bcp14">MUST</span> hold for a chain to be valid.<a href="#section-4.1-7" class="pilcrow">¶</a></p>
 <p id="section-4.1-8">Invariants I1 through I6 are the normative enforcement mechanism for
 this property. I4 (Section 4.5) directly enforces <code>C(child) ⊆
 C(parent)</code>. The remaining invariants enforce the conditions under which
@@ -2829,7 +2851,7 @@ that the presenter holds the key (I6).<a href="#section-4.1-8" class="pilcrow">�
 derived.iss == key_thumbprint(parent.cnf.jwk)
 </pre><a href="#section-4.2-1" class="pilcrow">¶</a>
 </div>
-<p id="section-4.2-2">The entity that signed the derived token MUST be the holder of the
+<p id="section-4.2-2">The entity that signed the derived token <span class="bcp14">MUST</span> be the holder of the
 parent token. Authority flows from parent holder to derived token
 issuer. This invariant establishes an unambiguous audit trail: each link
 in the chain was signed by the party that held the preceding token.<a href="#section-4.2-2" class="pilcrow">¶</a></p>
@@ -2868,12 +2890,12 @@ agents might prefer. Intermediate token holders can only lower
 constraint is cryptographically enforced across the entire chain.<a href="#section-4.3-3" class="pilcrow">¶</a></p>
 <p id="section-4.3-4">MAX_DELEGATION_DEPTH is an implementation-defined finite integer
 specifying the maximum permitted delegation chain depth. Implementations
-MUST enforce a finite maximum delegation depth to prevent resource
+<span class="bcp14">MUST</span> enforce a finite maximum delegation depth to prevent resource
 exhaustion from pathologically deep chains. The appropriate value
 depends on the deployment topology; swarm architectures with deep
 fan-out may require significantly larger values than linear delegation
 chains. See Appendix B for guidance.<a href="#section-4.3-4" class="pilcrow">¶</a></p>
-<p id="section-4.3-5">The <code>del_max_depth</code> claim in any token in the chain MUST NOT exceed the
+<p id="section-4.3-5">The <code>del_max_depth</code> claim in any token in the chain <span class="bcp14">MUST NOT</span> exceed the
 implementation's MAX_DELEGATION_DEPTH.<a href="#section-4.3-5" class="pilcrow">¶</a></p>
 <div id="implementation-resource-limits">
 <section id="section-4.3.1">
@@ -2882,11 +2904,11 @@ implementation's MAX_DELEGATION_DEPTH.<a href="#section-4.3-5" class="pilcrow">�
           </h4>
 <p id="section-4.3.1-1">MAX_TOKEN_SIZE is an implementation-defined finite integer specifying
 the maximum encoded size of a single token in bytes. Implementations
-MUST enforce this limit to prevent memory exhaustion from pathologically
-large tokens. A value of 65536 bytes (64 KiB) is RECOMMENDED.<a href="#section-4.3.1-1" class="pilcrow">¶</a></p>
+<span class="bcp14">MUST</span> enforce this limit to prevent memory exhaustion from pathologically
+large tokens. A value of 65536 bytes (64 KiB) is <span class="bcp14">RECOMMENDED</span>.<a href="#section-4.3.1-1" class="pilcrow">¶</a></p>
 <p id="section-4.3.1-2">MAX_STACK_SIZE is an implementation-defined finite integer specifying
-the maximum total encoded size of a chain in bytes. Implementations MUST
-enforce this limit. A value of 262144 bytes (256 KiB) is RECOMMENDED.<a href="#section-4.3.1-2" class="pilcrow">¶</a></p>
+the maximum total encoded size of a chain in bytes. Implementations <span class="bcp14">MUST</span>
+enforce this limit. A value of 262144 bytes (256 KiB) is <span class="bcp14">RECOMMENDED</span>.<a href="#section-4.3.1-2" class="pilcrow">¶</a></p>
 </section>
 </div>
 </section>
@@ -2906,20 +2928,20 @@ derived.exp  &lt;= derived.iat + MAX_TOKEN_LIFETIME
 </div>
 <p id="section-4.4-2">MAX_IAT_SKEW is an implementation-defined finite integer specifying the
 maximum number of seconds a token's <code>iat</code> may be in the future relative
-to the verifier's clock. Implementations MUST enforce a finite
-MAX_IAT_SKEW. A value of 30 seconds is RECOMMENDED.<a href="#section-4.4-2" class="pilcrow">¶</a></p>
+to the verifier's clock. Implementations <span class="bcp14">MUST</span> enforce a finite
+MAX_IAT_SKEW. A value of 30 seconds is <span class="bcp14">RECOMMENDED</span>.<a href="#section-4.4-2" class="pilcrow">¶</a></p>
 <p id="section-4.4-3">MAX_TOKEN_LIFETIME is an implementation-defined finite integer
 specifying the maximum permitted duration in seconds between a token's
-<code>iat</code> and <code>exp</code>. Implementations MUST enforce a finite
-MAX_TOKEN_LIFETIME. A value of 90 days is RECOMMENDED as an upper bound;
-deployments SHOULD use significantly shorter lifetimes in practice (see
+<code>iat</code> and <code>exp</code>. Implementations <span class="bcp14">MUST</span> enforce a finite
+MAX_TOKEN_LIFETIME. A value of 90 days is <span class="bcp14">RECOMMENDED</span> as an upper bound;
+deployments <span class="bcp14">SHOULD</span> use significantly shorter lifetimes in practice (see
 Appendix B).<a href="#section-4.4-3" class="pilcrow">¶</a></p>
 <p id="section-4.4-4">A derived token cannot outlive its parent. Authority cannot extend
 beyond the lifetime of the token that granted it. A child token's
-issuance time MUST NOT precede its parent's issuance time. A child with
+issuance time <span class="bcp14">MUST NOT</span> precede its parent's issuance time. A child with
 an earlier <code>iat</code> indicates clock manipulation or chain forgery. Tokens
 with <code>iat</code> more than MAX_IAT_SKEW in the future relative to the
-verifier's clock MUST be rejected. A token's lifetime MUST NOT exceed
+verifier's clock <span class="bcp14">MUST</span> be rejected. A token's lifetime <span class="bcp14">MUST NOT</span> exceed
 MAX_TOKEN_LIFETIME.<a href="#section-4.4-4" class="pilcrow">¶</a></p>
 </section>
 </div>
@@ -2935,9 +2957,9 @@ tools(derived) ⊆ tools(parent)
   constraints(derived, tool) ⊑ constraints(parent, tool)
 </pre><a href="#section-4.5-1" class="pilcrow">¶</a>
 </div>
-<p id="section-4.5-2">A derived token MUST NOT authorize tools that the parent did not
+<p id="section-4.5-2">A derived token <span class="bcp14">MUST NOT</span> authorize tools that the parent did not
 authorize. For each tool that appears in both parent and derived token,
-every argument constraint in the derived token MUST be at least as
+every argument constraint in the derived token <span class="bcp14">MUST</span> be at least as
 restrictive as the corresponding constraint in the parent token.<a href="#section-4.5-2" class="pilcrow">¶</a></p>
 <p id="section-4.5-3">Constraint subsumption is defined per constraint type. The normative
 rules are:<a href="#section-4.5-3" class="pilcrow">¶</a></p>
@@ -2958,7 +2980,7 @@ a derived <code>exact</code> constraint.<a href="#section-4.5-4.1.1" class="pilc
           <li class="normal" id="section-4.5-4.2">
             <p id="section-4.5-4.2.1"><strong>pattern:</strong> This specification does not define a general
 containment algorithm for glob patterns; therefore it uses a
-conservative syntactic strategy. Enforcement points MUST apply
+conservative syntactic strategy. Enforcement points <span class="bcp14">MUST</span> apply
 the following rules, in order:<a href="#section-4.5-4.2.1" class="pilcrow">¶</a></p>
 <ol start="1" type="1" class="normal type-1" id="section-4.5-4.2.2">
 <li id="section-4.5-4.2.2.1">
@@ -2984,10 +3006,9 @@ begins with <code>/data/</code> and is longer.<a href="#section-4.5-4.2.2.2.1" c
 <p id="section-4.5-4.2.3">
 This strategy applies to patterns containing character classes
 (<code>[abc]</code>, <code>[!abc]</code>) without exception: a derived pattern with a
-different character class than its parent MUST be treated as
-non-subsuming even if semantically narrower. Enforcement points MUST
-NOT attempt semantic evaluation to determine pattern subsumption.
-Deployments requiring richer containment analysis SHOULD use a
+different character class than its parent <span class="bcp14">MUST</span> be treated as
+non-subsuming even if semantically narrower. Enforcement points <span class="bcp14">MUST NOT</span> attempt semantic evaluation to determine pattern subsumption.
+Deployments requiring richer containment analysis <span class="bcp14">SHOULD</span> use a
 registered extension constraint type (see Appendix C).<a href="#section-4.5-4.2.3" class="pilcrow">¶</a></p>
 </li>
           <li class="normal" id="section-4.5-4.3">
@@ -3009,7 +3030,7 @@ Cross-type pairs involving a derived <code>not_one_of</code> against a
 parent <code>one_of</code> are invalid: a <code>not_one_of</code> constraint
 accepts values outside the parent's permitted set and
 cannot be verified as subsuming a <code>one_of</code> without domain knowledge.
-Enforcement points MUST reject this cross-type pair.<a href="#section-4.5-4.4.1" class="pilcrow">¶</a></p>
+Enforcement points <span class="bcp14">MUST</span> reject this cross-type pair.<a href="#section-4.5-4.4.1" class="pilcrow">¶</a></p>
 </li>
           <li class="normal" id="section-4.5-4.5">
             <p id="section-4.5-4.5.1"><strong>not_one_of:</strong> A derived <code>not_one_of</code> constraint is valid
@@ -3025,7 +3046,7 @@ parent <code>regex</code> constraint if and only if the pattern strings
 are identical. A derived <code>exact</code> constraint subsumes a
 parent <code>regex</code> constraint if and only if the exact value matches the
 parent regex pattern. All other cross-type pairs involving <code>regex</code> are
-invalid. Deployments requiring richer containment analysis SHOULD use
+invalid. Deployments requiring richer containment analysis <span class="bcp14">SHOULD</span> use
 a registered extension constraint type.<a href="#section-4.5-4.6.1" class="pilcrow">¶</a></p>
 </li>
           <li class="normal" id="section-4.5-4.7">
@@ -3050,19 +3071,19 @@ than narrows authority. Wrapping each additional clause in balanced
 parentheses ensures that any <code>||</code> inside the clause is contained
 within the conjunction and cannot widen authority.<a href="#section-4.5-4.7.2" class="pilcrow">¶</a></p>
 <p id="section-4.5-4.7.3">
-Enforcement points MUST verify balanced parentheses by bracket
-counting, not by semantic evaluation. Enforcement points MUST NOT
+Enforcement points <span class="bcp14">MUST</span> verify balanced parentheses by bracket
+counting, not by semantic evaluation. Enforcement points <span class="bcp14">MUST NOT</span>
 attempt semantic evaluation to determine subsumption.<a href="#section-4.5-4.7.3" class="pilcrow">¶</a></p>
 <p id="section-4.5-4.7.4">
-Issuers constructing a derived <code>cel</code> constraint MUST copy the parent
-expression string verbatim inside the leading parentheses and MUST
+Issuers constructing a derived <code>cel</code> constraint <span class="bcp14">MUST</span> copy the parent
+expression string verbatim inside the leading parentheses and <span class="bcp14">MUST</span>
 wrap each additional clause in balanced parentheses. If the issuer
 requires a structurally different expression that is semantically
-narrower, it MUST request a new root token from the root issuer rather
+narrower, it <span class="bcp14">MUST</span> request a new root token from the root issuer rather
 than attempting to rewrite the parent clause.<a href="#section-4.5-4.7.4" class="pilcrow">¶</a></p>
 <p id="section-4.5-4.7.5">
 Deployments requiring richer policy expressiveness with full
-subsumption support SHOULD use a registered extension type built on a
+subsumption support <span class="bcp14">SHOULD</span> use a registered extension type built on a
 language with a decidable containment algorithm (see Appendix C).<a href="#section-4.5-4.7.5" class="pilcrow">¶</a></p>
 </li>
           <li class="normal" id="section-4.5-4.8">
@@ -3075,18 +3096,18 @@ parent <code>wildcard</code>.<a href="#section-4.5-4.8.1" class="pilcrow">¶</a>
 parent <code>all</code> if the derived constraint contains all clauses
 present in the parent (none may be dropped) and each
 corresponding clause satisfies the subsumption relation.
-The derived constraint MAY add additional clauses at any
+The derived constraint <span class="bcp14">MAY</span> add additional clauses at any
 position, which only further restrict the accepted
 value set. Dropping any parent clause from the derived <code>all</code> would
-expand authority and MUST be rejected.<a href="#section-4.5-4.9.1" class="pilcrow">¶</a></p>
+expand authority and <span class="bcp14">MUST</span> be rejected.<a href="#section-4.5-4.9.1" class="pilcrow">¶</a></p>
 <p id="section-4.5-4.9.2">
 Clause matching for <code>all</code> is subsumption-keyed: for each clause C_p in
-the parent array, the enforcement point MUST find at least one clause
+the parent array, the enforcement point <span class="bcp14">MUST</span> find at least one clause
 C_d in the derived array with the same <code>constraint_type</code> such that C_d
-subsumes C_p per this section. Each parent clause MUST be matched to a
+subsumes C_p per this section. Each parent clause <span class="bcp14">MUST</span> be matched to a
 distinct derived clause (one-to-one assignment); a single derived
-clause MUST NOT be used to satisfy more than one parent clause. If any
-parent clause cannot be matched, the check MUST fail. Unmatched
+clause <span class="bcp14">MUST NOT</span> be used to satisfy more than one parent clause. If any
+parent clause cannot be matched, the check <span class="bcp14">MUST</span> fail. Unmatched
 additional clauses in the derived array are permitted.<a href="#section-4.5-4.9.2" class="pilcrow">¶</a></p>
 <p id="section-4.5-4.9.3">
 The following pseudocode describes the matching algorithm:<a href="#section-4.5-4.9.3" class="pilcrow">¶</a></p>
@@ -3118,7 +3139,7 @@ clauses from <code>any</code> semantically narrows the accepted value
 set, tracking clause identity and subsumption across clause
 sets of differing length introduces significant implementation
 complexity. Issuers that need to narrow an <code>any</code> constraint
-SHOULD re-issue from the root issuer or use a registered
+<span class="bcp14">SHOULD</span> re-issue from the root issuer or use a registered
 extension type.<a href="#section-4.5-4.10.1" class="pilcrow">¶</a></p>
 </li>
           <li class="normal" id="section-4.5-4.11">
@@ -3130,22 +3151,21 @@ as JCS-canonical JSON (<span>[<a href="#RFC8785" class="cite xref">RFC8785</a>]<
 inner constraint semantically narrows the negation and
 restricts authority, verifying this direction requires
 recursive subsumption in reverse, which introduces significant
-implementation complexity and risk of divergence. Implementations MUST
-NOT attempt semantic evaluation to determine <code>not → not</code> subsumption.
-Issuers that need to tighten a <code>not</code> constraint SHOULD re-issue from
+implementation complexity and risk of divergence. Implementations <span class="bcp14">MUST NOT</span> attempt semantic evaluation to determine <code>not → not</code> subsumption.
+Issuers that need to tighten a <code>not</code> constraint <span class="bcp14">SHOULD</span> re-issue from
 the root issuer or use a registered extension type with defined
 negation semantics. Cross-type pairs involving <code>not</code> (for example,
 <code>exact → not(X)</code> or <code>not(X) → exact</code>) are not valid attenuations and
-MUST be rejected.<a href="#section-4.5-4.11.1" class="pilcrow">¶</a></p>
+<span class="bcp14">MUST</span> be rejected.<a href="#section-4.5-4.11.1" class="pilcrow">¶</a></p>
 <p id="section-4.5-4.11.2">
 Example: a parent token carries <code>not(one_of(["a", "b"]))</code>, meaning the
-argument must not be "a" or "b". A child token MAY carry an identical
+argument must not be "a" or "b". A child token <span class="bcp14">MAY</span> carry an identical
 <code>not(one_of(["a", "b"]))</code> constraint (identity is valid). A child
-token MUST NOT carry <code>not(one_of(["a"]))</code>, even though that inner set
+token <span class="bcp14">MUST NOT</span> carry <code>not(one_of(["a"]))</code>, even though that inner set
 is narrower and the resulting negation is semantically more
 restrictive: verifying this requires reversing the subsumption
-direction for the inner constraint, which implementations MUST NOT
-attempt. The issuer MUST re-issue from root.<a href="#section-4.5-4.11.2" class="pilcrow">¶</a></p>
+direction for the inner constraint, which implementations <span class="bcp14">MUST NOT</span>
+attempt. The issuer <span class="bcp14">MUST</span> re-issue from root.<a href="#section-4.5-4.11.2" class="pilcrow">¶</a></p>
 </li>
           <li class="normal" id="section-4.5-4.12">
             <p id="section-4.5-4.12.1"><strong>contains:</strong> A derived <code>contains</code> constraint is valid
@@ -3153,19 +3173,19 @@ attenuation of a parent <code>contains</code> if the derived <code>required</cod
 is a superset of the parent's <code>required</code> set. Requiring
 additional elements is a restriction; removing required
 elements would expand the set of accepted argument
-arrays and MUST be rejected.<a href="#section-4.5-4.12.1" class="pilcrow">¶</a></p>
+arrays and <span class="bcp14">MUST</span> be rejected.<a href="#section-4.5-4.12.1" class="pilcrow">¶</a></p>
 </li>
           <li class="normal" id="section-4.5-4.13">
             <p id="section-4.5-4.13.1"><strong>subset:</strong> A derived <code>subset</code> constraint is valid attenuation
 of a parent <code>subset</code> if the derived <code>allowed</code> set is a subset
 of the parent's <code>allowed</code> set. Shrinking the allowed set is
 a restriction; adding allowed elements would expand the set
-of accepted argument arrays and MUST be rejected.<a href="#section-4.5-4.13.1" class="pilcrow">¶</a></p>
+of accepted argument arrays and <span class="bcp14">MUST</span> be rejected.<a href="#section-4.5-4.13.1" class="pilcrow">¶</a></p>
 </li>
         </ul>
 <p id="section-4.5-5">Any (parent constraint type, derived constraint type) pair not
 explicitly permitted by the above rules, or by a registered extension
-constraint's cross-type subsumption declaration (Section 3.5.1), MUST be
+constraint's cross-type subsumption declaration (Section 3.5.1), <span class="bcp14">MUST</span> be
 rejected.<a href="#section-4.5-5" class="pilcrow">¶</a></p>
 </section>
 </div>
@@ -3200,7 +3220,7 @@ a given depth.<a href="#section-4.6-3" class="pilcrow">¶</a></p>
 pop_signature verifies under derived.cnf.jwk
 </pre><a href="#section-4.7-1" class="pilcrow">¶</a>
 </div>
-<p id="section-4.7-2">The presenter of a token chain MUST demonstrate control of the private
+<p id="section-4.7-2">The presenter of a token chain <span class="bcp14">MUST</span> demonstrate control of the private
 key corresponding to the leaf token's <code>cnf.jwk</code>. Proof of Possession is
 defined in Section 5.<a href="#section-4.7-2" class="pilcrow">¶</a></p>
 </section>
@@ -3231,7 +3251,7 @@ invocation to the private key of the leaf token's holder.<a href="#section-5.1-1
         </h3>
 <p id="section-5.2-1">The holder of the leaf execution token produces a PoP JWT for each tool
 invocation. The PoP JWT is a compact serialization signed with the
-holder's private key. It MUST contain the following claims.<a href="#section-5.2-1" class="pilcrow">¶</a></p>
+holder's private key. It <span class="bcp14">MUST</span> contain the following claims.<a href="#section-5.2-1" class="pilcrow">¶</a></p>
 <table class="center" id="table-4">
           <caption><a href="#table-4" class="selfRef">Table 4</a></caption>
 <thead>
@@ -3247,14 +3267,14 @@ holder's private key. It MUST contain the following claims.<a href="#section-5.2
                 <code>jti</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">string</td>
-              <td class="text-left" rowspan="1" colspan="1">Fresh random identifier. Issuers MUST NOT generate the same <code>jti</code> value for two different PoP JWTs. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per <span>[<a href="#RFC9562" class="cite xref">RFC9562</a>]</span>. Whether a verifier can detect reuse depends on whether stateful <code>jti</code> tracking is deployed (see Section 8.6).</td>
+              <td class="text-left" rowspan="1" colspan="1">Fresh random identifier. Issuers <span class="bcp14">MUST NOT</span> generate the same <code>jti</code> value for two different PoP JWTs. When a UUID is used, it <span class="bcp14">MUST</span> be encoded as a lowercase hyphenated string per <span>[<a href="#RFC9562" class="cite xref">RFC9562</a>]</span>. Whether a verifier can detect reuse depends on whether stateful <code>jti</code> tracking is deployed (see Section 8.6).</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
                 <code>iat</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">NumericDate</td>
-              <td class="text-left" rowspan="1" colspan="1">Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (see Section 5.3).</td>
+              <td class="text-left" rowspan="1" colspan="1">Time of PoP creation. <span class="bcp14">MUST</span> reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (see Section 5.3).</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -3268,7 +3288,7 @@ holder's private key. It MUST contain the following claims.<a href="#section-5.2
                 <code>aat_tool</code>
 </td>
               <td class="text-left" rowspan="1" colspan="1">string</td>
-              <td class="text-left" rowspan="1" colspan="1">The tool identifier being invoked. MUST exactly match a key in the <code>tools</code> map of the leaf token's <code>authorization_details</code>. Tool identifiers are compared as byte strings; no Unicode normalization is applied.</td>
+              <td class="text-left" rowspan="1" colspan="1">The tool identifier being invoked. <span class="bcp14">MUST</span> exactly match a key in the <code>tools</code> map of the leaf token's <code>authorization_details</code>. Tool identifiers are compared as byte strings; no Unicode normalization is applied.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -3279,7 +3299,7 @@ holder's private key. It MUST contain the following claims.<a href="#section-5.2
             </tr>
           </tbody>
         </table>
-<p id="section-5.2-3">The PoP JWT payload MUST be serialized as JCS-canonical JSON
+<p id="section-5.2-3">The PoP JWT payload <span class="bcp14">MUST</span> be serialized as JCS-canonical JSON
 (<span>[<a href="#RFC8785" class="cite xref">RFC8785</a>]</span>) before JWS signing. This is a whole-payload requirement,
 not specific to the <code>hta</code> member. The JWS signing input is therefore
 <code>BASE64URL(JWS Protected Header) || '.' || BASE64URL(JCS(PoP claims))</code>.
@@ -3287,7 +3307,7 @@ Whole-payload JCS canonicalization ensures a deterministic byte
 representation; in particular, it gives <code>hta</code> stable equality semantics
 so that argument map comparison is unambiguous across implementations
 and languages regardless of JSON serialization choices.<a href="#section-5.2-3" class="pilcrow">¶</a></p>
-<p id="section-5.2-4">The PoP JWT MUST be signed using the private key corresponding to the
+<p id="section-5.2-4">The PoP JWT <span class="bcp14">MUST</span> be signed using the private key corresponding to the
 leaf execution token's <code>cnf.jwk</code>. The enforcement point verifies the PoP
 JWT signature against the leaf token's <code>cnf.jwk</code>.<a href="#section-5.2-4" class="pilcrow">¶</a></p>
 <div class="lang-json sourcecode" id="section-5.2-5">
@@ -3309,11 +3329,11 @@ JWT signature against the leaf token's <code>cnf.jwk</code>.<a href="#section-5.
 <a href="#section-5.3" class="section-number selfRef">5.3. </a><a href="#name-verification" class="section-name selfRef">Verification</a>
         </h3>
 <p id="section-5.3-1">PoP verification is only meaningful against a leaf token whose chain has
-been fully verified per Section 6. An enforcement point MUST complete
+been fully verified per Section 6. An enforcement point <span class="bcp14">MUST</span> complete
 chain verification (Section 6, steps 2-6) before evaluating the PoP JWT.
-A valid PoP JWT against an unverified or invalid chain MUST NOT result
+A valid PoP JWT against an unverified or invalid chain <span class="bcp14">MUST NOT</span> result
 in authorization.<a href="#section-5.3-1" class="pilcrow">¶</a></p>
-<p id="section-5.3-2">The enforcement point MUST reject a PoP JWT that:<a href="#section-5.3-2" class="pilcrow">¶</a></p>
+<p id="section-5.3-2">The enforcement point <span class="bcp14">MUST</span> reject a PoP JWT that:<a href="#section-5.3-2" class="pilcrow">¶</a></p>
 <ol start="1" type="1" class="normal type-1" id="section-5.3-3">
 <li id="section-5.3-3.1">
             <p id="section-5.3-3.1.1">Has a signature that does not verify under the leaf token's
@@ -3334,26 +3354,26 @@ leaf token, per the verification algorithm in Section 6
 </li>
           <li id="section-5.3-3.5">
             <p id="section-5.3-3.5.1">Has <code>iat</code> that is outside the enforcement point's accepted
-clock tolerance window (RECOMMENDED: ±30 seconds).<a href="#section-5.3-3.5.1" class="pilcrow">¶</a></p>
+clock tolerance window (<span class="bcp14">RECOMMENDED</span>: ±30 seconds).<a href="#section-5.3-3.5.1" class="pilcrow">¶</a></p>
 </li>
         </ol>
 <p id="section-5.3-4">The PoP JWT <code>iat</code> timestamp and clock tolerance window bound the replay
 surface to a short interval. Implementations that wish to avoid shared
-state MAY use fixed-width time buckets (for example, accepting PoP JWTs
+state <span class="bcp14">MAY</span> use fixed-width time buckets (for example, accepting PoP JWTs
 whose <code>iat</code> falls within the current or immediately preceding 30-second
 bucket) to simplify enforcement point implementation.<a href="#section-5.3-4" class="pilcrow">¶</a></p>
 <p id="section-5.3-5">Note: The time bucket approach is stateless but probabilistic: a PoP JWT
 captured early in a bucket remains usable until the end of the following
-bucket. This approach MUST NOT be used for tool invocations that have side
+bucket. This approach <span class="bcp14">MUST NOT</span> be used for tool invocations that have side
 effects or are not idempotent. For any tool invocation where duplicate
-execution causes unintended side effects, stateful <code>jti</code> tracking MUST
+execution causes unintended side effects, stateful <code>jti</code> tracking <span class="bcp14">MUST</span>
 be used.<a href="#section-5.3-5" class="pilcrow">¶</a></p>
 <p id="section-5.3-6">Full replay prevention — guaranteeing that a given PoP JWT is accepted
 at most once — requires stateful tracking of presented <code>jti</code> values
 across all enforcement points in a deployment. The mechanism for that
 state (shared cache, database, token-binding infrastructure) is
 deployment-specific and outside the scope of this specification.
-Deployments with strong replay prevention requirements SHOULD consult
+Deployments with strong replay prevention requirements <span class="bcp14">SHOULD</span> consult
 the security considerations in Section 8.6.<a href="#section-5.3-6" class="pilcrow">¶</a></p>
 </section>
 </div>
@@ -3365,7 +3385,7 @@ the security considerations in Section 8.6.<a href="#section-5.3-6" class="pilcr
 <a href="#section-6" class="section-number selfRef">6. </a><a href="#name-chain-verification-algorith" class="section-name selfRef">Chain Verification Algorithm</a>
       </h2>
 <p id="section-6-1">The enforcement point receives a chain of tokens ordered from root to
-leaf and MUST execute the following algorithm. Any failure MUST result
+leaf and <span class="bcp14">MUST</span> execute the following algorithm. Any failure <span class="bcp14">MUST</span> result
 in denial.<a href="#section-6-1" class="pilcrow">¶</a></p>
 <p id="section-6-2">Verification requires only the token chain and the trust anchor public
 key. No network calls or authorization server availability are required.
@@ -3539,35 +3559,35 @@ Algorithm:
 8. PERMIT.
 </pre><a href="#section-6-3" class="pilcrow">¶</a>
 </div>
-<p id="section-6-4">Enforcement points MUST verify the JWS signature of each token before
+<p id="section-6-4">Enforcement points <span class="bcp14">MUST</span> verify the JWS signature of each token before
 deserializing its payload claims into application-layer data structures.
 Signature verification operates on the raw encoded header and payload
 bytes (the JWS Signing Input) and does not require claim parsing. Full
-claim parsing MUST NOT occur until after signature verification succeeds
+claim parsing <span class="bcp14">MUST NOT</span> occur until after signature verification succeeds
 for that token. This ordering prevents parser-based denial-of-service
 attacks on maliciously crafted payloads. The sole exception is step 2c:
 extracting only the <code>jti</code> string field for cycle detection prior to
 signature verification is permitted, provided the implementation treats
 the extracted value as untrusted until the corresponding signature is
-verified. Enforcement points MUST reject any token whose JWS <code>alg</code>
+verified. Enforcement points <span class="bcp14">MUST</span> reject any token whose JWS <code>alg</code>
 header is <code>"none"</code>. The <code>"none"</code> algorithm provides no cryptographic
-protection and MUST NOT be used in any AAT or PoP JWT.<a href="#section-6-4" class="pilcrow">¶</a></p>
+protection and <span class="bcp14">MUST NOT</span> be used in any AAT or PoP JWT.<a href="#section-6-4" class="pilcrow">¶</a></p>
 <p id="section-6-5">The <code>hta</code> comparison in step 7d requires both the enforcement point and
 the PoP JWT issuer to use JCS canonicalization (<span>[<a href="#RFC8785" class="cite xref">RFC8785</a>]</span>). The
-enforcement point MUST canonicalize the <code>args</code> map independently and
+enforcement point <span class="bcp14">MUST</span> canonicalize the <code>args</code> map independently and
 compare the resulting byte sequence against the canonical form committed
-to by the PoP JWT signature. Implementations MUST NOT compare raw JSON
+to by the PoP JWT signature. Implementations <span class="bcp14">MUST NOT</span> compare raw JSON
 strings; surface differences such as key ordering or numeric
 representation (e.g., 1.0 vs 1) are resolved by canonicalization before
 comparison.<a href="#section-6-5" class="pilcrow">¶</a></p>
-<p id="section-6-6">The JWS <code>alg</code> header value MUST be consistent with the key type of the
+<p id="section-6-6">The JWS <code>alg</code> header value <span class="bcp14">MUST</span> be consistent with the key type of the
 key used to verify the signature: the trust anchor public key for root
 tokens, and the <code>cnf.jwk</code> of the parent token for derived tokens.
-Enforcement points MUST reject any token where the declared <code>alg</code> is not
+Enforcement points <span class="bcp14">MUST</span> reject any token where the declared <code>alg</code> is not
 compatible with the verifying key's <code>kty</code> and <code>crv</code> parameters. For
-example, a token whose <code>alg</code> is <code>"EdDSA"</code> MUST be verified against an
+example, a token whose <code>alg</code> is <code>"EdDSA"</code> <span class="bcp14">MUST</span> be verified against an
 OKP key with <code>"crv": "Ed25519"</code> or <code>"crv": "Ed448"</code>. A mismatch between
-the declared algorithm and the verifying key type MUST result in denial,
+the declared algorithm and the verifying key type <span class="bcp14">MUST</span> result in denial,
 regardless of whether the signature bytes would verify under an
 alternate interpretation.<a href="#section-6-6" class="pilcrow">¶</a></p>
 </section>
@@ -3578,10 +3598,10 @@ alternate interpretation.<a href="#section-6-6" class="pilcrow">¶</a></p>
 <a href="#section-7" class="section-number selfRef">7. </a><a href="#name-token-derivation" class="section-name selfRef">Token Derivation</a>
       </h2>
 <p id="section-7-1">A holder of any AAT whose <code>del_depth</code> is strictly less than
-<code>del_max_depth</code> MAY derive a child token as follows.<a href="#section-7-1" class="pilcrow">¶</a></p>
+<code>del_max_depth</code> <span class="bcp14">MAY</span> derive a child token as follows.<a href="#section-7-1" class="pilcrow">¶</a></p>
 <ol start="1" type="1" class="normal type-1" id="section-7-2">
 <li id="section-7-2.1">
-          <p id="section-7-2.1.1">Set <code>jti</code> to a fresh unique token identifier, RECOMMENDED to
+          <p id="section-7-2.1.1">Set <code>jti</code> to a fresh unique token identifier, <span class="bcp14">RECOMMENDED</span> to
 be a UUIDv7 value per <span>[<a href="#RFC9562" class="cite xref">RFC9562</a>]</span>.<a href="#section-7-2.1.1" class="pilcrow">¶</a></p>
 </li>
         <li id="section-7-2.2">
@@ -3595,12 +3615,12 @@ in this specification; see Appendix B for deployment guidance.<a href="#section-
         <li id="section-7-2.3">
           <p id="section-7-2.3.1">Select the <code>aat_type</code> of the child token. Any type
 transition is permitted (Section 3.1). If the child's
-<code>aat_type</code> differs from the parent's, the child MUST use a
+<code>aat_type</code> differs from the parent's, the child <span class="bcp14">MUST</span> use a
 different <code>cnf.jwk</code> than the parent (type-transition key
 separation).<a href="#section-7-2.3.1" class="pilcrow">¶</a></p>
 </li>
         <li id="section-7-2.4">
-          <p id="section-7-2.4.1">Select the set of tools to authorize. This set MUST be a
+          <p id="section-7-2.4.1">Select the set of tools to authorize. This set <span class="bcp14">MUST</span> be a
 subset of the tools authorized by the parent token.<a href="#section-7-2.4.1" class="pilcrow">¶</a></p>
 </li>
         <li id="section-7-2.5">
@@ -3627,12 +3647,12 @@ Input))</code>, using base64url encoding without padding
 </li>
         <li id="section-7-2.9">
           <p id="section-7-2.9.1">Set <code>cnf.jwk</code> to the intended holder's public key. The
-value MUST be a public key; private key material MUST NOT
+value <span class="bcp14">MUST</span> be a public key; private key material <span class="bcp14">MUST NOT</span>
 appear in this field.<a href="#section-7-2.9.1" class="pilcrow">¶</a></p>
 </li>
         <li id="section-7-2.10">
           <p id="section-7-2.10.1">Sign the token with the private key corresponding to the
-parent token's <code>cnf.jwk</code>. The <code>iss</code> claim MUST be set to
+parent token's <code>cnf.jwk</code>. The <code>iss</code> claim <span class="bcp14">MUST</span> be set to
 the base64url-encoded SHA-256 JWK Thumbprint of that
 signing key without padding, as defined in <span>[<a href="#RFC7638" class="cite xref">RFC7638</a>]</span> and
 <span>[<a href="#RFC7515" class="cite xref">RFC7515</a>]</span> Appendix C.<a href="#section-7-2.10.1" class="pilcrow">¶</a></p>
@@ -3644,8 +3664,8 @@ server communication is required.<a href="#section-7-3" class="pilcrow">¶</a></
 (the tool set is identical, all constraints are unchanged, and <code>exp</code> is
 unchanged) is technically valid by the invariants but produces a child
 token with authority identical to its parent. Such derivations serve no
-purpose from a least-privilege standpoint and SHOULD NOT be issued.
-Enforcement points MAY log same-scope derivations as anomalous.<a href="#section-7-4" class="pilcrow">¶</a></p>
+purpose from a least-privilege standpoint and <span class="bcp14">SHOULD NOT</span> be issued.
+Enforcement points <span class="bcp14">MAY</span> log same-scope derivations as anomalous.<a href="#section-7-4" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="security-considerations">
@@ -3660,7 +3680,7 @@ Enforcement points MAY log same-scope derivations as anomalous.<a href="#section
         </h3>
 <p id="section-8.1-1">This section characterizes the threats that AATs mitigate and the
 threats that are outside the scope of this mechanism. Implementations
-SHOULD use this characterization to evaluate whether AATs are sufficient
+<span class="bcp14">SHOULD</span> use this characterization to evaluate whether AATs are sufficient
 for their threat environment and to identify what complementary controls
 are required.<a href="#section-8.1-1" class="pilcrow">¶</a></p>
 <div id="threats-mitigated">
@@ -3757,9 +3777,9 @@ detectable by chain verification.<a href="#section-8.1.2-6" class="pilcrow">¶</
 <p id="section-8.2-1">The security guarantee of this specification rests entirely on the
 enforcement of the capability monotonicity invariant (I4). A verifier
 that fails to check I4, or that checks it incorrectly, provides no blast
-radius containment. Implementers MUST test I4 enforcement against the
+radius containment. Implementers <span class="bcp14">MUST</span> test I4 enforcement against the
 full constraint attenuation matrix in Section 4.5, including all (parent
-type, child type) pairs, and MUST reject all pairs not explicitly
+type, child type) pairs, and <span class="bcp14">MUST</span> reject all pairs not explicitly
 permitted.<a href="#section-8.2-1" class="pilcrow">¶</a></p>
 <p id="section-8.2-2">The other invariants (I1, I2, I3, I5, I6) rely on well-established
 cryptographic primitives and validation patterns with substantial prior
@@ -3785,7 +3805,7 @@ provided in Appendix E.<a href="#section-8.2-3" class="pilcrow">¶</a></p>
         </h3>
 <p id="section-8.3-1">A compromised trust anchor key allows an attacker to issue arbitrary
 root tokens. This breaks the security guarantees of all chains anchored
-to that key. Deployments SHOULD implement key rotation procedures and
+to that key. Deployments <span class="bcp14">SHOULD</span> implement key rotation procedures and
 revocation mechanisms appropriate to their risk model. The specific
 mechanism for root key revocation, including revocation list formats,
 distribution protocols, and enforcement point update procedures, is
@@ -3810,7 +3830,7 @@ short-lived tokens.<a href="#section-8.4-1" class="pilcrow">¶</a></p>
 <a href="#section-8.5" class="section-number selfRef">8.5. </a><a href="#name-chain-splicing" class="section-name selfRef">Chain Splicing</a>
         </h3>
 <p id="section-8.5-1">The <code>par_hash</code> invariant (I5) is the primary defense against chain
-splicing, as described in Section 8.1.1. Enforcement points MUST verify
+splicing, as described in Section 8.1.1. Enforcement points <span class="bcp14">MUST</span> verify
 <code>par_hash</code> at every chain link per step 4p of the verification algorithm
 (Section 6).<a href="#section-8.5-1" class="pilcrow">¶</a></p>
 </section>
@@ -3823,20 +3843,20 @@ splicing, as described in Section 8.1.1. Enforcement points MUST verify
 <p id="section-8.6-1">The PoP JWT binds a specific invocation to a nonce, a timestamp, the
 target tool, and the presented arguments. The timestamp window limits
 the interval during which a captured PoP JWT remains usable to
-approximately twice the clock tolerance (RECOMMENDED: ±30 seconds,
+approximately twice the clock tolerance (<span class="bcp14">RECOMMENDED</span>: ±30 seconds,
 giving a window of roughly 60 seconds). This provides probabilistic
 replay resistance and is appropriate only for idempotent, read-only tool
 invocations where duplicate execution is harmless.<a href="#section-8.6-1" class="pilcrow">¶</a></p>
 <p id="section-8.6-2">For tool invocations that are irreversible or have significant side
 effects, including financial transactions, data deletion, writes to
 external systems, and any operation that cannot be undone: enforcement
-points MUST implement stateful <code>jti</code> tracking for PoP JWTs and MUST NOT
+points <span class="bcp14">MUST</span> implement stateful <code>jti</code> tracking for PoP JWTs and <span class="bcp14">MUST NOT</span>
 rely solely on the timestamp window for replay protection.<a href="#section-8.6-2" class="pilcrow">¶</a></p>
 <p id="section-8.6-3">This specification requires stateful <code>jti</code> tracking for irreversible
 operations but does not define the storage backend, consistency model,
 or distribution protocol for that state. The required consistency
 properties depend on the deployment topology and the risk tolerance of
-the application. Deployments SHOULD treat the time-windowed PoP as a
+the application. Deployments <span class="bcp14">SHOULD</span> treat the time-windowed PoP as a
 probabilistic control and layer additional idempotency mechanisms at the
 application level for high-value operations.<a href="#section-8.6-3" class="pilcrow">¶</a></p>
 </section>
@@ -3849,7 +3869,7 @@ application level for high-value operations.<a href="#section-8.6-3" class="pilc
 <p id="section-8.7-1">Several constraint types introduce potential for denial-of-service
 through expensive evaluation. <code>regex</code> patterns can cause catastrophic
 backtracking. <code>cel</code> expressions execute arbitrary logic at argument
-check time. Enforcement points SHOULD impose evaluation timeouts on any
+check time. Enforcement points <span class="bcp14">SHOULD</span> impose evaluation timeouts on any
 constraint type whose check predicate is not O(n) in the length of the
 argument value.<a href="#section-8.7-1" class="pilcrow">¶</a></p>
 <p id="section-8.7-2">The subsumption check for <code>cel</code> constraints (the balanced-parentheses
@@ -3857,10 +3877,10 @@ bracket counting described in Section 4.5) is O(n) in expression length
 and does not evaluate the expression. Only the runtime <code>check</code>
 predicate, which evaluates the CEL expression against actual argument
 values at invocation time, carries unbounded cost. These are distinct
-operations; implementations MUST NOT conflate them.<a href="#section-8.7-2" class="pilcrow">¶</a></p>
-<p id="section-8.7-3">Extension constraint types registered under Section 3.5 MUST document
+operations; implementations <span class="bcp14">MUST NOT</span> conflate them.<a href="#section-8.7-2" class="pilcrow">¶</a></p>
+<p id="section-8.7-3">Extension constraint types registered under Section 3.5 <span class="bcp14">MUST</span> document
 their computational complexity and any resource limits implementations
-SHOULD enforce.<a href="#section-8.7-3" class="pilcrow">¶</a></p>
+<span class="bcp14">SHOULD</span> enforce.<a href="#section-8.7-3" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="depth-limit">
@@ -3868,11 +3888,11 @@ SHOULD enforce.<a href="#section-8.7-3" class="pilcrow">¶</a></p>
         <h3 id="name-depth-limit">
 <a href="#section-8.8" class="section-number selfRef">8.8. </a><a href="#name-depth-limit" class="section-name selfRef">Depth Limit</a>
         </h3>
-<p id="section-8.8-1">Enforcement points MUST enforce a finite MAX_DELEGATION_DEPTH to prevent
+<p id="section-8.8-1">Enforcement points <span class="bcp14">MUST</span> enforce a finite MAX_DELEGATION_DEPTH to prevent
 resource exhaustion from artificially deep chains. The appropriate value
 is deployment-specific: linear orchestration chains require far fewer
 hops than swarm architectures with deep fan-out delegation.
-Implementations SHOULD choose a value that reflects the maximum chain
+Implementations <span class="bcp14">SHOULD</span> choose a value that reflects the maximum chain
 depth their deployment topology requires, without imposing an artificial
 ceiling on legitimate use cases. See Appendix B for guidance on
 selecting an appropriate value.<a href="#section-8.8-1" class="pilcrow">¶</a></p>
@@ -3887,7 +3907,7 @@ of such trust extensions that a single root grant can produce.<a href="#section-
 <p id="section-8.8-3">The <code>del_max_depth</code> claim in the root token is the root issuer's
 explicit policy on chain topology. An implementation that ignores
 <code>del_max_depth</code> or enforces only a global implementation limit without
-checking per-token values violates this policy. Enforcement points MUST
+checking per-token values violates this policy. Enforcement points <span class="bcp14">MUST</span>
 check both the per-token <code>del_max_depth</code> value (step 4f of Section 6)
 and the global MAX_DELEGATION_DEPTH (step 4g of Section 6). Neither
 check alone is sufficient.<a href="#section-8.8-3" class="pilcrow">¶</a></p>
@@ -3898,7 +3918,7 @@ check alone is sufficient.<a href="#section-8.8-3" class="pilcrow">¶</a></p>
         <h3 id="name-unknown-constraint-types">
 <a href="#section-8.9" class="section-number selfRef">8.9. </a><a href="#name-unknown-constraint-types" class="section-name selfRef">Unknown Constraint Types</a>
         </h3>
-<p id="section-8.9-1">Enforcement points MUST deny authorization when they encounter an
+<p id="section-8.9-1">Enforcement points <span class="bcp14">MUST</span> deny authorization when they encounter an
 unknown constraint type. Permitting invocation in the presence of an
 unrecognized constraint would silently remove a restriction the issuer
 intended to enforce.<a href="#section-8.9-1" class="pilcrow">¶</a></p>
@@ -3914,15 +3934,15 @@ scope of this specification. The offline delegation model trades
 per-token revocation granularity for verifiability without authorization
 server availability. This is a deliberate design choice, not an
 oversight.<a href="#section-8.10-1" class="pilcrow">¶</a></p>
-<p id="section-8.10-2">Deployments SHOULD use short token lifetimes as the primary recovery
+<p id="section-8.10-2">Deployments <span class="bcp14">SHOULD</span> use short token lifetimes as the primary recovery
 mechanism. A short-lived execution token provides a bounded damage
 window that is operationally equivalent to revocation for most threat
 models, without the availability and consistency requirements that a
-revocation list imposes. Root tokens SHOULD be issued with the shortest
+revocation list imposes. Root tokens <span class="bcp14">SHOULD</span> be issued with the shortest
 lifetime compatible with the intended delegation chain depth.<a href="#section-8.10-2" class="pilcrow">¶</a></p>
 <p id="section-8.10-3">Root trust anchor rotation (replacing the trust anchor signing key and
 re-issuing root tokens) is the appropriate response to a root key
-compromise. Enforcement points SHOULD support configurable trust anchor
+compromise. Enforcement points <span class="bcp14">SHOULD</span> support configurable trust anchor
 sets to enable rotation without downtime.<a href="#section-8.10-3" class="pilcrow">¶</a></p>
 <p id="section-8.10-4">Revocation list distribution, token status list integration, and
 per-token introspection mechanisms are deferred to a companion document.<a href="#section-8.10-4" class="pilcrow">¶</a></p>
@@ -3934,25 +3954,24 @@ per-token introspection mechanisms are deferred to a companion document.<a href=
 <a href="#section-8.11" class="section-number selfRef">8.11. </a><a href="#name-clock-skew" class="section-name selfRef">Clock Skew</a>
         </h3>
 <p id="section-8.11-1">This specification uses clock-based checks in two distinct contexts with
-different semantics. MAX_IAT_SKEW (Section 4.4, RECOMMENDED: 30 seconds)
+different semantics. MAX_IAT_SKEW (Section 4.4, <span class="bcp14">RECOMMENDED</span>: 30 seconds)
 is a one-sided future-dating tolerance applied to token <code>iat</code> values: it
 prevents a token issued slightly in the future from being rejected due
 to minor clock drift between issuer and verifier. The PoP JWT timestamp
-window (Section 5.3, RECOMMENDED: ±30 seconds) is a bilateral replay
+window (Section 5.3, <span class="bcp14">RECOMMENDED</span>: ±30 seconds) is a bilateral replay
 window applied to PoP JWT <code>iat</code> values: it bounds how long a captured
 PoP JWT remains usable. These are independent parameters enforced at
-different points in the verification algorithm and SHOULD be configured
+different points in the verification algorithm and <span class="bcp14">SHOULD</span> be configured
 separately.<a href="#section-8.11-1" class="pilcrow">¶</a></p>
 <p id="section-8.11-2">PoP JWT timestamp verification requires synchronized clocks. The
-RECOMMENDED tolerance window is ±30 seconds, which accommodates typical
+<span class="bcp14">RECOMMENDED</span> tolerance window is ±30 seconds, which accommodates typical
 Network Time Protocol (NTP) synchronized deployments with generous
 margin. Deployments running on cloud infrastructure with guaranteed NTP
-synchronization SHOULD target ±5 to ±10 seconds. Deployments with
-stricter security requirements MAY reduce this window further.<a href="#section-8.11-2" class="pilcrow">¶</a></p>
-<p id="section-8.11-3">Implementations MUST enforce a finite maximum tolerance window. Values
+synchronization <span class="bcp14">SHOULD</span> target ±5 to ±10 seconds. Deployments with
+stricter security requirements <span class="bcp14">MAY</span> reduce this window further.<a href="#section-8.11-2" class="pilcrow">¶</a></p>
+<p id="section-8.11-3">Implementations <span class="bcp14">MUST</span> enforce a finite maximum tolerance window. Values
 beyond ±60 seconds provide negligible additional clock skew tolerance
-while meaningfully expanding the PoP replay window and are NOT
-RECOMMENDED. A value of ±30 seconds is the conservative baseline; the
+while meaningfully expanding the PoP replay window and are <span class="bcp14">NOT RECOMMENDED</span>. A value of ±30 seconds is the conservative baseline; the
 ±60 second ceiling is intended only for heterogeneous environments such
 as embedded systems or degraded connectivity scenarios.<a href="#section-8.11-3" class="pilcrow">¶</a></p>
 </section>
@@ -3997,12 +4016,12 @@ expression <code>(amount &lt; 10000) &amp;&amp; true || amount &lt; 1000000</cod
 prefix check but CEL parses it as <code>((amount &lt; 10000) &amp;&amp; true) || (amount
 &lt; 1000000)</code>, which simplifies to <code>amount &lt; 1000000</code>, a 100x privilege
 escalation.<a href="#section-8.13-2" class="pilcrow">¶</a></p>
-<p id="section-8.13-3">Enforcement points MUST implement the subsumption check using
+<p id="section-8.13-3">Enforcement points <span class="bcp14">MUST</span> implement the subsumption check using
 balanced-parentheses bracket counting as specified in Section 4.5.
-Implementations MUST reject any derived <code>cel</code> expression where the
+Implementations <span class="bcp14">MUST</span> reject any derived <code>cel</code> expression where the
 additional clause is not wrapped in balanced parentheses, regardless of
 whether the expression appears semantically narrower. Implementations
-MUST NOT attempt semantic evaluation to determine subsumption.<a href="#section-8.13-3" class="pilcrow">¶</a></p>
+<span class="bcp14">MUST NOT</span> attempt semantic evaluation to determine subsumption.<a href="#section-8.13-3" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="algorithm-confusion">
@@ -4014,18 +4033,18 @@ MUST NOT attempt semantic evaluation to determine subsumption.<a href="#section-
 JWT algorithm confusion attacks, including <code>alg: "none"</code> acceptance,
 symmetric/asymmetric key confusion (RS256/HS256 key reuse), and
 algorithm substitution across tokens in the same chain.<a href="#section-8.14-1" class="pilcrow">¶</a></p>
-<p id="section-8.14-2">Enforcement points MUST maintain an explicit allowlist of permitted
-signature algorithms and MUST reject any token whose <code>alg</code> header value
-is not on that list. Implementations MUST reject tokens with <code>alg:
-"none"</code> unconditionally and MUST NOT treat the absence of an <code>alg</code>
+<p id="section-8.14-2">Enforcement points <span class="bcp14">MUST</span> maintain an explicit allowlist of permitted
+signature algorithms and <span class="bcp14">MUST</span> reject any token whose <code>alg</code> header value
+is not on that list. Implementations <span class="bcp14">MUST</span> reject tokens with <code>alg:
+"none"</code> unconditionally and <span class="bcp14">MUST NOT</span> treat the absence of an <code>alg</code>
 header as equivalent to any permitted algorithm.<a href="#section-8.14-2" class="pilcrow">¶</a></p>
-<p id="section-8.14-3">In chains where multiple token types are verified, implementations MUST
+<p id="section-8.14-3">In chains where multiple token types are verified, implementations <span class="bcp14">MUST</span>
 apply the algorithm allowlist independently to each token. Accepting a
 weaker algorithm on an intermediate token because the leaf token used a
 strong algorithm is a verification failure.<a href="#section-8.14-3" class="pilcrow">¶</a></p>
-<p id="section-8.14-4">The RECOMMENDED algorithm set is the same as for DPoP <span>[<a href="#RFC9449" class="cite xref">RFC9449</a>]</span>:
+<p id="section-8.14-4">The <span class="bcp14">RECOMMENDED</span> algorithm set is the same as for DPoP <span>[<a href="#RFC9449" class="cite xref">RFC9449</a>]</span>:
 ES256, ES384, ES512, RS256, RS384, RS512, PS256, PS384, PS512, EdDSA.
-Symmetric algorithms (HS256, HS384, HS512) MUST NOT be used for AAT
+Symmetric algorithms (HS256, HS384, HS512) <span class="bcp14">MUST NOT</span> be used for AAT
 signatures; symmetric keys cannot provide the per-holder key binding
 that PoP requires.<a href="#section-8.14-4" class="pilcrow">¶</a></p>
 </section>
@@ -4175,7 +4194,7 @@ Specification Required <span>[<a href="#RFC8126" class="cite xref">RFC8126</a>]<
           <h4 id="name-designated-expert-instructi">
 <a href="#section-9.3.1" class="section-number selfRef">9.3.1. </a><a href="#name-designated-expert-instructi" class="section-name selfRef">Designated Expert Instructions</a>
           </h4>
-<p id="section-9.3.1-1">Designated experts MUST verify that each submitted registration
+<p id="section-9.3.1-1">Designated experts <span class="bcp14">MUST</span> verify that each submitted registration
 satisfies all of the following criteria before approving it:<a href="#section-9.3.1-1" class="pilcrow">¶</a></p>
 <ol start="1" type="1" class="normal type-1" id="section-9.3.1-2">
 <li id="section-9.3.1-2.1">
@@ -4201,7 +4220,7 @@ formally justifies its soundness.<a href="#section-9.3.1-2.3.1" class="pilcrow">
 type, child type) pair involving both the new type and
 all existing core types that the registration declares
 valid, with explicit conditions. Unlisted
-pairs are implicitly invalid; the registration MUST NOT rely on the
+pairs are implicitly invalid; the registration <span class="bcp14">MUST NOT</span> rely on the
 catch-all rejection rule to handle pairs that deserve explicit
 treatment.<a href="#section-9.3.1-2.4.1" class="pilcrow">¶</a></p>
 </li>
@@ -4211,7 +4230,7 @@ Internet-Drafts that have not yet been published as RFCs
 are not acceptable as stable references.<a href="#section-9.3.1-2.5.1" class="pilcrow">¶</a></p>
 </li>
           </ol>
-<p id="section-9.3.1-3">Designated experts SHOULD request clarification when cross-type rules
+<p id="section-9.3.1-3">Designated experts <span class="bcp14">SHOULD</span> request clarification when cross-type rules
 are incomplete, when the subsumption procedure's soundness is not
 formally justified, or when the check predicate leaves ambiguous cases
 unresolved.<a href="#section-9.3.1-3" class="pilcrow">¶</a></p>
@@ -4222,7 +4241,7 @@ unresolved.<a href="#section-9.3.1-3" class="pilcrow">¶</a></p>
           <h4 id="name-registration-template">
 <a href="#section-9.3.2" class="section-number selfRef">9.3.2. </a><a href="#name-registration-template" class="section-name selfRef">Registration Template</a>
           </h4>
-<p id="section-9.3.2-1">Registration requests MUST use the following template:<a href="#section-9.3.2-1" class="pilcrow">¶</a></p>
+<p id="section-9.3.2-1">Registration requests <span class="bcp14">MUST</span> use the following template:<a href="#section-9.3.2-1" class="pilcrow">¶</a></p>
 <div class="alignLeft art-text artwork" id="section-9.3.2-2">
 <pre>
 Type name:
@@ -4454,7 +4473,7 @@ OAuth Parameters Registry established by <span>[<a href="#RFC6749" class="cite x
 </li>
         </ul>
 <p id="section-9.6-3">The <code>cnf</code> parameter carries a key confirmation object as defined in
-<span>[<a href="#RFC7800" class="cite xref">RFC7800</a>]</span>. When used at the token endpoint, its value MUST be a JSON
+<span>[<a href="#RFC7800" class="cite xref">RFC7800</a>]</span>. When used at the token endpoint, its value <span class="bcp14">MUST</span> be a JSON
 object containing a <code>jwk</code> member with the requesting agent's public key.
 The authorization server binds this key into the issued AAT's <code>cnf.jwk</code>
 claim. The semantics of the <code>cnf</code> object are defined by <span>[<a href="#RFC7800" class="cite xref">RFC7800</a>]</span>;
@@ -4475,10 +4494,6 @@ issuance.<a href="#section-9.6-3" class="pilcrow">¶</a></p>
 <a href="#section-10.1" class="section-number selfRef">10.1. </a><a href="#name-normative-references" class="section-name selfRef">Normative References</a>
         </h3>
 <dl class="references">
-<dt id="RFC2119">[RFC2119]</dt>
-        <dd>
-<span class="refAuthor">Bradner, S.</span>, <span class="refTitle">"Key words for use in RFCs to Indicate Requirement Levels"</span>, <span class="seriesInfo">BCP 14</span>, <span class="seriesInfo">RFC 2119</span>, <span class="seriesInfo">DOI 10.17487/RFC2119</span>, <time datetime="1997-03" class="refDate">March 1997</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc2119">https://www.rfc-editor.org/info/rfc2119</a>&gt;</span>. </dd>
-<dd class="break"></dd>
 <dt id="RFC3986">[RFC3986]</dt>
         <dd>
 <span class="refAuthor">Berners-Lee, T.</span>, <span class="refAuthor">Fielding, R.</span>, and <span class="refAuthor">L. Masinter</span>, <span class="refTitle">"Uniform Resource Identifier (URI): Generic Syntax"</span>, <span class="seriesInfo">STD 66</span>, <span class="seriesInfo">RFC 3986</span>, <span class="seriesInfo">DOI 10.17487/RFC3986</span>, <time datetime="2005-01" class="refDate">January 2005</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc3986">https://www.rfc-editor.org/info/rfc3986</a>&gt;</span>. </dd>
@@ -4507,14 +4522,6 @@ issuance.<a href="#section-9.6-3" class="pilcrow">¶</a></p>
         <dd>
 <span class="refAuthor">Josefsson, S.</span> and <span class="refAuthor">I. Liusvaara</span>, <span class="refTitle">"Edwards-Curve Digital Signature Algorithm (EdDSA)"</span>, <span class="seriesInfo">RFC 8032</span>, <span class="seriesInfo">DOI 10.17487/RFC8032</span>, <time datetime="2017-01" class="refDate">January 2017</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc8032">https://www.rfc-editor.org/info/rfc8032</a>&gt;</span>. </dd>
 <dd class="break"></dd>
-<dt id="RFC8126">[RFC8126]</dt>
-        <dd>
-<span class="refAuthor">Cotton, M.</span>, <span class="refAuthor">Leiba, B.</span>, and <span class="refAuthor">T. Narten</span>, <span class="refTitle">"Guidelines for Writing an IANA Considerations Section in RFCs"</span>, <span class="seriesInfo">BCP 26</span>, <span class="seriesInfo">RFC 8126</span>, <span class="seriesInfo">DOI 10.17487/RFC8126</span>, <time datetime="2017-06" class="refDate">June 2017</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc8126">https://www.rfc-editor.org/info/rfc8126</a>&gt;</span>. </dd>
-<dd class="break"></dd>
-<dt id="RFC8174">[RFC8174]</dt>
-        <dd>
-<span class="refAuthor">Leiba, B.</span>, <span class="refTitle">"Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words"</span>, <span class="seriesInfo">BCP 14</span>, <span class="seriesInfo">RFC 8174</span>, <span class="seriesInfo">DOI 10.17487/RFC8174</span>, <time datetime="2017-05" class="refDate">May 2017</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc8174">https://www.rfc-editor.org/info/rfc8174</a>&gt;</span>. </dd>
-<dd class="break"></dd>
 <dt id="RFC8785">[RFC8785]</dt>
         <dd>
 <span class="refAuthor">Rundgren, A.</span>, <span class="refAuthor">Jordan, B.</span>, and <span class="refAuthor">S. Erdtman</span>, <span class="refTitle">"JSON Canonicalization Scheme (JCS)"</span>, <span class="seriesInfo">RFC 8785</span>, <span class="seriesInfo">DOI 10.17487/RFC8785</span>, <time datetime="2020-06" class="refDate">June 2020</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc8785">https://www.rfc-editor.org/info/rfc8785</a>&gt;</span>. </dd>
@@ -4532,8 +4539,16 @@ issuance.<a href="#section-9.6-3" class="pilcrow">¶</a></p>
 <span class="refAuthor">Davis, K.</span>, <span class="refAuthor">Peabody, B.</span>, and <span class="refAuthor">P. Leach</span>, <span class="refTitle">"Universally Unique IDentifiers (UUIDs)"</span>, <span class="seriesInfo">RFC 9562</span>, <span class="seriesInfo">DOI 10.17487/RFC9562</span>, <time datetime="2024-05" class="refDate">May 2024</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc9562">https://www.rfc-editor.org/info/rfc9562</a>&gt;</span>. </dd>
 <dd class="break"></dd>
 <dt id="RFC6749">[RFC6749]</dt>
-      <dd>
+        <dd>
 <span class="refAuthor">Hardt, D., Ed.</span>, <span class="refTitle">"The OAuth 2.0 Authorization Framework"</span>, <span class="seriesInfo">RFC 6749</span>, <span class="seriesInfo">DOI 10.17487/RFC6749</span>, <time datetime="2012-10" class="refDate">October 2012</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc6749">https://www.rfc-editor.org/info/rfc6749</a>&gt;</span>. </dd>
+<dd class="break"></dd>
+<dt id="RFC2119">[RFC2119]</dt>
+        <dd>
+<span class="refAuthor">Bradner, S.</span>, <span class="refTitle">"Key words for use in RFCs to Indicate Requirement Levels"</span>, <span class="seriesInfo">BCP 14</span>, <span class="seriesInfo">RFC 2119</span>, <span class="seriesInfo">DOI 10.17487/RFC2119</span>, <time datetime="1997-03" class="refDate">March 1997</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc2119">https://www.rfc-editor.org/info/rfc2119</a>&gt;</span>. </dd>
+<dd class="break"></dd>
+<dt id="RFC8174">[RFC8174]</dt>
+      <dd>
+<span class="refAuthor">Leiba, B.</span>, <span class="refTitle">"Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words"</span>, <span class="seriesInfo">BCP 14</span>, <span class="seriesInfo">RFC 8174</span>, <span class="seriesInfo">DOI 10.17487/RFC8174</span>, <time datetime="2017-05" class="refDate">May 2017</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc8174">https://www.rfc-editor.org/info/rfc8174</a>&gt;</span>. </dd>
 <dd class="break"></dd>
 </dl>
 </section>
@@ -4544,6 +4559,10 @@ issuance.<a href="#section-9.6-3" class="pilcrow">¶</a></p>
 <a href="#section-10.2" class="section-number selfRef">10.2. </a><a href="#name-informative-references" class="section-name selfRef">Informative References</a>
         </h3>
 <dl class="references">
+<dt id="RFC8126">[RFC8126]</dt>
+        <dd>
+<span class="refAuthor">Cotton, M.</span>, <span class="refAuthor">Leiba, B.</span>, and <span class="refAuthor">T. Narten</span>, <span class="refTitle">"Guidelines for Writing an IANA Considerations Section in RFCs"</span>, <span class="seriesInfo">BCP 26</span>, <span class="seriesInfo">RFC 8126</span>, <span class="seriesInfo">DOI 10.17487/RFC8126</span>, <time datetime="2017-06" class="refDate">June 2017</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc8126">https://www.rfc-editor.org/info/rfc8126</a>&gt;</span>. </dd>
+<dd class="break"></dd>
 <dt id="RFC8392">[RFC8392]</dt>
         <dd>
 <span class="refAuthor">Jones, M.</span>, <span class="refAuthor">Wahlstroem, E.</span>, <span class="refAuthor">Erdtman, S.</span>, and <span class="refAuthor">H. Tschofenig</span>, <span class="refTitle">"CBOR Web Token (CWT)"</span>, <span class="seriesInfo">RFC 8392</span>, <span class="seriesInfo">DOI 10.17487/RFC8392</span>, <time datetime="2018-05" class="refDate">May 2018</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc8392">https://www.rfc-editor.org/info/rfc8392</a>&gt;</span>. </dd>
@@ -4617,10 +4636,10 @@ issuance.<a href="#section-9.6-3" class="pilcrow">¶</a></p>
 </div>
 </section>
 </div>
-<div id="comparison-with-related-oauth-mechanisms">
+<div id="comparison-with-related-oauth-mechanisms-non-normative">
 <section id="appendix-A">
       <h2 id="name-comparison-with-related-oau">
-<a href="#appendix-A" class="section-number selfRef">Appendix A. </a><a href="#name-comparison-with-related-oau" class="section-name selfRef">Comparison with Related OAuth Mechanisms</a>
+<a href="#appendix-A" class="section-number selfRef">Appendix A. </a><a href="#name-comparison-with-related-oau" class="section-name selfRef">Comparison with Related OAuth Mechanisms (Non-Normative)</a>
       </h2>
 <div id="token-exchange-rfc-8693">
 <section id="appendix-A.1">
@@ -4729,10 +4748,10 @@ protocol rather than as a sequence of policy blocks.<a href="#appendix-A.4-4" cl
 </div>
 </section>
 </div>
-<div id="implementation-notes">
+<div id="implementation-notes-non-normative">
 <section id="appendix-B">
-      <h2 id="name-implementation-notes">
-<a href="#appendix-B" class="section-number selfRef">Appendix B. </a><a href="#name-implementation-notes" class="section-name selfRef">Implementation Notes</a>
+      <h2 id="name-implementation-notes-non-no">
+<a href="#appendix-B" class="section-number selfRef">Appendix B. </a><a href="#name-implementation-notes-non-no" class="section-name selfRef">Implementation Notes (Non-Normative)</a>
       </h2>
 <div id="algorithm-recommendations">
 <section id="appendix-B.1">
@@ -4741,30 +4760,27 @@ protocol rather than as a sequence of policy blocks.<a href="#appendix-A.4-4" cl
         </h3>
 <ul class="normal">
 <li class="normal" id="appendix-B.1-1.1">
-            <p id="appendix-B.1-1.1.1"><strong>Signing algorithm:</strong> Ed25519 <span>[<a href="#RFC8032" class="cite xref">RFC8032</a>]</span>. Implementations MUST
-support Ed25519 and MAY support additional algorithms. EdDSA provides
-compact 64-byte signatures suitable for constrained agent
-environments. The JWS <code>alg</code> header value for Ed25519 is <code>"EdDSA"</code>.<a href="#appendix-B.1-1.1.1" class="pilcrow">¶</a></p>
+            <p id="appendix-B.1-1.1.1"><strong>Signing algorithm:</strong> Ed25519 <span>[<a href="#RFC8032" class="cite xref">RFC8032</a>]</span>. The normative requirement
+is in Section 3.2. EdDSA provides compact 64-byte signatures suitable
+for constrained agent environments. The JWS <code>alg</code> header value for
+Ed25519 is <code>"EdDSA"</code>.<a href="#appendix-B.1-1.1.1" class="pilcrow">¶</a></p>
 </li>
           <li class="normal" id="appendix-B.1-1.2">
             <p id="appendix-B.1-1.2.1"><strong>Key representation:</strong> JWK <span>[<a href="#RFC7517" class="cite xref">RFC7517</a>]</span> with <code>"kty": "OKP"</code> and
 <code>"crv": "Ed25519"</code>.<a href="#appendix-B.1-1.2.1" class="pilcrow">¶</a></p>
 </li>
           <li class="normal" id="appendix-B.1-1.3">
-            <p id="appendix-B.1-1.3.1"><strong>Token identifier:</strong> UUIDv7 RECOMMENDED for <code>jti</code> values, providing
-time-ordered identifiers without central coordination.<a href="#appendix-B.1-1.3.1" class="pilcrow">¶</a></p>
+            <p id="appendix-B.1-1.3.1"><strong>Token identifier:</strong> UUIDv7 is recommended for <code>jti</code> values,
+providing time-ordered identifiers without central coordination.<a href="#appendix-B.1-1.3.1" class="pilcrow">¶</a></p>
 </li>
         </ul>
-<p id="appendix-B.1-2">Enforcement points MUST maintain an explicit allowlist of accepted <code>alg</code>
-values and MUST reject any token whose <code>alg</code> header is not on that
-allowlist. The <code>alg</code> value MUST be consistent with the verifying key's
-type; see Section 6 for the normative key/algorithm consistency
-requirement.<a href="#appendix-B.1-2" class="pilcrow">¶</a></p>
+<p id="appendix-B.1-2">The algorithm allowlist requirement is normatively defined in Section 6
+(steps 3a and 4a) and discussed in Section 8.14.<a href="#appendix-B.1-2" class="pilcrow">¶</a></p>
 <p id="appendix-B.1-3">Post-quantum migration: the <code>cnf.jwk</code> key type is not hardcoded to
-Ed25519. Implementations SHOULD be designed to support key type
+Ed25519. Implementations should be designed to support key type
 migration. NIST finalized ML-DSA (FIPS 204, formerly Dilithium) in 2024
 as a post-quantum digital signature standard. Deployments with long-term
-security requirements SHOULD design their key management infrastructure
+security requirements should design their key management infrastructure
 to support algorithm migration without requiring changes to token
 structure.<a href="#appendix-B.1-3" class="pilcrow">¶</a></p>
 </section>
@@ -4791,19 +4807,19 @@ guidance.<a href="#appendix-B.2-1" class="pilcrow">¶</a></p>
         </h3>
 <p id="appendix-B.3-1">Implementations that process AATs alongside conventional OAuth tokens —
 for example, in policy engines, token introspection endpoints, or API
-gateways — MUST NOT assume <code>iss</code> is always a URI. For root tokens, <code>iss</code>
-is a URI and behaves as expected by standard OAuth tooling. For derived
-tokens, <code>iss</code> is a base64url-encoded JWK Thumbprint, which will not
-parse as a URI and will not match any issuer in a conventional issuer
-registry.<a href="#appendix-B.3-1" class="pilcrow">¶</a></p>
-<p id="appendix-B.3-2">Middleware that routes or policy-evaluates based on <code>iss</code> SHOULD detect
-AAT chains (for example, by checking for the <code>aat_type</code> claim) and apply
-chain-aware processing rather than single-token <code>iss</code> lookup. Token
-introspection endpoints that expose <code>iss</code> SHOULD document this dual
-semantics behavior. Federation systems that use <code>iss</code> to resolve public
-keys MUST NOT attempt to resolve a derived token's <code>iss</code> as an issuer
-URI; the verification key for derived tokens is <code>parent.cnf.jwk</code>,
-resolved from the preceding chain link.<a href="#appendix-B.3-2" class="pilcrow">¶</a></p>
+gateways — must not assume <code>iss</code> is always a URI (see Section 3.2 for
+the normative definition). For root tokens, <code>iss</code> is a URI and behaves
+as expected by standard OAuth tooling. For derived tokens, <code>iss</code> is a
+base64url-encoded JWK Thumbprint, which will not parse as a URI and
+will not match any issuer in a conventional issuer registry.<a href="#appendix-B.3-1" class="pilcrow">¶</a></p>
+<p id="appendix-B.3-2">Middleware that routes or policy-evaluates based on <code>iss</code> should detect
+AAT chains (for example, by checking for the <code>aat_type</code> claim) and
+apply chain-aware processing rather than single-token <code>iss</code> lookup.
+Token introspection endpoints that expose <code>iss</code> should document this
+dual semantics behavior. Federation systems that use <code>iss</code> to resolve
+public keys must not attempt to resolve a derived token's <code>iss</code> as an
+issuer URI; the verification key for derived tokens is
+<code>parent.cnf.jwk</code>, resolved from the preceding chain link.<a href="#appendix-B.3-2" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="relationship-to-wimse">
@@ -4814,7 +4830,7 @@ resolved from the preceding chain link.<a href="#appendix-B.3-2" class="pilcrow"
 <p id="appendix-B.4-1">The WIMSE architecture <span>[<a href="#WIMSE-ARCH" class="cite xref">WIMSE-ARCH</a>]</span> and service-to-service protocol
 <span>[<a href="#WIMSE-S2S" class="cite xref">WIMSE-S2S</a>]</span> address workload identity and authentication for entities
 that hold and present AATs. A WIMSE workload credential identifies an
-agent; the <code>iss</code> claim in a root AAT issued to that agent MAY reference
+agent; the <code>iss</code> claim in a root AAT issued to that agent may reference
 the agent's WIMSE workload identifier. The two specifications are
 complementary: WIMSE establishes workload identity and authentication;
 this specification defines a holder-derivable, invocation-scoped
@@ -4836,7 +4852,7 @@ fan-out, sub-task delegation, or hierarchical agent groups may require
 significantly deeper chains. The implementation ceiling should reflect
 the maximum depth the deployment actually needs, not an arbitrary
 conservative default.<a href="#appendix-B.5-2" class="pilcrow">¶</a></p>
-<p id="appendix-B.5-3">Regardless of the implementation ceiling, issuers SHOULD set
+<p id="appendix-B.5-3">Regardless of the implementation ceiling, issuers should set
 <code>del_max_depth</code> in individual tokens to the minimum depth the specific
 workflow requires. A grant with a lower <code>del_max_depth</code> than the
 implementation ceiling is always permitted and limits blast radius if a
@@ -4893,10 +4909,10 @@ deployment constraints:<a href="#appendix-B.6-1" class="pilcrow">¶</a></p>
             </tr>
           </tbody>
         </table>
-<p id="appendix-B.6-3">Deployments SHOULD document their enforced limits. Interoperating
-parties SHOULD verify that their respective limits are compatible before
+<p id="appendix-B.6-3">Deployments should document their enforced limits. Interoperating
+parties should verify that their respective limits are compatible before
 deployment.<a href="#appendix-B.6-3" class="pilcrow">¶</a></p>
-<p id="appendix-B.6-4">Implementations SHOULD prefer <code>exact</code> and <code>one_of</code> constraints over
+<p id="appendix-B.6-4">Implementations should prefer <code>exact</code> and <code>one_of</code> constraints over
 <code>pattern</code>, <code>regex</code>, or <code>cel</code> where the policy permits, as these types
 produce significantly more compact tokens and simpler subsumption
 checks.<a href="#appendix-B.6-4" class="pilcrow">¶</a></p>
@@ -4912,25 +4928,24 @@ delegation chain, such as a request trace identifier, a tenant context
 used for logging or routing, or a human-readable subject identifier.
 This specification does not define a mechanism for such metadata, but
 the JWT format accommodates it naturally.<a href="#appendix-B.7-1" class="pilcrow">¶</a></p>
-<p id="appendix-B.7-2">Implementations MAY include additional JWT claims in AATs beyond those
-defined in Section 3. Claims used for passthrough metadata SHOULD use
+<p id="appendix-B.7-2">Implementations may include additional JWT claims in AATs beyond those
+defined in Section 3. Claims used for passthrough metadata should use
 collision-resistant names (e.g., reverse domain notation such as
-<code>com.example.trace_id</code>) and SHOULD NOT encode tool permissions or
+<code>com.example.trace_id</code>) and should not encode tool permissions or
 argument constraints that this specification models in
 <code>authorization_details</code>.<a href="#appendix-B.7-2" class="pilcrow">¶</a></p>
 <p id="appendix-B.7-3">Because additional claims are included in the token's JWS signature,
 they are integrity-protected within each individual token. However,
 this specification's chain verification algorithm (Section 6) does not
 enforce preservation of unrecognized claims across derivation steps.
-Enforcement points MUST ignore unrecognized top-level JWT claims; the
-fail-closed rule (Section 3.4) applies only to unrecognized constraint
-types within <code>authorization_details</code>. A token carrying a
-<code>com.example.trace_id</code> claim MUST NOT be rejected solely because the
-enforcement point does not recognize that claim. Deployments that
-require chain-wide preservation of passthrough metadata MUST define
-and enforce their own derivation and verification rules for those
-claims, either through deployment-specific policy or in a companion
-profile.<a href="#appendix-B.7-3" class="pilcrow">¶</a></p>
+Per Section 3.4, enforcement points ignore unrecognized top-level JWT
+claims; the fail-closed rule applies only to constraint types within
+<code>authorization_details</code>. A token carrying a <code>com.example.trace_id</code>
+claim will not be rejected solely for containing that claim.
+Deployments that require chain-wide preservation of passthrough
+metadata must define and enforce their own derivation and verification
+rules for those claims, either through deployment-specific policy or
+in a companion profile.<a href="#appendix-B.7-3" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="ttl-guidance">
@@ -4955,7 +4970,7 @@ execution tokens should be scoped to the expected duration of a single
 tool invocation. Deployments with intermittent connectivity (edge,
 embedded, or air-gapped) may need longer lifetimes, with the awareness
 that longer lifetimes expand the compromise window.<a href="#appendix-B.8-3" class="pilcrow">¶</a></p>
-<p id="appendix-B.8-4">Deployments SHOULD treat TTL as a policy expression rather than a
+<p id="appendix-B.8-4">Deployments <span class="bcp14">SHOULD</span> treat TTL as a policy expression rather than a
 convenience parameter. A root delegation token with a 24-hour TTL
 effectively grants the holder 24 hours of authority regardless of how
 narrowly the capability scope is defined.<a href="#appendix-B.8-4" class="pilcrow">¶</a></p>
@@ -4979,7 +4994,7 @@ expressions that do not satisfy the syntactic criteria will be rejected
 by enforcement points applying the normative strategy, even if a human
 reviewer could determine that subsumption holds.<a href="#appendix-C-2" class="pilcrow">¶</a></p>
 <p id="appendix-C-3">Implementers requiring richer policy expressiveness without sacrificing
-subsumption decidability SHOULD consider languages that were designed
+subsumption decidability should consider languages that were designed
 specifically for authorization use cases and that provide formal
 containment algorithms as a first-class operation. Such languages are
 better positioned to provide conforming extension constraint
@@ -5002,10 +5017,10 @@ registration satisfies the three properties defined in Section 3.5.1:
 decidable, sound, and deterministic.<a href="#appendix-C-5" class="pilcrow">¶</a></p>
 </section>
 </div>
-<div id="cborcwt-profile-non-normative">
+<div id="cborcwt-profile">
 <section id="appendix-D">
-      <h2 id="name-cbor-cwt-profile-non-normat">
-<a href="#appendix-D" class="section-number selfRef">Appendix D. </a><a href="#name-cbor-cwt-profile-non-normat" class="section-name selfRef">CBOR/CWT Profile (Non-Normative)</a>
+      <h2 id="name-cbor-cwt-profile">
+<a href="#appendix-D" class="section-number selfRef">Appendix D. </a><a href="#name-cbor-cwt-profile" class="section-name selfRef">CBOR/CWT Profile</a>
       </h2>
 <p id="appendix-D-1">The claim semantics, attenuation invariants, constraint subsumption
 rules, and chain verification algorithm defined in this document are
@@ -5037,7 +5052,7 @@ significant.<a href="#appendix-D.1-2" class="pilcrow">¶</a></p>
         <h3 id="name-deterministic-encoding">
 <a href="#appendix-D.2" class="section-number selfRef">D.2. </a><a href="#name-deterministic-encoding" class="section-name selfRef">Deterministic Encoding</a>
         </h3>
-<p id="appendix-D.2-1">CWT implementations of this protocol MUST use deterministic CBOR
+<p id="appendix-D.2-1">CWT implementations of this protocol <span class="bcp14">MUST</span> use deterministic CBOR
 encoding as defined in <span>[<a href="#RFC8949" class="cite xref">RFC8949</a>]</span> Section 4.2. Deterministic encoding
 requires that integer keys be used for all map entries where assignments
 exist, that map keys be sorted in length-first, bytewise lexicographic
@@ -5045,8 +5060,8 @@ order, and that the shortest-form encoding be used for all values. This
 ensures that two compliant implementations produce identical byte
 sequences for the same AAT payload, which is required for correct
 <code>par_hash</code> computation and cross-implementation chain verification.<a href="#appendix-D.2-1" class="pilcrow">¶</a></p>
-<p id="appendix-D.2-2">The <code>hta</code> map within a CWT PoP token MUST also use deterministic CBOR
-encoding. Implementations MUST NOT use indefinite-length encoding for
+<p id="appendix-D.2-2">The <code>hta</code> map within a CWT PoP token <span class="bcp14">MUST</span> also use deterministic CBOR
+encoding. Implementations <span class="bcp14">MUST NOT</span> use indefinite-length encoding for
 any AAT or PoP token structure.<a href="#appendix-D.2-2" class="pilcrow">¶</a></p>
 </section>
 </div>
