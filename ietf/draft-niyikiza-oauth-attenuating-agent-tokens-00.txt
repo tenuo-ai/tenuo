@@ -4,7 +4,7 @@
 
 Web Authorization Protocol (OAuth)                        N. A. Niyikiza
 Internet-Draft                                                     Tenuo
-Intended status: Standards Track                              March 2026
+Intended status: Standards Track                           16 March 2026
 Expires: 17 September 2026
 
 
@@ -43,7 +43,7 @@ Status of This Memo
    time.  It is inappropriate to use Internet-Drafts as reference
    material or to cite them other than as "work in progress."
 
-   This Internet-Draft will expire on 2 September 2026.
+   This Internet-Draft will expire on 17 September 2026.
 
 Copyright Notice
 
