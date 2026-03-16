@@ -3230,25 +3230,10 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
               DOI 10.17487/RFC8785, June 2020,
               <https://www.rfc-editor.org/info/rfc8785>.
 
-   [RFC8414]  Jones, M., Sakimura, N., and J. Bradley, "OAuth 2.0
-              Authorization Server Metadata", RFC 8414,
-              DOI 10.17487/RFC8414, June 2018,
-              <https://www.rfc-editor.org/info/rfc8414>.
-
    [RFC9396]  Lodderstedt, T., Richer, J., and B. Campbell, "OAuth 2.0
               Rich Authorization Requests", RFC 9396,
               DOI 10.17487/RFC9396, May 2023,
               <https://www.rfc-editor.org/info/rfc9396>.
-
-
-
-
-
-
-Niyikiza                Expires 17 September 2026              [Page 58]
-
-Internet-Draft          Attenuating Agent Tokens              March 2026
-
 
    [RFC9562]  Davis, K., Peabody, B., and P. Leach, "Universally Unique
               IDentifiers (UUIDs)", RFC 9562, DOI 10.17487/RFC9562, May
@@ -3257,6 +3242,13 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    [RFC6749]  Hardt, D., Ed., "The OAuth 2.0 Authorization Framework",
               RFC 6749, DOI 10.17487/RFC6749, October 2012,
               <https://www.rfc-editor.org/info/rfc6749>.
+
+
+
+Niyikiza                Expires 17 September 2026              [Page 58]
+
+Internet-Draft          Attenuating Agent Tokens              March 2026
+
 
    [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
               Requirement Levels", BCP 14, RFC 2119,
@@ -3268,6 +3260,11 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
               May 2017, <https://www.rfc-editor.org/info/rfc8174>.
 
 10.2.  Informative References
+
+   [RFC8414]  Jones, M., Sakimura, N., and J. Bradley, "OAuth 2.0
+              Authorization Server Metadata", RFC 8414,
+              DOI 10.17487/RFC8414, June 2018,
+              <https://www.rfc-editor.org/info/rfc8414>.
 
    [RFC8126]  Cotton, M., Leiba, B., and T. Narten, "Guidelines for
               Writing an IANA Considerations Section in RFCs", BCP 26,
@@ -3296,6 +3293,9 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
    [BISCUIT]  Eclipse Foundation, "Biscuit: Distributed Authorization
               Tokens", n.d., <https://doc.biscuitsec.org/reference/
               specifications.html>.
+
+
+
 
 
 

@@ -24,12 +24,12 @@ normative:
   RFC7800:   # Proof-of-Possession Key Semantics for JWTs
   RFC8032:   # EdDSA
   RFC8785:   # JSON Canonicalization Scheme (JCS)
-  RFC8414:   # OAuth 2.0 Authorization Server Metadata
   RFC9396:   # Rich Authorization Requests
   RFC9562:   # Universally Unique IDentifiers (UUIDs)
   RFC6749:   # OAuth 2.0 Authorization Framework
 
 informative:
+  RFC8414:   # OAuth 2.0 Authorization Server Metadata
   RFC8126:   # Guidelines for Writing an IANA Considerations Section
   RFC8392:   # CBOR Web Token (CWT)
   RFC8693:   # OAuth 2.0 Token Exchange
