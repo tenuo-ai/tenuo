@@ -24,7 +24,7 @@ from tenuo import (
     warrant_scope,
 )
 from tenuo.constraints import Constraints
-from tenuo.exceptions import ScopeViolation
+from tenuo.exceptions import MonotonicityError, ScopeViolation
 
 
 def test_pattern_constraint_matching():
@@ -151,53 +151,30 @@ def test_constraint_attenuation():
 
 
 def test_constraint_field_addition():
-    """Test that new constraint fields can be added during attenuation."""
+    """Adding a constraint key absent from a non-empty parent map is
+    rejected under keyset identity (I4)."""
 
     kp = SigningKey.generate()
 
-    # Parent with one constraint, allows unknown fields (permissive)
-    # Child can then add constraints on those fields (restrictive)
     parent = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool(
             "api_call",
             {
                 "endpoint": Pattern("/api/*"),
-                "_allow_unknown": True,  # Allow other fields like 'method'
             },
         ),
         holder=kp.public_key,
         ttl_seconds=3600,
     )
 
-    # Child adds another constraint
-    child = parent.attenuate(
-        capabilities=Constraints.for_tool("api_call", {"endpoint": Pattern("/api/users/*"), "method": Exact("GET")}),
-        signing_key=kp,  # kp signs (they hold parent)
-        holder=kp.public_key,
-        ttl_seconds=60,
-    )
-
-    @guard(tool="api_call")
-    def call_api(endpoint: str, method: str) -> str:
-        return f"{method} {endpoint}"
-
-    # Parent doesn't require method constraint
-    with warrant_scope(parent), key_scope(kp):
-        assert call_api(endpoint="/api/data", method="GET") == "GET /api/data"
-        assert call_api(endpoint="/api/data", method="POST") == "POST /api/data"
-
-    # Child requires both constraints
-    with warrant_scope(child), key_scope(kp):
-        assert call_api(endpoint="/api/users/123", method="GET") == "GET /api/users/123"
-
-        # Wrong method
-        with pytest.raises(ScopeViolation):
-            call_api(endpoint="/api/users/123", method="POST")
-
-        # Wrong endpoint
-        with pytest.raises(ScopeViolation):
-            call_api(endpoint="/api/data", method="GET")
+    with pytest.raises(MonotonicityError):
+        parent.attenuate(
+            capabilities=Constraints.for_tool("api_call", {"endpoint": Pattern("/api/users/*"), "method": Exact("GET")}),
+            signing_key=kp,
+            holder=kp.public_key,
+            ttl_seconds=60,
+        )
 
 
 def test_missing_constraint_parameter():
