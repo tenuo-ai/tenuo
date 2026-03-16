@@ -1055,6 +1055,77 @@ proptest! {
             "allow_unknown=true -> false should be accepted (narrowing)"
         );
     }
+
+    /// Keyset identity (I4, IETF draft Section 4.5): adding an argument
+    /// key to a non-empty parent constraint map must be rejected.
+    /// Under closed-world semantics, an added key produces invocations
+    /// whose shape the parent's closed-world check would reject (the
+    /// extra argument is unknown), so the derived invocation set is
+    /// disjoint from the parent's, not a subset.
+    #[test]
+    fn prop_keyset_add_rejected_for_nonempty_parent(
+        field in atom_strategy(),
+        extra_field in "[f-z]{2,6}",
+        constraint in leaf_constraint_strategy(),
+        extra_constraint in leaf_constraint_strategy(),
+    ) {
+        let mut parent_cs = ConstraintSet::new();
+        parent_cs.insert(field.clone(), constraint.clone());
+
+        let mut child_cs = ConstraintSet::new();
+        child_cs.insert(field, constraint);
+        child_cs.insert(extra_field.clone(), extra_constraint);
+
+        prop_assert!(
+            parent_cs.validate_attenuation(&child_cs).is_err(),
+            "Adding key '{}' to non-empty parent constraint map must be rejected \
+             (keyset identity, I4)",
+            extra_field
+        );
+    }
+
+    /// Keyset identity: adding keys to an empty parent map is valid
+    /// (open-world to closed-world transition).
+    #[test]
+    fn prop_keyset_add_allowed_for_empty_parent(
+        field in atom_strategy(),
+        constraint in leaf_constraint_strategy(),
+    ) {
+        let parent_cs = ConstraintSet::new();
+
+        let mut child_cs = ConstraintSet::new();
+        child_cs.insert(field, constraint);
+
+        prop_assert!(
+            parent_cs.validate_attenuation(&child_cs).is_ok(),
+            "Adding keys to empty parent map should be accepted (open-world to closed-world)"
+        );
+    }
+
+    /// Keyset identity: dropping a key from a non-empty parent map
+    /// must be rejected. Dropping reopens that argument under
+    /// closed-world semantics, which is a privilege escalation.
+    #[test]
+    fn prop_keyset_drop_rejected(
+        field_a in atom_strategy(),
+        field_b in "[f-z]{2,6}",
+        constraint_a in leaf_constraint_strategy(),
+        constraint_b in leaf_constraint_strategy(),
+    ) {
+        let mut parent_cs = ConstraintSet::new();
+        parent_cs.insert(field_a.clone(), constraint_a.clone());
+        parent_cs.insert(field_b.clone(), constraint_b);
+
+        let mut child_cs = ConstraintSet::new();
+        child_cs.insert(field_a, constraint_a);
+        // field_b dropped
+
+        prop_assert!(
+            parent_cs.validate_attenuation(&child_cs).is_err(),
+            "Dropping key '{}' from non-empty parent must be rejected (keyset identity, I4)",
+            field_b
+        );
+    }
 }
 
 /// Closed-world property survives wire round-trip.
