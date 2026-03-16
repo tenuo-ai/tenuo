@@ -34,6 +34,16 @@ the `sub1`/`sub2`/`sub3` function chain.
   `child.accepts ⊆ parent.accepts`. Checked for scope 8 Constraint, 8 Value.
   Result: **UNSAT** (no counterexample exists).
 
+- `MapMonotonicity` - models the I4 keyset identity rule (IETF draft
+  Section 4.5). A `ConstraintMap` maps `ArgKey` to `Constraint`. When the
+  parent map is non-empty, the child must have exactly the same key set;
+  when the parent is empty (open-world), the child may introduce any keys.
+  Per-key constraints must subsume. Under closed-world `map_accepts`
+  semantics, if `map_subsumes(parent, child)` holds, then every argument
+  vector accepted by the child map is also accepted by the parent map.
+  Checked for scope 4 Constraint, 4 Value, 3 ArgKey, 4 ConstraintMap.
+  Result: **UNSAT** (no counterexample exists).
+
 - `conservatism_gap` - enumerates attenuations that are semantically valid but
   intentionally rejected by the implementation (e.g., cross-type pairs). This is
   a `run` command, not an assertion - it documents the gap rather than asserting
@@ -104,7 +114,7 @@ Rust implementation** with randomly generated constraints and values. This
 catches implementation bugs that a correct model would miss (off-by-one errors,
 missing match arms, serialization issues).
 
-**32 properties** organized into five categories:
+**35 properties** organized into five categories:
 
 ### Monotonicity soundness (12 tests)
 
@@ -133,12 +143,15 @@ ConstraintSet, and full Warrant CBOR encoding.
 `in_memory.matches(v)` agrees with `decoded_warrant.check_constraints(v)` after
 a serialization round-trip, for both single-field and multi-field scenarios.
 
-### Closed-world semantics (6 tests)
+### Closed-world semantics and keyset identity (9 tests)
 
 - Unknown fields rejected when `allow_unknown = false`
 - Unknown fields permitted when `allow_unknown = true`
 - `allow_unknown` cannot be widened during attenuation
 - Both states survive wire round-trip
+- Adding a key to a non-empty parent map rejected (I4 keyset identity)
+- Adding keys to an empty parent map accepted (open-world transition)
+- Dropping a key from a non-empty parent map rejected (I4 keyset identity)
 
 ### TTL and constants (5 tests)
 

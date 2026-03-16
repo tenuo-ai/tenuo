@@ -975,6 +975,26 @@ impl DataPlane {
             )));
         }
 
+        // I2: Child's max_depth cannot exceed parent's max_depth
+        // (IETF draft Section 7, step 4h)
+        let child_max = child.effective_max_depth();
+        if child_max > parent_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "I2 violated: child max_depth {} exceeds parent's max_depth {}",
+                child_max, parent_max
+            )));
+        }
+
+        // I2: Child's depth must not exceed its own max_depth
+        // (IETF draft Section 7, step 4n)
+        if child.depth() > child_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "I2 violated: child depth {} exceeds its own max_depth {}",
+                child.depth(),
+                child_max
+            )));
+        }
+
         // I3: TTL Monotonicity - Check expiration doesn't exceed parent
         if child.expires_at() > parent.expires_at() {
             return Err(Error::ChainVerificationFailed(format!(
@@ -2013,6 +2033,26 @@ impl Authorizer {
                 "child depth {} exceeds parent's max_depth {}",
                 child.depth(),
                 parent_max
+            )));
+        }
+
+        // I2: Child's max_depth cannot exceed parent's max_depth
+        // (IETF draft Section 7, step 4h)
+        let child_max = child.effective_max_depth();
+        if child_max > parent_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "child max_depth {} exceeds parent's max_depth {}",
+                child_max, parent_max
+            )));
+        }
+
+        // I2: Child's depth must not exceed its own max_depth
+        // (IETF draft Section 7, step 4n)
+        if child.depth() > child_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "child depth {} exceeds its own max_depth {}",
+                child.depth(),
+                child_max
             )));
         }
 
