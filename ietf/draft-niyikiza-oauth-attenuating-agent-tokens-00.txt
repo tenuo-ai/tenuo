@@ -4,8 +4,8 @@
 
 Web Authorization Protocol (OAuth)                        N. A. Niyikiza
 Internet-Draft                                                     Tenuo
-Intended status: Standards Track                           13 March 2026
-Expires: 14 September 2026
+Intended status: Standards Track                           16 March 2026
+Expires: 17 September 2026
 
 
      Attenuating Authorization Tokens for Agentic Delegation Chains
@@ -43,7 +43,7 @@ Status of This Memo
    time.  It is inappropriate to use Internet-Drafts as reference
    material or to cite them other than as "work in progress."
 
-   This Internet-Draft will expire on 14 September 2026.
+   This Internet-Draft will expire on 17 September 2026.
 
 Copyright Notice
 
@@ -53,7 +53,7 @@ Copyright Notice
 
 
 
-Niyikiza                Expires 14 September 2026               [Page 1]
+Niyikiza                Expires 17 September 2026               [Page 1]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -109,7 +109,7 @@ Table of Contents
 
 
 
-Niyikiza                Expires 14 September 2026               [Page 2]
+Niyikiza                Expires 17 September 2026               [Page 2]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -165,7 +165,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026               [Page 3]
+Niyikiza                Expires 17 September 2026               [Page 3]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -221,7 +221,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026               [Page 4]
+Niyikiza                Expires 17 September 2026               [Page 4]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -277,7 +277,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026               [Page 5]
+Niyikiza                Expires 17 September 2026               [Page 5]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -333,7 +333,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026               [Page 6]
+Niyikiza                Expires 17 September 2026               [Page 6]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -389,7 +389,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026               [Page 7]
+Niyikiza                Expires 17 September 2026               [Page 7]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -445,7 +445,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026               [Page 8]
+Niyikiza                Expires 17 September 2026               [Page 8]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -501,7 +501,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026               [Page 9]
+Niyikiza                Expires 17 September 2026               [Page 9]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -557,7 +557,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 10]
+Niyikiza                Expires 17 September 2026              [Page 10]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -613,7 +613,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 11]
+Niyikiza                Expires 17 September 2026              [Page 11]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -669,7 +669,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 12]
+Niyikiza                Expires 17 September 2026              [Page 12]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -725,7 +725,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 13]
+Niyikiza                Expires 17 September 2026              [Page 13]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -781,7 +781,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 14]
+Niyikiza                Expires 17 September 2026              [Page 14]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -837,7 +837,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 15]
+Niyikiza                Expires 17 September 2026              [Page 15]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -893,7 +893,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 16]
+Niyikiza                Expires 17 September 2026              [Page 16]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -949,7 +949,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 17]
+Niyikiza                Expires 17 September 2026              [Page 17]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1005,7 +1005,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 18]
+Niyikiza                Expires 17 September 2026              [Page 18]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1061,7 +1061,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 19]
+Niyikiza                Expires 17 September 2026              [Page 19]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1117,7 +1117,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 20]
+Niyikiza                Expires 17 September 2026              [Page 20]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1173,7 +1173,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 21]
+Niyikiza                Expires 17 September 2026              [Page 21]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1229,7 +1229,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 22]
+Niyikiza                Expires 17 September 2026              [Page 22]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1285,7 +1285,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 23]
+Niyikiza                Expires 17 September 2026              [Page 23]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1341,7 +1341,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 24]
+Niyikiza                Expires 17 September 2026              [Page 24]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1397,7 +1397,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 25]
+Niyikiza                Expires 17 September 2026              [Page 25]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1453,7 +1453,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 26]
+Niyikiza                Expires 17 September 2026              [Page 26]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1509,7 +1509,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 27]
+Niyikiza                Expires 17 September 2026              [Page 27]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1565,7 +1565,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 28]
+Niyikiza                Expires 17 September 2026              [Page 28]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1621,7 +1621,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 29]
+Niyikiza                Expires 17 September 2026              [Page 29]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1677,7 +1677,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 30]
+Niyikiza                Expires 17 September 2026              [Page 30]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1733,7 +1733,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 31]
+Niyikiza                Expires 17 September 2026              [Page 31]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1789,7 +1789,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 32]
+Niyikiza                Expires 17 September 2026              [Page 32]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1845,7 +1845,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 33]
+Niyikiza                Expires 17 September 2026              [Page 33]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1901,7 +1901,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 34]
+Niyikiza                Expires 17 September 2026              [Page 34]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -1957,7 +1957,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 35]
+Niyikiza                Expires 17 September 2026              [Page 35]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2013,7 +2013,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 36]
+Niyikiza                Expires 17 September 2026              [Page 36]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2069,7 +2069,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 37]
+Niyikiza                Expires 17 September 2026              [Page 37]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2125,7 +2125,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 38]
+Niyikiza                Expires 17 September 2026              [Page 38]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2181,7 +2181,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 39]
+Niyikiza                Expires 17 September 2026              [Page 39]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2237,7 +2237,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 40]
+Niyikiza                Expires 17 September 2026              [Page 40]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2293,7 +2293,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 41]
+Niyikiza                Expires 17 September 2026              [Page 41]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2349,7 +2349,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 42]
+Niyikiza                Expires 17 September 2026              [Page 42]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2405,7 +2405,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 43]
+Niyikiza                Expires 17 September 2026              [Page 43]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2461,7 +2461,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 44]
+Niyikiza                Expires 17 September 2026              [Page 44]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2517,7 +2517,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 45]
+Niyikiza                Expires 17 September 2026              [Page 45]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2573,7 +2573,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 46]
+Niyikiza                Expires 17 September 2026              [Page 46]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2629,7 +2629,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 47]
+Niyikiza                Expires 17 September 2026              [Page 47]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2685,7 +2685,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 48]
+Niyikiza                Expires 17 September 2026              [Page 48]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2741,7 +2741,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 49]
+Niyikiza                Expires 17 September 2026              [Page 49]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2797,7 +2797,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 50]
+Niyikiza                Expires 17 September 2026              [Page 50]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2853,7 +2853,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 51]
+Niyikiza                Expires 17 September 2026              [Page 51]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2909,7 +2909,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 52]
+Niyikiza                Expires 17 September 2026              [Page 52]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -2965,7 +2965,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 53]
+Niyikiza                Expires 17 September 2026              [Page 53]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3021,7 +3021,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 54]
+Niyikiza                Expires 17 September 2026              [Page 54]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3077,7 +3077,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 55]
+Niyikiza                Expires 17 September 2026              [Page 55]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3133,7 +3133,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 56]
+Niyikiza                Expires 17 September 2026              [Page 56]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3189,7 +3189,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 57]
+Niyikiza                Expires 17 September 2026              [Page 57]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3245,7 +3245,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 58]
+Niyikiza                Expires 17 September 2026              [Page 58]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3301,7 +3301,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 59]
+Niyikiza                Expires 17 September 2026              [Page 59]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3357,7 +3357,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 60]
+Niyikiza                Expires 17 September 2026              [Page 60]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3413,7 +3413,7 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 61]
+Niyikiza                Expires 17 September 2026              [Page 61]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3469,7 +3469,7 @@ A.2.  Rich Authorization Requests (RFC 9396)
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 62]
+Niyikiza                Expires 17 September 2026              [Page 62]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3525,7 +3525,7 @@ A.3.  DPoP (RFC 9449)
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 63]
+Niyikiza                Expires 17 September 2026              [Page 63]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3581,7 +3581,7 @@ B.1.  Algorithm Recommendations
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 64]
+Niyikiza                Expires 17 September 2026              [Page 64]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3637,7 +3637,7 @@ B.4.  Relationship to WIMSE
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 65]
+Niyikiza                Expires 17 September 2026              [Page 65]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3693,7 +3693,7 @@ B.6.  Implementation Size Limits
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 66]
+Niyikiza                Expires 17 September 2026              [Page 66]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3749,7 +3749,7 @@ B.7.  Signed Passthrough Metadata
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 67]
+Niyikiza                Expires 17 September 2026              [Page 67]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3805,7 +3805,7 @@ Appendix C.  Policy Languages with Decidable Containment (Non-Normative)
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 68]
+Niyikiza                Expires 17 September 2026              [Page 68]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3861,7 +3861,7 @@ Appendix D.  CBOR/CWT Profile (Normative)
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 69]
+Niyikiza                Expires 17 September 2026              [Page 69]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3917,7 +3917,7 @@ D.3.  Claim Key Assignments
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 70]
+Niyikiza                Expires 17 September 2026              [Page 70]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -3973,7 +3973,7 @@ Author's Address
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 71]
+Niyikiza                Expires 17 September 2026              [Page 71]
 
 Internet-Draft          Attenuating Agent Tokens              March 2026
 
@@ -4029,4 +4029,4 @@ Internet-Draft          Attenuating Agent Tokens              March 2026
 
 
 
-Niyikiza                Expires 14 September 2026              [Page 72]
+Niyikiza                Expires 17 September 2026              [Page 72]

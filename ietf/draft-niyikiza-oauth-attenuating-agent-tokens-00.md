@@ -6,7 +6,7 @@ category: std
 consensus: true
 submissiontype: IETF
 ipr: trust200902
-date: 2026-03-13
+date: 2026-03-16
 area: Security
 workgroup: Web Authorization Protocol (OAuth)
 
