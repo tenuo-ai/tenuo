@@ -6,7 +6,7 @@ category: std
 consensus: true
 submissiontype: IETF
 ipr: trust200902
-date: 2026-03-16
+date: 2026-03-13
 area: Security
 workgroup: Web Authorization Protocol (OAuth)
 
@@ -156,7 +156,7 @@ informative:
 This document defines Attenuating Authorization Tokens (AATs), a
 JWT-based credential format for secure delegation in AI agent systems.
 An AAT encodes which tools an agent may invoke and with what
-argument constraints. Any holder can derive a child token offline
+argument constraints. Any holder can derive a more restrictive token offline
 that narrows or maintains scope but cannot expand it. This
 invariant is cryptographically enforced and verifiable offline by
 any party holding the root token's trust anchor key.
@@ -216,11 +216,11 @@ Root Issuer
        v
 Orchestrating Agent
        |
-       | derives child AAT (Section 6)
+       | derives AAT (Section 6)
        v
 Planning Agent
        |
-       | derives child AAT (Section 6)
+       | derives AAT (Section 6)
        v
 Tool-Invoking Agent
        |
@@ -230,11 +230,12 @@ Enforcement Point
   (verifies chain offline, Section 7)
 ~~~
 
-At each derivation step, the child token's scope is a subset of the
-parent's: scope can only narrow or stay the same, never widen. The
+At each derivation step, the derived token's scope is a subset of
+the parent's: scope can only narrow or stay the same, never widen. The
 enforcement point verifies the complete chain using only the root
-token's trust anchor key; no network calls are required. How token chains are
-carried to enforcement points is deployment-specific; this document does
+token's trust anchor key; no network calls are required. How token
+chains are carried to enforcement points is deployment-specific; this
+document does
 not define a transport binding.
 
 ## Limitations of Existing OAuth Mechanisms for Agentic Delegation
@@ -245,7 +246,7 @@ server enforces the scope reduction. This requires a synchronous
 round-trip to the authorization server at each delegation hop. In
 multi-agent chains, this makes the authorization server a participant in
 every delegation decision, coupling the delegation topology to
-authorization server (AS) availability. RFC 8693 supports
+authorization server (AS) availability. {{RFC8693}} supports
 representing prior delegation actors via nested `act` claims, but those
 claims are informational for access control decisions rather than a
 cryptographically self-verifiable attenuation chain. The AS mediates
@@ -278,14 +279,14 @@ invariant and offline chain verification.
    argument constraints, scoped to the task, not to the full authority
    of the calling principal.
 
-2. **Offline derivation.** A token holder can derive a child token
-   without contacting the root issuer.
+2. **Offline derivation.** A token holder can derive a more restrictive
+   token without contacting the root issuer.
 
 3. **Independent chain verification.** Any enforcement point holding
    the trust anchor can verify the complete delegation chain without
    network calls.
 
-4. **Cryptographically enforced attenuation.** A child token cannot
+4. **Cryptographically enforced attenuation.** A derived token cannot
    grant broader authority than its parent.
 
 5. **JWT interoperability.** Tokens are representable as signed JWTs
@@ -338,7 +339,7 @@ behavior. AATs realize one protocol-layer approach to that goal.
 
 **Attenuating Authorization Token (AAT):** A signed JWT as defined in
 this document. An AAT encodes tool-level capability claims and supports
-offline derivation of child tokens with authority equal to or narrower
+offline derivation of derived tokens with authority equal to or narrower
 than the parent's.
 
 **Root Token:** An AAT with no parent token, `del_depth: 0`, and
@@ -357,23 +358,23 @@ for verifying agent identity and requested authority before issuance.
 
 **Token Holder:** The entity that possesses an AAT and the private key
 corresponding to its `cnf.jwk` claim. The token holder is the party
-authorized to present the token, derive child tokens from it, or both,
+authorized to present the token, derive further tokens from it, or both,
 depending on the token's `aat_type`.
 
 **Derived Token:** An AAT produced by a token holder from a parent AAT,
 also referred to as a child token. A derived token's authority is a
-subset of its parent's authority (equal or narrower). Derivation does not require a round-trip to the root
-issuer.
+subset of its parent's authority (equal or narrower). Derivation does
+not require a round-trip to the root issuer.
 
-**Delegation Token:** An AAT that authorizes its holder to derive child
-tokens for a specified set of tools. The name reflects what the holder
+**Delegation Token:** An AAT that authorizes its holder to derive
+further tokens for a specified set of tools. The name reflects what the holder
 is authorized to do, not who issued the token. A delegation token does
 not authorize tool invocation. A delegation token may itself be derived
 from a parent token; it is not necessarily produced by the root issuer.
 
 **Execution Token:** An AAT that authorizes its holder to invoke a
 specific set of tools subject to argument constraints. An execution
-token holder may derive child tokens with authority equal to or narrower
+token holder may derive tokens with authority equal to or narrower
 than their own, subject to the depth limit of the chain.
 
 **Tool:** An addressable function or API operation that an agent may
@@ -391,7 +392,7 @@ are evaluated at the enforcement point before invocation.
 **Capability Claim:** The set of (tool, argument constraints) pairs
 encoded in an AAT's `authorization_details` claim.
 
-**Attenuation:** The process of deriving a child token with a capability
+**Attenuation:** The process of deriving a token with a capability
 claim that is a subset of the parent token's capability claim.
 Attenuation is the only permitted direction of derivation.
 
@@ -403,7 +404,7 @@ presented to the enforcement point for authorization. A leaf token MUST
 have `aat_type: "execution"`. The PoP JWT is signed by the private key
 corresponding to the leaf token's `cnf.jwk`.
 
-**Enforcement Point (EP):** The component that receives a tool
+**Enforcement Point:** The component that receives a tool
 invocation request, verifies the presented token chain, evaluates
 argument constraints, and permits or denies execution.
 
@@ -426,13 +427,13 @@ This specification defines two token types, distinguished by the
 `aat_type` claim.
 
 **Delegation Tokens** (`aat_type: "delegation"`) enumerate the tools for
-which the holder may derive child tokens; they do not authorize tool
+which the holder may derive further tokens; they do not authorize tool
 invocation. A delegation token holder MUST NOT present a delegation
 token to an enforcement point to invoke a tool. Root delegation tokens
 are typically issued by a root issuer to orchestrating agents, but
 delegation tokens may also appear at intermediate hops in a chain,
-derived from a parent delegation token with narrower scope. A child
-token derived from a delegation token MUST NOT authorize tools absent
+derived from a parent delegation token with narrower scope. A derived
+token from a delegation token MUST NOT authorize tools absent
 from the delegation token's `authorization_details`. The capability
 monotonicity invariant (I4, Section 4.5) applies at every delegation
 step: derived tokens can only narrow the authorized tool set and
@@ -452,8 +453,8 @@ separation (Section 8.12) to be structurally enforced rather than
 left to convention.
 
 Any type transition is permitted, provided `del_depth < del_max_depth`
-in the parent token. A holder of either token type may derive a child
-token of either type, narrowing or maintaining the authorized tool set
+in the parent token. A holder of either token type may derive a token
+of either type, narrowing or maintaining the authorized tool set
 and argument constraints. The capability monotonicity invariant (I4,
 Section 4.5) applies at every derivation step regardless of the type
 transition.
@@ -482,7 +483,7 @@ their absence carries the semantics described in the table.
 |---|---|---|---|
 | `jti` | string | REQUIRED | Unique token identifier. SHOULD be a UUIDv7 value. When a UUID is used, it MUST be encoded as a lowercase hyphenated string in the form `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` per {{RFC9562}}. |
 | `iss` | string | REQUIRED | Identifier of the entity that signed this token. For root tokens, MUST be a URI identifying the root issuer. For derived tokens, MUST be a JWK Thumbprint URI as defined in {{RFC9278}}, using the SHA-256 hash algorithm: `urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>`, where `<thumbprint>` is computed per {{RFC7638}}. |
-| `iat` | NumericDate | REQUIRED | Time at which the token was issued. MUST NOT be more than MAX_IAT_SKEW in the future relative to the enforcement point's clock (see Section 4.4). In a chain, a child token's `iat` MUST NOT be earlier than its parent's `iat`. |
+| `iat` | NumericDate | REQUIRED | Time at which the token was issued. MUST NOT be more than MAX_IAT_SKEW in the future relative to the enforcement point's clock (see Section 4.4). In a chain, a derived token's `iat` MUST NOT be earlier than its parent's `iat`. |
 | `exp` | NumericDate | REQUIRED | Time at which the token expires. MUST be greater than `iat`. MUST NOT exceed `iat` plus MAX_TOKEN_LIFETIME (see Section 4.4). |
 | `cnf` | object | REQUIRED | Confirmation claim {{RFC7800}}. MUST contain `jwk` with the holder's public key. The `jwk` value MUST be a public key; private key material MUST NOT appear in this field. |
 | `aat_type` | string | REQUIRED | Token type. MUST be `"delegation"` or `"execution"`. |
@@ -941,7 +942,7 @@ Note that the derived token:
 ### Root Issuer Discovery
 
 A root issuer that supports AAT issuance SHOULD advertise this
-capability in its RFC 8414 server metadata document using the following
+capability in its {{RFC8414}} server metadata document using the following
 metadata parameter.
 
 | Metadata Parameter | Value |
@@ -1108,7 +1109,7 @@ that the presenter holds the key (I6).
 derived.iss == jwk_thumbprint_uri(parent.cnf.jwk)
 ~~~
 
-where `jwk_thumbprint_uri` constructs the RFC 9278 URI from the
+where `jwk_thumbprint_uri` constructs the {{RFC9278}} URI from the
 key's SHA-256 thumbprint. The entity that signed the derived token
 MUST be the holder of the parent token. Authority flows from parent
 holder to derived token issuer. This invariant establishes an
@@ -1191,8 +1192,8 @@ deployments SHOULD use significantly shorter lifetimes in practice (see
 Appendix B).
 
 A derived token cannot outlive its parent. Authority cannot extend
-beyond the lifetime of the token that granted it. A child token's
-issuance time MUST NOT precede its parent's issuance time. A child with
+beyond the lifetime of the token that granted it. A derived token's
+issuance time MUST NOT precede its parent's issuance time. A token with
 an earlier `iat` indicates clock manipulation or chain forgery. Tokens
 with `iat` more than MAX_IAT_SKEW in the future relative to the
 enforcement point's clock MUST be rejected. A token's lifetime
@@ -1276,7 +1277,7 @@ rules are:
   bounds are at least as restrictive as the parent's
   (derived `min >= parent min`, derived `max <= parent max`).
   A missing bound on the parent is treated as unbounded; a
-  missing bound on the child is only valid if the parent
+  missing bound on the derived constraint is only valid if the parent
   bound is also missing. A derived bound's inclusivity may only become
   more restrictive: a derived `min_inclusive: false` is valid when the
   parent has `min_inclusive: true` at the same `min` value (exclusive is
@@ -1415,9 +1416,9 @@ rules are:
   section.
 
   Example: a parent token carries
-  `any([exact("pdf"), exact("csv"), exact("xlsx")])`. A child
+  `any([exact("pdf"), exact("csv"), exact("xlsx")])`. A derived
   token MAY carry `any([exact("pdf"), exact("csv")])` because
-  each child clause is subsumed by a parent clause. A child
+  each derived clause is subsumed by a parent clause. A derived
   token MUST NOT carry `any([exact("pdf"), exact("docx")])`
   because `exact("docx")` is not subsumed by any parent
   clause.
@@ -1440,19 +1441,19 @@ rules are:
   valid attenuations and MUST be rejected.
 
   Example: a parent token carries `not(one_of(["a", "b"]))`,
-  meaning the argument must not be "a" or "b". A child token
+  meaning the argument must not be "a" or "b". A derived token
   MAY carry an identical `not(one_of(["a", "b"]))` constraint
   (identity is valid).
 
-  A child token MUST NOT carry `not(one_of(["a"]))`. That
-  inner set is narrower, so the negation is wider: the child
-  accepts "b", which the parent denies. This is a privilege
-  escalation and the JCS-identity check rejects it because
-  the two constraints are not structurally identical.
+  A derived token MUST NOT carry `not(one_of(["a"]))`. That
+  inner set is narrower, so the negation is wider: the derived
+  token accepts "b", which the parent denies. This is a
+  privilege escalation and the JCS-identity check rejects it
+  because the two constraints are not structurally identical.
 
-  Conversely, a child token MUST NOT carry
+  Conversely, a derived token MUST NOT carry
   `not(one_of(["a", "b", "c"]))`. That inner set is wider,
-  so the negation is narrower: the child is genuinely more
+  so the negation is narrower: the derived token is genuinely more
   restrictive (it additionally denies "c"). However, verifying
   this direction requires reversing the subsumption check on
   the inner constraint, which introduces implementation
@@ -1777,6 +1778,12 @@ Algorithm:
    f. Verify child.del_depth <= parent.del_max_depth.    [I2]
    g. Verify child.del_depth <= MAX_DELEGATION_DEPTH.    [I2]
    h. Verify child.del_max_depth <= parent.del_max_depth.[I2]
+      Note: the requirement that every token's
+      del_max_depth <= MAX_DELEGATION_DEPTH is transitively
+      satisfied: step 3j verifies this for the root, and
+      step 4h at each link ensures the value can only
+      decrease. Implementations MAY add this check
+      explicitly as defense in depth.
    i. Verify child.exp <= parent.exp.                    [I3]
    j. Verify child.exp > now.                            [I3]
    k. Verify child.iat >= parent.iat.                    [I3]
@@ -1932,16 +1939,17 @@ authorization ceiling. There is no ambient authority to confuse.
 
 **Privilege escalation across delegation hops.** The capability
 monotonicity invariant (I4) ensures that authority can only narrow at
-each delegation step. A derived token cannot authorize tools or argument values absent
-from its parent token. An agent that attempts to mint a child token with
+each delegation step. A derived token cannot authorize tools or
+argument values absent from its parent token. An agent that attempts
+to mint a derived token with
 broader scope will produce a token that fails chain verification at the
 enforcement point.
 
 **Compromised sub-agents.** If a sub-agent is compromised, the blast
 radius is bounded by the scope of the token it holds. The attacker
 cannot use the compromised agent to escalate to broader authority,
-invoke tools outside the token's scope, or derive child tokens with
-wider permissions than the compromised token encodes.
+invoke tools outside the token's scope, or derive tokens with wider
+permissions than the compromised token encodes.
 
 **Chain splicing.** The `par_hash` claim (I5) binds each derived token
 to the specific bytes of its parent token. An attacker cannot substitute
@@ -2023,8 +2031,8 @@ types with corresponding caution and to publish independent analyses.
 The reference implementation includes a test suite covering monotonicity
 of the attenuation invariants under arbitrary sequences, normalization
 idempotence across encode/decode round-trips, and enforcement agreement
-between in-memory and deserialized constraint evaluation. Details are
-provided in Appendix E.
+between in-memory and deserialized constraint evaluation. See
+Appendix E for implementation status.
 
 ## Root Key Compromise
 
@@ -2103,7 +2111,7 @@ is deployment-specific: linear orchestration chains require far fewer
 hops than swarm architectures with deep fan-out delegation.
 Implementations SHOULD choose a value that reflects the maximum chain
 depth their deployment topology requires, without imposing an artificial
-ceiling on legitimate use cases. See Appendix B for guidance on
+ceiling on legitimate use cases. See Appendix B.5 for guidance on
 selecting an appropriate value.
 
 The security rationale for depth limiting goes beyond resource
@@ -2248,6 +2256,15 @@ Symmetric algorithms (HS256, HS384, HS512) MUST NOT be used for AAT
 signatures; symmetric keys cannot provide the per-holder key binding
 that PoP requires.
 
+## Token Content Visibility
+
+AAT payloads are integrity-protected but not encrypted. Token
+contents, including tool identifiers, argument constraints, and
+delegation chain structure, are visible to any party that observes
+the token in transit or at rest. Deployments SHOULD transmit AAT
+chains over encrypted transport (e.g., TLS) and SHOULD treat stored
+tokens as sensitive material. Token encryption is outside the scope
+of this specification.
 
 # IANA Considerations
 
@@ -2458,7 +2475,7 @@ enforces scope reduction. This requires network connectivity to the
 authorization server at each delegation hop and cannot be performed
 offline.
 
-This specification allows a token holder to derive a child token
+This specification allows a token holder to derive a new token
 locally, without contacting the authorization server. The attenuation
 invariant is enforced by the chain verification algorithm, not by a
 server-side policy check.
@@ -2485,7 +2502,7 @@ presenter holds the bound key.
 
 AATs encode the authorization itself. The token specifies which tools
 may be invoked, with what argument constraints, and by which key holder.
-Holders can derive child tokens with authority equal to or narrower than
+Holders can derive tokens with authority equal to or narrower than
 their own, without contacting the authorization server. The PoP JWT in
 Section 5 serves a similar cryptographic role to a DPoP proof, binding a
 specific invocation to the leaf token's holder key, but operates in a
@@ -2814,8 +2831,10 @@ assignments in the IANA CWT Claims Registry {{RFC8392}} before
 a normative CWT profile can be published.
 
 Those registrations, along with COSE algorithm guidance and CWT-specific
-serialization rules, are deferred to a companion Internet-Draft. This
-document makes no CWT claim key assignments.
+serialization rules, are deferred to a companion Internet-Draft. That
+companion document will reference {{RFC8392}} and {{RFC9052}}
+normatively; this document references them informatively. This document
+makes no CWT claim key assignments.
 
 ## Companion Document
 
