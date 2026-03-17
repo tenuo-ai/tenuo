@@ -24,6 +24,8 @@ normative:
   RFC7800:   # Proof-of-Possession Key Semantics for JWTs
   RFC8032:   # EdDSA
   RFC8785:   # JSON Canonicalization Scheme (JCS)
+  RFC9278:   # JWK Thumbprint URI
+  RFC8949:   # Concise Binary Object Representation (CBOR)
   RFC9396:   # Rich Authorization Requests
   RFC9562:   # Universally Unique IDentifiers (UUIDs)
   RFC6749:   # OAuth 2.0 Authorization Framework
@@ -93,7 +95,6 @@ informative:
       - name: Simon Osindero
     date: 2026
     target: https://arxiv.org/abs/2602.11865
-  RFC8949:   # Concise Binary Object Representation (CBOR)
   WIMSE-ARCH:
     title: "Workload Identity in a Multi System Environment (WIMSE) Architecture"
     author:
@@ -158,7 +159,7 @@ An AAT encodes which tools an agent may invoke and with what
 argument constraints. Any holder can derive a child token offline
 that narrows or maintains scope but cannot expand it. This
 invariant is cryptographically enforced and verifiable offline by
-any party holding the trust anchor's public key.
+any party holding the root token's trust anchor key.
 
 This specification extends the Rich Authorization Requests format
 (RFC 9396) with delegation-chain semantics and defines a typed
@@ -231,8 +232,8 @@ Enforcement Point
 
 At each derivation step, the child token's scope is a subset of the
 parent's: scope can only narrow or stay the same, never widen. The
-enforcement point verifies the complete chain using only the trust
-anchor public key; no network calls are required. How token chains are
+enforcement point verifies the complete chain using only the root
+token's trust anchor key; no network calls are required. How token chains are
 carried to enforcement points is deployment-specific; this document does
 not define a transport binding.
 
@@ -257,6 +258,14 @@ structured authorization detail objects, enabling expressive capability
 descriptions. RAR addresses the expressiveness problem. It does not
 define how a token holder can produce a narrower token, or how a
 chain of such derivations can be verified.
+
+Proposals to extend the authorization code flow with explicit agent
+consent, such as introducing a `requested_actor` parameter at the
+authorization endpoint, address who the agent is and whether the
+user approved the delegation. They do not constrain which tools the
+agent may invoke or with what argument values. AATs are
+complementary: they scope authority to specific tools and arguments
+after identity and consent have been established.
 
 To the author's knowledge, no existing OAuth standard defines a
 delegation chain protocol with a cryptographically enforced attenuation
@@ -351,9 +360,9 @@ corresponding to its `cnf.jwk` claim. The token holder is the party
 authorized to present the token, derive child tokens from it, or both,
 depending on the token's `aat_type`.
 
-**Derived Token:** An AAT produced by a token holder from a parent AAT.
-A derived token's authority is a subset of its parent's authority (equal
-or narrower). Derivation does not require a round-trip to the root
+**Derived Token:** An AAT produced by a token holder from a parent AAT,
+also referred to as a child token. A derived token's authority is a
+subset of its parent's authority (equal or narrower). Derivation does not require a round-trip to the root
 issuer.
 
 **Delegation Token:** An AAT that authorizes its holder to derive child
@@ -472,7 +481,7 @@ their absence carries the semantics described in the table.
 | Claim | Type | Required | Description |
 |---|---|---|---|
 | `jti` | string | REQUIRED | Unique token identifier. SHOULD be a UUIDv7 value. When a UUID is used, it MUST be encoded as a lowercase hyphenated string in the form `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` per {{RFC9562}}. |
-| `iss` | string | REQUIRED | Identifier of the entity that signed this token. For root tokens, MUST be a URI identifying the root issuer. For derived tokens, MUST be the base64url-encoded SHA-256 JWK Thumbprint of the signing key without padding, as defined in {{RFC7638}} and {{RFC7515}} Appendix C. |
+| `iss` | string | REQUIRED | Identifier of the entity that signed this token. For root tokens, MUST be a URI identifying the root issuer. For derived tokens, MUST be a JWK Thumbprint URI as defined in {{RFC9278}}, using the SHA-256 hash algorithm: `urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>`, where `<thumbprint>` is computed per {{RFC7638}}. |
 | `iat` | NumericDate | REQUIRED | Time at which the token was issued. MUST NOT be more than MAX_IAT_SKEW in the future relative to the enforcement point's clock (see Section 4.4). In a chain, a child token's `iat` MUST NOT be earlier than its parent's `iat`. |
 | `exp` | NumericDate | REQUIRED | Time at which the token expires. MUST be greater than `iat`. MUST NOT exceed `iat` plus MAX_TOKEN_LIFETIME (see Section 4.4). |
 | `cnf` | object | REQUIRED | Confirmation claim {{RFC7800}}. MUST contain `jwk` with the holder's public key. The `jwk` value MUST be a public key; private key material MUST NOT appear in this field. |
@@ -485,22 +494,13 @@ their absence carries the semantics described in the table.
 Implementations MUST support Ed25519 {{RFC8032}} for token signing and
 verification. Implementations MAY support additional algorithms.
 
-This specification uses `iss` with two distinct but related semantics
-that together enable offline chain verification. For root tokens, `iss`
-is a URI identifying the root issuer, consistent with conventional OAuth
-usage. For derived tokens, `iss` is the base64url-encoded SHA-256 JWK
-Thumbprint ({{RFC7638}}) of the signing key, rather than a URI.
-
-This divergence from typical `iss` usage is intentional: a derived
-token is signed by a key holder who may have no stable URI identity.
-Using the key thumbprint makes I1 verifiable offline: the enforcement
-point can confirm that `derived.iss` equals the thumbprint of
-`parent.cnf.jwk` without any external lookup. A URI in `iss`
-for derived tokens would require a network call to resolve the
-key, defeating offline chain
-verification. Implementations that perform token introspection or
-identity federation SHOULD be aware of this dual semantics and MUST NOT
-assume `iss` is always a URI.
+In both root and derived tokens, `iss` is a URI. For root tokens,
+`iss` is a URI identifying the root issuer, consistent with
+conventional OAuth usage. For derived tokens, `iss` is a JWK
+Thumbprint URI {{RFC9278}} that encodes the SHA-256 thumbprint of
+the signing key. This makes I1 verifiable offline: the enforcement
+point can confirm that the thumbprint embedded in `derived.iss`
+matches `parent.cnf.jwk` without any external lookup.
 
 This specification intentionally omits the `sub` claim. In conventional
 OAuth tokens, `sub` identifies the resource owner or principal on whose
@@ -895,7 +895,7 @@ parent's `check` predicate. All other cross-type pairs involving
 ~~~json
 {
   "jti": "01957a41-0081-7c20-bf3a-00a0c91e1234",
-  "iss": "KAKnRDlMQVIKCfS5JhHlABCHjAFLdyEVVHdpnGnLLg8",
+  "iss": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:KAKnRDlMQVIKCfS5JhHlABCHjAFLdyEVVHdpnGnLLg8",
   "iat": 1741600120,
   "exp": 1741601920,
   "aat_type": "execution",
@@ -1084,8 +1084,8 @@ constraint must be at least as restrictive. A derived constraint
 `c_child` also satisfies `c_parent`.
 
 Two boundary cases complete the structure. The empty capability set
-`∅` is the bottom element: a token with no tools authorized is a valid but
-useless terminal token. The root token's capability set is the ceiling
+`∅` is the bottom element: a token with no tools authorized is a
+valid but useless terminal token. The root token's capability set is the ceiling
 for the entire chain: no derived token at any depth can exceed what the
 root authorized.
 
@@ -1105,12 +1105,14 @@ that the presenter holds the key (I6).
 ## I1: Delegation Authority
 
 ~~~
-derived.iss == key_thumbprint(parent.cnf.jwk)
+derived.iss == jwk_thumbprint_uri(parent.cnf.jwk)
 ~~~
 
-The entity that signed the derived token MUST be the holder of the
-parent token. Authority flows from parent holder to derived token
-issuer. This invariant establishes an unambiguous audit trail: each link
+where `jwk_thumbprint_uri` constructs the RFC 9278 URI from the
+key's SHA-256 thumbprint. The entity that signed the derived token
+MUST be the holder of the parent token. Authority flows from parent
+holder to derived token issuer. This invariant establishes an
+unambiguous audit trail: each link
 in the chain was signed by the party that held the preceding token.
 
 ## I2: Depth Monotonicity
@@ -1118,6 +1120,7 @@ in the chain was signed by the party that held the preceding token.
 ~~~
 derived.del_depth == parent.del_depth + 1
 derived.del_depth <= parent.del_max_depth
+derived.del_depth <= derived.del_max_depth
 derived.del_depth <= MAX_DELEGATION_DEPTH
 derived.del_max_depth <= parent.del_max_depth
 ~~~
@@ -1168,6 +1171,8 @@ enforce this limit. A value of 262144 bytes (256 KiB) is RECOMMENDED.
 
 ~~~
 derived.exp  <= parent.exp
+derived.exp  >  now
+derived.exp  >  derived.iat
 derived.iat  >= parent.iat
 derived.iat  <= now + MAX_IAT_SKEW
 derived.exp  <= derived.iat + MAX_TOKEN_LIFETIME
@@ -1307,9 +1312,9 @@ rules are:
   conjunction: a derived `cel` constraint subsumes a parent
   `cel` constraint if and only if the derived expression
   string is exactly `(parent_expression) &&
-  (additional_clause)`. The parent expression must appear
+  (additional_clause)`. The parent expression MUST appear
   verbatim inside the leading parentheses. Each additional
-  clause must be individually wrapped in balanced
+  clause MUST be individually wrapped in balanced
   parentheses. Multiple additional
   clauses are permitted: `(parent) && (clause1) && (clause2)`. No other
   form is considered subsuming.
@@ -1394,27 +1399,28 @@ rules are:
   MAY employ Hopcroft-Karp or similar maximum matching
   algorithms for the general case.
 
-- **any:** This specification prescribes a conservative strategy
-  for `any → any` attenuation. A derived `any` constraint is
-  valid attenuation of a parent `any` constraint if and only
-  if the two constraints are structurally identical, compared
-  as JCS-canonical JSON ({{RFC8785}}). Although removing
-  clauses from `any` semantically narrows the accepted value
-  set, tracking clause identity and subsumption across clause
-  sets of differing length introduces significant implementation
-  complexity. Issuers that need to narrow an `any` constraint
-  SHOULD re-issue from the root issuer or use a registered
-  extension type.
+- **any:** A derived `any` constraint subsumes a parent `any`
+  constraint if every clause in the derived constraint is
+  subsumed by at least one clause in the parent constraint,
+  using the per-type subsumption rules defined in this section.
+  Formally: for each `clause_d` in
+  `derived.any.constraints`, there MUST exist a `clause_p` in
+  `parent.any.constraints` such that `clause_d ⊑ clause_p`.
+  Removing clauses is valid (it narrows the accepted set).
+  Adding clauses is invalid (it widens it). The derived `any`
+  MUST contain at least one clause. Cross-type subsumption
+  between clauses is permitted: for example, a derived clause
+  of `exact("pdf")` is subsumed by a parent clause of
+  `pattern("*.pdf")` under the cross-type rules in this
+  section.
 
   Example: a parent token carries
-  `any([exact("pdf"), exact("csv")])`. A child token MAY
-  carry an identical `any([exact("pdf"), exact("csv")])`
-  (identity is valid). A child token MUST NOT carry
-  `any([exact("pdf")])`, even though removing a clause
-  narrows the accepted set: the two constraints are not
-  structurally identical under JCS comparison, so the check
-  fails. The issuer MUST re-issue from root to narrow the
-  clause set.
+  `any([exact("pdf"), exact("csv"), exact("xlsx")])`. A child
+  token MAY carry `any([exact("pdf"), exact("csv")])` because
+  each child clause is subsumed by a parent clause. A child
+  token MUST NOT carry `any([exact("pdf"), exact("docx")])`
+  because `exact("docx")` is not subsumed by any parent
+  clause.
 
 - **not:** This specification prescribes a conservative strategy
   for `not → not` attenuation. A derived `not` constraint is
@@ -1642,10 +1648,9 @@ A holder of any AAT whose `del_depth` is strictly less than
    appear in this field.
 
 10. Sign the token with the private key corresponding to the
-    parent token's `cnf.jwk`. The `iss` claim MUST be set to
-    the base64url-encoded SHA-256 JWK Thumbprint of that
-    signing key without padding, as defined in {{RFC7638}} and
-    {{RFC7515}} Appendix C.
+    parent token's `cnf.jwk`. The `iss` claim MUST be set to the
+    JWK Thumbprint URI {{RFC9278}} of that signing key, using the
+    SHA-256 hash algorithm.
 
 Derivation is performed locally by the token holder. No authorization
 server communication is required.
@@ -1765,7 +1770,7 @@ Algorithm:
           absent or not integers, DENY.
       b5. Verify child.iss, child.iat, child.exp, child.aat_type,
           and child.par_hash are all present. If any is absent, DENY.
-   c. Verify child.iss equals key_thumbprint(parent.cnf.jwk). [I1]
+   c. Verify child.iss equals jwk_thumbprint_uri(parent.cnf.jwk). [I1]
    d. Verify child.aat_type is "delegation" or "execution".
       If any other value, DENY.
    e. Verify child.del_depth == parent.del_depth + 1.    [I2]
@@ -1925,9 +1930,9 @@ cannot exercise authority beyond what its token encodes, even if it is
 invoked by a trusted orchestrator. The token carries its own
 authorization ceiling. There is no ambient authority to confuse.
 
-**Privilege escalation across delegation hops.** The attenuation
-invariant (I4) ensures that authority can only narrow at each delegation
-step. A derived token cannot authorize tools or argument values absent
+**Privilege escalation across delegation hops.** The capability
+monotonicity invariant (I4) ensures that authority can only narrow at
+each delegation step. A derived token cannot authorize tools or argument values absent
 from its parent token. An agent that attempts to mint a child token with
 broader scope will produce a token that fails chain verification at the
 enforcement point.
@@ -2578,24 +2583,16 @@ number of constraints. For `regex` and `cel`, evaluation cost depends on
 expression complexity and input size; see Section 8.7 for resource limit
 guidance.
 
-## Handling `iss` Dual Semantics in Middleware
+## Recognizing Derived Token `iss` Values in Middleware
 
-Implementations that process AATs alongside conventional OAuth
-tokens — for example, in policy engines, token introspection
-endpoints, or API gateways — must not assume `iss` is always
-a URI (see Section 3.2 for
-the normative definition). For root tokens, `iss` is a URI and behaves
-as expected by standard OAuth tooling. For derived tokens, `iss` is a
-base64url-encoded JWK Thumbprint, which will not parse as a URI and
-will not match any issuer in a conventional issuer registry.
-
-Middleware that routes or policy-evaluates based on `iss` should detect
-AAT chains (for example, by checking for the `aat_type` claim) and
-apply chain-aware processing rather than single-token `iss` lookup.
-Token introspection endpoints that expose `iss` should document this
-dual semantics behavior. Federation systems that use `iss` to resolve
-public keys must not attempt to resolve a derived token's `iss` as an
-issuer URI; the verification key for derived tokens is
+In both root and derived AATs, `iss` is a URI. For root tokens it
+is a conventional issuer URI. For derived tokens it is a JWK
+Thumbprint URI ({{RFC9278}}) with the
+`urn:ietf:params:oauth:jwk-thumbprint:sha-256:` prefix.
+Middleware that routes or policy-evaluates based on `iss` should
+recognize the JWK Thumbprint URI scheme and apply chain-aware
+processing rather than attempting to resolve the URI as an issuer
+endpoint. The verification key for derived tokens is
 `parent.cnf.jwk`, resolved from the preceding chain link.
 
 ## Relationship to WIMSE
@@ -2656,6 +2653,21 @@ Implementations should prefer `exact` and `one_of` constraints over
 `pattern`, `regex`, or `cel` where the policy permits, as these types
 produce significantly more compact tokens and simpler subsumption
 checks.
+
+Implementations concerned about parser exposure on unverified
+payloads in step 2c of the chain verification algorithm (Section 7)
+may extract `jti` using a length-limited byte scan rather than a
+full JSON parser, provided the extraction correctly handles JSON
+whitespace and string escaping.
+
+A single AAT is typically 1-4 KB when base64url-encoded. Chains
+of two or more tokens will commonly exceed the 4-8 KB header size
+limits enforced by common reverse proxies and load balancers,
+resulting in 431 errors. Deployments should transmit AAT chains
+in a request body field rather than an HTTP header. For
+size-constrained environments, the CBOR/CWT profile in Appendix D
+reduces chain size by 30-50% and is recommended when HTTP header
+transport is required.
 
 ## Signed Passthrough Metadata
 
@@ -2752,7 +2764,7 @@ only that whatever language is used, the resulting extension constraint
 registration satisfies the three properties defined in Section 3.5.1:
 decidable, sound, and deterministic.
 
-# CBOR/CWT Profile
+# CBOR/CWT Profile (Normative)
 
 The claim semantics, attenuation invariants, constraint subsumption
 rules, and chain verification algorithm defined in this document are

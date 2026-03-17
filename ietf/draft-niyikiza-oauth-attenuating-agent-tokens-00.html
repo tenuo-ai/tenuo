@@ -8,18 +8,18 @@
 <meta content="Niki Aimable Niyikiza" name="author">
 <meta content="
        This document defines Attenuating Authorization Tokens (AATs), a
-      JWT-based credential format for secure delegation in AI agent systems.
-      An AAT encodes which tools an agent may invoke and with what
-      argument constraints. Any holder can derive a child token offline
-      that narrows or maintains scope but cannot expand it. This
-      invariant is cryptographically enforced and verifiable offline by
-      any party holding the trust anchor's public key. 
+JWT-based credential format for secure delegation in AI agent systems.
+An AAT encodes which tools an agent may invoke and with what
+argument constraints. Any holder can derive a child token offline
+that narrows or maintains scope but cannot expand it. This
+invariant is cryptographically enforced and verifiable offline by
+any party holding the root token's trust anchor key. 
        This specification extends the Rich Authorization Requests format
-      (RFC 9396) with delegation-chain semantics and defines a typed
-      constraint vocabulary for tool-level argument restrictions. The
-      accompanying chain verification algorithm enforces the monotonic
-      attenuation invariant at each delegation step and requires no network
-      contact with the root issuer. 
+(RFC 9396) with delegation-chain semantics and defines a typed
+constraint vocabulary for tool-level argument restrictions. The
+accompanying chain verification algorithm enforces the monotonic
+attenuation invariant at each delegation step and requires no network
+contact with the root issuer. 
     " name="description">
 <meta content="xml2rfc 3.32.0" name="generator">
 <meta content="draft-niyikiza-oauth-attenuating-agent-tokens-00" name="ietf.draft">
@@ -1262,18 +1262,18 @@ li > p:last-of-type:only-child {
 <section id="section-abstract">
       <h2 id="abstract"><a href="#abstract" class="selfRef">Abstract</a></h2>
 <p id="section-abstract-1">This document defines Attenuating Authorization Tokens (AATs), a
-      JWT-based credential format for secure delegation in AI agent systems.
-      An AAT encodes which tools an agent may invoke and with what
-      argument constraints. Any holder can derive a child token offline
-      that narrows or maintains scope but cannot expand it. This
-      invariant is cryptographically enforced and verifiable offline by
-      any party holding the trust anchor's public key.<a href="#section-abstract-1" class="pilcrow">¶</a></p>
+JWT-based credential format for secure delegation in AI agent systems.
+An AAT encodes which tools an agent may invoke and with what
+argument constraints. Any holder can derive a child token offline
+that narrows or maintains scope but cannot expand it. This
+invariant is cryptographically enforced and verifiable offline by
+any party holding the root token's trust anchor key.<a href="#section-abstract-1" class="pilcrow">¶</a></p>
 <p id="section-abstract-2">This specification extends the Rich Authorization Requests format
-      (RFC 9396) with delegation-chain semantics and defines a typed
-      constraint vocabulary for tool-level argument restrictions. The
-      accompanying chain verification algorithm enforces the monotonic
-      attenuation invariant at each delegation step and requires no network
-      contact with the root issuer.<a href="#section-abstract-2" class="pilcrow">¶</a></p>
+(RFC 9396) with delegation-chain semantics and defines a typed
+constraint vocabulary for tool-level argument restrictions. The
+accompanying chain verification algorithm enforces the monotonic
+attenuation invariant at each delegation step and requires no network
+contact with the root issuer.<a href="#section-abstract-2" class="pilcrow">¶</a></p>
 </section>
 <div id="status-of-memo">
 <section id="section-boilerplate.1">
@@ -1579,7 +1579,7 @@ li > p:last-of-type:only-child {
                 <p id="section-toc.1-1.12.2.2.1"><a href="#appendix-B.2" class="auto internal xref">B.2</a>.  <a href="#name-performance" class="internal xref">Performance</a></p>
 </li>
               <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.12.2.3">
-                <p id="section-toc.1-1.12.2.3.1"><a href="#appendix-B.3" class="auto internal xref">B.3</a>.  <a href="#name-handling-iss-dual-semantics" class="internal xref">Handling <code>iss</code> Dual Semantics in Middleware</a></p>
+                <p id="section-toc.1-1.12.2.3.1"><a href="#appendix-B.3" class="auto internal xref">B.3</a>.  <a href="#name-recognizing-derived-token-i" class="internal xref">Recognizing Derived Token <code>iss</code> Values in Middleware</a></p>
 </li>
               <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.12.2.4">
                 <p id="section-toc.1-1.12.2.4.1"><a href="#appendix-B.4" class="auto internal xref">B.4</a>.  <a href="#name-relationship-to-wimse" class="internal xref">Relationship to WIMSE</a></p>
@@ -1602,7 +1602,7 @@ li > p:last-of-type:only-child {
             <p id="section-toc.1-1.13.1"><a href="#appendix-C" class="auto internal xref">Appendix C</a>.  <a href="#name-policy-languages-with-decid" class="internal xref">Policy Languages with Decidable Containment (Non-Normative)</a></p>
 </li>
           <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.14">
-            <p id="section-toc.1-1.14.1"><a href="#appendix-D" class="auto internal xref">Appendix D</a>.  <a href="#name-cbor-cwt-profile" class="internal xref">CBOR/CWT Profile</a></p>
+            <p id="section-toc.1-1.14.1"><a href="#appendix-D" class="auto internal xref">Appendix D</a>.  <a href="#name-cbor-cwt-profile-normative" class="internal xref">CBOR/CWT Profile (Normative)</a></p>
 <ul class="compact toc ulBare ulEmpty">
 <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.14.2.1">
                 <p id="section-toc.1-1.14.2.1.1"><a href="#appendix-D.1" class="auto internal xref">D.1</a>.  <a href="#name-cwt-representation" class="internal xref">CWT Representation</a></p>
@@ -1698,8 +1698,8 @@ Enforcement Point
 </div>
 <p id="section-1-6">At each derivation step, the child token's scope is a subset of the
 parent's: scope can only narrow or stay the same, never widen. The
-enforcement point verifies the complete chain using only the trust
-anchor public key; no network calls are required. How token chains are
+enforcement point verifies the complete chain using only the root
+token's trust anchor key; no network calls are required. How token chains are
 carried to enforcement points is deployment-specific; this document does
 not define a transport binding.<a href="#section-1-6" class="pilcrow">¶</a></p>
 <div id="limitations-of-existing-oauth-mechanisms-for-agentic-delegation">
@@ -1725,9 +1725,16 @@ structured authorization detail objects, enabling expressive capability
 descriptions. RAR addresses the expressiveness problem. It does not
 define how a token holder can produce a narrower token, or how a
 chain of such derivations can be verified.<a href="#section-1.1-2" class="pilcrow">¶</a></p>
-<p id="section-1.1-3">To the author's knowledge, no existing OAuth standard defines a
+<p id="section-1.1-3">Proposals to extend the authorization code flow with explicit agent
+consent, such as introducing a <code>requested_actor</code> parameter at the
+authorization endpoint, address who the agent is and whether the
+user approved the delegation. They do not constrain which tools the
+agent may invoke or with what argument values. AATs are
+complementary: they scope authority to specific tools and arguments
+after identity and consent have been established.<a href="#section-1.1-3" class="pilcrow">¶</a></p>
+<p id="section-1.1-4">To the author's knowledge, no existing OAuth standard defines a
 delegation chain protocol with a cryptographically enforced attenuation
-invariant and offline chain verification.<a href="#section-1.1-3" class="pilcrow">¶</a></p>
+invariant and offline chain verification.<a href="#section-1.1-4" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="design-goals">
@@ -1834,9 +1841,9 @@ for verifying agent identity and requested authority before issuance.<a href="#s
 corresponding to its <code>cnf.jwk</code> claim. The token holder is the party
 authorized to present the token, derive child tokens from it, or both,
 depending on the token's <code>aat_type</code>.<a href="#section-2-5" class="pilcrow">¶</a></p>
-<p id="section-2-6"><strong>Derived Token:</strong> An AAT produced by a token holder from a parent AAT.
-A derived token's authority is a subset of its parent's authority (equal
-or narrower). Derivation does not require a round-trip to the root
+<p id="section-2-6"><strong>Derived Token:</strong> An AAT produced by a token holder from a parent AAT,
+also referred to as a child token. A derived token's authority is a
+subset of its parent's authority (equal or narrower). Derivation does not require a round-trip to the root
 issuer.<a href="#section-2-6" class="pilcrow">¶</a></p>
 <p id="section-2-7"><strong>Delegation Token:</strong> An AAT that authorizes its holder to derive child
 tokens for a specified set of tools. The name reflects what the holder
@@ -1973,7 +1980,7 @@ their absence carries the semantics described in the table.<a href="#section-3.2
               <td class="text-left" rowspan="1" colspan="1">
                 <span class="bcp14">REQUIRED</span>
 </td>
-              <td class="text-left" rowspan="1" colspan="1">Identifier of the entity that signed this token. For root tokens, <span class="bcp14">MUST</span> be a URI identifying the root issuer. For derived tokens, <span class="bcp14">MUST</span> be the base64url-encoded SHA-256 JWK Thumbprint of the signing key without padding, as defined in <span>[<a href="#RFC7638" class="cite xref">RFC7638</a>]</span> and <span>[<a href="#RFC7515" class="cite xref">RFC7515</a>]</span> Appendix C.</td>
+              <td class="text-left" rowspan="1" colspan="1">Identifier of the entity that signed this token. For root tokens, <span class="bcp14">MUST</span> be a URI identifying the root issuer. For derived tokens, <span class="bcp14">MUST</span> be a JWK Thumbprint URI as defined in <span>[<a href="#RFC9278" class="cite xref">RFC9278</a>]</span>, using the SHA-256 hash algorithm: <code>urn:ietf:params:oauth:jwk-thumbprint:sha-256:&lt;thumbprint&gt;</code>, where <code>&lt;thumbprint&gt;</code> is computed per <span>[<a href="#RFC7638" class="cite xref">RFC7638</a>]</span>.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -2058,22 +2065,14 @@ their absence carries the semantics described in the table.<a href="#section-3.2
         </table>
 <p id="section-3.2-3">Implementations <span class="bcp14">MUST</span> support Ed25519 <span>[<a href="#RFC8032" class="cite xref">RFC8032</a>]</span> for token signing and
 verification. Implementations <span class="bcp14">MAY</span> support additional algorithms.<a href="#section-3.2-3" class="pilcrow">¶</a></p>
-<p id="section-3.2-4">This specification uses <code>iss</code> with two distinct but related semantics
-that together enable offline chain verification. For root tokens, <code>iss</code>
-is a URI identifying the root issuer, consistent with conventional OAuth
-usage. For derived tokens, <code>iss</code> is the base64url-encoded SHA-256 JWK
-Thumbprint (<span>[<a href="#RFC7638" class="cite xref">RFC7638</a>]</span>) of the signing key, rather than a URI.<a href="#section-3.2-4" class="pilcrow">¶</a></p>
-<p id="section-3.2-5">This divergence from typical <code>iss</code> usage is intentional: a derived
-token is signed by a key holder who may have no stable URI identity.
-Using the key thumbprint makes I1 verifiable offline: the enforcement
-point can confirm that <code>derived.iss</code> equals the thumbprint of
-<code>parent.cnf.jwk</code> without any external lookup. A URI in <code>iss</code>
-for derived tokens would require a network call to resolve the
-key, defeating offline chain
-verification. Implementations that perform token introspection or
-identity federation <span class="bcp14">SHOULD</span> be aware of this dual semantics and <span class="bcp14">MUST NOT</span>
-assume <code>iss</code> is always a URI.<a href="#section-3.2-5" class="pilcrow">¶</a></p>
-<p id="section-3.2-6">This specification intentionally omits the <code>sub</code> claim. In conventional
+<p id="section-3.2-4">In both root and derived tokens, <code>iss</code> is a URI. For root tokens,
+<code>iss</code> is a URI identifying the root issuer, consistent with
+conventional OAuth usage. For derived tokens, <code>iss</code> is a JWK
+Thumbprint URI <span>[<a href="#RFC9278" class="cite xref">RFC9278</a>]</span> that encodes the SHA-256 thumbprint of
+the signing key. This makes I1 verifiable offline: the enforcement
+point can confirm that the thumbprint embedded in <code>derived.iss</code>
+matches <code>parent.cnf.jwk</code> without any external lookup.<a href="#section-3.2-4" class="pilcrow">¶</a></p>
+<p id="section-3.2-5">This specification intentionally omits the <code>sub</code> claim. In conventional
 OAuth tokens, <code>sub</code> identifies the resource owner or principal on whose
 behalf the token is issued. In an AAT chain, the holder's identity is
 fully determined by <code>cnf.jwk</code>: the entity presenting the token proves
@@ -2082,7 +2081,7 @@ possession of the private key corresponding to <code>cnf.jwk</code>. Including a
 cryptographically enforced by this specification and could be set
 arbitrarily by any delegating party. Implementations that require a
 human-readable subject identifier <span class="bcp14">MAY</span> convey one in additional JWT
-claims outside this specification (see Appendix B).<a href="#section-3.2-6" class="pilcrow">¶</a></p>
+claims outside this specification (see Appendix B).<a href="#section-3.2-5" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="capability-claims-via-authorizationdetails">
@@ -2584,7 +2583,7 @@ parent's <code>check</code> predicate. All other cross-type pairs involving
 <pre>
 {
   "jti": "01957a41-0081-7c20-bf3a-00a0c91e1234",
-  "iss": "KAKnRDlMQVIKCfS5JhHlABCHjAFLdyEVVHdpnGnLLg8",
+  "iss": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:KAKnRDlMQVIKCfS5JhHlABCHjAFLdyEVVHdpnGnLLg8",
   "iat": 1741600120,
   "exp": 1741601920,
   "aat_type": "execution",
@@ -2834,8 +2833,8 @@ constraint must be at least as restrictive. A derived constraint
 <code>c_child ⊑ c_parent</code>) if every argument value that satisfies
 <code>c_child</code> also satisfies <code>c_parent</code>.<a href="#section-4.1-6" class="pilcrow">¶</a></p>
 <p id="section-4.1-7">Two boundary cases complete the structure. The empty capability set
-<code>∅</code> is the bottom element: a token with no tools authorized is a valid but
-useless terminal token. The root token's capability set is the ceiling
+<code>∅</code> is the bottom element: a token with no tools authorized is a
+valid but useless terminal token. The root token's capability set is the ceiling
 for the entire chain: no derived token at any depth can exceed what the
 root authorized.<a href="#section-4.1-7" class="pilcrow">¶</a></p>
 <p id="section-4.1-8">Token lifetime (I3) is a mandatory attenuation dimension orthogonal to
@@ -2858,12 +2857,14 @@ that the presenter holds the key (I6).<a href="#section-4.1-9" class="pilcrow">�
         </h3>
 <div class="alignLeft art-text artwork" id="section-4.2-1">
 <pre>
-derived.iss == key_thumbprint(parent.cnf.jwk)
+derived.iss == jwk_thumbprint_uri(parent.cnf.jwk)
 </pre><a href="#section-4.2-1" class="pilcrow">¶</a>
 </div>
-<p id="section-4.2-2">The entity that signed the derived token <span class="bcp14">MUST</span> be the holder of the
-parent token. Authority flows from parent holder to derived token
-issuer. This invariant establishes an unambiguous audit trail: each link
+<p id="section-4.2-2">where <code>jwk_thumbprint_uri</code> constructs the RFC 9278 URI from the
+key's SHA-256 thumbprint. The entity that signed the derived token
+<span class="bcp14">MUST</span> be the holder of the parent token. Authority flows from parent
+holder to derived token issuer. This invariant establishes an
+unambiguous audit trail: each link
 in the chain was signed by the party that held the preceding token.<a href="#section-4.2-2" class="pilcrow">¶</a></p>
 </section>
 </div>
@@ -2876,6 +2877,7 @@ in the chain was signed by the party that held the preceding token.<a href="#sec
 <pre>
 derived.del_depth == parent.del_depth + 1
 derived.del_depth &lt;= parent.del_max_depth
+derived.del_depth &lt;= derived.del_max_depth
 derived.del_depth &lt;= MAX_DELEGATION_DEPTH
 derived.del_max_depth &lt;= parent.del_max_depth
 </pre><a href="#section-4.3-1" class="pilcrow">¶</a>
@@ -2931,6 +2933,8 @@ enforce this limit. A value of 262144 bytes (256 KiB) is <span class="bcp14">REC
 <div class="alignLeft art-text artwork" id="section-4.4-1">
 <pre>
 derived.exp  &lt;= parent.exp
+derived.exp  &gt;  now
+derived.exp  &gt;  derived.iat
 derived.iat  &gt;= parent.iat
 derived.iat  &lt;= now + MAX_IAT_SKEW
 derived.exp  &lt;= derived.iat + MAX_TOKEN_LIFETIME
@@ -3089,9 +3093,9 @@ subsumption strategy requires balanced-parentheses
 conjunction: a derived <code>cel</code> constraint subsumes a parent
 <code>cel</code> constraint if and only if the derived expression
 string is exactly <code>(parent_expression) &amp;&amp;
-(additional_clause)</code>. The parent expression must appear
+(additional_clause)</code>. The parent expression <span class="bcp14">MUST</span> appear
 verbatim inside the leading parentheses. Each additional
-clause must be individually wrapped in balanced
+clause <span class="bcp14">MUST</span> be individually wrapped in balanced
 parentheses. Multiple additional
 clauses are permitted: <code>(parent) &amp;&amp; (clause1) &amp;&amp; (clause2)</code>. No other
 form is considered subsuming.<a href="#section-4.5-6.7.1" class="pilcrow">¶</a></p>
@@ -3180,27 +3184,28 @@ appears at most once, giving O(n) behavior. Implementations
 algorithms for the general case.<a href="#section-4.5-6.9.5" class="pilcrow">¶</a></p>
 </li>
           <li class="normal" id="section-4.5-6.10">
-            <p id="section-4.5-6.10.1"><strong>any:</strong> This specification prescribes a conservative strategy
-for <code>any → any</code> attenuation. A derived <code>any</code> constraint is
-valid attenuation of a parent <code>any</code> constraint if and only
-if the two constraints are structurally identical, compared
-as JCS-canonical JSON (<span>[<a href="#RFC8785" class="cite xref">RFC8785</a>]</span>). Although removing
-clauses from <code>any</code> semantically narrows the accepted value
-set, tracking clause identity and subsumption across clause
-sets of differing length introduces significant implementation
-complexity. Issuers that need to narrow an <code>any</code> constraint
-<span class="bcp14">SHOULD</span> re-issue from the root issuer or use a registered
-extension type.<a href="#section-4.5-6.10.1" class="pilcrow">¶</a></p>
+            <p id="section-4.5-6.10.1"><strong>any:</strong> A derived <code>any</code> constraint subsumes a parent <code>any</code>
+constraint if every clause in the derived constraint is
+subsumed by at least one clause in the parent constraint,
+using the per-type subsumption rules defined in this section.
+Formally: for each <code>clause_d</code> in
+<code>derived.any.constraints</code>, there <span class="bcp14">MUST</span> exist a <code>clause_p</code> in
+<code>parent.any.constraints</code> such that <code>clause_d ⊑ clause_p</code>.
+Removing clauses is valid (it narrows the accepted set).
+Adding clauses is invalid (it widens it). The derived <code>any</code>
+              <span class="bcp14">MUST</span> contain at least one clause. Cross-type subsumption
+between clauses is permitted: for example, a derived clause
+of <code>exact("pdf")</code> is subsumed by a parent clause of
+<code>pattern("*.pdf")</code> under the cross-type rules in this
+section.<a href="#section-4.5-6.10.1" class="pilcrow">¶</a></p>
 <p id="section-4.5-6.10.2">
 Example: a parent token carries
-<code>any([exact("pdf"), exact("csv")])</code>. A child token <span class="bcp14">MAY</span>
-carry an identical <code>any([exact("pdf"), exact("csv")])</code>
-(identity is valid). A child token <span class="bcp14">MUST NOT</span> carry
-<code>any([exact("pdf")])</code>, even though removing a clause
-narrows the accepted set: the two constraints are not
-structurally identical under JCS comparison, so the check
-fails. The issuer <span class="bcp14">MUST</span> re-issue from root to narrow the
-clause set.<a href="#section-4.5-6.10.2" class="pilcrow">¶</a></p>
+<code>any([exact("pdf"), exact("csv"), exact("xlsx")])</code>. A child
+token <span class="bcp14">MAY</span> carry <code>any([exact("pdf"), exact("csv")])</code> because
+each child clause is subsumed by a parent clause. A child
+token <span class="bcp14">MUST NOT</span> carry <code>any([exact("pdf"), exact("docx")])</code>
+because <code>exact("docx")</code> is not subsumed by any parent
+clause.<a href="#section-4.5-6.10.2" class="pilcrow">¶</a></p>
 </li>
           <li class="normal" id="section-4.5-6.11">
             <p id="section-4.5-6.11.1"><strong>not:</strong> This specification prescribes a conservative strategy
@@ -3517,10 +3522,9 @@ appear in this field.<a href="#section-6-2.9.1" class="pilcrow">¶</a></p>
 </li>
         <li id="section-6-2.10">
           <p id="section-6-2.10.1">Sign the token with the private key corresponding to the
-parent token's <code>cnf.jwk</code>. The <code>iss</code> claim <span class="bcp14">MUST</span> be set to
-the base64url-encoded SHA-256 JWK Thumbprint of that
-signing key without padding, as defined in <span>[<a href="#RFC7638" class="cite xref">RFC7638</a>]</span> and
-<span>[<a href="#RFC7515" class="cite xref">RFC7515</a>]</span> Appendix C.<a href="#section-6-2.10.1" class="pilcrow">¶</a></p>
+parent token's <code>cnf.jwk</code>. The <code>iss</code> claim <span class="bcp14">MUST</span> be set to the
+JWK Thumbprint URI <span>[<a href="#RFC9278" class="cite xref">RFC9278</a>]</span> of that signing key, using the
+SHA-256 hash algorithm.<a href="#section-6-2.10.1" class="pilcrow">¶</a></p>
 </li>
       </ol>
 <p id="section-6-3">Derivation is performed locally by the token holder. No authorization
@@ -3642,7 +3646,7 @@ Algorithm:
           absent or not integers, DENY.
       b5. Verify child.iss, child.iat, child.exp, child.aat_type,
           and child.par_hash are all present. If any is absent, DENY.
-   c. Verify child.iss equals key_thumbprint(parent.cnf.jwk). [I1]
+   c. Verify child.iss equals jwk_thumbprint_uri(parent.cnf.jwk). [I1]
    d. Verify child.aat_type is "delegation" or "execution".
       If any other value, DENY.
    e. Verify child.del_depth == parent.del_depth + 1.    [I2]
@@ -3805,9 +3809,9 @@ denied at the enforcement point before the tool executes.<a href="#section-8.1.1
 cannot exercise authority beyond what its token encodes, even if it is
 invoked by a trusted orchestrator. The token carries its own
 authorization ceiling. There is no ambient authority to confuse.<a href="#section-8.1.1-3" class="pilcrow">¶</a></p>
-<p id="section-8.1.1-4"><strong>Privilege escalation across delegation hops.</strong> The attenuation
-invariant (I4) ensures that authority can only narrow at each delegation
-step. A derived token cannot authorize tools or argument values absent
+<p id="section-8.1.1-4"><strong>Privilege escalation across delegation hops.</strong> The capability
+monotonicity invariant (I4) ensures that authority can only narrow at
+each delegation step. A derived token cannot authorize tools or argument values absent
 from its parent token. An agent that attempts to mint a child token with
 broader scope will produce a token that fails chain verification at the
 enforcement point.<a href="#section-8.1.1-4" class="pilcrow">¶</a></p>
@@ -4631,6 +4635,14 @@ issuance.<a href="#section-9.6-3" class="pilcrow">¶</a></p>
         <dd>
 <span class="refAuthor">Rundgren, A.</span>, <span class="refAuthor">Jordan, B.</span>, and <span class="refAuthor">S. Erdtman</span>, <span class="refTitle">"JSON Canonicalization Scheme (JCS)"</span>, <span class="seriesInfo">RFC 8785</span>, <span class="seriesInfo">DOI 10.17487/RFC8785</span>, <time datetime="2020-06" class="refDate">June 2020</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc8785">https://www.rfc-editor.org/info/rfc8785</a>&gt;</span>. </dd>
 <dd class="break"></dd>
+<dt id="RFC9278">[RFC9278]</dt>
+        <dd>
+<span class="refAuthor">Jones, M.</span> and <span class="refAuthor">K. Yasuda</span>, <span class="refTitle">"JWK Thumbprint URI"</span>, <span class="seriesInfo">RFC 9278</span>, <span class="seriesInfo">DOI 10.17487/RFC9278</span>, <time datetime="2022-08" class="refDate">August 2022</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc9278">https://www.rfc-editor.org/info/rfc9278</a>&gt;</span>. </dd>
+<dd class="break"></dd>
+<dt id="RFC8949">[RFC8949]</dt>
+        <dd>
+<span class="refAuthor">Bormann, C.</span> and <span class="refAuthor">P. Hoffman</span>, <span class="refTitle">"Concise Binary Object Representation (CBOR)"</span>, <span class="seriesInfo">STD 94</span>, <span class="seriesInfo">RFC 8949</span>, <span class="seriesInfo">DOI 10.17487/RFC8949</span>, <time datetime="2020-12" class="refDate">December 2020</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc8949">https://www.rfc-editor.org/info/rfc8949</a>&gt;</span>. </dd>
+<dd class="break"></dd>
 <dt id="RFC9396">[RFC9396]</dt>
         <dd>
 <span class="refAuthor">Lodderstedt, T.</span>, <span class="refAuthor">Richer, J.</span>, and <span class="refAuthor">B. Campbell</span>, <span class="refTitle">"OAuth 2.0 Rich Authorization Requests"</span>, <span class="seriesInfo">RFC 9396</span>, <span class="seriesInfo">DOI 10.17487/RFC9396</span>, <time datetime="2023-05" class="refDate">May 2023</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc9396">https://www.rfc-editor.org/info/rfc9396</a>&gt;</span>. </dd>
@@ -4707,10 +4719,6 @@ issuance.<a href="#section-9.6-3" class="pilcrow">¶</a></p>
 <dt id="DEEPMIND26">[DEEPMIND26]</dt>
         <dd>
 <span class="refAuthor">Tomašev, N.</span>, <span class="refAuthor">Franklin, M.</span>, and <span class="refAuthor">S. Osindero</span>, <span class="refTitle">"Intelligent AI Delegation"</span>, <time datetime="2026" class="refDate">2026</time>, <span>&lt;<a href="https://arxiv.org/abs/2602.11865">https://arxiv.org/abs/2602.11865</a>&gt;</span>. </dd>
-<dd class="break"></dd>
-<dt id="RFC8949">[RFC8949]</dt>
-        <dd>
-<span class="refAuthor">Bormann, C.</span> and <span class="refAuthor">P. Hoffman</span>, <span class="refTitle">"Concise Binary Object Representation (CBOR)"</span>, <span class="seriesInfo">STD 94</span>, <span class="seriesInfo">RFC 8949</span>, <span class="seriesInfo">DOI 10.17487/RFC8949</span>, <time datetime="2020-12" class="refDate">December 2020</time>, <span>&lt;<a href="https://www.rfc-editor.org/info/rfc8949">https://www.rfc-editor.org/info/rfc8949</a>&gt;</span>. </dd>
 <dd class="break"></dd>
 <dt id="WIMSE-ARCH">[WIMSE-ARCH]</dt>
         <dd>
@@ -4905,27 +4913,20 @@ expression complexity and input size; see Section 8.7 for resource limit
 guidance.<a href="#appendix-B.2-1" class="pilcrow">¶</a></p>
 </section>
 </div>
-<div id="handling-iss-dual-semantics-in-middleware">
+<div id="recognizing-derived-token-iss-values-in-middleware">
 <section id="appendix-B.3">
-        <h3 id="name-handling-iss-dual-semantics">
-<a href="#appendix-B.3" class="section-number selfRef">B.3. </a><a href="#name-handling-iss-dual-semantics" class="section-name selfRef">Handling <code>iss</code> Dual Semantics in Middleware</a>
+        <h3 id="name-recognizing-derived-token-i">
+<a href="#appendix-B.3" class="section-number selfRef">B.3. </a><a href="#name-recognizing-derived-token-i" class="section-name selfRef">Recognizing Derived Token <code>iss</code> Values in Middleware</a>
         </h3>
-<p id="appendix-B.3-1">Implementations that process AATs alongside conventional OAuth
-tokens — for example, in policy engines, token introspection
-endpoints, or API gateways — must not assume <code>iss</code> is always
-a URI (see Section 3.2 for
-the normative definition). For root tokens, <code>iss</code> is a URI and behaves
-as expected by standard OAuth tooling. For derived tokens, <code>iss</code> is a
-base64url-encoded JWK Thumbprint, which will not parse as a URI and
-will not match any issuer in a conventional issuer registry.<a href="#appendix-B.3-1" class="pilcrow">¶</a></p>
-<p id="appendix-B.3-2">Middleware that routes or policy-evaluates based on <code>iss</code> should detect
-AAT chains (for example, by checking for the <code>aat_type</code> claim) and
-apply chain-aware processing rather than single-token <code>iss</code> lookup.
-Token introspection endpoints that expose <code>iss</code> should document this
-dual semantics behavior. Federation systems that use <code>iss</code> to resolve
-public keys must not attempt to resolve a derived token's <code>iss</code> as an
-issuer URI; the verification key for derived tokens is
-<code>parent.cnf.jwk</code>, resolved from the preceding chain link.<a href="#appendix-B.3-2" class="pilcrow">¶</a></p>
+<p id="appendix-B.3-1">In both root and derived AATs, <code>iss</code> is a URI. For root tokens it
+is a conventional issuer URI. For derived tokens it is a JWK
+Thumbprint URI (<span>[<a href="#RFC9278" class="cite xref">RFC9278</a>]</span>) with the
+<code>urn:ietf:params:oauth:jwk-thumbprint:sha-256:</code> prefix.
+Middleware that routes or policy-evaluates based on <code>iss</code> should
+recognize the JWK Thumbprint URI scheme and apply chain-aware
+processing rather than attempting to resolve the URI as an issuer
+endpoint. The verification key for derived tokens is
+<code>parent.cnf.jwk</code>, resolved from the preceding chain link.<a href="#appendix-B.3-1" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="relationship-to-wimse">
@@ -5022,6 +5023,19 @@ deployment.<a href="#appendix-B.6-3" class="pilcrow">¶</a></p>
 <code>pattern</code>, <code>regex</code>, or <code>cel</code> where the policy permits, as these types
 produce significantly more compact tokens and simpler subsumption
 checks.<a href="#appendix-B.6-4" class="pilcrow">¶</a></p>
+<p id="appendix-B.6-5">Implementations concerned about parser exposure on unverified
+payloads in step 2c of the chain verification algorithm (Section 7)
+may extract <code>jti</code> using a length-limited byte scan rather than a
+full JSON parser, provided the extraction correctly handles JSON
+whitespace and string escaping.<a href="#appendix-B.6-5" class="pilcrow">¶</a></p>
+<p id="appendix-B.6-6">A single AAT is typically 1-4 KB when base64url-encoded. Chains
+of two or more tokens will commonly exceed the 4-8 KB header size
+limits enforced by common reverse proxies and load balancers,
+resulting in 431 errors. Deployments should transmit AAT chains
+in a request body field rather than an HTTP header. For
+size-constrained environments, the CBOR/CWT profile in Appendix D
+reduces chain size by 30-50% and is recommended when HTTP header
+transport is required.<a href="#appendix-B.6-6" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="signed-passthrough-metadata">
@@ -5123,10 +5137,10 @@ registration satisfies the three properties defined in Section 3.5.1:
 decidable, sound, and deterministic.<a href="#appendix-C-5" class="pilcrow">¶</a></p>
 </section>
 </div>
-<div id="cborcwt-profile">
+<div id="cborcwt-profile-normative">
 <section id="appendix-D">
-      <h2 id="name-cbor-cwt-profile">
-<a href="#appendix-D" class="section-number selfRef">Appendix D. </a><a href="#name-cbor-cwt-profile" class="section-name selfRef">CBOR/CWT Profile</a>
+      <h2 id="name-cbor-cwt-profile-normative">
+<a href="#appendix-D" class="section-number selfRef">Appendix D. </a><a href="#name-cbor-cwt-profile-normative" class="section-name selfRef">CBOR/CWT Profile (Normative)</a>
       </h2>
 <p id="appendix-D-1">The claim semantics, attenuation invariants, constraint subsumption
 rules, and chain verification algorithm defined in this document are
