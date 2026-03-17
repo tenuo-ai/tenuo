@@ -512,7 +512,7 @@ possession of the private key corresponding to `cnf.jwk`. Including a
 cryptographically enforced by this specification and could be set
 arbitrarily by any delegating party. Implementations that require a
 human-readable subject identifier MAY convey one in additional JWT
-claims outside this specification (see Appendix B).
+claims outside this specification (see Appendix B.7).
 
 ## Capability Claims via `authorization_details`
 
@@ -942,8 +942,8 @@ Note that the derived token:
 ### Root Issuer Discovery
 
 A root issuer that supports AAT issuance SHOULD advertise this
-capability in its {{RFC8414}} server metadata document using the following
-metadata parameter.
+capability using the following metadata parameter in its
+authorization server metadata document {{RFC8414}}, if supported.
 
 | Metadata Parameter | Value |
 |---|---|
@@ -1152,7 +1152,7 @@ MUST enforce a finite maximum delegation depth to prevent resource
 exhaustion from pathologically deep chains. The appropriate value
 depends on the deployment topology; swarm architectures with deep
 fan-out may require significantly larger values than linear delegation
-chains. See Appendix B for guidance.
+chains. See Appendix B.5 for guidance.
 
 The `del_max_depth` claim in any token in the chain MUST NOT exceed the
 implementation's MAX_DELEGATION_DEPTH.
@@ -1189,7 +1189,7 @@ specifying the maximum permitted duration in seconds between a token's
 `iat` and `exp`. Implementations MUST enforce a finite
 MAX_TOKEN_LIFETIME. A value of 90 days is RECOMMENDED as an upper bound;
 deployments SHOULD use significantly shorter lifetimes in practice (see
-Appendix B).
+Appendix B.8).
 
 A derived token cannot outlive its parent. Authority cannot extend
 beyond the lifetime of the token that granted it. A derived token's
@@ -1612,7 +1612,7 @@ A holder of any AAT whose `del_depth` is strictly less than
    Token lifetime is a mandatory attenuation dimension. Every
    derived token is temporally bounded by its parent regardless
    of capability scope. TTL is the primary revocation mechanism
-   in this specification; see Appendix B for deployment guidance.
+   in this specification; see Appendix B.8 for deployment guidance.
 
 3. Select the `aat_type` of the child token. The permitted
    transitions are defined in Section 3.1. If the child's
@@ -2788,7 +2788,10 @@ rules, and chain verification algorithm defined in this document are
 format-agnostic. They describe a protocol, not an encoding. This
 appendix notes the relationship to CBOR-based token formats for
 implementers operating in constrained or throughput-sensitive
-environments.
+environments. The normative content of this appendix is limited to
+encoding constraints (deterministic CBOR per {{RFC8949}}); integer
+CWT claim key assignments are deferred to a companion document and
+are not normative here.
 
 ## CWT Representation
 

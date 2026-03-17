@@ -2085,7 +2085,7 @@ possession of the private key corresponding to <code>cnf.jwk</code>. Including a
 cryptographically enforced by this specification and could be set
 arbitrarily by any delegating party. Implementations that require a
 human-readable subject identifier <span class="bcp14">MAY</span> convey one in additional JWT
-claims outside this specification (see Appendix B).<a href="#section-3.2-5" class="pilcrow">¶</a></p>
+claims outside this specification (see Appendix B.7).<a href="#section-3.2-5" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="capability-claims-via-authorizationdetails">
@@ -2653,8 +2653,8 @@ window.<a href="#section-3.6.2-3.5.1" class="pilcrow">¶</a></p>
 <a href="#section-3.7.1" class="section-number selfRef">3.7.1. </a><a href="#name-root-issuer-discovery" class="section-name selfRef">Root Issuer Discovery</a>
           </h4>
 <p id="section-3.7.1-1">A root issuer that supports AAT issuance <span class="bcp14">SHOULD</span> advertise this
-capability in its <span>[<a href="#RFC8414" class="cite xref">RFC8414</a>]</span> server metadata document using the following
-metadata parameter.<a href="#section-3.7.1-1" class="pilcrow">¶</a></p>
+capability using the following metadata parameter in its
+authorization server metadata document <span>[<a href="#RFC8414" class="cite xref">RFC8414</a>]</span>, if supported.<a href="#section-3.7.1-1" class="pilcrow">¶</a></p>
 <table class="center" id="table-3">
             <caption><a href="#table-3" class="selfRef">Table 3</a></caption>
 <thead>
@@ -2910,7 +2910,7 @@ specifying the maximum permitted delegation chain depth. Implementations
 exhaustion from pathologically deep chains. The appropriate value
 depends on the deployment topology; swarm architectures with deep
 fan-out may require significantly larger values than linear delegation
-chains. See Appendix B for guidance.<a href="#section-4.3-4" class="pilcrow">¶</a></p>
+chains. See Appendix B.5 for guidance.<a href="#section-4.3-4" class="pilcrow">¶</a></p>
 <p id="section-4.3-5">The <code>del_max_depth</code> claim in any token in the chain <span class="bcp14">MUST NOT</span> exceed the
 implementation's MAX_DELEGATION_DEPTH.<a href="#section-4.3-5" class="pilcrow">¶</a></p>
 <div id="implementation-resource-limits">
@@ -2953,7 +2953,7 @@ specifying the maximum permitted duration in seconds between a token's
 <code>iat</code> and <code>exp</code>. Implementations <span class="bcp14">MUST</span> enforce a finite
 MAX_TOKEN_LIFETIME. A value of 90 days is <span class="bcp14">RECOMMENDED</span> as an upper bound;
 deployments <span class="bcp14">SHOULD</span> use significantly shorter lifetimes in practice (see
-Appendix B).<a href="#section-4.4-3" class="pilcrow">¶</a></p>
+Appendix B.8).<a href="#section-4.4-3" class="pilcrow">¶</a></p>
 <p id="section-4.4-4">A derived token cannot outlive its parent. Authority cannot extend
 beyond the lifetime of the token that granted it. A derived token's
 issuance time <span class="bcp14">MUST NOT</span> precede its parent's issuance time. A token with
@@ -3481,7 +3481,7 @@ be a UUIDv7 value per <span>[<a href="#RFC9562" class="cite xref">RFC9562</a>]</
 Token lifetime is a mandatory attenuation dimension. Every
 derived token is temporally bounded by its parent regardless
 of capability scope. TTL is the primary revocation mechanism
-in this specification; see Appendix B for deployment guidance.<a href="#section-6-2.2.1" class="pilcrow">¶</a></p>
+in this specification; see Appendix B.8 for deployment guidance.<a href="#section-6-2.2.1" class="pilcrow">¶</a></p>
 </li>
         <li id="section-6-2.3">
           <p id="section-6-2.3.1">Select the <code>aat_type</code> of the child token. The permitted
@@ -5172,7 +5172,10 @@ rules, and chain verification algorithm defined in this document are
 format-agnostic. They describe a protocol, not an encoding. This
 appendix notes the relationship to CBOR-based token formats for
 implementers operating in constrained or throughput-sensitive
-environments.<a href="#appendix-D-1" class="pilcrow">¶</a></p>
+environments. The normative content of this appendix is limited to
+encoding constraints (deterministic CBOR per <span>[<a href="#RFC8949" class="cite xref">RFC8949</a>]</span>); integer
+CWT claim key assignments are deferred to a companion document and
+are not normative here.<a href="#appendix-D-1" class="pilcrow">¶</a></p>
 <div id="cwt-representation">
 <section id="appendix-D.1">
         <h3 id="name-cwt-representation">
