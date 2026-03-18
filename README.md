@@ -16,7 +16,9 @@
 </p>
 
 > **Tenuo Cloud — Early Access**
+>
 > Managed control plane with revocation, observability, and multi-tenant warrant issuance.
+>
 > [Request access →](https://tenuo.ai/early-access.html)
 
 Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid debit card, as opposed to corporate Amex**: ephemeral, scoped capability tokens that expire when the task ends.
