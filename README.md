@@ -15,6 +15,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" alt="License"></a>
 </p>
 
+> **Tenuo Cloud — Early Access**
+> Managed control plane with revocation, observability, and multi-tenant warrant issuance.
+> [Request access →](https://tenuo.ai/early-access.html)
+
 Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid debit card, as opposed to corporate Amex**: ephemeral, scoped capability tokens that expire when the task ends.
 
 A **warrant** is a signed token specifying which tools an agent can call, under what constraints, and for how long. Bound to a cryptographic key, verified offline in ~27μs, and monotonically scoped: delegation can only narrow authority, never expand it. If an agent is prompt-injected, the warrant's bounds still hold.
