@@ -34,6 +34,7 @@ data-plane = []
 # Python bindings
 python = ["pyo3"]
 python-extension = ["pyo3/extension-module", "python"]
+python-server = ["python", "server"]
 
 # Server features (adds HTTP/gRPC + structured logging dependencies)
 # Includes reqwest for control plane heartbeat functionality
