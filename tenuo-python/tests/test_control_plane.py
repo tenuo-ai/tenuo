@@ -677,24 +677,10 @@ class TestTemporalControlPlane:
 # 6. Google ADK TenuoGuard control plane wiring
 # ---------------------------------------------------------------------------
 
-# Patch google.adk before importing TenuoGuard (same technique as test_google_adk.py)
-# sys and MagicMock are already imported at the top of this file.
-_mock_google = MagicMock()
-for _mod in [
-    "google", "google.adk", "google.adk.plugins", "google.adk.tools",
-    "google.adk.tools.tool_context", "google.adk.tools.base_tool",
-    "google.adk.agents", "google.adk.agents.callback_context",
-]:
-    if _mod not in sys.modules:
-        sys.modules[_mod] = _mock_google
-
 
 class _MockBasePlugin:
     def __init__(self, *args, **kwargs):
         pass
-
-
-_mock_google.adk.plugins.BasePlugin = _MockBasePlugin
 
 
 class _MockBaseTool:
@@ -707,8 +693,44 @@ class _MockToolContext:
         self.state = state or {}
 
 
+def _make_adk_sys_modules_patch() -> dict:
+    """Return a sys.modules overlay that stubs out google.adk without leaking."""
+    mock_google = MagicMock()
+    mock_google.adk.plugins.BasePlugin = _MockBasePlugin
+    return {
+        "google": mock_google,
+        "google.adk": mock_google.adk,
+        "google.adk.plugins": mock_google.adk.plugins,
+        "google.adk.tools": mock_google.adk.tools,
+        "google.adk.tools.tool_context": mock_google.adk.tools.tool_context,
+        "google.adk.tools.base_tool": mock_google.adk.tools.base_tool,
+        "google.adk.agents": mock_google.adk.agents,
+        "google.adk.agents.callback_context": mock_google.adk.agents.callback_context,
+    }
+
+
 class TestADKControlPlane:
     """TenuoGuard emits allow/deny events to the control plane."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_google_adk(self):
+        """Patch google.adk for the duration of each ADK test, then restore.
+
+        Using patch.dict ensures the original sys.modules state is restored after
+        every test so other test modules (e.g. crewai tests) are not affected.
+        """
+        from unittest.mock import patch
+
+        with patch.dict(sys.modules, _make_adk_sys_modules_patch(), clear=False):
+            # Re-import guard module so it picks up the patched google.adk
+            for mod_name in list(sys.modules):
+                if mod_name.startswith("tenuo.google_adk"):
+                    del sys.modules[mod_name]
+            yield
+            # Clean up the re-imported tenuo.google_adk modules after the test
+            for mod_name in list(sys.modules):
+                if mod_name.startswith("tenuo.google_adk"):
+                    del sys.modules[mod_name]
 
     @pytest.fixture
     def adk_keys(self):
