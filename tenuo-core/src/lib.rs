@@ -76,6 +76,9 @@ pub mod python;
 #[cfg(feature = "server")]
 pub mod heartbeat;
 
+#[cfg(feature = "python-server")]
+pub mod python_control_plane;
+
 // Re-exports for convenience
 pub use constraints::{
     All, Any, CelConstraint, Cidr, Constraint, ConstraintSet, ConstraintValue, Contains, Exact,

@@ -87,3 +87,7 @@ verification/aat_constraints/
 
 # Demo/presentation scripts (local only)
 tenuo-python/examples/unprompted_demo.py
+
+# Local notes and todos (never committed)
+TODO.md
+NOTES.md

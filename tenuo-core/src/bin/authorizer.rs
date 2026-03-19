@@ -734,6 +734,7 @@ async fn handle_request(
                     None,
                     0,
                     request_id.clone(),
+                    None,
                 ),
             )
             .await;
@@ -791,6 +792,7 @@ async fn handle_request(
                     None,
                     0,
                     request_id.clone(),
+                    None,
                 ),
             )
             .await;
@@ -850,6 +852,12 @@ async fn handle_request(
             Ok(v) => v,
             Err(_) => Value::Null, // Non-JSON body, use null
         }
+    };
+
+    let arguments_json = if json_body.is_null() {
+        None
+    } else {
+        Some(json_body.to_string())
     };
 
     // 5. Build request context
@@ -1018,6 +1026,7 @@ async fn handle_request(
                     warrant_stack_b64.clone(),
                     latency_us,
                     request_id.clone(),
+                    arguments_json.clone(),
                 ),
             )
             .await;
@@ -1147,6 +1156,7 @@ async fn handle_request(
                     warrant_stack_b64,
                     latency_us,
                     request_id.clone(),
+                    arguments_json,
                 ),
             )
             .await;

@@ -226,6 +226,10 @@ pub struct ChainVerificationResult {
     pub leaf_depth: u32,
     /// Details of each verified step.
     pub verified_steps: Vec<ChainStep>,
+    /// Base64-encoded CBOR WarrantStack for audit event transmission.
+    /// Populated by check_chain(); None when computed from a single warrant
+    /// via authorize_one() without a full chain.
+    pub warrant_stack_b64: Option<String>,
 }
 
 /// A single step in the verified chain.
@@ -846,6 +850,7 @@ impl DataPlane {
             chain_length: chain.len(),
             leaf_depth: 0,
             verified_steps: Vec::new(),
+            warrant_stack_b64: None,
         };
 
         // Step 1: Verify the root warrant is from a trusted key
@@ -1199,6 +1204,21 @@ impl DataPlane {
             }
             auth_result?;
         }
+
+        use base64::Engine;
+        let warrant_stack_b64 = if chain.len() > 1 {
+            let stack = crate::wire::WarrantStack(chain.to_vec());
+            crate::wire::encode_stack(&stack)
+                .ok()
+                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+        } else {
+            // Single warrant — encode it directly for audit completeness
+            crate::wire::encode_stack(&crate::wire::WarrantStack(chain.to_vec()))
+                .ok()
+                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+        };
+        let mut result = result;
+        result.warrant_stack_b64 = warrant_stack_b64;
 
         Ok(result)
     }
@@ -1931,6 +1951,7 @@ impl Authorizer {
             chain_length: chain.len(),
             leaf_depth: 0,
             verified_steps: Vec::new(),
+            warrant_stack_b64: None,
         };
 
         // Root must be from a trusted key
@@ -2298,6 +2319,21 @@ impl Authorizer {
             // needs_approval = false → tool is free (either approval gate map present
             // and no approval gate matched, or no approval gate map and no required_approvers)
         }
+
+        use base64::Engine;
+        let warrant_stack_b64 = if chain.len() > 1 {
+            let stack = crate::wire::WarrantStack(chain.to_vec());
+            crate::wire::encode_stack(&stack)
+                .ok()
+                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+        } else {
+            // Single warrant — encode it directly for audit completeness
+            crate::wire::encode_stack(&crate::wire::WarrantStack(chain.to_vec()))
+                .ok()
+                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+        };
+        let mut result = result;
+        result.warrant_stack_b64 = warrant_stack_b64;
 
         Ok(result)
     }

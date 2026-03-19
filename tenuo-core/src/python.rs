@@ -2021,7 +2021,7 @@ impl PyShlex {
 /// Python wrapper for SigningKey.
 #[pyclass(name = "SigningKey")]
 pub struct PySigningKey {
-    inner: RustSigningKey,
+    pub(crate) inner: RustSigningKey,
 }
 
 #[pymethods]
@@ -4418,6 +4418,12 @@ impl PyChainVerificationResult {
             .collect()
     }
 
+    /// Base64-encoded CBOR WarrantStack for audit event transmission.
+    #[getter]
+    fn warrant_stack_b64(&self) -> Option<String> {
+        self.inner.warrant_stack_b64.clone()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "ChainVerificationResult(chain_length={}, leaf_depth={}, steps={})",
@@ -5657,6 +5663,9 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySignedRevocationList>()?;
     m.add_class::<PySrlBuilder>()?;
 
+    #[cfg(feature = "python-server")]
+    m.add_class::<crate::python_control_plane::PyControlPlaneClient>()?;
+
     // Constants
     m.add("MAX_DELEGATION_DEPTH", crate::MAX_DELEGATION_DEPTH)?;
     m.add("MAX_WARRANT_SIZE", crate::MAX_WARRANT_SIZE)?;
@@ -5668,6 +5677,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Functions
     m.add_function(wrap_pyfunction!(py_compute_diff, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_warrant_stack_base64, m)?)?;
+    m.add_function(wrap_pyfunction!(py_encode_warrant_stack, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approvals, m)?)?;
     m.add_function(wrap_pyfunction!(py_evaluate_approval_gates, m)?)?;
@@ -5681,12 +5691,44 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[pyfunction(name = "decode_warrant_stack_base64")]
 fn py_decode_warrant_stack_base64(s: &str) -> PyResult<Vec<PyWarrant>> {
     use crate::wire;
-    let stack = wire::decode_pem_chain(s).map_err(to_py_err)?;
+    use base64::Engine;
+
+    // Try PEM/URL-safe first, fallback to bare STANDARD base64
+    let stack = wire::decode_pem_chain(s)
+        .or_else(|err| {
+            match base64::engine::general_purpose::STANDARD.decode(s.trim()) {
+                Ok(bytes) => wire::decode_stack(&bytes),
+                Err(_) => Err(err), // Return original error if standard base64 decoding also fails
+            }
+        })
+        .map_err(to_py_err)?;
+
     Ok(stack
         .0
         .into_iter()
         .map(|w| PyWarrant { inner: w })
         .collect())
+}
+
+/// Encode a list of warrants as a base64 CBOR WarrantStack.
+///
+/// Returns the base64-encoded CBOR representation suitable for the
+/// ``warrant_stack`` field of a control plane ``AuthorizationEvent``.
+/// Pass a single-element list when only the leaf warrant is available.
+///
+/// Returns ``None`` if the list is empty or encoding fails.
+#[pyfunction(name = "encode_warrant_stack")]
+fn py_encode_warrant_stack(warrants: Vec<PyRef<PyWarrant>>) -> Option<String> {
+    if warrants.is_empty() {
+        return None;
+    }
+    use base64::Engine;
+    let rust_warrants: Vec<crate::warrant::Warrant> =
+        warrants.iter().map(|w| w.inner.clone()).collect();
+    let stack = wire::WarrantStack(rust_warrants);
+    wire::encode_stack(&stack)
+        .ok()
+        .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
 }
 
 /// Compute diff between two warrants.

@@ -66,7 +66,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
-from tenuo._enforcement import enforce_tool_call
+from tenuo._enforcement import EnforcementResult, enforce_tool_call
 
 if TYPE_CHECKING:
     from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
@@ -128,6 +128,7 @@ class TenuoGuard:
         approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
+        control_plane: Optional[Any] = None,
     ):
         """
         Initialize TenuoGuard.
@@ -148,6 +149,9 @@ class TenuoGuard:
                         Set to False for Tier 1 guardrails-only mode.
             dry_run: If True, log denials but don't block. Useful for testing.
             include_hints: If True (default), include recovery hints in denial messages.
+            control_plane: Optional :class:`tenuo.control_plane.ControlPlaneClient` instance.
+                           When provided, every allow and deny decision is streamed to the
+                           Tenuo Cloud control plane for audit and observability.
         """
         self._warrant = warrant
         self._signing_key = signing_key
@@ -164,6 +168,7 @@ class TenuoGuard:
         self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
+        self._control_plane = control_plane
 
         # Handle audit log: string path or file-like object
         self._owns_audit_log = False
@@ -315,6 +320,9 @@ class TenuoGuard:
             None: Allow tool execution
             Dict: Skip tool, use this as result (denial message)
         """
+        import time
+        start_ns = time.perf_counter_ns()
+
         # Map tool name to skill
         skill_name = self._skill_map.get(tool.name, tool.name)
 
@@ -328,7 +336,8 @@ class TenuoGuard:
         use_direct_constraints = warrant is None and (self._constraints or self._allow_tools)
 
         if warrant is None and not use_direct_constraints:
-            return self._deny("No warrant or constraints available", tool.name, args)
+            return self._deny("No warrant or constraints available", tool.name, args,
+                              start_ns=start_ns)
 
         # =======================================================================
         # Tier 2: Warrant + PoP Authorization (Cryptographic)
@@ -352,10 +361,25 @@ class TenuoGuard:
                     approvals=self._approvals,
                 )
 
+                if self._control_plane is not None:
+                    latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                    _warrant_stack = None
+                    try:
+                        from tenuo_core import encode_warrant_stack
+                        _warrant_stack = encode_warrant_stack([bound_warrant.warrant])
+                    except Exception:
+                        pass
+                    self._control_plane.emit_for_enforcement(
+                        result,
+                        latency_us=latency_us,
+                        warrant_stack_override=_warrant_stack,
+                    )
+
                 if not result.allowed:
                     # Map error types to appropriate denial messages
                     if result.error_type == "expired":
-                        return self._deny("Warrant expired", tool.name, args)
+                        return self._deny("Warrant expired", tool.name, args,
+                                          start_ns=start_ns, _cp_already_emitted=True)
                     else:
                         # Get detailed reason for other denial types
                         reason, constraint_param, constraint = self._get_denial_info(warrant, skill_name, validation_args)
@@ -365,6 +389,8 @@ class TenuoGuard:
                             args,
                             constraint_param=constraint_param,
                             constraint=constraint,
+                            start_ns=start_ns,
+                            _cp_already_emitted=True,
                         )
 
                 # PoP authorized - tool call is allowed
@@ -390,18 +416,20 @@ class TenuoGuard:
         if use_direct_constraints:
             # Direct constraints from builder (no warrant)
             if skill_name not in self._constraints and skill_name not in self._allow_tools:
-                return self._deny(f"Tool '{tool.name}' not in allowlist", tool.name, args)
+                return self._deny(f"Tool '{tool.name}' not in allowlist", tool.name, args,
+                                  start_ns=start_ns)
             constraints = self._constraints.get(skill_name, {})
         else:
             # Warrant-based Tier 1
             # Check expiry
             is_expired = self._check_expiry(warrant)
             if is_expired:
-                return self._deny("Warrant expired", tool.name, args)
+                return self._deny("Warrant expired", tool.name, args, start_ns=start_ns)
 
             # Check skill is granted
             if not self._skill_granted(warrant, skill_name):
-                return self._deny(f"Tool '{tool.name}' not authorized", tool.name, args)
+                return self._deny(f"Tool '{tool.name}' not authorized", tool.name, args,
+                                  start_ns=start_ns)
 
             # Get constraints for this skill
             constraints = self._get_skill_constraints(warrant, skill_name)
@@ -430,6 +458,7 @@ class TenuoGuard:
                                 args,
                                 constraint_param=arg_name,
                                 constraint=constraint,
+                                start_ns=start_ns,
                             )
                     elif not has_wildcard and not allows_unknown:
                         # Zero-trust: unknown argument rejected
@@ -437,6 +466,7 @@ class TenuoGuard:
                             f"Unknown argument '{arg_name}' - not in constraints",
                             tool.name,
                             args,
+                            start_ns=start_ns,
                         )
                 except Exception as e:
                     logger.warning(f"Constraint implementation bug causing denial for '{arg_name}': {e}")
@@ -444,10 +474,25 @@ class TenuoGuard:
                         f"Argument '{arg_name}' violates constraint (internal validation error)",
                         tool.name,
                         args,
+                        start_ns=start_ns,
                     )
 
         # All checks passed
         self._audit("tool_allowed", tool.name, args, warrant)
+        if self._control_plane is not None:
+            latency_us = (time.perf_counter_ns() - start_ns) // 1000
+            warrant_id = ""
+            if warrant is not None:
+                _wid = getattr(warrant, "id", None)
+                if _wid is not None:
+                    warrant_id = _wid.hex() if hasattr(_wid, "hex") else str(_wid)
+            pseudo = EnforcementResult(
+                allowed=True,
+                warrant_id=warrant_id,
+                tool=tool.name,
+                arguments=args,
+            )
+            self._control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
         return None  # Proceed with tool execution
 
     async def async_before_tool(
@@ -610,6 +655,8 @@ class TenuoGuard:
         *,
         constraint_param: Optional[str] = None,
         constraint: Optional[Any] = None,
+        start_ns: Optional[int] = None,
+        _cp_already_emitted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Handle denial based on on_deny setting."""
         # Dry run mode: log but don't block
@@ -619,6 +666,24 @@ class TenuoGuard:
             return None  # Allow through in dry run
 
         self._audit("tool_denied", tool_name, args, reason=reason)
+
+        if self._control_plane is not None and not _cp_already_emitted:
+            import time
+            latency_us = ((time.perf_counter_ns() - start_ns) // 1000) if start_ns is not None else 0
+            warrant_id = ""
+            if self._warrant is not None:
+                _wid = getattr(self._warrant, "id", None)
+                if _wid is not None:
+                    warrant_id = _wid.hex() if hasattr(_wid, "hex") else str(_wid)
+            pseudo = EnforcementResult(
+                allowed=False,
+                warrant_id=warrant_id,
+                tool=tool_name,
+                denial_reason=reason,
+                constraint_violated=constraint_param,
+                arguments=args,
+            )
+            self._control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
 
         if self._on_deny == "raise":
             raise ToolAuthorizationError(reason, tool_name, args)
@@ -760,6 +825,7 @@ class GuardBuilder:
         self._approval_policy: Optional[Any] = None
         self._approval_handler: Optional[Any] = None
         self._approvals = None
+        self._control_plane: Optional[Any] = None
 
     @classmethod
     def from_tools(cls, tools: List[Callable]) -> "GuardBuilder":
@@ -791,6 +857,32 @@ class GuardBuilder:
                 if constraints:
                     builder.allow(tool_name, **constraints)
         return builder
+
+    def with_control_plane(self, control_plane: Any) -> "GuardBuilder":
+        """
+        Attach a Tenuo Cloud control plane client for audit event streaming.
+
+        Every allow and deny decision will be streamed to the control plane
+        for real-time observability and non-repudiation.
+
+        Args:
+            control_plane: A :class:`tenuo.control_plane.ControlPlaneClient` instance,
+                           or ``tenuo.control_plane.get_client()`` singleton.
+
+        Returns:
+            self for chaining
+
+        Example:
+            from tenuo.control_plane import connect
+
+            cp = connect()
+            guard = (GuardBuilder()
+                .with_warrant(my_warrant, agent_key)
+                .with_control_plane(cp)
+                .build())
+        """
+        self._control_plane = control_plane
+        return self
 
     def with_warrant(
         self,
@@ -1047,4 +1139,5 @@ class GuardBuilder:
             approval_policy=self._approval_policy,
             approval_handler=self._approval_handler,
             approvals=self._approvals,
+            control_plane=self._control_plane,
         )

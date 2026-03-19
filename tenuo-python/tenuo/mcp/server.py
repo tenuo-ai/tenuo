@@ -259,6 +259,7 @@ class MCPVerifier:
         authorizer: Any,
         config: Optional[Any] = None,
         require_warrant: bool = True,
+        control_plane: Optional[Any] = None,
     ) -> None:
         """
         Args:
@@ -280,6 +281,7 @@ class MCPVerifier:
         self._authorizer = authorizer
         self._config = config
         self._require_warrant = require_warrant
+        self._control_plane = control_plane
 
     def verify(
         self,
@@ -438,9 +440,22 @@ class MCPVerifier:
         # ------------------------------------------------------------------
         # Step 6: authorize
         # ------------------------------------------------------------------
+        import time
+        start_ns = time.perf_counter_ns()
+        chain_result = None
+        result: MCPVerificationResult
+
         try:
-            self._authorizer.authorize_one(
+            chain_result = self._authorizer.authorize_one(
                 warrant, tool_name, constraints, pop_sig, approvals
+            )
+            logger.debug("MCP call authorized for '%s' (warrant=%s)", tool_name, warrant_id)
+            result = MCPVerificationResult(
+                allowed=True,
+                tool=tool_name,
+                clean_arguments=clean_arguments,
+                constraints=constraints,
+                warrant_id=warrant_id,
             )
         except ApprovalGateTriggered:
             logger.info(
@@ -448,7 +463,7 @@ class MCPVerifier:
                 tool_name,
                 warrant_id,
             )
-            return MCPVerificationResult(
+            result = MCPVerificationResult(
                 allowed=False,
                 tool=tool_name,
                 clean_arguments=clean_arguments,
@@ -473,7 +488,7 @@ class MCPVerifier:
                 warrant_id,
                 exc,
             )
-            return MCPVerificationResult(
+            result = MCPVerificationResult(
                 allowed=False,
                 tool=tool_name,
                 clean_arguments=clean_arguments,
@@ -489,7 +504,7 @@ class MCPVerifier:
                 warrant_id,
                 exc,
             )
-            return MCPVerificationResult(
+            result = MCPVerificationResult(
                 allowed=False,
                 tool=tool_name,
                 clean_arguments=clean_arguments,
@@ -505,7 +520,7 @@ class MCPVerifier:
                 exc,
                 exc_info=True,
             )
-            return MCPVerificationResult(
+            result = MCPVerificationResult(
                 allowed=False,
                 tool=tool_name,
                 clean_arguments=clean_arguments,
@@ -515,14 +530,13 @@ class MCPVerifier:
                 jsonrpc_error_code=-32001,
             )
 
-        logger.debug("MCP call authorized for '%s' (warrant=%s)", tool_name, warrant_id)
-        return MCPVerificationResult(
-            allowed=True,
-            tool=tool_name,
-            clean_arguments=clean_arguments,
-            constraints=constraints,
-            warrant_id=warrant_id,
-        )
+        if self._control_plane:
+            latency_us = (time.perf_counter_ns() - start_ns) // 1000
+            self._control_plane.emit_for_enforcement(
+                result, chain_result=chain_result, latency_us=latency_us
+            )
+            
+        return result
 
     def verify_or_raise(
         self,
@@ -569,6 +583,7 @@ def verify_mcp_call(
     config: Optional[Any] = None,
     require_warrant: bool = True,
     meta: Optional[Dict[str, Any]] = None,
+    control_plane: Optional[Any] = None,
 ) -> MCPVerificationResult:
     """Verify a single MCP tool call — convenience wrapper around :class:`MCPVerifier`.
 
@@ -605,6 +620,7 @@ def verify_mcp_call(
         authorizer=authorizer,
         config=config,
         require_warrant=require_warrant,
+        control_plane=control_plane,
     ).verify(tool_name, arguments, meta=meta)
 
 
