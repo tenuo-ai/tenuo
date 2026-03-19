@@ -535,7 +535,7 @@ class MCPVerifier:
             self._control_plane.emit_for_enforcement(
                 result, chain_result=chain_result, latency_us=latency_us
             )
-            
+
         return result
 
     def verify_or_raise(

@@ -16,6 +16,7 @@ so we can assert on fields without standing up a real control plane server.
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
@@ -677,10 +678,8 @@ class TestTemporalControlPlane:
 # ---------------------------------------------------------------------------
 
 # Patch google.adk before importing TenuoGuard (same technique as test_google_adk.py)
-import sys
-from unittest.mock import MagicMock as _MagicMock
-
-_mock_google = _MagicMock()
+# sys and MagicMock are already imported at the top of this file.
+_mock_google = MagicMock()
 for _mod in [
     "google", "google.adk", "google.adk.plugins", "google.adk.tools",
     "google.adk.tools.tool_context", "google.adk.tools.base_tool",
