@@ -30,12 +30,12 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.4",
-    "@vitest/ui": "^4.1.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/ui": "^4.0.18",
     "autoprefixer": "^10.4.27",
-    "jsdom": "^28.1.0",
+    "jsdom": "^29.0.0",
     "typescript": "^5.2.2",
-    "vite": "^7.3.1",
-    "vitest": "^4.1.0"
+    "vite": "^8.0.1",
+    "vitest": "^3.2.4"
   }
 }
