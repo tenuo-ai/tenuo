@@ -153,3 +153,67 @@ assert CapabilityMonotonicity {
 // We prove this mathematically by asking Alloy to search the entire state space combinatorics 
 // up to 8 Constraints and 8 Values. If unsatisfiable, no counterexample exists inside this bound.
 check CapabilityMonotonicity for 8 Constraint, 8 Value
+run conservatism_gap for 8 Constraint, 8 Value
+
+// ============================================================================
+// Map-level keyset identity (I4, IETF draft Section 4.5)
+// ============================================================================
+//
+// Per-constraint subsumption (above) proves that individual constraint
+// values narrow correctly. This section models the *map-level* rule:
+// when the parent's constraint map is non-empty, the child must have
+// exactly the same set of argument keys. Dropping a key reopens that
+// argument (escalation under closed-world semantics). Adding a key
+// produces invocations the parent's closed-world check rejects (the
+// derived invocation set is disjoint, not a subset).
+
+sig ArgKey {}
+
+sig ConstraintMap {
+    entries: ArgKey -> lone Constraint
+}
+
+fun keys[m: ConstraintMap] : set ArgKey {
+    m.entries.Constraint
+}
+
+fun non_empty[m: ConstraintMap] : set ConstraintMap {
+    { cm: ConstraintMap | some cm.entries }
+}
+
+pred map_subsumes[parent, child: ConstraintMap] {
+    // Tool-level: child keys must be a subset (no phantom tools)
+    // Key-level: when parent is non-empty, exact key set identity
+    some parent.entries =>
+        keys[child] = keys[parent]
+    else
+        // Parent empty (open-world): child may introduce any keys
+        keys[child] in ArgKey
+
+    // Per-key: each child constraint subsumes its parent's
+    all k: keys[parent] & keys[child] |
+        parent.entries[k] -> child.entries[k] in sub3
+}
+
+// If map_subsumes holds, then every value accepted by the child map
+// under closed-world semantics is also accepted by the parent map.
+// Closed-world: a value is a map from ArgKey to Value; it is accepted
+// iff (a) its keys exactly equal the map's keys, and (b) each value
+// satisfies its constraint.
+
+pred map_accepts[m: ConstraintMap, args: ArgKey -> one Value] {
+    some m.entries =>
+        (args.Value = keys[m] and
+         all k: keys[m] | args[k] in m.entries[k].accepts)
+    else
+        // Empty map: open-world, all arg combinations accepted
+        all k: args.Value | some args[k]
+}
+
+assert MapMonotonicity {
+    all parent, child: ConstraintMap, args: ArgKey -> one Value |
+        (map_subsumes[parent, child] and map_accepts[child, args])
+            => map_accepts[parent, args]
+}
+
+check MapMonotonicity for 4 Constraint, 4 Value, 3 ArgKey, 4 ConstraintMap

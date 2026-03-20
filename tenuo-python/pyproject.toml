@@ -56,7 +56,7 @@ langgraph = [
     "langchain-core>=0.2.27",  # langgraph 0.2.0 requires this minimum
 ]
 crewai = [
-    "crewai>=1.0",
+    "crewai>=1.0; python_version >= '3.10'",
 ]
 mcp = [
     "mcp>=1.0.0; python_version >= '3.10'",

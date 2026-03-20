@@ -77,6 +77,9 @@ pub struct AuthorizationEvent {
     pub latency_us: u64,
     /// Unique request ID for tracing
     pub request_id: String,
+    /// JSON string of the tool arguments passed by the agent
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
 }
 
 impl AuthorizationEvent {
@@ -91,6 +94,7 @@ impl AuthorizationEvent {
         warrant_stack: Option<String>,
         latency_us: u64,
         request_id: String,
+        arguments: Option<String>,
     ) -> Self {
         Self {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -105,6 +109,7 @@ impl AuthorizationEvent {
             warrant_stack,
             latency_us,
             request_id,
+            arguments,
         }
     }
 
@@ -121,6 +126,7 @@ impl AuthorizationEvent {
         warrant_stack: Option<String>,
         latency_us: u64,
         request_id: String,
+        arguments: Option<String>,
     ) -> Self {
         Self {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -135,6 +141,7 @@ impl AuthorizationEvent {
             warrant_stack,
             latency_us,
             request_id,
+            arguments,
         }
     }
 }
@@ -275,6 +282,10 @@ pub struct EnvironmentInfo {
     pub environment: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deploy_id: Option<String>,
+
+    /// SDK and Framework context for Fleet Health UI
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub metadata: HashMap<String, String>,
 }
 
 impl EnvironmentInfo {
@@ -321,6 +332,7 @@ impl EnvironmentInfo {
                 .or_else(|_| std::env::var("BUILD_ID"))
                 .or_else(|_| std::env::var("CI_COMMIT_SHA"))
                 .ok(),
+            metadata: HashMap::new(),
         }
     }
 }
@@ -1457,6 +1469,7 @@ mod tests {
             Some("base64stack".to_string()),
             1234,
             "req-789".to_string(),
+            None,
         );
         assert_eq!(event.decision, "allow");
         assert!(event.deny_reason.is_none());
@@ -1478,6 +1491,7 @@ mod tests {
             Some("base64stack".to_string()),
             5678,
             "req-999".to_string(),
+            None,
         );
         assert_eq!(event.decision, "deny");
         assert_eq!(event.deny_reason, Some("constraint_violation".to_string()));
@@ -1497,6 +1511,7 @@ mod tests {
             None, // No warrant stack
             1234,
             "req-789".to_string(),
+            None,
         );
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"decision\":\"allow\""));

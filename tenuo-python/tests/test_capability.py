@@ -186,20 +186,18 @@ class TestScopedTaskBoundaries:
         """
         Attack: Add new constraint field not in parent.
 
-        Expected: Allowed (narrowing), but parent constraints inherited.
+        Expected: Rejected (keyset identity, I4). When the parent's
+        constraint map is non-empty, the child must use the exact same
+        key set.
         """
         print("\n--- grant: New Constraint Field ---")
 
         with mint_sync(Capability("read_file", path=Pattern("/data/*"))):
-            # Add max_size constraint not in parent
-            with grant(Capability("read_file", path=Pattern("/data/reports/*"), max_size=Range(max=1000))):
-                child = warrant_scope()
+            with pytest.raises(MonotonicityError):
+                with grant(Capability("read_file", path=Pattern("/data/reports/*"), max_size=Range(max=1000))):
+                    pass
 
-                # Both constraints present
-                assert "path" in child.capabilities["read_file"]
-                assert "max_size" in child.capabilities["read_file"]
-
-        print("  [Result] New constraint fields allowed (narrowing)")
+        print("  [Result] New constraint fields correctly rejected (keyset identity)")
 
 
 class TestEnsureConstraint:

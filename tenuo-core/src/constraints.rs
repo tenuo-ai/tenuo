@@ -3787,14 +3787,17 @@ impl ConstraintSet {
     /// # Monotonicity Rules
     ///
     /// - Child must have all constraints that parent has (can be narrower)
-    /// - Child can add new constraints (that's more restrictive)
+    /// - When the parent map is non-empty, the child must have exactly
+    ///   the same argument keys (keyset identity, I4). Adding a key
+    ///   produces invocations the parent's closed-world check rejects;
+    ///   dropping a key reopens that argument. Both break monotonicity.
+    /// - When the parent map is empty (open-world), the child may
+    ///   introduce any keys (open-world to closed-world transition).
     /// - Child cannot enable `allow_unknown` if parent has it disabled
     ///   (that would expand capabilities)
     /// - Child can disable `allow_unknown` even if parent enabled it
     ///   (that's more restrictive)
     pub fn validate_attenuation(&self, child: &ConstraintSet) -> Result<()> {
-        // Monotonicity: child cannot be MORE permissive than parent
-        // If parent has allow_unknown=false, child cannot enable it
         if !self.allow_unknown && child.allow_unknown {
             return Err(Error::MonotonicityViolation(
                 "child cannot enable allow_unknown when parent has it disabled".to_string(),
@@ -3813,7 +3816,22 @@ impl ConstraintSet {
             parent_constraint.validate_attenuation(child_constraint)?;
         }
 
-        // Child can have additional constraints (that's more restrictive)
+        // Keyset identity (I4): when the parent map is non-empty, the
+        // child must not introduce argument keys absent from the parent.
+        // When the parent map is empty, any child keys are permitted
+        // (open-world to closed-world transition).
+        if !self.constraints.is_empty() {
+            for key in child.constraints.keys() {
+                if !self.constraints.contains_key(key) {
+                    return Err(Error::MonotonicityViolation(format!(
+                        "child adds argument key '{}' not present in parent's \
+                         non-empty constraint map (keyset identity, I4)",
+                        key
+                    )));
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -4338,17 +4356,30 @@ mod tests {
     }
 
     #[test]
-    fn test_adding_new_constraint_to_unconstrained_field() {
-        // When parent doesn't have a field, child can add any constraint
+    fn test_adding_key_to_nonempty_parent_rejected() {
+        // Keyset identity (I4): when parent has a non-empty constraint
+        // map, child cannot add new argument keys. Under closed-world
+        // semantics, the added key produces a different invocation shape.
         let mut parent = ConstraintSet::new();
         parent.insert("cluster", Pattern::new("staging-*").unwrap());
-        // parent has no "action" constraint
 
         let mut child = ConstraintSet::new();
         child.insert("cluster", Exact::new("staging-web"));
-        child.insert("action", OneOf::new(vec!["upgrade", "restart"])); // NEW field
+        child.insert("action", OneOf::new(vec!["upgrade", "restart"]));
 
-        // This should work - child can add new constraints
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[test]
+    fn test_adding_key_to_empty_parent_allowed() {
+        // Open-world to closed-world transition: when parent has no
+        // constraints, child may introduce any keys.
+        let parent = ConstraintSet::new();
+
+        let mut child = ConstraintSet::new();
+        child.insert("cluster", Exact::new("staging-web"));
+        child.insert("action", OneOf::new(vec!["upgrade", "restart"]));
+
         assert!(parent.validate_attenuation(&child).is_ok());
     }
 

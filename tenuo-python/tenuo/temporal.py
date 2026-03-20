@@ -1043,6 +1043,12 @@ class TenuoInterceptorConfig:
     ``trusted_roots`` to enable full Authorizer + PoP verification.
     """
 
+    control_plane: Optional[Any] = None
+    """
+    Optional ControlPlaneClient for emitting authorization check results
+    back to the control plane.
+    """
+
     on_denial: Literal["raise", "log", "skip"] = "raise"
     """
     Behavior when authorization fails:
@@ -2832,6 +2838,10 @@ class TenuoActivityInboundInterceptor:
         # Get activity info
         info = activity.info()
 
+        import time
+        start_ns = time.perf_counter_ns()
+        chain_result = None
+
         # Phase 2: Local activity guard
         # Local activities bypass interceptors at the worker level, but
         # we can detect them here and enforce @unprotected marking.
@@ -2969,13 +2979,13 @@ class TenuoActivityInboundInterceptor:
                 if chain_header:
                     chain_list = json.loads(base64.b64decode(chain_header))
                     chain = [CoreWarrant.from_base64(w) for w in chain_list]
-                    authorizer.check_chain(
+                    chain_result = authorizer.check_chain(
                         chain, tool_name, args,
                         signature=pop_bytes,
                         approvals=gate_approvals,
                     )
                 else:
-                    authorizer.authorize_one(
+                    chain_result = authorizer.authorize_one(
                         warrant, tool_name, args,
                         signature=pop_bytes,
                         approvals=gate_approvals,
@@ -3188,6 +3198,8 @@ class TenuoActivityInboundInterceptor:
             warrant=warrant,
             tool=tool_name,
             args=args,
+            start_ns=start_ns,
+            chain_result=chain_result,
         )
 
         # Execute the activity
@@ -3365,8 +3377,25 @@ class TenuoActivityInboundInterceptor:
         warrant: Any,
         tool: str,
         args: Dict[str, Any],
+        start_ns: Optional[int] = None,
+        chain_result: Optional[Any] = None,
     ) -> None:
         """Emit audit event for allowed action."""
+        if self._config.control_plane:
+            import time
+            from tenuo._enforcement import EnforcementResult
+            latency_us = int((time.perf_counter_ns() - start_ns) / 1000) if start_ns else 0
+
+            res = EnforcementResult(
+                allowed=True,
+                tool=tool,
+                arguments=args,
+                warrant_id=getattr(warrant, "id", None)
+            )
+            self._config.control_plane.emit_for_enforcement(
+                res, chain_result=chain_result, latency_us=latency_us
+            )
+
         if not self._config.audit_allow or not self._config.audit_callback:
             return
 
@@ -3399,8 +3428,36 @@ class TenuoActivityInboundInterceptor:
         args: Dict[str, Any],
         reason: str,
         constraint: Optional[str] = None,
+        start_ns: Optional[int] = None,
     ) -> None:
         """Emit audit event for denied action."""
+        if self._config.control_plane:
+            import time
+            from tenuo._enforcement import EnforcementResult
+            latency_us = int((time.perf_counter_ns() - start_ns) / 1000) if start_ns else 0
+
+            # Encode single-warrant stack for the denial event so the control
+            # plane can reconstruct chain context even without a full check_chain result.
+            warrant_stack_b64 = None
+            try:
+                from tenuo_core import encode_warrant_stack
+                warrant_stack_b64 = encode_warrant_stack([warrant])
+            except Exception:
+                pass
+
+            res = EnforcementResult(
+                allowed=False,
+                tool=tool,
+                arguments=args,
+                denial_reason=reason,
+                constraint_violated=constraint,
+                warrant_id=getattr(warrant, "id", None),
+            )
+            self._config.control_plane.emit_for_enforcement(
+                res, chain_result=None, latency_us=latency_us,
+                warrant_stack_override=warrant_stack_b64,
+            )
+
         if not self._config.audit_deny or not self._config.audit_callback:
             return
 

@@ -102,6 +102,25 @@ logger = logging.getLogger("tenuo.langgraph")
 F = TypeVar("F", bound=Callable)
 
 
+def _warrant_stack_from_bound(bw: "BoundWarrant") -> Optional[str]:
+    """Encode the bound warrant as a single-element base64 CBOR WarrantStack.
+
+    LangGraph operates on single delegated warrants (no multi-hop chain object
+    in Python state), so chain_length=1 and warrant_stack contains just the
+    leaf warrant.  This gives the control plane enough context to reconstruct
+    the issuer and warrant ID even without a full ChainVerificationResult.
+    Returns None on any failure so callers always degrade gracefully.
+    """
+    try:
+        from tenuo_core import encode_warrant_stack
+        w = getattr(bw, "warrant", None)
+        if w is not None:
+            return encode_warrant_stack([w])
+    except Exception:
+        pass
+    return None
+
+
 # =============================================================================
 # Key Auto-Loading (Convention over Configuration)
 # =============================================================================
@@ -206,6 +225,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
+        control_plane: Optional[Any] = None,
     ):
         """
         Initialize TenuoMiddleware.
@@ -231,6 +251,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
+        self._control_plane = control_plane
 
     def _get_bound_warrant_from_request(
         self,
@@ -293,6 +314,9 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             bw = self._get_bound_warrant_from_request(request.state, request.runtime)
 
             # Use shared enforcement logic
+            import time
+            start_ns = time.perf_counter_ns()
+
             result = enforce_tool_call(
                 tool_name=tool_name,
                 tool_args=tool_args,
@@ -302,6 +326,13 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
             )
+
+            if self._control_plane:
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                self._control_plane.emit_for_enforcement(
+                    result, latency_us=latency_us, request_id=request_id,
+                    warrant_stack_override=_warrant_stack_from_bound(bw),
+                )
 
             if not result.allowed:
                 # Log detailed reason for operators
@@ -625,6 +656,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
+        control_plane: Optional[Any] = None,
         **kwargs: Any,
     ):
         """
@@ -646,6 +678,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
+        self._control_plane = control_plane
 
     def _run_with_auth(
         self,
@@ -697,6 +730,9 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
 
             # Use shared enforcement logic
             request_id = str(uuid.uuid4())[:8]
+            import time
+            start_ns = time.perf_counter_ns()
+
             enforcement_result = enforce_tool_call(
                 tool_name=tool_name,
                 tool_args=tool_args,
@@ -706,6 +742,13 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
             )
+
+            if self._control_plane:
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                self._control_plane.emit_for_enforcement(
+                    enforcement_result, latency_us=latency_us, request_id=request_id,
+                    warrant_stack_override=_warrant_stack_from_bound(bw),
+                )
 
             if not enforcement_result.allowed:
                 # Log detailed reason for operators

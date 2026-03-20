@@ -226,6 +226,10 @@ pub struct ChainVerificationResult {
     pub leaf_depth: u32,
     /// Details of each verified step.
     pub verified_steps: Vec<ChainStep>,
+    /// Base64-encoded CBOR WarrantStack for audit event transmission.
+    /// Populated by check_chain(); None when computed from a single warrant
+    /// via authorize_one() without a full chain.
+    pub warrant_stack_b64: Option<String>,
 }
 
 /// A single step in the verified chain.
@@ -846,6 +850,7 @@ impl DataPlane {
             chain_length: chain.len(),
             leaf_depth: 0,
             verified_steps: Vec::new(),
+            warrant_stack_b64: None,
         };
 
         // Step 1: Verify the root warrant is from a trusted key
@@ -972,6 +977,26 @@ impl DataPlane {
                 "I2 violated: child depth {} exceeds parent's max_depth {}",
                 child.depth(),
                 parent_max
+            )));
+        }
+
+        // I2: Child's max_depth cannot exceed parent's max_depth
+        // (IETF draft Section 7, step 4h)
+        let child_max = child.effective_max_depth();
+        if child_max > parent_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "I2 violated: child max_depth {} exceeds parent's max_depth {}",
+                child_max, parent_max
+            )));
+        }
+
+        // I2: Child's depth must not exceed its own max_depth
+        // (IETF draft Section 7, step 4n)
+        if child.depth() > child_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "I2 violated: child depth {} exceeds its own max_depth {}",
+                child.depth(),
+                child_max
             )));
         }
 
@@ -1179,6 +1204,21 @@ impl DataPlane {
             }
             auth_result?;
         }
+
+        use base64::Engine;
+        let warrant_stack_b64 = if chain.len() > 1 {
+            let stack = crate::wire::WarrantStack(chain.to_vec());
+            crate::wire::encode_stack(&stack)
+                .ok()
+                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+        } else {
+            // Single warrant — encode it directly for audit completeness
+            crate::wire::encode_stack(&crate::wire::WarrantStack(chain.to_vec()))
+                .ok()
+                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+        };
+        let mut result = result;
+        result.warrant_stack_b64 = warrant_stack_b64;
 
         Ok(result)
     }
@@ -1911,6 +1951,7 @@ impl Authorizer {
             chain_length: chain.len(),
             leaf_depth: 0,
             verified_steps: Vec::new(),
+            warrant_stack_b64: None,
         };
 
         // Root must be from a trusted key
@@ -2013,6 +2054,26 @@ impl Authorizer {
                 "child depth {} exceeds parent's max_depth {}",
                 child.depth(),
                 parent_max
+            )));
+        }
+
+        // I2: Child's max_depth cannot exceed parent's max_depth
+        // (IETF draft Section 7, step 4h)
+        let child_max = child.effective_max_depth();
+        if child_max > parent_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "child max_depth {} exceeds parent's max_depth {}",
+                child_max, parent_max
+            )));
+        }
+
+        // I2: Child's depth must not exceed its own max_depth
+        // (IETF draft Section 7, step 4n)
+        if child.depth() > child_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "child depth {} exceeds its own max_depth {}",
+                child.depth(),
+                child_max
             )));
         }
 
@@ -2258,6 +2319,21 @@ impl Authorizer {
             // needs_approval = false → tool is free (either approval gate map present
             // and no approval gate matched, or no approval gate map and no required_approvers)
         }
+
+        use base64::Engine;
+        let warrant_stack_b64 = if chain.len() > 1 {
+            let stack = crate::wire::WarrantStack(chain.to_vec());
+            crate::wire::encode_stack(&stack)
+                .ok()
+                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+        } else {
+            // Single warrant — encode it directly for audit completeness
+            crate::wire::encode_stack(&crate::wire::WarrantStack(chain.to_vec()))
+                .ok()
+                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+        };
+        let mut result = result;
+        result.warrant_stack_b64 = warrant_stack_b64;
 
         Ok(result)
     }
