@@ -123,14 +123,22 @@ impl PyControlPlaneClient {
             environment: env_info,
             metrics: None,
             signing_key: signing_key.inner.clone(),
+            id_notify: None,
         };
 
         let authorizer_id_async = Arc::new(RwLock::new(None::<String>));
         let authorizer_id_py = Arc::new(Mutex::new(None::<String>));
 
+        // Watch channel: HeartbeatConfig fires `id_notify` the instant the
+        // authorizer ID is assigned. The watcher task below receives it
+        // immediately via `changed()` — no polling required.
+        let (id_tx, mut id_rx) = tokio::sync::watch::channel(None::<String>);
+
         let shared_id = authorizer_id_async.clone();
         let py_id_watcher = authorizer_id_py.clone();
-        let async_id_watcher = authorizer_id_async.clone();
+
+        let mut config = config;
+        config.id_notify = Some(id_tx);
 
         runtime().spawn(async move {
             tokio::select! {
@@ -139,16 +147,14 @@ impl PyControlPlaneClient {
             }
         });
 
-        // One-shot watcher: polls the tokio RwLock until the authorizer_id is
-        // set (after registration completes), then propagates to the std::Mutex
+        // One-shot watcher: blocks on the watch channel until the heartbeat
+        // loop fires id_notify after registration, then copies to std::Mutex
         // so Python-side reads never need block_on.
         runtime().spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                let id = async_id_watcher.read().await.clone();
+            if id_rx.changed().await.is_ok() {
+                let id = id_rx.borrow().clone();
                 if id.is_some() {
                     *py_id_watcher.lock().unwrap() = id;
-                    break;
                 }
             }
         });

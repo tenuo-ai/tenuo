@@ -609,6 +609,7 @@ async fn serve_http(
             environment,
             metrics: Some(metrics.clone()),
             signing_key,
+            id_notify: None,
         };
 
         // Clone shared_authorizer_id for the heartbeat task to update

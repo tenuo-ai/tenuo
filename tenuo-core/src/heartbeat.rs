@@ -684,6 +684,10 @@ pub struct HeartbeatConfig {
     /// Events are signed by the authorizer and become non-repudiable receipts.
     /// The public key is sent during registration for verification on the control plane.
     pub signing_key: SigningKey,
+    /// Optional watch channel sender notified immediately after the authorizer
+    /// ID is assigned by the control plane. Python bindings use this to avoid
+    /// polling; all other callers leave this as `None`.
+    pub id_notify: Option<tokio::sync::watch::Sender<Option<String>>>,
 }
 
 impl Default for HeartbeatConfig {
@@ -704,6 +708,7 @@ impl Default for HeartbeatConfig {
             environment: EnvironmentInfo::default(),
             metrics: None,
             signing_key,
+            id_notify: None,
         }
     }
 }
@@ -853,6 +858,12 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
     {
         let mut id_guard = shared_authorizer_id.write().await;
         *id_guard = Some(authorizer_id.clone());
+    }
+
+    // Notify any watch-based subscriber (e.g. Python bindings) immediately,
+    // eliminating the need for a polling watcher.
+    if let Some(ref tx) = config.id_notify {
+        let _ = tx.send(Some(authorizer_id.clone()));
     }
 
     // Track local SRL version (0 = no SRL loaded)
@@ -1379,6 +1390,7 @@ mod tests {
             environment: EnvironmentInfo::default(),
             metrics: None,
             signing_key: SigningKey::generate(),
+            id_notify: None,
         }
     }
 
