@@ -26,3 +26,15 @@ tenuo-explorer/src/wasm/** linguist-generated
 
 # Don't count TypeScript declaration files (generated)
 *.d.ts linguist-generated
+
+# Explorer is a tooling frontend, not the core SDK
+tenuo-explorer/** linguist-vendored
+
+# HTML: all docs/ pages are GitHub Pages templates and the ietf/ file
+# is a rendered RFC — neither represents implementation language
+docs/** linguist-documentation
+ietf/** linguist-documentation
+
+# Scripts and verification helpers are tooling, not the SDK
+scripts/** linguist-documentation
+docs/formal_verification/z3_bounds.py linguist-documentation
