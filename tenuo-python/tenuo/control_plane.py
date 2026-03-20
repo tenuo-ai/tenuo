@@ -15,6 +15,7 @@ _global_client: Optional["ControlPlaneClient"] = None
 
 def connect(
     *,
+    token: Optional[str] = None,
     url: Optional[str] = None,
     api_key: Optional[str] = None,
     authorizer_name: Optional[str] = None,
@@ -24,7 +25,14 @@ def connect(
     """
     Connect to the Tenuo control plane and return a singleton client.
     On first call, starts the background heartbeat loop. Subsequent calls
-    return the same client. All parameters fall back to env vars:
+    return the same client.
+
+    Accepts either a connect token (from the dashboard's Quick Connect) or
+    individual parameters. The connect token encodes endpoint, API key,
+    agent ID, and registration secret in a single string.
+
+    Parameters fall back to env vars:
+        TENUO_CONNECT_TOKEN   (single token from Quick Connect)
         TENUO_CONTROL_PLANE_URL
         TENUO_API_KEY
         TENUO_AUTHORIZER_NAME
@@ -33,7 +41,8 @@ def connect(
     global _global_client
     if _global_client is None:
         _global_client = ControlPlaneClient(
-            url=url, api_key=api_key, authorizer_name=authorizer_name,
+            token=token, url=url, api_key=api_key,
+            authorizer_name=authorizer_name,
             signing_key=signing_key, **kwargs,
         )
     return _global_client
@@ -42,53 +51,59 @@ def get_client() -> Optional["ControlPlaneClient"]:
     """Return the singleton client, or None if connect() was never called."""
     return _global_client
 
+
 class ControlPlaneClient:
     """
     Thin Python wrapper around tenuo_core.ControlPlaneClient.
-    Provides convenience helpers (emit_for_enforcement, from_env) so integrations
-    can emit events with a single call rather than destructuring chain results.
+
+    Token parsing, agent claiming, and signing key generation are all
+    delegated to the Rust core. This wrapper adds Python-specific metadata
+    (detected frameworks, runtime version) and convenience helpers like
+    ``emit_for_enforcement``.
     """
-    def __init__(self, *, url=None, api_key=None, authorizer_name=None,
-                 signing_key=None, **kwargs):
+    def __init__(self, *, token=None, url=None, api_key=None,
+                 authorizer_name=None, signing_key=None, **kwargs):
         try:
-            from tenuo_core import ControlPlaneClient as _Rust, SigningKey
+            from tenuo_core import ControlPlaneClient as _Rust
         except ImportError:
             raise RuntimeError("tenuo_core python-server build not available. Please install tenuo_core with server support.")
+
+        resolved_token = token or os.environ.get("TENUO_CONNECT_TOKEN") or None
+        resolved_url = url or os.environ.get("TENUO_CONTROL_PLANE_URL") or None
+        resolved_key = api_key or os.environ.get("TENUO_API_KEY") or None
+        resolved_name = authorizer_name or os.environ.get("TENUO_AUTHORIZER_NAME") or None
 
         if signing_key is None:
             raw = os.environ.get("TENUO_SIGNING_KEY")
             if raw:
+                from tenuo_core import SigningKey
                 signing_key = SigningKey.from_base64(raw)
-        if signing_key is None:
-            raise ValueError(
-                "signing_key required (or set TENUO_SIGNING_KEY)"
-            )
 
         meta = kwargs.pop("metadata", {}) or {}
         meta.setdefault("sdk_language", "python")
         meta.setdefault("sdk_runtime_version", platform.python_version())
 
-        try:
-            import langgraph
-            meta.setdefault("framework_langgraph", langgraph.__version__)
-        except Exception:
-            pass
-        try:
-            import temporalio
-            meta.setdefault("framework_temporal", temporalio.__version__)
-        except Exception:
-            pass
-        try:
-            import mcp
-            meta.setdefault("framework_mcp", getattr(mcp, "__version__", "unknown"))
-        except Exception:
-            pass
+        for mod_name, meta_key in [
+            ("langgraph", "framework_langgraph"),
+            ("temporalio", "framework_temporal"),
+            ("mcp", "framework_mcp"),
+            ("google.adk", "framework_adk"),
+            ("crewai", "framework_crewai"),
+        ]:
+            try:
+                mod = __import__(mod_name)
+                meta.setdefault(meta_key, getattr(mod, "__version__", "unknown"))
+            except Exception:
+                pass
 
+        # Delegate everything to Rust core: token parsing, key generation,
+        # agent claiming, and heartbeat loop startup.
         self._inner = _Rust(
-            url=url or os.environ["TENUO_CONTROL_PLANE_URL"],
-            api_key=api_key or os.environ["TENUO_API_KEY"],
-            authorizer_name=authorizer_name or os.environ["TENUO_AUTHORIZER_NAME"],
+            url=resolved_url,
+            api_key=resolved_key,
+            authorizer_name=resolved_name,
             signing_key=signing_key,
+            token=resolved_token,
             metadata=meta,
             **kwargs,
         )
@@ -96,17 +111,19 @@ class ControlPlaneClient:
     @classmethod
     def from_env(cls) -> Optional["ControlPlaneClient"]:
         """Return a client from env vars, or None if vars are absent."""
+        if os.environ.get("TENUO_CONNECT_TOKEN"):
+            return cls()
         if not all(v in os.environ for v in (
             "TENUO_CONTROL_PLANE_URL", "TENUO_API_KEY",
-            "TENUO_AUTHORIZER_NAME", "TENUO_SIGNING_KEY",
+            "TENUO_AUTHORIZER_NAME",
         )):
             return None
         return cls()
 
     def emit_for_enforcement(
         self,
-        result: Any,           # EnforcementResult or MCPVerificationResult
-        chain_result: Optional[Any] = None,  # PyChainVerificationResult if available
+        result: Any,
+        chain_result: Optional[Any] = None,
         *,
         latency_us: int = 0,
         request_id: Optional[str] = None,
@@ -116,10 +133,6 @@ class ControlPlaneClient:
         Emit an authorization event from any integration's result object.
         Works with EnforcementResult (LangGraph), MCPVerificationResult (MCP),
         and TemporalAuditEvent (Temporal).
-
-        ``warrant_stack_override`` lets callers supply a pre-encoded base64 CBOR
-        warrant stack when ``chain_result`` is unavailable (e.g. denial events in
-        Temporal where check_chain never returned).
         """
         request_id = request_id or str(uuid.uuid4())
         warrant_id = getattr(result, "warrant_id", None) or ""
@@ -128,7 +141,7 @@ class ControlPlaneClient:
 
         chain_depth = 1
         root_principal = None
-        warrant_stack = warrant_stack_override  # caller-supplied fallback
+        warrant_stack = warrant_stack_override
 
         arguments_dict = getattr(result, "arguments", None)
         arguments_json = None
@@ -144,8 +157,7 @@ class ControlPlaneClient:
             if isinstance(ri, (bytes, list)):
                 root_principal = bytes(ri).hex()
             elif isinstance(ri, str):
-                root_principal = ri  # already hex or identifier string
-            # chain_result warrant_stack takes precedence over the override
+                root_principal = ri
             warrant_stack = getattr(chain_result, "warrant_stack_b64", None) or warrant_stack
 
         if allowed:

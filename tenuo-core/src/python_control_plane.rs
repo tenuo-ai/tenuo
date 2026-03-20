@@ -1,4 +1,6 @@
 #[cfg(feature = "python-server")]
+use crate::connect_token::ConnectToken;
+#[cfg(feature = "python-server")]
 use crate::heartbeat::{
     create_audit_channel, start_heartbeat_loop_with_audit_and_id, AuditEventSender,
     AuthorizationEvent, EnvironmentInfo, HeartbeatConfig,
@@ -33,13 +35,57 @@ fn runtime() -> &'static Arc<tokio::runtime::Runtime> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// PyConnectToken — expose token parsing to Python
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "python-server")]
+#[pyclass(name = "ConnectToken", module = "tenuo_core")]
+pub struct PyConnectToken {
+    inner: ConnectToken,
+}
+
+#[cfg(feature = "python-server")]
+#[pymethods]
+impl PyConnectToken {
+    /// Parse a ``tenuo_ct_…`` token string and return its components.
+    #[staticmethod]
+    fn parse(raw: &str) -> PyResult<Self> {
+        let ct = ConnectToken::parse(raw)
+            .map_err(|e| PyValueError::new_err(format!("invalid connect token: {}", e)))?;
+        Ok(Self { inner: ct })
+    }
+
+    #[getter]
+    fn version(&self) -> u8 {
+        self.inner.version
+    }
+    #[getter]
+    fn endpoint(&self) -> &str {
+        &self.inner.endpoint
+    }
+    #[getter]
+    fn api_key(&self) -> &str {
+        &self.inner.api_key
+    }
+    #[getter]
+    fn agent_id(&self) -> Option<&str> {
+        self.inner.agent_id.as_deref()
+    }
+    #[getter]
+    fn registration_token(&self) -> Option<&str> {
+        self.inner.registration_token.as_deref()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PyControlPlaneClient — main Python-facing control plane client
+// ---------------------------------------------------------------------------
+
 #[cfg(feature = "python-server")]
 #[pyclass(name = "ControlPlaneClient", module = "tenuo_core")]
 pub struct PyControlPlaneClient {
     sender: AuditEventSender,
-    /// Std Mutex for lock-free Python-side reads (no block_on needed).
-    /// Populated by a one-shot watcher task after the heartbeat registers with
-    /// the control plane and receives an authorizer ID.
     authorizer_id_py: Arc<Mutex<Option<String>>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
@@ -49,70 +95,84 @@ pub struct PyControlPlaneClient {
 impl PyControlPlaneClient {
     /// Create a new control plane client and start the background heartbeat loop.
     ///
-    /// The heartbeat loop registers this authorizer with Tenuo Cloud and
-    /// periodically sends liveness signals. Authorization events are batched
-    /// and flushed at ``audit_flush_interval_secs`` intervals.
-    ///
-    /// Args:
-    ///     url: Tenuo Cloud control plane URL (e.g. ``https://cp.tenuo.dev``).
-    ///     api_key: API key for authenticating to the control plane.
-    ///     authorizer_name: Human-readable name for this authorizer instance.
-    ///     signing_key: Ed25519 signing key used to sign heartbeat payloads.
-    ///     authorizer_type: SDK identifier tag (default: ``"python-sdk"``).
-    ///     heartbeat_interval_secs: Seconds between heartbeat signals (default: 30).
-    ///     audit_batch_size: Maximum events held in the in-memory buffer (default: 100).
-    ///     audit_flush_interval_secs: Seconds between audit batch flushes (default: 10).
-    ///     metadata: Optional key-value pairs attached to every heartbeat payload.
-    ///
-    /// Example:
-    /// ```text
-    ///     from tenuo_core import ControlPlaneClient, SigningKey
-    ///
-    ///     key = SigningKey.generate()
-    ///     client = ControlPlaneClient(
-    ///         url="https://cp.tenuo.dev",
-    ///         api_key="tk_...",
-    ///         authorizer_name="my-service",
-    ///         signing_key=key,
-    ///     )
-    /// ```
+    /// Accepts **either** a connect token (``token``) **or** explicit
+    /// ``url`` / ``api_key`` / ``signing_key`` parameters.  When a token is
+    /// provided the endpoint, API key, and optional agent binding are extracted
+    /// from it and a fresh signing key is generated automatically.
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
-        url,
-        api_key,
-        authorizer_name,
-        signing_key,
+        url = None,
+        api_key = None,
+        authorizer_name = None,
+        signing_key = None,
         *,
-        authorizer_type = "python-sdk",
+        token = None,
+        authorizer_type = "embedded",
         heartbeat_interval_secs = 30,
         audit_batch_size = 100,
         audit_flush_interval_secs = 10,
         metadata = None,
     ))]
     fn new(
-        url: String,
-        api_key: String,
-        authorizer_name: String,
-        signing_key: &PySigningKey,
+        url: Option<String>,
+        api_key: Option<String>,
+        authorizer_name: Option<String>,
+        signing_key: Option<&PySigningKey>,
+        token: Option<String>,
         authorizer_type: &str,
         heartbeat_interval_secs: u64,
         audit_batch_size: usize,
         audit_flush_interval_secs: u64,
         metadata: Option<HashMap<String, String>>,
     ) -> PyResult<Self> {
-        let (audit_tx, audit_rx) = create_audit_channel(audit_batch_size);
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+        // ---- resolve configuration from token or explicit args ----
+        let parsed_token = token
+            .as_deref()
+            .map(ConnectToken::parse)
+            .transpose()
+            .map_err(|e| PyValueError::new_err(format!("invalid connect token: {}", e)))?;
 
+        let resolved_url = url
+            .or_else(|| parsed_token.as_ref().map(|t| t.endpoint.clone()))
+            .ok_or_else(|| PyValueError::new_err("url is required (or provide a token)"))?;
+
+        let resolved_key = api_key
+            .or_else(|| parsed_token.as_ref().map(|t| t.api_key.clone()))
+            .ok_or_else(|| PyValueError::new_err("api_key is required (or provide a token)"))?;
+
+        let resolved_name = authorizer_name.unwrap_or_else(|| {
+            parsed_token
+                .as_ref()
+                .and_then(|t| t.agent_id.clone())
+                .unwrap_or_else(|| "default".to_string())
+        });
+
+        let resolved_signing_key = match signing_key {
+            Some(sk) => sk.inner.clone(),
+            None => crate::crypto::SigningKey::generate(),
+        };
+
+        let agent_id = parsed_token.as_ref().and_then(|t| t.agent_id.clone());
+
+        // ---- build env / metadata ----
         let mut env_info = EnvironmentInfo::from_env();
         if let Some(meta) = metadata {
             env_info.metadata = meta;
         }
+        if let Some(ref aid) = agent_id {
+            env_info
+                .metadata
+                .insert("agent_id".to_string(), aid.clone());
+        }
+
+        let (audit_tx, audit_rx) = create_audit_channel(audit_batch_size);
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
 
         let config = HeartbeatConfig {
-            control_plane_url: url,
-            api_key,
-            authorizer_name,
+            control_plane_url: resolved_url,
+            api_key: resolved_key,
+            authorizer_name: resolved_name,
             authorizer_type: authorizer_type.to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             interval_secs: heartbeat_interval_secs,
@@ -122,16 +182,15 @@ impl PyControlPlaneClient {
             audit_flush_interval_secs,
             environment: env_info,
             metrics: None,
-            signing_key: signing_key.inner.clone(),
+            signing_key: resolved_signing_key,
             id_notify: None,
+            agent_id,
+            connect_token: parsed_token,
         };
 
         let authorizer_id_async = Arc::new(RwLock::new(None::<String>));
         let authorizer_id_py = Arc::new(Mutex::new(None::<String>));
 
-        // Watch channel: HeartbeatConfig fires `id_notify` the instant the
-        // authorizer ID is assigned. The watcher task below receives it
-        // immediately via `changed()` — no polling required.
         let (id_tx, mut id_rx) = tokio::sync::watch::channel(None::<String>);
 
         let shared_id = authorizer_id_async.clone();
@@ -140,16 +199,21 @@ impl PyControlPlaneClient {
         let mut config = config;
         config.id_notify = Some(id_tx);
 
+        let cp_url = config.control_plane_url.clone();
+        let auth_name = config.authorizer_name.clone();
         runtime().spawn(async move {
             tokio::select! {
-                _ = start_heartbeat_loop_with_audit_and_id(config, Some(audit_rx), shared_id) => {}
+                _ = start_heartbeat_loop_with_audit_and_id(config, Some(audit_rx), shared_id) => {
+                    eprintln!(
+                        "[tenuo] control plane loop exited for '{}' ({}). \
+                         Registration may have failed — check API key and URL.",
+                        auth_name, cp_url,
+                    );
+                }
                 _ = shutdown_rx.changed() => {}
             }
         });
 
-        // One-shot watcher: blocks on the watch channel until the heartbeat
-        // loop fires id_notify after registration, then copies to std::Mutex
-        // so Python-side reads never need block_on.
         runtime().spawn(async move {
             if id_rx.changed().await.is_ok() {
                 let id = id_rx.borrow().clone();
@@ -166,21 +230,34 @@ impl PyControlPlaneClient {
         })
     }
 
-    /// Create a client from environment variables, returning ``None`` if any required
-    /// variable is missing.
+    /// Create a client from environment variables.
     ///
-    /// Required environment variables:
-    ///     ``TENUO_CONTROL_PLANE_URL``, ``TENUO_API_KEY``,
-    ///     ``TENUO_AUTHORIZER_NAME``, ``TENUO_SIGNING_KEY`` (base64 Ed25519 key).
-    ///
-    /// Example:
-    /// ```text
-    ///     client = ControlPlaneClient.from_env()
-    ///     if client is None:
-    ///         print("Control plane env vars not set — running without telemetry")
-    /// ```
+    /// Checks ``TENUO_CONNECT_TOKEN`` first. Falls back to the legacy
+    /// four-variable set (``TENUO_CONTROL_PLANE_URL``, ``TENUO_API_KEY``,
+    /// ``TENUO_AUTHORIZER_NAME``, ``TENUO_SIGNING_KEY``).
+    /// Returns ``None`` when neither path provides enough configuration.
     #[staticmethod]
     fn from_env() -> PyResult<Option<Self>> {
+        // Fast path: connect token contains everything we need.
+        if let Ok(token) = std::env::var("TENUO_CONNECT_TOKEN") {
+            if !token.is_empty() {
+                return Self::new(
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(token),
+                    "embedded",
+                    30,
+                    100,
+                    10,
+                    None,
+                )
+                .map(Some);
+            }
+        }
+
+        // Legacy path: require all four env vars.
         let url = match std::env::var("TENUO_CONTROL_PLANE_URL") {
             Ok(v) => v,
             Err(_) => return Ok(None),
@@ -212,15 +289,15 @@ impl PyControlPlaneClient {
         arr.copy_from_slice(&key_bytes);
 
         let sk = crate::crypto::SigningKey::from_bytes(&arr);
-
         let py_sk = PySigningKey { inner: sk };
 
         Self::new(
-            url,
-            api_key,
-            auth_name,
-            &py_sk,
-            "python-sdk",
+            Some(url),
+            Some(api_key),
+            Some(auth_name),
+            Some(&py_sk),
+            None,
+            "embedded",
             30,
             100,
             10,
@@ -230,16 +307,6 @@ impl PyControlPlaneClient {
     }
 
     /// Emit an allow event to the control plane.
-    ///
-    /// Args:
-    ///     warrant_id: Unique ID of the leaf warrant that was accepted.
-    ///     tool: Name of the tool or resource that was accessed.
-    ///     chain_depth: Depth of the warrant chain (1 for single warrants).
-    ///     root_principal: Hex-encoded public key of the root issuer, if known.
-    ///     warrant_stack: Base64-encoded CBOR warrant stack for non-repudiation.
-    ///     latency_us: Authorization check latency in microseconds.
-    ///     request_id: Caller-supplied correlation ID (UUID recommended).
-    ///     arguments: JSON-encoded tool arguments for the audit record.
     #[allow(clippy::too_many_arguments)]
     fn emit_allow(
         &self,
@@ -270,23 +337,11 @@ impl PyControlPlaneClient {
             request_id,
             arguments,
         );
-        let _ = self.sender.try_send(event); // drop if full
+        let _ = self.sender.try_send(event);
         Ok(())
     }
 
     /// Emit a deny event to the control plane.
-    ///
-    /// Args:
-    ///     warrant_id: Unique ID of the warrant that was presented (empty string if absent).
-    ///     tool: Name of the tool or resource that was attempted.
-    ///     deny_reason: Human-readable reason for the denial.
-    ///     failed_constraint: The specific constraint expression that was violated, if any.
-    ///     chain_depth: Depth of the warrant chain (1 for single warrants).
-    ///     root_principal: Hex-encoded public key of the root issuer, if known.
-    ///     warrant_stack: Base64-encoded CBOR warrant stack for non-repudiation.
-    ///     latency_us: Authorization check latency in microseconds.
-    ///     request_id: Caller-supplied correlation ID (UUID recommended).
-    ///     arguments: JSON-encoded tool arguments for the audit record.
     #[allow(clippy::too_many_arguments)]
     fn emit_deny(
         &self,
@@ -321,36 +376,21 @@ impl PyControlPlaneClient {
             request_id,
             arguments,
         );
-        let _ = self.sender.try_send(event); // drop if full
+        let _ = self.sender.try_send(event);
         Ok(())
     }
 
-    /// Flush pending audit events and stop the background heartbeat task.
-    ///
-    /// Blocks the calling Python thread for up to ``timeout_secs`` to allow
-    /// the audit flush loop to drain buffered events before the task is
-    /// cancelled. The atexit handler in ``tenuo.control_plane`` calls this
-    /// automatically with a 2-second timeout on clean process exit.
+    /// Flush pending events and stop the background heartbeat task.
     #[pyo3(signature = (timeout_secs = 5.0))]
     fn shutdown(&self, timeout_secs: f64) -> PyResult<()> {
         let secs = timeout_secs.clamp(0.0, 30.0);
-        // Block briefly to let the audit flush loop drain before we cancel it.
         runtime().block_on(tokio::time::sleep(std::time::Duration::from_secs_f64(secs)));
         let _ = self.shutdown_tx.send(true);
         Ok(())
     }
 
     /// The authorizer UUID assigned by the control plane after registration.
-    ///
-    /// Returns ``None`` until the first heartbeat completes and the control plane
-    /// responds with an ID (typically within the first ``heartbeat_interval_secs``).
-    ///
-    /// Example:
-    /// ```text
-    ///     import time
-    ///     time.sleep(5)  # wait for first heartbeat
-    ///     print(client.authorizer_id)  # "tnu_auth_..."
-    /// ```
+    /// Returns ``None`` until registration completes.
     #[getter]
     fn get_authorizer_id(&self) -> Option<String> {
         self.authorizer_id_py.lock().ok().and_then(|g| g.clone())

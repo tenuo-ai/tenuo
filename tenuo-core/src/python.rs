@@ -5665,6 +5665,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     #[cfg(feature = "python-server")]
     m.add_class::<crate::python_control_plane::PyControlPlaneClient>()?;
+    #[cfg(feature = "python-server")]
+    m.add_class::<crate::python_control_plane::PyConnectToken>()?;
 
     // Constants
     m.add("MAX_DELEGATION_DEPTH", crate::MAX_DELEGATION_DEPTH)?;
