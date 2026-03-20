@@ -56,6 +56,8 @@ pub enum ConnectTokenError {
     MissingField(&'static str),
     /// Agent claim HTTP request failed.
     ClaimFailed(String),
+    /// Token version is newer than this SDK supports.
+    UnsupportedVersion(u8),
 }
 
 impl std::fmt::Display for ConnectTokenError {
@@ -66,6 +68,12 @@ impl std::fmt::Display for ConnectTokenError {
             Self::Json(e) => write!(f, "JSON parse error: {}", e),
             Self::MissingField(name) => write!(f, "required field '{}' is empty", name),
             Self::ClaimFailed(e) => write!(f, "agent claim failed: {}", e),
+            Self::UnsupportedVersion(v) => write!(
+                f,
+                "connect token version {} is not supported by this SDK (max: 1). \
+                 Upgrade tenuo to use this token.",
+                v
+            ),
         }
     }
 }
@@ -85,6 +93,11 @@ impl ConnectToken {
 
         let token: ConnectToken = serde_json::from_slice(&json_bytes)
             .map_err(|e| ConnectTokenError::Json(e.to_string()))?;
+
+        const MAX_SUPPORTED_VERSION: u8 = 1;
+        if token.version > MAX_SUPPORTED_VERSION {
+            return Err(ConnectTokenError::UnsupportedVersion(token.version));
+        }
 
         if token.endpoint.is_empty() {
             return Err(ConnectTokenError::MissingField("endpoint"));
@@ -216,6 +229,15 @@ mod tests {
         assert!(matches!(
             ConnectToken::parse(&raw),
             Err(ConnectTokenError::MissingField("api_key"))
+        ));
+    }
+
+    #[test]
+    fn reject_future_version() {
+        let raw = make_token_str(r#"{"v":2,"e":"https://api.tenuo.cloud","k":"tc_abc"}"#);
+        assert!(matches!(
+            ConnectToken::parse(&raw),
+            Err(ConnectTokenError::UnsupportedVersion(2))
         ));
     }
 }
