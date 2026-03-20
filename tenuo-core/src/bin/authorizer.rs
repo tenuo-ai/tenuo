@@ -428,6 +428,8 @@ struct AppState {
     authorizer_id: Arc<tokio::sync::RwLock<Option<String>>>,
     /// Metrics collector (None if control plane not configured)
     metrics: Option<MetricsCollector>,
+    /// Process start time for uptime reporting in /status
+    started_at: std::time::Instant,
 }
 
 /// Structured denial reason for logging
@@ -688,6 +690,7 @@ async fn serve_http(
         audit_tx,
         authorizer_id: shared_authorizer_id,
         metrics,
+        started_at: std::time::Instant::now(),
     });
 
     // Build the router
@@ -697,6 +700,7 @@ async fn serve_http(
         .route("/health", axum::routing::get(health_check))
         .route("/healthz", axum::routing::get(health_check))
         .route("/ready", axum::routing::get(health_check))
+        .route("/status", axum::routing::get(status_handler))
         .fallback(handle_request)
         .with_state(state);
 
@@ -715,6 +719,54 @@ async fn health_check() -> impl axum::response::IntoResponse {
         Json(serde_json::json!({
             "status": "healthy",
             "service": "tenuo-authorizer"
+        })),
+    )
+}
+
+/// Registration and runtime status endpoint.
+///
+/// Returns the authorizer's control plane registration state and uptime.
+/// Useful for debugging K8s deployments and verifying that a connect token
+/// was accepted: poll until `cp.status == "registered"`.
+///
+/// Response shape:
+/// ```json
+/// {
+///   "version": "0.1.0-beta.12",
+///   "uptime_secs": 42,
+///   "cp": {
+///     "enabled": true,
+///     "status": "registered",   // "registering" | "registered" | "disabled"
+///     "authorizer_id": "tnu_auth_..."  // null while registering
+///   }
+/// }
+/// ```
+async fn status_handler(State(state): State<Arc<AppState>>) -> impl axum::response::IntoResponse {
+    let uptime_secs = state.started_at.elapsed().as_secs();
+    let cp_enabled = state.audit_tx.is_some();
+
+    let (cp_status, authorizer_id) = if cp_enabled {
+        let id = state.authorizer_id.read().await.clone();
+        let status = if id.is_some() {
+            "registered"
+        } else {
+            "registering"
+        };
+        (status, id)
+    } else {
+        ("disabled", None)
+    };
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "uptime_secs": uptime_secs,
+            "cp": {
+                "enabled": cp_enabled,
+                "status": cp_status,
+                "authorizer_id": authorizer_id,
+            }
         })),
     )
 }
