@@ -313,8 +313,8 @@ This runs the [orchestrator -> worker -> authorizer demo](https://tenuo.ai/demo.
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
 ```bash
-docker pull tenuo/authorizer:0.1.0-beta.11  # Sidecar for warrant verification
-docker pull tenuo/control:0.1.0-beta.11     # Control plane (demo/reference)
+docker pull tenuo/authorizer:0.1.0-beta.12  # Sidecar for warrant verification
+docker pull tenuo/control:0.1.0-beta.12     # Control plane (demo/reference)
 ```
 
 **Helm Chart**:
@@ -349,7 +349,7 @@ Building a sidecar or gateway? Use the core directly:
 
 ```toml
 [dependencies]
-tenuo = "0.1.0-beta.11"
+tenuo = "0.1.0-beta.12"
 ```
 
 See [docs.rs/tenuo](https://docs.rs/tenuo) for Rust API.
