@@ -74,6 +74,9 @@ pub use mcp::{CompiledMcpConfig, CompiledTool, McpConfig, McpSettings};
 pub mod python;
 
 #[cfg(feature = "server")]
+pub mod connect_token;
+
+#[cfg(feature = "server")]
 pub mod heartbeat;
 
 #[cfg(feature = "python-server")]

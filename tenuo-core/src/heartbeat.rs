@@ -688,11 +688,16 @@ pub struct HeartbeatConfig {
     /// ID is assigned by the control plane. Python bindings use this to avoid
     /// polling; all other callers leave this as `None`.
     pub id_notify: Option<tokio::sync::watch::Sender<Option<String>>>,
+    /// Optional agent ID to bind this authorizer to a registered agent.
+    /// Set automatically when constructed via [`HeartbeatConfig::from_connect_token`].
+    pub agent_id: Option<String>,
+    /// Optional connect token for auto-claiming the agent before the first
+    /// heartbeat. Stored so the heartbeat loop can call `claim_agent` at startup.
+    pub connect_token: Option<crate::connect_token::ConnectToken>,
 }
 
 impl Default for HeartbeatConfig {
     fn default() -> Self {
-        // Generate a random signing key for tests/defaults
         let signing_key = SigningKey::generate();
         Self {
             control_plane_url: String::new(),
@@ -709,7 +714,37 @@ impl Default for HeartbeatConfig {
             metrics: None,
             signing_key,
             id_notify: None,
+            agent_id: None,
+            connect_token: None,
         }
+    }
+}
+
+impl HeartbeatConfig {
+    /// Build a [`HeartbeatConfig`] from a connect token string.
+    ///
+    /// Parses the token, generates a fresh signing key, and populates
+    /// `control_plane_url`, `api_key`, and `agent_id` from the token payload.
+    /// The caller still needs to set `authorizer_name` and `authorizer_type`.
+    pub fn from_connect_token(
+        raw_token: &str,
+        authorizer_name: &str,
+        authorizer_type: &str,
+    ) -> Result<Self, crate::connect_token::ConnectTokenError> {
+        let ct = crate::connect_token::ConnectToken::parse(raw_token)?;
+        let signing_key = SigningKey::generate();
+
+        Ok(Self {
+            control_plane_url: ct.endpoint.clone(),
+            api_key: ct.api_key.clone(),
+            authorizer_name: authorizer_name.to_string(),
+            authorizer_type: authorizer_type.to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            signing_key,
+            agent_id: ct.agent_id.clone(),
+            connect_token: Some(ct),
+            ..Default::default()
+        })
     }
 }
 
@@ -721,10 +756,12 @@ struct RegisterRequest<'a> {
     #[serde(rename = "type")]
     authorizer_type: &'a str,
     version: &'a str,
-    /// Hex-encoded Ed25519 public key for verifying signed receipts.
-    /// When provided, the authorizer can send signed events that become cryptographic receipts.
     #[serde(skip_serializing_if = "Option::is_none")]
     public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<&'a HashMap<String, String>>,
     // Flattened environment fields (Go control plane expects these at top level)
     #[serde(skip_serializing_if = "Option::is_none")]
     environment: Option<&'a str>,
@@ -835,6 +872,15 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
         .timeout(Duration::from_secs(10))
         .build()
         .expect("Failed to create HTTP client");
+
+    // Auto-claim agent if a connect token with agent binding is present.
+    // This is idempotent — repeated claims by other authorizer instances
+    // sharing the same token are silently accepted.
+    if let Some(ref ct) = config.connect_token {
+        if let Err(e) = ct.claim_agent(&config.signing_key).await {
+            warn!(error = %e, "connect token agent claim failed (non-fatal)");
+        }
+    }
 
     // Register with retry
     let authorizer_id = match register_with_retry(&client, &config).await {
@@ -1172,6 +1218,13 @@ async fn register_with_retry(client: &Client, config: &HeartbeatConfig) -> Optio
                     backoff_secs = backoff.as_secs(),
                     "Registration attempt failed, retrying..."
                 );
+                eprintln!(
+                    "[tenuo] registration attempt {}/{} failed: {} (retry in {}s)",
+                    attempt,
+                    MAX_ATTEMPTS,
+                    e,
+                    backoff.as_secs(),
+                );
 
                 if attempt < MAX_ATTEMPTS {
                     tokio::time::sleep(backoff).await;
@@ -1180,6 +1233,11 @@ async fn register_with_retry(client: &Client, config: &HeartbeatConfig) -> Optio
         }
     }
 
+    eprintln!(
+        "[tenuo] WARN: failed to register '{}' with {} after {} attempts. \
+         Running in standalone mode — events will not reach the dashboard.",
+        config.authorizer_name, config.control_plane_url, MAX_ATTEMPTS,
+    );
     None
 }
 
@@ -1190,13 +1248,19 @@ async fn register(client: &Client, config: &HeartbeatConfig) -> Result<String, H
     // Get public key hex from signing key
     let public_key_hex = hex::encode(config.signing_key.public_key().to_bytes());
 
-    // Build request with flattened environment fields
     let env = &config.environment;
+    let meta = if config.environment.metadata.is_empty() {
+        None
+    } else {
+        Some(&config.environment.metadata)
+    };
     let request_body = RegisterRequest {
         name: &config.authorizer_name,
         authorizer_type: &config.authorizer_type,
         version: &config.version,
         public_key: Some(public_key_hex),
+        agent_id: config.agent_id.as_deref(),
+        metadata: meta,
         environment: env.environment.as_deref(),
         k8s_namespace: env.k8s_namespace.as_deref(),
         k8s_pod_name: env.k8s_pod_name.as_deref(),
@@ -1391,6 +1455,8 @@ mod tests {
             metrics: None,
             signing_key: SigningKey::generate(),
             id_notify: None,
+            agent_id: None,
+            connect_token: None,
         }
     }
 

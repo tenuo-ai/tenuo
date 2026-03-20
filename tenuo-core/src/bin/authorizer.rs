@@ -97,6 +97,13 @@ struct Cli {
     revocation_list: Option<PathBuf>,
 
     // === Control Plane Configuration ===
+    /// One-token onboarding for Tenuo Cloud.
+    /// Base64url-encoded JSON blob generated from the Tenuo Cloud dashboard.
+    /// Encodes the control plane endpoint, API key, and optional agent binding.
+    /// Explicit TENUO_CONTROL_PLANE_URL / TENUO_API_KEY take precedence when set.
+    #[arg(long, env = "TENUO_CONNECT_TOKEN")]
+    connect_token: Option<String>,
+
     /// Control plane URL (enables heartbeat when set with api-key and authorizer-name)
     #[arg(long, env = "TENUO_CONTROL_PLANE_URL")]
     control_plane_url: Option<String>,
@@ -507,9 +514,40 @@ async fn serve_http(
     let debug_mode = config.settings.debug_mode;
     let compiled = CompiledGatewayConfig::compile(config)?;
 
+    // Resolve TENUO_CONNECT_TOKEN — extract endpoint, api_key, and optional
+    // agent_id. Explicit env vars (TENUO_CONTROL_PLANE_URL, TENUO_API_KEY)
+    // always win. The full parsed token is kept so the heartbeat loop can
+    // call `claim_agent` with the embedded registration secret.
+    let (resolved_url, resolved_key, resolved_agent_id, resolved_connect_token) =
+        match cli.connect_token.as_deref() {
+            Some(token) => match tenuo::connect_token::ConnectToken::parse(token) {
+                Ok(ct) => {
+                    info!(
+                        endpoint = %ct.endpoint,
+                        has_agent_id = ct.agent_id.is_some(),
+                        "Connect token parsed"
+                    );
+                    let url = cli.control_plane_url.clone().or(Some(ct.endpoint.clone()));
+                    let key = cli.api_key.clone().or(Some(ct.api_key.clone()));
+                    let agent_id = ct.agent_id.clone();
+                    (url, key, agent_id, Some(ct))
+                }
+                Err(e) => {
+                    error!(error = %e, "TENUO_CONNECT_TOKEN is invalid");
+                    std::process::exit(1);
+                }
+            },
+            None => (
+                cli.control_plane_url.clone(),
+                cli.api_key.clone(),
+                None,
+                None,
+            ),
+        };
+
     // Check if control plane is configured
     let control_plane_enabled =
-        cli.control_plane_url.is_some() && cli.api_key.is_some() && cli.authorizer_name.is_some();
+        resolved_url.is_some() && resolved_key.is_some() && cli.authorizer_name.is_some();
 
     eprintln!("┌─────────────────────────────────────────────────────────");
     eprintln!("│ Tenuo Authorizer Server v{}", authorizer_version());
@@ -548,7 +586,7 @@ async fn serve_http(
 
     // Create audit channel, metrics collector, and spawn heartbeat task if control plane is configured
     let (audit_tx, metrics) = if let (Some(url), Some(key), Some(name)) =
-        (&cli.control_plane_url, &cli.api_key, &cli.authorizer_name)
+        (resolved_url, resolved_key, &cli.authorizer_name)
     {
         // Create audit event channel (buffer 1000 events)
         let (tx, rx) = create_audit_channel(1000);
@@ -561,10 +599,17 @@ async fn serve_http(
             metrics.record_srl_fetch(true, Some(version)).await;
         }
 
-        // Get environment info from standard env vars
-        let environment = EnvironmentInfo::from_env();
+        // Get environment info from standard env vars; inject agent_id from
+        // connect token so the backend can bind this authorizer to the agent.
+        let mut environment = EnvironmentInfo::from_env();
+        if let Some(ref agent_id) = resolved_agent_id {
+            environment
+                .metadata
+                .insert("agent_id".to_string(), agent_id.clone());
+        }
 
-        // Parse signing key (required for cryptographic receipts)
+        // Parse signing key; auto-generate if not supplied so connect-token
+        // onboarding works without any additional key management step.
         let signing_key = match &cli.signing_key {
             Some(hex_key) => match hex::decode(hex_key) {
                 Ok(bytes) if bytes.len() == 32 => {
@@ -590,8 +635,13 @@ async fn serve_http(
                 }
             },
             None => {
-                error!("TENUO_SIGNING_KEY is required. Generate one with: openssl rand -hex 32");
-                std::process::exit(1);
+                let key = SigningKey::generate();
+                info!(
+                    public_key = %hex::encode(key.public_key().to_bytes()),
+                    "No TENUO_SIGNING_KEY set — using ephemeral signing key. \
+                     Set TENUO_SIGNING_KEY to persist the key across restarts."
+                );
+                key
             }
         };
 
@@ -610,6 +660,8 @@ async fn serve_http(
             metrics: Some(metrics.clone()),
             signing_key,
             id_notify: None,
+            agent_id: resolved_agent_id,
+            connect_token: resolved_connect_token,
         };
 
         // Clone shared_authorizer_id for the heartbeat task to update
