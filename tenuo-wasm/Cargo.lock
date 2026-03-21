@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "tenuo-wasm"
-version = "0.1.0-beta.13"
+version = "0.1.0-beta.14"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
