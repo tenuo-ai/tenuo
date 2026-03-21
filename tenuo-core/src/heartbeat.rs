@@ -159,6 +159,10 @@ pub struct SignedEvent {
     /// Base64-encoded Ed25519 signature over the canonical signing payload.
     /// Payload format: CBOR({1: authorizer_id, 2: warrant_chain, 3: action, 4: outcome, 5: timestamp})
     pub signature: String,
+    /// Base64-encoded CBOR bytes that were signed (envelope pattern).
+    /// When present, the control plane verifies these exact bytes instead of
+    /// reconstructing the payload, eliminating CBOR encoding mismatches.
+    pub signing_payload: String,
     /// The action that was authorized (for receipt indexing)
     pub action: String,
     /// Session ID for grouping related actions (optional)
@@ -1074,7 +1078,14 @@ async fn run_audit_flush_loop(
 ///
 /// Creates a CBOR signing payload and signs it with the authorizer's key.
 /// The signature covers: (authorizer_id, warrant_chain, action, outcome, timestamp, root_principal)
-fn sign_event(event: &AuthorizationEvent, signing_key: &SigningKey) -> SignedEvent {
+///
+/// `authorizer_id_override` ensures the signing payload uses the real registered
+/// authorizer ID even if the event was created before registration completed.
+fn sign_event(
+    event: &AuthorizationEvent,
+    signing_key: &SigningKey,
+    authorizer_id_override: &str,
+) -> SignedEvent {
     // Decode warrant stack if present (base64 -> bytes)
     let warrant_chain_bytes = event
         .warrant_stack
@@ -1090,9 +1101,10 @@ fn sign_event(event: &AuthorizationEvent, signing_key: &SigningKey) -> SignedEve
         .map(|dt| dt.timestamp())
         .unwrap_or_else(|_| chrono::Utc::now().timestamp());
 
-    // Build signing payload (CBOR with integer keys)
+    // Build signing payload using the canonical authorizer ID (not the
+    // potentially-stale value the event was created with).
     let payload = ReceiptSigningPayload {
-        authorizer_id: &event.authorizer_id,
+        authorizer_id: authorizer_id_override,
         warrant_chain: &warrant_chain_bytes,
         action: &action,
         outcome: event.decision,
@@ -1103,7 +1115,6 @@ fn sign_event(event: &AuthorizationEvent, signing_key: &SigningKey) -> SignedEve
     // Encode to CBOR
     let mut payload_buf = Vec::new();
     if ciborium::into_writer(&payload, &mut payload_buf).is_err() {
-        // Use empty payload on error (signature will fail verification)
         payload_buf.clear();
     }
 
@@ -1114,11 +1125,21 @@ fn sign_event(event: &AuthorizationEvent, signing_key: &SigningKey) -> SignedEve
         signature.to_bytes(),
     );
 
+    // Include the exact signed bytes so the control plane can verify
+    // without reconstructing the CBOR (envelope pattern).
+    let signing_payload_b64 =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &payload_buf);
+
+    // Patch the event's authorizer_id to match what was signed
+    let mut patched_event = event.clone();
+    patched_event.authorizer_id = authorizer_id_override.to_string();
+
     SignedEvent {
-        event: event.clone(),
+        event: patched_event,
         signature: signature_b64,
+        signing_payload: signing_payload_b64,
         action,
-        session_id: None, // Could be extracted from metadata if present
+        session_id: None,
         action_category: Some("tool".to_string()),
     }
 }
@@ -1141,10 +1162,11 @@ async fn flush_audit_events(
         config.control_plane_url, authorizer_id
     );
 
-    // Sign all events with the authorizer's signing key
+    // Sign all events, using the canonical authorizer_id from registration
+    // (events may carry a stale "pending" ID if emitted before registration completed)
     let signed_events: Vec<SignedEvent> = buffer
         .iter()
-        .map(|event| sign_event(event, &config.signing_key))
+        .map(|event| sign_event(event, &config.signing_key, authorizer_id))
         .collect();
 
     let result = client
@@ -1162,15 +1184,26 @@ async fn flush_audit_events(
                 event_count = %event_count,
                 "Flushed audit events to control plane"
             );
+            eprintln!(
+                "[tenuo] flushed {} audit events for {}",
+                event_count, authorizer_id
+            );
             buffer.clear();
         }
         Ok(response) => {
             let status = response.status();
+            let body = response.text().await.unwrap_or_default();
             warn!(
                 authorizer_id = %authorizer_id,
                 event_count = %event_count,
                 status = %status,
                 "Failed to flush audit events, will retry"
+            );
+            eprintln!(
+                "[tenuo] WARN: flush failed status={} body={} (authorizer={})",
+                status,
+                &body[..body.len().min(200)],
+                authorizer_id
             );
             // Keep events in buffer for retry, but cap size to prevent unbounded growth
             if buffer.len() > config.audit_batch_size * 10 {
