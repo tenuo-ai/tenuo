@@ -71,7 +71,20 @@ class ControlPlaneClient:
         resolved_token = token or os.environ.get("TENUO_CONNECT_TOKEN") or None
         resolved_url = url or os.environ.get("TENUO_CONTROL_PLANE_URL") or None
         resolved_key = api_key or os.environ.get("TENUO_API_KEY") or None
-        resolved_name = authorizer_name or os.environ.get("TENUO_AUTHORIZER_NAME") or None
+        resolved_name = (
+            authorizer_name
+            or os.environ.get("TENUO_AUTHORIZER_NAME")
+            # When using a connect token, derive a name from the environment
+            # so operators don't need TENUO_AUTHORIZER_NAME separately.
+            # K8s downward API → Docker/plain hostname → stable fallback.
+            or (resolved_token and (
+                os.environ.get("POD_NAME")
+                or os.environ.get("HOSTNAME")
+                or platform.node()
+                or "tenuo-python-sdk"
+            ))
+            or None
+        )
 
         if signing_key is None:
             raw = os.environ.get("TENUO_SIGNING_KEY")
@@ -110,12 +123,15 @@ class ControlPlaneClient:
 
     @classmethod
     def from_env(cls) -> Optional["ControlPlaneClient"]:
-        """Return a client from env vars, or None if vars are absent."""
+        """Return a client from env vars, or None if vars are absent.
+
+        A connect token alone is sufficient — authorizer name is derived from
+        POD_NAME / HOSTNAME when TENUO_AUTHORIZER_NAME is not set.
+        """
         if os.environ.get("TENUO_CONNECT_TOKEN"):
             return cls()
         if not all(v in os.environ for v in (
-            "TENUO_CONTROL_PLANE_URL", "TENUO_API_KEY",
-            "TENUO_AUTHORIZER_NAME",
+            "TENUO_CONTROL_PLANE_URL", "TENUO_API_KEY", "TENUO_AUTHORIZER_NAME",
         )):
             return None
         return cls()
