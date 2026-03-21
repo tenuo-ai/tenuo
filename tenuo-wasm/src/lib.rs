@@ -93,6 +93,9 @@ fn constraint_to_readable(constraint: &Constraint) -> JsonValue {
             if !u.block_metadata {
                 obj.insert("block_metadata".to_string(), json!(false));
             }
+            if !u.block_reserved {
+                obj.insert("block_reserved".to_string(), json!(false));
+            }
             if u.block_internal_tlds {
                 obj.insert("block_internal_tlds".to_string(), json!(true));
             }
@@ -356,10 +359,10 @@ pub fn check_access(
                     .unwrap(),
                 }
             } else {
-                return to_auth_error(&format!("Tool '{}' not authorized by warrant", tool));
+                to_auth_error(&format!("Tool '{}' not authorized by warrant", tool))
             }
         } else {
-             return to_auth_error("Warrant has no capabilities/tools");
+            to_auth_error("Warrant has no capabilities/tools")
         }
     } else {
         // Full Authorizer check (requires PoP)
@@ -518,10 +521,10 @@ pub fn check_chain_access(
                     .unwrap(),
                 }
             } else {
-                return to_auth_error(&format!("Tool '{}' not authorized by leaf warrant", tool));
+                to_auth_error(&format!("Tool '{}' not authorized by leaf warrant", tool))
             }
         } else {
-            return to_auth_error("Leaf warrant has no capabilities");
+            to_auth_error("Leaf warrant has no capabilities")
         }
     } else {
         // Full check with PoP (requires signature)
@@ -898,8 +901,7 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                     }
                     // Range constraint
                     else if let Some(range_val) = obj.get("range").and_then(|v| v.as_str()) {
-                        if range_val.ends_with('-') {
-                            let min_str = &range_val[..range_val.len() - 1];
+                        if let Some(min_str) = range_val.strip_suffix('-') {
                             if let Ok(min) = min_str.parse::<f64>() {
                                 if let Ok(r) = Range::min(min) {
                                     constraint_set.insert(field.clone(), Constraint::Range(r));
@@ -1036,23 +1038,52 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                         let url_safe_obj = obj.get("url_safe").or_else(|| obj.get("urlsafe"));
                         if let Some(inner) = url_safe_obj.and_then(|v| v.as_object()) {
                             let mut us = UrlSafe::new();
-                            if let Some(domains_arr) = inner.get("allow_domains").and_then(|v| v.as_array()) {
-                                let domains: Vec<String> = domains_arr
-                                    .iter()
+                            if let Some(arr) = inner.get("allow_domains").and_then(|v| v.as_array()) {
+                                let domains: Vec<String> = arr.iter()
                                     .filter_map(|d| d.as_str().map(|s| s.to_string()))
                                     .collect();
                                 if !domains.is_empty() {
                                     us.allow_domains = Some(domains);
                                 }
                             }
-                            if let Some(deny_arr) = inner.get("deny_domains").and_then(|v| v.as_array()) {
-                                let denied: Vec<String> = deny_arr
-                                    .iter()
+                            if let Some(arr) = inner.get("deny_domains").and_then(|v| v.as_array()) {
+                                let domains: Vec<String> = arr.iter()
                                     .filter_map(|d| d.as_str().map(|s| s.to_string()))
                                     .collect();
-                                if !denied.is_empty() {
-                                    us.deny_domains = Some(denied);
+                                if !domains.is_empty() {
+                                    us.deny_domains = Some(domains);
                                 }
+                            }
+                            if let Some(arr) = inner.get("allow_ports").and_then(|v| v.as_array()) {
+                                let ports: Vec<u16> = arr.iter()
+                                    .filter_map(|v| v.as_u64().and_then(|n| u16::try_from(n).ok()))
+                                    .collect();
+                                if !ports.is_empty() {
+                                    us.allow_ports = Some(ports);
+                                }
+                            }
+                            if let Some(arr) = inner.get("schemes").and_then(|v| v.as_array()) {
+                                let schemes: Vec<String> = arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect();
+                                if !schemes.is_empty() {
+                                    us.schemes = schemes;
+                                }
+                            }
+                            if let Some(v) = inner.get("block_private").and_then(|v| v.as_bool()) {
+                                us.block_private = v;
+                            }
+                            if let Some(v) = inner.get("block_loopback").and_then(|v| v.as_bool()) {
+                                us.block_loopback = v;
+                            }
+                            if let Some(v) = inner.get("block_metadata").and_then(|v| v.as_bool()) {
+                                us.block_metadata = v;
+                            }
+                            if let Some(v) = inner.get("block_reserved").and_then(|v| v.as_bool()) {
+                                us.block_reserved = v;
+                            }
+                            if let Some(v) = inner.get("block_internal_tlds").and_then(|v| v.as_bool()) {
+                                us.block_internal_tlds = v;
                             }
                             constraint_set.insert(field.clone(), Constraint::UrlSafe(us));
                         } else {
@@ -1063,9 +1094,12 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                     else if obj.contains_key("shlex") {
                         let shlex_obj = obj.get("shlex");
                         if let Some(inner) = shlex_obj.and_then(|v| v.as_object()) {
-                            if let Some(allow_arr) = inner.get("allow").and_then(|v| v.as_array()) {
-                                let allow: Vec<String> = allow_arr
-                                    .iter()
+                            // Accept both "allow" (canonical) and "allowed" (openclaw SDK alias)
+                            let allow_arr = inner.get("allow")
+                                .or_else(|| inner.get("allowed"))
+                                .and_then(|v| v.as_array());
+                            if let Some(arr) = allow_arr {
+                                let allow: Vec<String> = arr.iter()
                                     .filter_map(|a| a.as_str().map(|s| s.to_string()))
                                     .collect();
                                 if !allow.is_empty() {
@@ -1074,6 +1108,171 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                                         Constraint::Shlex(Shlex { allow }),
                                     );
                                 }
+                            }
+                        }
+                    }
+                    // Type-keyed dispatch: handles { "type": "Shlex", "allowed": [...] } etc.
+                    // Accepts the openclaw SDK's typed format directly (camelCase and snake_case).
+                    else if let Some(type_str) = obj.get("type").and_then(|v| v.as_str()) {
+                        match type_str {
+                            "Pattern" => {
+                                if let Some(pat) = obj.get("pattern").and_then(|v| v.as_str()) {
+                                    if let Ok(p) = Pattern::new(pat) {
+                                        constraint_set.insert(field.clone(), Constraint::Pattern(p));
+                                    }
+                                }
+                            }
+                            "Exact" => {
+                                if let Some(val) = obj.get("value").and_then(|v| v.as_str()) {
+                                    constraint_set.insert(
+                                        field.clone(),
+                                        Constraint::Exact(Exact::new(ConstraintValue::String(
+                                            val.to_string(),
+                                        ))),
+                                    );
+                                }
+                            }
+                            "Range" => {
+                                let min = obj.get("min").and_then(|v| v.as_f64());
+                                let max = obj.get("max").and_then(|v| v.as_f64());
+                                if let Ok(r) = Range::new(min, max) {
+                                    constraint_set.insert(field.clone(), Constraint::Range(r));
+                                }
+                            }
+                            "OneOf" => {
+                                if let Some(arr) = obj.get("values").and_then(|v| v.as_array()) {
+                                    let values: Vec<String> = arr.iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect();
+                                    if !values.is_empty() {
+                                        constraint_set.insert(
+                                            field.clone(),
+                                            Constraint::OneOf(OneOf::new(values)),
+                                        );
+                                    }
+                                }
+                            }
+                            "NotOneOf" => {
+                                if let Some(arr) = obj.get("values").and_then(|v| v.as_array()) {
+                                    let values: Vec<String> = arr.iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect();
+                                    if !values.is_empty() {
+                                        constraint_set.insert(
+                                            field.clone(),
+                                            Constraint::NotOneOf(NotOneOf::new(values)),
+                                        );
+                                    }
+                                }
+                            }
+                            "Cidr" => {
+                                if let Some(cidr_val) = obj.get("cidr").and_then(|v| v.as_str()) {
+                                    if let Ok(c) = Cidr::new(cidr_val) {
+                                        constraint_set.insert(field.clone(), Constraint::Cidr(c));
+                                    }
+                                }
+                            }
+                            "UrlPattern" => {
+                                if let Some(pat) = obj.get("pattern").and_then(|v| v.as_str()) {
+                                    if let Ok(u) = UrlPattern::new(pat) {
+                                        constraint_set
+                                            .insert(field.clone(), Constraint::UrlPattern(u));
+                                    }
+                                }
+                            }
+                            "Regex" => {
+                                if let Some(pat) = obj.get("pattern").and_then(|v| v.as_str()) {
+                                    if let Ok(r) = RegexConstraint::new(pat) {
+                                        constraint_set.insert(field.clone(), Constraint::Regex(r));
+                                    }
+                                }
+                            }
+                            "Contains" => {
+                                if let Some(arr) = obj.get("values").and_then(|v| v.as_array()) {
+                                    let values: Vec<String> = arr.iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect();
+                                    if !values.is_empty() {
+                                        constraint_set.insert(
+                                            field.clone(),
+                                            Constraint::Contains(Contains::new(values)),
+                                        );
+                                    }
+                                }
+                            }
+                            "Subpath" => {
+                                // Accepts both "base" (openclaw) and "root" (canonical)
+                                let root = obj.get("base")
+                                    .or_else(|| obj.get("root"))
+                                    .and_then(|v| v.as_str());
+                                if let Some(root_path) = root {
+                                    if let Ok(s) = Subpath::new(root_path) {
+                                        constraint_set.insert(field.clone(), Constraint::Subpath(s));
+                                    }
+                                }
+                            }
+                            "Shlex" => {
+                                // Accepts both "allowed" (openclaw) and "allow" (canonical)
+                                let allow_arr = obj.get("allowed")
+                                    .or_else(|| obj.get("allow"))
+                                    .and_then(|v| v.as_array());
+                                if let Some(arr) = allow_arr {
+                                    let cmds: Vec<String> = arr.iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect();
+                                    if !cmds.is_empty() {
+                                        constraint_set.insert(
+                                            field.clone(),
+                                            Constraint::Shlex(Shlex { allow: cmds }),
+                                        );
+                                    }
+                                }
+                            }
+                            "UrlSafe" => {
+                                let mut us = UrlSafe::new();
+                                // "deniedHosts" (openclaw) or "deny_domains" (canonical)
+                                let deny = obj.get("deniedHosts")
+                                    .or_else(|| obj.get("deny_domains"))
+                                    .and_then(|v| v.as_array());
+                                if let Some(arr) = deny {
+                                    let hosts: Vec<String> = arr.iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect();
+                                    if !hosts.is_empty() {
+                                        us.deny_domains = Some(hosts);
+                                    }
+                                }
+                                // "allowedHosts" (openclaw) or "allow_domains" (canonical)
+                                let allow = obj.get("allowedHosts")
+                                    .or_else(|| obj.get("allow_domains"))
+                                    .and_then(|v| v.as_array());
+                                if let Some(arr) = allow {
+                                    let hosts: Vec<String> = arr.iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect();
+                                    if !hosts.is_empty() {
+                                        us.allow_domains = Some(hosts);
+                                    }
+                                }
+                                // Block flags (camelCase and snake_case)
+                                for (camel, snake, field_ref) in [
+                                    ("blockPrivate", "block_private", &mut us.block_private),
+                                    ("blockLoopback", "block_loopback", &mut us.block_loopback),
+                                    ("blockMetadata", "block_metadata", &mut us.block_metadata),
+                                    ("blockReserved", "block_reserved", &mut us.block_reserved),
+                                    ("blockInternalTlds", "block_internal_tlds", &mut us.block_internal_tlds),
+                                ] {
+                                    if let Some(v) = obj.get(camel).or_else(|| obj.get(snake)).and_then(|v| v.as_bool()) {
+                                        *field_ref = v;
+                                    }
+                                }
+                                constraint_set.insert(field.clone(), Constraint::UrlSafe(us));
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "unrecognized constraint type '{}' for field '{}'",
+                                    type_str, field
+                                ));
                             }
                         }
                     }
