@@ -9,16 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`SignedEvent.signing_payload`**: The exact base64-encoded CBOR bytes that were signed are now included in every audit event. The Go control plane verifies these bytes directly instead of reconstructing the payload, eliminating cross-language CBOR encoding mismatches.
-- **WASM constraint builder — type-keyed dispatch**: `create_warrant_from_config` now accepts the openclaw SDK's typed format natively (`{ "type": "Shlex", "allowed": [...] }`, `{ "type": "UrlSafe", "deniedHosts": [...] }`, `{ "type": "Subpath", "base": "..." }`, etc.), removing the need for a lossy `normalizeToolConstraints()` shim in consuming SDKs.
-- **WASM constraint builder — full `UrlSafe` support**: All `UrlSafe` fields are now settable from `create_warrant_from_config`: `allow_ports`, `schemes`, `block_private`, `block_loopback`, `block_metadata`, `block_reserved`, `block_internal_tlds` (previously only `allow_domains`/`deny_domains` were wired).
-- **WASM constraint builder — `Shlex` `allowed` alias**: The `shlex` key now accepts both `"allow"` (canonical) and `"allowed"` (openclaw SDK) as the binary list key.
+- **WASM constraint builder — type-keyed dispatch**: `create_warrant_from_config` now accepts `{ "type": "Shlex", ... }`, `{ "type": "UrlSafe", ... }`, `{ "type": "Subpath", ... }` and all other constraint types directly, alongside the existing key-based format.
+- **WASM constraint builder — full `UrlSafe` support**: All `UrlSafe` fields are now configurable: `allow_ports`, `schemes`, `block_private`, `block_loopback`, `block_metadata`, `block_reserved`, `block_internal_tlds`.
+- **WASM constraint builder — `Shlex` `allowed` alias**: Accepts both `"allow"` and `"allowed"` as the binary list key.
 
 ### Fixed
 
-- **Audit event signing race**: `sign_event()` now takes an explicit `authorizer_id_override` sourced from the confirmed registered ID at flush time. Events buffered before registration completed were previously signed with a stale pending ID.
-- **`constraint_to_readable` — `block_reserved`**: `UrlSafe` constraints with `block_reserved: false` now correctly emit that field in decoded warrant output (the default `true` is still omitted for brevity).
-- **Five pre-existing Clippy warnings** in `tenuo-wasm`: `needless_return` in `check_access` and `check_chain_access`, `manual_strip` in the `Range` parser.
+- Audit receipts now always carry the confirmed authorizer identity, not a pre-registration placeholder.
+- `UrlSafe` decoded output now correctly includes `block_reserved: false` when explicitly overridden.
+- Five pre-existing Clippy warnings in `tenuo-wasm` resolved.
 
 ---
 
@@ -26,18 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`TENUO_CONNECT_TOKEN`**: One-token Tenuo Cloud onboarding for the `tenuo-authorizer` binary and Python SDK. A single base64url-encoded token encodes endpoint, API key, and optional agent ID — no separate `TENUO_CONTROL_PLANE_URL`, `TENUO_API_KEY`, or `TENUO_SIGNING_KEY` required.
-  - Binary auto-generates an ephemeral Ed25519 signing key when `TENUO_SIGNING_KEY` is absent and a connect token is present.
-  - `authorizer_name` defaults to `POD_NAME` / `HOSTNAME` / `"tenuo-authorizer"` when not explicitly set.
-  - Python `ControlPlaneClient.from_env()` unblocks on `TENUO_CONNECT_TOKEN` alone; framework versions (LangGraph, Temporal, MCP, Google ADK, CrewAI) are auto-detected into registration metadata.
-- **`/status` HTTP endpoint** on the authorizer binary: returns registered authorizer ID, uptime, and registration state for local health checks and K8s readiness probes.
-- **Version guard in `ConnectToken::parse()`**: Tokens with `v > 1` are rejected with an explicit `UnsupportedVersion` error instead of being silently misinterpreted.
+- **`TENUO_CONNECT_TOKEN`**: Single-token onboarding for the `tenuo-authorizer` binary and Python SDK. Copy the token from the dashboard — no separate URL, API key, or signing key env vars needed.
+  - Signing key is auto-generated if not provided.
+  - Authorizer name defaults to pod/hostname when not set explicitly.
+- **`/status` endpoint** on the authorizer binary: exposes registration state and uptime for health checks and readiness probes.
 
 ### Fixed
 
-- **Security**: Upgraded `rustls-webpki` from `0.103.9` to `0.103.10` in both `tenuo-core` and `tenuo-python` (`RUSTSEC-2026-0049` — CRL matching bug).
-- **Connect token `authorizer_id` propagation**: `HeartbeatConfig` now correctly carries the resolved `agent_id` and `ConnectToken` struct through to `claim_agent()` before first registration.
-- **Python SDK `authorizer_name` hostname fallback**: `control_plane.py` now derives the authorizer name from `POD_NAME` / `HOSTNAME` / `platform.node()` when a connect token is used without an explicit name.
+- **Security**: `rustls-webpki` upgraded to `0.103.10` (`RUSTSEC-2026-0049`).
+- Several correctness gaps in the connect token startup path.
 
 ---
 
@@ -45,34 +41,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-#### Control Plane Event Streaming
-- **`ControlPlaneClient`** (Python): Emits cryptographically signed `AuthorizationEvent` records to Tenuo Cloud for audit and observability. Integrates with MCP, LangGraph, Temporal, and Google ADK via `emit_for_enforcement()`.
-- **`PyControlPlaneClient`** (Rust/PyO3): Core heartbeat loop with buffered batch flushing, Ed25519 event signing, and `tokio::sync::watch` for instant post-registration ID notification (replaces 200ms polling).
-- **`warrant_stack_b64`**: Base64-encoded CBOR warrant chain included in every signed audit event for end-to-end receipt verification.
-
-#### WASM — Approval Gates
-- **`evaluate_approval_gates()`**: WASM export to check whether a tool call requires human approval before proceeding.
-- **`required_approvers`** field exposed in decoded warrant output.
-
-#### Formal Verification
-- **Alloy models** (`aat_constraints.als`): Type-keyed positional matching for `Any`/`All`, `Not` subsumption logic, `run conservatism_gap`, and `MapMonotonicity` section.
-- **Z3 proofs** (`z3_bounds.py`): Automated theorem proving for core AAT constraint properties.
-- **Conformance oracle tests**: Bridge between formal models and the Rust implementation.
-
-#### IETF Draft
-- Published `draft-niyikiza-oauth-attenuating-agent-tokens-00`: Attenuating Authorization Tokens for Agentic Delegation Chains.
+- **Tenuo Cloud integration** for Python SDK: authorization decisions can be streamed to Tenuo Cloud for audit and observability. Works with MCP, LangGraph, Temporal, and Google ADK.
+- **WASM — `evaluate_approval_gates()`**: Check whether a tool call requires human approval before proceeding.
+- **Formal verification**: Alloy models and Z3 proofs for core AAT constraint properties, with conformance oracle tests bridging the formal models to the Rust implementation.
+- **IETF Draft**: Published `draft-niyikiza-oauth-attenuating-agent-tokens-00`.
 
 ### Fixed
 
-- **Three attenuation soundness holes** (`#227`): Gaps found during lattice audit — cross-type coercions that could allow authority expansion through delegation.
-- **Temporal integration**: Replay deduplication, Python 3.9 typing compatibility, dry-run shadow mode.
-- **Explorer npm vulnerabilities**: Upgraded `vite`, `@vitejs/plugin-react`, `jsdom`, aligned `@vitest/ui` peer dependency.
+- **Three attenuation soundness holes** (`#227`): Cross-type coercions that could allow authority expansion through delegation.
+- **Temporal integration**: Replay deduplication, Python 3.9 compatibility, dry-run shadow mode.
+- **Explorer npm vulnerabilities**: Upgraded `vite`, `@vitejs/plugin-react`, `jsdom`.
 
 ### Changed
 
-- **`reqwest`** upgraded from `0.11.27` to `0.13.2` (async HTTP client used by control plane and heartbeat).
-- **`thiserror`** upgraded from `1.0` to `2.0`.
-- **`tower`** upgraded from `0.4` to `0.5`.
+- `reqwest` upgraded from `0.11` to `0.13`, `thiserror` from `1.0` to `2.0`, `tower` from `0.4` to `0.5`.
 
 ---
 
