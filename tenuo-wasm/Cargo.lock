@@ -1403,7 +1403,9 @@ dependencies = [
 name = "tenuo-wasm"
 version = "0.1.0-beta.14"
 dependencies = [
+ "base64",
  "chrono",
+ "ciborium",
  "console_error_panic_hook",
  "hex",
  "serde",
