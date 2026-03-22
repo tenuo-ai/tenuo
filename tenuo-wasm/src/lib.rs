@@ -4,6 +4,7 @@ use serde_wasm_bindgen::Serializer;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use tenuo::{
+    approval::{compute_request_hash, SignedApproval},
     approval_gate::{
         self, ApprovalGateMap, ArgApprovalGate, ToolApprovalGate,
     },
@@ -11,7 +12,7 @@ use tenuo::{
         Any, Cidr, Constraint, ConstraintSet, ConstraintValue, Contains, Exact, NotOneOf, OneOf,
         Pattern, Range, RegexConstraint, Shlex, Subpath, UrlPattern, UrlSafe,
     },
-    wire, Authorizer, PublicKey, SigningKey, Warrant,
+    wire, Authorizer, PublicKey, SignedRevocationList, SigningKey, Warrant,
 };
 use wasm_bindgen::prelude::*;
 
@@ -153,12 +154,29 @@ pub struct DecodedWarrant {
     /// Raw extensions as hex-encoded values keyed by extension name.
     pub extensions: HashMap<String, String>,
     /// Parsed approval gates from the `tenuo.approval_gates` extension (if present).
-    /// Map of tool_name -> gate spec: { args: null } for whole-tool, { args: { field: "all" | constraint } } for per-arg.
     pub approval_gates: Option<JsonValue>,
     /// Hex-encoded Ed25519 public keys of required approvers.
     pub required_approvers: Option<Vec<String>>,
     /// Minimum number of approvals required.
     pub min_approvals: Option<u32>,
+    /// Warrant type: 0 = Execution, 1 = Issuer.
+    pub warrant_type: u8,
+    /// Clearance level (0–50). None if not set.
+    pub clearance: Option<u8>,
+    /// Session ID (optional).
+    pub session_id: Option<String>,
+    /// Agent ID (optional).
+    pub agent_id: Option<String>,
+    /// Parent warrant hash as hex (None for root warrants).
+    pub parent_hash: Option<String>,
+    /// Whether the warrant is currently expired.
+    pub is_expired: bool,
+    /// Whether the warrant is terminal (cannot delegate further).
+    pub is_terminal: bool,
+    /// Tools this warrant can issue (Issuer warrants only).
+    pub issuable_tools: Option<Vec<String>>,
+    /// Maximum delegation depth (Issuer warrants only).
+    pub max_issue_depth: Option<u32>,
 }
 
 /// Convert an ApprovalGateMap to a JSON-serializable representation.
@@ -254,6 +272,15 @@ fn extract_decoded_warrant(warrant: &Warrant) -> DecodedWarrant {
         approval_gates,
         required_approvers,
         min_approvals,
+        warrant_type: warrant.r#type() as u8,
+        clearance: warrant.clearance().map(|c| c.level()),
+        session_id: warrant.session_id().map(|s| s.to_string()),
+        agent_id: warrant.agent_id().map(|s| s.to_string()),
+        parent_hash: warrant.parent_hash().map(hex::encode),
+        is_expired: warrant.is_expired(),
+        is_terminal: warrant.is_terminal(),
+        issuable_tools: warrant.issuable_tools().map(|t| t.to_vec()),
+        max_issue_depth: warrant.max_issue_depth(),
     }
 }
 
@@ -549,6 +576,603 @@ pub fn check_chain_access(
     }
 }
 
+/// Compute the canonical request hash for a (warrant, tool, args) tuple.
+///
+/// The hash is SHA-256(warrant_id | tool | CBOR(sorted_args) | holder_key) and is
+/// what every SignedApproval must cover. Use this to build the payload for
+/// POST /v1/approvals/requests so the backend can verify it matches.
+///
+/// Returns `{ "hash": "<hex>" }` on success, or `{ "hash": null, "error": "..." }` on failure.
+#[wasm_bindgen]
+pub fn compute_request_hash_wasm(
+    warrant_b64: &str,
+    tool: &str,
+    args_json: JsValue,
+) -> JsValue {
+    init_panic_hook();
+
+    #[derive(Serialize)]
+    struct HashResult {
+        hash: Option<String>,
+        error: Option<String>,
+    }
+
+    let warrant = match wire::decode_base64(warrant_b64.trim()) {
+        Ok(w) => w,
+        Err(e) => return serde_wasm_bindgen::to_value(&HashResult {
+            hash: None,
+            error: Some(format!("Invalid warrant: {}", e)),
+        }).unwrap(),
+    };
+
+    let args: HashMap<String, ConstraintValue> = match serde_wasm_bindgen::from_value(args_json) {
+        Ok(a) => a,
+        Err(e) => return serde_wasm_bindgen::to_value(&HashResult {
+            hash: None,
+            error: Some(format!("Invalid arguments: {}", e)),
+        }).unwrap(),
+    };
+
+    let hash = compute_request_hash(
+        &warrant.id().to_string(),
+        tool,
+        &args,
+        Some(warrant.authorized_holder()),
+    );
+
+    serde_wasm_bindgen::to_value(&HashResult {
+        hash: Some(hex::encode(hash)),
+        error: None,
+    }).unwrap()
+}
+
+/// Helper: decode a base64 (standard or URL-safe) string into bytes.
+fn decode_b64(s: &str) -> Result<Vec<u8>, String> {
+    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, s.trim())
+        .or_else(|_| base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, s.trim()))
+        .map_err(|e| format!("base64 decode error: {}", e))
+}
+
+/// Check a warrant chain with signed approvals and optional revocation list.
+///
+/// Extends `check_chain_access` with:
+/// - `approvals_b64`: JS array of base64-encoded CBOR `SignedApproval` blobs for M-of-N
+///   approval verification (pass `[]` if not needed).
+/// - `srl_b64`: optional base64-encoded CBOR `SignedRevocationList`. When provided, the
+///   SRL is verified (using the trusted root as its issuer) and applied before chain checks.
+///   Pass `null`/`undefined` to skip revocation checking.
+#[wasm_bindgen]
+pub fn check_chain_access_with_approvals(
+    warrant_b64_list: Vec<String>,
+    tool: &str,
+    args_json: JsValue,
+    trusted_root_hex: &str,
+    approvals_b64: JsValue,
+    srl_b64: Option<String>,
+) -> JsValue {
+    init_panic_hook();
+
+    // Parse trusted root
+    let root_bytes: [u8; 32] = match hex::decode(trusted_root_hex.trim()) {
+        Ok(b) => match b.try_into() {
+            Ok(b) => b,
+            Err(_) => return to_auth_error("Invalid trusted root key length (must be 32 bytes)"),
+        },
+        Err(_) => return to_auth_error("Invalid trusted root hex"),
+    };
+    let root_key = match PublicKey::from_bytes(&root_bytes) {
+        Ok(k) => k,
+        Err(_) => return to_auth_error("Invalid trusted root key bytes"),
+    };
+
+    // Parse warrant chain
+    let mut chain: Vec<Warrant> = Vec::new();
+    for b64 in warrant_b64_list {
+        match wire::decode_base64(b64.trim()) {
+            Ok(w) => chain.push(w),
+            Err(e) => return to_auth_error(&format!("Invalid warrant in chain: {}", e)),
+        }
+    }
+    if chain.is_empty() {
+        return to_auth_error("Warrant chain is empty");
+    }
+
+    // Parse args
+    let args: HashMap<String, ConstraintValue> = match serde_wasm_bindgen::from_value(args_json) {
+        Ok(a) => a,
+        Err(e) => return to_auth_error(&format!("Invalid arguments JSON: {}", e)),
+    };
+
+    // Parse approvals: JS array of base64 strings, each a CBOR-encoded SignedApproval
+    let approval_b64_list: Vec<String> = match serde_wasm_bindgen::from_value(approvals_b64) {
+        Ok(v) => v,
+        Err(_) => return to_auth_error("Invalid approvals: expected array of base64 strings"),
+    };
+
+    let mut approvals: Vec<SignedApproval> = Vec::new();
+    for (i, b64) in approval_b64_list.iter().enumerate() {
+        let bytes = match decode_b64(b64) {
+            Ok(b) => b,
+            Err(e) => return to_auth_error(&format!("approval[{}]: {}", i, e)),
+        };
+        match ciborium::de::from_reader::<SignedApproval, _>(&bytes[..]) {
+            Ok(a) => approvals.push(a),
+            Err(e) => return to_auth_error(&format!("approval[{}] CBOR decode failed: {}", i, e)),
+        }
+    }
+
+    // Build authorizer, optionally attaching a signed revocation list
+    let authorizer_base = Authorizer::new().with_trusted_root(root_key.clone());
+    let authorizer = if let Some(srl_b64_str) = srl_b64 {
+        let bytes = match decode_b64(&srl_b64_str) {
+            Ok(b) => b,
+            Err(e) => return to_auth_error(&format!("SRL base64 decode failed: {}", e)),
+        };
+        let srl = match SignedRevocationList::from_bytes(&bytes) {
+            Ok(s) => s,
+            Err(e) => return to_auth_error(&format!("SRL CBOR decode failed: {}", e)),
+        };
+        match authorizer_base.try_revocation_list(srl, &root_key) {
+            Ok(a) => a,
+            Err(e) => return to_auth_error(&format!("SRL verification failed: {}", e)),
+        }
+    } else {
+        authorizer_base
+    };
+
+    match authorizer.check_chain(&chain, tool, &args, None, &approvals) {
+        Ok(_) => serde_wasm_bindgen::to_value(&AuthResult {
+            authorized: true,
+            reason: None,
+            deny_code: None,
+            field: None,
+        }).unwrap(),
+        Err(e) => serde_wasm_bindgen::to_value(&AuthResult {
+            authorized: false,
+            reason: Some(e.to_string()),
+            deny_code: Some("DENIED".to_string()),
+            field: None,
+        }).unwrap(),
+    }
+}
+
+// ============================================================================
+// SRL — revocation list verification
+// ============================================================================
+
+/// Verify a signed revocation list and return its metadata.
+///
+/// `srl_cbor_b64` — base64-encoded CBOR `SignedRevocationList`.
+/// `expected_issuer_hex` — hex-encoded Ed25519 public key of the expected SRL issuer.
+///
+/// Returns `{ valid, version, revoked_count, issued_at, error? }`.
+#[wasm_bindgen]
+pub fn verify_srl(srl_cbor_b64: &str, expected_issuer_hex: &str) -> JsValue {
+    init_panic_hook();
+
+    #[derive(Serialize)]
+    struct SrlResult {
+        valid: bool,
+        version: Option<u64>,
+        revoked_count: Option<u32>,
+        issued_at: Option<u64>,
+        error: Option<String>,
+    }
+
+    let bytes = match decode_b64(srl_cbor_b64) {
+        Ok(b) => b,
+        Err(e) => return serde_wasm_bindgen::to_value(&SrlResult {
+            valid: false, version: None, revoked_count: None, issued_at: None,
+            error: Some(format!("base64 decode: {}", e)),
+        }).unwrap(),
+    };
+    let issuer_bytes = match hex::decode(expected_issuer_hex.trim()) {
+        Ok(b) => b,
+        Err(e) => return serde_wasm_bindgen::to_value(&SrlResult {
+            valid: false, version: None, revoked_count: None, issued_at: None,
+            error: Some(format!("issuer hex decode: {}", e)),
+        }).unwrap(),
+    };
+    let issuer_arr: [u8; 32] = match issuer_bytes.try_into() {
+        Ok(a) => a,
+        Err(_) => return serde_wasm_bindgen::to_value(&SrlResult {
+            valid: false, version: None, revoked_count: None, issued_at: None,
+            error: Some("issuer key must be 32 bytes".to_string()),
+        }).unwrap(),
+    };
+    let issuer = match PublicKey::from_bytes(&issuer_arr) {
+        Ok(k) => k,
+        Err(e) => return serde_wasm_bindgen::to_value(&SrlResult {
+            valid: false, version: None, revoked_count: None, issued_at: None,
+            error: Some(format!("invalid issuer key: {}", e)),
+        }).unwrap(),
+    };
+    let srl = match SignedRevocationList::from_bytes(&bytes) {
+        Ok(s) => s,
+        Err(e) => return serde_wasm_bindgen::to_value(&SrlResult {
+            valid: false, version: None, revoked_count: None, issued_at: None,
+            error: Some(format!("CBOR decode: {}", e)),
+        }).unwrap(),
+    };
+    if let Err(e) = srl.verify(&issuer) {
+        return serde_wasm_bindgen::to_value(&SrlResult {
+            valid: false, version: None, revoked_count: None, issued_at: None,
+            error: Some(format!("signature invalid: {}", e)),
+        }).unwrap();
+    }
+    serde_wasm_bindgen::to_value(&SrlResult {
+        valid: true,
+        version: Some(srl.version()),
+        revoked_count: Some(srl.revoked_ids().len() as u32),
+        issued_at: Some(srl.issued_at().timestamp() as u64),
+        error: None,
+    }).unwrap()
+}
+
+/// Check if a warrant ID appears in a signed revocation list.
+///
+/// Does not verify the SRL signature — call `verify_srl` first if you need
+/// signature assurance. Returns `{ revoked, error? }`.
+#[wasm_bindgen]
+pub fn check_revocation(warrant_id: &str, srl_cbor_b64: &str) -> JsValue {
+    init_panic_hook();
+
+    #[derive(Serialize)]
+    struct RevocationResult {
+        revoked: bool,
+        error: Option<String>,
+    }
+
+    let bytes = match decode_b64(srl_cbor_b64) {
+        Ok(b) => b,
+        Err(e) => return serde_wasm_bindgen::to_value(&RevocationResult {
+            revoked: false, error: Some(format!("base64 decode: {}", e)),
+        }).unwrap(),
+    };
+    let mut srl = match SignedRevocationList::from_bytes(&bytes) {
+        Ok(s) => s,
+        Err(e) => return serde_wasm_bindgen::to_value(&RevocationResult {
+            revoked: false, error: Some(format!("CBOR decode: {}", e)),
+        }).unwrap(),
+    };
+    srl.build_cache();
+    serde_wasm_bindgen::to_value(&RevocationResult {
+        revoked: srl.is_revoked(warrant_id),
+        error: None,
+    }).unwrap()
+}
+
+// ============================================================================
+// Approval verification — standalone helpers
+// ============================================================================
+
+/// Verify a single signed approval blob and return its payload.
+///
+/// `approval_cbor_b64` — base64-encoded CBOR `SignedApproval`.
+///
+/// Returns `{ valid, approver_hex, request_hash_hex, approved_at, expires_at, error? }`.
+#[wasm_bindgen]
+pub fn verify_signed_approval(approval_cbor_b64: &str) -> JsValue {
+    init_panic_hook();
+
+    #[derive(Serialize)]
+    struct ApprovalResult {
+        valid: bool,
+        approver_hex: Option<String>,
+        request_hash_hex: Option<String>,
+        approved_at: Option<u64>,
+        expires_at: Option<u64>,
+        error: Option<String>,
+    }
+
+    let bytes = match decode_b64(approval_cbor_b64) {
+        Ok(b) => b,
+        Err(e) => return serde_wasm_bindgen::to_value(&ApprovalResult {
+            valid: false, approver_hex: None, request_hash_hex: None,
+            approved_at: None, expires_at: None,
+            error: Some(format!("base64 decode: {}", e)),
+        }).unwrap(),
+    };
+    let approval = match ciborium::de::from_reader::<SignedApproval, _>(&bytes[..]) {
+        Ok(a) => a,
+        Err(e) => return serde_wasm_bindgen::to_value(&ApprovalResult {
+            valid: false, approver_hex: None, request_hash_hex: None,
+            approved_at: None, expires_at: None,
+            error: Some(format!("CBOR decode: {}", e)),
+        }).unwrap(),
+    };
+    let approver_hex = hex::encode(approval.approver_key.to_bytes());
+    match approval.verify() {
+        Ok(payload) => serde_wasm_bindgen::to_value(&ApprovalResult {
+            valid: true,
+            approver_hex: Some(approver_hex),
+            request_hash_hex: Some(hex::encode(payload.request_hash)),
+            approved_at: Some(payload.approved_at),
+            expires_at: Some(payload.expires_at),
+            error: None,
+        }).unwrap(),
+        Err(e) => serde_wasm_bindgen::to_value(&ApprovalResult {
+            valid: false,
+            approver_hex: Some(approver_hex),
+            request_hash_hex: None,
+            approved_at: None, expires_at: None,
+            error: Some(e.to_string()),
+        }).unwrap(),
+    }
+}
+
+/// Verify that enough valid signed approvals cover a known request hash.
+///
+/// Use this when you already have a pre-computed `request_hash_hex` and want
+/// to check the approval set independently of tool/args re-parsing.
+///
+/// `warrant_b64` — the leaf warrant (provides `required_approvers` and threshold).
+/// `request_hash_hex` — hex-encoded 32-byte hash from `compute_request_hash_wasm`.
+/// `approvals_b64` — JS array of base64-encoded CBOR `SignedApproval` blobs.
+///
+/// Returns `{ satisfied, valid_count, required, error? }`.
+#[wasm_bindgen]
+pub fn verify_approval_set(
+    warrant_b64: &str,
+    request_hash_hex: &str,
+    approvals_b64: JsValue,
+) -> JsValue {
+    init_panic_hook();
+
+    #[derive(Serialize)]
+    struct ApprovalSetResult {
+        satisfied: bool,
+        valid_count: u32,
+        required: u32,
+        error: Option<String>,
+    }
+
+    let warrant = match wire::decode_base64(warrant_b64.trim()) {
+        Ok(w) => w,
+        Err(e) => return serde_wasm_bindgen::to_value(&ApprovalSetResult {
+            satisfied: false, valid_count: 0, required: 0,
+            error: Some(format!("invalid warrant: {}", e)),
+        }).unwrap(),
+    };
+    let hash_bytes = match hex::decode(request_hash_hex.trim()) {
+        Ok(b) => b,
+        Err(e) => return serde_wasm_bindgen::to_value(&ApprovalSetResult {
+            satisfied: false, valid_count: 0, required: 0,
+            error: Some(format!("request_hash hex decode: {}", e)),
+        }).unwrap(),
+    };
+    let request_hash: [u8; 32] = match hash_bytes.try_into() {
+        Ok(h) => h,
+        Err(_) => return serde_wasm_bindgen::to_value(&ApprovalSetResult {
+            satisfied: false, valid_count: 0, required: 0,
+            error: Some("request_hash must be 32 bytes".to_string()),
+        }).unwrap(),
+    };
+
+    let required_approvers = match warrant.required_approvers() {
+        Some(keys) if !keys.is_empty() => keys,
+        _ => return serde_wasm_bindgen::to_value(&ApprovalSetResult {
+            satisfied: true, valid_count: 0, required: 0, error: None,
+        }).unwrap(),
+    };
+    let threshold = warrant.approval_threshold();
+
+    let approval_b64_list: Vec<String> = match serde_wasm_bindgen::from_value(approvals_b64) {
+        Ok(v) => v,
+        Err(_) => return serde_wasm_bindgen::to_value(&ApprovalSetResult {
+            satisfied: false, valid_count: 0, required: threshold,
+            error: Some("approvals must be array of base64 strings".to_string()),
+        }).unwrap(),
+    };
+
+    let mut valid_count = 0u32;
+    let mut seen = std::collections::HashSet::new();
+    for (i, b64) in approval_b64_list.iter().enumerate() {
+        let bytes = match decode_b64(b64) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let approval = match ciborium::de::from_reader::<SignedApproval, _>(&bytes[..]) {
+            Ok(a) => a,
+            Err(_) => continue,
+        };
+        // Must be from an authorised approver
+        if !required_approvers.contains(&approval.approver_key) {
+            continue;
+        }
+        // No duplicates
+        if !seen.insert(i) {
+            continue;
+        }
+        // Verify signature and check hash
+        match approval.verify() {
+            Ok(payload) if payload.request_hash == request_hash => valid_count += 1,
+            _ => continue,
+        }
+    }
+
+    serde_wasm_bindgen::to_value(&ApprovalSetResult {
+        satisfied: valid_count >= threshold,
+        valid_count,
+        required: threshold,
+        error: None,
+    }).unwrap()
+}
+
+// ============================================================================
+// Receipt signing
+// ============================================================================
+
+/// Sign an authorization receipt for audit ingestion.
+///
+/// Produces the same CBOR+Ed25519 format used by the authorizer binary, allowing
+/// browser/Node plugins to generate verifiable forensic receipts.
+///
+/// `payload_json` — `{ authorizer_id, warrant_chain_b64, action, outcome, timestamp, root_principal? }`
+/// `authorizer_key_hex` — hex-encoded Ed25519 private key (32 bytes).
+///
+/// Returns `{ signature_hex, signing_payload_cbor_hex, error? }`.
+#[wasm_bindgen]
+pub fn sign_receipt(payload_json: JsValue, authorizer_key_hex: &str) -> JsValue {
+    init_panic_hook();
+
+    #[derive(serde::Deserialize)]
+    struct ReceiptInput {
+        authorizer_id: String,
+        warrant_chain_b64: String,
+        action: String,
+        outcome: bool,
+        timestamp: i64,
+        root_principal: Option<String>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct ReceiptSigningPayload<'a> {
+        #[serde(rename = "1")] authorizer_id: &'a str,
+        #[serde(rename = "2", with = "serde_bytes")] warrant_chain: &'a [u8],
+        #[serde(rename = "3")] action: &'a str,
+        #[serde(rename = "4")] outcome: bool,
+        #[serde(rename = "5")] timestamp: i64,
+        #[serde(rename = "6")] root_principal: Option<&'a str>,
+    }
+
+    #[derive(Serialize)]
+    struct ReceiptResult {
+        signature_hex: Option<String>,
+        signing_payload_cbor_hex: Option<String>,
+        error: Option<String>,
+    }
+
+    let input: ReceiptInput = match serde_wasm_bindgen::from_value(payload_json) {
+        Ok(v) => v,
+        Err(e) => return serde_wasm_bindgen::to_value(&ReceiptResult {
+            signature_hex: None, signing_payload_cbor_hex: None,
+            error: Some(format!("invalid payload: {}", e)),
+        }).unwrap(),
+    };
+    let key_bytes = match hex::decode(authorizer_key_hex.trim()) {
+        Ok(b) => b,
+        Err(e) => return serde_wasm_bindgen::to_value(&ReceiptResult {
+            signature_hex: None, signing_payload_cbor_hex: None,
+            error: Some(format!("key hex decode: {}", e)),
+        }).unwrap(),
+    };
+    let key_arr: [u8; 32] = match key_bytes.try_into() {
+        Ok(a) => a,
+        Err(_) => return serde_wasm_bindgen::to_value(&ReceiptResult {
+            signature_hex: None, signing_payload_cbor_hex: None,
+            error: Some("private key must be 32 bytes".to_string()),
+        }).unwrap(),
+    };
+    let signing_key = SigningKey::from_bytes(&key_arr);
+    let warrant_chain_bytes = match decode_b64(&input.warrant_chain_b64) {
+        Ok(b) => b,
+        Err(e) => return serde_wasm_bindgen::to_value(&ReceiptResult {
+            signature_hex: None, signing_payload_cbor_hex: None,
+            error: Some(format!("warrant_chain_b64 decode: {}", e)),
+        }).unwrap(),
+    };
+    let root_principal_ref = input.root_principal.as_deref();
+    let payload = ReceiptSigningPayload {
+        authorizer_id: &input.authorizer_id,
+        warrant_chain: &warrant_chain_bytes,
+        action: &input.action,
+        outcome: input.outcome,
+        timestamp: input.timestamp,
+        root_principal: root_principal_ref,
+    };
+    let mut cbor_buf = Vec::new();
+    if ciborium::into_writer(&payload, &mut cbor_buf).is_err() {
+        return serde_wasm_bindgen::to_value(&ReceiptResult {
+            signature_hex: None, signing_payload_cbor_hex: None,
+            error: Some("CBOR serialization failed".to_string()),
+        }).unwrap();
+    }
+    let signature = signing_key.sign(&cbor_buf);
+    serde_wasm_bindgen::to_value(&ReceiptResult {
+        signature_hex: Some(hex::encode(signature.to_bytes())),
+        signing_payload_cbor_hex: Some(hex::encode(&cbor_buf)),
+        error: None,
+    }).unwrap()
+}
+
+// ============================================================================
+// Connect token parsing
+// ============================================================================
+
+/// Parse a `TENUO_CONNECT_TOKEN` string into its component fields.
+///
+/// The token is a base64url-encoded JSON blob: `{ v, e, k, a?, r? }`.
+/// This WASM binding keeps the parsing canonical so TypeScript doesn't need
+/// to duplicate the decode logic.
+///
+/// Returns `{ endpoint, apiKey, agentId?, registrationToken?, error? }`.
+#[wasm_bindgen]
+pub fn parse_connect_token(token: &str) -> JsValue {
+    init_panic_hook();
+
+    #[derive(serde::Deserialize)]
+    struct RawToken {
+        v: u32,
+        e: String,
+        k: String,
+        #[serde(default)]
+        a: Option<String>,
+        #[serde(default)]
+        r: Option<String>,
+    }
+
+    #[derive(Serialize)]
+    struct TokenResult {
+        endpoint: Option<String>,
+        #[serde(rename = "apiKey")]
+        api_key: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: Option<String>,
+        #[serde(rename = "registrationToken")]
+        registration_token: Option<String>,
+        error: Option<String>,
+    }
+
+    let bytes = match base64::Engine::decode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD, token.trim())
+        .or_else(|_| base64::Engine::decode(
+            &base64::engine::general_purpose::URL_SAFE, token.trim()))
+    {
+        Ok(b) => b,
+        Err(e) => return serde_wasm_bindgen::to_value(&TokenResult {
+            endpoint: None, api_key: None, agent_id: None, registration_token: None,
+            error: Some(format!("base64url decode: {}", e)),
+        }).unwrap(),
+    };
+    let raw: RawToken = match serde_json::from_slice(&bytes) {
+        Ok(t) => t,
+        Err(e) => return serde_wasm_bindgen::to_value(&TokenResult {
+            endpoint: None, api_key: None, agent_id: None, registration_token: None,
+            error: Some(format!("JSON parse: {}", e)),
+        }).unwrap(),
+    };
+    if raw.v > 1 {
+        return serde_wasm_bindgen::to_value(&TokenResult {
+            endpoint: None, api_key: None, agent_id: None, registration_token: None,
+            error: Some(format!("unsupported token version: {}", raw.v)),
+        }).unwrap();
+    }
+    if raw.e.is_empty() || raw.k.is_empty() {
+        return serde_wasm_bindgen::to_value(&TokenResult {
+            endpoint: None, api_key: None, agent_id: None, registration_token: None,
+            error: Some("token missing required fields (e, k)".to_string()),
+        }).unwrap();
+    }
+    serde_wasm_bindgen::to_value(&TokenResult {
+        endpoint: Some(raw.e),
+        api_key: Some(raw.k),
+        agent_id: raw.a,
+        registration_token: raw.r,
+        error: None,
+    }).unwrap()
+}
+
 fn to_auth_error(msg: &str) -> JsValue {
     serde_wasm_bindgen::to_value(&AuthResult {
         authorized: false,
@@ -791,6 +1415,100 @@ pub fn create_sample_warrant(
         holder_private_key_hex: hex::encode(holder_key.secret_key_bytes()),
         holder_public_key_hex: hex::encode(holder_key.public_key().to_bytes()),
         tool: tool.to_string(),
+        ttl_seconds,
+        error: None,
+    })
+    .unwrap()
+}
+
+/// Result of root Issuer warrant creation (generated once at setup)
+#[derive(serde::Serialize)]
+pub struct IssuerWarrantResult {
+    pub warrant_b64: String,
+    pub public_key_hex: String,
+    pub private_key_hex: String,
+    pub ttl_seconds: u64,
+    pub error: Option<String>,
+}
+
+/// Create a self-signed root Issuer warrant for use as a persistent trust anchor.
+/// This is called once during plugin setup and stored on disk.
+/// The Issuer warrant's keypair replaces per-session signing keys — all Execution
+/// warrants (depth ≥ 1) are derived from it, enabling proper WASM chain verification
+/// across plugin restarts.
+///
+/// Config: { signing_key_hex?: string, issuable_tools: string[], max_issue_depth?: number, ttl_seconds?: number }
+#[wasm_bindgen]
+pub fn create_issuer_warrant(config_json: JsValue) -> JsValue {
+    init_panic_hook();
+
+    #[derive(serde::Deserialize)]
+    struct IssuerConfig {
+        signing_key_hex: Option<String>,
+        issuable_tools: Vec<String>,
+        max_issue_depth: Option<u32>,
+        ttl_seconds: Option<u64>,
+    }
+
+    let err = |msg: &str| {
+        serde_wasm_bindgen::to_value(&IssuerWarrantResult {
+            warrant_b64: String::new(),
+            public_key_hex: String::new(),
+            private_key_hex: String::new(),
+            ttl_seconds: 0,
+            error: Some(msg.to_string()),
+        })
+        .unwrap()
+    };
+
+    let config: IssuerConfig = match serde_wasm_bindgen::from_value(config_json) {
+        Ok(c) => c,
+        Err(e) => return err(&format!("Invalid config: {}", e)),
+    };
+
+    if config.issuable_tools.is_empty() {
+        return err("issuable_tools must not be empty");
+    }
+
+    // Use provided key or generate a fresh one
+    let root_key = if let Some(hex_str) = &config.signing_key_hex {
+        match hex::decode(hex_str) {
+            Ok(bytes) => match bytes.try_into() {
+                Ok(arr) => SigningKey::from_bytes(&arr),
+                Err(_) => return err("signing_key_hex has wrong length (must be 32 bytes)"),
+            },
+            Err(_) => return err("signing_key_hex is not valid hex"),
+        }
+    } else {
+        SigningKey::generate()
+    };
+
+    // 90-day TTL by default (protocol maximum) — this is the stable root trust anchor
+    let ttl_seconds = config.ttl_seconds.unwrap_or(90 * 24 * 3600);
+    let max_issue_depth = config.max_issue_depth.unwrap_or(8);
+
+    let mut builder = Warrant::builder()
+        .issuable_tools(config.issuable_tools)
+        .max_issue_depth(max_issue_depth)
+        .ttl(Duration::from_secs(ttl_seconds));
+
+    // Self-signed: holder defaults to issuer (signing key) — valid per spec §5.3
+    builder = builder.holder(root_key.public_key());
+
+    let warrant = match builder.build(&root_key) {
+        Ok(w) => w,
+        Err(e) => return err(&format!("Failed to build Issuer warrant: {}", e)),
+    };
+
+    let warrant_b64 = match wire::encode_base64(&warrant) {
+        Ok(b) => b,
+        Err(e) => return err(&format!("Failed to encode Issuer warrant: {}", e)),
+    };
+
+    serde_wasm_bindgen::to_value(&IssuerWarrantResult {
+        warrant_b64,
+        public_key_hex: hex::encode(root_key.public_key().to_bytes()),
+        private_key_hex: hex::encode(root_key.secret_key_bytes()),
         ttl_seconds,
         error: None,
     })
