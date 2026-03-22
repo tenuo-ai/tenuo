@@ -1410,6 +1410,7 @@ dependencies = [
  "hex",
  "serde",
  "serde-wasm-bindgen",
+ "serde_bytes",
  "serde_json",
  "tenuo",
  "wasm-bindgen",
