@@ -20,7 +20,6 @@ from tenuo.a2a import A2AServer
 from tenuo.a2a.errors import (
     ChainValidationError,
     UntrustedIssuerError,
-    WarrantExpiredError,
 )
 
 
