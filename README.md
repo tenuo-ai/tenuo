@@ -360,6 +360,8 @@ See [docs.rs/tenuo](https://docs.rs/tenuo) for Rust API.
 
 Tenuo builds on capability token ideas described in [CaMeL](https://arxiv.org/abs/2503.18813) (Debenedetti et al., 2025). Inspired by [Macaroons](https://research.google/pubs/pub41892/), [Biscuit](https://www.biscuitsec.org/), and [UCAN](https://ucan.xyz/).
 
+The token format and delegation protocol are being standardized as [draft-niyikiza-oauth-attenuating-agent-tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/) in the IETF OAuth Working Group.
+
 See [Related Work](https://tenuo.ai/related-work) for detailed comparison.
 
 ---

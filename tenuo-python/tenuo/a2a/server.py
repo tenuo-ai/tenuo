@@ -105,9 +105,19 @@ __all__ = [
     "SkillDefinition",
 ]
 
-# Maximum warrant token size accepted (64 KB). Warrants above this size are
-# almost certainly malformed or an attempt to trigger a DoS via parsing cost.
+# Maximum warrant token size accepted (64 KB) — mirrors wire.MAX_WARRANT_SIZE.
+# WarrantStack inputs may be larger (up to 256 KB); the limit here applies only
+# to the extracted leaf token passed into validate_warrant.
 MAX_WARRANT_TOKEN_BYTES = 65_536
+
+# HTTP header names — imported from tenuo_core so they stay in sync with the wire spec.
+try:
+    from tenuo_core import WARRANT_HEADER
+except ImportError:
+    WARRANT_HEADER = "X-Tenuo-Warrant"
+
+# Delegation chain header (legacy transport; WarrantStack is preferred).
+WARRANT_CHAIN_HEADER = "X-Tenuo-Warrant-Chain"
 
 logger = logging.getLogger("tenuo.a2a.server")
 
@@ -989,16 +999,19 @@ class A2AServer:
         arguments: Dict[str, Any],
         *,
         warrant_chain: Optional[str] = None,
+        _preloaded_parents: Optional[List[Any]] = None,
         pop_signature: Optional[bytes] = None,
     ) -> "Warrant":
         """
         Validate a warrant for a skill invocation.
 
         Args:
-            warrant_token: JWT warrant token
+            warrant_token: Base64-encoded leaf warrant token
             skill_id: Requested skill
             arguments: Skill arguments to check against constraints
-            warrant_chain: Optional semicolon-separated chain of parent warrants
+            warrant_chain: Optional semicolon-separated parent warrants (legacy)
+            _preloaded_parents: Already-decoded parent warrants from a WarrantStack
+                (takes precedence over ``warrant_chain`` when provided)
             pop_signature: Optional Proof-of-Possession signature bytes
 
         Returns:
@@ -1068,8 +1081,11 @@ class A2AServer:
             raise RevokedError(f"Issuer key '{issuer_normalized}' is revoked")
 
         if issuer_normalized and issuer_normalized not in self.trusted_issuers:
-            if self.trust_delegated and warrant_chain:
-                # Validate delegation chain
+            if _preloaded_parents is not None and len(_preloaded_parents) > 0:
+                # WarrantStack path: parents already decoded by the HTTP handler
+                await self._validate_chain_warrants(warrant, _preloaded_parents)
+            elif self.trust_delegated and warrant_chain:
+                # Legacy path: semicolon-separated header
                 await self._validate_chain(warrant, warrant_chain)
             else:
                 raise UntrustedIssuerError(issuer_normalized)
@@ -1192,136 +1208,120 @@ class A2AServer:
 
         return warrant
 
+    async def _validate_chain_warrants(
+        self,
+        leaf_warrant: Any,
+        parents: List[Any],
+    ) -> None:
+        """
+        Validate a delegation chain using the Rust ``Authorizer.verify_chain``.
+
+        The Rust core performs full cryptographic validation:
+          - Root warrant issuer is in the server's trusted roots
+          - Every warrant's signature is cryptographically valid
+          - Each child carries a ``parent_hash`` that matches the hash of its
+            parent (stronger than mere issuer/holder key comparison)
+          - No warrant in the chain is expired
+          - Capability monotonicity is enforced at the Rust level
+
+        The only server-side policy applied here in Python is ``max_chain_depth``,
+        which is a deployment limit not encoded into the warrant payloads.
+
+        Args:
+            leaf_warrant: The leaf warrant (already decoded, NOT included in parents)
+            parents: Parent warrants in root-first order, excluding the leaf
+
+        Raises:
+            ChainValidationError, UntrustedIssuerError, WarrantExpiredError
+        """
+        if not parents:
+            raise ChainValidationError("Empty warrant chain")
+
+        if len(parents) > self.max_chain_depth:
+            raise ChainValidationError(
+                f"Chain depth {len(parents)} exceeds maximum {self.max_chain_depth}"
+            )
+
+        # Full chain passed to the Rust verifier: [root, ..., intermediates, leaf]
+        all_warrants = list(parents) + [leaf_warrant]
+
+        try:
+            self._authorizer.verify_chain(all_warrants)
+        except Exception as e:
+            _msg = str(e)
+            try:
+                from tenuo.exceptions import ChainError, ExpiredError, SignatureInvalid
+            except ImportError:
+                raise ChainValidationError(f"Chain verification error: {_msg}") from e
+
+            if isinstance(e, ExpiredError):
+                raise WarrantExpiredError(_msg) from e
+
+            if isinstance(e, SignatureInvalid):
+                # "root warrant issuer not trusted" surfaces as SignatureInvalid
+                root = all_warrants[0]
+                root_issuer = getattr(root, "iss", None) or getattr(root, "issuer", None)
+                root_issuer_str = self._normalize_key(root_issuer) if root_issuer else "unknown"
+                raise UntrustedIssuerError(
+                    root_issuer_str,
+                    reason=f"Chain validation failed: {_msg}",
+                ) from e
+
+            if isinstance(e, (ChainError, ValueError)):
+                raise ChainValidationError(_msg) from e
+
+            # Unexpected Rust error — surface as generic chain failure
+            raise ChainValidationError(f"Chain verification error: {_msg}") from e
+
+        logger.debug("Chain validated via Authorizer: %d warrants", len(all_warrants))
+
     async def _validate_chain(
         self,
         leaf_warrant: Any,
         chain_header: str,
     ) -> None:
         """
-        Validate a delegation chain.
+        Validate a delegation chain from a semicolon-separated header string.
 
-        The chain header contains semicolon-separated JWTs ordered parent-first:
-            root_warrant;middle_warrant;leaf_warrant
+        The chain header contains parent warrants in root-first order; the leaf
+        warrant is passed separately and is NOT expected to appear in the header.
 
-        Validation rules:
-            1. Root warrant must be from a trusted issuer
-            2. Each warrant must have valid signature
-            3. Each child's issuer must match parent's subject/holder
-            4. Chain depth must not exceed max_chain_depth
-            5. All warrants in chain must not be expired
-            6. Grants must narrow (monotonicity)
+        This is the legacy transport interface kept for backward compatibility.
+        New clients should use WarrantStack transport (a single
+        ``X-Tenuo-Warrant`` header containing the packed CBOR array) instead.
 
         Args:
-            leaf_warrant: The final warrant being validated
-            chain_header: Semicolon-separated JWT chain
+            leaf_warrant: The leaf warrant (already decoded)
+            chain_header: Semicolon-separated base64 parent warrants (parent-first)
 
         Raises:
-            A2AError on validation failure
+            ChainValidationError, UntrustedIssuerError, WarrantExpiredError
         """
-
         try:
             from tenuo_core import Warrant
         except ImportError as e:
             raise RuntimeError("tenuo_core not available") from e
 
-        # Parse chain (parent-first order)
+        # Parse parent chain (root-first order)
         chain_tokens = [t.strip() for t in chain_header.split(";") if t.strip()]
 
         if not chain_tokens:
             raise ChainValidationError("Empty warrant chain")
 
         if len(chain_tokens) > self.max_chain_depth:
-            raise ChainValidationError(f"Chain depth {len(chain_tokens)} exceeds maximum {self.max_chain_depth}")
+            raise ChainValidationError(
+                f"Chain depth {len(chain_tokens)} exceeds maximum {self.max_chain_depth}"
+            )
 
-        # Decode all warrants in chain
-        chain_warrants = []
+        parents: List[Any] = []
         for i, token in enumerate(chain_tokens):
             try:
-                # Use from_base64 consistently (same as main warrant parsing)
                 w = Warrant.from_base64(token)
-                chain_warrants.append(w)
+                parents.append(w)
             except Exception as e:
                 raise ChainValidationError(f"Invalid warrant at position {i}: {e}")
 
-        # Validate root warrant is from trusted issuer
-        root = chain_warrants[0]
-        root_issuer = getattr(root, "iss", None) or getattr(root, "issuer", None)
-        root_issuer_normalized = self._normalize_key(root_issuer) if root_issuer else None
-
-        if root_issuer_normalized not in self.trusted_issuers:
-            raise UntrustedIssuerError(
-                root_issuer_normalized or "unknown",
-                reason=f"Root warrant issuer '{root_issuer_normalized}' is not trusted",
-            )
-
-        # Validate chain linkage
-        now = int(time.time())
-
-        for i in range(len(chain_warrants)):
-            current = chain_warrants[i]
-
-            # Check expiry
-            exp = getattr(current, "exp", None)
-            if exp and exp < now:
-                raise WarrantExpiredError(f"Warrant at position {i} has expired")
-
-            # Check chain linkage (child's issuer should be parent's holder)
-            if i > 0:
-                parent = chain_warrants[i - 1]
-
-                # Get parent's authorized holder (the one who can delegate)
-                parent_holder = (
-                    getattr(parent, "sub", None)
-                    or getattr(parent, "subject", None)
-                    or getattr(parent, "authorized_holder", None)
-                )
-
-                # Get current warrant's issuer
-                current_issuer = getattr(current, "iss", None) or getattr(current, "issuer", None)
-
-                # SECURITY: Strict chain linkage for A2A delegation
-                # - Parent MUST have a holder (sub/subject) to enable delegation
-                # - Child MUST have an issuer
-                # - They MUST match for the chain to be valid
-                # Note: Root warrants (i=0) can be bearer tokens without sub
-                if not parent_holder:
-                    raise ChainValidationError(
-                        f"Chain broken at position {i}: parent warrant (position {i - 1}) "
-                        f"has no holder (sub/subject) - cannot delegate a bearer token",
-                        depth=i,
-                    )
-                if not current_issuer:
-                    raise ChainValidationError(
-                        f"Chain broken at position {i}: warrant has no issuer (iss)",
-                        depth=i,
-                    )
-                # Normalize keys for comparison (handles both PublicKey objects and strings)
-                parent_holder_normalized = self._normalize_key(parent_holder)
-                current_issuer_normalized = self._normalize_key(current_issuer)
-                if parent_holder_normalized != current_issuer_normalized:
-                    raise ChainValidationError(
-                        f"Chain broken at position {i}: parent holder != child issuer",
-                        depth=i,
-                    )
-
-                # Monotonicity check: child grants must be subset of parent grants
-                if not self._grants_are_subset(current, parent):
-                    raise ChainValidationError(
-                        f"Monotonicity violation at position {i}: child grants exceed parent grants",
-                        depth=i,
-                    )
-
-        # Verify leaf warrant in chain matches the leaf_warrant being validated
-        leaf_jti = getattr(leaf_warrant, "jti", None) or getattr(leaf_warrant, "id", None)
-        chain_leaf = chain_warrants[-1] if chain_warrants else None
-        chain_leaf_jti = getattr(chain_leaf, "jti", None) or getattr(chain_leaf, "id", None) if chain_leaf else None
-
-        if leaf_jti and chain_leaf_jti and leaf_jti != chain_leaf_jti:
-            raise ChainValidationError(
-                f"Leaf warrant mismatch: warrant jti '{leaf_jti}' != chain tail '{chain_leaf_jti}'"
-            )
-
-        logger.debug(f"Chain validated: {len(chain_warrants)} warrants, root issuer: {root_issuer_normalized}")
+        await self._validate_chain_warrants(leaf_warrant, parents)
 
     def _grants_are_subset(self, child: Any, parent: Any) -> bool:
         """
@@ -2041,14 +2041,34 @@ class A2AServer:
         task_id = task.get("id") or str(uuid.uuid4())
 
         # Get warrant from header or params
-        warrant_token = request.headers.get("X-Tenuo-Warrant")
-        if not warrant_token:
-            warrant_token = params.get("x-tenuo-warrant")
+        warrant_token_raw = request.headers.get(WARRANT_HEADER)
+        if not warrant_token_raw:
+            warrant_token_raw = params.get("x-tenuo-warrant")
 
-        # Get delegation chain (semicolon-separated, parent-first)
-        warrant_chain = request.headers.get("X-Tenuo-Warrant-Chain")
-        if not warrant_chain:
-            warrant_chain = params.get("x-tenuo-warrant-chain")
+        # Try to decode as a packed WarrantStack (new single-header transport).
+        # If the value is a multi-warrant CBOR array, split it into leaf + parents
+        # so the chain validation path can proceed without the legacy chain header.
+        _preloaded_parents: Optional[List[Any]] = None
+        warrant_token = warrant_token_raw
+        if warrant_token_raw:
+            try:
+                from tenuo_core import decode_warrant_stack_base64
+
+                stack_warrants = decode_warrant_stack_base64(warrant_token_raw)
+                if len(stack_warrants) >= 1:
+                    # Re-encode only the leaf so validate_warrant sees a normal token
+                    warrant_token = stack_warrants[-1].to_base64()
+                    _preloaded_parents = stack_warrants[:-1]  # empty list for 1-element stacks
+            except Exception:
+                # Not a WarrantStack — treat as a plain single-warrant token
+                pass
+
+        # Legacy fallback: chain header (only consulted when no WarrantStack decoded).
+        warrant_chain: Optional[str] = None
+        if not _preloaded_parents:
+            warrant_chain = request.headers.get(WARRANT_CHAIN_HEADER)
+            if not warrant_chain:
+                warrant_chain = params.get("x-tenuo-warrant-chain")
 
         # Get Proof-of-Possession signature (base64 URL-safe encoded)
         pop_b64 = request.headers.get("X-Tenuo-PoP")
@@ -2075,6 +2095,7 @@ class A2AServer:
                 skill_id,
                 arguments,
                 warrant_chain=warrant_chain,
+                _preloaded_parents=_preloaded_parents,
                 pop_signature=pop_signature,
             )
 
@@ -2114,9 +2135,25 @@ class A2AServer:
         arguments = task.get("arguments", {})
         task_id = task.get("id") or str(uuid.uuid4())
 
-        # Get warrant from header or params
-        warrant_token = request.headers.get("X-Tenuo-Warrant") or params.get("x-tenuo-warrant")
-        warrant_chain = request.headers.get("X-Tenuo-Warrant-Chain") or params.get("x-tenuo-warrant-chain")
+        # Get warrant from header or params — same WarrantStack logic as task/send
+        warrant_token_raw = request.headers.get(WARRANT_HEADER) or params.get("x-tenuo-warrant")
+
+        _preloaded_parents: Optional[List[Any]] = None
+        warrant_token = warrant_token_raw
+        if warrant_token_raw:
+            try:
+                from tenuo_core import decode_warrant_stack_base64
+
+                stack_warrants = decode_warrant_stack_base64(warrant_token_raw)
+                if len(stack_warrants) >= 1:
+                    warrant_token = stack_warrants[-1].to_base64()
+                    _preloaded_parents = stack_warrants[:-1]
+            except Exception:
+                pass
+
+        warrant_chain: Optional[str] = None
+        if not _preloaded_parents:
+            warrant_chain = request.headers.get(WARRANT_CHAIN_HEADER) or params.get("x-tenuo-warrant-chain")
 
         # Get Proof-of-Possession signature
         pop_b64 = request.headers.get("X-Tenuo-PoP") or params.get("x-tenuo-pop")
@@ -2140,6 +2177,7 @@ class A2AServer:
                 skill_id,
                 arguments,
                 warrant_chain=warrant_chain,
+                _preloaded_parents=_preloaded_parents,
                 pop_signature=pop_signature,
             )
 

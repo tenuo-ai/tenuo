@@ -37,6 +37,14 @@ __all__ = [
 
 logger = logging.getLogger("tenuo.a2a.client")
 
+# HTTP header names — imported from tenuo_core to stay in sync with the wire spec.
+try:
+    from tenuo_core import WARRANT_HEADER
+except ImportError:
+    WARRANT_HEADER = "X-Tenuo-Warrant"
+
+WARRANT_CHAIN_HEADER = "X-Tenuo-Warrant-Chain"  # legacy transport fallback
+
 
 # =============================================================================
 # A2A Client Builder
@@ -238,8 +246,9 @@ class A2AClient:
         trusting it.
 
         Args:
-            chain: List of warrant tokens (base64 strings) in parent-first order,
-                   matching the ``X-Tenuo-Warrant-Chain`` header convention.
+            chain: List of warrant tokens (base64 strings) in parent-first order
+                   (root first, leaf last).  This is the same ordering used when
+                   packing a WarrantStack for the ``X-Tenuo-Warrant`` header.
             trusted_roots: Public keys trusted as root issuers.  If ``None``,
                            falls back to the pinned key (``pin_key``) if set.
 
@@ -572,19 +581,31 @@ class A2AClient:
         # Warrant must be a tenuo Warrant object with to_base64()
         if not hasattr(warrant, "to_base64"):
             raise TypeError(f"warrant must be a Warrant object with to_base64() method, got {type(warrant).__name__}")
-        warrant_token = warrant.to_base64()
 
-        # Build headers
-        headers: Dict[str, str] = {"X-Tenuo-Warrant": warrant_token}
-
-        # Add delegation chain if provided (semicolon-separated, parent-first)
+        # Build headers — pack chain + leaf into a single WarrantStack when a
+        # delegation chain is present.  This avoids the two-header split and
+        # matches the CBOR WarrantStack format used by tenuo-core.
+        headers: Dict[str, str] = {}
         if warrant_chain:
-            chain_tokens = []
             for w in warrant_chain:
                 if not hasattr(w, "to_base64"):
                     raise TypeError(f"warrant_chain items must have to_base64() method, got {type(w).__name__}")
-                chain_tokens.append(w.to_base64())
-            headers["X-Tenuo-Warrant-Chain"] = ";".join(chain_tokens)
+            try:
+                from tenuo_core import encode_warrant_stack
+
+                all_warrants = list(warrant_chain) + [warrant]
+                stack_b64 = encode_warrant_stack(all_warrants)
+                if stack_b64:
+                    headers[WARRANT_HEADER] = stack_b64
+                else:
+                    raise ValueError("encode_warrant_stack returned None")
+            except Exception as _e:
+                # Graceful fallback: legacy two-header format
+                logger.warning("WarrantStack encode failed, falling back to legacy format: %s", _e)
+                headers[WARRANT_HEADER] = warrant.to_base64()
+                headers[WARRANT_CHAIN_HEADER] = ";".join(w.to_base64() for w in warrant_chain)
+        else:
+            headers[WARRANT_HEADER] = warrant.to_base64()
 
         # Generate Proof-of-Possession signature if signing_key provided
         args = arguments or {}
@@ -734,22 +755,29 @@ class A2AClient:
         # Serialize warrant
         if not hasattr(warrant, "to_base64"):
             raise TypeError(f"warrant must be a Warrant object with to_base64() method, got {type(warrant).__name__}")
-        warrant_token = warrant.to_base64()
 
-        # Build headers
-        headers: Dict[str, str] = {
-            "X-Tenuo-Warrant": warrant_token,
-            "Accept": "text/event-stream",
-        }
-
-        # Add delegation chain if provided
+        # Build headers — pack chain + leaf into a single WarrantStack when a
+        # delegation chain is present (same logic as send_task).
+        headers: Dict[str, str] = {"Accept": "text/event-stream"}
         if warrant_chain:
-            chain_tokens = []
             for w in warrant_chain:
                 if not hasattr(w, "to_base64"):
                     raise TypeError(f"warrant_chain items must have to_base64() method, got {type(w).__name__}")
-                chain_tokens.append(w.to_base64())
-            headers["X-Tenuo-Warrant-Chain"] = ";".join(chain_tokens)
+            try:
+                from tenuo_core import encode_warrant_stack
+
+                all_warrants = list(warrant_chain) + [warrant]
+                stack_b64 = encode_warrant_stack(all_warrants)
+                if stack_b64:
+                    headers[WARRANT_HEADER] = stack_b64
+                else:
+                    raise ValueError("encode_warrant_stack returned None")
+            except Exception as _e:
+                logger.warning("WarrantStack encode failed, falling back to legacy format: %s", _e)
+                headers[WARRANT_HEADER] = warrant.to_base64()
+                headers[WARRANT_CHAIN_HEADER] = ";".join(w.to_base64() for w in warrant_chain)
+        else:
+            headers[WARRANT_HEADER] = warrant.to_base64()
 
         # Generate Proof-of-Possession signature if signing_key provided
         args = arguments or {}
