@@ -30,7 +30,6 @@ Multi-Tenant Safety:
 from __future__ import annotations
 
 import logging
-import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -188,18 +187,19 @@ class TenuoPlugin(BasePlugin):
 
     def _check_warrant_expiry(self, warrant: Any) -> bool:
         """Check if warrant is expired."""
-        is_expired = getattr(warrant, "is_expired", None)
+        # Prefer the canonical is_expired() method (Rust Warrant objects).
+        # For test doubles where is_expired is a PropertyMock, accessing the
+        # attribute returns a bool directly (not a callable); handle that too.
+        # Fall back to the .expired property (added by warrant_ext).
+        is_expired_attr = getattr(warrant, "is_expired", None)
+        if callable(is_expired_attr):
+            return is_expired_attr()
+        if is_expired_attr is not None:
+            return bool(is_expired_attr)
 
-        # Handle method vs property
-        if callable(is_expired):
-            return is_expired()
-        elif is_expired is not None:
-            return bool(is_expired)
-
-        # Fallback: check exp claim manually
-        exp = getattr(warrant, "exp", None)
-        if exp is not None:
-            return time.time() > exp
+        expired_prop = getattr(warrant, "expired", None)
+        if expired_prop is not None:
+            return bool(expired_prop)
 
         return False
 

@@ -54,8 +54,14 @@ except ImportError:
     FASTAPI_AVAILABLE = False
 
 
-# Define standard headers
-X_TENUO_WARRANT = "X-Tenuo-Warrant"
+# Use the canonical header name from tenuo_core; fall back to the literal if the
+# version in the environment doesn't export it yet.
+try:
+    from tenuo_core import WARRANT_HEADER as _WARRANT_HEADER  # type: ignore[attr-defined]
+except ImportError:
+    _WARRANT_HEADER = "X-Tenuo-Warrant"
+
+X_TENUO_WARRANT: str = _WARRANT_HEADER
 X_TENUO_POP = "X-Tenuo-PoP"
 
 # Reusable security scheme for Swagger UI (only if FastAPI available)
@@ -205,26 +211,53 @@ class SecurityContext:
 # Guard all FastAPI-dependent code to prevent import errors when FastAPI not installed
 if FASTAPI_AVAILABLE:
 
-    def get_warrant_header(x_tenuo_warrant: Optional[str] = Header(None, alias=X_TENUO_WARRANT)) -> Optional[Warrant]:
+    def get_warrant_header(
+        request: Request,
+        x_tenuo_warrant: Optional[str] = Header(None, alias=X_TENUO_WARRANT),
+    ) -> Optional[Warrant]:
         """
         FastAPI dependency to extract and parse the X-Tenuo-Warrant header.
-        Returns None if missing. Raises HTTP Exception on invalid format.
+
+        Supports both a plain base64-encoded warrant and a WarrantStack (CBOR
+        array of warrants, also base64-encoded).  When a multi-warrant stack is
+        detected the parent warrants are stored in ``request.state.tenuo_parents``
+        so that ``TenuoGuard`` can pass the full chain to ``Authorizer.check_chain``.
+
+        Returns None if the header is absent.  Raises HTTP 400 on invalid format.
         """
         if not x_tenuo_warrant:
             return None
 
+        # --- Try WarrantStack decode first --------------------------------
         try:
+            from tenuo_core import decode_warrant_stack_base64  # type: ignore[attr-defined]
+
+            warrants = decode_warrant_stack_base64(x_tenuo_warrant)
+            if len(warrants) > 1:
+                # Multi-warrant stack: parents lead, leaf is last
+                request.state.tenuo_parents = warrants[:-1]
+                return warrants[-1]
+            elif warrants:
+                request.state.tenuo_parents = []
+                return warrants[0]
+        except Exception:
+            pass  # Not a WarrantStack — fall through to single-warrant decode
+
+        # --- Fall back to plain single-warrant decode ---------------------
+        try:
+            request.state.tenuo_parents = []
             return Warrant.from_base64(x_tenuo_warrant)
         except DeserializationError as e:
-            # Client error: malformed warrant
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid X-Tenuo-Warrant header: {str(e)}",
             )
         except TenuoError:
             raise
         except Exception as e:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid X-Tenuo-Warrant header: {str(e)}",
             )
 
     def require_warrant(
@@ -312,12 +345,17 @@ class TenuoGuard:
         tool: str,
         args: Dict[str, Any],
         pop_signature: bytes,
+        parents: Optional[List] = None,
     ) -> EnforcementResult:
         """
         Adapter for FastAPI's client-side PoP pattern.
 
         Uses enforce_tool_call with verify_mode="verify" to leverage shared
         logic (allowlists, critical tools) with pre-computed signatures.
+
+        When ``parents`` is provided (warrants extracted from a WarrantStack),
+        the full chain ``[*parents, warrant]`` is passed to
+        ``Authorizer.check_chain`` for cryptographic chain verification.
 
         Note: This uses _VerificationOnlyKey sentinel since in verify mode,
         the signing key is never used (precomputed_signature is used instead).
@@ -326,17 +364,19 @@ class TenuoGuard:
 
         from tenuo._enforcement import enforce_tool_call
 
-        # In verify mode, enforce_tool_call() requires a BoundWarrant for type safety
-        # and to access warrant properties (id, tools, etc.), but the signing key
-        # is never used for cryptographic operations. The precomputed_signature
-        # provided by the client is used instead.
-        #
-        # We bind with _VerificationOnlyKey sentinel to make this explicit.
-        # This is safe and intentional - the key is only for type compatibility.
         bound = warrant.bind(_VerificationOnlyKey())  # type: ignore[arg-type]
 
-        issuer_pub = getattr(warrant, "issuer_public_key", None) or getattr(warrant, "issuer", None)
-        roots = [issuer_pub] if issuer_pub is not None else []
+        # Prefer the application-level trusted_issuers for the Authorizer so
+        # that multi-hop chains whose root differs from the leaf's direct issuer
+        # are verified correctly.  Fall back to the leaf's issuer for backward
+        # compatibility when trusted_issuers was not configured.
+        trusted_issuers = _config.get("trusted_issuers") or []
+        if trusted_issuers:
+            roots = list(trusted_issuers)
+        else:
+            issuer_pub = getattr(warrant, "issuer_public_key", None) or getattr(warrant, "issuer", None)
+            roots = [issuer_pub] if issuer_pub is not None else []
+
         authorizer = _Authorizer(trusted_roots=roots)
 
         return enforce_tool_call(
@@ -346,6 +386,7 @@ class TenuoGuard:
             verify_mode="verify",
             precomputed_signature=pop_signature,
             authorizer=authorizer,
+            warrant_chain=parents or [],
         )
 
     def __call__(
@@ -409,12 +450,14 @@ class TenuoGuard:
                 },
             )
 
-        # 5. Authorize using Adapter
+        # 5. Authorize using Adapter (include delegation chain parents if present)
+        parents = getattr(request.state, "tenuo_parents", [])
         enforcement = self._enforce_with_pop_signature(
             warrant=warrant,
             tool=self.tool,
             args=auth_args,
             pop_signature=pop_sig_bytes,
+            parents=parents,
         )
 
         if not enforcement.allowed:

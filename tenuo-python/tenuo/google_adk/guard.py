@@ -555,20 +555,19 @@ class TenuoGuard:
         Fails closed on exceptions (treats as expired).
         """
         try:
-            is_expired = getattr(warrant, "is_expired", None)
+            # Prefer the canonical is_expired() method from the Rust core.
+            # For a real Warrant object, warrant.is_expired is a callable method;
+            # for PropertyMock-based test doubles, accessing it returns a bool directly.
+            # Fall back to the .expired property (added by warrant_ext).
+            is_expired_attr = getattr(warrant, "is_expired", None)
+            if callable(is_expired_attr):
+                return is_expired_attr()
+            if is_expired_attr is not None:
+                return bool(is_expired_attr)
 
-            # Handle method vs property
-            if callable(is_expired):
-                return is_expired()
-            elif is_expired is not None:
-                return bool(is_expired)
-
-            # Fallback: check exp claim manually
-            import time
-
-            exp = getattr(warrant, "exp", None)
-            if exp is not None:
-                return time.time() > exp
+            expired_prop = getattr(warrant, "expired", None)
+            if expired_prop is not None:
+                return bool(expired_prop)
 
             return False
         except Exception as e:

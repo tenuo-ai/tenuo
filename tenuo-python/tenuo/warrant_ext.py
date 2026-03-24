@@ -39,6 +39,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Union, runtime_checkable
 
+try:
+    from tenuo_core import WARRANT_HEADER as _WARRANT_HEADER  # type: ignore[attr-defined]
+except ImportError:
+    _WARRANT_HEADER = "X-Tenuo-Warrant"
+
 from tenuo_core import (  # type: ignore[import-untyped]  # type: ignore[import-untyped]
     DelegationDiff,
     DelegationReceipt,
@@ -368,7 +373,7 @@ def _warrant_headers(
     pop_sig = self.sign(key, tool, args, int(_time.time()))
     pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
-    return {"X-Tenuo-Warrant": self.to_base64(), "X-Tenuo-PoP": pop_b64}
+    return {_WARRANT_HEADER: self.to_base64(), "X-Tenuo-PoP": pop_b64}
 
 
 if not hasattr(Warrant, "headers"):
