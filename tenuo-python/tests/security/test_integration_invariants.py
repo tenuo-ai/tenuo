@@ -594,8 +594,8 @@ class TestCrewAIInvariants:
 # ===========================================================================
 #
 # Every integration adapter must implement the _Adapter protocol, which defines
-# exactly five invariant scenarios.  The TestCrossIntegrationMatrix class
-# parametrizes all five tests over every adapter so coverage is mechanically
+# exactly six invariant scenarios.  The TestCrossIntegrationMatrix class
+# parametrizes all six tests over every adapter so coverage is mechanically
 # guaranteed — adding a new adapter to _ADAPTERS is sufficient to inherit the
 # entire battery.
 #
@@ -606,6 +606,18 @@ class TestCrewAIInvariants:
 # check_wrong_tool()         → I7: correct credential + wrong tool; must deny
 # check_expired()            → I2: expired credential; must deny
 # check_constraint_violated()→ I8: correct credential + violated constraint; must deny
+# check_untrusted_issuer()   → I3/I4: warrant from attacker key (NOT in trusted_roots);
+#                              must deny. This is the "self-signed trust gap" invariant —
+#                              the most critical check for multi-tenant deployments.
+#
+# THIS IS WHY: the original protocol omitted check_untrusted_issuer(), causing the
+# self-signed trust gap (Bug 3) to go undetected in all Tier 2 integrations.
+# Tier 2 adapters (CrewAI, AutoGen, LangGraph, etc.) were tested against I1/I2/I7/I8
+# but never against an adversarial issuer. The gap persisted because:
+#   a) check_valid() used the same key for both issuance and signing — masking the bug
+#   b) I3/I4 was only tested at the service boundary (A2A, FastAPI, MCP), not at
+#      the tool-execution layer where Tier 2 integrations run
+#   c) No explicit required method forced adapters to answer: "do you verify the issuer?"
 #
 # Adapters that cannot implement a specific scenario (e.g. a pure allow-list
 # adapter that has no notion of expiry) may return None from that method;
@@ -643,6 +655,31 @@ class _Adapter:
 
     async def check_constraint_violated(self) -> Optional[bool]:
         """I8: valid credential + argument that violates a configured constraint."""
+        raise NotImplementedError
+
+    async def check_untrusted_issuer(self) -> Optional[bool]:
+        """I3/I4: warrant signed by an attacker key not in trusted_roots.
+
+        The adapter must:
+          1. Configure a 'real' trusted root (real_root_key).
+          2. Have an attacker create a warrant using their own key (attacker_key).
+          3. Present that warrant to the integration with trusted_roots=[real_root_key].
+          4. MUST return False (denied).
+
+        Return None if the integration has no trust-root concept (e.g. pure
+        constraint-only Tier 1 mode with no warrant at all).
+        """
+        raise NotImplementedError
+
+    async def check_wrong_holder(self) -> Optional[bool]:
+        """PoP holder-binding: warrant issued to holder_A, but PoP signed by attacker_B.
+
+        The adapter must present a cryptographically valid warrant (from a trusted issuer)
+        but with the PoP signed by a different key than the warrant's declared holder.
+        MUST return False (denied) — PoP mismatch.
+
+        Return None if the integration does not enforce PoP (e.g. Tier 1 or require_pop=False).
+        """
         raise NotImplementedError
 
 
@@ -702,9 +739,20 @@ class _A2AAdapter(_Adapter):
         # the matrix tests I8 via the dedicated TestA2AInvariants class instead.
         return None
 
+    async def check_untrusted_issuer(self) -> Optional[bool]:
+        attacker_key = SigningKey.generate()
+        attacker_w = Warrant.issue(
+            attacker_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+            holder=attacker_key.public_key,
+        )
+        return await self._call(attacker_w.to_base64(), "search", {})
 
-# ---------------------------------------------------------------------------
-# CrewAI adapter (Tier 1: allow-list + constraints)
+    async def check_wrong_holder(self) -> Optional[bool]:
+        # A2A matrix uses require_pop=False: no PoP is enforced, so holder-binding
+        # cannot be tested here. Full PoP holder-binding is tested by TestA2APoP.
+        return None
 # ---------------------------------------------------------------------------
 
 class _CrewAIAdapter(_Adapter):
@@ -751,10 +799,13 @@ class _CrewAIAdapter(_Adapter):
     async def check_constraint_violated(self) -> Optional[bool]:
         return self._ok(self._guard_constrained, "search", {"query": "rm -rf /"})
 
+    async def check_untrusted_issuer(self) -> Optional[bool]:
+        # CrewAI Tier 1 (allow-list only) has no warrant concept; skip.
+        return None
 
-# ---------------------------------------------------------------------------
-# OpenAI adapter (Tier 1: allow/deny lists + constraints)
-# ---------------------------------------------------------------------------
+    async def check_wrong_holder(self) -> Optional[bool]:
+        # CrewAI Tier 1 has no warrant or PoP concept; skip.
+        return None
 
 class _OpenAIAdapter(_Adapter):
     name = "openai"
@@ -797,10 +848,14 @@ class _OpenAIAdapter(_Adapter):
                               ["search"], None,
                               {"search": {"query": tenuo_core.Pattern("safe:*")}})
 
+    async def check_untrusted_issuer(self) -> Optional[bool]:
+        # OpenAI Tier 1 (allow/deny lists) has no warrant concept; skip.
+        # Tier 2 trust verification is covered by TestTrustedRootsEnforcement.
+        return None
 
-# ---------------------------------------------------------------------------
-# AutoGen adapter (Tier 1: allow-list + constraints)
-# ---------------------------------------------------------------------------
+    async def check_wrong_holder(self) -> Optional[bool]:
+        # OpenAI Tier 1 has no warrant or PoP concept; skip.
+        return None
 
 class _AutoGenAdapter(_Adapter):
     name = "autogen"
@@ -851,10 +906,13 @@ class _AutoGenAdapter(_Adapter):
     async def check_constraint_violated(self) -> Optional[bool]:
         return self._ok(self._guard_constrained, "search", {"query": "rm -rf /"})
 
+    async def check_untrusted_issuer(self) -> Optional[bool]:
+        # AutoGen Tier 1 (allow-list only) has no warrant concept; skip.
+        return None
 
-# ---------------------------------------------------------------------------
-# Google ADK adapter
-# ---------------------------------------------------------------------------
+    async def check_wrong_holder(self) -> Optional[bool]:
+        # AutoGen Tier 1 has no warrant or PoP concept; skip.
+        return None
 
 class _GoogleADKAdapter(_Adapter):
     name = "google_adk"
@@ -863,27 +921,32 @@ class _GoogleADKAdapter(_Adapter):
         from unittest.mock import MagicMock
         from tenuo.google_adk.guard import TenuoGuard
 
-        self._root = SigningKey.generate()
+        self._root = SigningKey.generate()    # trusted issuer (control plane)
+        self._holder = SigningKey.generate()  # agent key (holds the warrant)
         self._warrant = Warrant.issue(
             self._root, capabilities={"search": {}}, ttl_seconds=3600,
-            holder=self._root.public_key,
+            holder=self._holder.public_key,   # issued TO holder, BY root
         )
         self._tool_search = MagicMock(); self._tool_search.name = "search"
         self._tool_delete = MagicMock(); self._tool_delete.name = "delete"
         self._ctx = MagicMock()
 
+        # Production-configured guard: require_pop=True + trusted_roots set
         self._guard_with_warrant = TenuoGuard(
-            warrant=self._warrant, signing_key=self._root, require_pop=False,
-            on_deny="return",
+            warrant=self._warrant, signing_key=self._holder,
+            trusted_roots=[self._root.public_key],
+            require_pop=True, on_deny="return",
         )
         self._guard_no_warrant = TenuoGuard(on_deny="return", require_pop=False)
         self._guard_constrained = TenuoGuard(
             warrant=Warrant.issue(
                 self._root,
                 capabilities={"search": {"query": tenuo_core.Pattern("safe:*")}},
-                ttl_seconds=3600, holder=self._root.public_key,
+                ttl_seconds=3600, holder=self._holder.public_key,
             ),
-            signing_key=self._root, require_pop=False, on_deny="return",
+            signing_key=self._holder,
+            trusted_roots=[self._root.public_key],
+            require_pop=True, on_deny="return",
         )
 
     def _ok(self, guard: Any, tool: Any, args: Dict[str, Any]) -> bool:
@@ -903,19 +966,48 @@ class _GoogleADKAdapter(_Adapter):
         from unittest.mock import MagicMock
 
         w = Warrant.issue(self._root, capabilities={"search": {}}, ttl_seconds=1,
-                          holder=self._root.public_key)
+                          holder=self._holder.public_key)
         time.sleep(2)
-        guard = TenuoGuard(warrant=w, signing_key=self._root, require_pop=False, on_deny="return")
+        guard = TenuoGuard(warrant=w, signing_key=self._holder,
+                           trusted_roots=[self._root.public_key],
+                           require_pop=True, on_deny="return")
         ctx = MagicMock()
         return guard.before_tool(self._tool_search, {}, ctx) is None
 
     async def check_constraint_violated(self) -> Optional[bool]:
         return self._ok(self._guard_constrained, self._tool_search, {"query": "rm -rf /"})
 
+    async def check_untrusted_issuer(self) -> Optional[bool]:
+        from tenuo import BoundWarrant
+        from tenuo._enforcement import enforce_tool_call
 
-# ---------------------------------------------------------------------------
-# LangChain adapter
-# ---------------------------------------------------------------------------
+        attacker_key = SigningKey.generate()
+        attacker_w = Warrant.issue(
+            attacker_key, capabilities={"search": {}}, ttl_seconds=3600,
+            holder=attacker_key.public_key,
+        )
+        bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
+        result = enforce_tool_call(
+            tool_name="search",
+            tool_args={},
+            bound_warrant=bw,
+            trusted_roots=[self._root.public_key],
+        )
+        return result.allowed
+
+    async def check_wrong_holder(self) -> Optional[bool]:
+        from tenuo import BoundWarrant
+        from tenuo._enforcement import enforce_tool_call
+
+        attacker_key = SigningKey.generate()
+        # Warrant issued to self._holder but PoP signed by attacker_key (holder mismatch)
+        bw = BoundWarrant(warrant=self._warrant, key=attacker_key)
+        result = enforce_tool_call(
+            tool_name="search", tool_args={},
+            bound_warrant=bw,
+            trusted_roots=[self._root.public_key],
+        )
+        return result.allowed
 
 class _LangChainAdapter(_Adapter):
     name = "langchain"
@@ -926,20 +1018,27 @@ class _LangChainAdapter(_Adapter):
         from tenuo import BoundWarrant
         from tenuo.langchain import TenuoTool
 
-        self._root = SigningKey.generate()
+        self._root = SigningKey.generate()    # trusted issuer (control plane)
+        self._holder = SigningKey.generate()  # agent key (holds the warrant)
         self._warrant_search = Warrant.issue(
             self._root, capabilities={"search": {}}, ttl_seconds=3600,
-            holder=self._root.public_key,
+            holder=self._holder.public_key,   # issued TO holder, BY root
         )
-        self._bw_search = BoundWarrant(warrant=self._warrant_search, key=self._root)
+        self._bw_search = BoundWarrant(warrant=self._warrant_search, key=self._holder)
 
         def _mock(name: str) -> Any:
             t = MagicMock(); t.name = name; t.description = name; t.args_schema = None
             return t
 
         self._tool_search_no_bw = TenuoTool(_mock("search"))
-        self._tool_search_with_bw = TenuoTool(_mock("search"), bound_warrant=self._bw_search)
-        self._tool_delete_with_bw = TenuoTool(_mock("delete"), bound_warrant=self._bw_search)
+        self._tool_search_with_bw = TenuoTool(
+            _mock("search"), bound_warrant=self._bw_search,
+            trusted_roots=[self._root.public_key],  # production path: explicit trust anchor
+        )
+        self._tool_delete_with_bw = TenuoTool(
+            _mock("delete"), bound_warrant=self._bw_search,
+            trusted_roots=[self._root.public_key],
+        )
 
     def _ok(self, tool: Any, args: Dict[str, Any]) -> bool:
         from tenuo.langchain import ToolNotAuthorized
@@ -964,21 +1063,53 @@ class _LangChainAdapter(_Adapter):
         from unittest.mock import MagicMock
 
         w = Warrant.issue(self._root, capabilities={"search": {}}, ttl_seconds=1,
-                          holder=self._root.public_key)
+                          holder=self._holder.public_key)
         time.sleep(2)
-        bw = BoundWarrant(warrant=w, key=self._root)
+        bw = BoundWarrant(warrant=w, key=self._holder)
         t = MagicMock(); t.name = "search"; t.description = "search"; t.args_schema = None
-        tool = TenuoTool(t, bound_warrant=bw)
+        tool = TenuoTool(t, bound_warrant=bw, trusted_roots=[self._root.public_key])
         return self._ok(tool, {})
 
     async def check_constraint_violated(self) -> Optional[bool]:
         return None  # LangChain constraint checking happens inside enforce_tool_call;
                      # invariant tested via TestLangChainInvariants / TestA2AInvariants
 
+    async def check_untrusted_issuer(self) -> Optional[bool]:
+        from tenuo import BoundWarrant
+        from tenuo.langchain import TenuoTool, ToolNotAuthorized
+        from unittest.mock import MagicMock
 
-# ---------------------------------------------------------------------------
-# MCP adapter
-# ---------------------------------------------------------------------------
+        attacker_key = SigningKey.generate()
+        attacker_w = Warrant.issue(
+            attacker_key, capabilities={"search": {}}, ttl_seconds=3600,
+            holder=attacker_key.public_key,
+        )
+        attacker_bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
+        t = MagicMock(); t.name = "search"; t.description = "search"; t.args_schema = None
+        tool = TenuoTool(t, bound_warrant=attacker_bw,
+                         trusted_roots=[self._root.public_key])
+        try:
+            tool._check_authorization({})
+            return True
+        except Exception:
+            return False
+
+    async def check_wrong_holder(self) -> Optional[bool]:
+        from tenuo import BoundWarrant
+        from tenuo.langchain import TenuoTool
+        from unittest.mock import MagicMock
+
+        attacker_key = SigningKey.generate()
+        # Warrant issued to self._holder but PoP signed by attacker_key (holder mismatch)
+        bw_wrong = BoundWarrant(warrant=self._warrant_search, key=attacker_key)
+        t = MagicMock(); t.name = "search"; t.description = "search"; t.args_schema = None
+        tool = TenuoTool(t, bound_warrant=bw_wrong,
+                         trusted_roots=[self._root.public_key])
+        try:
+            tool._check_authorization({})
+            return True
+        except Exception:
+            return False
 
 class _MCPAdapter(_Adapter):
     name = "mcp"
@@ -988,7 +1119,8 @@ class _MCPAdapter(_Adapter):
         from tenuo_core import Authorizer
         from tenuo.mcp.server import MCPVerifier
 
-        self._root = SigningKey.generate()
+        self._root = SigningKey.generate()    # trusted issuer (control plane)
+        self._holder = SigningKey.generate()  # agent key (holds the warrant)
         auth = Authorizer()
         auth.add_trusted_root(self._root.public_key)
         self._verifier = MCPVerifier(auth, require_warrant=True)
@@ -996,11 +1128,13 @@ class _MCPAdapter(_Adapter):
 
         self._warrant = Warrant.issue(
             self._root, capabilities={"search": {}}, ttl_seconds=3600,
-            holder=self._root.public_key,
+            holder=self._holder.public_key,   # issued TO holder, BY root
         )
 
-    def _meta(self, warrant: Warrant, sign: bool = True) -> Dict[str, Any]:
-        sig = bytes(warrant.sign(self._root, "search", {}, int(time.time())))
+    def _meta(self, warrant: Warrant, signer: Any = None) -> Dict[str, Any]:
+        """Build MCP meta dict; signer defaults to self._holder (the correct holder)."""
+        signing_key = signer if signer is not None else self._holder
+        sig = bytes(warrant.sign(signing_key, "search", {}, int(time.time())))
         return {"tenuo": {
             "warrant": warrant.to_base64(),
             "signature": self._b64.b64encode(sig).decode(),
@@ -1022,7 +1156,7 @@ class _MCPAdapter(_Adapter):
 
     async def check_expired(self) -> Optional[bool]:
         w = Warrant.issue(self._root, capabilities={"search": {}}, ttl_seconds=1,
-                          holder=self._root.public_key)
+                          holder=self._holder.public_key)
         time.sleep(2)
         return self._ok("search", {}, meta=self._meta(w))
 
@@ -1030,10 +1164,29 @@ class _MCPAdapter(_Adapter):
         return None  # MCP constraint enforcement requires a VerifierConfig; tested
                      # individually in TestMCPInvariants
 
+    async def check_untrusted_issuer(self) -> Optional[bool]:
+        from tenuo_core import Authorizer
+        from tenuo.mcp.server import MCPVerifier
+        import base64 as _b64
 
-# ---------------------------------------------------------------------------
-# LangGraph adapter
-# ---------------------------------------------------------------------------
+        attacker_key = SigningKey.generate()
+        attacker_w = Warrant.issue(
+            attacker_key, capabilities={"search": {}}, ttl_seconds=3600,
+            holder=attacker_key.public_key,
+        )
+        sig = bytes(attacker_w.sign(attacker_key, "search", {}, int(time.time())))
+        meta = {"tenuo": {
+            "warrant": attacker_w.to_base64(),
+            "signature": _b64.b64encode(sig).decode(),
+        }}
+        return self._ok("search", {}, meta)
+
+    async def check_wrong_holder(self) -> Optional[bool]:
+        import base64 as _b64
+        attacker_key = SigningKey.generate()
+        # Warrant issued to self._holder but PoP signed by attacker_key (holder mismatch)
+        meta = self._meta(self._warrant, signer=attacker_key)
+        return self._ok("search", {}, meta)
 
 class _LangGraphAdapter(_Adapter):
     name = "langgraph"
@@ -1044,16 +1197,20 @@ class _LangGraphAdapter(_Adapter):
         from tenuo.keys import KeyRegistry
         from tenuo.langgraph import TenuoMiddleware
 
-        self._root = SigningKey.generate()
+        self._root = SigningKey.generate()    # trusted issuer (control plane)
+        self._holder = SigningKey.generate()  # agent key (holds the warrant)
         self._registry = KeyRegistry.get_instance()
         self._key_id = f"_matrix_langgraph_{id(self)}"
-        self._registry.register(self._key_id, self._root)
+        self._registry.register(self._key_id, self._holder)  # register holder key
 
         self._warrant = Warrant.issue(
             self._root, capabilities={"search": {}}, ttl_seconds=3600,
-            holder=self._root.public_key,
+            holder=self._holder.public_key,  # issued TO holder, BY root
         )
-        self._middleware = TenuoMiddleware(key_id=self._key_id)
+        self._middleware = TenuoMiddleware(
+            key_id=self._key_id,
+            trusted_roots=[self._root.public_key],  # production path: explicit trust anchor
+        )
 
     def _request(self, warrant: Optional[Any]) -> Any:
         """Build a mock ToolCallRequest with the given warrant in state."""
@@ -1087,17 +1244,46 @@ class _LangGraphAdapter(_Adapter):
 
     async def check_expired(self) -> Optional[bool]:
         w = Warrant.issue(self._root, capabilities={"search": {}}, ttl_seconds=1,
-                          holder=self._root.public_key)
+                          holder=self._holder.public_key)
         time.sleep(2)
         return self._ok("search", w)
 
     async def check_constraint_violated(self) -> Optional[bool]:
         return None  # LangGraph constraint enforcement requires schema config
 
+    async def check_untrusted_issuer(self) -> Optional[bool]:
+        from tenuo import BoundWarrant
+        from tenuo._enforcement import enforce_tool_call
 
-# ---------------------------------------------------------------------------
-# Temporal adapter
-# ---------------------------------------------------------------------------
+        attacker_key = SigningKey.generate()
+        attacker_w = Warrant.issue(
+            attacker_key, capabilities={"search": {}}, ttl_seconds=3600,
+            holder=attacker_key.public_key,
+        )
+        bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
+        # TenuoMiddleware/TenuoToolNode both go through enforce_tool_call;
+        # test directly with trusted_roots to verify the integration's core path.
+        result = enforce_tool_call(
+            tool_name="search",
+            tool_args={},
+            bound_warrant=bw,
+            trusted_roots=[self._root.public_key],
+        )
+        return result.allowed
+
+    async def check_wrong_holder(self) -> Optional[bool]:
+        from tenuo import BoundWarrant
+        from tenuo._enforcement import enforce_tool_call
+
+        attacker_key = SigningKey.generate()
+        # Warrant issued to self._holder but PoP signed by attacker_key (holder mismatch)
+        bw = BoundWarrant(warrant=self._warrant, key=attacker_key)
+        result = enforce_tool_call(
+            tool_name="search", tool_args={},
+            bound_warrant=bw,
+            trusted_roots=[self._root.public_key],
+        )
+        return result.allowed
 
 class _TemporalAdapter(_Adapter):
     name = "temporal"
@@ -1192,10 +1378,17 @@ class _TemporalAdapter(_Adapter):
     async def check_constraint_violated(self) -> Optional[bool]:
         return None  # Temporal constraint enforcement requires activity-level config
 
+    async def check_untrusted_issuer(self) -> Optional[bool]:
+        # Temporal adapter uses trusted_roots=None (lightweight mode) in this matrix.
+        # An attacker warrant passes structural checks but would fail PoP in strict mode.
+        # The full I3/I4 check for Temporal is in TestTrustedRootsEnforcement via
+        # enforce_tool_call (the same code path TenuoInterceptor uses).
+        return None
 
-# ---------------------------------------------------------------------------
-# FastAPI adapter
-# ---------------------------------------------------------------------------
+    async def check_wrong_holder(self) -> Optional[bool]:
+        # Temporal uses lightweight mode (no PoP); holder-binding not enforced here.
+        # Full PoP enforcement is tested by TestTemporalInvariants.
+        return None
 
 class _FastAPIAdapter(_Adapter):
     name = "fastapi"
@@ -1204,18 +1397,22 @@ class _FastAPIAdapter(_Adapter):
         pytest.importorskip("fastapi")
         from tenuo.fastapi import _config
 
-        self._root = SigningKey.generate()
+        self._root = SigningKey.generate()    # trusted issuer (control plane)
+        self._holder = SigningKey.generate()  # agent key (holds the warrant)
         self._config = _config
         self._config["trusted_issuers"] = [self._root.public_key]
         self._warrant = Warrant.issue(
             self._root, capabilities={"search": {}}, ttl_seconds=3600,
-            holder=self._root.public_key,
+            holder=self._holder.public_key,   # issued TO holder, BY root
         )
 
-    def _enforce(self, warrant: Warrant, tool: str, args: Dict) -> bool:
+    def _enforce(self, warrant: Warrant, tool: str, args: Dict,
+                 signer: Any = None) -> bool:
+        """signer defaults to self._holder (the correct holder)."""
         import warnings
         from tenuo.fastapi import TenuoGuard
-        pop_bytes = bytes(warrant.sign(self._root, tool, args, int(time.time())))
+        signing_key = signer if signer is not None else self._holder
+        pop_bytes = bytes(warrant.sign(signing_key, tool, args, int(time.time())))
         guard = TenuoGuard(tool)
         try:
             with warnings.catch_warnings():
@@ -1229,26 +1426,37 @@ class _FastAPIAdapter(_Adapter):
         attacker = SigningKey.generate()
         w = Warrant.issue(attacker, capabilities={"search": {}}, ttl_seconds=3600,
                           holder=attacker.public_key)
-        return self._enforce(w, "search", {})
+        return self._enforce(w, "search", {}, signer=attacker)
 
     async def check_valid(self) -> Optional[bool]:
         return self._enforce(self._warrant, "search", {})
 
     async def check_wrong_tool(self) -> Optional[bool]:
         w = Warrant.issue(self._root, capabilities={"search": {}}, ttl_seconds=3600,
-                          holder=self._root.public_key)
+                          holder=self._holder.public_key)
         # FastAPI TenuoGuard is bound to a specific tool at construction time;
         # tool-name mismatch means the warrant doesn't cover the guarded tool.
         return self._enforce(w, "delete", {})
 
     async def check_expired(self) -> Optional[bool]:
         w = Warrant.issue(self._root, capabilities={"search": {}}, ttl_seconds=1,
-                          holder=self._root.public_key)
+                          holder=self._holder.public_key)
         time.sleep(2)
         return self._enforce(w, "search", {})
 
     async def check_constraint_violated(self) -> Optional[bool]:
         return None  # FastAPI constraint checks happen inside enforce_tool_call
+
+    async def check_untrusted_issuer(self) -> Optional[bool]:
+        attacker = SigningKey.generate()
+        w = Warrant.issue(attacker, capabilities={"search": {}}, ttl_seconds=3600,
+                          holder=attacker.public_key)
+        return self._enforce(w, "search", {}, signer=attacker)
+
+    async def check_wrong_holder(self) -> Optional[bool]:
+        attacker = SigningKey.generate()
+        # Warrant issued to self._holder but PoP signed by attacker (holder mismatch)
+        return self._enforce(self._warrant, "search", {}, signer=attacker)
 
 
 _ADAPTERS: List[type] = [
@@ -1269,7 +1477,7 @@ _ADAPTERS: List[type] = [
 @pytest.mark.asyncio
 class TestCrossIntegrationMatrix:
     """
-    Every adapter in _ADAPTERS runs all five invariant scenarios.
+    Every adapter in _ADAPTERS runs all six invariant scenarios.
 
     Adapters that return None from a scenario method skip that invariant with
     a documented reason.  This makes coverage gaps explicit rather than silent.
@@ -1317,6 +1525,25 @@ class TestCrossIntegrationMatrix:
     async def test_I8_constraint_violated_denied(self, adapter):
         """I8: Constraint violation MUST always be denied."""
         self._assert_denied(adapter, "I8:constraint_violated", await adapter.check_constraint_violated())
+
+    async def test_I3_I4_untrusted_issuer_denied(self, adapter):
+        """I3/I4: Warrant from an attacker key not in trusted_roots MUST be denied.
+
+        This is the adversarial issuer invariant — the critical property that
+        was missing from the original protocol.  Every integration MUST verify
+        that the warrant issuer is an explicitly trusted root.  Returning None
+        is only acceptable for pure Tier 1 (no-warrant) adapters.
+        """
+        self._assert_denied(adapter, "I3/I4:untrusted_issuer", await adapter.check_untrusted_issuer())
+
+    async def test_pop_wrong_holder_denied(self, adapter):
+        """PoP holder-binding: warrant for holder_A signed by attacker_B MUST be denied.
+
+        Every Tier 2 integration that enforces PoP must reject a PoP signed by
+        a key that is not the declared warrant holder.  Returning None is acceptable
+        for integrations where PoP is not enforced (Tier 1 or require_pop=False).
+        """
+        self._assert_denied(adapter, "PoP:wrong_holder", await adapter.check_wrong_holder())
 
 
 # ===========================================================================
@@ -2186,6 +2413,257 @@ class TestLangChainInvariantsExtended:
             tool._check_authorization({"query": "rm -rf /"})
         assert exc_info.type.__name__ not in ("AttributeError", "TypeError")
 
+    def test_I3_attacker_warrant_rejected_with_trusted_roots(self):
+        """I3: Self-signed attacker warrant MUST be rejected when trusted_roots is set.
+
+        Without trusted_roots, enforce_tool_call uses self-signed trust — any
+        warrant signed by its own issuer passes.  With trusted_roots set to the
+        real control-plane key only, the attacker's self-signed warrant fails.
+        """
+        pytest.importorskip("langchain")
+        from unittest.mock import MagicMock
+        from tenuo import BoundWarrant
+        from tenuo.langchain import TenuoTool, ToolNotAuthorized
+
+        real_root_key = SigningKey.generate()
+        attacker_key = SigningKey.generate()
+
+        attacker_w = Warrant.issue(
+            attacker_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+            holder=attacker_key.public_key,
+        )
+        attacker_bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
+
+        t = MagicMock(); t.name = "search"; t.description = "search"; t.args_schema = None
+        # trusted_roots points to real_root_key — attacker's key is NOT trusted
+        tool = TenuoTool(t, bound_warrant=attacker_bw, trusted_roots=[real_root_key.public_key])
+
+        with pytest.raises((ToolNotAuthorized, Exception)):
+            tool._check_authorization({})
+
+
+# ===========================================================================
+# I3/I4: Trusted-Roots Enforcement for all Tier 2 integrations
+# ===========================================================================
+#
+# These tests verify that when trusted_roots is configured, all Tier 2
+# integrations reject self-signed ("attacker") warrants.  This closes the
+# trust gap where BoundWarrant.validate() implicitly trusted the warrant's
+# own issuer key.  All integrations MUST go through tenuo_core.Authorizer.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.security
+class TestTrustedRootsEnforcement:
+    """
+    I3/I4 — trusted_roots rejects self-signed attacker warrants in every
+    Tier 2 integration (CrewAI, AutoGen, Google ADK, LangChain, LangGraph,
+    OpenAI).
+
+    Without trusted_roots: enforce_tool_call trusts warrant.issuer → any
+    self-signed warrant passes.  With trusted_roots=[real_root.public_key]:
+    the attacker's warrant issuer is not in the trust anchor set → denied.
+    """
+
+    @pytest.fixture()
+    def real_root_key(self):
+        return SigningKey.generate()
+
+    @pytest.fixture()
+    def attacker_warrant_and_key(self):
+        k = SigningKey.generate()
+        w = Warrant.issue(k, capabilities={"search": {}}, ttl_seconds=3600, holder=k.public_key)
+        return w, k
+
+    def test_I3_crewai_attacker_warrant_rejected(self, real_root_key, attacker_warrant_and_key):
+        """I3: CrewAI guard with trusted_roots rejects self-signed warrant."""
+        attacker_w, attacker_key = attacker_warrant_and_key
+
+        from tenuo.crewai import GuardBuilder
+
+        guard = (
+            GuardBuilder()
+            .allow("search", query=tenuo_core.Wildcard())
+            .with_warrant(attacker_w, attacker_key)
+            .with_trusted_roots([real_root_key.public_key])
+            .on_denial("raise")
+            .build()
+        )
+        with pytest.raises(Exception) as exc_info:
+            guard._authorize("search", {"query": "test"}, agent_role=None)
+        assert exc_info.type.__name__ not in ("AttributeError", "TypeError"), (
+            f"Expected security denial, got internal error: {exc_info.value}"
+        )
+
+    def test_I4_autogen_attacker_warrant_rejected(self, real_root_key, attacker_warrant_and_key):
+        """I4: AutoGen guard with trusted_roots rejects self-signed warrant."""
+        attacker_w, attacker_key = attacker_warrant_and_key
+
+        from tenuo.autogen import GuardBuilder
+
+        guard = (
+            GuardBuilder()
+            .allow("search", query=tenuo_core.Wildcard())
+            .with_warrant(attacker_w, attacker_key)
+            .with_trusted_roots([real_root_key.public_key])
+            .on_denial("raise")
+            .build()
+        )
+        with pytest.raises(Exception) as exc_info:
+            guard._authorize("search", {"query": "test"})
+        assert exc_info.type.__name__ not in ("AttributeError", "TypeError"), (
+            f"Expected security denial, got internal error: {exc_info.value}"
+        )
+
+    def test_I3_google_adk_attacker_warrant_rejected(self, real_root_key, attacker_warrant_and_key):
+        """I3: Google ADK TenuoGuard with trusted_roots rejects self-signed warrant.
+
+        This tests the same enforce_tool_call core path that ADK uses.
+        We call enforce_tool_call directly with trusted_roots since the ADK
+        framework requires heavy mocking to invoke before_tool in isolation.
+        """
+        attacker_w, attacker_key = attacker_warrant_and_key
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo import BoundWarrant
+
+        bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
+        result = enforce_tool_call(
+            tool_name="search",
+            tool_args={},
+            bound_warrant=bw,
+            trusted_roots=[real_root_key.public_key],
+        )
+        assert not result.allowed, (
+            "Google ADK I3: self-signed attacker warrant must be denied when "
+            f"trusted_roots is set. Got: {result.denial_reason}"
+        )
+
+    def test_I3_langgraph_toolnode_attacker_warrant_rejected(
+        self, real_root_key, attacker_warrant_and_key
+    ):
+        """I3: TenuoToolNode with trusted_roots rejects self-signed warrant at PEP layer."""
+        pytest.importorskip("langgraph")
+        pytest.importorskip("langchain_core")
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo import BoundWarrant
+
+        attacker_w, attacker_key = attacker_warrant_and_key
+        bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
+
+        result = enforce_tool_call(
+            tool_name="search",
+            tool_args={"query": "test"},
+            bound_warrant=bw,
+            trusted_roots=[real_root_key.public_key],
+        )
+        assert not result.allowed, (
+            "enforce_tool_call with trusted_roots must reject a self-signed attacker warrant. "
+            f"Got: allowed={result.allowed}, reason={result.denial_reason}"
+        )
+
+    def test_I4_no_trusted_roots_emits_warning(self, attacker_warrant_and_key):
+        """I4: enforce_tool_call without trusted_roots MUST emit SecurityWarning.
+
+        Self-signed warrants pass (self-trust), but callers are warned via
+        SecurityWarning that this is insecure.
+        """
+        import warnings
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo import BoundWarrant
+
+        attacker_w, attacker_key = attacker_warrant_and_key
+        bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            enforce_tool_call(
+                tool_name="search",
+                tool_args={},
+                bound_warrant=bw,
+            )
+
+        security_warnings = [
+            w for w in caught
+            if issubclass(w.category, UserWarning) and "trusted_roots" in str(w.message)
+        ]
+        assert security_warnings, (
+            "enforce_tool_call without trusted_roots MUST emit SecurityWarning. "
+            "Callers must be warned about the self-signed trust gap."
+        )
+
+    def test_I3_openai_trusted_roots_rejects_attacker(
+        self, real_root_key, attacker_warrant_and_key
+    ):
+        """I3: OpenAI verify_tool_call with trusted_roots rejects self-signed warrant."""
+        attacker_w, attacker_key = attacker_warrant_and_key
+
+        from tenuo.openai import WarrantDenied, verify_tool_call
+
+        with pytest.raises((WarrantDenied, Exception)) as exc_info:
+            verify_tool_call(
+                tool_name="search",
+                arguments={"query": "test"},
+                allow_tools=["search"],
+                deny_tools=None,
+                constraints=None,
+                warrant=attacker_w,
+                signing_key=attacker_key,
+                trusted_roots=[real_root_key.public_key],
+            )
+        assert exc_info.type.__name__ not in ("AttributeError", "TypeError"), (
+            f"Expected security denial, got internal error: {exc_info.value}"
+        )
+
+    def test_I3_crewai_legitimate_warrant_still_allowed(self, real_root_key):
+        """I3: CrewAI guard with trusted_roots accepts legitimate warrant from that root."""
+        holder_key = SigningKey.generate()
+        legit_w = Warrant.issue(
+            real_root_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+            holder=holder_key.public_key,
+        )
+
+        from tenuo.crewai import GuardBuilder
+
+        guard = (
+            GuardBuilder()
+            .allow("search", query=tenuo_core.Wildcard())
+            .with_warrant(legit_w, holder_key)
+            .with_trusted_roots([real_root_key.public_key])
+            .on_denial("raise")
+            .build()
+        )
+        # Must NOT raise — legitimate warrant from trusted root is allowed
+        guard._authorize("search", {"query": "test"}, agent_role=None)
+
+    def test_I3_enforce_tool_call_legitimate_warrant_allowed(self, real_root_key):
+        """I3: enforce_tool_call with trusted_roots ALLOWS warrants from that root."""
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo import BoundWarrant
+
+        holder_key = SigningKey.generate()
+        legit_w = Warrant.issue(
+            real_root_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+            holder=holder_key.public_key,
+        )
+        bw = BoundWarrant(warrant=legit_w, key=holder_key)
+
+        result = enforce_tool_call(
+            tool_name="search",
+            tool_args={},
+            bound_warrant=bw,
+            trusted_roots=[real_root_key.public_key],
+        )
+        assert result.allowed, (
+            f"Legitimate warrant from trusted root must be allowed. "
+            f"Denied with: {result.denial_reason}"
+        )
+
 
 # ===========================================================================
 # Regression Tests (one per production bug)
@@ -2313,4 +2791,46 @@ class TestRegressions:
             "Bug 2 regression: delegation chain + PoP must succeed.  "
             "If this fails, validate_warrant is calling authorize_one(leaf) "
             "instead of check_chain([root, leaf])."
+        )
+
+    # ------------------------------------------------------------------ Bug 3
+    def test_regression_bug3_self_signed_trust_gap_in_enforce_tool_call(self):
+        """
+        Bug 3: enforce_tool_call accepted self-signed attacker warrants in Tier 2.
+
+        Root cause: BoundWarrant.validate() built Authorizer(trusted_roots=
+        [warrant.issuer]), trusting the warrant's own issuer unconditionally.
+        Any key could mint a warrant for itself and pass authorization.
+
+        This affected all Tier 2 integrations: CrewAI, AutoGen, Google ADK,
+        LangChain, LangGraph, OpenAI.
+
+        Fix: enforce_tool_call now accepts trusted_roots parameter. When provided,
+        it signs PoP locally then verifies via Authorizer(trusted_roots) instead of
+        the self-signed path. Emits SecurityWarning when trusted_roots is omitted.
+        """
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo import BoundWarrant
+
+        real_root_key = SigningKey.generate()
+        attacker_key = SigningKey.generate()
+
+        attacker_w = Warrant.issue(
+            attacker_key,
+            capabilities={"delete_database": {}},
+            ttl_seconds=3600,
+            holder=attacker_key.public_key,
+        )
+        bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
+
+        result = enforce_tool_call(
+            tool_name="delete_database",
+            tool_args={},
+            bound_warrant=bw,
+            trusted_roots=[real_root_key.public_key],
+        )
+        assert not result.allowed, (
+            "Bug 3 regression: self-signed attacker warrant must be DENIED when "
+            "trusted_roots is configured. If this fails, enforce_tool_call is not "
+            "verifying issuer trust against the configured roots."
         )
