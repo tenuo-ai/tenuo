@@ -27,6 +27,11 @@ from tenuo.langgraph import (
     tenuo_node,
 )
 
+try:
+    from langchain_core.messages import ToolMessage
+except ImportError:
+    ToolMessage = None  # type: ignore
+
 
 class MockState(TypedDict, total=False):
     """Test state with warrant (key_id now in config)."""
@@ -1213,6 +1218,123 @@ class TestPhilosophyAndDesign:
         assert bound.id is not None, "BoundWarrant must have ID"
         # Result should allow correlation back to warrant
         assert result.warrant_id is not None or hasattr(bound, "id")
+
+
+def _middleware_available() -> bool:
+    try:
+        from langchain.agents.middleware import AgentMiddleware  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+@pytest.mark.skipif(not _middleware_available(), reason="LangChain middleware not installed")
+class TestMiddlewareAsync:
+    """
+    Tests that TenuoMiddleware works correctly with async agents.
+
+    The AgentMiddleware ABC requires both sync AND async hook implementations.
+    Missing awrap_tool_call / awrap_model_call causes NotImplementedError when
+    users call agent.ainvoke() or agent.astream() — the common production path.
+    """
+
+    @pytest.fixture
+    def warrant_and_key(self, registry):
+        warrant, key = Warrant.quick_mint(tools=["search", "write_file"], ttl=3600)
+        registry.register("test-key", key)
+        return warrant, key
+
+    @pytest.mark.asyncio
+    async def test_awrap_tool_call_allows_authorized_tool(self, warrant_and_key, registry):
+        """awrap_tool_call: authorized tool call must be passed to handler."""
+        from unittest.mock import AsyncMock, MagicMock
+        from tenuo.langgraph import TenuoMiddleware
+
+        warrant, _ = warrant_and_key
+        middleware = TenuoMiddleware(key_id="test-key")
+
+        request = MagicMock()
+        request.tool_call = {"name": "search", "args": {"query": "papers"}, "id": "t1"}
+        request.state = {"warrant": warrant}
+        request.runtime = MagicMock()
+        request.runtime.config = make_config("test-key")
+
+        handler = AsyncMock(return_value=ToolMessage(content="results", tool_call_id="t1"))
+        result = await middleware.awrap_tool_call(request, handler)
+
+        handler.assert_awaited_once_with(request)
+        assert result.content == "results"
+
+    @pytest.mark.asyncio
+    async def test_awrap_tool_call_denies_unauthorized_tool(self, warrant_and_key, registry):
+        """awrap_tool_call: unauthorized tool must be denied without calling handler."""
+        from unittest.mock import AsyncMock, MagicMock
+        from tenuo.langgraph import TenuoMiddleware
+
+        warrant, _ = warrant_and_key
+        middleware = TenuoMiddleware(key_id="test-key")
+
+        request = MagicMock()
+        request.tool_call = {"name": "delete_everything", "args": {}, "id": "t2"}
+        request.state = {"warrant": warrant}
+        request.runtime = MagicMock()
+        request.runtime.config = make_config("test-key")
+
+        handler = AsyncMock(return_value=ToolMessage(content="SHOULD NOT REACH", tool_call_id="t2"))
+        result = await middleware.awrap_tool_call(request, handler)
+
+        handler.assert_not_awaited()
+        assert result.status == "error"
+        assert "Authorization denied" in result.content
+
+    @pytest.mark.asyncio
+    async def test_awrap_model_call_passes_through_when_filter_disabled(
+        self, warrant_and_key, registry
+    ):
+        """awrap_model_call with filter_tools=False must call handler unchanged."""
+        from unittest.mock import AsyncMock, MagicMock
+        from tenuo.langgraph import TenuoMiddleware
+
+        warrant, _ = warrant_and_key
+        middleware = TenuoMiddleware(key_id="test-key", filter_tools=False)
+
+        request = MagicMock()
+        request.state = {"warrant": warrant}
+        request.runtime = MagicMock()
+        request.runtime.config = make_config("test-key")
+        request.tools = []
+
+        expected = MagicMock()
+        handler = AsyncMock(return_value=expected)
+        result = await middleware.awrap_model_call(request, handler)
+
+        handler.assert_awaited_once_with(request)
+        assert result is expected
+
+    @pytest.mark.asyncio
+    async def test_awrap_tool_call_opaque_error_in_production_mode(
+        self, warrant_and_key, registry
+    ):
+        """awrap_tool_call: denied tool returns opaque ref-id in production (debug=False)."""
+        from unittest.mock import AsyncMock, MagicMock
+        from tenuo.langgraph import TenuoMiddleware
+
+        warrant, _ = warrant_and_key
+        middleware = TenuoMiddleware(key_id="test-key", debug=False)
+
+        request = MagicMock()
+        request.tool_call = {"name": "admin_panel", "args": {}, "id": "t3"}
+        request.state = {"warrant": warrant}
+        request.runtime = MagicMock()
+        request.runtime.config = make_config("test-key")
+
+        handler = AsyncMock()
+        result = await middleware.awrap_tool_call(request, handler)
+
+        # Opaque message: contains ref-id but NOT the internal denial reason
+        assert "ref:" in result.content
+        assert "not in allowed" not in result.content.lower()
+        assert "constraint" not in result.content.lower()
 
 
 class TestLangGraphApproval:

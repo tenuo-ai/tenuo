@@ -72,7 +72,7 @@ Security Model (Local vs Remote PEP):
     (or the APIs they call) must also verify authorization. Use `bound_warrant.token`
     to pass the signed warrant to remote services.
 
-See docs: https://tenuo.dev/langgraph
+See docs: https://tenuo.ai/langgraph
 """
 
 import logging
@@ -323,6 +323,31 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
 
         return handler(request)
 
+    async def awrap_model_call(
+        self,
+        request: "ModelRequest",
+        handler: Callable[["ModelRequest"], Any],
+    ) -> "ModelResponse":
+        """Async version of wrap_model_call — filters tools for async agents."""
+        if not self._filter_tools:
+            return await handler(request)
+
+        try:
+            bw = self._get_bound_warrant_from_request(request.state, request.runtime)
+
+            if hasattr(request, "tools") and request.tools:
+                filtered = filter_tools_by_warrant(
+                    list(request.tools),
+                    bw,
+                    get_name=lambda t: getattr(t, "name", str(t)),
+                )
+                return await handler(request.override(tools=filtered))
+
+        except Exception as e:
+            logger.debug(f"Tool filtering skipped: {e}")
+
+        return await handler(request)
+
     def wrap_tool_call(
         self,
         request: "ToolCallRequest",
@@ -333,6 +358,26 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
 
         Returns opaque error messages to prevent constraint probing attacks.
         """
+        return self._authorize_and_run(request, handler, is_async=False)
+
+    async def awrap_tool_call(
+        self,
+        request: "ToolCallRequest",
+        handler: Callable[["ToolCallRequest"], Any],
+    ) -> Any:
+        """Async version of wrap_tool_call — authorizes tool calls for async agents."""
+        return await self._authorize_and_run_async(request, handler)
+
+    def _authorize_and_run(
+        self,
+        request: "ToolCallRequest",
+        handler: Callable[["ToolCallRequest"], Any],
+        *,
+        is_async: bool = False,
+    ) -> Any:
+        """Shared authorization logic for sync tool calls."""
+        import time
+
         request_id = str(uuid.uuid4())[:8]
         tool_call = request.tool_call
         tool_name = tool_call.get("name", "unknown")
@@ -341,8 +386,6 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         try:
             bw = self._get_bound_warrant_from_request(request.state, request.runtime)
 
-            # Use shared enforcement logic
-            import time
             start_ns = time.perf_counter_ns()
 
             result = enforce_tool_call(
@@ -363,37 +406,30 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 )
 
             if not result.allowed:
-                # Log detailed reason for operators
                 logger.warning(
                     f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}"
                 )
-
-                # In debug mode, tell the LLM exactly why
                 error_msg = (
                     f"Authorization denied: {result.denial_reason}"
                     if self._debug
                     else f"Authorization denied (ref: {request_id})"
                 )
-
                 return ToolMessage(
                     content=error_msg,
                     tool_call_id=tool_call.get("id", "unknown"),
                     status="error",
                 )
 
-            # Tool authorized - proceed with execution
             logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
             return handler(request)
 
         except ConfigurationError as e:
             logger.warning(f"[{request_id}] Configuration error: {e}")
-
             error_msg = (
                 f"Configuration error: {e}"
                 if self._debug
                 else f"Security configuration error (ref: {request_id})"
             )
-
             return ToolMessage(
                 content=error_msg,
                 tool_call_id=tool_call.get("id", "unknown"),
@@ -401,13 +437,89 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             )
         except Exception as e:
             logger.error(f"[{request_id}] Unexpected error in authorization: {e}")
-
             error_msg = (
                 f"Unexpected error: {e}"
                 if self._debug
                 else f"Authorization error (ref: {request_id})"
             )
+            return ToolMessage(
+                content=error_msg,
+                tool_call_id=tool_call.get("id", "unknown"),
+                status="error",
+            )
 
+    async def _authorize_and_run_async(
+        self,
+        request: "ToolCallRequest",
+        handler: Callable[["ToolCallRequest"], Any],
+    ) -> Any:
+        """Shared authorization logic for async tool calls."""
+        import time
+
+        request_id = str(uuid.uuid4())[:8]
+        tool_call = request.tool_call
+        tool_name = tool_call.get("name", "unknown")
+        tool_args = tool_call.get("args", {})
+
+        try:
+            bw = self._get_bound_warrant_from_request(request.state, request.runtime)
+
+            start_ns = time.perf_counter_ns()
+
+            result = enforce_tool_call(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                bound_warrant=bw,
+                require_constraints=self._require_constraints,
+                approval_policy=self._approval_policy,
+                approval_handler=self._approval_handler,
+                approvals=self._approvals,
+            )
+
+            if self._control_plane:
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                self._control_plane.emit_for_enforcement(
+                    result, latency_us=latency_us, request_id=request_id,
+                    warrant_stack_override=_warrant_stack_from_bound(bw),
+                )
+
+            if not result.allowed:
+                logger.warning(
+                    f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}"
+                )
+                error_msg = (
+                    f"Authorization denied: {result.denial_reason}"
+                    if self._debug
+                    else f"Authorization denied (ref: {request_id})"
+                )
+                return ToolMessage(
+                    content=error_msg,
+                    tool_call_id=tool_call.get("id", "unknown"),
+                    status="error",
+                )
+
+            logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
+            return await handler(request)
+
+        except ConfigurationError as e:
+            logger.warning(f"[{request_id}] Configuration error: {e}")
+            error_msg = (
+                f"Configuration error: {e}"
+                if self._debug
+                else f"Security configuration error (ref: {request_id})"
+            )
+            return ToolMessage(
+                content=error_msg,
+                tool_call_id=tool_call.get("id", "unknown"),
+                status="error",
+            )
+        except Exception as e:
+            logger.error(f"[{request_id}] Unexpected error in authorization: {e}")
+            error_msg = (
+                f"Unexpected error: {e}"
+                if self._debug
+                else f"Authorization error (ref: {request_id})"
+            )
             return ToolMessage(
                 content=error_msg,
                 tool_call_id=tool_call.get("id", "unknown"),
