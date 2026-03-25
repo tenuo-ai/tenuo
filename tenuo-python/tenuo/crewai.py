@@ -1178,40 +1178,47 @@ class CrewAIGuard:
             "tier": 2,
         }
 
-        # Get warrant ID if available
-        if hasattr(self._warrant, "id"):
-            try:
-                info["warrant_id"] = self._warrant.id()
-            except Exception:
-                pass
+        # Helper: safely read a value that may be a property or a method.
+        def _read(attr: str) -> Any:
+            val = getattr(self._warrant, attr, None)
+            if val is None:
+                return None
+            return val() if callable(val) else val
 
-        # Get TTL info if available
-        if hasattr(self._warrant, "ttl_seconds"):
-            try:
-                info["ttl_remaining"] = self._warrant.ttl_seconds()
-            except Exception:
-                pass
+        try:
+            wid = _read("id")
+            if wid is not None:
+                info["warrant_id"] = wid
+        except Exception:
+            pass
 
-        # Get expiry status if available
-        if hasattr(self._warrant, "is_expired"):
-            try:
-                info["is_expired"] = self._warrant.is_expired()
-            except Exception:
-                pass
+        try:
+            ttl = _read("ttl_seconds")
+            if ttl is not None:
+                info["ttl_remaining"] = ttl
+        except Exception:
+            pass
 
-        # Get authorized tools if available
-        if hasattr(self._warrant, "tools"):
-            try:
-                info["tools"] = list(self._warrant.tools())
-            except Exception:
-                pass
+        try:
+            expired = _read("is_expired")
+            if expired is not None:
+                info["is_expired"] = bool(expired)
+        except Exception:
+            pass
 
-        # Get delegation depth if available
-        if hasattr(self._warrant, "depth"):
-            try:
-                info["depth"] = self._warrant.depth()
-            except Exception:
-                pass
+        try:
+            tools = _read("tools")
+            if tools is not None:
+                info["tools"] = list(tools)
+        except Exception:
+            pass
+
+        try:
+            depth = _read("depth")
+            if depth is not None:
+                info["depth"] = depth
+        except Exception:
+            pass
 
         return info
 
@@ -1336,19 +1343,26 @@ class WarrantDelegator:
         """Get the set of tools the parent warrant authorizes.
 
         Returns:
-            Set of tool names the parent authorizes
+            Set of tool names the parent authorizes, or empty set if the
+            parent warrant has no tool restriction.
 
         Raises:
-            EscalationAttempt: If tools cannot be retrieved (fail-closed)
+            EscalationAttempt: If tools attribute exists but cannot be read.
         """
-        if hasattr(parent_warrant, "tools"):
-            try:
-                return set(parent_warrant.tools())
-            except Exception as e:
-                # SECURITY: Fail-closed - if we can't verify parent tools, deny delegation
-                raise EscalationAttempt(f"Cannot verify parent warrant tools: {e}. Delegation denied (fail-closed).")
-        # No tools() method - assume warrant doesn't restrict tools
-        return set()
+        tools_attr = getattr(parent_warrant, "tools", None)
+        if tools_attr is None:
+            # Warrant does not restrict tools at all
+            return set()
+        try:
+            # tools is a property on Rust Warrant objects (returns a list).
+            # Guard against it being a callable (e.g. on mock objects).
+            tools = tools_attr() if callable(tools_attr) else tools_attr
+            return set(tools) if tools is not None else set()
+        except Exception as e:
+            # SECURITY: Fail-closed — if we can't read the tool list, deny delegation.
+            raise EscalationAttempt(
+                f"Cannot verify parent warrant tools: {e}. Delegation denied (fail-closed)."
+            )
 
     def _validate_tool_delegation(
         self,

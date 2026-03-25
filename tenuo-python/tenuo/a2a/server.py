@@ -1080,13 +1080,22 @@ class A2AServer:
         if issuer_normalized and issuer_normalized in self._revoked_issuers:
             raise RevokedError(f"Issuer key '{issuer_normalized}' is revoked")
 
+        # Decoded parent warrants from the chain (populated when delegation is used).
+        # Kept in scope so the PoP check can call check_chain instead of authorize_one
+        # when the leaf's issuer is a delegated agent (not a direct trusted root).
+        _resolved_chain_parents: Optional[List[Any]] = None
+
         if issuer_normalized and issuer_normalized not in self.trusted_issuers:
             if _preloaded_parents is not None and len(_preloaded_parents) > 0:
-                # WarrantStack path: parents already decoded by the HTTP handler
-                await self._validate_chain_warrants(warrant, _preloaded_parents)
+                # WarrantStack path: parents already decoded by the HTTP handler.
+                # Verify chain structure now; PoP (if required) is done below
+                # via check_chain so the full chain is validated atomically.
+                if not self.require_pop:
+                    await self._validate_chain_warrants(warrant, _preloaded_parents)
+                _resolved_chain_parents = _preloaded_parents
             elif self.trust_delegated and warrant_chain:
-                # Legacy path: semicolon-separated header
-                await self._validate_chain(warrant, warrant_chain)
+                # Legacy path: semicolon-separated header.
+                _resolved_chain_parents = await self._validate_chain(warrant, warrant_chain)
             else:
                 raise UntrustedIssuerError(issuer_normalized)
 
@@ -1112,23 +1121,23 @@ class A2AServer:
             if pop_signature is None:
                 raise PopRequiredError()
 
-            # Convert arguments to ConstraintValue format for authorization
+            # Verify PoP via the cached Authorizer.
+            # Both authorize_one and check_chain accept plain bytes for the
+            # signature and a plain dict for args — no ConstraintValue needed.
+            # When a delegation chain was supplied, use check_chain so the full
+            # chain (issuer trust + linkage + capabilities + PoP) is verified
+            # atomically.  Using authorize_one on the leaf alone would fail
+            # because the leaf's issuer is a delegated agent, not a trusted root.
             try:
-                from tenuo_core import ConstraintValue, Signature
-
-                args_cv = {k: ConstraintValue.from_any(v) for k, v in arguments.items()}
-                # Create Signature object from bytes
-                pop_sig = Signature.from_bytes(pop_signature)
-            except ImportError:
-                # If ConstraintValue not available, we can't verify PoP
-                raise PopVerificationError("tenuo_core ConstraintValue not available")
-            except Exception as e:
-                raise PopVerificationError(f"Failed to parse PoP signature: {e}")
-
-            # Verify PoP via the cached Authorizer (built at server init from trusted_issuers).
-            # Performs full verification: issuer trust, PoP signature, skill grant, constraints.
-            try:
-                self._authorizer.authorize_one(warrant, skill_id, args_cv, signature=pop_sig)
+                if _resolved_chain_parents:
+                    all_chain = list(_resolved_chain_parents) + [warrant]
+                    self._authorizer.check_chain(
+                        all_chain, skill_id, arguments, signature=pop_signature
+                    )
+                else:
+                    self._authorizer.authorize_one(
+                        warrant, skill_id, arguments, signature=pop_signature
+                    )
                 logger.debug(f"PoP verified for skill '{skill_id}'")
             except Exception as e:
                 # Map tenuo_core errors to A2A errors
@@ -1279,7 +1288,7 @@ class A2AServer:
         self,
         leaf_warrant: Any,
         chain_header: str,
-    ) -> None:
+    ) -> List[Any]:
         """
         Validate a delegation chain from a semicolon-separated header string.
 
@@ -1293,6 +1302,10 @@ class A2AServer:
         Args:
             leaf_warrant: The leaf warrant (already decoded)
             chain_header: Semicolon-separated base64 parent warrants (parent-first)
+
+        Returns:
+            Decoded parent warrants (root-first order, excluding the leaf), so
+            the caller can pass the full chain to ``check_chain`` for PoP.
 
         Raises:
             ChainValidationError, UntrustedIssuerError, WarrantExpiredError
@@ -1321,7 +1334,12 @@ class A2AServer:
             except Exception as e:
                 raise ChainValidationError(f"Invalid warrant at position {i}: {e}")
 
-        await self._validate_chain_warrants(leaf_warrant, parents)
+        # Validate structure now (skipped when PoP is required — check_chain does
+        # both structure and PoP atomically in validate_warrant's PoP step).
+        if not self.require_pop:
+            await self._validate_chain_warrants(leaf_warrant, parents)
+
+        return parents
 
     def _grants_are_subset(self, child: Any, parent: Any) -> bool:
         """
