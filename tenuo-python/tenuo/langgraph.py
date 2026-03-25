@@ -4,31 +4,64 @@ Tenuo LangGraph Integration
 This module provides middleware for securing LangGraph agents with Tenuo.
 It solves the key management problem by keeping private keys out of graph state.
 
-Recommended Pattern (Middleware):
-    Use TenuoMiddleware with LangGraph's create_agent() for the cleanest integration.
-    The middleware intercepts tool calls and enforces authorization automatically.
+Production Pattern (TenuoToolNode):
+    Use TenuoToolNode as a drop-in replacement for LangGraph's ToolNode.
+    This is the stable, recommended path for production graphs — including
+    multi-agent supervisor patterns.
+
+    from tenuo.langgraph import TenuoToolNode, guard_node, load_tenuo_keys
+
+    load_tenuo_keys()  # reads TENUO_KEY_* env vars into KeyRegistry
+
+    # Supervisor node validates warrant covers the tools it will dispatch to
+    def supervisor(state: State) -> dict:
+        ...
+
+    # Tool node enforces per-call authorization (tool name + argument constraints)
+    tool_node = TenuoToolNode([search_tool, write_tool])
+
+    graph.add_node("supervisor", guard_node(supervisor, required_tools=["search"]))
+    graph.add_node("tools", tool_node)
+
+Multi-Agent Delegation Pattern:
+    Each agent holds an *attenuated* copy of the root warrant in graph state.
+    Downstream nodes and tool-nodes only see the narrowed capability set.
+
+    # Supervisor attenuates warrant for sub-agent and stores it in state
+    @tenuo_node
+    def supervisor(state: State, bound_warrant: BoundWarrant) -> dict:
+        researcher_warrant = bound_warrant.warrant.attenuate(
+            signing_key=supervisor_key,
+            holder=researcher_pubkey,
+            capabilities={"search": {}, "read": {}},
+            ttl_seconds=300,
+        )
+        return {"warrant": researcher_warrant}
+
+    # Researcher's TenuoToolNode can only call search/read — not write
+    researcher_tools = TenuoToolNode([search_tool, read_tool, write_tool])
+
+Experimental Pattern (TenuoMiddleware):
+    TenuoMiddleware integrates with the LangChain 1.0+ agent middleware API
+    (langchain>=1.2).  It intercepts both model calls (tool filtering) and
+    tool calls (authorization).  The middleware API is stable in langchain 1.x
+    but is newer than TenuoToolNode — prefer TenuoToolNode if you need maximum
+    compatibility across LangChain versions.
 
     from langchain.agents import create_agent
-    from tenuo import SigningKey
     from tenuo.langgraph import TenuoMiddleware, load_tenuo_keys
 
-    # Auto-load keys from TENUO_KEY_* env vars
     load_tenuo_keys()
 
-    # Create middleware - handles all authorization
-    tenuo = TenuoMiddleware()
-
-    # Build agent with middleware
     agent = create_agent(
         model="gpt-4.1",
         tools=[search_tool, file_tool],
-        middleware=[tenuo],
+        middleware=[TenuoMiddleware()],
     )
 
-    # Invoke with warrant in state
     result = agent.invoke({
         "messages": [HumanMessage("search for AI papers")],
-        "warrant": root_warrant,  # Or warrant.to_base64() for serialization
+        "warrant": root_warrant,
     })
 
 Security Model (Local vs Remote PEP):
@@ -38,11 +71,6 @@ Security Model (Local vs Remote PEP):
     However, for complete security (Defense-in-Depth), the tools themselves
     (or the APIs they call) must also verify authorization. Use `bound_warrant.token`
     to pass the signed warrant to remote services.
-
-Alternative Patterns:
-    TenuoToolNode  - Drop-in replacement for ToolNode (legacy graphs)
-    guard_node()   - Wrapper for custom node functions
-    @tenuo_node    - Decorator for explicit BoundWarrant access
 
 See docs: https://tenuo.dev/langgraph
 """
@@ -477,29 +505,39 @@ def guard_node(
     *,
     key_id: Optional[str] = None,
     inject_warrant: bool = False,
+    required_tools: Optional[List[str]] = None,
 ) -> Callable:
     """
     Wrap a LangGraph node with Tenuo authorization.
 
-    This keeps the node function pure (standard LangGraph signature).
-    Authorization context is set up before the node runs.
+    Validates that:
+    1. The ``warrant`` field is present in state and can be bound to a key.
+    2. If ``required_tools`` is provided, the warrant covers *all* of those
+       tools — use this on supervisor nodes to fail fast before any sub-graph
+       work begins, rather than discovering a missing capability mid-execution.
+
+    Per-argument constraint enforcement (e.g. checking ``query`` matches a
+    pattern) happens at ``TenuoToolNode`` time, not here.  This wrapper is
+    the warrant-presence and key-binding check only.
 
     Args:
         node: The node function (state) -> dict
         key_id: Explicit key_id (default: from config or "default")
-        inject_warrant: If True, pass bound_warrant as kwarg
+        inject_warrant: If True, pass bound_warrant as kwarg to the node
+        required_tools: Optional list of tool names the warrant must cover.
+            Raises ConfigurationError if the warrant does not grant all of
+            them, blocking the node from running at all.
 
     Returns:
         Wrapped node function
 
-    Example:
-        def my_agent(state: State) -> dict:
-            # Pure domain logic - no Tenuo imports needed
+    Example::
+
+        def researcher(state: State) -> dict:
             return {"messages": [...]}
 
-        # Wrap at graph construction:
-        graph.add_node("agent", guard_node(my_agent))
-        graph.add_node("worker", guard_node(worker_node, key_id="worker"))
+        # Validate warrant covers both tools before the node runs:
+        graph.add_node("researcher", guard_node(researcher, required_tools=["search", "read"]))
     """
 
     @wraps(node)
@@ -518,14 +556,21 @@ def guard_node(
         except Exception as e:
             raise ConfigurationError(f"Authorization failed in node '{node.__name__}': {e}") from e
 
+        # Optional: check that the warrant covers all required tools up-front
+        # so the node fails fast instead of discovering missing capabilities later.
+        if required_tools:
+            from ._enforcement import enforce_tool_call
+            for tool_name in required_tools:
+                result = enforce_tool_call(tool_name=tool_name, tool_args={}, bound_warrant=bw)
+                if not result.allowed:
+                    raise ConfigurationError(
+                        f"Node '{node.__name__}': warrant does not cover required tool "
+                        f"'{tool_name}': {result.denial_reason}"
+                    )
+
         if inject_warrant:
             kwargs["bound_warrant"] = bw
 
-        # For now, we just validate the warrant exists and is bound
-        # The actual tool authorization happens in TenuoTool or guard()
-        # This wrapper primarily ensures the key binding works
-
-        # Check if wrapped function accepts config parameter
         import inspect
 
         sig = inspect.signature(node)
@@ -833,7 +878,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         import asyncio
         import functools
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             functools.partial(self._run_with_auth, input, config=config, **kwargs),
