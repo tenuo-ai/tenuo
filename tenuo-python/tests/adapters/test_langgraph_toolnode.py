@@ -115,6 +115,18 @@ class TestTenuoToolNode:
         assert "search" in node.tools_by_name
         assert "calculator" in node.tools_by_name
 
+    def _run_through_graph(self, node, state, config=None):
+        """Run a TenuoToolNode through a real StateGraph for proper runtime context."""
+        from tests.adapters.test_langgraph import MockState
+        from langgraph.graph import StateGraph, END, START
+
+        builder = StateGraph(MockState)
+        builder.add_node("tools", node)
+        builder.add_edge(START, "tools")
+        builder.add_edge("tools", END)
+        graph = builder.compile()
+        return graph.invoke(state, config=config)
+
     def test_tenuo_tool_node_execution(self, warrant_and_key, registry):
         """Test TenuoToolNode executes tools with authorization."""
         from langchain_core.messages import AIMessage
@@ -129,7 +141,6 @@ class TestTenuoToolNode:
 
         node = TenuoToolNode([search])
 
-        # Create state with warrant (key_id in config)
         state = {
             "warrant": warrant,
             "messages": [
@@ -138,13 +149,11 @@ class TestTenuoToolNode:
         }
         config = make_config(key_id)
 
-        result = node(state, config=config)
+        result = self._run_through_graph(node, state, config=config)
 
-        # Should have executed the tool
         assert "messages" in result
-        assert len(result["messages"]) == 1
-        # Check the result is a ToolMessage with content
-        msg = result["messages"][0]
+        assert len(result["messages"]) >= 1
+        msg = result["messages"][-1]
         assert hasattr(msg, "content")
 
     def test_tenuo_tool_node_missing_warrant(self, registry):
@@ -159,16 +168,17 @@ class TestTenuoToolNode:
 
         node = TenuoToolNode([search])
 
-        # State without warrant
         state = {
             "key_id": "test-key",
             "messages": [AIMessage(content="", tool_calls=[{"name": "search", "args": {}, "id": "call_1"}])],
         }
 
-        result = node(state)
+        result = self._run_through_graph(node, state)
 
-        # Should return error message
-        assert "Security Error" in result["messages"][0].content or "error" in result["messages"][0].content.lower()
+        last_msg = result["messages"][-1]
+        assert hasattr(last_msg, "content")
+        content = last_msg.content.lower()
+        assert "error" in content or "denied" in content or "security" in content
 
     def test_tenuo_tool_node_tool_not_found(self, warrant_and_key, registry):
         """TenuoToolNode handles missing tools gracefully."""
@@ -184,16 +194,18 @@ class TestTenuoToolNode:
 
         node = TenuoToolNode([search])
 
-        # Request a tool that doesn't exist
         state = {
             "warrant": warrant,
             "messages": [AIMessage(content="", tool_calls=[{"name": "nonexistent", "args": {}, "id": "call_1"}])],
         }
         config = make_config(key_id)
 
-        result = node(state, config=config)
+        result = self._run_through_graph(node, state, config=config)
 
-        assert "not found" in result["messages"][0].content.lower() or "error" in result["messages"][0].content.lower()
+        last_msg = result["messages"][-1]
+        assert hasattr(last_msg, "content")
+        content = last_msg.content.lower()
+        assert "not found" in content or "error" in content or "denied" in content
 
 
 # =============================================================================

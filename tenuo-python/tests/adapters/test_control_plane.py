@@ -459,7 +459,9 @@ class TestLangGraphControlPlane:
         if not LANGGRAPH_AVAILABLE:
             pytest.skip("LangGraph not available")
 
+        from typing import Any
         from langchain_core.tools import tool
+        from langgraph.graph import StateGraph, END, START
 
         @tool
         def search(query: str) -> str:
@@ -475,7 +477,15 @@ class TestLangGraphControlPlane:
                 tool_calls=[{"id": "t1", "name": "search", "args": {"query": "AI"}}],
             )
         ]
-        tool_node(state)
+
+        from tests.adapters.test_langgraph import MockState as _S  # noqa: F401  — reuse existing State
+
+        builder = StateGraph(_S)
+        builder.add_node("tools", tool_node)
+        builder.add_edge(START, "tools")
+        builder.add_edge("tools", END)
+        graph = builder.compile()
+        graph.invoke(state)
 
         assert len(mock_cp.allow_events) == 1
         entry = mock_cp.allow_events[0]
@@ -491,6 +501,8 @@ class TestLangGraphControlPlane:
             pytest.skip("LangGraph not available")
 
         from langchain_core.tools import tool
+        from langgraph.graph import StateGraph, END, START
+        from tests.adapters.test_langgraph import MockState as _S
 
         @tool
         def admin_reset() -> str:
@@ -506,7 +518,13 @@ class TestLangGraphControlPlane:
                 tool_calls=[{"id": "t2", "name": "admin_reset", "args": {}}],
             )
         ]
-        tool_node(state)
+
+        builder = StateGraph(_S)
+        builder.add_node("tools", tool_node)
+        builder.add_edge(START, "tools")
+        builder.add_edge("tools", END)
+        graph = builder.compile()
+        graph.invoke(state)
 
         assert len(mock_cp.deny_events) == 1
         assert mock_cp.deny_events[0]["result"].tool == "admin_reset"
@@ -521,6 +539,8 @@ class TestLangGraphControlPlane:
             pytest.skip("LangGraph not available")
 
         from langchain_core.tools import tool
+        from langgraph.graph import StateGraph, END, START
+        from tests.adapters.test_langgraph import MockState as _S
 
         @tool
         def read_file(path: str) -> str:
@@ -535,7 +555,13 @@ class TestLangGraphControlPlane:
                 tool_calls=[{"id": "t3", "name": "read_file", "args": {"path": "/data/x"}}],
             )
         ]
-        tool_node(state)
+
+        builder = StateGraph(_S)
+        builder.add_node("tools", tool_node)
+        builder.add_edge(START, "tools")
+        builder.add_edge("tools", END)
+        graph = builder.compile()
+        graph.invoke(state)
 
         entry = mock_cp.allow_events[0]
         assert entry["warrant_stack_override"] is not None

@@ -116,9 +116,42 @@ python-packages = ["tenuo"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
 markers = [
+    # Lifecycle / speed
     "temporal_live: tests that require an in-process Temporal server (slow, ~2-5s each)",
+    # Security test categories (also declared in tests/security/conftest.py)
+    "security: security/red-team tests verifying cryptographic invariants",
+    "integration_responsibility: tests documenting application responsibilities (not Tenuo bugs)",
+    "signature: signature and issuer trust verification",
+    "monotonicity: capability attenuation / delegation monotonicity rules",
+    "pop: Proof-of-Possession holder binding",
+    "delegation: delegation depth and chain integrity",
+    "implementation: implementation-level bypass prevention",
 ]
+
+[tool.coverage.run]
+source = ["tenuo"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/conftest.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.coverage.paths]
+source = ["tenuo"]
 
 [tool.ruff]
 line-length = 120
