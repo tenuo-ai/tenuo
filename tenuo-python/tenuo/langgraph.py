@@ -785,24 +785,28 @@ def require_warrant(
 
 class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignore
     """
-    A Secure ToolNode that authorizes tool calls using warrant from state.
+    A drop-in replacement for LangGraph's ToolNode with Tenuo authorization.
 
-    **Note**: For new projects, prefer TenuoMiddleware with create_agent().
-    TenuoToolNode is provided for compatibility with existing graphs that
-    use the ToolNode pattern.
+    Authorization is wired through ToolNode's own ``wrap_tool_call`` /
+    ``awrap_tool_call`` hook parameters, so the parent handles all execution
+    details — streaming, parallel dispatch, error handling, state injection,
+    ``Command`` routing — without any reimplementation.
 
-    Drop-in replacement for LangGraph's ToolNode with automatic Tenuo protection.
+    Usage::
 
-    Usage:
-        from tenuo.langgraph import TenuoToolNode
+        from tenuo.langgraph import TenuoToolNode, load_tenuo_keys
 
-        tools = [search, calculator]
-        tool_node = TenuoToolNode(tools)
+        load_tenuo_keys()  # reads TENUO_KEY_* env vars
 
+        tool_node = TenuoToolNode([search_tool, write_tool])
         graph.add_node("tools", tool_node)
-
-        # Invoke with key_id in config
         graph.invoke(state, config={"configurable": {"tenuo_key_id": "worker"}})
+
+    Multi-agent pattern::
+
+        researcher_node = TenuoToolNode([search_tool])
+        executor_node   = TenuoToolNode([write_tool])
+        # Each node enforces the warrant currently in state independently.
     """
 
     def __init__(
@@ -814,187 +818,139 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
         control_plane: Optional[Any] = None,
+        key_id: Optional[str] = None,
         **kwargs: Any,
     ):
-        """
-        Initialize TenuoToolNode.
-
-        Args:
-            tools: List of tools to make available
-            require_constraints: Require constraints for sensitive tools
-            approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
-            approval_handler: Handler invoked when approval policy triggers
-        """
         if not LANGGRAPH_AVAILABLE:
             raise ImportError(
                 "LangGraph is required for TenuoToolNode. "
                 "Install with: uv pip install langgraph"
             )
-        super().__init__(tools, **kwargs)
+
+        # Capture auth config in closure so the wrappers are self-contained.
+        _require_constraints = require_constraints
+        _approval_policy = approval_policy
+        _approval_handler = approval_handler
+        _approvals = approvals
+        _control_plane = control_plane
+        _key_id = key_id
+
+        def _make_bound_warrant(request: Any) -> Any:
+            """Extract BoundWarrant from the tool call request."""
+            state = request.state
+            state_dict = state if isinstance(state, dict) else vars(state)
+            config = getattr(request.runtime, "config", None)
+            return _get_bound_warrant(state_dict, config, key_id=_key_id)
+
+        def _auth_wrap(request: Any, handler: Callable[..., Any]) -> Any:
+            """Sync authorization wrapper passed to ToolNode."""
+            import time
+
+            request_id = str(uuid.uuid4())[:8]
+            tool_call = request.tool_call
+            tool_name = tool_call.get("name", "unknown")
+            tool_args = tool_call.get("args", {})
+
+            try:
+                bw = _make_bound_warrant(request)
+            except Exception as e:
+                logger.warning(f"[{request_id}] Failed to get BoundWarrant: {e}")
+                return ToolMessage(
+                    content=f"Security configuration error (ref: {request_id})",
+                    tool_call_id=tool_call.get("id", "unknown"),
+                    status="error",
+                )
+
+            start_ns = time.perf_counter_ns()
+            result = enforce_tool_call(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                bound_warrant=bw,
+                require_constraints=_require_constraints,
+                approval_policy=_approval_policy,
+                approval_handler=_approval_handler,
+                approvals=_approvals,
+            )
+
+            if _control_plane:
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                _control_plane.emit_for_enforcement(
+                    result, latency_us=latency_us, request_id=request_id,
+                    warrant_stack_override=_warrant_stack_from_bound(bw),
+                )
+
+            if not result.allowed:
+                logger.warning(f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}")
+                return ToolMessage(
+                    content=f"Authorization denied (ref: {request_id})",
+                    tool_call_id=tool_call.get("id", "unknown"),
+                    status="error",
+                )
+
+            logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
+            return handler(request)
+
+        async def _auth_awrap(request: Any, handler: Callable[..., Any]) -> Any:
+            """Async authorization wrapper passed to ToolNode."""
+            import time
+
+            request_id = str(uuid.uuid4())[:8]
+            tool_call = request.tool_call
+            tool_name = tool_call.get("name", "unknown")
+            tool_args = tool_call.get("args", {})
+
+            try:
+                bw = _make_bound_warrant(request)
+            except Exception as e:
+                logger.warning(f"[{request_id}] Failed to get BoundWarrant: {e}")
+                return ToolMessage(
+                    content=f"Security configuration error (ref: {request_id})",
+                    tool_call_id=tool_call.get("id", "unknown"),
+                    status="error",
+                )
+
+            start_ns = time.perf_counter_ns()
+            result = enforce_tool_call(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                bound_warrant=bw,
+                require_constraints=_require_constraints,
+                approval_policy=_approval_policy,
+                approval_handler=_approval_handler,
+                approvals=_approvals,
+            )
+
+            if _control_plane:
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                _control_plane.emit_for_enforcement(
+                    result, latency_us=latency_us, request_id=request_id,
+                    warrant_stack_override=_warrant_stack_from_bound(bw),
+                )
+
+            if not result.allowed:
+                logger.warning(f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}")
+                return ToolMessage(
+                    content=f"Authorization denied (ref: {request_id})",
+                    tool_call_id=tool_call.get("id", "unknown"),
+                    status="error",
+                )
+
+            logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
+            return await handler(request)
+
+        super().__init__(
+            tools,
+            wrap_tool_call=_auth_wrap,
+            awrap_tool_call=_auth_awrap,
+            **kwargs,
+        )
+        # Store for test introspection / approval param checks
         self._require_constraints = require_constraints
         self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
         self._control_plane = control_plane
-
-    def _run_with_auth(
-        self,
-        input: Dict[str, Any],
-        config: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        """Execute tools with authorization from state warrant."""
-        # Get BoundWarrant from state + config
-        try:
-            bw = _get_bound_warrant(input, config)
-        except Exception as e:
-            request_id = str(uuid.uuid4())[:8]
-            logger.warning(f"[{request_id}] Failed to get BoundWarrant: {e}")
-            return {
-                "messages": [
-                    ToolMessage(
-                        content=f"Security configuration error (ref: {request_id})",
-                        tool_call_id="unknown",
-                        status="error",
-                    )
-                ]
-            }
-
-        # Dispatch tool calls
-        messages = input.get("messages", [])
-        if not messages:
-            return {"messages": []}
-
-        last_message = messages[-1]
-        if not hasattr(last_message, "tool_calls"):
-            return {"messages": []}
-
-        results = []
-        for call in last_message.tool_calls:
-            tool_name = call["name"]
-            tool_args = call["args"]
-            tool_id = call["id"]
-
-            if tool_name not in self.tools_by_name:
-                results.append(
-                    ToolMessage(
-                        content=f"Error: Tool '{tool_name}' not found.",
-                        tool_call_id=tool_id,
-                        status="error",
-                    )
-                )
-                continue
-
-            # Use shared enforcement logic
-            request_id = str(uuid.uuid4())[:8]
-            import time
-            start_ns = time.perf_counter_ns()
-
-            enforcement_result = enforce_tool_call(
-                tool_name=tool_name,
-                tool_args=tool_args,
-                bound_warrant=bw,
-                require_constraints=self._require_constraints,
-                approval_policy=self._approval_policy,
-                approval_handler=self._approval_handler,
-                approvals=self._approvals,
-            )
-
-            if self._control_plane:
-                latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                self._control_plane.emit_for_enforcement(
-                    enforcement_result, latency_us=latency_us, request_id=request_id,
-                    warrant_stack_override=_warrant_stack_from_bound(bw),
-                )
-
-            if not enforcement_result.allowed:
-                # Log detailed reason for operators
-                logger.warning(
-                    f"[{request_id}] Tool '{tool_name}' denied: "
-                    f"{enforcement_result.denial_reason}"
-                )
-                # Return opaque error to LLM
-                results.append(
-                    ToolMessage(
-                        content=f"Authorization denied (ref: {request_id})",
-                        tool_call_id=tool_id,
-                        status="error",
-                    )
-                )
-                continue
-
-            # Tool authorized - execute it
-            tool = self.tools_by_name[tool_name]
-            try:
-                output = tool.invoke(tool_args, config=config)
-                results.append(
-                    ToolMessage(
-                        content=str(output),
-                        tool_call_id=tool_id,
-                        name=tool_name,
-                    )
-                )
-            except Exception as e:
-                from tenuo.approval import ApprovalRequired, ApprovalDenied
-                if isinstance(e, (ApprovalRequired, ApprovalDenied)):
-                    status = "required" if isinstance(e, ApprovalRequired) else "denied"
-                    logger.info(f"[{request_id}] Tool '{tool_name}' approval {status}")
-                    results.append(
-                        ToolMessage(
-                            content=f"Approval {status} (ref: {request_id})",
-                            tool_call_id=tool_id,
-                            status="error",
-                        )
-                    )
-                    continue
-                logger.warning(f"[{request_id}] Tool '{tool_name}' execution failed: {e}")
-                results.append(
-                    ToolMessage(
-                        content=f"Tool execution error (ref: {request_id})",
-                        tool_call_id=tool_id,
-                        status="error",
-                    )
-                )
-
-        return {"messages": results}
-
-    def __call__(
-        self,
-        input: Dict[str, Any],
-        config: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        """Execute as callable."""
-        return self._run_with_auth(input, config=config, **kwargs)
-
-    def invoke(
-        self,
-        input: Dict[str, Any],
-        config: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        """Execute via invoke()."""
-        return self._run_with_auth(input, config=config, **kwargs)
-
-    async def ainvoke(
-        self,
-        input: Dict[str, Any],
-        config: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        """Execute asynchronously via ainvoke().
-
-        Runs _run_with_auth in a thread-pool executor so blocking tool calls
-        don't stall the event loop. LangGraph calls ainvoke() on async graphs.
-        """
-        import asyncio
-        import functools
-
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            functools.partial(self._run_with_auth, input, config=config, **kwargs),
-        )
+        self._key_id = key_id
 
 
 __all__ = [

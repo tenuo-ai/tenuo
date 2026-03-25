@@ -1493,6 +1493,31 @@ class TestMultiAgentDelegation:
         # Warrant chain: researcher's warrant has a parent (the root)
 
     # ------------------------------------------------------------------
+    # Shared helper: build + run a minimal one-step graph
+    # ------------------------------------------------------------------
+
+    def _run_tool_node(self, tool_node, state, key_id):
+        """
+        Run a TenuoToolNode through a real StateGraph so the LangGraph
+        runtime injects the required Runtime context into ToolNode._func.
+        """
+        from typing import TypedDict, Annotated
+        from langchain_core.messages import BaseMessage
+        from langgraph.graph import StateGraph, END, START
+        from langgraph.graph.message import add_messages
+
+        class _State(TypedDict):
+            messages: Annotated[list[BaseMessage], add_messages]
+            warrant: Any
+
+        workflow = StateGraph(_State)
+        workflow.add_node("tools", tool_node)
+        workflow.add_edge(START, "tools")
+        workflow.add_edge("tools", END)
+        graph = workflow.compile()
+        return graph.invoke(state, config=make_config(key_id))
+
+    # ------------------------------------------------------------------
     # D2 — Sub-agent's TenuoToolNode accepts delegated warrant
     # ------------------------------------------------------------------
 
@@ -1532,14 +1557,13 @@ class TestMultiAgentDelegation:
             ],
             "warrant": researcher_warrant,
         }
-        config = make_config("researcher")
 
-        result = tool_node(state, config=config)
+        result = self._run_tool_node(tool_node, state, "researcher")
         messages = result.get("messages", [])
         assert messages, "TenuoToolNode should return at least one ToolMessage"
-        assert messages[0].status != "error" or "Authorization denied" not in messages[0].content, (
+        assert "Authorization denied" not in messages[-1].content, (
             f"D2: researcher's warrant should authorize 'search'. "
-            f"Got: {messages[0].content}"
+            f"Got: {messages[-1].content}"
         )
 
     # ------------------------------------------------------------------
@@ -1585,12 +1609,11 @@ class TestMultiAgentDelegation:
             ],
             "warrant": researcher_warrant,
         }
-        config = make_config("researcher")
 
-        result = tool_node(state, config=config)
+        result = self._run_tool_node(tool_node, state, "researcher")
         messages = result.get("messages", [])
         assert messages, "TenuoToolNode should return a denial ToolMessage"
-        denial_msg = messages[0].content
+        denial_msg = messages[-1].content
         assert "Authorization denied" in denial_msg, (
             f"D3: write_file must be denied for researcher's warrant. "
             f"Got: {denial_msg}"
@@ -1611,7 +1634,7 @@ class TestMultiAgentDelegation:
             pytest.skip("LangGraph not installed")
 
         supervisor_key, researcher_key = multi_agent_keys
-        search_tool, write_tool = tool_node_tools
+        search_tool, _ = tool_node_tools
 
         root_warrant = Warrant.issue(
             supervisor_key,
@@ -1637,7 +1660,7 @@ class TestMultiAgentDelegation:
         updated_state = supervisor_node(state, config)
         assert "warrant" in updated_state, "Supervisor should update state with sub-warrant"
 
-        # Downstream TenuoToolNode uses the updated warrant
+        # Downstream TenuoToolNode enforces the attenuated warrant
         merged_state = {**state, **updated_state}
         merged_state["messages"] = [
             AIMessage(
@@ -1647,11 +1670,11 @@ class TestMultiAgentDelegation:
         ]
 
         tool_node = TenuoToolNode([search_tool])
-        result = tool_node(merged_state, config=make_config("researcher"))
+        result = self._run_tool_node(tool_node, merged_state, "researcher")
         messages = result.get("messages", [])
         assert messages
-        assert "Authorization denied" not in messages[0].content, (
-            f"D4: search should be allowed by delegated warrant. Got: {messages[0].content}"
+        assert "Authorization denied" not in messages[-1].content, (
+            f"D4: search should be allowed by delegated warrant. Got: {messages[-1].content}"
         )
 
     # ------------------------------------------------------------------
@@ -1760,8 +1783,8 @@ class TestMultiAgentDelegation:
             ],
             "warrant": executor_warrant,
         }
-        result = tool_node(search_state, config=make_config("executor"))
-        assert "Authorization denied" not in result["messages"][0].content, (
+        result = self._run_tool_node(tool_node, search_state, "executor")
+        assert "Authorization denied" not in result["messages"][-1].content, (
             "D6: search must be allowed for executor"
         )
 
@@ -1777,7 +1800,7 @@ class TestMultiAgentDelegation:
             ],
             "warrant": executor_warrant,
         }
-        result = tool_node(write_state, config=make_config("executor"))
-        assert "Authorization denied" in result["messages"][0].content, (
+        result = self._run_tool_node(tool_node, write_state, "executor")
+        assert "Authorization denied" in result["messages"][-1].content, (
             "D6: write_file must be denied — executor never received that capability"
         )
