@@ -227,7 +227,7 @@ class LocalActivityError(TenuoTemporalError):
 
     error_code = "LOCAL_ACTIVITY_BLOCKED"
 
-    def __init__(self, activity_name: str):
+    def __init__(self, activity_name: str) -> None:
         self.activity_name = activity_name
         super().__init__(
             f"Activity '{activity_name}' cannot be used as local activity. "

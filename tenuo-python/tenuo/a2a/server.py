@@ -142,7 +142,7 @@ class ReplayBackend(Protocol):
     Example (Redis backend sketch)::
 
         class RedisReplayBackend:
-            def __init__(self, redis_client):
+            def __init__(self, redis_client) -> None:
                 self._redis = redis_client
 
             async def check_and_add(self, jti: str, ttl_seconds: int) -> bool:
@@ -191,7 +191,7 @@ class InMemoryReplayBackend:
 
     CLEANUP_INTERVAL = 1000  # Cleanup every N requests
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._cache: Dict[str, float] = {}  # jti -> expiry_time (wall clock)
         self._lock: Optional[asyncio.Lock] = None  # Lazy init to avoid event loop issues
         self._counter: int = 0  # Request counter for amortized cleanup
@@ -259,7 +259,7 @@ class SkillDefinition:
         func: Callable,
         constraints: Dict[str, Any],
         name: Optional[str] = None,
-    ):
+    ) -> None:
         self.skill_id = skill_id
         self.func = func
         self.constraints = constraints
@@ -634,7 +634,7 @@ class A2AServer:
         revoked_issuers: Optional[List[Any]] = None,
         signing_key: Optional[Any] = None,
         registration_handler: Optional[Callable] = None,
-    ):
+    ) -> None:
         """
         Initialize A2A server.
 

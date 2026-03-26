@@ -20,8 +20,8 @@ try:
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
-    StructuredTool = object  # type: ignore
-    BaseModel = object  # type: ignore
+    StructuredTool = object  # type: ignore[assignment]
+    BaseModel = object  # type: ignore[assignment]
 
 try:
     from mcp.types import Tool as MCPTool  # type: ignore[import-not-found]
@@ -29,7 +29,7 @@ try:
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
-    MCPTool = object  # type: ignore
+    MCPTool = object  # type: ignore[assignment]
 
 
 def mcp_tool_to_langchain(

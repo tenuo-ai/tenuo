@@ -582,6 +582,7 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
             allowed=self._constraints.copy(),
             warrant=self._warrant,
             signing_key=self._signing_key,
+            trusted_roots=self._trusted_roots,
             on_denial=self._on_denial,
             audit_callback=self._audit_callback,
             approval_policy=self._approval_policy,
@@ -611,6 +612,7 @@ class CrewAIGuard:
         allowed: Dict[str, Dict[str, Constraint]],
         warrant: Optional[Warrant],
         signing_key: Optional[SigningKey],
+        trusted_roots: Optional[list],
         on_denial: str,
         audit_callback: Optional[AuditCallback],
         approval_policy: Optional["ApprovalPolicy"] = None,
@@ -620,6 +622,7 @@ class CrewAIGuard:
         self._allowed = allowed
         self._warrant = warrant
         self._signing_key = signing_key
+        self._trusted_roots = trusted_roots
         self._on_denial = on_denial
         self._audit_callback = audit_callback
         self._approval_policy = approval_policy
@@ -869,6 +872,7 @@ class CrewAIGuard:
                 tool_name=tool_name,
                 tool_args=args,
                 bound_warrant=bound,
+                trusted_roots=self._trusted_roots,
                 approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,

@@ -65,7 +65,7 @@ class BoundWarrant:
     # Use __slots__ to prevent __dict__ access (security: key not exposed via vars())
     __slots__ = ("_warrant", "_key", "_warrant_token", "_key_token")
 
-    def __init__(self, warrant: Warrant, key: SigningKey):
+    def __init__(self, warrant: Warrant, key: SigningKey) -> None:
         """
         Create a BoundWarrant.
 

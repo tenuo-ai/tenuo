@@ -336,7 +336,7 @@ class TenuoGuard:
         tool: str,
         *,
         extract_args: Optional[Callable[[Request], Dict[str, Any]]] = None,
-    ):
+    ) -> None:
         self.tool = tool
         self.extract_args = extract_args
 
@@ -579,7 +579,7 @@ class SecureAPIRouter:
         def get_user(user_id: str): ...
     """
 
-    def __init__(self, *args: Any, tool_prefix: Optional[str] = None, require_pop: bool = True, **kwargs: Any):
+    def __init__(self, *args: Any, tool_prefix: Optional[str] = None, require_pop: bool = True, **kwargs: Any) -> None:
         if not FASTAPI_AVAILABLE:
             raise ImportError("FastAPI is required for SecureAPIRouter")
 

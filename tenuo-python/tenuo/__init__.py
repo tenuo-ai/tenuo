@@ -249,6 +249,8 @@ __all__ = [
     # Context
     "warrant_scope",
     "key_scope",
+    # Timestamp helper (use in warrant.sign() calls; in Temporal use workflow.now())
+    "now",
     # Common constraints
     "Pattern",
     "Exact",
@@ -315,10 +317,9 @@ __all__ = [
     "ApprovalVerificationError",
     "require_approval",
     "sign_approval",
-    "compute_request_hash",
     "cli_prompt",
     "auto_approve",
     "auto_deny",
 ]
 
-__version__ = "0.1.0b11"
+__version__ = "0.1.0b14"

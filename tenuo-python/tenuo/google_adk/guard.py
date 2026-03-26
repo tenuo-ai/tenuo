@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 
 
 class ToolAuthorizationError(Exception):
-    """Raised when tool authorization fails and on_deny='raise'."""
+    """Raised when tool authorization fails and on_denial='raise'."""
 
     def __init__(self, message: str, tool_name: str, tool_args: Dict[str, Any]):
         super().__init__(message)
@@ -114,6 +114,7 @@ class TenuoGuard:
         self,
         warrant: Optional["Warrant"] = None,
         signing_key: Optional["SigningKey"] = None,
+        trusted_roots: Optional[list] = None,
         warrant_key: Optional[str] = "__tenuo_warrant__",
         skill_map: Optional[Dict[str, str]] = None,
         arg_map: Optional[Dict[str, Dict[str, str]]] = None,
@@ -121,7 +122,8 @@ class TenuoGuard:
         allow_tools: Optional[List[str]] = None,  # Allowlist for Tier 1 (explicit grants)
         denial_detail: str = "full",  # "full", "minimal", "silent"
         audit_log: Union[None, str, Any] = None,
-        on_deny: str = "return",  # "return" or "raise"
+        on_denial: str = "return",  # "return" or "raise"
+        on_deny: Optional[str] = None,  # Deprecated: use on_denial
         require_pop: bool = True,  # Default to secure mode
         dry_run: bool = False,  # Log denials but don't block
         include_hints: bool = True,  # Include recovery hints in denials
@@ -129,13 +131,17 @@ class TenuoGuard:
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         control_plane: Optional[Any] = None,
-    ):
+    ) -> None:
         """
         Initialize TenuoGuard.
 
         Args:
             warrant: Static warrant to use for all tool calls
             signing_key: Signing key for Proof-of-Possession (required for Tier 2)
+            trusted_roots: List of trusted issuer public keys (tenuo_core.PublicKey).
+                Warrant issuers are verified against these roots via
+                Authorizer.authorize_one() — closes the self-signed trust gap.
+                Always supply in production. Emits SecurityWarning when omitted.
             warrant_key: Key to look up warrant in ToolContext.state (for dynamic warrants)
             skill_map: Map ADK tool names to warrant skill names
             arg_map: Map tool argument names to constraint parameter names
@@ -144,7 +150,9 @@ class TenuoGuard:
             allow_tools: Allowlist of tools (Tier 1 mode) - explicit grants only
             denial_detail: Detail level for denial messages ("full", "minimal", "silent")
             audit_log: File path or file-like object for audit logging
-            on_deny: "return" error dict or "raise" exception
+            on_denial: How to handle denied calls — "return" (return an error dict,
+                default) or "raise" (raise ToolAuthorizationError).
+            on_deny: Deprecated alias for on_denial. Use on_denial instead.
             require_pop: If True (default), requires signing_key for Tier 2 authorization.
                         Set to False for Tier 1 guardrails-only mode.
             dry_run: If True, log denials but don't block. Useful for testing.
@@ -153,15 +161,24 @@ class TenuoGuard:
                            When provided, every allow and deny decision is streamed to the
                            Tenuo Cloud control plane for audit and observability.
         """
+        if on_deny is not None:
+            import warnings
+            warnings.warn(
+                "TenuoGuard: 'on_deny' is deprecated, use 'on_denial' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            on_denial = on_deny
         self._warrant = warrant
         self._signing_key = signing_key
+        self._trusted_roots = trusted_roots
         self._warrant_key = warrant_key
         self._skill_map = skill_map or {}
         self._arg_map = arg_map or {}
         self._constraints = constraints or {}  # Direct constraints for Tier 1
         self._allow_tools = allow_tools or []  # Allowlist (explicit grants)
         self._denial_detail = denial_detail
-        self._on_deny = on_deny
+        self._on_denial = on_denial
         self._require_pop = require_pop
         self._dry_run = dry_run
         self._include_hints = include_hints
@@ -356,6 +373,7 @@ class TenuoGuard:
                     tool_name=skill_name,
                     tool_args=validation_args,
                     bound_warrant=bound_warrant,
+                    trusted_roots=self._trusted_roots,
                     approval_policy=self._approval_policy,
                     approval_handler=self._approval_handler,
                     approvals=self._approvals,
@@ -657,7 +675,7 @@ class TenuoGuard:
         start_ns: Optional[int] = None,
         _cp_already_emitted: bool = False,
     ) -> Optional[Dict[str, Any]]:
-        """Handle denial based on on_deny setting."""
+        """Handle denial based on on_denial setting."""
         # Dry run mode: log but don't block
         if self._dry_run:
             logger.warning(f"DRY RUN: Would deny {tool_name} - {reason}")
@@ -684,7 +702,7 @@ class TenuoGuard:
             )
             self._control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
 
-        if self._on_deny == "raise":
+        if self._on_denial == "raise":
             raise ToolAuthorizationError(reason, tool_name, args)
 
         # Construct user-facing message based on detail level
@@ -816,7 +834,7 @@ class GuardBuilder:
         self._constraints: Dict[str, Dict[str, Any]] = {}  # Direct constraints
         self._allow_tools: List[str] = []  # Allowlist (explicit grants only)
         self._denial_detail: str = "full"
-        self._on_deny: str = "return"
+        self._on_denial: str = "return"
         self._require_pop: bool = True
         self._dry_run: bool = False
         self._include_hints: bool = True
@@ -1022,7 +1040,7 @@ class GuardBuilder:
         """
         if mode not in ("return", "raise"):
             raise ValueError(f"on_denial must be 'return' or 'raise', got {mode!r}")
-        self._on_deny = mode
+        self._on_denial = mode
         return self
 
     def detail_level(self, level: str) -> "GuardBuilder":
@@ -1130,7 +1148,7 @@ class GuardBuilder:
             constraints=self._constraints,
             allow_tools=self._allow_tools,
             denial_detail=self._denial_detail,
-            on_deny=self._on_deny,
+            on_denial=self._on_denial,
             require_pop=self._require_pop,
             dry_run=self._dry_run,
             include_hints=self._include_hints,

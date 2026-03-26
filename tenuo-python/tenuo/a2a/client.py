@@ -208,7 +208,7 @@ class A2AClient:
         auth: Optional[Any] = None,
         pin_key: Optional[str] = None,
         timeout: float = 30.0,
-    ):
+    ) -> None:
         """
         Initialize A2A client.
 

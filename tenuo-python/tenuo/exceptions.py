@@ -71,6 +71,96 @@ Error Hierarchy:
 
 from typing import Any, Optional
 
+__all__ = [
+    # Base
+    "TenuoError",
+    # Scope / authorization failures
+    "ScopeViolation",
+    "ToolNotAuthorized",
+    "ToolMismatch",
+    "ConstraintViolation",
+    "ExpiredError",
+    "Unauthorized",
+    # Cryptographic errors
+    "CryptoError",
+    "SignatureInvalid",
+    "MissingSignature",
+    # Monotonicity (delegation narrowing violations)
+    "MonotonicityError",
+    "IncompatibleConstraintTypes",
+    "WildcardExpansion",
+    "EmptyResultSet",
+    "ExclusionRemoved",
+    "ValueNotInParentSet",
+    "RangeExpanded",
+    "PatternExpanded",
+    "RequiredValueRemoved",
+    "ExactValueMismatch",
+    # Proof-of-Possession errors
+    "PopError",
+    "MissingSigningKey",
+    "SignatureMismatch",
+    "PopExpired",
+    # Chain validation errors
+    "ChainError",
+    "BrokenChain",
+    "CycleDetected",
+    "UntrustedRoot",
+    "ParentRequired",
+    "DelegationAuthorityError",
+    # Clearance errors
+    "ClearanceViolation",
+    "ClearanceLevelExceeded",
+    # Issuance errors
+    "IssuanceError",
+    "UnauthorizedToolIssuance",
+    "SelfIssuanceProhibited",
+    "IssueDepthExceeded",
+    "InvalidWarrantType",
+    "IssuerChainTooLong",
+    # Limit errors
+    "LimitError",
+    "DepthExceeded",
+    "ConstraintDepthExceeded",
+    "PayloadTooLarge",
+    # Revocation
+    "RevokedError",
+    # Validation errors
+    "ValidationError",
+    "MissingField",
+    "InvalidWarrantId",
+    "InvalidTtl",
+    # Constraint syntax errors
+    "ConstraintSyntaxError",
+    "InvalidPattern",
+    "InvalidRange",
+    "InvalidRegex",
+    "CelError",
+    # Serialization errors
+    "SerializationError",
+    "DeserializationError",
+    "UnsupportedVersion",
+    # Approval errors
+    "ApprovalError",
+    "ApprovalExpired",
+    "InsufficientApprovals",
+    "InvalidApproval",
+    "ApprovalGateTriggered",
+    "UnknownProvider",
+    # Configuration errors
+    "ConfigurationError",
+    "FeatureNotEnabled",
+    # Runtime errors
+    "RuntimeError",
+    # Warnings
+    "TenuoSecurityWarning",
+    # Result types
+    "ConstraintResult",
+    "AuthorizationDenied",
+    # Wire format
+    "ErrorCode",
+]
+
 # =============================================================================
 # Canonical Error Codes (Wire Format Spec §Appendix A)
 # =============================================================================
@@ -1193,8 +1283,15 @@ class RuntimeError(TenuoError):
     error_code = "runtime_error"
     rust_variant = "RuntimeError"
 
-    def __init__(self, message: str = "", hint: Optional[str] = None):
-        super().__init__(message or "Runtime error", {"message": message}, hint=hint)
+
+class TenuoSecurityWarning(UserWarning):
+    """
+    Warning emitted when a security-sensitive default is in use.
+
+    Callers should treat this as a configuration error in production
+    deployments.  Common trigger: enforce_tool_call called without
+    trusted_roots, meaning the warrant issuer is implicitly trusted.
+    """
 
 
 # =============================================================================

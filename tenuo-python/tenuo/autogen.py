@@ -175,6 +175,7 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
         return _Guard(
             constraints=self._constraints,
             bound=bound,
+            trusted_roots=self._trusted_roots,
             on_denial=self._on_denial,
             approval_policy=self._approval_policy,
             approval_handler=self._approval_handler,
@@ -195,6 +196,7 @@ class _Guard:
         *,
         constraints: Dict[str, Dict[str, Any]],
         bound: Any,
+        trusted_roots: Any = None,
         on_denial: str,
         approval_policy: Any = None,
         approval_handler: Any = None,
@@ -202,6 +204,7 @@ class _Guard:
     ) -> None:
         self._constraints = constraints
         self._bound = bound
+        self._trusted_roots = trusted_roots
         self._on_denial = on_denial
         self._approval_policy = approval_policy
         self._approval_handler = approval_handler
@@ -385,6 +388,7 @@ class _Guard:
             # Tier 2: Use shared enforcement logic
             result = enforce_tool_call(
                 tool_name, auth_args, self._bound,
+                trusted_roots=self._trusted_roots,
                 approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,

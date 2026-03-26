@@ -1021,6 +1021,12 @@ ${argsLines}
 
 // Validation Warnings Component
 const ValidationWarnings = ({ decoded, tool, args }: { decoded: DecodedWarrant | null; tool: string; args: string }) => {
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    setDismissed(false);
+  }, [decoded]);
+
   const warnings = useMemo<ValidationWarning[]>(() => {
     const w: ValidationWarning[] = [];
     if (!decoded) return w;
@@ -1070,10 +1076,17 @@ const ValidationWarnings = ({ decoded, tool, args }: { decoded: DecodedWarrant |
     return w;
   }, [decoded, tool, args]);
 
-  if (warnings.length === 0) return null;
+  if (warnings.length === 0 || dismissed) return null;
 
   return (
-    <div className="warnings-panel">
+    <div className="warnings-panel" style={{ position: 'relative' }}>
+      <button 
+        onClick={() => setDismissed(true)} 
+        style={{ position: 'absolute', top: '8px', right: '8px', background: 'none', border: 'none', cursor: 'pointer', opacity: 0.5 }}
+        title="Dismiss warnings"
+      >
+        ✕
+      </button>
       {warnings.map((w, i) => (
         <div key={i} className={`warning warning-${w.type}`}>
           <span>{w.type === 'danger' ? '🚨' : w.type === 'warning' ? '⚠️' : 'ℹ️'}</span>
@@ -2017,6 +2030,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'decode' | 'debug' | 'code'>('decode');
   const [mode, setMode] = useState<'decoder' | 'builder' | 'chain' | 'diff'>('decoder');
   const [builderPreview, setBuilderPreview] = useState<unknown>(null);
+  const [showBuilderJson, setShowBuilderJson] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(true);
   const [samples, setSamples] = useState<Record<string, SampleDef>>({});
   const [pemDetected, setPemDetected] = useState(false);
@@ -2401,13 +2415,22 @@ function App() {
                       <>
                         {/* Warrant Base64 */}
                         <div style={{ marginBottom: '16px' }}>
-                          <label className="label">Warrant (base64)</label>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                            <label className="label" style={{ marginBottom: 0 }}>Warrant (base64)</label>
+                            <button
+                              onClick={() => setShowBuilderJson(!showBuilderJson)}
+                              className="btn btn-secondary"
+                              style={{ fontSize: '10px', padding: '2px 6px' }}
+                            >
+                              {showBuilderJson ? 'Show Base64' : 'Show JSON'}
+                            </button>
+                          </div>
                           <div style={{ position: 'relative' }}>
                             <textarea
                               className="input"
                               readOnly
-                              value={(builderPreview as { warrant_b64: string }).warrant_b64}
-                              style={{ height: '80px', fontSize: '10px', fontFamily: 'monospace' }}
+                              value={showBuilderJson ? JSON.stringify((builderPreview as { config?: unknown }).config || builderPreview, null, 2) : (builderPreview as { warrant_b64: string }).warrant_b64}
+                              style={{ height: showBuilderJson ? '200px' : '80px', fontSize: '10px', fontFamily: 'monospace' }}
                             />
                             <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px' }}>
                               <button

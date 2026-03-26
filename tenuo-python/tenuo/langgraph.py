@@ -98,32 +98,32 @@ try:
     from langchain_core.messages import ToolMessage
     from langchain_core.runnables import RunnableConfig
     from langchain_core.tools import BaseTool
-    from langgraph.prebuilt import ToolNode  # type: ignore
+    from langgraph.prebuilt import ToolNode  # type: ignore[import-not-found]
 
     LANGGRAPH_AVAILABLE = True
 except (ImportError, TypeError):
     # TypeError can happen on Python 3.9 with old typing/Pydantic interactions in langchain
     LANGGRAPH_AVAILABLE = False
-    ToolNode = object  # type: ignore
-    BaseTool = object  # type: ignore
+    ToolNode = object  # type: ignore[assignment]
+    BaseTool = object  # type: ignore[assignment]
     RunnableConfig = dict  # type: ignore
 
 # Optional middleware imports (langchain 1.0+)
 try:
-    from langchain.agents.middleware import (  # type: ignore
+    from langchain.agents.middleware import (  # type: ignore[import-not-found]
         AgentMiddleware,
         ModelRequest,
         ModelResponse,
     )
-    from langchain.tools.tool_node import ToolCallRequest  # type: ignore
+    from langchain.tools.tool_node import ToolCallRequest  # type: ignore[import-not-found]
 
     MIDDLEWARE_AVAILABLE = True
 except ImportError:
     MIDDLEWARE_AVAILABLE = False
-    AgentMiddleware = object  # type: ignore
-    ModelRequest = object  # type: ignore
-    ModelResponse = object  # type: ignore
-    ToolCallRequest = object  # type: ignore
+    AgentMiddleware = object  # type: ignore[assignment]
+    ModelRequest = object  # type: ignore[assignment]
+    ModelResponse = object  # type: ignore[assignment]
+    ToolCallRequest = object  # type: ignore[assignment]
 
 logger = logging.getLogger("tenuo.langgraph")
 
@@ -250,6 +250,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         filter_tools: bool = True,
         require_constraints: bool = False,
         debug: bool = False,
+        trusted_roots: Optional[List[Any]] = None,
         approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
@@ -263,6 +264,10 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             filter_tools: Filter tools presented to LLM based on warrant
             require_constraints: Require constraints for sensitive tools
             debug: If True, returns detailed error messages to the LLM (DEV ONLY)
+            trusted_roots: List of trusted issuer public keys (tenuo_core.PublicKey).
+                Warrant issuers are verified against these roots via
+                Authorizer.authorize_one() — closes the self-signed trust gap.
+                Always supply in production. Emits SecurityWarning when omitted.
             approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
             approval_handler: Handler invoked when approval policy triggers
         """
@@ -276,6 +281,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         self._filter_tools = filter_tools
         self._require_constraints = require_constraints
         self._debug = debug
+        self._trusted_roots = trusted_roots
         self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
@@ -393,6 +399,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 tool_args=tool_args,
                 bound_warrant=bw,
                 require_constraints=self._require_constraints,
+                trusted_roots=self._trusted_roots,
                 approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
@@ -471,6 +478,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 tool_args=tool_args,
                 bound_warrant=bw,
                 require_constraints=self._require_constraints,
+                trusted_roots=self._trusted_roots,
                 approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
@@ -814,6 +822,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         tools: List[BaseTool],
         *,
         require_constraints: bool = False,
+        trusted_roots: Optional[List[Any]] = None,
         approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
@@ -829,6 +838,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
 
         # Capture auth config in closure so the wrappers are self-contained.
         _require_constraints = require_constraints
+        _trusted_roots = trusted_roots
         _approval_policy = approval_policy
         _approval_handler = approval_handler
         _approvals = approvals
@@ -867,6 +877,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 tool_args=tool_args,
                 bound_warrant=bw,
                 require_constraints=_require_constraints,
+                trusted_roots=_trusted_roots,
                 approval_policy=_approval_policy,
                 approval_handler=_approval_handler,
                 approvals=_approvals,
@@ -915,6 +926,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 tool_args=tool_args,
                 bound_warrant=bw,
                 require_constraints=_require_constraints,
+                trusted_roots=_trusted_roots,
                 approval_policy=_approval_policy,
                 approval_handler=_approval_handler,
                 approvals=_approvals,

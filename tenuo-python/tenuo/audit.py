@@ -194,7 +194,7 @@ class AuditLogger:
     Can be configured with custom handlers for other destinations.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._enabled = True
         self._service_name = "tenuo-python"
         self._handler: Callable[[AuditEvent], None] = self._default_handler

@@ -550,6 +550,7 @@ def enforce_tool_call(
     precomputed_signature: Optional[bytes] = None,
     authorizer: Optional[Any] = None,
     warrant_chain: Optional[List[Any]] = None,
+    trusted_roots: Optional[List[Any]] = None,
     approval_policy: Optional[ApprovalPolicy] = None,
     approval_handler: Optional[ApprovalHandler] = None,
     approvals: Optional[List[Any]] = None,
@@ -588,6 +589,15 @@ def enforce_tool_call(
             leaf) to pass alongside the leaf warrant to check_chain().  Used when
             a multi-hop delegation chain was received (e.g. via WarrantStack
             transport) and full cryptographic chain verification is required.
+        trusted_roots: Explicit list of trusted issuer public keys (tenuo_core.PublicKey).
+            When provided, enforce_tool_call builds an Authorizer(trusted_roots=...)
+            and verifies the warrant issuer against those roots via
+            Authorizer.authorize_one() after signing PoP locally.  This closes the
+            self-signed trust gap in the default verify_mode="sign" path where
+            BoundWarrant.validate() would accept any warrant whose issuer matches
+            its own signature key.
+            When NOT provided a SecurityWarning is emitted — callers should always
+            supply trusted_roots in production deployments.
         approval_policy: Optional ApprovalPolicy to check after warrant authorization.
             If a rule matches, the approval_handler is invoked.
         approval_handler: Callable that handles approval requests and returns a
@@ -758,27 +768,80 @@ def enforce_tool_call(
             )
 
         if verify_mode == "sign":
-            # Pass approval gate approvals (if any) so Rust satisfies the gate check.
-            validation_result: ValidationResult = bound_warrant.validate(
-                tool_name, tool_args, approvals=_gate_approvals
-            )
+            if trusted_roots is not None:
+                # ─────────────────────────────────────────────────────────────
+                # VERIFIED SIGN PATH — sign PoP locally, then verify issuer
+                # trust via Authorizer(trusted_roots).authorize_one().
+                # This is the secure path: the warrant issuer must be one of
+                # the explicitly trusted roots, not just self-consistent.
+                # ─────────────────────────────────────────────────────────────
+                import time as _time
+                from tenuo_core import Authorizer as _Authorizer
 
-            if not validation_result.success:
-                # Extract detailed failure info from ValidationResult
-                violated_field = _extract_violated_field(validation_result.reason)
+                try:
+                    _warrant = bound_warrant.warrant
+                    _key = bound_warrant._key
+                    _pop = bytes(_warrant.sign(_key, tool_name, tool_args, int(_time.time())))
+                    _auth = _Authorizer(trusted_roots=trusted_roots)
+                    _auth.authorize_one(
+                        _warrant, tool_name, tool_args,
+                        signature=_pop,
+                        approvals=_gate_approvals or [],
+                    )
+                except Exception as _exc:
+                    from tenuo.exceptions import ExpiredError as _ExpiredError
+                    from tenuo.exceptions import MissingSignature as _MissingSignature
+                    from tenuo.exceptions import SignatureInvalid as _SignatureInvalid
+                    if isinstance(_exc, (_ExpiredError, _SignatureInvalid, _MissingSignature)):
+                        raise
+                    violated_field = _extract_violated_field(str(_exc))
+                    logger.debug(f"Authorization denied for {tool_name}: {_exc}")
+                    return EnforcementResult(
+                        allowed=False,
+                        tool=tool_name,
+                        arguments=tool_args,
+                        denial_reason=str(_exc) or "Authorization failed",
+                        constraint_violated=violated_field,
+                        error_type="authorization_failed",
+                        warrant_id=warrant_id,
+                    )
+            else:
+                # ─────────────────────────────────────────────────────────────
+                # SELF-SIGNED PATH — no explicit trusted_roots provided.
+                # BoundWarrant.validate() trusts the warrant's own issuer, so
+                # any self-signed warrant passes.  This is insecure for
+                # untrusted inputs: always supply trusted_roots in production.
+                # ─────────────────────────────────────────────────────────────
+                import warnings
+                from .exceptions import TenuoSecurityWarning
+                warnings.warn(
+                    "enforce_tool_call called without trusted_roots: warrant issuer is "
+                    "implicitly trusted. Supply trusted_roots=[<PublicKey>] to verify "
+                    "the issuer against an explicit trust anchor (see tenuo_core.Authorizer).",
+                    TenuoSecurityWarning,
+                    stacklevel=3,
+                )
+                # Pass approval gate approvals (if any) so Rust satisfies the gate check.
+                validation_result: ValidationResult = bound_warrant.validate(
+                    tool_name, tool_args, approvals=_gate_approvals
+                )
 
-                logger.debug(
-                    f"Authorization denied for {tool_name}: {validation_result.reason}"
-                )
-                return EnforcementResult(
-                    allowed=False,
-                    tool=tool_name,
-                    arguments=tool_args,
-                    denial_reason=validation_result.reason or "Authorization failed",
-                    constraint_violated=violated_field,
-                    error_type="authorization_failed",
-                    warrant_id=warrant_id,
-                )
+                if not validation_result.success:
+                    # Extract detailed failure info from ValidationResult
+                    violated_field = _extract_violated_field(validation_result.reason)
+
+                    logger.debug(
+                        f"Authorization denied for {tool_name}: {validation_result.reason}"
+                    )
+                    return EnforcementResult(
+                        allowed=False,
+                        tool=tool_name,
+                        arguments=tool_args,
+                        denial_reason=validation_result.reason or "Authorization failed",
+                        constraint_violated=violated_field,
+                        error_type="authorization_failed",
+                        warrant_id=warrant_id,
+                    )
         else:
             # verify_mode == "verify"
             # Full chain verification: issuer trust, chain linkage, revocation,

@@ -215,7 +215,7 @@ class TestOnDenialBehaviouralContracts:
 
         guard = TenuoGuard(
             warrant=w, signing_key=key,
-            require_pop=False, on_deny="return",
+            require_pop=False, on_denial="return",
         )
 
         tool = MagicMock(); tool.name = "delete_everything"

@@ -376,7 +376,7 @@ class TestOnDenyRaise:
         guard = TenuoGuard(
             warrant=warrant,
             signing_key=keys,
-            on_deny="raise",
+            on_denial="raise",
         )
 
         tool = MockBaseTool("shell_tool")
@@ -615,7 +615,7 @@ class TestGuardBuilder:
         """Test on_denial configuration."""
         guard = GuardBuilder().with_warrant(warrant, keys).on_denial("raise").build()
 
-        assert guard._on_deny == "raise"
+        assert guard._on_denial == "raise"
 
 
 class TestDryRunMode:

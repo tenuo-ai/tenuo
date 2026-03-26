@@ -151,6 +151,7 @@ class BaseGuardBuilder(Generic[T]):
         self._constraints: Dict[str, Dict[str, Any]] = {}
         self._warrant: Optional[Any] = None
         self._signing_key: Optional[Any] = None
+        self._trusted_roots: Optional[list] = None
         self._on_denial: str = DenialPolicy.RAISE
         self._approval_policy: Optional[ApprovalPolicy] = None
         self._approval_handler: Optional[ApprovalHandler] = None
@@ -192,6 +193,27 @@ class BaseGuardBuilder(Generic[T]):
             raise MissingSigningKey("Signing key is required for Tier 2")
         self._warrant = warrant
         self._signing_key = signing_key
+        return self
+
+    def with_trusted_roots(self: T, roots: list) -> T:
+        """
+        Set trusted issuer public keys for warrant verification.
+
+        When provided, the guard verifies the warrant issuer against these
+        roots via Authorizer.authorize_one() before allowing any tool call.
+        This closes the self-signed trust gap present when trusted_roots is
+        not configured.
+
+        Always supply this in production deployments to ensure warrants can
+        only originate from your control plane, not from arbitrary keys.
+
+        Args:
+            roots: List of trusted tenuo_core.PublicKey objects
+
+        Returns:
+            self for method chaining
+        """
+        self._trusted_roots = list(roots)
         return self
 
     def on_denial(self: T, mode: str) -> T:

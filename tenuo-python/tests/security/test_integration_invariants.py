@@ -935,9 +935,9 @@ class _GoogleADKAdapter(_Adapter):
         self._guard_with_warrant = TenuoGuard(
             warrant=self._warrant, signing_key=self._holder,
             trusted_roots=[self._root.public_key],
-            require_pop=True, on_deny="return",
+            require_pop=True, on_denial="return",
         )
-        self._guard_no_warrant = TenuoGuard(on_deny="return", require_pop=False)
+        self._guard_no_warrant = TenuoGuard(on_denial="return", require_pop=False)
         self._guard_constrained = TenuoGuard(
             warrant=Warrant.issue(
                 self._root,
@@ -946,7 +946,7 @@ class _GoogleADKAdapter(_Adapter):
             ),
             signing_key=self._holder,
             trusted_roots=[self._root.public_key],
-            require_pop=True, on_deny="return",
+            require_pop=True, on_denial="return",
         )
 
     def _ok(self, guard: Any, tool: Any, args: Dict[str, Any]) -> bool:
@@ -970,7 +970,7 @@ class _GoogleADKAdapter(_Adapter):
         time.sleep(2)
         guard = TenuoGuard(warrant=w, signing_key=self._holder,
                            trusted_roots=[self._root.public_key],
-                           require_pop=True, on_deny="return")
+                           require_pop=True, on_denial="return")
         ctx = MagicMock()
         return guard.before_tool(self._tool_search, {}, ctx) is None
 
@@ -1567,7 +1567,7 @@ class TestGoogleADKInvariants:
             warrant=warrant,
             signing_key=signing_key,
             require_pop=False,
-            on_deny="return",
+            on_denial="return",
         )
 
     def _mock_tool(self, name: str = "search"):
@@ -2364,7 +2364,7 @@ class TestGoogleADKInvariantsExtended:
         )
         guard = TenuoGuard(
             warrant=legitimate_w, signing_key=root_key,
-            require_pop=False, on_deny="return",
+            require_pop=False, on_denial="return",
         )
 
         tool = MagicMock(); tool.name = "search"
