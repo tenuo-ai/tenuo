@@ -13,7 +13,7 @@ import pytest
 
 from tenuo import Pattern, SigningKey, Warrant
 from tenuo.openai import (
-    ConstraintViolation,
+    OpenAIConstraintViolation,
     MissingSigningKey,
     verify_tool_call,
 )
@@ -46,7 +46,7 @@ class TestZeroTrust:
         args_attack = {"path": "/safe/data.txt", "admin": "true"}
 
         # This SHOULD fail, but we expect it might pass currently
-        with pytest.raises(ConstraintViolation, match="Unknown argument"):
+        with pytest.raises(OpenAIConstraintViolation, match="Unknown argument"):
             verify_tool_call(tool_name, args_attack, ["read_file"], None, constraints)
 
 
@@ -73,7 +73,7 @@ class TestFailClosed:
 
         # The check_constraint function handles fail-closed for the constraint check itself,
         # verifying that verify_tool_call propagates that failure.
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call("read_file", {"path": "/any"}, ["read_file"], None, constraints)
 
     def test_constraint_implementation_bug(self):
@@ -85,8 +85,8 @@ class TestFailClosed:
         with patch("tenuo.openai.check_constraint", side_effect=ValueError("Oops")):
             constraints = {"read_file": {"path": Pattern("*")}}
 
-            # Should raise ConstraintViolation (denial), NOT ValueError (crash)
-            with pytest.raises(ConstraintViolation, match="internal validation error"):
+            # Should raise OpenAIConstraintViolation (denial), NOT ValueError (crash)
+            with pytest.raises(OpenAIConstraintViolation, match="internal validation error"):
                 verify_tool_call("read_file", {"path": "/any"}, ["read_file"], None, constraints)
 
 
@@ -149,7 +149,7 @@ class TestStreamingSecurity:
         constraints = {"read_file": {"path": Pattern("/data/*")}}
 
         # Should DENY because "admin" is not in constraints (Zero Trust)
-        with pytest.raises(ConstraintViolation, match="Unknown argument"):
+        with pytest.raises(OpenAIConstraintViolation, match="Unknown argument"):
             verify_tool_call("read_file", args, ["read_file"], None, constraints)
 
     def test_streaming_constraint_violation_caught(self):
@@ -169,5 +169,5 @@ class TestStreamingSecurity:
         constraints = {"read_file": {"path": Pattern("/data/*")}}
 
         # Should DENY because path violates constraint
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call("read_file", args, ["read_file"], None, constraints)

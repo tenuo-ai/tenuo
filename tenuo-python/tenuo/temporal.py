@@ -49,7 +49,7 @@ Security Philosophy (Fail-Closed by Default):
     - Missing warrant headers: Denied (require_warrant=True by default)
     - Invalid warrant: Raises ChainValidationError
     - Expired warrant: Raises WarrantExpired
-    - Constraint violation: Raises ConstraintViolation
+    - Constraint violation: Raises TemporalConstraintViolation
     - PoP failure: Raises PopVerificationError (PoP is always mandatory)
     - Local activity without @unprotected: Raises LocalActivityError
 
@@ -115,14 +115,14 @@ Troubleshooting:
         client calls ``TenuoClientInterceptor.set_headers_for_workflow(
         workflow_id, tenuo_headers(...))`` before ``client.execute_workflow()``.
 
-    ``ConstraintViolation: No warrant provided (require_warrant=True)``
+    ``TemporalConstraintViolation: No warrant provided (require_warrant=True)``
         The activity interceptor received no warrant.  Common causes:
         (a) ``set_headers()`` / ``set_headers_for_workflow()`` was never
         called, (b) headers were cleared before start, or (c) the
         ``TenuoClientInterceptor`` is missing from the client's interceptor
         list.
 
-    ``ConstraintViolation: ... Incorrect padding`` or ``signature must be 64 bytes``
+    ``TemporalConstraintViolation: ... Incorrect padding`` or ``signature must be 64 bytes``
         PoP/header encoding mismatch. Ensure the worker has
         ``TenuoInterceptor(...)`` registered and that Tenuo headers are
         injected at workflow start. ``workflow.execute_activity()`` is
@@ -255,7 +255,7 @@ class PopVerificationError(TenuoTemporalError):
 
 
 @dataclass
-class ConstraintViolation(TenuoTemporalError):
+class TemporalConstraintViolation(TenuoTemporalError):
     """Raised when an activity violates warrant constraints.
 
     Attributes:
@@ -1052,7 +1052,7 @@ class TenuoInterceptorConfig:
     on_denial: Literal["raise", "log", "skip"] = "raise"
     """
     Behavior when authorization fails:
-    - "raise": Raise ConstraintViolation (default)
+    - "raise": Raise TemporalConstraintViolation (default)
     - "log": Log denial, continue execution
     - "skip": Silent denial, return None
     """
@@ -1669,7 +1669,7 @@ def attenuated_headers(
 
     Raises:
         TenuoContextError: If no parent warrant in context
-        ConstraintViolation: If requested tools exceed parent scope
+        TemporalConstraintViolation: If requested tools exceed parent scope
     """
     try:
         from temporalio import workflow  # type: ignore[import-not-found]  # noqa: F401
@@ -1686,7 +1686,7 @@ def attenuated_headers(
         requested_tools = set(tools)
         if not requested_tools.issubset(parent_tools):
             excess = requested_tools - parent_tools
-            raise ConstraintViolation(
+            raise TemporalConstraintViolation(
                 tool=str(list(excess)[0]),
                 arguments={},
                 constraint=f"Cannot delegate tools not in parent: {excess}",
@@ -1757,7 +1757,7 @@ def attenuated_headers(
         # this check.
         unknown_keys = set(narrowing) - set(base)
         if unknown_keys:
-            raise ConstraintViolation(
+            raise TemporalConstraintViolation(
                 tool=tool_key,
                 arguments={},
                 constraint=(
@@ -1971,7 +1971,7 @@ def workflow_grant(
 
     Raises:
         TenuoContextError: If called outside workflow context
-        ConstraintViolation: If tool not in parent warrant
+        TemporalConstraintViolation: If tool not in parent warrant
     """
     try:
         from temporalio import workflow  # type: ignore[import-not-found]  # noqa: F401
@@ -1982,7 +1982,7 @@ def workflow_grant(
 
     parent_tools = parent_warrant.tools or []
     if tool not in parent_tools:
-        raise ConstraintViolation(
+        raise TemporalConstraintViolation(
             tool=tool,
             arguments={},
             constraint=f"Tool '{tool}' not in parent warrant capabilities",
@@ -2261,7 +2261,7 @@ class AuthorizedWorkflow:
             The activity result
 
         Raises:
-            ConstraintViolation: If activity violates warrant constraints
+            TemporalConstraintViolation: If activity violates warrant constraints
             WarrantExpired: If warrant has expired
             ChainValidationError: If warrant chain is invalid
         """
@@ -2677,7 +2677,7 @@ class _TenuoWorkflowInboundInterceptor:
                 logger.warning(
                     f"Signal '{signal_name}' denied: not in authorized_signals"
                 )
-                raise ConstraintViolation(
+                raise TemporalConstraintViolation(
                     tool=f"signal:{signal_name}",
                     arguments={},
                     constraint=f"Signal not authorized: {signal_name}",
@@ -2697,7 +2697,7 @@ class _TenuoWorkflowInboundInterceptor:
                     f"Update '{update_name}' rejected at validation: "
                     "not in authorized_updates"
                 )
-                raise ConstraintViolation(
+                raise TemporalConstraintViolation(
                     tool=f"update:{update_name}",
                     arguments={},
                     constraint=f"Update not authorized: {update_name}",
@@ -2710,7 +2710,7 @@ class _TenuoWorkflowInboundInterceptor:
         if config and config.authorized_updates is not None:
             update_name = getattr(input, "update", None)
             if update_name not in config.authorized_updates:
-                raise ConstraintViolation(
+                raise TemporalConstraintViolation(
                     tool=f"update:{update_name}",
                     arguments={},
                     constraint=f"Update not authorized: {update_name}",
@@ -2934,7 +2934,7 @@ class TenuoActivityInboundInterceptor:
                 # Fail-closed: deny activities without warrant
                 logger.warning(f"No warrant for activity {info.activity_type}, denying (require_warrant=True)")
                 if self._config.on_denial == "raise" and not self._config.dry_run:
-                    raise ConstraintViolation(
+                    raise TemporalConstraintViolation(
                         tool=info.activity_type,
                         arguments={},
                         constraint="No warrant provided (require_warrant=True)",
@@ -3069,7 +3069,7 @@ class TenuoActivityInboundInterceptor:
                                 for k, _ in by_age[:excess]:
                                     del _pop_dedup_cache[k]
 
-            except (ConstraintViolation, PopVerificationError, ChainValidationError, WarrantExpired):
+            except (TemporalConstraintViolation, PopVerificationError, ChainValidationError, WarrantExpired):
                 raise
             except Exception as e:
                 # Distinguish authorization denials (from tenuo_core or Temporal
@@ -3090,7 +3090,7 @@ class TenuoActivityInboundInterceptor:
                         reason=str(e),
                     )
                     if self._config.on_denial == "raise" and not self._config.dry_run:
-                        raise ConstraintViolation(
+                        raise TemporalConstraintViolation(
                             tool=tool_name,
                             arguments=args,
                             constraint=str(e),
@@ -3135,7 +3135,7 @@ class TenuoActivityInboundInterceptor:
                     constraint="tool_not_allowed",
                 )
                 if self._config.on_denial == "raise" and not self._config.dry_run:
-                    raise ConstraintViolation(
+                    raise TemporalConstraintViolation(
                         tool=tool_name,
                         arguments=args,
                         constraint=f"Tool not in warrant capabilities: {tools}",
@@ -3159,7 +3159,7 @@ class TenuoActivityInboundInterceptor:
                         constraint="constraint_violated",
                     )
                     if self._config.on_denial == "raise" and not self._config.dry_run:
-                        raise ConstraintViolation(
+                        raise TemporalConstraintViolation(
                             tool=tool_name,
                             arguments=args,
                             constraint=str(violation),
@@ -3170,7 +3170,7 @@ class TenuoActivityInboundInterceptor:
                         reason=f"Constraint violated: {violation}",
                     )
 
-            except ConstraintViolation:
+            except TemporalConstraintViolation:
                 raise
             except Exception as e:
                 logger.error(f"Constraint check error: {e}")
@@ -3182,7 +3182,7 @@ class TenuoActivityInboundInterceptor:
                     reason=f"Constraint check error: {e}",
                 )
                 if self._config.on_denial == "raise" and not self._config.dry_run:
-                    raise ConstraintViolation(
+                    raise TemporalConstraintViolation(
                         tool=tool_name,
                         arguments=args,
                         constraint=f"Constraint check failed: {e}",
@@ -3209,7 +3209,7 @@ class TenuoActivityInboundInterceptor:
                         constraint="approval_gate_triggered",
                     )
                     if self._config.on_denial == "raise" and not self._config.dry_run:
-                        raise ConstraintViolation(
+                        raise TemporalConstraintViolation(
                             tool=tool_name,
                             arguments=args,
                             constraint=f"Approval gate triggered for '{tool_name}'. "
@@ -3220,7 +3220,7 @@ class TenuoActivityInboundInterceptor:
                         tool=tool_name,
                         reason=f"Approval gate triggered for '{tool_name}'",
                     )
-            except ConstraintViolation:
+            except TemporalConstraintViolation:
                 raise
             except ImportError:
                 pass
@@ -3326,7 +3326,7 @@ class TenuoActivityInboundInterceptor:
                 if self._config and self._config.approval_threshold is not None:
                     warrant_min = warrant.approval_threshold()
                     if warrant_min is not None and threshold < warrant_min:
-                        raise ConstraintViolation(
+                        raise TemporalConstraintViolation(
                             tool=tool_name,
                             arguments=args,
                             constraint=(
@@ -3528,7 +3528,7 @@ __all__ = [
     # Exceptions
     "TenuoTemporalError",
     "TenuoContextError",
-    "ConstraintViolation",
+    "TemporalConstraintViolation",
     "WarrantExpired",
     "ChainValidationError",
     "KeyResolutionError",

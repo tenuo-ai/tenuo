@@ -22,7 +22,7 @@ try:
     import openai  # noqa: F401
 
     from tenuo import Subpath  # noqa: F401
-    from tenuo.openai import ConstraintViolation, GuardBuilder  # noqa: F401
+    from tenuo.openai import OpenAIConstraintViolation, GuardBuilder  # noqa: F401
 
     HAS_LIVE_DEPS = True
 except ImportError:

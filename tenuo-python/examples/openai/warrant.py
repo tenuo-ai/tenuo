@@ -23,7 +23,7 @@ import os
 
 from tenuo import Pattern, Range, SigningKey, Warrant
 from tenuo.openai import (
-    ConfigurationError,
+    OpenAIConfigurationError,
     MissingSigningKey,
     ToolDenied,
     WarrantDenied,
@@ -325,7 +325,7 @@ def demo_validate(agent_key, warrant):
     try:
         client.validate()
         print("  OK Validation passed for correct config")
-    except ConfigurationError as e:
+    except OpenAIConfigurationError as e:
         print(f"  X Unexpected error: {e}")
 
     # Bad config - wrong key
@@ -334,7 +334,7 @@ def demo_validate(agent_key, warrant):
     try:
         client2.validate()
         print("  X Should have caught key mismatch!")
-    except ConfigurationError as e:
+    except OpenAIConfigurationError as e:
         print(f"  OK validate() caught config error: {e.code}")
         print(f"     {str(e)[:60]}...")
 

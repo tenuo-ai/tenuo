@@ -24,7 +24,7 @@ from tenuo.temporal import (  # noqa: E402 - must be after importorskip
     TENUO_WARRANT_HEADER,
     ChainValidationError,
     # Exceptions
-    ConstraintViolation,
+    TemporalConstraintViolation,
     EnvKeyResolver,
     KeyResolutionError,
     # Key Resolvers
@@ -588,8 +588,8 @@ class TestExceptions:
     """Tests for exception types."""
 
     def test_constraint_violation_str(self):
-        """ConstraintViolation has informative str."""
-        exc = ConstraintViolation(
+        """TemporalConstraintViolation has informative str."""
+        exc = TemporalConstraintViolation(
             tool="read_file",
             arguments={"path": "/etc/passwd"},
             constraint="path must start with /allowed",

@@ -17,8 +17,8 @@ import pytest
 
 # Import the crewai module under test
 from tenuo.crewai import (
-    ConfigurationError,
-    ConstraintViolation,
+    CrewAIConfigurationError,
+    CrewAIConstraintViolation,
     CrewAIGuard,
     DenialResult,
     GuardBuilder,
@@ -133,7 +133,7 @@ class TestConstraintEnforcement:
         """Values violating constraints are rejected."""
         guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
 
-        with pytest.raises(ConstraintViolation) as exc:
+        with pytest.raises(CrewAIConstraintViolation) as exc:
             guard._authorize("read_file", {"path": "/etc/passwd"})
 
         assert "path" in str(exc.value)
@@ -154,7 +154,7 @@ class TestConstraintEnforcement:
         assert guard._authorize("transfer", {"amount": 50}) is None
 
         # Above range - rejected
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("transfer", {"amount": 150})
 
     def test_pattern_constraint(self):
@@ -165,7 +165,7 @@ class TestConstraintEnforcement:
         assert guard._authorize("send_email", {"to": "alice@company.com"}) is None
 
         # Non-matching pattern - rejected
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("send_email", {"to": "attacker@evil.com"})
 
 
@@ -177,14 +177,14 @@ class TestPathTraversal:
         guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
 
         # Direct traversal
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("read_file", {"path": "/data/../etc/passwd"})
 
     def test_double_dot_traversal_blocked(self):
         """Multiple .. traversal attempts are blocked."""
         guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("read_file", {"path": "/data/../../etc/passwd"})
 
     def test_valid_subpath_allowed(self):
@@ -221,7 +221,7 @@ class TestInvariants:
         """Invariant 3: Constraint violations block execution."""
         guard = GuardBuilder().allow("tool", x=Range(1, 10)).build()
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("tool", {"x": 100})
 
     def test_invariant_wildcard_required(self):
@@ -296,7 +296,7 @@ class TestToolNamespacing:
         )
 
         # researcher::search should use the restricted constraint
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("search", {"query": "evil.com"}, agent_role="researcher")
 
 
@@ -357,8 +357,8 @@ class TestOnDenialModes:
         assert isinstance(result, DenialResult)
 
     def test_invalid_mode_raises_error(self):
-        """Invalid on_denial mode raises ConfigurationError."""
-        with pytest.raises(ConfigurationError):
+        """Invalid on_denial mode raises CrewAIConfigurationError."""
+        with pytest.raises(CrewAIConfigurationError):
             GuardBuilder().on_denial("invalid_mode")
 
 
@@ -473,11 +473,11 @@ class TestErrorMessages:
             assert "Wildcard()" in str(e)
 
     def test_constraint_violation_shows_value(self):
-        """ConstraintViolation shows the rejected value."""
+        """CrewAIConstraintViolation shows the rejected value."""
         try:
             guard = GuardBuilder().allow("transfer", amount=Range(0, 100)).build()
             guard._authorize("transfer", {"amount": 999})
-        except ConstraintViolation as e:
+        except CrewAIConstraintViolation as e:
             assert "999" in str(e)
             assert "Range" in str(e)
 

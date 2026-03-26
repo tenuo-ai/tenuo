@@ -242,7 +242,7 @@ class ToolDenied(TenuoCrewAIError):
         super().__init__(msg)
 
 
-class ConstraintViolation(TenuoCrewAIError):
+class CrewAIConstraintViolation(TenuoCrewAIError):
     """Raised when a tool argument violates a constraint.
 
     Attributes:
@@ -327,7 +327,7 @@ class MissingSigningKey(TenuoCrewAIError):
         )
 
 
-class ConfigurationError(TenuoCrewAIError):
+class CrewAIConfigurationError(TenuoCrewAIError):
     """Raised when guard configuration is invalid."""
 
     error_code = "CONFIGURATION_ERROR"
@@ -556,7 +556,7 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
                 - "skip": Return DenialResult silently (still audited)
         """
         if mode not in ("raise", "log", "skip"):
-            raise ConfigurationError(f"Invalid on_denial mode: {mode}")
+            raise CrewAIConfigurationError(f"Invalid on_denial mode: {mode}")
         self._on_denial = mode
         return self
 
@@ -825,7 +825,7 @@ class CrewAIGuard:
             None if authorized, DenialResult if denied and on_denial != "raise"
 
         Raises:
-            ToolDenied, ConstraintViolation, UnlistedArgument: If denied and on_denial == "raise"
+            ToolDenied, CrewAIConstraintViolation, UnlistedArgument: If denied and on_denial == "raise"
         """
         logger.debug(f"Authorizing {tool_name} with args {list(args.keys())}")
 
@@ -856,7 +856,7 @@ class CrewAIGuard:
         for arg_name, arg_value in args.items():
             constraint = constraints[arg_name]
             if not check_constraint(constraint, arg_value):
-                error = ConstraintViolation(  # type: ignore[assignment]
+                error = CrewAIConstraintViolation(  # type: ignore[assignment]
                     tool=tool_name,
                     argument=arg_name,
                     value=arg_value,
@@ -888,7 +888,7 @@ class CrewAIGuard:
                      # Best-effort constraint violation mapping
                      from tenuo import Wildcard
                      violated_field = enforcement.constraint_violated or "unknown_field"
-                     error = ConstraintViolation(  # type: ignore[assignment]
+                     error = CrewAIConstraintViolation(  # type: ignore[assignment]
                         tool=tool_name,
                         argument=violated_field,
                         value=args.get(violated_field),
@@ -1835,7 +1835,7 @@ class _GuardedCrewImpl:
             except Exception as e:
                 # SECURITY: Fail-closed - if issuer is configured but delegation fails,
                 # don't proceed with unguarded agent
-                raise ConfigurationError(
+                raise CrewAIConfigurationError(
                     f"Failed to issue warrant to agent '{role}': {e}. "
                     "Warrant issuance is required when .with_issuer() is configured. "
                     "Check that the issuer warrant has the necessary capabilities."
@@ -1850,7 +1850,7 @@ class _GuardedCrewImpl:
 
             if role not in self._policy:
                 # SECURITY: Fail-closed - agents not in policy cannot execute
-                raise ConfigurationError(
+                raise CrewAIConfigurationError(
                     f"Agent '{role}' is not listed in policy. "
                     "All agents must be covered by the policy for security. "
                     f"Add '{role}' to .policy() configuration."
@@ -1999,10 +1999,10 @@ __all__ = [
     # Exceptions
     "TenuoCrewAIError",
     "ToolDenied",
-    "ConstraintViolation",
+    "CrewAIConstraintViolation",
     "UnlistedArgument",
     "MissingSigningKey",
-    "ConfigurationError",
+    "CrewAIConfigurationError",
     "EscalationAttempt",
     "UnguardedToolError",
     # Tier 2 exceptions (Phase 3)

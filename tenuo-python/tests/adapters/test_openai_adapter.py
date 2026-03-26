@@ -24,8 +24,8 @@ from tenuo.openai import (
     AnyOf,
     AuditEvent,
     Cidr,
-    ConfigurationError,
-    ConstraintViolation,
+    OpenAIConfigurationError,
+    OpenAIConstraintViolation,
     GuardedClient,
     MalformedToolCall,
     MissingSigningKey,
@@ -260,7 +260,7 @@ class TestConstraints:
         assert len(result.choices[0].message.tool_calls) == 1
 
     def test_pattern_constraint_fails(self):
-        """Invalid pattern should raise ConstraintViolation."""
+        """Invalid pattern should raise OpenAIConstraintViolation."""
         response = make_response([("read_file", {"path": "/etc/passwd"})])
         mock_client = make_mock_client(response)
 
@@ -271,7 +271,7 @@ class TestConstraints:
             on_denial="raise",
         )
 
-        with pytest.raises(ConstraintViolation) as exc:
+        with pytest.raises(OpenAIConstraintViolation) as exc:
             client.chat.completions.create(model="gpt-4o", messages=[])
 
         assert exc.value.tool_name == "read_file"
@@ -305,7 +305,7 @@ class TestConstraints:
             on_denial="raise",
         )
 
-        with pytest.raises(ConstraintViolation) as exc:
+        with pytest.raises(OpenAIConstraintViolation) as exc:
             client.chat.completions.create(model="gpt-4o", messages=[])
 
         assert exc.value.param == "max_results"
@@ -334,7 +334,7 @@ class TestConstraints:
             on_denial="raise",
         )
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             client.chat.completions.create(model="gpt-4o", messages=[])
 
     def test_multiple_constraints_all_must_pass(self):
@@ -573,7 +573,7 @@ class TestVerifyToolCall:
 
     def test_verify_fails_constraint(self):
         """Constraint violation should raise."""
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 "read_file",
                 {"path": "/etc/passwd"},
@@ -584,7 +584,7 @@ class TestVerifyToolCall:
 
     def test_type_mismatch_provides_clear_error(self):
         """Type mismatch should provide actionable error message."""
-        with pytest.raises(ConstraintViolation) as exc:
+        with pytest.raises(OpenAIConstraintViolation) as exc:
             verify_tool_call(
                 "search",
                 {"max_results": "ten"},  # String instead of int
@@ -600,7 +600,7 @@ class TestVerifyToolCall:
 
     def test_value_mismatch_not_flagged_as_type_error(self):
         """Value constraint violation should not be flagged as type mismatch."""
-        with pytest.raises(ConstraintViolation) as exc:
+        with pytest.raises(OpenAIConstraintViolation) as exc:
             verify_tool_call(
                 "search",
                 {"max_results": 1000},  # Correct type, wrong value
@@ -840,7 +840,7 @@ class TestRealWorldScenarios:
         )
 
         # Path outside /data should be caught
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             client.chat.completions.create(model="gpt-4o", messages=[])
 
     def test_rate_limit_protection(self):
@@ -855,7 +855,7 @@ class TestRealWorldScenarios:
             on_denial="raise",
         )
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             client.chat.completions.create(model="gpt-4o", messages=[])
 
     def test_hallucinated_tool_blocked(self):
@@ -1108,7 +1108,7 @@ class TestStreamingTOCTOUProtection:
             on_denial="raise",
         )
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             list(client.chat.completions.create(model="gpt-4o", messages=[], stream=True))
 
 
@@ -1451,7 +1451,7 @@ class TestDeveloperExperience:
         mock_client = make_mock_client(make_response([]))
         client = guard(mock_client, warrant=warrant, signing_key=wrong_key)
 
-        with pytest.raises(ConfigurationError) as exc:
+        with pytest.raises(OpenAIConfigurationError) as exc:
             client.validate()
 
         assert exc.value.code == "CFG_003"
@@ -1580,7 +1580,7 @@ class TestAuditSupport:
             audit_callback=capture_audit,
         )
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             client.chat.completions.create(model="gpt-4o", messages=[])
 
         assert len(events) == 1
@@ -2077,7 +2077,7 @@ class TestSubpathConstraint:
 
         client = guard(mock_client, constraints={"read_file": {"path": Subpath("/data")}})
 
-        with pytest.raises(ConstraintViolation) as exc:
+        with pytest.raises(OpenAIConstraintViolation) as exc:
             client.chat.completions.create(model="gpt-4o", messages=[])
 
         assert exc.value.param == "path"
@@ -2712,7 +2712,7 @@ class TestGuardBuilder:
             )
 
         # Constraint violation
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 "read_file",
                 {"path": "/etc/passwd"},
@@ -2804,11 +2804,11 @@ class TestToolSchemaValidation:
         assert "Did you mean 'to'?" in caplog.text
 
     def test_strict_mode_raises(self, sample_tools):
-        """Strict mode should raise ConfigurationError."""
+        """Strict mode should raise OpenAIConfigurationError."""
         from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
-        with pytest.raises(ConfigurationError) as exc_info:
+        with pytest.raises(OpenAIConfigurationError) as exc_info:
             (
                 GuardBuilder(mock_client)
                 .allow("send_email", recipient=Pattern("*@company.com"))  # Wrong name
@@ -3143,9 +3143,9 @@ class TestUrlSafeOpenAIIntegration:
     def test_urlsafe_blocks_metadata(self):
         """UrlSafe blocks cloud metadata URLs."""
         from tenuo import UrlSafe
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, verify_tool_call
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 tool_name="fetch_url",
                 arguments={"url": "http://169.254.169.254/latest/meta-data/"},
@@ -3157,9 +3157,9 @@ class TestUrlSafeOpenAIIntegration:
     def test_urlsafe_blocks_localhost(self):
         """UrlSafe blocks localhost URLs."""
         from tenuo import UrlSafe
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, verify_tool_call
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 tool_name="fetch_url",
                 arguments={"url": "http://127.0.0.1/admin"},
@@ -3171,9 +3171,9 @@ class TestUrlSafeOpenAIIntegration:
     def test_urlsafe_blocks_private_ips(self):
         """UrlSafe blocks private IP addresses."""
         from tenuo import UrlSafe
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, verify_tool_call
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 tool_name="fetch_url",
                 arguments={"url": "http://10.0.0.1/internal"},
@@ -3185,7 +3185,7 @@ class TestUrlSafeOpenAIIntegration:
     def test_urlsafe_with_domain_allowlist(self):
         """UrlSafe with domain allowlist restricts to specific domains."""
         from tenuo import UrlSafe
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, verify_tool_call
 
         safe = UrlSafe(allow_domains=["api.github.com"])
 
@@ -3200,7 +3200,7 @@ class TestUrlSafeOpenAIIntegration:
         assert result is None
 
         # Non-allowed domain blocked
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 tool_name="fetch_url",
                 arguments={"url": "https://evil.com/data"},
@@ -3227,7 +3227,7 @@ class TestUrlSafeOpenAIIntegration:
     def test_urlsafe_ip_encoding_bypasses(self):
         """UrlSafe blocks IP encoding bypass attempts."""
         from tenuo import UrlSafe
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, verify_tool_call
 
         bypass_attempts = [
             "http://2130706433/",  # Decimal 127.0.0.1
@@ -3236,7 +3236,7 @@ class TestUrlSafeOpenAIIntegration:
         ]
 
         for url in bypass_attempts:
-            with pytest.raises(ConstraintViolation):
+            with pytest.raises(OpenAIConstraintViolation):
                 verify_tool_call(
                     tool_name="fetch_url",
                     arguments={"url": url},
@@ -3271,9 +3271,9 @@ class TestShlexOpenAIIntegration:
     def test_shlex_blocks_shell_injection(self):
         """Shlex blocks shell injection attempts."""
         from tenuo import Shlex
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, verify_tool_call
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 tool_name="run_command",
                 arguments={"cmd": "ls -la; rm -rf /"},
@@ -3285,9 +3285,9 @@ class TestShlexOpenAIIntegration:
     def test_shlex_blocks_pipe(self):
         """Shlex blocks pipe operators."""
         from tenuo import Shlex
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, verify_tool_call
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 tool_name="run_command",
                 arguments={"cmd": "cat /etc/passwd | grep root"},
@@ -3299,9 +3299,9 @@ class TestShlexOpenAIIntegration:
     def test_shlex_blocks_command_substitution(self):
         """Shlex blocks command substitution."""
         from tenuo import Shlex
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, verify_tool_call
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 tool_name="run_command",
                 arguments={"cmd": "echo $(whoami)"},
@@ -3313,9 +3313,9 @@ class TestShlexOpenAIIntegration:
     def test_shlex_blocks_variable_expansion(self):
         """Shlex blocks variable expansion."""
         from tenuo import Shlex
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, verify_tool_call
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 tool_name="run_command",
                 arguments={"cmd": "ls $HOME"},
@@ -3327,9 +3327,9 @@ class TestShlexOpenAIIntegration:
     def test_shlex_blocks_unlisted_binary(self):
         """Shlex blocks binaries not in allowlist."""
         from tenuo import Shlex
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, verify_tool_call
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 tool_name="run_command",
                 arguments={"cmd": "rm -rf /"},

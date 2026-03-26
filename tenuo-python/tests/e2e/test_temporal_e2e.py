@@ -35,7 +35,7 @@ from tenuo.temporal import (  # noqa: E402
     TENUO_KEY_ID_HEADER,
     TENUO_POP_HEADER,
     TENUO_WARRANT_HEADER,
-    ConstraintViolation,
+    TemporalConstraintViolation,
     EnvKeyResolver,
     TenuoClientInterceptor,
     TenuoInterceptor,
@@ -344,7 +344,7 @@ class TestActivityInterceptorAuthorizer:
             fn=lambda path: path, args=("/etc/passwd",), headers=act_headers)
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
-            with pytest.raises(ConstraintViolation):
+            with pytest.raises(TemporalConstraintViolation):
                 _run(ai.execute_activity(inp))
         assert any(e.decision == "DENY" for e in events)
         nxt.execute_activity.assert_not_called()
@@ -359,7 +359,7 @@ class TestActivityInterceptorAuthorizer:
         inp = FakeExecuteActivityInput(fn=lambda: None, args=())
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
-            with pytest.raises(ConstraintViolation, match="No warrant"):
+            with pytest.raises(TemporalConstraintViolation, match="No warrant"):
                 _run(ai.execute_activity(inp))
 
     def test_denies_unknown_tool(self, warrant, agent_key, control_key, headers_dict):
@@ -376,7 +376,7 @@ class TestActivityInterceptorAuthorizer:
             fn=lambda path: path, args=("/tmp/demo/f",), headers=act_headers)
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
-            with pytest.raises(ConstraintViolation):
+            with pytest.raises(TemporalConstraintViolation):
                 _run(ai.execute_activity(inp))
 
 
@@ -444,7 +444,7 @@ class TestAuditEvents:
             fn=lambda path: path, args=("/etc/shadow",), headers=act_headers)
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
-            with pytest.raises(ConstraintViolation):
+            with pytest.raises(TemporalConstraintViolation):
                 _run(ai.execute_activity(inp))
         assert len(events) == 1
         assert events[0].decision == "DENY"
@@ -623,7 +623,7 @@ class TestParallelActivities:
             fn=lambda path: path, args=("/tmp/demo/f.txt",))
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(ConstraintViolation, match="No warrant"):
+            with pytest.raises(TemporalConstraintViolation, match="No warrant"):
                 _run(ai.execute_activity(inp))
 
 
@@ -753,7 +753,7 @@ class TestWarrantExpiration:
             fn=lambda path: path, args=("/tmp/demo/f",), headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(ConstraintViolation, match="expired"):
+            with pytest.raises(TemporalConstraintViolation, match="expired"):
                 _run(ai.execute_activity(inp))
         nxt.execute_activity.assert_not_called()
 
@@ -837,7 +837,7 @@ class TestPopValidation:
             fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(ConstraintViolation):
+            with pytest.raises(TemporalConstraintViolation):
                 _run(ai.execute_activity(inp))
         nxt.execute_activity.assert_not_called()
 
@@ -862,7 +862,7 @@ class TestPopValidation:
             fn=lambda path: path, args=("/tmp/demo/b.txt",), headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(ConstraintViolation):
+            with pytest.raises(TemporalConstraintViolation):
                 _run(ai.execute_activity(inp))
 
     def test_missing_pop_with_trusted_roots_rejected(
@@ -889,7 +889,7 @@ class TestPopValidation:
             fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=no_pop_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(ConstraintViolation):
+            with pytest.raises(TemporalConstraintViolation):
                 _run(ai.execute_activity(inp))
 
 
@@ -992,7 +992,7 @@ class TestConcurrentWorkflowsFullRoundTrip:
             headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(ConstraintViolation):
+            with pytest.raises(TemporalConstraintViolation):
                 _run(ai.execute_activity(inp))
         nxt.execute_activity.assert_not_called()
 

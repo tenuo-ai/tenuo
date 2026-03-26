@@ -514,7 +514,7 @@ class TestCrewAIInvariants:
 
     def test_I8_constraint_violation_denied(self):
         """I8: Argument violating a Pattern constraint MUST be denied."""
-        from tenuo.crewai import ConstraintViolation, GuardBuilder
+        from tenuo.crewai import CrewAIConstraintViolation, GuardBuilder
 
         guard = (
             GuardBuilder()
@@ -522,7 +522,7 @@ class TestCrewAIInvariants:
             .on_denial("raise")
             .build()
         )
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("send_email", {"recipient": "attacker@evil.com"})
 
     # ------------------------------------------------------------------
@@ -821,12 +821,12 @@ class _OpenAIAdapter(_Adapter):
     def _tier1_ok(self, tool: str, args: Dict[str, Any],
                   allow: Optional[List[str]], deny: Optional[List[str]],
                   constraints: Optional[Dict]) -> bool:
-        from tenuo.openai import ConstraintViolation, ToolDenied, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, ToolDenied, verify_tool_call
         try:
             verify_tool_call(tool_name=tool, arguments=args,
                              allow_tools=allow, deny_tools=deny, constraints=constraints)
             return True
-        except (ToolDenied, ConstraintViolation):
+        except (ToolDenied, OpenAIConstraintViolation):
             return False
 
     async def check_no_auth(self) -> Optional[bool]:
@@ -1657,7 +1657,7 @@ class TestOpenAIInvariants:
     """
     Security invariants for the OpenAI verify_tool_call integration.
 
-    verify_tool_call() raises ToolDenied / WarrantDenied / ConstraintViolation.
+    verify_tool_call() raises ToolDenied / WarrantDenied / OpenAIConstraintViolation.
     """
 
     # ------------------------------------------------------------------
@@ -1703,9 +1703,9 @@ class TestOpenAIInvariants:
     def test_I8_constraint_violation_denied(self):
         """I8: Argument violating Tier 1 constraint MUST be denied."""
         pytest.importorskip("openai")
-        from tenuo.openai import ConstraintViolation, verify_tool_call
+        from tenuo.openai import OpenAIConstraintViolation, verify_tool_call
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(OpenAIConstraintViolation):
             verify_tool_call(
                 tool_name="send_email",
                 arguments={"recipient": "attacker@evil.com"},

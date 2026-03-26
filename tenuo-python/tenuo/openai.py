@@ -299,7 +299,7 @@ class MissingSigningKey(TenuoOpenAIError):
         )
 
 
-class ConfigurationError(TenuoOpenAIError):
+class OpenAIConfigurationError(TenuoOpenAIError):
     """Raised when guard() configuration is invalid.
 
     Common causes:
@@ -383,7 +383,7 @@ def _serialize_constraints(constraints: Dict[str, Dict[str, Any]]) -> Dict[str, 
     return result
 
 
-class ConstraintViolation(TenuoOpenAIError):
+class OpenAIConstraintViolation(TenuoOpenAIError):
     """Raised when a tool argument violates a constraint.
 
     Attributes:
@@ -810,7 +810,7 @@ def verify_tool_call(
     Raises:
         ToolDenied: If tool is not allowed (Tier 1 allow/deny lists)
         WarrantDenied: If warrant doesn't authorize the call (Tier 2)
-        ConstraintViolation: If argument violates constraint (Tier 1, only when no warrant)
+        OpenAIConstraintViolation: If argument violates constraint (Tier 1, only when no warrant)
         MissingSigningKey: If warrant provided without signing_key
     """
     # ==========================================================================
@@ -881,16 +881,16 @@ def verify_tool_call(
                     # Check compatibility and validity
                     type_mismatch, reason = _check_type_compatibility(constraint, value)
                     if type_mismatch:
-                        raise ConstraintViolation(
+                        raise OpenAIConstraintViolation(
                             tool_name, arg_name, value, constraint, type_mismatch=True, reason=reason
                         )
 
                     if not check_constraint(constraint, value):
-                        raise ConstraintViolation(tool_name, arg_name, value, constraint)
+                        raise OpenAIConstraintViolation(tool_name, arg_name, value, constraint)
                 elif not allow_unknown:
                     # Arg not in constraints -> UNKNOWN argument.
                     # Zero Trust (default): Reject it.
-                    raise ConstraintViolation(
+                    raise OpenAIConstraintViolation(
                         tool_name,
                         arg_name,
                         value,
@@ -898,12 +898,12 @@ def verify_tool_call(
                         reason=f"Unknown argument '{arg_name}' - not in constraints (set _allow_unknown=True to permit)",
                     )
                 # else: allow_unknown=True, so we skip unknown args
-            except ConstraintViolation:
+            except OpenAIConstraintViolation:
                 raise
             except Exception as e:
                 # Fail Closed: Internal error during validation = DENY
                 logger.error(f"Internal validation error for {tool_name}.{arg_name}: {e}")
-                raise ConstraintViolation(
+                raise OpenAIConstraintViolation(
                     tool_name, arg_name, value, constraint=Wildcard(), reason=f"internal validation error: {e}"
                 )
 
@@ -1047,7 +1047,7 @@ class GuardedCompletions:
                 try:
                     self._verify_single_tool_call(tool_call)
                     verified_calls.append(tool_call)
-                except (ToolDenied, WarrantDenied, ConstraintViolation) as e:
+                except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
                     self._handle_denial(e)
                     if self._on_denial == "raise":
                         raise
@@ -1089,7 +1089,7 @@ class GuardedCompletions:
             )
             # Emit audit event for allowed call
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-        except (ToolDenied, WarrantDenied, ConstraintViolation) as e:
+        except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             # Emit audit event for denied call
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
@@ -1187,7 +1187,7 @@ class GuardedCompletions:
                     self._approvals,
                 )
                 verified_indices.add(index)
-            except (ToolDenied, WarrantDenied, ConstraintViolation, MalformedToolCall) as e:
+            except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
                 if self._on_denial == "raise":
                     raise
@@ -1357,7 +1357,7 @@ class GuardedCompletions:
                     self._approvals,
                 )
                 verified_indices.add(index)
-            except (ToolDenied, WarrantDenied, ConstraintViolation, MalformedToolCall) as e:
+            except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
                 if self._on_denial == "raise":
                     raise
@@ -1446,7 +1446,7 @@ class GuardedResponses:
                 try:
                     self._verify_function_call(item)
                     verified_items.append(item)
-                except (ToolDenied, WarrantDenied, ConstraintViolation) as e:
+                except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
                     self._handle_denial(e)
                     if self._on_denial == "raise":
                         raise
@@ -1485,7 +1485,7 @@ class GuardedResponses:
                 self._approvals,
             )
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-        except (ToolDenied, WarrantDenied, ConstraintViolation) as e:
+        except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
             raise
@@ -1635,8 +1635,8 @@ class GuardedClient:
 
         Raises:
             MissingSigningKey: If warrant provided without signing_key
-            ConfigurationError: If signing_key doesn't match warrant holder
-            ConfigurationError: If warrant is expired
+            OpenAIConfigurationError: If signing_key doesn't match warrant holder
+            OpenAIConfigurationError: If warrant is expired
 
         Example::
 
@@ -1655,14 +1655,14 @@ class GuardedClient:
                 else getattr(self._warrant, "expired", False)
             )
             if is_expired:
-                raise ConfigurationError("Warrant is expired. Request a new warrant from the control plane.", "CFG_002")
+                raise OpenAIConfigurationError("Warrant is expired. Request a new warrant from the control plane.", "CFG_002")
 
             # Check signing_key matches warrant holder
             try:
                 holder = self._warrant.authorized_holder
                 signer_pub = self._signing_key.public_key
                 if holder.to_bytes() != signer_pub.to_bytes():
-                    raise ConfigurationError(
+                    raise OpenAIConfigurationError(
                         "Signing key does not match warrant holder. "
                         "The signing_key must be the private key corresponding to "
                         "the warrant's authorized_holder public key.",
@@ -2013,7 +2013,7 @@ class GuardBuilder:
         Args:
             mode:
                 - "warn": Log warnings for invalid constraints (default)
-                - "strict": Raise ConfigurationError for invalid constraints
+                - "strict": Raise OpenAIConfigurationError for invalid constraints
                 - False: Disable validation
 
         Returns:
@@ -2127,14 +2127,14 @@ class GuardBuilder:
 
         Raises:
             MissingSigningKey: If warrant provided without signing_key
-            ConfigurationError: If validation is strict and constraints are invalid
+            OpenAIConfigurationError: If validation is strict and constraints are invalid
         """
         # Validate constraints against tool schemas
         if self._tool_schemas and self._validate_mode:
             warnings = self._validate_constraints()
             if warnings:
                 if self._validate_mode == "strict":
-                    raise ConfigurationError("Constraint validation failed:\n  " + "\n  ".join(warnings), code="C1_003")
+                    raise OpenAIConfigurationError("Constraint validation failed:\n  " + "\n  ".join(warnings), code="C1_003")
                 else:  # warn mode
                     for warning in warnings:
                         logger.warning(f"Constraint validation: {warning}")
@@ -2455,7 +2455,7 @@ class TenuoToolGuardrail:
                 )
                 # Emit audit event for allowed call
                 self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-            except (ToolDenied, WarrantDenied, ConstraintViolation, MalformedToolCall) as e:
+            except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 violations.append(f"{tool_name}: {e}")
                 logger.warning(f"Tenuo guardrail blocked: {tool_name} - {e}")
                 # Emit audit event for denied call
@@ -2724,12 +2724,12 @@ __all__ = [
     # Exceptions
     "TenuoOpenAIError",
     "ToolDenied",
-    "ConstraintViolation",
+    "OpenAIConstraintViolation",
     "MalformedToolCall",
     "BufferOverflow",
     "WarrantDenied",
     "MissingSigningKey",
-    "ConfigurationError",
+    "OpenAIConfigurationError",
     # Zero-config entry point
     "protect",
     # Re-export constraints for convenience

@@ -15,7 +15,7 @@ import pytest
 crewai = pytest.importorskip("crewai")
 
 from tenuo.crewai import (  # noqa: E402 - must be after importorskip
-    ConfigurationError,
+    CrewAIConfigurationError,
     CrewAIGuard,
     DenialResult,
     GuardBuilder,
@@ -190,7 +190,7 @@ class TestGuardedCrewBuilder:
         )
 
         # Policy validation happens at kickoff
-        with pytest.raises(ConfigurationError, match="not listed in policy"):
+        with pytest.raises(CrewAIConfigurationError, match="not listed in policy"):
             crew.kickoff()
 
     def test_guarded_crew_with_audit(self):
