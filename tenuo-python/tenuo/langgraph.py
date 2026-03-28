@@ -105,8 +105,8 @@ try:
 except (ImportError, TypeError):
     # TypeError can happen on Python 3.9 with old typing/Pydantic interactions in langchain
     LANGGRAPH_AVAILABLE = False
-    ToolNode = object  # type: ignore[assignment]
-    BaseTool = object  # type: ignore[assignment]
+    ToolNode = object  # type: ignore
+    BaseTool = object  # type: ignore
     RunnableConfig = dict  # type: ignore
 
 # Optional middleware imports (langchain 1.0+)
@@ -121,10 +121,10 @@ try:
     MIDDLEWARE_AVAILABLE = True
 except ImportError:
     MIDDLEWARE_AVAILABLE = False
-    AgentMiddleware = object  # type: ignore[assignment]
-    ModelRequest = object  # type: ignore[assignment]
-    ModelResponse = object  # type: ignore[assignment]
-    ToolCallRequest = object  # type: ignore[assignment]
+    AgentMiddleware = object  # type: ignore
+    ModelRequest = object  # type: ignore
+    ModelResponse = object  # type: ignore
+    ToolCallRequest = object  # type: ignore
 
 logger = logging.getLogger("tenuo.langgraph")
 

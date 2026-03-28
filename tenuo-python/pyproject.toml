@@ -166,6 +166,9 @@ ignore = ["E501"]  # Line too long - handled by formatter
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["E402"]
 
+[tool.mypy]
+ignore_missing_imports = true
+
 [[tool.maturin.sdist]]
 include = ["README.md", "LICENSE*", "examples/**/*", "tenuo/**/*.py"]
 

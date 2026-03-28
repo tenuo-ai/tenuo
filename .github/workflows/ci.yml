@@ -207,7 +207,7 @@ jobs:
 
       - name: Type check
         working-directory: tenuo-python
-        run: mypy .
+        run: mypy tenuo/
 
       - name: Test
         working-directory: tenuo-python
