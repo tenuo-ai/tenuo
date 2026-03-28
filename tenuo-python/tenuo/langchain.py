@@ -39,7 +39,7 @@ from tenuo._version_compat import check_langchain_compat  # noqa: E402
 
 from ._enforcement import enforce_tool_call
 from .audit import log_authorization_success
-from .config import allow_passthrough, get_config
+from .config import allow_passthrough, get_config, resolve_trusted_roots
 from .decorators import get_allowed_tools_context, key_scope, warrant_scope
 from .exceptions import (
     ConfigurationError,
@@ -48,24 +48,6 @@ from .exceptions import (
 )
 from .schemas import TOOL_SCHEMAS, ToolSchema, _get_tool_name
 
-
-def _resolve_trusted_roots(explicit_roots: Optional[list]) -> Optional[list]:
-    """Return trusted_roots to use for enforce_tool_call.
-
-    Priority:
-    1. Explicitly provided roots (passed in or stored on TenuoTool)
-    2. Global config trusted_roots (from configure(..., trusted_roots=[...]))
-    3. In dev_mode, the configured issuer key acts as the implicit trust anchor
-    4. None → enforce_tool_call will raise ConfigurationError (fail-closed)
-    """
-    if explicit_roots is not None:
-        return explicit_roots
-    config = get_config()
-    if config.trusted_roots:
-        return list(config.trusted_roots)
-    if config.dev_mode and config.issuer_key is not None:
-        return [config.issuer_key.public_key]
-    return None
 
 check_langchain_compat()
 
@@ -220,7 +202,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                     tool_name=self.name,
                     tool_args=constraint_args,
                     bound_warrant=warrant,
-                    trusted_roots=_resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
+                    trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
                     approval_policy=approval_policy,
                     approval_handler=approval_handler,
                     approvals=getattr(self, "_approvals", None),
@@ -239,7 +221,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                         tool_name=self.name,
                         tool_args=constraint_args,
                         bound_warrant=bw,
-                        trusted_roots=_resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
+                        trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
                         approval_policy=getattr(self, "_approval_policy", None),
                         approval_handler=getattr(self, "_approval_handler", None),
                         approvals=getattr(self, "_approvals", None),

@@ -1154,37 +1154,53 @@ class A2AServer:
         # tool grants and constraints atomically, so running them again in Python
         # creates a redundant gate that can drift from Rust semantics.
         if not self.require_pop:
-            grants = getattr(warrant, "grants", [])
-            if not grants:
-                # Try to get grants from tools/capabilities
-                tools = getattr(warrant, "tools", None)
-                if tools:
-                    grants = [{"skill": t} for t in tools]
+            # Use Rust's why_denied() for warrant-level grant and constraint checks
+            # so semantics stay in sync with the Authorizer (wildcards, capability
+            # shapes, etc.).  Server-level constraints (SkillDefinition.constraints)
+            # are checked separately below because they are not encoded in the warrant.
+            _why_denied_available = hasattr(warrant, "why_denied")
+            if _why_denied_available:
+                _why = warrant.why_denied(skill_id, arguments)
+                # Guard against mock objects — only trust a real WhyDenied boolean.
+                _why_denied_bool = getattr(_why, "denied", None)
+                if isinstance(_why_denied_bool, bool):
+                    if _why_denied_bool:
+                        from tenuo.warrant_ext import DenyCode as _DC
+                        if _why.deny_code == _DC.TOOL_NOT_FOUND or (
+                            _why.deny_code == _DC.CONSTRAINT_MISMATCH and getattr(_why, "field", None) == "tool"
+                        ):
+                            raise SkillNotGrantedError(skill_id, [])
+                        raise ConstraintViolationError(
+                            param=getattr(_why, "field", None) or skill_id,
+                            constraint_type="warrant",
+                            value=arguments.get(getattr(_why, "field", skill_id), "<unknown>"),
+                            reason=getattr(_why, "suggestion", None) or str(_why),
+                        )
+                    # why_denied returned False → warrant grants the skill, continue
+                else:
+                    # why_denied result is not a real WhyDenied (e.g. mock object);
+                    # fall back to inspecting warrant.grants directly.
+                    _why_denied_available = False
 
-            granted_skills = [g.get("skill", g) if isinstance(g, dict) else g for g in grants]
-            if skill_id not in granted_skills:
-                raise SkillNotGrantedError(skill_id, granted_skills)
+            if not _why_denied_available:
+                # Fallback for non-tenuo_core warrant objects (plain dicts or mocks)
+                grants = getattr(warrant, "grants", [])
+                if not grants:
+                    tools = getattr(warrant, "tools", None)
+                    if tools:
+                        grants = [{"skill": t} for t in tools]
+                granted_skills = [g.get("skill", g) if isinstance(g, dict) else g for g in grants]
+                if skill_id not in granted_skills:
+                    raise SkillNotGrantedError(skill_id, granted_skills)
 
-            # Get warrant constraints for this skill (if any)
-            warrant_constraints = {}
-            for grant in grants:
-                if isinstance(grant, dict):
-                    grant_skill = grant.get("skill")
-                    if grant_skill == skill_id:
-                        warrant_constraints = grant.get("constraints", {})
-                        break
-
-            # Check constraints - warrant constraints take precedence over server constraints
-            # Server constraints define what the skill CAN check
-            # Warrant constraints define what this invocation IS LIMITED TO
-            # Both must pass, but warrant may be more restrictive
+            # Always check server-level constraints (declared on SkillDefinition).
+            # These represent the skill's own input requirements and are NOT encoded
+            # in the warrant — why_denied() cannot see them.
             skill_def = self._skills.get(skill_id)
             if skill_def:
                 for param, server_constraint in skill_def.constraints.items():
                     if param in arguments:
                         value = arguments[param]
-
-                        # First check server constraint (the skill's declared requirement)
                         if not self._check_constraint(server_constraint, value, param):
                             raise ConstraintViolationError(
                                 param=param,
@@ -1192,18 +1208,6 @@ class A2AServer:
                                 value=value,
                                 reason="Value does not satisfy server constraint",
                             )
-
-                        # Then check warrant constraint if present (may be more restrictive)
-                        if param in warrant_constraints:
-                            # Warrant constraints come as dicts from JSON - deserialize
-                            warrant_constraint = self._deserialize_constraint(warrant_constraints[param], param)
-                            if not self._check_constraint(warrant_constraint, value, param):
-                                raise ConstraintViolationError(
-                                    param=param,
-                                    constraint_type=type(warrant_constraint).__name__,
-                                    value=value,
-                                    reason="Value does not satisfy warrant constraint",
-                                )
 
         # Log audit event
         latency_ms = int((time.time() - start_time) * 1000)

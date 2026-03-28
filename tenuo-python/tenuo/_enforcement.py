@@ -554,6 +554,7 @@ def enforce_tool_call(
     approval_policy: Optional[ApprovalPolicy] = None,
     approval_handler: Optional[ApprovalHandler] = None,
     approvals: Optional[List[Any]] = None,
+    nonce_store: Optional[Any] = None,
 ) -> EnforcementResult:
     """
     Core enforcement logic for tool authorization.
@@ -769,21 +770,28 @@ def enforce_tool_call(
 
         if verify_mode == "sign":
             # ─────────────────────────────────────────────────────────────────
-            # Resolve trusted_roots: explicit parameter > BoundWarrant's own
-            # configured roots > fail closed.
+            # Resolve trusted_roots:
+            #   1. Explicit parameter passed to this call
+            #   2. BoundWarrant's own configured roots (set at bind time)
+            #   3. Global tenuo.configure(trusted_roots=[...]) fallback
+            #   4. Fail-closed — raise ConfigurationError
             # ─────────────────────────────────────────────────────────────────
             if trusted_roots is None:
                 _bound_roots = getattr(bound_warrant, "_trusted_roots", None)
-                if _bound_roots is None:
-                    raise ConfigurationError(
-                        "enforce_tool_call requires trusted_roots in the sign path. "
-                        "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, or "
-                        "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time "
-                        "so the Rust Authorizer verifies the warrant against an explicit "
-                        "trust anchor. Accepting self-signed warrants is not permitted "
-                        "(fail-closed). See tenuo_core.Authorizer for details."
-                    )
-                trusted_roots = _bound_roots
+                if _bound_roots is not None:
+                    trusted_roots = _bound_roots
+                else:
+                    from .config import resolve_trusted_roots as _resolve_roots
+                    trusted_roots = _resolve_roots(None)
+                    if trusted_roots is None:
+                        raise ConfigurationError(
+                            "enforce_tool_call requires trusted_roots in the sign path. "
+                            "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
+                            "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
+                            "or call tenuo.configure(trusted_roots=[...]) at application startup. "
+                            "Accepting self-signed warrants is not permitted (fail-closed). "
+                            "See tenuo_core.Authorizer for details."
+                        )
 
             # ─────────────────────────────────────────────────────────────────
             # VERIFIED SIGN PATH — sign PoP locally, then verify issuer
@@ -803,6 +811,24 @@ def enforce_tool_call(
                     signature=_pop,
                     approvals=_gate_approvals or [],
                 )
+                # ── Replay prevention ────────────────────────────────────────
+                # Resolve nonce_store: explicit param > module-level default.
+                # Ed25519 PoP is deterministic, so an exact replay of the same
+                # (key, tool, args, timestamp) triple produces the same bytes.
+                # The nonce store rejects exact replays within the TTL window.
+                _ns = nonce_store
+                if _ns is None:
+                    from .nonce import get_default_nonce_store as _get_ns
+                    _ns = _get_ns()
+                if _ns is not None and not _ns.check_and_record(_pop):
+                    return EnforcementResult(
+                        allowed=False,
+                        tool=tool_name,
+                        arguments=tool_args,
+                        denial_reason="PoP replay detected — this exact authorization token was already consumed.",
+                        error_type="invalid_pop",
+                        warrant_id=warrant_id,
+                    )
             except Exception as _exc:
                 from tenuo.exceptions import ExpiredError as _ExpiredError
                 from tenuo.exceptions import MissingSignature as _MissingSignature

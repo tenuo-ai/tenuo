@@ -31,6 +31,7 @@ from typing import (
 
 from ._builder import BaseGuardBuilder
 from ._enforcement import EnforcementResult, enforce_tool_call, handle_denial
+from .config import resolve_trusted_roots
 from .exceptions import (
     AuthorizationDenied,
     ConstraintViolation,
@@ -407,7 +408,7 @@ class _Guard:
             # Tier 2: Use shared enforcement logic
             result = enforce_tool_call(
                 tool_name, auth_args, self._bound,
-                trusted_roots=self._trusted_roots,
+                trusted_roots=resolve_trusted_roots(self._trusted_roots),
                 approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,

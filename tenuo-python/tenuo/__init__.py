@@ -111,7 +111,16 @@ from .config import (
     is_configured,
     is_enforce_mode,
     reset_config,
+    resolve_trusted_roots,
     should_block_violation,
+)
+
+# Nonce store for PoP replay prevention
+from .nonce import (
+    NonceStore,
+    disable_default_nonce_store,
+    enable_default_nonce_store as enable_nonce_store,
+    get_default_nonce_store,
 )
 
 # Constraints

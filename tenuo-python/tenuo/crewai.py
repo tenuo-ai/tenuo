@@ -116,7 +116,8 @@ from tenuo import (
     Warrant,
     Wildcard,
 )
-from tenuo._builder import BaseGuardBuilder
+from ._builder import BaseGuardBuilder
+from .config import resolve_trusted_roots
 
 # Import unified enforcement logic
 from tenuo._enforcement import (
@@ -872,7 +873,7 @@ class CrewAIGuard:
                 tool_name=tool_name,
                 tool_args=args,
                 bound_warrant=bound,
-                trusted_roots=self._trusted_roots,
+                trusted_roots=resolve_trusted_roots(self._trusted_roots),
                 approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,

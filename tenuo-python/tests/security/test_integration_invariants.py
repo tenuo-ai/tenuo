@@ -2573,9 +2573,13 @@ class TestTrustedRootsEnforcement:
         from tenuo._enforcement import enforce_tool_call
         from tenuo import BoundWarrant
         from tenuo.exceptions import ConfigurationError
+        from tenuo.config import reset_config
 
         attacker_w, attacker_key = attacker_warrant_and_key
         bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
+
+        # Reset global config to ensure no ambient trusted_roots leak from other tests.
+        reset_config()
 
         result = enforce_tool_call(
             tool_name="search",

@@ -136,6 +136,7 @@ check_openai_compat()
 
 # Import shared enforcement logic (after version check)
 from tenuo._enforcement import DenialPolicy, EnforcementResult, enforce_tool_call, handle_denial  # noqa: E402
+from tenuo.config import resolve_trusted_roots
 
 logger = logging.getLogger("tenuo.openai")
 
@@ -531,7 +532,7 @@ def verify_tool_call(
             tool_name=tool_name,
             tool_args=arguments,
             bound_warrant=bound_warrant,
-            trusted_roots=trusted_roots,
+            trusted_roots=resolve_trusted_roots(trusted_roots),
             approval_policy=approval_policy,
             approval_handler=approval_handler,
             approvals=approvals,

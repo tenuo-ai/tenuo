@@ -1214,13 +1214,21 @@ class TenuoInterceptorConfig:
 
         # F1: enforce strict_mode invariants before anything else
         if self.strict_mode and not self.trusted_roots:
-            raise ValueError(
-                "TenuoInterceptorConfig: strict_mode=True requires trusted_roots to be set. "
-                "Without trusted_roots, PoP and chain-of-trust verification are skipped, "
-                "reducing security to lightweight constraint checks only. "
-                "Pass trusted_roots=[control_key.public_key] or set strict_mode=False "
-                "to acknowledge running in lightweight mode."
-            )
+            # Try global configure() first — allows setting trusted_roots once at startup
+            from tenuo.config import resolve_trusted_roots as _resolve
+            _global = _resolve(None)
+            if _global:
+                self.trusted_roots = _global  # type: ignore[assignment]
+            else:
+                from tenuo.exceptions import ConfigurationError
+                raise ConfigurationError(
+                    "TenuoInterceptorConfig: strict_mode=True requires trusted_roots to be set. "
+                    "Without trusted_roots, PoP and chain-of-trust verification are skipped, "
+                    "reducing security to lightweight constraint checks only. "
+                    "Pass trusted_roots=[control_key.public_key], call "
+                    "tenuo.configure(trusted_roots=[...]) at startup, or set strict_mode=False "
+                    "to acknowledge running in lightweight mode."
+                )
 
         self._activity_registry: Dict[str, Callable] = {}
         if self.activity_fns:
@@ -2763,14 +2771,24 @@ class TenuoInterceptor:
         self._config = config
         self._version = self._get_version()
         if not config.trusted_roots:
-            import warnings as _warnings
             _msg = (
                 "TenuoInterceptor initialized WITHOUT trusted_roots. "
                 "Running in lightweight mode: PoP signatures and chain-of-trust are NOT "
                 "verified — any structurally valid warrant is accepted. "
                 "Set trusted_roots=[control_key.public_key] for production security, "
+                "call tenuo.configure(trusted_roots=[...]) and set strict_mode=True, "
                 "or pass strict_mode=True to fail fast on misconfiguration."
             )
+            if getattr(config, "strict_mode", False):
+                # strict_mode already checked in __post_init__, but guard here too
+                # in case the config was built without __post_init__ running.
+                from tenuo.exceptions import ConfigurationError as _ConfigError
+                raise _ConfigError(
+                    "TenuoInterceptor strict_mode=True requires trusted_roots. "
+                    "Pass trusted_roots=[issuer_public_key] to TenuoInterceptorConfig or "
+                    "call tenuo.configure(trusted_roots=[...]) at application startup."
+                )
+            import warnings as _warnings
             logger.warning(_msg)
             _warnings.warn(_msg, stacklevel=2)
         # Verify tenuo_core is importable — catches missing passthrough_modules early.

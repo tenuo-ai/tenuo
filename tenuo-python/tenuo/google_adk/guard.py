@@ -67,6 +67,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from tenuo._enforcement import EnforcementResult, enforce_tool_call
+from tenuo.config import resolve_trusted_roots
 
 if TYPE_CHECKING:
     from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
@@ -382,7 +383,7 @@ class TenuoGuard:
                     tool_name=skill_name,
                     tool_args=validation_args,
                     bound_warrant=bound_warrant,
-                    trusted_roots=self._trusted_roots,
+                    trusted_roots=resolve_trusted_roots(self._trusted_roots),
                     approval_policy=self._approval_policy,
                     approval_handler=self._approval_handler,
                     approvals=self._approvals,

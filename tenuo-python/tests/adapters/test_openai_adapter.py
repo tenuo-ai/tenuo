@@ -1233,12 +1233,12 @@ class TestTier2Warrant:
         with pytest.raises(WarrantDenied):
             client2.chat.completions.create(model="gpt-4o", messages=[])
 
-    def test_warrant_error_message_includes_reason(self, keypair, warrant):
+    def test_warrant_error_message_includes_reason(self, keypair, warrant, trusted_roots):
         """WarrantDenied should include reason from warrant.why_denied()."""
         response = make_response([("read_file", {"path": "/etc/passwd"})])
         mock_client = make_mock_client(response)
 
-        client = guard(mock_client, warrant=warrant, signing_key=keypair)
+        client = guard(mock_client, warrant=warrant, signing_key=keypair, trusted_roots=trusted_roots)
 
         with pytest.raises(WarrantDenied) as exc_info:
             client.chat.completions.create(model="gpt-4o", messages=[])

@@ -88,6 +88,7 @@ from tenuo._version_compat import check_langgraph_compat  # noqa: E402
 
 from ._enforcement import enforce_tool_call, filter_tools_by_warrant
 from .bound_warrant import BoundWarrant
+from .config import resolve_trusted_roots
 from .exceptions import ConfigurationError
 from .keys import KeyRegistry, load_signing_key_from_env
 
@@ -405,7 +406,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 tool_args=tool_args,
                 bound_warrant=bw,
                 require_constraints=self._require_constraints,
-                trusted_roots=self._trusted_roots,
+                trusted_roots=resolve_trusted_roots(self._trusted_roots),
                 approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
@@ -484,7 +485,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 tool_args=tool_args,
                 bound_warrant=bw,
                 require_constraints=self._require_constraints,
-                trusted_roots=self._trusted_roots,
+                trusted_roots=resolve_trusted_roots(self._trusted_roots),
                 approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,

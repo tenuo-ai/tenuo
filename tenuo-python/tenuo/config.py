@@ -285,6 +285,35 @@ def get_config() -> TenuoConfig:
     return ctx_config if ctx_config is not None else _config
 
 
+def resolve_trusted_roots(explicit: Optional[List[Any]] = None) -> Optional[List[Any]]:
+    """Resolve trusted roots with a three-level priority chain.
+
+    1. Explicitly provided roots (takes precedence over everything)
+    2. Global config ``trusted_roots`` (from ``configure(trusted_roots=[...])``)
+    3. In ``dev_mode``, the configured issuer key acts as the implicit anchor
+    4. ``None`` — callers should raise ``ConfigurationError`` (fail-closed)
+
+    All integration adapters should call this instead of reading
+    ``get_config().trusted_roots`` directly so the precedence is uniform
+    across all frameworks.
+
+    Example::
+
+        from tenuo.config import resolve_trusted_roots
+
+        roots = resolve_trusted_roots(self._trusted_roots)
+        result = enforce_tool_call(tool, args, bound, trusted_roots=roots)
+    """
+    if explicit is not None:
+        return explicit
+    cfg = get_config()
+    if cfg.trusted_roots:
+        return list(cfg.trusted_roots)
+    if cfg.dev_mode and cfg.issuer_key is not None:
+        return [cfg.issuer_key.public_key]
+    return None
+
+
 def reset_config() -> None:
     """Reset configuration to defaults (mainly for testing)."""
     global _config
