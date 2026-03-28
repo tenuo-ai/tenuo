@@ -1198,8 +1198,12 @@ class _LangGraphAdapter(_Adapter):
 
     def __init__(self) -> None:
         pytest.importorskip("langchain")  # LangGraph requires LangChain
+        from tenuo.langgraph import TenuoMiddleware, MIDDLEWARE_AVAILABLE
+
+        if not MIDDLEWARE_AVAILABLE:
+            pytest.skip("LangChain middleware (AgentMiddleware) not available — requires langchain>=1.0")
+
         from tenuo.keys import KeyRegistry
-        from tenuo.langgraph import TenuoMiddleware
 
         self._root = SigningKey.generate()    # trusted issuer (control plane)
         self._holder = SigningKey.generate()  # agent key (holds the warrant)

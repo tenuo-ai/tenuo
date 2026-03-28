@@ -469,6 +469,9 @@ class TestLangGraphControlPlane:
 
         tool_node = TenuoToolNode([search], control_plane=mock_cp, trusted_roots=[issuer_key.public_key])
 
+        if not getattr(tool_node, "_tenuo_hooks_active", True):
+            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
+
         state = dict(setup)
         state["messages"] = [
             AIMessage(
@@ -510,6 +513,9 @@ class TestLangGraphControlPlane:
 
         tool_node = TenuoToolNode([admin_reset], control_plane=mock_cp)
 
+        if not getattr(tool_node, "_tenuo_hooks_active", True):
+            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
+
         state = dict(setup)
         state["messages"] = [
             AIMessage(
@@ -547,6 +553,10 @@ class TestLangGraphControlPlane:
             return "content"
 
         tool_node = TenuoToolNode([read_file], control_plane=mock_cp, trusted_roots=[issuer_key.public_key])
+
+        if not getattr(tool_node, "_tenuo_hooks_active", True):
+            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
+
         state = dict(setup)
         state["messages"] = [
             AIMessage(
