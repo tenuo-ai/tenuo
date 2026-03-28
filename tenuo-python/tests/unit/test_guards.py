@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from tenuo import Authorizer, Pattern, SigningKey, Warrant
+from tenuo import Authorizer, OneOf, Pattern, SigningKey, Warrant
 from tenuo.exceptions import ApprovalGateTriggered
 from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
 
@@ -112,6 +112,24 @@ class TestArgApprovalGate:
         with pytest.raises(ApprovalGateTriggered):
             _authorize(
                 w, holder, "delete_file", {"path": "/anything"}, root.public_key
+            )
+
+    def test_arg_gate_exempt(self, keys):
+        """Values in the exempt set do not trigger the gate; other values do."""
+        root, holder, approver = keys
+        w = _mint_gated(
+            root,
+            holder,
+            approver,
+            approval_gates={"delete_file": {"path": {"exempt": OneOf(["/tmp/ok"])}}},
+        )
+        # allowed because it is exempt
+        _authorize(w, holder, "delete_file", {"path": "/tmp/ok"}, root.public_key)
+
+        # triggers because it is not exempt
+        with pytest.raises(ApprovalGateTriggered):
+            _authorize(
+                w, holder, "delete_file", {"path": "/etc/shadow"}, root.public_key
             )
 
 
@@ -438,6 +456,15 @@ class TestEvaluateApprovalGatesBinding:
             approval_gates={"delete_file": {"path": Pattern("/etc/*")}},
         )
         assert not _evaluate_approval_gates(w, "delete_file", {"path": "/tmp/safe"})
+
+    def test_evaluate_approval_gates_exempt_evaluates_correctly(self, keys):
+        root, holder, approver = keys
+        w = _mint_gated(
+            root, holder, approver,
+            approval_gates={"delete_file": {"path": {"exempt": OneOf(["/tmp/safe"])}}},
+        )
+        assert not _evaluate_approval_gates(w, "delete_file", {"path": "/tmp/safe"})
+        assert _evaluate_approval_gates(w, "delete_file", {"path": "/etc/passwd"})
 
 
 # ============================================================================

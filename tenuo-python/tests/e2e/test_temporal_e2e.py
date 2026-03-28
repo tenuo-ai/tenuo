@@ -329,6 +329,53 @@ class TestActivityInterceptorAuthorizer:
         assert r == "content"
         assert any(e.decision == "ALLOW" for e in events)
 
+    def test_exempt_gate_allowed_and_denied(self, agent_key, control_key):
+        from tenuo_core import Exact
+
+        warrantWithExempt = (
+            Warrant.mint_builder()
+            .capability("read_file")
+            .approval_gates({"read_file": {"path": {"exempt": Exact("/tmp/demo/public.txt")}}})
+            .required_approvers([control_key.public_key])
+            .holder(agent_key.public_key)
+            .ttl(3600)
+            .mint(control_key)
+        )
+        headersWithExempt = tenuo_headers(warrantWithExempt, "agent1")
+
+        events = []
+        ti = self._make(control_key, events)
+        wf = "wf-exempt"
+
+        # 1. Exempt parameter (should succeed without hitting ApprovalRequired loop)
+        act_headers_exempt = _make_activity_headers(
+            headersWithExempt, warrantWithExempt, agent_key, "read_file", {"path": "/tmp/demo/public.txt"})
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="content")
+        nxt.init = MagicMock()
+        ai = ti.intercept_activity(nxt)
+        info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
+        inp_exempt = FakeExecuteActivityInput(
+            fn=lambda path: path, args=("/tmp/demo/public.txt",), headers=act_headers_exempt)
+
+        with patch("temporalio.activity.info") as mock_info:
+            mock_info.return_value = info
+            r = _run(ai.execute_activity(inp_exempt))
+
+        assert r == "content"
+        assert any(e.decision == "ALLOW" for e in events)
+
+        # 2. Non-exempt parameter (should require approval)
+        act_headers_private = _make_activity_headers(
+            headersWithExempt, warrantWithExempt, agent_key, "read_file", {"path": "/tmp/demo/secret.txt"})
+        inp_private = FakeExecuteActivityInput(
+            fn=lambda path: path, args=("/tmp/demo/secret.txt",), headers=act_headers_private)
+
+        with patch("temporalio.activity.info") as mock_info:
+            mock_info.return_value = info
+            with pytest.raises(TemporalConstraintViolation):
+                _run(ai.execute_activity(inp_private))
+
     def test_denies_unauthorized_path(self, warrant, agent_key, control_key, headers_dict):
         events = []
         ti = self._make(control_key, events)

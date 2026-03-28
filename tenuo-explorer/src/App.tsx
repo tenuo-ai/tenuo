@@ -15,11 +15,12 @@ interface DecodedWarrant {
   id: string;
   issuer: string;
   tools: string[];
-  capabilities: Record<string, unknown>;
+  capabilities: Record<string, any>;
   issued_at: number;
   expires_at: number;
   authorized_holder: string;
   depth: number;
+  approval_gates?: Record<string, any> | null;
 }
 
 interface ConstraintNarrowing {
@@ -1668,6 +1669,26 @@ const ChainTester = () => {
                     <div style={{ color: 'var(--muted)', fontStyle: 'italic' }}>No detailed capabilities</div>
                   )}
 
+                  {warrant.decoded.approval_gates && Object.keys(warrant.decoded.approval_gates).length > 0 && (
+                    <div style={{ marginTop: '8px' }}>
+                      <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                        <strong>🛡️ Approval Gates:</strong>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {Object.entries(warrant.decoded.approval_gates).map(([tool, gateDef]) => (
+                          <div key={tool} style={{ background: 'rgba(0,0,0,0.1)', padding: '4px', borderRadius: '4px' }}>
+                            <span style={{ color: 'var(--text)', fontWeight: 600 }}>{tool}</span>
+                            <div style={{ paddingLeft: '8px', borderLeft: '2px solid var(--border)', marginTop: '2px' }}>
+                              <span style={{ color: 'var(--accent)', fontFamily: 'monospace' }}>
+                                {typeof gateDef === 'object' ? JSON.stringify(gateDef) : String(gateDef)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div style={{ color: 'var(--muted)', marginTop: '6px' }}>
                     Holder: <span style={{ color: 'var(--text)', fontFamily: 'monospace', fontSize: '10px' }}>
                       {truncate(warrant.decoded.authorized_holder || '', 16)}
@@ -2853,6 +2874,13 @@ function App() {
                             <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>📋 Constraints</div>
                             <pre className="code-block" style={{ height: '120px', minHeight: '80px', maxHeight: '400px', resize: 'vertical' }}>{JSON.stringify(decodedWarrant.capabilities, null, 2)}</pre>
                           </div>
+
+                          {decodedWarrant.approval_gates && (
+                            <div style={{ padding: '12px', background: 'var(--surface-2)', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>🛡️ Approval Gates</div>
+                              <pre className="code-block" style={{ height: '120px', minHeight: '80px', maxHeight: '400px', resize: 'vertical' }}>{JSON.stringify(decodedWarrant.approval_gates, null, 2)}</pre>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

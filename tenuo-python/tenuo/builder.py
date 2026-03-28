@@ -262,12 +262,8 @@ class MintBuilder:
     def approval_gates(self, approval_gate_map: Dict[str, Any]) -> "MintBuilder":
         """Add approval gates to the warrant.
 
-        Keys are tool names. Values are None (whole-tool approval gate) or a dict of
-        argument approval gates.
-
-        Example:
-            builder.approval_gates({"transfer": None})
-            builder.approval_gates({"transfer": {"amount": Range(min=1000)}})
+        Keys are tool names. Values are ``None`` (whole-tool gate) or a dict of
+        per-argument gate specifications. See Tenuo Cloud documentation for details.
         """
         self._approval_gates = approval_gate_map
         return self
@@ -627,12 +623,9 @@ class GrantBuilder:
     def approval_gates(self, approval_gate_map: Dict[str, Any]) -> "GrantBuilder":
         """Add or merge approval gates into the attenuated warrant.
 
-        Keys are tool names. Values are None (whole-tool approval gate) or a dict of
-        argument approval gates. Approval gates merge with any gates inherited from the parent.
-
-        Example:
-            builder.approval_gates({"transfer": None})
-            builder.approval_gates({"transfer": {"amount": Range(min=1000)}})
+        Keys are tool names. Values are ``None`` (whole-tool gate) or a dict of
+        per-argument gate specifications. Gates merge with any inherited from the parent.
+        See Tenuo Cloud documentation for details.
         """
         self._rust_builder.with_approval_gates(approval_gate_map)
         return self
@@ -945,12 +938,9 @@ class IssuanceBuilder:
     def approval_gates(self, approval_gate_map: Dict[str, Any]) -> "IssuanceBuilder":
         """Add or merge approval gates into the issued execution warrant.
 
-        Keys are tool names. Values are None (whole-tool approval gate) or a dict of
-        argument approval gates. Approval gates merge with any gates inherited from the issuer warrant.
-
-        Example:
-            builder.approval_gates({"transfer": None})
-            builder.approval_gates({"transfer": {"amount": Range(min=1000)}})
+        Keys are tool names. Values are ``None`` (whole-tool gate) or a dict of
+        per-argument gate specifications. Gates merge with any inherited from the issuer warrant.
+        See Tenuo Cloud documentation for details.
         """
         self._rust_builder.with_approval_gates(approval_gate_map)
         return self

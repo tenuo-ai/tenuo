@@ -196,6 +196,47 @@ class TestTier2Authorization:
         with pytest.raises(MissingSigningKeyError):
             guard.before_tool(tool, {"path": "/tmp/safe/x"}, context)
 
+    def test_exempt_gate_allowed_and_denied(self, keys):
+        from tenuo_core import Exact
+        from tenuo.approval import ApprovalRequired
+
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read_file")
+            .approval_gates({"read_file": {"path": {"exempt": Exact("/tmp/safe/public.txt")}}})
+            .required_approvers([keys.public_key])
+            .holder(keys.public_key)
+            .ttl(3600)
+            .mint(keys)
+        )
+
+        guard = TenuoGuard(
+            warrant=warrant,
+            signing_key=keys,
+            trusted_roots=[keys.public_key],
+            skill_map={"read_file_tool": "read_file"},
+            arg_map={"read_file": {"file_path": "path"}},
+        )
+
+        tool = MockBaseTool("read_file_tool")
+        context = MockToolContext()
+
+        # Exempt argument value doesn't hit the approval exception
+        result = guard.before_tool(
+            tool=tool,
+            args={"file_path": "/tmp/safe/public.txt"},
+            tool_context=context,
+        )
+        assert result is None  # Allowed
+
+        # Non-exempt argument value requires approval, invoking the rule
+        with pytest.raises(ApprovalRequired):
+            guard.before_tool(
+                tool=tool,
+                args={"file_path": "/tmp/safe/private.txt"},
+                tool_context=context,
+            )
+
 
 class TestTier1Authorization:
     """Test Tier 1 (guardrails-only) authorization."""
