@@ -331,7 +331,6 @@ class TestActivityInterceptorAuthorizer:
 
     def test_exempt_gate_allowed_and_denied(self, agent_key, control_key):
         from tenuo_core import Exact
-        from tenuo.approval import ApprovalRequired
 
         warrantWithExempt = (
             Warrant.mint_builder()
@@ -374,7 +373,7 @@ class TestActivityInterceptorAuthorizer:
 
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
-            with pytest.raises(ApprovalRequired):
+            with pytest.raises(TemporalConstraintViolation):
                 _run(ai.execute_activity(inp_private))
 
     def test_denies_unauthorized_path(self, warrant, agent_key, control_key, headers_dict):
