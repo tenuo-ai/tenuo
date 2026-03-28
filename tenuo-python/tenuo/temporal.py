@@ -1212,6 +1212,27 @@ class TenuoInterceptorConfig:
                 "does not enforce authorization denials. Do not use in production."
             )
 
+        # Contradictory configuration: trusted_roots signals production intent while
+        # dry_run disables enforcement — the combination is almost certainly a mistake.
+        if self.dry_run and self.trusted_roots:
+            from tenuo.exceptions import ConfigurationError
+            raise ConfigurationError(
+                "TenuoInterceptorConfig: dry_run=True is incompatible with trusted_roots. "
+                "trusted_roots enables full Authorizer + PoP verification, which implies "
+                "you intend to enforce authorization — but dry_run=True bypasses that "
+                "enforcement. Remove dry_run=True for production use, or remove "
+                "trusted_roots to explicitly acknowledge running in shadow/dev mode."
+            )
+
+        # strict_mode + dry_run: strict_mode means 'fail fast if not production-safe',
+        # which is directly contradicted by dry_run.
+        if self.dry_run and self.strict_mode:
+            from tenuo.exceptions import ConfigurationError
+            raise ConfigurationError(
+                "TenuoInterceptorConfig: dry_run=True cannot be combined with strict_mode=True. "
+                "strict_mode requires full enforcement; dry_run bypasses it."
+            )
+
         # F1: enforce strict_mode invariants before anything else
         if self.strict_mode and not self.trusted_roots:
             # Try global configure() first — allows setting trusted_roots once at startup

@@ -2225,6 +2225,31 @@ impl Authorizer {
             }
         }
 
+        // I5: Approval gate monotonicity (wire-level defense-in-depth)
+        // Re-check at verification time what AttenuationBuilder enforces at build time.
+        // A warrant chain forged outside the SDK could weaken or strip approval gates
+        // that the parent warrant established.
+        {
+            use crate::approval_gate::{
+                parse_approval_gate_map, verify_approval_gate_monotonicity,
+                APPROVAL_GATE_EXTENSION_KEY,
+            };
+            let parent_gates =
+                parse_approval_gate_map(parent.extension(APPROVAL_GATE_EXTENSION_KEY))?;
+            let child_gates =
+                parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))?;
+            let empty = std::collections::BTreeMap::new();
+            let child_tools = child.capabilities().unwrap_or(&empty);
+            verify_approval_gate_monotonicity(
+                parent_gates.as_ref(),
+                child_gates.as_ref(),
+                child_tools,
+            )
+            .map_err(|e| {
+                Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
+            })?;
+        }
+
         // Note: Signature verification is done in batch at the chain level for performance
         // (see verify_chain_with_options). Individual verify_link calls don't re-verify signatures.
         Ok(())
