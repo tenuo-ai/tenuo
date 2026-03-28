@@ -647,7 +647,7 @@ class TestEnforcementModule:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # "skip" is specifically exempt - no approval handler provided, and should just succeed
         result = enforce_tool_call("search", {"query": "skip"}, bound)

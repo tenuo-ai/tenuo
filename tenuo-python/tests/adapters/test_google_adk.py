@@ -213,6 +213,7 @@ class TestTier2Authorization:
         guard = TenuoGuard(
             warrant=warrant,
             signing_key=keys,
+            trusted_roots=[keys.public_key],
             skill_map={"read_file_tool": "read_file"},
             arg_map={"read_file": {"file_path": "path"}},
         )
