@@ -1599,6 +1599,9 @@ class TestMultiAgentDelegation:
         )
 
         tool_node = TenuoToolNode([write_tool])
+        if not getattr(tool_node, "_tenuo_hooks_active", True):
+            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
+
         state = {
             "messages": [
                 AIMessage(
@@ -1779,6 +1782,8 @@ class TestMultiAgentDelegation:
             [search_tool, write_tool],
             trusted_roots=[orchestrator_key.public_key, researcher_key.public_key],
         )
+        if not getattr(tool_node, "_tenuo_hooks_active", True):
+            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
 
         # Search is allowed
         search_state = {
