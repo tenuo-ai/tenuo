@@ -109,6 +109,17 @@ except (ImportError, TypeError):
     BaseTool = object  # type: ignore
     RunnableConfig = dict  # type: ignore
 
+# wrap_tool_call / awrap_tool_call were added in LangGraph 0.3+ (requires Python 3.10+).
+# On Python 3.9, uv/pip resolves to LangGraph 0.2.x which lacks this API.
+# TenuoToolNode requires this hook to enforce authorization; construction raises RuntimeError
+# when unsupported. This flag lets callers and tests detect support ahead of time.
+if LANGGRAPH_AVAILABLE:
+    import inspect as _inspect
+    WRAP_TOOL_CALL_SUPPORTED = "wrap_tool_call" in _inspect.signature(ToolNode.__init__).parameters
+    del _inspect
+else:
+    WRAP_TOOL_CALL_SUPPORTED = False
+
 # Optional middleware imports (langchain 1.0+)
 try:
     from langchain.agents.middleware import (  # type: ignore[import-not-found]

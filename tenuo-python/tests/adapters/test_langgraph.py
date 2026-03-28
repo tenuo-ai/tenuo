@@ -25,6 +25,7 @@ from tenuo.langgraph import (
     load_tenuo_keys,
     require_warrant,
     tenuo_node,
+    WRAP_TOOL_CALL_SUPPORTED,
 )
 
 try:
@@ -1403,6 +1404,7 @@ class TestLangGraphApproval:
         assert middleware._approval_policy is None
         assert middleware._approval_handler is None
 
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
     def test_toolnode_stores_approval_params(self, registry):
         """TenuoToolNode accepts and stores approval_policy and approval_handler."""
         try:
@@ -1548,6 +1550,7 @@ class TestMultiAgentDelegation:
     # D2 — Sub-agent's TenuoToolNode accepts delegated warrant
     # ------------------------------------------------------------------
 
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
     def test_D2_toolnode_accepts_attenuated_warrant(
         self, multi_agent_keys, registry, tool_node_tools
     ):
@@ -1597,6 +1600,7 @@ class TestMultiAgentDelegation:
     # D3 — Sub-agent cannot exceed delegated scope
     # ------------------------------------------------------------------
 
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
     def test_D3_subagent_cannot_exceed_scope(
         self, multi_agent_keys, registry, tool_node_tools
     ):
@@ -1653,6 +1657,7 @@ class TestMultiAgentDelegation:
     # D4 — Warrant flows through state to downstream TenuoToolNode
     # ------------------------------------------------------------------
 
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
     def test_D4_attenuated_warrant_in_state_enforced(
         self, multi_agent_keys, registry, tool_node_tools
     ):
@@ -1758,6 +1763,7 @@ class TestMultiAgentDelegation:
     # D6 — Three-level delegation chain
     # ------------------------------------------------------------------
 
+    @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
     def test_D6_three_level_delegation_chain(self, registry, tool_node_tools):
         """D6: orchestrator → researcher → executor — each level narrows scope."""
         from langchain_core.messages import AIMessage

@@ -415,6 +415,10 @@ class TestMCPVerifierControlPlane:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    not __import__("tenuo.langgraph", fromlist=["WRAP_TOOL_CALL_SUPPORTED"]).WRAP_TOOL_CALL_SUPPORTED,
+    reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)",
+)
 class TestLangGraphControlPlane:
     @pytest.fixture
     def setup(self, issuer_key, agent_key):
@@ -454,11 +458,7 @@ class TestLangGraphControlPlane:
     def test_toolnode_emits_allow(self, setup, mock_cp, issuer_key):
         """TenuoToolNode emits allow event for authorized tool call."""
         from langchain_core.messages import AIMessage
-        from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
-
-        if not LANGGRAPH_AVAILABLE:
-            pytest.skip("LangGraph not available")
-
+        from tenuo.langgraph import TenuoToolNode
         from langchain_core.tools import tool
         from langgraph.graph import StateGraph, END, START
 
@@ -468,9 +468,6 @@ class TestLangGraphControlPlane:
             return f"results for {query}"
 
         tool_node = TenuoToolNode([search], control_plane=mock_cp, trusted_roots=[issuer_key.public_key])
-
-        if not getattr(tool_node, "_tenuo_hooks_active", True):
-            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
 
         state = dict(setup)
         state["messages"] = [
@@ -497,11 +494,7 @@ class TestLangGraphControlPlane:
     def test_toolnode_emits_deny(self, setup, mock_cp):
         """TenuoToolNode emits deny event for unauthorized tool call."""
         from langchain_core.messages import AIMessage
-        from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
-
-        if not LANGGRAPH_AVAILABLE:
-            pytest.skip("LangGraph not available")
-
+        from tenuo.langgraph import TenuoToolNode
         from langchain_core.tools import tool
         from langgraph.graph import StateGraph, END, START
         from tests.adapters.test_langgraph import MockState as _S
@@ -512,9 +505,6 @@ class TestLangGraphControlPlane:
             return "reset"
 
         tool_node = TenuoToolNode([admin_reset], control_plane=mock_cp)
-
-        if not getattr(tool_node, "_tenuo_hooks_active", True):
-            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
 
         state = dict(setup)
         state["messages"] = [
@@ -538,11 +528,7 @@ class TestLangGraphControlPlane:
     def test_toolnode_warrant_stack_not_none(self, setup, mock_cp, issuer_key):
         """Emitted allow event carries a non-None warrant_stack_override (single-warrant encoding)."""
         from langchain_core.messages import AIMessage
-        from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
-
-        if not LANGGRAPH_AVAILABLE:
-            pytest.skip("LangGraph not available")
-
+        from tenuo.langgraph import TenuoToolNode
         from langchain_core.tools import tool
         from langgraph.graph import StateGraph, END, START
         from tests.adapters.test_langgraph import MockState as _S
@@ -553,9 +539,6 @@ class TestLangGraphControlPlane:
             return "content"
 
         tool_node = TenuoToolNode([read_file], control_plane=mock_cp, trusted_roots=[issuer_key.public_key])
-
-        if not getattr(tool_node, "_tenuo_hooks_active", True):
-            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
 
         state = dict(setup)
         state["messages"] = [
