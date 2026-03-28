@@ -644,7 +644,7 @@ class TestStreamingTier2:
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
-        guard = GuardBuilder().with_warrant(warrant, key).build()
+        guard = GuardBuilder().with_warrant(warrant, key).with_trusted_roots([key.public_key]).build()
 
         chunks = [
             MockStreamChunk(
@@ -678,7 +678,7 @@ class TestStreamingTier2:
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
-        guard = GuardBuilder().with_warrant(warrant, key).build()
+        guard = GuardBuilder().with_warrant(warrant, key).with_trusted_roots([key.public_key]).build()
 
         chunks = [
             MockStreamChunk(
@@ -720,7 +720,7 @@ class TestGuardToolTier2:
         """Authorized tool call succeeds when constraints pass."""
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         guarded = guard_tool(search, bound, tool_name="search")
         assert guarded(query="ok-1") == "results:ok-1:0"
@@ -729,7 +729,7 @@ class TestGuardToolTier2:
         """Constraint violations raise AuthorizationDenied."""
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         guarded = guard_tool(search, bound, tool_name="search")
         with pytest.raises(AuthorizationDenied):
@@ -744,7 +744,7 @@ class TestGuardToolTier2:
             .holder(key.public_key)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         guarded = guard_tool(search, bound, tool_name="search")
         assert guarded(query="ok", limit=2) == "results:ok:2"
@@ -761,7 +761,7 @@ class TestGuardToolTier2:
             .holder(holder_key.public_key)
             .mint(holder_key)
         )
-        bound = warrant.bind(wrong_key)
+        bound = warrant.bind(wrong_key, trusted_roots=[holder_key.public_key])
 
         guarded = guard_tool(search, bound, tool_name="search")
         with pytest.raises(AuthorizationDenied):
@@ -777,7 +777,7 @@ class TestGuardToolTier2:
             .ttl(2)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         guarded = guard_tool(search, bound, tool_name="search")
         assert guarded(query="ok", limit=1) == "results:ok:1"
@@ -789,7 +789,7 @@ class TestGuardToolTier2:
         """Tool not in warrant.tools raises ToolNotAuthorized."""
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().tools(["search"]).holder(key.public_key).mint(key)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         guarded = guard_tool(read_file, bound, tool_name="read_file")
         with pytest.raises(ToolNotAuthorized):
@@ -799,7 +799,7 @@ class TestGuardToolTier2:
         """guard_tools handles list and dict inputs."""
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         wrapped_list = guard_tools([search], bound)
         assert wrapped_list[0](query="ok") == "results:ok:0"
@@ -825,7 +825,7 @@ class TestAsyncToolsTier2:
 
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         guarded = guard_tool(async_search, bound, tool_name="search")
         assert await guarded(query="ok") == "async:ok"
@@ -839,7 +839,7 @@ class TestAsyncToolsTier2:
 
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         guarded = guard_tool(async_search, bound, tool_name="search")
         with pytest.raises(AuthorizationDenied):
@@ -865,7 +865,7 @@ class TestToolNameResolutionTier2:
 
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().tools(["search"]).holder(key.public_key).mint(key)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         guarded = guard_tool(NamedTool(), bound)
         assert guarded(query="ok") == "named:ok"
@@ -879,7 +879,7 @@ class TestToolNameResolutionTier2:
 
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().tools(["ClassNameTool"]).holder(key.public_key).mint(key)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         guarded = guard_tool(ClassNameTool(), bound)
         assert guarded(query="ok") == "class:ok"
@@ -895,7 +895,7 @@ class TestToolNameResolutionTier2:
 
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().tools(["override"]).holder(key.public_key).mint(key)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         guarded = guard_tool(NamedTool(), bound, tool_name="override")
         assert guarded(query="ok") == "override:ok"
@@ -914,7 +914,7 @@ class TestGuardBuilderTier2:
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
-        guard = GuardBuilder().with_warrant(warrant, key).build()
+        guard = GuardBuilder().with_warrant(warrant, key).with_trusted_roots([key.public_key]).build()
         guarded = guard.guard_tool(search, tool_name="search")
 
         assert guarded(query="ok") == "results:ok:0"
@@ -924,7 +924,7 @@ class TestGuardBuilderTier2:
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
-        guard = GuardBuilder().with_warrant(warrant, key).build()
+        guard = GuardBuilder().with_warrant(warrant, key).with_trusted_roots([key.public_key]).build()
         guarded = guard.guard_tool(search, tool_name="search")
 
         with pytest.raises(AuthorizationDenied):
@@ -944,7 +944,7 @@ class TestGuardBuilderTier2:
             .mint(key)
         )
 
-        guard = GuardBuilder().with_warrant(warrant, key).build()
+        guard = GuardBuilder().with_warrant(warrant, key).with_trusted_roots([key.public_key]).build()
         guarded = guard.guard_tool(operate, tool_name="operate")
 
         assert guarded(operation="add") == "add"
@@ -962,7 +962,7 @@ class TestGuardBuilderTier2:
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
-        guard = GuardBuilder().with_warrant(warrant, key).on_denial("log").build()
+        guard = GuardBuilder().with_warrant(warrant, key).with_trusted_roots([key.public_key]).on_denial("log").build()
         guarded = guard.guard_tool(tracking_tool, tool_name="search")
 
         with caplog.at_level(logging.WARNING):
@@ -983,7 +983,7 @@ class TestGuardBuilderTier2:
         key = SigningKey.generate()
         warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
-        guard = GuardBuilder().with_warrant(warrant, key).on_denial("skip").build()
+        guard = GuardBuilder().with_warrant(warrant, key).with_trusted_roots([key.public_key]).on_denial("skip").build()
         guarded = guard.guard_tool(tracking_tool, tool_name="search")
 
         assert guarded(query="nope") is None
@@ -1081,7 +1081,7 @@ class TestIntegrationInvariants:
         warrant = Warrant.mint_builder().capability("read", path=Wildcard()).holder(key.public_key).ttl(1).mint(key)
         time.sleep(2)
 
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
         with pytest.raises(ExpiredError):
             bound.validate("read", {"path": "/data/file.txt"})
 

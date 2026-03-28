@@ -39,7 +39,7 @@ from tenuo._version_compat import check_langchain_compat  # noqa: E402
 
 from ._enforcement import enforce_tool_call
 from .audit import log_authorization_success
-from .config import allow_passthrough
+from .config import allow_passthrough, resolve_trusted_roots
 from .decorators import get_allowed_tools_context, key_scope, warrant_scope
 from .exceptions import (
     ConfigurationError,
@@ -47,6 +47,7 @@ from .exceptions import (
     ToolNotAuthorized,
 )
 from .schemas import TOOL_SCHEMAS, ToolSchema, _get_tool_name
+
 
 check_langchain_compat()
 
@@ -96,6 +97,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         strict: bool = False,
         schemas: Optional[Dict[str, ToolSchema]] = None,
         bound_warrant: Optional[Any] = None,
+        trusted_roots: Optional[list] = None,
         approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
@@ -109,6 +111,10 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             strict: Enforce constraints for require_at_least_one tools
             schemas: Tool schemas for risk level checking
             bound_warrant: Explicit BoundWarrant to use (optional, overrides context)
+            trusted_roots: List of trusted issuer public keys (tenuo_core.PublicKey).
+                Warrant issuers are verified against these roots via
+                Authorizer.authorize_one() — closes the self-signed trust gap.
+                Always supply in production. Emits SecurityWarning when omitted.
             approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
             approval_handler: Handler invoked when approval policy triggers
         """
@@ -124,6 +130,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         object.__setattr__(self, "strict", strict)
         object.__setattr__(self, "_schemas", schemas or TOOL_SCHEMAS)
         object.__setattr__(self, "_bound_warrant", bound_warrant)
+        object.__setattr__(self, "_trusted_roots", trusted_roots)
         object.__setattr__(self, "_approval_policy", approval_policy)
         object.__setattr__(self, "_approval_handler", approval_handler)
         object.__setattr__(self, "_approvals", approvals)
@@ -195,6 +202,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                     tool_name=self.name,
                     tool_args=constraint_args,
                     bound_warrant=warrant,
+                    trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
                     approval_policy=approval_policy,
                     approval_handler=approval_handler,
                     approvals=getattr(self, "_approvals", None),
@@ -202,23 +210,21 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                 if not result.allowed:
                     raise ToolNotAuthorized(tool=self.name)
             else:
-                # Plain Warrant — sign PoP then use Authorizer.authorize_one() for
-                # full verification (issuer trust, revocation, clearance, PoP, constraints).
-                import time
-
-                from tenuo_core import Authorizer
+                # Plain Warrant — bind to key then use enforce_tool_call with
+                # trusted_roots for proper issuer verification (not self-signed).
                 signing_key = key_scope()
                 if signing_key:
-                    pop_signature = bytes(warrant.sign(signing_key, self.name, constraint_args, int(time.time())))
-                    # Build a minimal Authorizer trusting the warrant's own issuer.
-                    # For production delegated warrants, callers should pass a
-                    # bound_warrant so the BoundWarrant/enforce_tool_call path runs instead.
-                    try:
-                        issuer_pub = getattr(warrant, "issuer_public_key", None) or getattr(warrant, "issuer", None)
-                        roots = [issuer_pub] if issuer_pub is not None else []
-                        auth = Authorizer(trusted_roots=roots)
-                        auth.authorize_one(warrant, self.name, constraint_args, signature=pop_signature)
-                    except Exception:
+                    bw = warrant.bind(signing_key)
+                    result = enforce_tool_call(
+                        tool_name=self.name,
+                        tool_args=constraint_args,
+                        bound_warrant=bw,
+                        trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
+                        approval_policy=getattr(self, "_approval_policy", None),
+                        approval_handler=getattr(self, "_approval_handler", None),
+                        approvals=getattr(self, "_approvals", None),
+                    )
+                    if not result.allowed:
                         raise ToolNotAuthorized(tool=self.name)
                 else:
                     raise ToolNotAuthorized(tool=self.name)

@@ -60,6 +60,12 @@ def keys():
 
 
 @pytest.fixture
+def trusted_roots(keys):
+    """Trusted roots for the test's self-issued warrant (keys is both issuer and holder)."""
+    return [keys.public_key]
+
+
+@pytest.fixture
 def warrant(keys):
     """Create a warrant using the current API."""
     return (
@@ -113,11 +119,12 @@ class TestToolFiltering:
 class TestTier2Authorization:
     """Test Tier 2 (PoP) authorization."""
 
-    def test_before_tool_allowed_with_pop(self, warrant, keys):
+    def test_before_tool_allowed_with_pop(self, warrant, keys, trusted_roots):
         """Test authorized tool execution with PoP."""
         guard = TenuoGuard(
             warrant=warrant,
             signing_key=keys,
+            trusted_roots=trusted_roots,
             skill_map={"read_file_tool": "read_file"},
             arg_map={"read_file": {"file_path": "path"}},
         )
@@ -299,11 +306,12 @@ class TestZeroTrust:
 class TestDynamicWarrants:
     """Test dynamic warrant retrieval from session state."""
 
-    def test_warrant_from_state(self, warrant, keys):
+    def test_warrant_from_state(self, warrant, keys, trusted_roots):
         """Test warrant retrieval from session state."""
         guard = TenuoGuard(
             warrant_key="user_warrant",
             signing_key=keys,
+            trusted_roots=trusted_roots,
             skill_map={"read_file_tool": "read_file"},
             arg_map={"read_file": {"file_path": "path"}},
         )
@@ -337,12 +345,13 @@ class TestDynamicWarrants:
 class TestAuditLogging:
     """Test audit logging functionality."""
 
-    def test_audit_logging(self, warrant, keys):
+    def test_audit_logging(self, warrant, keys, trusted_roots):
         """Test that actions are logged to audit file."""
         log_file = io.StringIO()
         guard = TenuoGuard(
             warrant=warrant,
             signing_key=keys,
+            trusted_roots=trusted_roots,
             skill_map={"read_file_tool": "read_file"},
             arg_map={"read_file": {"file_path": "path"}},
             audit_log=log_file,
@@ -376,7 +385,7 @@ class TestOnDenyRaise:
         guard = TenuoGuard(
             warrant=warrant,
             signing_key=keys,
-            on_deny="raise",
+            on_denial="raise",
         )
 
         tool = MockBaseTool("shell_tool")
@@ -412,6 +421,7 @@ class TestArgumentRemapping:
         guard = TenuoGuard(
             warrant=warrant,
             signing_key=keys,
+            trusted_roots=[keys.public_key],
             skill_map={"read_file_tool": "read_file"},
             arg_map={"read_file": {"file_path": "path"}},  # Map file_path -> path
         )
@@ -615,7 +625,7 @@ class TestGuardBuilder:
         """Test on_denial configuration."""
         guard = GuardBuilder().with_warrant(warrant, keys).on_denial("raise").build()
 
-        assert guard._on_deny == "raise"
+        assert guard._on_denial == "raise"
 
 
 class TestDryRunMode:
@@ -1337,7 +1347,7 @@ class TestInvariantPoPBypass:
 
     def test_tier2_uses_authorize_not_allows(self, warrant, keys):
         """Tier 2 MUST use authorize() (with PoP), not allows() (debug)."""
-        guard = TenuoGuard(warrant=warrant, signing_key=keys, require_pop=True)
+        guard = TenuoGuard(warrant=warrant, signing_key=keys, trusted_roots=[keys.public_key], require_pop=True)
 
         # The warrant.authorize should be called (with signature), not .allows
         # We verify this by checking the code path works
@@ -1395,7 +1405,7 @@ class TestInvariantNoImplicitPermissions:
             .mint(keys)
         )
 
-        guard = TenuoGuard(warrant=warrant, signing_key=keys, require_pop=True)
+        guard = TenuoGuard(warrant=warrant, signing_key=keys, trusted_roots=[keys.public_key], require_pop=True)
 
         # read_file should work
         result = guard.before_tool(
@@ -1439,7 +1449,7 @@ class TestInvariantAttenuation:
             .grant(keys)  # Use .grant() not .mint() for attenuation
         )
 
-        guard = TenuoGuard(warrant=child_warrant, signing_key=child_keys, require_pop=True)
+        guard = TenuoGuard(warrant=child_warrant, signing_key=child_keys, trusted_roots=[keys.public_key], require_pop=True)
 
         # Should allow: /data/reports/file.txt
         result = guard.before_tool(
@@ -1478,7 +1488,7 @@ class TestInvariantAttenuation:
             .grant(keys)  # Use .grant() not .mint() for attenuation
         )
 
-        guard = TenuoGuard(warrant=child_warrant, signing_key=child_keys, require_pop=True)
+        guard = TenuoGuard(warrant=child_warrant, signing_key=child_keys, trusted_roots=[keys.public_key], require_pop=True)
 
         # Should allow: api.example.com
         result = guard.before_tool(
@@ -1578,6 +1588,7 @@ class TestInvariantWireAuthorization:
         guard = TenuoGuard(
             warrant=warrant,
             signing_key=keys,
+            trusted_roots=[keys.public_key],
             require_pop=True,
         )
 

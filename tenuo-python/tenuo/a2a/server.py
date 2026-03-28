@@ -142,7 +142,7 @@ class ReplayBackend(Protocol):
     Example (Redis backend sketch)::
 
         class RedisReplayBackend:
-            def __init__(self, redis_client):
+            def __init__(self, redis_client) -> None:
                 self._redis = redis_client
 
             async def check_and_add(self, jti: str, ttl_seconds: int) -> bool:
@@ -191,7 +191,7 @@ class InMemoryReplayBackend:
 
     CLEANUP_INTERVAL = 1000  # Cleanup every N requests
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._cache: Dict[str, float] = {}  # jti -> expiry_time (wall clock)
         self._lock: Optional[asyncio.Lock] = None  # Lazy init to avoid event loop issues
         self._counter: int = 0  # Request counter for amortized cleanup
@@ -259,7 +259,7 @@ class SkillDefinition:
         func: Callable,
         constraints: Dict[str, Any],
         name: Optional[str] = None,
-    ):
+    ) -> None:
         self.skill_id = skill_id
         self.func = func
         self.constraints = constraints
@@ -634,7 +634,7 @@ class A2AServer:
         revoked_issuers: Optional[List[Any]] = None,
         signing_key: Optional[Any] = None,
         registration_handler: Optional[Callable] = None,
-    ):
+    ) -> None:
         """
         Initialize A2A server.
 
@@ -1064,11 +1064,13 @@ class A2AServer:
                 logger.warning(f"Warrant expiry check failed: {e}")
                 raise WarrantExpiredError("Expiry check failed (fail-closed)")
         else:
-            # Fallback: check exp claim manually
-            # Note: This path should rarely be taken with tenuo_core warrants
+            # Fallback: check exp claim manually when is_expired() is unavailable.
+            # Mirror Rust's CLOCK_SKEW_TOLERANCE_SECS (30 s) so near-boundary warrants
+            # are not prematurely rejected on the Python path.
+            _CLOCK_SKEW = 30
             now = int(time.time())
             exp = self._get_warrant_prop(warrant, "exp", "expires_at")
-            if exp is not None and exp < now:
+            if exp is not None and exp + _CLOCK_SKEW < now:
                 raise WarrantExpiredError()
 
         # Check issuer trust (direct or via chain)
@@ -1080,13 +1082,22 @@ class A2AServer:
         if issuer_normalized and issuer_normalized in self._revoked_issuers:
             raise RevokedError(f"Issuer key '{issuer_normalized}' is revoked")
 
+        # Decoded parent warrants from the chain (populated when delegation is used).
+        # Kept in scope so the PoP check can call check_chain instead of authorize_one
+        # when the leaf's issuer is a delegated agent (not a direct trusted root).
+        _resolved_chain_parents: Optional[List[Any]] = None
+
         if issuer_normalized and issuer_normalized not in self.trusted_issuers:
             if _preloaded_parents is not None and len(_preloaded_parents) > 0:
-                # WarrantStack path: parents already decoded by the HTTP handler
-                await self._validate_chain_warrants(warrant, _preloaded_parents)
+                # WarrantStack path: parents already decoded by the HTTP handler.
+                # Verify chain structure now; PoP (if required) is done below
+                # via check_chain so the full chain is validated atomically.
+                if not self.require_pop:
+                    await self._validate_chain_warrants(warrant, _preloaded_parents)
+                _resolved_chain_parents = _preloaded_parents
             elif self.trust_delegated and warrant_chain:
-                # Legacy path: semicolon-separated header
-                await self._validate_chain(warrant, warrant_chain)
+                # Legacy path: semicolon-separated header.
+                _resolved_chain_parents = await self._validate_chain(warrant, warrant_chain)
             else:
                 raise UntrustedIssuerError(issuer_normalized)
 
@@ -1112,23 +1123,23 @@ class A2AServer:
             if pop_signature is None:
                 raise PopRequiredError()
 
-            # Convert arguments to ConstraintValue format for authorization
+            # Verify PoP via the cached Authorizer.
+            # Both authorize_one and check_chain accept plain bytes for the
+            # signature and a plain dict for args — no ConstraintValue needed.
+            # When a delegation chain was supplied, use check_chain so the full
+            # chain (issuer trust + linkage + capabilities + PoP) is verified
+            # atomically.  Using authorize_one on the leaf alone would fail
+            # because the leaf's issuer is a delegated agent, not a trusted root.
             try:
-                from tenuo_core import ConstraintValue, Signature
-
-                args_cv = {k: ConstraintValue.from_any(v) for k, v in arguments.items()}
-                # Create Signature object from bytes
-                pop_sig = Signature.from_bytes(pop_signature)
-            except ImportError:
-                # If ConstraintValue not available, we can't verify PoP
-                raise PopVerificationError("tenuo_core ConstraintValue not available")
-            except Exception as e:
-                raise PopVerificationError(f"Failed to parse PoP signature: {e}")
-
-            # Verify PoP via the cached Authorizer (built at server init from trusted_issuers).
-            # Performs full verification: issuer trust, PoP signature, skill grant, constraints.
-            try:
-                self._authorizer.authorize_one(warrant, skill_id, args_cv, signature=pop_sig)
+                if _resolved_chain_parents:
+                    all_chain = list(_resolved_chain_parents) + [warrant]
+                    self._authorizer.check_chain(
+                        all_chain, skill_id, arguments, signature=pop_signature
+                    )
+                else:
+                    self._authorizer.authorize_one(
+                        warrant, skill_id, arguments, signature=pop_signature
+                    )
                 logger.debug(f"PoP verified for skill '{skill_id}'")
             except Exception as e:
                 # Map tenuo_core errors to A2A errors
@@ -1138,56 +1149,64 @@ class A2AServer:
                 # Re-raise other errors (constraint violations, etc.)
                 raise
 
-        # Check skill is granted in warrant
-        grants = getattr(warrant, "grants", [])
-        if not grants:
-            # Try to get grants from tools/capabilities
-            tools = getattr(warrant, "tools", None)
-            if tools:
-                grants = [{"skill": t} for t in tools]
-
-        granted_skills = [g.get("skill", g) if isinstance(g, dict) else g for g in grants]
-        if skill_id not in granted_skills:
-            raise SkillNotGrantedError(skill_id, granted_skills)
-
-        # Get warrant constraints for this skill (if any)
-        warrant_constraints = {}
-        for grant in grants:
-            if isinstance(grant, dict):
-                grant_skill = grant.get("skill")
-                if grant_skill == skill_id:
-                    warrant_constraints = grant.get("constraints", {})
-                    break
-
-        # Check constraints - warrant constraints take precedence over server constraints
-        # Server constraints define what the skill CAN check
-        # Warrant constraints define what this invocation IS LIMITED TO
-        # Both must pass, but warrant may be more restrictive
-        skill_def = self._skills.get(skill_id)
-        if skill_def:
-            for param, server_constraint in skill_def.constraints.items():
-                if param in arguments:
-                    value = arguments[param]
-
-                    # First check server constraint (the skill's declared requirement)
-                    if not self._check_constraint(server_constraint, value, param):
+        # Check skill is granted in warrant — only when PoP was NOT verified by the
+        # Authorizer above.  When require_pop=True the Authorizer already enforces
+        # tool grants and constraints atomically, so running them again in Python
+        # creates a redundant gate that can drift from Rust semantics.
+        if not self.require_pop:
+            # Use Rust's why_denied() for warrant-level grant and constraint checks
+            # so semantics stay in sync with the Authorizer (wildcards, capability
+            # shapes, etc.).  Server-level constraints (SkillDefinition.constraints)
+            # are checked separately below because they are not encoded in the warrant.
+            _why_denied_available = hasattr(warrant, "why_denied")
+            if _why_denied_available:
+                _why = warrant.why_denied(skill_id, arguments)
+                # Guard against mock objects — only trust a real WhyDenied boolean.
+                _why_denied_bool = getattr(_why, "denied", None)
+                if isinstance(_why_denied_bool, bool):
+                    if _why_denied_bool:
+                        from tenuo.warrant_ext import DenyCode as _DC
+                        if _why.deny_code == _DC.TOOL_NOT_FOUND or (
+                            _why.deny_code == _DC.CONSTRAINT_MISMATCH and getattr(_why, "field", None) == "tool"
+                        ):
+                            raise SkillNotGrantedError(skill_id, [])
                         raise ConstraintViolationError(
-                            param=param,
-                            constraint_type=type(server_constraint).__name__,
-                            value=value,
-                            reason="Value does not satisfy server constraint",
+                            param=getattr(_why, "field", None) or skill_id,
+                            constraint_type="warrant",
+                            value=arguments.get(getattr(_why, "field", skill_id), "<unknown>"),
+                            reason=getattr(_why, "suggestion", None) or str(_why),
                         )
+                    # why_denied returned False → warrant grants the skill, continue
+                else:
+                    # why_denied result is not a real WhyDenied (e.g. mock object);
+                    # fall back to inspecting warrant.grants directly.
+                    _why_denied_available = False
 
-                    # Then check warrant constraint if present (may be more restrictive)
-                    if param in warrant_constraints:
-                        # Warrant constraints come as dicts from JSON - deserialize
-                        warrant_constraint = self._deserialize_constraint(warrant_constraints[param], param)
-                        if not self._check_constraint(warrant_constraint, value, param):
+            if not _why_denied_available:
+                # Fallback for non-tenuo_core warrant objects (plain dicts or mocks)
+                grants = getattr(warrant, "grants", [])
+                if not grants:
+                    tools = getattr(warrant, "tools", None)
+                    if tools:
+                        grants = [{"skill": t} for t in tools]
+                granted_skills = [g.get("skill", g) if isinstance(g, dict) else g for g in grants]
+                if skill_id not in granted_skills:
+                    raise SkillNotGrantedError(skill_id, granted_skills)
+
+            # Always check server-level constraints (declared on SkillDefinition).
+            # These represent the skill's own input requirements and are NOT encoded
+            # in the warrant — why_denied() cannot see them.
+            skill_def = self._skills.get(skill_id)
+            if skill_def:
+                for param, server_constraint in skill_def.constraints.items():
+                    if param in arguments:
+                        value = arguments[param]
+                        if not self._check_constraint(server_constraint, value, param):
                             raise ConstraintViolationError(
                                 param=param,
-                                constraint_type=type(warrant_constraint).__name__,
+                                constraint_type=type(server_constraint).__name__,
                                 value=value,
-                                reason="Value does not satisfy warrant constraint",
+                                reason="Value does not satisfy server constraint",
                             )
 
         # Log audit event
@@ -1279,7 +1298,7 @@ class A2AServer:
         self,
         leaf_warrant: Any,
         chain_header: str,
-    ) -> None:
+    ) -> List[Any]:
         """
         Validate a delegation chain from a semicolon-separated header string.
 
@@ -1293,6 +1312,10 @@ class A2AServer:
         Args:
             leaf_warrant: The leaf warrant (already decoded)
             chain_header: Semicolon-separated base64 parent warrants (parent-first)
+
+        Returns:
+            Decoded parent warrants (root-first order, excluding the leaf), so
+            the caller can pass the full chain to ``check_chain`` for PoP.
 
         Raises:
             ChainValidationError, UntrustedIssuerError, WarrantExpiredError
@@ -1321,7 +1344,12 @@ class A2AServer:
             except Exception as e:
                 raise ChainValidationError(f"Invalid warrant at position {i}: {e}")
 
-        await self._validate_chain_warrants(leaf_warrant, parents)
+        # Validate structure now (skipped when PoP is required — check_chain does
+        # both structure and PoP atomically in validate_warrant's PoP step).
+        if not self.require_pop:
+            await self._validate_chain_warrants(leaf_warrant, parents)
+
+        return parents
 
     def _grants_are_subset(self, child: Any, parent: Any) -> bool:
         """
@@ -1939,9 +1967,11 @@ class A2AServer:
             if callable(is_expired_attr):
                 expired = is_expired_attr()
             else:
+                # Mirror Rust's CLOCK_SKEW_TOLERANCE_SECS (30 s)
+                _CLOCK_SKEW = 30
                 now = int(time.time())
                 exp = getattr(challenge_warrant, "exp", None)
-                expired = exp is not None and exp < now
+                expired = exp is not None and exp + _CLOCK_SKEW < now
             if expired:
                 raise InvalidSignatureError("Challenge token has expired")
         except InvalidSignatureError:
@@ -2218,8 +2248,9 @@ class A2AServer:
                 # Check if result is async generator (streaming skill)
                 if hasattr(result, "__anext__"):
                     async for chunk in result:
-                        # Mid-stream expiry check
-                        if warrant_exp and time.time() > warrant_exp:
+                        # Mid-stream expiry check — mirror Rust's 30 s clock skew tolerance
+                        _CLOCK_SKEW = 30
+                        if warrant_exp and time.time() > warrant_exp + _CLOCK_SKEW:
                             error_event = {
                                 "type": "error",
                                 "task_id": task_id,
@@ -2244,7 +2275,9 @@ class A2AServer:
 
                 # Final expiry check before completion
                 # (catches expiry during long-running non-streaming skills)
-                if warrant_exp and time.time() > warrant_exp:
+                # Mirror Rust's CLOCK_SKEW_TOLERANCE_SECS (30 s)
+                _CLOCK_SKEW = 30
+                if warrant_exp and time.time() > warrant_exp + _CLOCK_SKEW:
                     error_event = {
                         "type": "error",
                         "task_id": task_id,

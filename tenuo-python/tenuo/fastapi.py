@@ -23,6 +23,7 @@ Usage:
 import base64
 import logging
 import uuid
+import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -46,7 +47,8 @@ except ImportError:
     FastAPI = Any  # type: ignore
     Header = Any  # type: ignore
     HTTPException = Any  # type: ignore
-    Depends = Any  # type: ignore
+    def Depends(dep):  # type: ignore  # noqa: E301
+        return None
     Request = Any  # type: ignore
     status = Any  # type: ignore
     JSONResponse = Any  # type: ignore
@@ -335,7 +337,7 @@ class TenuoGuard:
         tool: str,
         *,
         extract_args: Optional[Callable[[Request], Dict[str, Any]]] = None,
-    ):
+    ) -> None:
         self.tool = tool
         self.extract_args = extract_args
 
@@ -374,6 +376,18 @@ class TenuoGuard:
         if trusted_issuers:
             roots = list(trusted_issuers)
         else:
+            # SECURITY WARNING: No trusted_issuers configured.  We fall back to
+            # trusting whatever issuer key the incoming warrant claims, which means
+            # any attacker who mints their own key-pair can forge a valid warrant.
+            # Call configure_tenuo(app, trusted_issuers=[...]) at startup to lock
+            # down which keys may issue warrants to this service.
+            _msg = (
+                "TenuoGuard: no trusted_issuers configured — any self-signed warrant "
+                "is accepted.  Call configure_tenuo(app, trusted_issuers=[issuer_key]) "
+                "to restrict which keys may issue warrants."
+            )
+            logger.warning(_msg)
+            warnings.warn(_msg, stacklevel=3)
             issuer_pub = getattr(warrant, "issuer_public_key", None) or getattr(warrant, "issuer", None)
             roots = [issuer_pub] if issuer_pub is not None else []
 
@@ -566,7 +580,7 @@ class SecureAPIRouter:
         def get_user(user_id: str): ...
     """
 
-    def __init__(self, *args: Any, tool_prefix: Optional[str] = None, require_pop: bool = True, **kwargs: Any):
+    def __init__(self, *args: Any, tool_prefix: Optional[str] = None, require_pop: bool = True, **kwargs: Any) -> None:
         if not FASTAPI_AVAILABLE:
             raise ImportError("FastAPI is required for SecureAPIRouter")
 

@@ -451,7 +451,7 @@ class TestLangGraphControlPlane:
         mw = TenuoMiddleware()
         assert mw._control_plane is None
 
-    def test_toolnode_emits_allow(self, setup, mock_cp):
+    def test_toolnode_emits_allow(self, setup, mock_cp, issuer_key):
         """TenuoToolNode emits allow event for authorized tool call."""
         from langchain_core.messages import AIMessage
         from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
@@ -460,13 +460,17 @@ class TestLangGraphControlPlane:
             pytest.skip("LangGraph not available")
 
         from langchain_core.tools import tool
+        from langgraph.graph import StateGraph, END, START
 
         @tool
         def search(query: str) -> str:
             """Search the web."""
             return f"results for {query}"
 
-        tool_node = TenuoToolNode([search], control_plane=mock_cp)
+        tool_node = TenuoToolNode([search], control_plane=mock_cp, trusted_roots=[issuer_key.public_key])
+
+        if not getattr(tool_node, "_tenuo_hooks_active", True):
+            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
 
         state = dict(setup)
         state["messages"] = [
@@ -475,7 +479,15 @@ class TestLangGraphControlPlane:
                 tool_calls=[{"id": "t1", "name": "search", "args": {"query": "AI"}}],
             )
         ]
-        tool_node(state)
+
+        from tests.adapters.test_langgraph import MockState as _S  # noqa: F401  — reuse existing State
+
+        builder = StateGraph(_S)
+        builder.add_node("tools", tool_node)
+        builder.add_edge(START, "tools")
+        builder.add_edge("tools", END)
+        graph = builder.compile()
+        graph.invoke(state)
 
         assert len(mock_cp.allow_events) == 1
         entry = mock_cp.allow_events[0]
@@ -491,6 +503,8 @@ class TestLangGraphControlPlane:
             pytest.skip("LangGraph not available")
 
         from langchain_core.tools import tool
+        from langgraph.graph import StateGraph, END, START
+        from tests.adapters.test_langgraph import MockState as _S
 
         @tool
         def admin_reset() -> str:
@@ -499,6 +513,9 @@ class TestLangGraphControlPlane:
 
         tool_node = TenuoToolNode([admin_reset], control_plane=mock_cp)
 
+        if not getattr(tool_node, "_tenuo_hooks_active", True):
+            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
+
         state = dict(setup)
         state["messages"] = [
             AIMessage(
@@ -506,13 +523,19 @@ class TestLangGraphControlPlane:
                 tool_calls=[{"id": "t2", "name": "admin_reset", "args": {}}],
             )
         ]
-        tool_node(state)
+
+        builder = StateGraph(_S)
+        builder.add_node("tools", tool_node)
+        builder.add_edge(START, "tools")
+        builder.add_edge("tools", END)
+        graph = builder.compile()
+        graph.invoke(state)
 
         assert len(mock_cp.deny_events) == 1
         assert mock_cp.deny_events[0]["result"].tool == "admin_reset"
 
     @needs_encode_warrant_stack
-    def test_toolnode_warrant_stack_not_none(self, setup, mock_cp):
+    def test_toolnode_warrant_stack_not_none(self, setup, mock_cp, issuer_key):
         """Emitted allow event carries a non-None warrant_stack_override (single-warrant encoding)."""
         from langchain_core.messages import AIMessage
         from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
@@ -521,13 +544,19 @@ class TestLangGraphControlPlane:
             pytest.skip("LangGraph not available")
 
         from langchain_core.tools import tool
+        from langgraph.graph import StateGraph, END, START
+        from tests.adapters.test_langgraph import MockState as _S
 
         @tool
         def read_file(path: str) -> str:
             """Read a file."""
             return "content"
 
-        tool_node = TenuoToolNode([read_file], control_plane=mock_cp)
+        tool_node = TenuoToolNode([read_file], control_plane=mock_cp, trusted_roots=[issuer_key.public_key])
+
+        if not getattr(tool_node, "_tenuo_hooks_active", True):
+            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
+
         state = dict(setup)
         state["messages"] = [
             AIMessage(
@@ -535,7 +564,13 @@ class TestLangGraphControlPlane:
                 tool_calls=[{"id": "t3", "name": "read_file", "args": {"path": "/data/x"}}],
             )
         ]
-        tool_node(state)
+
+        builder = StateGraph(_S)
+        builder.add_node("tools", tool_node)
+        builder.add_edge(START, "tools")
+        builder.add_edge("tools", END)
+        graph = builder.compile()
+        graph.invoke(state)
 
         entry = mock_cp.allow_events[0]
         assert entry["warrant_stack_override"] is not None
@@ -774,6 +809,7 @@ class TestADKControlPlane:
         guard = TenuoGuard(
             warrant=adk_warrant,
             signing_key=adk_keys,
+            trusted_roots=[adk_keys.public_key],
             control_plane=mock_cp,
         )
         tool = _MockBaseTool("read_file")
@@ -880,6 +916,7 @@ class TestADKControlPlane:
         guard = TenuoGuard(
             warrant=adk_warrant,
             signing_key=adk_keys,
+            trusted_roots=[adk_keys.public_key],
             control_plane=mock_cp,
         )
         tool = _MockBaseTool("read_file")

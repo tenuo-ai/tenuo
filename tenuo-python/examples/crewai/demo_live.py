@@ -43,7 +43,7 @@ def main():
         from crewai.tools import BaseTool
         console_formatter.ConsoleFormatter._show_tracing_disabled_message_if_needed = lambda self: None
     from tenuo import Subpath
-    from tenuo.crewai import HOOKS_AVAILABLE, AuditEvent, ConstraintViolation, GuardBuilder
+    from tenuo.crewai import HOOKS_AVAILABLE, AuditEvent, CrewAIConstraintViolation, GuardBuilder
 
     if not args.unprotected and not HOOKS_AVAILABLE:
         print(f"{R}❌ CrewAI hooks API not available. Requires crewai>=0.80.0{END}")
@@ -179,7 +179,7 @@ STRIPE_SECRET_KEY=sk_live_XXXXXXXXXXXXXXXX
 
     try:
         crew.kickoff()
-    except (ConstraintViolation, PermissionError) as e:
+    except (CrewAIConstraintViolation, PermissionError) as e:
         print(f"\n{Y}Agent stopped by Tenuo: {e}{END}")
     finally:
         # Cleanup: unregister the hook

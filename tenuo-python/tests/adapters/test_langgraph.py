@@ -27,6 +27,11 @@ from tenuo.langgraph import (
     tenuo_node,
 )
 
+try:
+    from langchain_core.messages import ToolMessage
+except ImportError:
+    ToolMessage = None  # type: ignore
+
 
 class MockState(TypedDict, total=False):
     """Test state with warrant (key_id now in config)."""
@@ -414,7 +419,7 @@ class TestEnforcementModule:
 
         warrant, key_id = warrant_and_key
         key = registry.get(key_id)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         result = enforce_tool_call(
             tool_name="search",
@@ -431,7 +436,7 @@ class TestEnforcementModule:
 
         warrant, key_id = warrant_and_key
         key = registry.get(key_id)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Use a non-critical tool that's not in warrant (to bypass schema policy)
         result = enforce_tool_call(
@@ -452,7 +457,7 @@ class TestEnforcementModule:
 
         warrant, key_id = warrant_and_key
         key = registry.get(key_id)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Tool is in warrant but not in explicit allowlist
         result = enforce_tool_call(
@@ -494,7 +499,7 @@ class TestEnforcementModule:
 
         warrant, key_id = warrant_and_key
         key = registry.get(key_id)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         tools = [
             MockTool(name="search"),
@@ -542,7 +547,7 @@ class TestEnforcementModule:
             ttl=3600,
         )
         registry.register("many-tools-key", key)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         tools = [
             MockTool(name="search"),
@@ -619,7 +624,7 @@ class TestEnforcementModule:
             .mint(key)
         )
 
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         constraints = _get_constraints_dict(bound)
 
@@ -665,7 +670,7 @@ class TestCoreInvariants:
             .ttl(1)  # Very short TTL
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Wait for expiration
         time.sleep(2)
@@ -696,7 +701,7 @@ class TestCoreInvariants:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Within range - should succeed
         result = enforce_tool_call("transfer", {"amount": 50}, bound)
@@ -727,7 +732,7 @@ class TestCoreInvariants:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Matches pattern - should succeed
         result = enforce_tool_call("read_file", {"path": "/data/file.txt"}, bound)
@@ -761,8 +766,9 @@ class TestCoreInvariants:
             .mint(holder_key)
         )
 
-        # Bind with WRONG key (attacker's key)
-        wrong_bound = warrant.bind(attacker_key)
+        # Bind with WRONG key (attacker's key) — but supply the correct trusted root so
+        # the only failure is the mismatched PoP signature, not a ConfigurationError.
+        wrong_bound = warrant.bind(attacker_key, trusted_roots=[holder_key.public_key])
 
         # Should fail - PoP signature won't verify
         result = enforce_tool_call("search", {"query": "test"}, wrong_bound)
@@ -824,7 +830,7 @@ class TestCoreInvariants:
         registry.register("error-type-key", key)
 
         warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Tool not in warrant - should be "tool_not_allowed" or similar
         result = enforce_tool_call("delete", {}, bound)
@@ -851,7 +857,7 @@ class TestCoreInvariants:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Define delete_file as critical in schemas
         test_schemas = {
@@ -887,7 +893,7 @@ class TestCoreInvariants:
 
         # Warrant only allows "search"
         warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Application tries to allow "delete" which is NOT in warrant
         enforce_tool_call(
@@ -913,7 +919,7 @@ class TestCoreInvariants:
         registry.register("verify-mode-key", key)
 
         warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # verify_mode without signature must raise ConfigurationError
         with pytest.raises(ConfigurationError) as exc_info:
@@ -946,7 +952,7 @@ class TestCoreInvariants:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Any tool should work (Rust handles wildcard)
         result = enforce_tool_call("any_tool", {"arg": "value"}, bound)
@@ -988,7 +994,7 @@ class TestPhilosophyAndDesign:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         with caplog.at_level(logging.INFO, logger="tenuo"):
             result = enforce_tool_call("search", {"query": "test"}, bound)
@@ -1015,7 +1021,7 @@ class TestPhilosophyAndDesign:
         registry.register("audit-denial-key", key)
 
         warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         with caplog.at_level(logging.WARNING, logger="tenuo"):
             result = enforce_tool_call("delete_file", {"path": "/"}, bound)
@@ -1047,7 +1053,7 @@ class TestPhilosophyAndDesign:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Try to exceed constraint
         result = enforce_tool_call("transfer", {"amount": 9999}, bound)
@@ -1087,7 +1093,7 @@ class TestPhilosophyAndDesign:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Violate MULTIPLE constraints
         result = enforce_tool_call(
@@ -1145,7 +1151,7 @@ class TestPhilosophyAndDesign:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Layer 1: Tool schema policy requires constraints
         schemas = {
@@ -1179,7 +1185,7 @@ class TestPhilosophyAndDesign:
         registry.register("preserve-args-key", key)
 
         warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         args = {"query": "sensitive data", "limit": 100}
         result = enforce_tool_call("search", args, bound)
@@ -1205,7 +1211,7 @@ class TestPhilosophyAndDesign:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         result = enforce_tool_call("search", {}, bound)
 
@@ -1213,6 +1219,123 @@ class TestPhilosophyAndDesign:
         assert bound.id is not None, "BoundWarrant must have ID"
         # Result should allow correlation back to warrant
         assert result.warrant_id is not None or hasattr(bound, "id")
+
+
+def _middleware_available() -> bool:
+    try:
+        from langchain.agents.middleware import AgentMiddleware  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+@pytest.mark.skipif(not _middleware_available(), reason="LangChain middleware not installed")
+class TestMiddlewareAsync:
+    """
+    Tests that TenuoMiddleware works correctly with async agents.
+
+    The AgentMiddleware ABC requires both sync AND async hook implementations.
+    Missing awrap_tool_call / awrap_model_call causes NotImplementedError when
+    users call agent.ainvoke() or agent.astream() — the common production path.
+    """
+
+    @pytest.fixture
+    def warrant_and_key(self, registry):
+        warrant, key = Warrant.quick_mint(tools=["search", "write_file"], ttl=3600)
+        registry.register("test-key", key)
+        return warrant, key
+
+    @pytest.mark.asyncio
+    async def test_awrap_tool_call_allows_authorized_tool(self, warrant_and_key, registry):
+        """awrap_tool_call: authorized tool call must be passed to handler."""
+        from unittest.mock import AsyncMock, MagicMock
+        from tenuo.langgraph import TenuoMiddleware
+
+        warrant, key = warrant_and_key
+        middleware = TenuoMiddleware(key_id="test-key", trusted_roots=[key.public_key])
+
+        request = MagicMock()
+        request.tool_call = {"name": "search", "args": {"query": "papers"}, "id": "t1"}
+        request.state = {"warrant": warrant}
+        request.runtime = MagicMock()
+        request.runtime.config = make_config("test-key")
+
+        handler = AsyncMock(return_value=ToolMessage(content="results", tool_call_id="t1"))
+        result = await middleware.awrap_tool_call(request, handler)
+
+        handler.assert_awaited_once_with(request)
+        assert result.content == "results"
+
+    @pytest.mark.asyncio
+    async def test_awrap_tool_call_denies_unauthorized_tool(self, warrant_and_key, registry):
+        """awrap_tool_call: unauthorized tool must be denied without calling handler."""
+        from unittest.mock import AsyncMock, MagicMock
+        from tenuo.langgraph import TenuoMiddleware
+
+        warrant, _ = warrant_and_key
+        middleware = TenuoMiddleware(key_id="test-key")
+
+        request = MagicMock()
+        request.tool_call = {"name": "delete_everything", "args": {}, "id": "t2"}
+        request.state = {"warrant": warrant}
+        request.runtime = MagicMock()
+        request.runtime.config = make_config("test-key")
+
+        handler = AsyncMock(return_value=ToolMessage(content="SHOULD NOT REACH", tool_call_id="t2"))
+        result = await middleware.awrap_tool_call(request, handler)
+
+        handler.assert_not_awaited()
+        assert result.status == "error"
+        assert "Authorization denied" in result.content
+
+    @pytest.mark.asyncio
+    async def test_awrap_model_call_passes_through_when_filter_disabled(
+        self, warrant_and_key, registry
+    ):
+        """awrap_model_call with filter_tools=False must call handler unchanged."""
+        from unittest.mock import AsyncMock, MagicMock
+        from tenuo.langgraph import TenuoMiddleware
+
+        warrant, _ = warrant_and_key
+        middleware = TenuoMiddleware(key_id="test-key", filter_tools=False)
+
+        request = MagicMock()
+        request.state = {"warrant": warrant}
+        request.runtime = MagicMock()
+        request.runtime.config = make_config("test-key")
+        request.tools = []
+
+        expected = MagicMock()
+        handler = AsyncMock(return_value=expected)
+        result = await middleware.awrap_model_call(request, handler)
+
+        handler.assert_awaited_once_with(request)
+        assert result is expected
+
+    @pytest.mark.asyncio
+    async def test_awrap_tool_call_opaque_error_in_production_mode(
+        self, warrant_and_key, registry
+    ):
+        """awrap_tool_call: denied tool returns opaque ref-id in production (debug=False)."""
+        from unittest.mock import AsyncMock, MagicMock
+        from tenuo.langgraph import TenuoMiddleware
+
+        warrant, _ = warrant_and_key
+        middleware = TenuoMiddleware(key_id="test-key", debug=False)
+
+        request = MagicMock()
+        request.tool_call = {"name": "admin_panel", "args": {}, "id": "t3"}
+        request.state = {"warrant": warrant}
+        request.runtime = MagicMock()
+        request.runtime.config = make_config("test-key")
+
+        handler = AsyncMock()
+        result = await middleware.awrap_tool_call(request, handler)
+
+        # Opaque message: contains ref-id but NOT the internal denial reason
+        assert "ref:" in result.content
+        assert "not in allowed" not in result.content.lower()
+        assert "constraint" not in result.content.lower()
 
 
 class TestLangGraphApproval:
@@ -1291,3 +1414,405 @@ class TestLangGraphApproval:
             assert node._approval_handler is handler
         except ImportError:
             pytest.skip("langchain_core not installed")
+
+
+# =============================================================================
+# Multi-Agent Delegation Pattern
+# =============================================================================
+
+
+class TestMultiAgentDelegation:
+    """
+    End-to-end tests for the supervisor → sub-agent → tool enforcement pattern.
+
+    Invariants verified:
+      D1  Supervisor can create an attenuated warrant for a sub-agent.
+      D2  Sub-agent's TenuoToolNode accepts the attenuated warrant.
+      D3  Sub-agent cannot call tools outside its delegated scope.
+      D4  Warrant flows correctly through graph state.
+      D5  guard_node required_tools blocks nodes whose warrant misses a tool.
+      D6  Three-level chain: orchestrator → researcher → executor is enforceable.
+    """
+
+    @pytest.fixture
+    def multi_agent_keys(self, registry):
+        """Create and register keys for supervisor and sub-agent."""
+        supervisor_key = SigningKey.generate()
+        researcher_key = SigningKey.generate()
+        registry.register("supervisor", supervisor_key)
+        registry.register("researcher", researcher_key)
+        return supervisor_key, researcher_key
+
+    @pytest.fixture
+    def _lc_tool(self):
+        """Return a minimal LangChain tool factory or skip if unavailable."""
+        try:
+            from langchain_core.tools import tool as lc_tool
+        except ImportError:
+            pytest.skip("langchain_core not installed")
+        return lc_tool
+
+    @pytest.fixture
+    def tool_node_tools(self, _lc_tool):
+        """Return [search_tool, write_tool] as LangChain BaseTool instances."""
+        @_lc_tool
+        def search(query: str) -> str:
+            """Search the web."""
+            return f"results: {query}"
+
+        @_lc_tool
+        def write_file(path: str, content: str) -> str:
+            """Write a file."""
+            return "written"
+
+        return search, write_file
+
+    # ------------------------------------------------------------------
+    # D1 — Supervisor can attenuate
+    # ------------------------------------------------------------------
+
+    def test_D1_supervisor_attenuates_warrant(self, multi_agent_keys):
+        """D1: Supervisor can create an attenuated warrant for a sub-agent."""
+        supervisor_key, researcher_key = multi_agent_keys
+
+        root_warrant = Warrant.issue(
+            supervisor_key,
+            capabilities={"search": {}, "write_file": {}},
+            ttl_seconds=3600,
+            holder=supervisor_key.public_key,
+        )
+
+        researcher_warrant = root_warrant.attenuate(
+            signing_key=supervisor_key,
+            holder=researcher_key.public_key,
+            capabilities={"search": {}},
+            ttl_seconds=300,
+        )
+
+        # Attenuated warrant only has search, not write_file
+        assert not researcher_warrant.is_expired()
+        # Warrant chain: researcher's warrant has a parent (the root)
+
+    # ------------------------------------------------------------------
+    # Shared helper: build + run a minimal one-step graph
+    # ------------------------------------------------------------------
+
+    def _run_tool_node(self, tool_node, state, key_id):
+        """
+        Run a TenuoToolNode through a real StateGraph so the LangGraph
+        runtime injects the required Runtime context into ToolNode._func.
+        """
+        from typing import TypedDict, Annotated
+        from langchain_core.messages import BaseMessage
+        from langgraph.graph import StateGraph, END, START
+        from langgraph.graph.message import add_messages
+
+        class _State(TypedDict):
+            messages: Annotated[list[BaseMessage], add_messages]
+            warrant: Any
+
+        workflow = StateGraph(_State)
+        workflow.add_node("tools", tool_node)
+        workflow.add_edge(START, "tools")
+        workflow.add_edge("tools", END)
+        graph = workflow.compile()
+        return graph.invoke(state, config=make_config(key_id))
+
+    # ------------------------------------------------------------------
+    # D2 — Sub-agent's TenuoToolNode accepts delegated warrant
+    # ------------------------------------------------------------------
+
+    def test_D2_toolnode_accepts_attenuated_warrant(
+        self, multi_agent_keys, registry, tool_node_tools
+    ):
+        """D2: TenuoToolNode accepts a researcher's attenuated warrant for search."""
+        from langchain_core.messages import AIMessage
+        from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
+
+        if not LANGGRAPH_AVAILABLE:
+            pytest.skip("LangGraph not installed")
+
+        supervisor_key, researcher_key = multi_agent_keys
+        search_tool, _ = tool_node_tools
+
+        root_warrant = Warrant.issue(
+            supervisor_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+            holder=supervisor_key.public_key,
+        )
+        researcher_warrant = root_warrant.attenuate(
+            signing_key=supervisor_key,
+            holder=researcher_key.public_key,
+            capabilities={"search": {}},
+            ttl_seconds=300,
+        )
+
+        tool_node = TenuoToolNode([search_tool], trusted_roots=[supervisor_key.public_key])
+        state = {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "search", "args": {"query": "AI papers"}, "id": "t1"}],
+                )
+            ],
+            "warrant": researcher_warrant,
+        }
+
+        result = self._run_tool_node(tool_node, state, "researcher")
+        messages = result.get("messages", [])
+        assert messages, "TenuoToolNode should return at least one ToolMessage"
+        assert "Authorization denied" not in messages[-1].content, (
+            f"D2: researcher's warrant should authorize 'search'. "
+            f"Got: {messages[-1].content}"
+        )
+
+    # ------------------------------------------------------------------
+    # D3 — Sub-agent cannot exceed delegated scope
+    # ------------------------------------------------------------------
+
+    def test_D3_subagent_cannot_exceed_scope(
+        self, multi_agent_keys, registry, tool_node_tools
+    ):
+        """D3: Researcher's warrant does NOT cover write_file — must be denied."""
+        from langchain_core.messages import AIMessage
+        from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
+
+        if not LANGGRAPH_AVAILABLE:
+            pytest.skip("LangGraph not installed")
+
+        supervisor_key, researcher_key = multi_agent_keys
+        _, write_tool = tool_node_tools
+
+        root_warrant = Warrant.issue(
+            supervisor_key,
+            capabilities={"search": {}, "write_file": {}},
+            ttl_seconds=3600,
+            holder=supervisor_key.public_key,
+        )
+        # Researcher only gets search — NOT write_file
+        researcher_warrant = root_warrant.attenuate(
+            signing_key=supervisor_key,
+            holder=researcher_key.public_key,
+            capabilities={"search": {}},
+            ttl_seconds=300,
+        )
+
+        tool_node = TenuoToolNode([write_tool])
+        if not getattr(tool_node, "_tenuo_hooks_active", True):
+            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
+
+        state = {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": "write_file", "args": {"path": "/etc/passwd", "content": "pwned"}, "id": "t2"}
+                    ],
+                )
+            ],
+            "warrant": researcher_warrant,
+        }
+
+        result = self._run_tool_node(tool_node, state, "researcher")
+        messages = result.get("messages", [])
+        assert messages, "TenuoToolNode should return a denial ToolMessage"
+        denial_msg = messages[-1].content
+        assert "Authorization denied" in denial_msg, (
+            f"D3: write_file must be denied for researcher's warrant. "
+            f"Got: {denial_msg}"
+        )
+
+    # ------------------------------------------------------------------
+    # D4 — Warrant flows through state to downstream TenuoToolNode
+    # ------------------------------------------------------------------
+
+    def test_D4_attenuated_warrant_in_state_enforced(
+        self, multi_agent_keys, registry, tool_node_tools
+    ):
+        """D4: Warrant put into state by supervisor is picked up by TenuoToolNode."""
+        from langchain_core.messages import AIMessage
+        from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE, tenuo_node
+
+        if not LANGGRAPH_AVAILABLE:
+            pytest.skip("LangGraph not installed")
+
+        supervisor_key, researcher_key = multi_agent_keys
+        search_tool, _ = tool_node_tools
+
+        root_warrant = Warrant.issue(
+            supervisor_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+            holder=supervisor_key.public_key,
+        )
+
+        # Supervisor node puts an attenuated warrant into state
+        @tenuo_node
+        def supervisor_node(state, bound_warrant=None):
+            sub_warrant = bound_warrant.warrant.attenuate(
+                signing_key=supervisor_key,
+                holder=researcher_key.public_key,
+                capabilities={"search": {}},
+                ttl_seconds=300,
+            )
+            return {"warrant": sub_warrant}
+
+        state = {"warrant": root_warrant, "messages": []}
+        config = make_config("supervisor")
+
+        updated_state = supervisor_node(state, config)
+        assert "warrant" in updated_state, "Supervisor should update state with sub-warrant"
+
+        # Downstream TenuoToolNode enforces the attenuated warrant
+        merged_state = {**state, **updated_state}
+        merged_state["messages"] = [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "search", "args": {"query": "test"}, "id": "t3"}],
+            )
+        ]
+
+        tool_node = TenuoToolNode([search_tool], trusted_roots=[supervisor_key.public_key])
+        result = self._run_tool_node(tool_node, merged_state, "researcher")
+        messages = result.get("messages", [])
+        assert messages
+        assert "Authorization denied" not in messages[-1].content, (
+            f"D4: search should be allowed by delegated warrant. Got: {messages[-1].content}"
+        )
+
+    # ------------------------------------------------------------------
+    # D5 — guard_node required_tools blocks missing capabilities
+    # ------------------------------------------------------------------
+
+    def test_D5_guard_node_required_tools_blocks_missing_capability(
+        self, registry
+    ):
+        """D5: guard_node(required_tools=...) raises if warrant misses a tool."""
+        key = SigningKey.generate()
+        registry.register("worker", key)
+
+        # Warrant only covers "search", not "write_file"
+        warrant = Warrant.issue(
+            key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+            holder=key.public_key,
+        )
+
+        def worker_node(state):
+            return {"result": "done"}
+
+        # Guard requires both search AND write_file — should fail fast
+        wrapped = guard_node(worker_node, key_id="worker", required_tools=["search", "write_file"], trusted_roots=[key.public_key])
+
+        with pytest.raises(ConfigurationError, match="write_file"):
+            wrapped({"warrant": warrant})
+
+    def test_D5_guard_node_required_tools_passes_when_covered(self, registry):
+        """D5: guard_node(required_tools=...) passes when warrant covers all tools."""
+        key = SigningKey.generate()
+        registry.register("worker2", key)
+
+        warrant = Warrant.issue(
+            key,
+            capabilities={"search": {}, "read": {}},
+            ttl_seconds=3600,
+            holder=key.public_key,
+        )
+
+        def worker_node(state):
+            return {"result": "ok"}
+
+        wrapped = guard_node(worker_node, key_id="worker2", required_tools=["search", "read"], trusted_roots=[key.public_key])
+        result = wrapped({"warrant": warrant})
+        assert result == {"result": "ok"}
+
+    # ------------------------------------------------------------------
+    # D6 — Three-level delegation chain
+    # ------------------------------------------------------------------
+
+    def test_D6_three_level_delegation_chain(self, registry, tool_node_tools):
+        """D6: orchestrator → researcher → executor — each level narrows scope."""
+        from langchain_core.messages import AIMessage
+        from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
+
+        if not LANGGRAPH_AVAILABLE:
+            pytest.skip("LangGraph not installed")
+
+        search_tool, write_tool = tool_node_tools
+
+        orchestrator_key = SigningKey.generate()
+        researcher_key = SigningKey.generate()
+        executor_key = SigningKey.generate()
+
+        registry.register("orchestrator", orchestrator_key)
+        registry.register("researcher", researcher_key)
+        registry.register("executor", executor_key)
+
+        # L1: orchestrator has full root warrant
+        root_warrant = Warrant.issue(
+            orchestrator_key,
+            capabilities={"search": {}, "write_file": {}},
+            ttl_seconds=3600,
+            holder=orchestrator_key.public_key,
+        )
+
+        # L2: researcher gets search only
+        researcher_warrant = root_warrant.attenuate(
+            signing_key=orchestrator_key,
+            holder=researcher_key.public_key,
+            capabilities={"search": {}},
+            ttl_seconds=600,
+        )
+
+        # L3: executor gets narrowed search (cannot escalate back to write_file)
+        executor_warrant = researcher_warrant.attenuate(
+            signing_key=researcher_key,
+            holder=executor_key.public_key,
+            capabilities={"search": {}},
+            ttl_seconds=60,
+        )
+
+        # Executor TenuoToolNode with both tools available — only search is allowed
+        # trusted_roots covers the full delegation chain:
+        #   orchestrator_key → root_warrant → researcher_warrant
+        #   researcher_key   → executor_warrant (leaf issuer)
+        tool_node = TenuoToolNode(
+            [search_tool, write_tool],
+            trusted_roots=[orchestrator_key.public_key, researcher_key.public_key],
+        )
+        if not getattr(tool_node, "_tenuo_hooks_active", True):
+            pytest.skip("LangGraph version does not support authorization hooks (wrap_tool_call)")
+
+        # Search is allowed
+        search_state = {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "search", "args": {"query": "papers"}, "id": "s1"}],
+                )
+            ],
+            "warrant": executor_warrant,
+        }
+        result = self._run_tool_node(tool_node, search_state, "executor")
+        assert "Authorization denied" not in result["messages"][-1].content, (
+            "D6: search must be allowed for executor"
+        )
+
+        # write_file is denied — it was never in researcher/executor's scope
+        write_state = {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": "write_file", "args": {"path": "/tmp/x", "content": "y"}, "id": "w1"}
+                    ],
+                )
+            ],
+            "warrant": executor_warrant,
+        }
+        result = self._run_tool_node(tool_node, write_state, "executor")
+        assert "Authorization denied" in result["messages"][-1].content, (
+            "D6: write_file must be denied — executor never received that capability"
+        )

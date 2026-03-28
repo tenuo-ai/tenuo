@@ -26,7 +26,7 @@ import pytest
 # Discovery
 # ---------------------------------------------------------------------------
 
-EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
+EXAMPLES_DIR = Path(__file__).resolve().parent.parent.parent / "examples"
 
 SKIP_DIRS = {"__pycache__", "demo_venv", ".venv", "venv", "node_modules", ".git"}
 

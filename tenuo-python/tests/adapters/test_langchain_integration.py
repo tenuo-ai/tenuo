@@ -297,7 +297,7 @@ class TestLangChainApproval:
             ttl_seconds=3600,
             holder=agent_key.public_key,
         )
-        bound = w.bind(agent_key)
+        bound = w.bind(agent_key, trusted_roots=[agent_key.public_key])
         policy = ApprovalPolicy(
             require_approval("search"),
             trusted_approvers=[approver_key.public_key],
@@ -330,7 +330,7 @@ class TestLangChainApproval:
             ttl_seconds=3600,
             holder=agent_key.public_key,
         )
-        bound = w.bind(agent_key)
+        bound = w.bind(agent_key, trusted_roots=[agent_key.public_key])
         policy = ApprovalPolicy(
             require_approval("search"),
             trusted_approvers=[approver_key.public_key],
@@ -358,7 +358,7 @@ class TestLangChainApproval:
             ttl_seconds=3600,
             holder=agent_key.public_key,
         )
-        bound = w.bind(agent_key)
+        bound = w.bind(agent_key, trusted_roots=[agent_key.public_key])
         policy = ApprovalPolicy(
             require_approval("search"),
             trusted_approvers=[approver_key.public_key],
@@ -391,7 +391,7 @@ class TestLangChainApproval:
             ttl_seconds=3600,
             holder=agent_key.public_key,
         )
-        bound = w.bind(agent_key)
+        bound = w.bind(agent_key, trusted_roots=[agent_key.public_key])
         policy = ApprovalPolicy(
             require_approval("search"),
             trusted_approvers=[approver_key.public_key],

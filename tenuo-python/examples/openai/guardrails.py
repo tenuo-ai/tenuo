@@ -34,7 +34,7 @@ from tenuo import Pattern, Range, Shlex, Subpath, UrlSafe
 # OpenAI-specific
 from tenuo.openai import (
     AuditEvent,
-    ConstraintViolation,
+    OpenAIConstraintViolation,
     GuardBuilder,
     ToolDenied,
     guard,
@@ -180,7 +180,7 @@ def demo_constraint_violation():
             messages=[{"role": "user", "content": "Read /etc/passwd"}],
         )
         print("✗ Should have been blocked!")
-    except ConstraintViolation as e:
+    except OpenAIConstraintViolation as e:
         print(f"✓ Blocked: {e}")
         print(f"  Tool: {e.tool_name}")
         print(f"  Param: {e.param}")
@@ -336,7 +336,7 @@ def demo_subpath_protection():
             messages=[{"role": "user", "content": "anything"}],
         )
         print("✗ Should have been blocked!")
-    except ConstraintViolation as e:
+    except OpenAIConstraintViolation as e:
         print(f"✓ Path traversal blocked: {e.tool_name}")
         print(f"  Value: {e.value}")
         print("  Normalized: /etc/passwd (escaped from /data)")
@@ -403,7 +403,7 @@ def demo_valid_call():
         tool_call = response.choices[0].message.tool_calls[0]
         print(f"✓ Allowed: {tool_call.function.name}")
         print(f"  Arguments: {tool_call.function.arguments}")
-    except (ToolDenied, ConstraintViolation) as e:
+    except (ToolDenied, OpenAIConstraintViolation) as e:
         print(f"✗ Unexpected block: {e}")
 
     print()

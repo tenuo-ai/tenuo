@@ -25,7 +25,7 @@ import pytest
 from tenuo.temporal import (
     ChainValidationError,
     # Exceptions
-    ConstraintViolation,
+    TemporalConstraintViolation,
     KeyResolver,
     LocalActivityError,
     PopVerificationError,
@@ -220,8 +220,8 @@ class TestExceptionErrorCodes:
     """Test that all exceptions have error_code for wire format compatibility."""
 
     def test_constraint_violation_has_error_code(self):
-        """ConstraintViolation should have error_code field."""
-        exc = ConstraintViolation(
+        """TemporalConstraintViolation should have error_code field."""
+        exc = TemporalConstraintViolation(
             tool="test_tool",
             arguments={"key": "value"},
             constraint="test_constraint",

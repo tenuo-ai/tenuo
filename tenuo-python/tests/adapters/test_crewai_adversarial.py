@@ -17,7 +17,7 @@ import pytest
 from tenuo.bound_warrant import BoundWarrant
 from tenuo.constraints import Subpath
 from tenuo.crewai import (
-    ConstraintViolation,
+    CrewAIConstraintViolation,
     DenialResult,
     GuardBuilder,
     MissingSigningKey,
@@ -112,15 +112,15 @@ class TestZeroTrust:
         guard = GuardBuilder().allow("transfer", amount=Range(1, 100)).build()
 
         # String instead of int
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("transfer", {"amount": "999"})
 
         # List instead of int
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("transfer", {"amount": [50]})
 
         # Dict instead of int
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("transfer", {"amount": {"value": 50}})
 
 
@@ -148,7 +148,7 @@ class TestFailClosed:
         guard = GuardBuilder().allow("read_file", path=UnknownConstraint()).build()
 
         # Should reject because UnknownConstraint is not recognized
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("read_file", {"path": "/any"})
 
     def test_constraint_exception_causes_denial(self):
@@ -178,7 +178,7 @@ class TestFailClosed:
         guard = GuardBuilder().allow("tool", value=Pattern("positive-*")).build()
 
         # None should not match the pattern
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("tool", {"value": None})
 
 
@@ -310,7 +310,7 @@ class TestNamespacingSecurity:
         )
 
         # Researcher is restricted to arxiv:* even though global allows all
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("search", {"query": "delete everything"}, agent_role="researcher")
 
 
@@ -331,7 +331,7 @@ class TestPathTraversalProtection:
         """
         guard = GuardBuilder().allow("read", path=Subpath("/data")).build()
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("read", {"path": "/data/../etc/passwd"})
 
     def test_double_encoding_traversal(self):
@@ -350,7 +350,7 @@ class TestPathTraversalProtection:
         # which is the responsibility of the transport layer.
         #
         # To test the underlying Subpath behavior, we test the decoded version:
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("read", {"path": "/data/../etc/passwd"})  # Decoded version
 
     def test_absolute_path_injection(self):
@@ -360,7 +360,7 @@ class TestPathTraversalProtection:
         """
         guard = GuardBuilder().allow("read", path=Subpath("/data")).build()
 
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("read", {"path": "/etc/passwd"})
 
     def test_null_byte_injection(self):
@@ -373,7 +373,7 @@ class TestPathTraversalProtection:
         # This depends on Subpath implementation handling null bytes
         # Either way, /data should not be bypassed
         path_with_null = "/data/file.txt\x00/../../etc/passwd"
-        with pytest.raises(ConstraintViolation):
+        with pytest.raises(CrewAIConstraintViolation):
             guard._authorize("read", {"path": path_with_null})
 
 
@@ -454,7 +454,7 @@ class TestAuditIntegrity:
         # Three different denial types
         guard._authorize("unknown_tool", {})  # ToolDenied
         guard._authorize("read", {"path": "/data/f.txt", "extra": "arg"})  # UnlistedArgument
-        guard._authorize("read", {"path": "/etc/passwd"})  # ConstraintViolation
+        guard._authorize("read", {"path": "/etc/passwd"})  # CrewAIConstraintViolation
 
         assert len(events) == 3
         assert all(e.decision == "DENY" for e in events)
@@ -571,7 +571,7 @@ class TestSecurityRegressions:
         REGRESSION: Agents not in policy must raise, not proceed unguarded.
         Previously: Logged warning and added agent with no guards.
         """
-        from tenuo.crewai import ConfigurationError, GuardedCrew
+        from tenuo.crewai import CrewAIConfigurationError, GuardedCrew
 
         mock_agent = MagicMock()
         mock_agent.role = "unregistered_agent"
@@ -589,7 +589,7 @@ class TestSecurityRegressions:
         crew = builder.build()
 
         # The error is raised when kickoff tries to protect the agents
-        with pytest.raises(ConfigurationError, match="not listed in policy"):
+        with pytest.raises(CrewAIConfigurationError, match="not listed in policy"):
             crew.kickoff()
 
     def test_audit_logs_redact_sensitive_values(self):
@@ -836,7 +836,7 @@ class TestReplayAttackProtection:
             .mint(key)
         )
 
-        guard = GuardBuilder().allow("read", path=Subpath("/data")).with_warrant(warrant, key).on_denial("skip").build()
+        guard = GuardBuilder().allow("read", path=Subpath("/data")).with_warrant(warrant, key).with_trusted_roots([key.public_key]).on_denial("skip").build()
 
         # First call with valid key should succeed
         result1 = guard._authorize("read", {"path": "/data/file.txt"})

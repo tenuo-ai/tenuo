@@ -102,8 +102,6 @@ from typing import (
     Optional,
     Union,
 )
-from urllib.parse import urlparse
-
 # Import constraint types from tenuo core
 from tenuo import (
     CEL,
@@ -136,6 +134,7 @@ check_openai_compat()
 
 # Import shared enforcement logic (after version check)
 from tenuo._enforcement import DenialPolicy, EnforcementResult, enforce_tool_call, handle_denial  # noqa: E402
+from tenuo.config import resolve_trusted_roots  # noqa: E402
 
 logger = logging.getLogger("tenuo.openai")
 
@@ -299,7 +298,7 @@ class MissingSigningKey(TenuoOpenAIError):
         )
 
 
-class ConfigurationError(TenuoOpenAIError):
+class OpenAIConfigurationError(TenuoOpenAIError):
     """Raised when guard() configuration is invalid.
 
     Common causes:
@@ -383,7 +382,7 @@ def _serialize_constraints(constraints: Dict[str, Dict[str, Any]]) -> Dict[str, 
     return result
 
 
-class ConstraintViolation(TenuoOpenAIError):
+class OpenAIConstraintViolation(TenuoOpenAIError):
     """Raised when a tool argument violates a constraint.
 
     Attributes:
@@ -463,308 +462,8 @@ class BufferOverflow(TenuoOpenAIError):
         self.limit = limit
 
 
-# =============================================================================
-# Constraint Checking
-# =============================================================================
-
-
-def check_constraint(constraint: Constraint, value: Any) -> bool:
-    """Check if a value satisfies a constraint.
-
-    Uses the Tenuo core constraint matching logic via the Rust bindings.
-    Falls back to Python implementation only when Rust bindings are not available.
-
-    SECURITY: Fails closed (returns False) for unknown constraint types.
-    This follows Tenuo's "fail closed" philosophy - when in doubt, deny.
-
-    UNIFIED INTERFACE: All Rust core constraints now support satisfies(value):
-      - constraint.satisfies(value) -> Rust core (handles type conversion)
-
-    The satisfies() method is the preferred interface.
-    """
-    try:
-        constraint_type = type(constraint).__name__
-
-        # =================================================================
-        # SPECIAL CASES - Type coercion required before satisfies()
-        # =================================================================
-        # Range requires explicit string-to-number coercion
-        if constraint_type == "Range" and hasattr(constraint, "satisfies"):
-            try:
-                return constraint.satisfies(float(value))
-            except (ValueError, TypeError):
-                return False  # Non-numeric value fails Range check
-
-        # =================================================================
-        # UNIFIED INTERFACE - All Rust core constraints support satisfies()
-        # =================================================================
-        if hasattr(constraint, "satisfies"):
-            return constraint.satisfies(value)
-
-        # =================================================================
-        # LEGACY FALLBACKS - For older constraint versions without satisfies()
-        # =================================================================
-
-        # Subpath - filesystem path containment
-        if hasattr(constraint, "contains") and constraint_type == "Subpath":
-            return constraint.contains(str(value))
-
-        # UrlSafe - SSRF protection
-        if hasattr(constraint, "is_safe"):
-            return constraint.is_safe(str(value))
-
-        # Cidr - IP address range
-        if hasattr(constraint, "contains_ip"):
-            return constraint.contains_ip(str(value))
-
-        # Pattern/Shlex - pattern matching
-        if hasattr(constraint, "matches"):
-            return constraint.matches(str(value))
-
-        # UrlPattern - URL pattern matching
-        if hasattr(constraint, "matches_url"):
-            return constraint.matches_url(str(value))
-
-        # Range - numeric bounds
-        if hasattr(constraint, "contains") and constraint_type == "Range":
-            try:
-                return constraint.contains(float(value))
-            except (ValueError, TypeError):
-                return False
-
-        # OneOf - set membership
-        if hasattr(constraint, "contains") and constraint_type == "OneOf":
-            return constraint.contains(str(value))
-
-        # NotOneOf - exclusion list
-        if hasattr(constraint, "allows"):
-            return constraint.allows(str(value))
-
-        # =================================================================
-        # FALLBACK - Python checks for constraints without Rust bindings
-        # =================================================================
-        return _python_constraint_check(constraint, value)
-
-    except Exception as e:
-        # If Rust binding fails, try Python fallback
-        logger.debug(f"Rust constraint check failed, using Python fallback: {e}")
-        return _python_constraint_check(constraint, value)
-
-
-def _python_constraint_check(constraint: Constraint, value: Any) -> bool:
-    """Python fallback for constraint checking.
-
-    SECURITY: This function follows Tenuo's "fail closed" philosophy.
-    Unknown constraint types return False, not True.
-    """
-    import fnmatch
-    import ipaddress
-    import re as regex_module
-
-    constraint_type = type(constraint).__name__
-
-    if constraint_type == "Pattern":
-        # Glob pattern matching
-        pattern = _get_attr_safe(constraint, "pattern")
-        if pattern is None:
-            logger.warning("Pattern constraint has no pattern attribute, failing closed")
-            return False
-        return fnmatch.fnmatch(str(value), pattern)
-
-    elif constraint_type == "Exact":
-        # Exact match
-        expected = _get_attr_safe(constraint, "value")
-        return value == expected
-
-    elif constraint_type == "OneOf":
-        # Set membership
-        allowed = _get_attr_safe(constraint, "values")
-        if allowed is None:
-            return False
-        return value in allowed
-
-    elif constraint_type == "Range":
-        # Numeric range - type-strict like Rust core
-        # NOTE: ConstraintValue::as_number() returns None for strings,
-        # so "15" as a string would NOT match Range(0,100).
-        # Only actual int/float types pass. This matches Tenuo's rigorous semantics.
-        min_val = _get_attr_safe(constraint, "min")
-        max_val = _get_attr_safe(constraint, "max")
-
-        # Type-strict: only int/float pass, strings fail (matches Rust behavior)
-        if not isinstance(value, (int, float)):
-            return False
-
-        try:
-            num_value = float(value)
-            if min_val is not None and num_value < min_val:
-                return False
-            if max_val is not None and num_value > max_val:
-                return False
-            return True
-        except (ValueError, TypeError):
-            return False
-
-    elif constraint_type == "Regex":
-        # Regex matching - uses fullmatch for complete string match (Tenuo spec semantics)
-        pattern = _get_attr_safe(constraint, "pattern")
-        if pattern is None:
-            logger.warning("Regex constraint has no pattern attribute, failing closed")
-            return False
-        # fullmatch ensures the ENTIRE value matches, not just a prefix
-        return bool(regex_module.fullmatch(pattern, str(value)))
-
-    elif constraint_type == "Wildcard":
-        # Wildcard matches anything
-        return True
-
-    elif constraint_type == "NotOneOf":
-        # Exclusion set
-        excluded = _get_attr_safe(constraint, "excluded")
-        if excluded is None:
-            excluded = []
-        return value not in excluded
-
-    elif constraint_type == "Contains":
-        # List must contain required values
-        required = _get_attr_safe(constraint, "required")
-        if required is None:
-            required = []
-        if not isinstance(value, (list, set, tuple)):
-            return False
-        return all(r in value for r in required)
-
-    elif constraint_type == "Subset":
-        # Value must be subset of allowed
-        allowed = _get_attr_safe(constraint, "allowed")
-        if allowed is None:
-            return False
-        if not isinstance(value, (list, set, tuple)):
-            return value in allowed
-        return all(v in allowed for v in value)
-
-    elif constraint_type == "Cidr":
-        # IP address must be within CIDR range
-        # Note: Tenuo uses .network attribute, not .cidr
-        network_str = _get_attr_safe(constraint, "network")
-        if network_str is None:
-            logger.warning("Cidr constraint has no network attribute, failing closed")
-            return False
-        try:
-            network = ipaddress.ip_network(str(network_str), strict=False)
-            ip = ipaddress.ip_address(str(value))
-            return ip in network
-        except (ValueError, TypeError):
-            return False
-
-    elif constraint_type == "UrlPattern":
-        # URL must match pattern (scheme, host, path)
-        return _check_url_pattern(constraint, value)
-
-    elif constraint_type == "CEL":
-        # CEL expressions require Rust - cannot safely evaluate in Python
-        # SECURITY: Fail closed. CEL is complex and must use the Rust evaluator.
-        logger.warning(
-            "CEL constraint cannot be evaluated in Python fallback. "
-            "Ensure tenuo-core Rust bindings are available. Failing closed."
-        )
-        return False
-
-    # Composite constraints - recursive checking
-    elif constraint_type == "AnyOf":
-        # OR: at least one constraint must match
-        options = _get_attr_safe(constraint, "constraints")
-        if not options:
-            return False
-        return any(check_constraint(c, value) for c in options)
-
-    elif constraint_type == "All":
-        # AND: all constraints must match
-        constraints_list = _get_attr_safe(constraint, "constraints")
-        if not constraints_list:
-            return True  # Empty AND is vacuously true
-        return all(check_constraint(c, value) for c in constraints_list)
-
-    elif constraint_type == "Not":
-        # NOT: inner constraint must NOT match
-        inner = _get_attr_safe(constraint, "constraint")
-        if inner is None:
-            return False
-        return not check_constraint(inner, value)
-
-    # SECURITY: Unknown constraint type - fail closed
-    # This is intentional. Tenuo's philosophy is "when in doubt, deny."
-    logger.error(f"Unknown constraint type '{constraint_type}'. Failing closed per Tenuo security policy.")
-    return False
-
-
-def _get_attr_safe(obj: Any, attr: str) -> Any:
-    """Safely get an attribute, handling both properties and methods."""
-    val = getattr(obj, attr, None)
-    if callable(val):
-        try:
-            return val()
-        except Exception:
-            return None
-    return val
-
-
-def _check_url_pattern(constraint: Any, value: Any) -> bool:
-    """Check if a URL matches a UrlPattern constraint.
-
-    UrlPattern attributes (from Rust bindings):
-        - schemes: List of allowed schemes (empty = any)
-        - host_pattern: Host pattern (supports *.example.com wildcards)
-        - path_pattern: Path pattern (glob-style)
-
-    Supported Patterns:
-        - `https://example.com/*`       - Specific host, any path
-        - `https://*.example.com/*`     - Subdomain wildcard
-        - `*://example.com/*`           - Any scheme, specific host
-
-    Known Bug (URLP-001): Bare wildcard hosts do NOT work.
-        Patterns like `https://*/*` fail silently. The Rust parser's `/*`
-        replacement (for path wildcards) interacts badly with URL parsing,
-        causing `host_pattern` to become `__tenuo_path_wildcard__` instead
-        of `*`. This is a parser bug, not intentional.
-
-        Workaround: Always specify an explicit domain or use `*.domain.com`.
-        See: tenuo-core/src/constraints.rs UrlPattern::new()
-    """
-    try:
-        url = urlparse(str(value))
-
-        # Get pattern components (Tenuo API)
-        schemes = _get_attr_safe(constraint, "schemes")  # List of allowed schemes
-        host_pattern = _get_attr_safe(constraint, "host_pattern")
-        path_pattern = _get_attr_safe(constraint, "path_pattern")
-
-        # Check scheme if specified
-        if schemes and "*" not in schemes:
-            if url.scheme not in schemes:
-                return False
-
-        # Check host if specified (supports wildcard prefix like *.example.com)
-        if host_pattern and host_pattern != "*":
-            if host_pattern.startswith("*."):
-                # Wildcard subdomain
-                suffix = host_pattern[1:]  # .example.com
-                if not url.netloc.endswith(suffix) and url.netloc != host_pattern[2:]:
-                    return False
-            else:
-                if url.netloc != host_pattern:
-                    return False
-
-        # Check path if specified (glob matching)
-        if path_pattern and path_pattern != "*":
-            import fnmatch
-
-            if not fnmatch.fnmatch(url.path, path_pattern):
-                return False
-
-        return True
-    except Exception:
-        return False
+# Import shared constraint checking logic from framework-agnostic core
+from tenuo.core import check_constraint  # noqa: E402
 
 
 def verify_tool_call(
@@ -775,6 +474,7 @@ def verify_tool_call(
     constraints: Optional[Dict[str, Dict[str, Constraint]]],
     warrant: Optional[Warrant] = None,
     signing_key: Optional[SigningKey] = None,
+    trusted_roots: Optional[list] = None,
     approval_policy: Optional[Any] = None,
     approval_handler: Optional[Any] = None,
     approvals: Optional[list] = None,
@@ -809,7 +509,7 @@ def verify_tool_call(
     Raises:
         ToolDenied: If tool is not allowed (Tier 1 allow/deny lists)
         WarrantDenied: If warrant doesn't authorize the call (Tier 2)
-        ConstraintViolation: If argument violates constraint (Tier 1, only when no warrant)
+        OpenAIConstraintViolation: If argument violates constraint (Tier 1, only when no warrant)
         MissingSigningKey: If warrant provided without signing_key
     """
     # ==========================================================================
@@ -830,6 +530,7 @@ def verify_tool_call(
             tool_name=tool_name,
             tool_args=arguments,
             bound_warrant=bound_warrant,
+            trusted_roots=resolve_trusted_roots(trusted_roots),
             approval_policy=approval_policy,
             approval_handler=approval_handler,
             approvals=approvals,
@@ -879,16 +580,16 @@ def verify_tool_call(
                     # Check compatibility and validity
                     type_mismatch, reason = _check_type_compatibility(constraint, value)
                     if type_mismatch:
-                        raise ConstraintViolation(
+                        raise OpenAIConstraintViolation(
                             tool_name, arg_name, value, constraint, type_mismatch=True, reason=reason
                         )
 
                     if not check_constraint(constraint, value):
-                        raise ConstraintViolation(tool_name, arg_name, value, constraint)
+                        raise OpenAIConstraintViolation(tool_name, arg_name, value, constraint)
                 elif not allow_unknown:
                     # Arg not in constraints -> UNKNOWN argument.
                     # Zero Trust (default): Reject it.
-                    raise ConstraintViolation(
+                    raise OpenAIConstraintViolation(
                         tool_name,
                         arg_name,
                         value,
@@ -896,12 +597,12 @@ def verify_tool_call(
                         reason=f"Unknown argument '{arg_name}' - not in constraints (set _allow_unknown=True to permit)",
                     )
                 # else: allow_unknown=True, so we skip unknown args
-            except ConstraintViolation:
+            except OpenAIConstraintViolation:
                 raise
             except Exception as e:
                 # Fail Closed: Internal error during validation = DENY
                 logger.error(f"Internal validation error for {tool_name}.{arg_name}: {e}")
-                raise ConstraintViolation(
+                raise OpenAIConstraintViolation(
                     tool_name, arg_name, value, constraint=Wildcard(), reason=f"internal validation error: {e}"
                 )
 
@@ -995,6 +696,7 @@ class GuardedCompletions:
         approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
+        trusted_roots: Optional[list] = None,
     ):
         self._original = original
         self._allow_tools = allow_tools
@@ -1010,6 +712,7 @@ class GuardedCompletions:
         self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
+        self._trusted_roots = trusted_roots
         # Freeze warrant_id at init time for consistent audit trail
         self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
 
@@ -1045,7 +748,7 @@ class GuardedCompletions:
                 try:
                     self._verify_single_tool_call(tool_call)
                     verified_calls.append(tool_call)
-                except (ToolDenied, WarrantDenied, ConstraintViolation) as e:
+                except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
                     self._handle_denial(e)
                     if self._on_denial == "raise":
                         raise
@@ -1081,13 +784,14 @@ class GuardedCompletions:
                 self._constraints,
                 self._warrant,
                 self._signing_key,
+                self._trusted_roots,
                 self._approval_policy,
                 self._approval_handler,
                 self._approvals,
             )
             # Emit audit event for allowed call
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-        except (ToolDenied, WarrantDenied, ConstraintViolation) as e:
+        except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             # Emit audit event for denied call
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
@@ -1180,12 +884,13 @@ class GuardedCompletions:
                     self._constraints,
                     self._warrant,
                     self._signing_key,
+                    self._trusted_roots,
                     self._approval_policy,
                     self._approval_handler,
                     self._approvals,
                 )
                 verified_indices.add(index)
-            except (ToolDenied, WarrantDenied, ConstraintViolation, MalformedToolCall) as e:
+            except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
                 if self._on_denial == "raise":
                     raise
@@ -1350,12 +1055,13 @@ class GuardedCompletions:
                     self._constraints,
                     self._warrant,
                     self._signing_key,
+                    self._trusted_roots,
                     self._approval_policy,
                     self._approval_handler,
                     self._approvals,
                 )
                 verified_indices.add(index)
-            except (ToolDenied, WarrantDenied, ConstraintViolation, MalformedToolCall) as e:
+            except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
                 if self._on_denial == "raise":
                     raise
@@ -1401,6 +1107,7 @@ class GuardedResponses:
         approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
+        trusted_roots: Optional[list] = None,
     ):
         self._original = original
         self._allow_tools = allow_tools
@@ -1415,6 +1122,7 @@ class GuardedResponses:
         self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
+        self._trusted_roots = trusted_roots
         # Freeze warrant_id at init time for consistent audit trail
         self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
 
@@ -1444,7 +1152,7 @@ class GuardedResponses:
                 try:
                     self._verify_function_call(item)
                     verified_items.append(item)
-                except (ToolDenied, WarrantDenied, ConstraintViolation) as e:
+                except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
                     self._handle_denial(e)
                     if self._on_denial == "raise":
                         raise
@@ -1478,12 +1186,13 @@ class GuardedResponses:
                 self._constraints,
                 self._warrant,
                 self._signing_key,
+                self._trusted_roots,
                 self._approval_policy,
                 self._approval_handler,
                 self._approvals,
             )
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-        except (ToolDenied, WarrantDenied, ConstraintViolation) as e:
+        except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
             raise
@@ -1554,6 +1263,7 @@ class GuardedClient:
         approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
+        trusted_roots: Optional[list] = None,
     ):
         self._client = client
         self._allow_tools = allow_tools
@@ -1567,6 +1277,7 @@ class GuardedClient:
         self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
+        self._trusted_roots = trusted_roots
 
         # Generate session ID and constraint hash for audit trail
         self.session_id = "sess_" + str(uuid.uuid4())[:8]
@@ -1589,6 +1300,8 @@ class GuardedClient:
                     self.constraint_hash,
                     approval_policy,
                     approval_handler,
+                    None,
+                    trusted_roots,
                 )
             )
 
@@ -1633,8 +1346,8 @@ class GuardedClient:
 
         Raises:
             MissingSigningKey: If warrant provided without signing_key
-            ConfigurationError: If signing_key doesn't match warrant holder
-            ConfigurationError: If warrant is expired
+            OpenAIConfigurationError: If signing_key doesn't match warrant holder
+            OpenAIConfigurationError: If warrant is expired
 
         Example::
 
@@ -1653,14 +1366,14 @@ class GuardedClient:
                 else getattr(self._warrant, "expired", False)
             )
             if is_expired:
-                raise ConfigurationError("Warrant is expired. Request a new warrant from the control plane.", "CFG_002")
+                raise OpenAIConfigurationError("Warrant is expired. Request a new warrant from the control plane.", "CFG_002")
 
             # Check signing_key matches warrant holder
             try:
                 holder = self._warrant.authorized_holder
                 signer_pub = self._signing_key.public_key
                 if holder.to_bytes() != signer_pub.to_bytes():
-                    raise ConfigurationError(
+                    raise OpenAIConfigurationError(
                         "Signing key does not match warrant holder. "
                         "The signing_key must be the private key corresponding to "
                         "the warrant's authorized_holder public key.",
@@ -2011,7 +1724,7 @@ class GuardBuilder:
         Args:
             mode:
                 - "warn": Log warnings for invalid constraints (default)
-                - "strict": Raise ConfigurationError for invalid constraints
+                - "strict": Raise OpenAIConfigurationError for invalid constraints
                 - False: Disable validation
 
         Returns:
@@ -2125,14 +1838,14 @@ class GuardBuilder:
 
         Raises:
             MissingSigningKey: If warrant provided without signing_key
-            ConfigurationError: If validation is strict and constraints are invalid
+            OpenAIConfigurationError: If validation is strict and constraints are invalid
         """
         # Validate constraints against tool schemas
         if self._tool_schemas and self._validate_mode:
             warnings = self._validate_constraints()
             if warnings:
                 if self._validate_mode == "strict":
-                    raise ConfigurationError("Constraint validation failed:\n  " + "\n  ".join(warnings), code="C1_003")
+                    raise OpenAIConfigurationError("Constraint validation failed:\n  " + "\n  ".join(warnings), code="C1_003")
                 else:  # warn mode
                     for warning in warnings:
                         logger.warning(f"Constraint validation: {warning}")
@@ -2161,6 +1874,7 @@ def guard(
     constraints: Optional[Dict[str, Dict[str, Constraint]]] = None,
     warrant: Optional[Warrant] = None,
     signing_key: Optional[SigningKey] = None,
+    trusted_roots: Optional[list] = None,
     on_denial: DenialMode = "raise",
     stream_buffer_limit: int = 65536,
     audit_callback: Optional[AuditCallback] = None,
@@ -2266,6 +1980,7 @@ def guard(
         stream_buffer_limit=stream_buffer_limit,
         warrant=warrant,
         signing_key=signing_key,
+        trusted_roots=trusted_roots,
         audit_callback=audit_callback,
     )
 
@@ -2368,6 +2083,7 @@ class TenuoToolGuardrail:
         constraints: Optional[Dict[str, Dict[str, Constraint]]] = None,
         warrant: Optional[Warrant] = None,
         signing_key: Optional[SigningKey] = None,
+        trusted_roots: Optional[list] = None,
         tripwire: bool = True,
         audit_callback: Optional[AuditCallback] = None,
         approval_policy: Optional[Any] = None,
@@ -2382,6 +2098,7 @@ class TenuoToolGuardrail:
             constraints: Per-tool argument constraints
             warrant: Optional Tier 2 warrant for cryptographic authorization
             signing_key: Required if warrant is provided (for PoP)
+            trusted_roots: Trusted issuer public keys (required for Tier 2 warrant path)
             tripwire: If True, halt agent on violation. If False, log and continue.
             audit_callback: Optional callback for audit events
             approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
@@ -2392,6 +2109,7 @@ class TenuoToolGuardrail:
         self.constraints = constraints
         self.warrant = warrant
         self.signing_key = signing_key
+        self.trusted_roots = trusted_roots
         self.tripwire = tripwire
         self.audit_callback = audit_callback
         self.approval_policy = approval_policy
@@ -2447,13 +2165,14 @@ class TenuoToolGuardrail:
                     self.constraints,
                     self.warrant,
                     self.signing_key,
+                    self.trusted_roots,
                     self.approval_policy,
                     self.approval_handler,
                     self.approvals,
                 )
                 # Emit audit event for allowed call
                 self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-            except (ToolDenied, WarrantDenied, ConstraintViolation, MalformedToolCall) as e:
+            except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 violations.append(f"{tool_name}: {e}")
                 logger.warning(f"Tenuo guardrail blocked: {tool_name} - {e}")
                 # Emit audit event for denied call
@@ -2645,6 +2364,7 @@ def create_tier2_guardrail(
     *,
     warrant: Warrant,
     signing_key: SigningKey,
+    trusted_roots: Optional[list] = None,
     tripwire: bool = True,
     audit_callback: Optional[AuditCallback] = None,
 ) -> TenuoToolGuardrail:
@@ -2694,6 +2414,7 @@ def create_tier2_guardrail(
     return TenuoToolGuardrail(
         warrant=warrant,
         signing_key=signing_key,
+        trusted_roots=trusted_roots,
         tripwire=tripwire,
         audit_callback=audit_callback,
     )
@@ -2722,12 +2443,12 @@ __all__ = [
     # Exceptions
     "TenuoOpenAIError",
     "ToolDenied",
-    "ConstraintViolation",
+    "OpenAIConstraintViolation",
     "MalformedToolCall",
     "BufferOverflow",
     "WarrantDenied",
     "MissingSigningKey",
-    "ConfigurationError",
+    "OpenAIConfigurationError",
     # Zero-config entry point
     "protect",
     # Re-export constraints for convenience

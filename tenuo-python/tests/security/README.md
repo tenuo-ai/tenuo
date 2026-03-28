@@ -5,10 +5,10 @@ Adversarial tests verifying Tenuo's security properties.
 ## Quick Verification
 
 ```bash
-# Verify all security properties in 30 seconds
+# Verify all security properties in ~60 seconds
 pytest tests/security/ -v --tb=short
 
-# Expected: 43 passed, 0 failed
+# Expected: 155 passed, ~14 skipped, 0 failed
 ```
 
 ## Running
@@ -37,6 +37,8 @@ pytest tests/security/ -m integration_responsibility -v
 | Delegation Limits | `test_delegation_limits.py` | 6 | ✅ All pass |
 | Implementation | `test_implementation.py` | 9 | ✅ All pass |
 | Edge Cases | `test_edge_cases.py` | 6 | ✅ All pass |
+| **Integration Invariants** | **`test_integration_invariants.py`** | **~130** | **✅ All pass** |
+| **Security Contracts** | **`test_security_contracts.py`** | **17** | **✅ All pass** |
 
 ## Test Markers
 
@@ -51,6 +53,45 @@ pytest tests/security/ -m integration_responsibility -v
 ```
 
 ## Critical Security Properties Verified
+
+### ✅ Integration-Level Invariants (test_integration_invariants.py)
+
+These tests exercise the **full integration stack** with real `tenuo_core` cryptographic
+objects — no mocked signing keys or fake warrants.  Every bug found in a post-mortem
+must produce a failing test here before the fix is merged.
+
+| Invariant | Description | Integrations covered |
+|-----------|-------------|----------------------|
+| I1 | No warrant → always denied | All 10 integrations (cross-matrix) |
+| I2 | Expired warrant → always denied | All 10 integrations (cross-matrix) |
+| I3 | Untrusted issuer → denied | A2A, FastAPI |
+| I4 | Self-signed warrant → denied | A2A, CrewAI, Google ADK |
+| I5 | Delegation chain + PoP → **ALLOWED** | A2A, FastAPI |
+| I6 | Broken chain linkage → denied | A2A |
+| I7 | Wrong tool → denied | All 10 integrations (cross-matrix), Temporal (dedicated) |
+| I8 | Constraint violation → denied | A2A, CrewAI, FastAPI, LangChain |
+| I9 | No trusted_issuers → SecurityWarning | FastAPI (regression Bug 1) |
+
+### ✅ Security Contracts (test_security_contracts.py)
+
+Tests that verify **configuration knob contracts** — what happens when you change
+`on_denial`, `require_warrant`, or `dry_run`.  Prevents silent security degradation
+from misconfiguration.
+
+| Contract | Description | Integrations covered |
+|----------|-------------|----------------------|
+| C2 | `on_denial=log/skip`: tool NOT executed, denial returned | CrewAI, AutoGen, Google ADK, Temporal |
+| C3a | `require_warrant=False` + bad warrant → still denied | A2A, MCP |
+| C3b | Safe defaults: zero-config is fail-closed | A2A, MCP, CrewAI, AutoGen |
+| C3c | `dry_run=False` by default; shadow mode must be explicit | Temporal |
+
+**Regression tests** (`TestRegressions`): one test per production bug, named after
+the bug.  If a regression test fails it means a previously-fixed security issue was
+re-introduced.
+
+**Adding a new integration**: append its `_XxxAdapter` class to `_ADAPTERS` in
+`TestCrossIntegrationMatrix` and it automatically runs I7 (wrong tool / correct tool).
+Add integration-specific invariants as a new `TestXxxInvariants` class.
 
 ### ✅ Cryptographic Guarantees
 1. **Signature verification** - Warrants signed by attacker keys rejected
@@ -102,11 +143,21 @@ See [SECURITY.md](../../SECURITY.md) for responsible disclosure.
 
 ## Adding New Attack Scenarios
 
+For core warrant invariants:
+
 1. Create test in appropriate category file
 2. Add `@pytest.mark.security` and category marker
-3. Print attack description and result
-4. Use `pytest.raises()` for expected failures
-5. Document in this README
+3. Use `pytest.raises()` for expected failures
+4. Document in this README
+
+For integration-level invariants (use this workflow for every new integration bug):
+
+1. **Write the failing test first** in `test_integration_invariants.py` under `TestRegressions`
+2. Name the test `test_regression_bugN_short_description`
+3. The test body must reproduce the exact attack scenario using real `tenuo_core` objects
+4. **Commit the failing test** — this proves the test actually catches the bug
+5. Fix the implementation, verify the test now passes
+6. Optionally promote the invariant to the appropriate `TestXxxInvariants` class
 
 ## Rust-Level Tests
 

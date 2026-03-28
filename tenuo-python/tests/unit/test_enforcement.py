@@ -384,17 +384,17 @@ class TestEnforceToolCall:
             enforce_tool_call("search", {}, basic_warrant)  # Not bound!
         assert "Expected BoundWarrant" in str(exc.value)
 
-    def test_allowed_tool_returns_success(self, bound_warrant):
+    def test_allowed_tool_returns_success(self, bound_warrant, signing_key):
         """Should return allowed=True for authorized tool."""
-        result = enforce_tool_call("search", {"query": "test"}, bound_warrant)
+        result = enforce_tool_call("search", {"query": "test"}, bound_warrant, trusted_roots=[signing_key.public_key])
         assert result.allowed is True
         assert result.tool == "search"
         assert result.arguments == {"query": "test"}
         assert result.warrant_id is not None
 
-    def test_unlisted_tool_denied_by_rust_core(self, bound_warrant):
+    def test_unlisted_tool_denied_by_rust_core(self, bound_warrant, signing_key):
         """Unlisted tool should be denied by Rust core."""
-        result = enforce_tool_call("delete_file", {}, bound_warrant)
+        result = enforce_tool_call("delete_file", {}, bound_warrant, trusted_roots=[signing_key.public_key])
         assert result.allowed is False
         assert "delete_file" in result.denial_reason or result.error_type == "tool_not_allowed"
 
@@ -411,13 +411,14 @@ class TestEnforceToolCall:
         assert "not in allowed list" in result.denial_reason
         assert result.error_type == "tool_not_allowed"
 
-    def test_application_allowlist_passes_through_to_rust(self, bound_warrant):
+    def test_application_allowlist_passes_through_to_rust(self, bound_warrant, signing_key):
         """When tool is in application allowlist, Rust core still validates."""
         result = enforce_tool_call(
             "search",
             {"query": "test"},
             bound_warrant,
             allowed_tools=["search"],
+            trusted_roots=[signing_key.public_key],
         )
         assert result.allowed is True
 
@@ -450,7 +451,7 @@ class TestEnforceToolCall:
         # Wait for warrant to expire
         time.sleep(1.5)
 
-        result = enforce_tool_call("search", {}, bound)
+        result = enforce_tool_call("search", {}, bound, trusted_roots=[signing_key.public_key])
         assert result.allowed is False
         # Error type should indicate expiration
         assert result.error_type in ("expired", "authorization_failed")
@@ -473,6 +474,7 @@ class TestEnforceToolCall:
             "read_file",
             {"path": "/etc/passwd"},  # Violates /data/* constraint
             bound,
+            trusted_roots=[signing_key.public_key],
         )
         assert result.allowed is False
         # Should capture constraint violation details
@@ -502,18 +504,19 @@ class TestEnforceToolCall:
             {"path": "/tmp/test"},
             bound,
             schemas=schemas,
+            trusted_roots=[signing_key.public_key],
         )
         assert result.allowed is False
         assert result.error_type == "policy_violation"
         assert "path" in result.denial_reason
 
-    def test_result_includes_warrant_id(self, bound_warrant):
+    def test_result_includes_warrant_id(self, bound_warrant, signing_key):
         """Result should include warrant_id for audit correlation."""
-        result = enforce_tool_call("search", {}, bound_warrant)
+        result = enforce_tool_call("search", {}, bound_warrant, trusted_roots=[signing_key.public_key])
         # warrant_id should be present (even on success or failure)
         assert result.warrant_id is not None
 
-    def test_tenuo_error_fails_closed(self, bound_warrant):
+    def test_tenuo_error_fails_closed(self, bound_warrant, signing_key):
         """TenuoError exceptions should result in denial (fail closed).
 
         This tests the error handling path for Tenuo-specific errors.
@@ -521,7 +524,7 @@ class TestEnforceToolCall:
         """
         # Test by triggering an actual TenuoError condition
         # Using a tool not in warrant is the cleanest way
-        result = enforce_tool_call("definitely_not_in_warrant", {}, bound_warrant)
+        result = enforce_tool_call("definitely_not_in_warrant", {}, bound_warrant, trusted_roots=[signing_key.public_key])
         assert result.allowed is False
         # Should be denied, demonstrating fail-closed behavior
 
@@ -653,7 +656,7 @@ class TestEnforcementIntegration:
         )
         bound = warrant.bind(signing_key)
 
-        result = enforce_tool_call("search", {"query": "AI papers"}, bound)
+        result = enforce_tool_call("search", {"query": "AI papers"}, bound, trusted_roots=[signing_key.public_key])
 
         assert result.allowed is True
         assert result.tool == "search"
@@ -674,7 +677,7 @@ class TestEnforcementIntegration:
         )
         bound = warrant.bind(signing_key)
 
-        result = enforce_tool_call("read_file", {"path": "/etc/passwd"}, bound)
+        result = enforce_tool_call("read_file", {"path": "/etc/passwd"}, bound, trusted_roots=[signing_key.public_key])
 
         assert result.allowed is False
         # Rust core should catch the constraint violation
@@ -690,7 +693,7 @@ class TestEnforcementIntegration:
         )
         bound = warrant.bind(signing_key)
 
-        result = enforce_tool_call("any_tool_name", {"arg": "value"}, bound)
+        result = enforce_tool_call("any_tool_name", {"arg": "value"}, bound, trusted_roots=[signing_key.public_key])
         assert result.allowed is True
 
     def test_wrong_signing_key_denied(self, signing_key):
@@ -707,7 +710,7 @@ class TestEnforcementIntegration:
         wrong_key = SigningKey.generate()
         bound = warrant.bind(wrong_key)
 
-        result = enforce_tool_call("search", {}, bound)
+        result = enforce_tool_call("search", {}, bound, trusted_roots=[signing_key.public_key])
         assert result.allowed is False
 
 
@@ -719,14 +722,14 @@ class TestEnforcementIntegration:
 class TestSecurityInvariants:
     """Tests for critical security properties."""
 
-    def test_fail_closed_on_unexpected_error(self, bound_warrant):
+    def test_fail_closed_on_unexpected_error(self, bound_warrant, signing_key):
         """System should deny on unexpected errors (fail closed).
 
         We verify this by checking that unauthorized tools are denied,
         demonstrating the fail-closed principle.
         """
         # Test with a tool not in the warrant
-        result = enforce_tool_call("unknown_tool_xyz", {}, bound_warrant)
+        result = enforce_tool_call("unknown_tool_xyz", {}, bound_warrant, trusted_roots=[signing_key.public_key])
         assert result.allowed is False
         # The system should deny rather than allow by default
 

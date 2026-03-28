@@ -4,14 +4,25 @@ from tenuo import (
     Exact,
     SigningKey,
     Warrant,
+    configure,
     guard,
 )
+from tenuo.config import reset_config
 from tenuo.constraints import Constraints
+
+
+@pytest.fixture(autouse=True)
+def reset_tenuo_config():
+    reset_config()
+    yield
+    reset_config()
 
 
 @pytest.fixture
 def keypair():
-    return SigningKey.generate()
+    kp = SigningKey.generate()
+    configure(issuer_key=kp, dev_mode=True)
+    return kp
 
 
 @pytest.fixture

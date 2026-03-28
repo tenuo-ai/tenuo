@@ -19,7 +19,7 @@ Context Manager:
 """
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from tenuo_core import PublicKey, SigningKey, Warrant  # type: ignore[import-untyped]
 
@@ -63,30 +63,36 @@ class BoundWarrant:
     """
 
     # Use __slots__ to prevent __dict__ access (security: key not exposed via vars())
-    __slots__ = ("_warrant", "_key", "_warrant_token", "_key_token")
+    __slots__ = ("_warrant", "_key", "_warrant_token", "_key_token", "_trusted_roots")
 
-    def __init__(self, warrant: Warrant, key: SigningKey):
+    def __init__(self, warrant: Warrant, key: SigningKey, trusted_roots: Optional[List[Any]] = None) -> None:
         """
         Create a BoundWarrant.
 
         Args:
             warrant: The warrant to bind
             key: The signing key to bind to
+            trusted_roots: Optional list of trusted issuer PublicKeys.  When provided,
+                ``enforce_tool_call`` uses these as the trust anchor instead of
+                requiring callers to pass ``trusted_roots`` explicitly.  If neither
+                this attribute nor the ``trusted_roots`` parameter to
+                ``enforce_tool_call`` is set, enforcement fails closed.
         """
         self._warrant = warrant
         self._key = key
+        self._trusted_roots = trusted_roots
         self._warrant_token = None
         self._key_token = None
 
     @staticmethod
-    def bind_warrant(warrant: Warrant, key: SigningKey) -> "BoundWarrant":
+    def bind_warrant(warrant: Warrant, key: SigningKey, trusted_roots: Optional[List[Any]] = None) -> "BoundWarrant":
         """
         Bind a warrant to a signing key.
 
         Usage:
             bound = warrant.bind(key)
         """
-        return BoundWarrant(warrant, key)
+        return BoundWarrant(warrant, key, trusted_roots=trusted_roots)
 
     # ========================================================================
     # Context Manager (sets both warrant and key scope)
@@ -198,9 +204,9 @@ class BoundWarrant:
         """Return the inner warrant without the key."""
         return self._warrant
 
-    def bind(self, key: SigningKey) -> "BoundWarrant":
+    def bind(self, key: SigningKey, trusted_roots: Optional[List[Any]] = None) -> "BoundWarrant":
         """Return a new BoundWarrant with a different key."""
-        return BoundWarrant(self._warrant, key)
+        return BoundWarrant(self._warrant, key, trusted_roots=trusted_roots)
 
     # ========================================================================
     # Convenience methods (use bound key)

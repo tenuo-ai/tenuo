@@ -168,6 +168,7 @@ def configure(
     max_missing_warrant_warnings: int = 0,
     expose_error_details: bool = False,
     audit_log: bool = True,
+    enable_nonce_store: bool = False,
 ) -> None:
     """
     Configure Tenuo globally.
@@ -191,6 +192,10 @@ def configure(
         max_missing_warrant_warnings: Tripwire - auto-flip to strict after N warnings (0=disabled)
         expose_error_details: Include constraint details in error responses (SECURITY: keep False in production)
         audit_log: Enable audit logging (default: True). Set False for clean demo output.
+        enable_nonce_store: Enable the in-process PoP replay prevention store (recommended in
+            production). When True, each successful PoP signature is recorded and exact replays
+            within the TTL window are rejected. Equivalent to calling tenuo.enable_nonce_store()
+            after configure(). Default: False (opt-in to avoid breaking existing tests).
 
     Raises:
         ConfigurationError: If invalid configuration
@@ -200,6 +205,7 @@ def configure(
         configure(
             issuer_key=my_keypair,
             trusted_roots=[control_plane_key],
+            enable_nonce_store=True,  # Recommended for production
         )
 
         # Development
@@ -278,11 +284,45 @@ def configure(
 
     audit_logger.configure(enabled=audit_log)
 
+    # Optionally activate the in-process PoP replay prevention store.
+    if enable_nonce_store:
+        from .nonce import enable_default_nonce_store
+        enable_default_nonce_store()
+
 
 def get_config() -> TenuoConfig:
     """Get the current configuration (context override or global)."""
     ctx_config = _config_context.get()
     return ctx_config if ctx_config is not None else _config
+
+
+def resolve_trusted_roots(explicit: Optional[List[Any]] = None) -> Optional[List[Any]]:
+    """Resolve trusted roots with a three-level priority chain.
+
+    1. Explicitly provided roots (takes precedence over everything)
+    2. Global config ``trusted_roots`` (from ``configure(trusted_roots=[...])``)
+    3. In ``dev_mode``, the configured issuer key acts as the implicit anchor
+    4. ``None`` — callers should raise ``ConfigurationError`` (fail-closed)
+
+    All integration adapters should call this instead of reading
+    ``get_config().trusted_roots`` directly so the precedence is uniform
+    across all frameworks.
+
+    Example::
+
+        from tenuo.config import resolve_trusted_roots
+
+        roots = resolve_trusted_roots(self._trusted_roots)
+        result = enforce_tool_call(tool, args, bound, trusted_roots=roots)
+    """
+    if explicit is not None:
+        return explicit
+    cfg = get_config()
+    if cfg.trusted_roots:
+        return list(cfg.trusted_roots)
+    if cfg.dev_mode and cfg.issuer_key is not None:
+        return [cfg.issuer_key.public_key]
+    return None
 
 
 def reset_config() -> None:

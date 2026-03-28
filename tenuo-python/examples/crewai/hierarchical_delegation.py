@@ -188,7 +188,7 @@ def main():
 
     print("\n  Testing researcher's access:")
 
-    from tenuo.crewai import ConstraintViolation, ToolDenied
+    from tenuo.crewai import CrewAIConstraintViolation, ToolDenied
 
     result = researcher_guard._authorize("search", {"query": "arxiv:2301.00001"})
     print(f"    search('arxiv:2301.00001'): {'ALLOWED' if result is None else 'DENIED'}")
@@ -196,7 +196,7 @@ def main():
     try:
         researcher_guard._authorize("search", {"query": "pubmed:12345"})
         print("    search('pubmed:12345'): Should be denied!")
-    except ConstraintViolation:
+    except CrewAIConstraintViolation:
         print("    search('pubmed:12345'): DENIED ✓")
 
     try:

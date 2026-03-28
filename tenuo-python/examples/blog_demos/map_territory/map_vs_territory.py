@@ -62,7 +62,7 @@ HAS_OPENAI = False
 try:
     import openai
 
-    from tenuo.openai import ConstraintViolation, GuardBuilder
+    from tenuo.openai import OpenAIConstraintViolation, GuardBuilder
 
     HAS_OPENAI = True
 except ImportError:
@@ -757,10 +757,10 @@ def demo_openai():
         else:
             print(f"  {Colors.GRAY}LLM response: {choice.message.content[:200]}...{Colors.RESET}")
 
-    except ConstraintViolation:
+    except OpenAIConstraintViolation:
         print()
         print(f"  {Colors.GREEN}{'─' * 59}{Colors.RESET}")
-        print(f"  {Colors.GREEN}[TENUO] 🛡️ BLOCKED — ConstraintViolation{Colors.RESET}")
+        print(f"  {Colors.GREEN}[TENUO] 🛡️ BLOCKED — OpenAIConstraintViolation{Colors.RESET}")
         print()
         print(f"  {Colors.GRAY}Tool: read_file{Colors.RESET}")
         print(f"  {Colors.GRAY}Path: /etc/passwd{Colors.RESET}")

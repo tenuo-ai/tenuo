@@ -45,7 +45,7 @@ def main():
 
     try:
         from tenuo import SigningKey, Subpath, Warrant
-        from tenuo.crewai import ConstraintViolation, GuardBuilder
+        from tenuo.crewai import CrewAIConstraintViolation, GuardBuilder
     except ImportError:
         print(f'{R}pip install "tenuo[crewai]"{END}')
         sys.exit(1)
@@ -145,7 +145,7 @@ def main():
     try:
         result = manager_read("/data/secrets/api-keys.txt")
         print(f"{G}    ✓ Allowed:{END} {result[:30]}...")
-    except ConstraintViolation:
+    except CrewAIConstraintViolation:
         print(f"{R}    ✗ Blocked{END}")
     print()
     time.sleep(d)
@@ -156,7 +156,7 @@ def main():
     try:
         researcher_read("/data/secrets/api-keys.txt")
         print(f"{R}    ⚠ Leaked secrets!{END}")
-    except ConstraintViolation:
+    except CrewAIConstraintViolation:
         print(f"{R}    [TENUO] BLOCKED{END} — attenuated warrant does not authorize this path")
         print(f"{Y}      Attempted: /data/secrets/api-keys.txt{END}")
         print(f"{G}      Allowed:   /data/papers/* (cryptographically enforced){END}")
@@ -182,7 +182,7 @@ def main():
     try:
         result = researcher_read("/data/secrets/api-keys.txt")
         print(f"{R}    ⚠ ATTACK SUCCEEDED! {result[:30]}...{END}")
-    except ConstraintViolation:
+    except CrewAIConstraintViolation:
         print(f"{R}    [TENUO] BLOCKED{END} — warrant does not authorize this path (prompt ignored)")
         print(f"{Y}      Attempted: /data/secrets/api-keys.txt{END}")
         print(f"{G}      Allowed:   /data/papers/* (warrant is source of truth){END}")
