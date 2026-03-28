@@ -47,7 +47,8 @@ except ImportError:
     FastAPI = Any  # type: ignore
     Header = Any  # type: ignore
     HTTPException = Any  # type: ignore
-    Depends = Any  # type: ignore
+    def Depends(dep):  # type: ignore  # noqa: E301
+        return None
     Request = Any  # type: ignore
     status = Any  # type: ignore
     JSONResponse = Any  # type: ignore

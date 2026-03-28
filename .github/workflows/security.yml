@@ -42,7 +42,7 @@ jobs:
         run: |
           source .venv/bin/activate
           pip install uv
-          uv pip install maturin pytest langchain langchain-core langgraph
+          uv pip install maturin pytest pytest-asyncio langchain langchain-core langgraph fastapi uvicorn pydantic
       
       - name: Build Rust extension
         working-directory: tenuo-python

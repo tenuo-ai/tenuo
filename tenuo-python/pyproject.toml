@@ -155,6 +155,7 @@ source = ["tenuo"]
 
 [tool.ruff]
 line-length = 120
+src = ["."]
 
 [tool.ruff.lint]
 select = ["E", "F", "W"]

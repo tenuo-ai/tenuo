@@ -1749,6 +1749,7 @@ class TestOpenAIInvariants:
                 constraints=None,
                 warrant=w,
                 signing_key=root_key,
+                trusted_roots=[root_key.public_key],
             )
 
 
@@ -2584,6 +2585,7 @@ class TestTrustedRootsEnforcement:
         from tenuo._enforcement import enforce_tool_call
         from tenuo import BoundWarrant
         from tenuo.config import reset_config
+        from tenuo.exceptions import ConfigurationError
 
         attacker_w, attacker_key = attacker_warrant_and_key
         bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
@@ -2591,16 +2593,14 @@ class TestTrustedRootsEnforcement:
         # Reset global config to ensure no ambient trusted_roots leak from other tests.
         reset_config()
 
-        result = enforce_tool_call(
-            tool_name="search",
-            tool_args={},
-            bound_warrant=bw,
-        )
-        assert not result.allowed, (
-            "enforce_tool_call without trusted_roots MUST deny the request (fail-closed)."
-        )
-        assert "trusted_roots" in (result.denial_reason or ""), (
-            "denial_reason must reference trusted_roots so the caller knows how to fix it."
+        with pytest.raises(ConfigurationError) as exc_info:
+            enforce_tool_call(
+                tool_name="search",
+                tool_args={},
+                bound_warrant=bw,
+            )
+        assert "trusted_roots" in str(exc_info.value), (
+            "ConfigurationError must reference trusted_roots so the caller knows how to fix it."
         )
 
     def test_I3_openai_trusted_roots_rejects_attacker(

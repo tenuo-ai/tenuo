@@ -539,6 +539,7 @@ class TestEnforcementIntegration:
             "read_file", {"path": "/etc/shadow"}, bound,
             approval_policy=policy,
             approval_handler=auto_approve(approver_key=approver_key),
+            trusted_roots=[key.public_key],
         )
         assert not result.allowed
         assert "path" in (result.constraint_violated or result.denial_reason or "")

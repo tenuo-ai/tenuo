@@ -262,7 +262,7 @@ jobs:
         timeout-minutes: 10  # Tests should complete in <5 minutes
         env:
           TEMPORAL_LIVE_TESTS: "1"
-        run: pytest tests/test_temporal_live.py -v -m temporal_live --timeout=300
+        run: pytest tests/e2e/test_temporal_live.py -v -m temporal_live --timeout=300
 
   # ============================================================================
   # LANGCHAIN COMPATIBILITY
@@ -318,7 +318,7 @@ jobs:
 
       - name: Test LangChain integration
         working-directory: tenuo-python
-        run: pytest tests/test_langchain_integration.py tests/test_langgraph.py -v
+        run: pytest tests/adapters/test_langchain_integration.py tests/adapters/test_langgraph.py -v
 
   # ============================================================================
   # SECURITY AUDIT
