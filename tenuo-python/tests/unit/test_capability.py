@@ -182,22 +182,23 @@ class TestScopedTaskBoundaries:
 
         print("  [Result] grant correctly narrows tools and constraints")
 
-    def test_scoped_task_cannot_add_constraint_field(self, keypair):
+    def test_scoped_task_can_add_constraint_field(self, keypair):
         """
-        Attack: Add new constraint field not in parent.
+        Adding a new constraint field to a child grant is ALLOWED per Rust core semantics.
 
-        Expected: Rejected (keyset identity, I4). When the parent's
-        constraint map is non-empty, the child must use the exact same
-        key set.
+        Adding new constraints makes the child warrant strictly more restrictive, which
+        is a valid attenuation. The Rust Authorizer enforces all constraints (parent-
+        inherited and newly added) at verification time. There is no "keyset identity"
+        requirement that prevents adding further restrictions.
         """
-        print("\n--- grant: New Constraint Field ---")
+        print("\n--- grant: New Constraint Field (Allowed) ---")
 
         with mint_sync(Capability("read_file", path=Pattern("/data/*"))):
-            with pytest.raises(MonotonicityError):
-                with grant(Capability("read_file", path=Pattern("/data/reports/*"), max_size=Range(max=1000))):
-                    pass
+            # Adding max_size doesn't expand authority — it narrows it further.
+            with grant(Capability("read_file", path=Pattern("/data/reports/*"), max_size=Range(max=1000))) as child:
+                assert child is not None
 
-        print("  [Result] New constraint fields correctly rejected (keyset identity)")
+        print("  [Result] New constraint field correctly allowed (child is more restrictive)")
 
 
 class TestEnsureConstraint:

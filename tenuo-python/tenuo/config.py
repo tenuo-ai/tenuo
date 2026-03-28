@@ -168,6 +168,7 @@ def configure(
     max_missing_warrant_warnings: int = 0,
     expose_error_details: bool = False,
     audit_log: bool = True,
+    enable_nonce_store: bool = False,
 ) -> None:
     """
     Configure Tenuo globally.
@@ -191,6 +192,10 @@ def configure(
         max_missing_warrant_warnings: Tripwire - auto-flip to strict after N warnings (0=disabled)
         expose_error_details: Include constraint details in error responses (SECURITY: keep False in production)
         audit_log: Enable audit logging (default: True). Set False for clean demo output.
+        enable_nonce_store: Enable the in-process PoP replay prevention store (recommended in
+            production). When True, each successful PoP signature is recorded and exact replays
+            within the TTL window are rejected. Equivalent to calling tenuo.enable_nonce_store()
+            after configure(). Default: False (opt-in to avoid breaking existing tests).
 
     Raises:
         ConfigurationError: If invalid configuration
@@ -200,6 +205,7 @@ def configure(
         configure(
             issuer_key=my_keypair,
             trusted_roots=[control_plane_key],
+            enable_nonce_store=True,  # Recommended for production
         )
 
         # Development
@@ -277,6 +283,11 @@ def configure(
     from .audit import audit_logger
 
     audit_logger.configure(enabled=audit_log)
+
+    # Optionally activate the in-process PoP replay prevention store.
+    if enable_nonce_store:
+        from .nonce import enable_default_nonce_store
+        enable_default_nonce_store()
 
 
 def get_config() -> TenuoConfig:

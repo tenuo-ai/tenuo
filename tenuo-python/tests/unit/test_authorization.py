@@ -17,12 +17,21 @@ from tenuo import (
     Pattern,
     SigningKey,
     Warrant,
+    configure,
     guard,
     key_scope,
     warrant_scope,
 )
+from tenuo.config import reset_config
 from tenuo.constraints import Constraints
 from tenuo.exceptions import ScopeViolation, SignatureInvalid
+
+
+@pytest.fixture(autouse=True)
+def reset_tenuo_config():
+    reset_config()
+    yield
+    reset_config()
 
 # ============================================================================
 # PoP Enforcement Tests
@@ -38,6 +47,7 @@ def test_guard_requires_keypair_context():
 
     # Create warrant
     kp = SigningKey.generate()
+    configure(issuer_key=kp, dev_mode=True)
     warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("test_tool", {"value": Pattern("*")}),
@@ -70,7 +80,7 @@ def test_guard_with_explicit_keypair():
     )
 
     # Keypair passed to decorator explicitly
-    @guard(tool="test_tool", keypair=kp)
+    @guard(tool="test_tool", keypair=kp, trusted_roots=[kp.public_key])
     def protected_function(value: str) -> str:
         return f"processed: {value}"
 
@@ -88,6 +98,7 @@ def test_context_based_pop_retrieval():
         return f"content of {path}"
 
     kp = SigningKey.generate()
+    configure(issuer_key=kp, dev_mode=True)
     warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
@@ -114,6 +125,7 @@ def test_pop_prevents_replay_attacks():
         return f"deleted {path}"
 
     kp = SigningKey.generate()
+    configure(issuer_key=kp, dev_mode=True)
     warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("delete_file", {"path": Exact("/tmp/test.txt")}),
@@ -160,7 +172,7 @@ def test_pop_prevents_cross_tenant_misuse():
     # ATTACK SCENARIO: Tenant A tries to use the warrant with their OWN keypair
     # This MUST fail - they don't have Tenant B's private key
 
-    @guard(tool="sensitive_operation")
+    @guard(tool="sensitive_operation", trusted_roots=[tenant_a_kp.public_key])
     def sensitive_operation(resource: str) -> str:
         return f"accessed {resource}"
 
@@ -261,7 +273,7 @@ def test_warrant_chain_verification():
     assert child.authorized_holder.to_bytes() == worker_kp.public_key.to_bytes()
 
     # Child should have narrower constraints
-    @guard(tool="file_ops")
+    @guard(tool="file_ops", trusted_roots=[control_kp.public_key])
     def access_file(path: str) -> str:
         return f"accessed {path}"
 
@@ -324,7 +336,7 @@ def test_clearance_enforcement():
         clearance=Clearance.EXTERNAL,
     )
 
-    @guard(tool="read_data")
+    @guard(tool="read_data", trusted_roots=[kp.public_key])
     def read_data(sensitivity: str) -> str:
         return f"data with sensitivity: {sensitivity}"
 
@@ -444,6 +456,7 @@ def test_authorization_fails_with_wrong_tool():
         return f"processed: {value}"
 
     kp = SigningKey.generate()
+    configure(issuer_key=kp, dev_mode=True)
 
     # Create warrant for wrong tool
     warrant = Warrant.mint(
@@ -466,6 +479,7 @@ def test_authorization_fails_with_constraint_violation():
         return f"content of {path}"
 
     kp = SigningKey.generate()
+    configure(issuer_key=kp, dev_mode=True)
 
     # Create warrant with specific path constraint
     warrant = Warrant.mint(

@@ -685,8 +685,10 @@ def guard(
 
             keypair_to_use = active_keypair or get_signing_key_context()
 
-            # PoP is MANDATORY - keypair must always be available
-            if keypair_to_use is None:
+            # PoP is MANDATORY in sign mode — keypair must always be available.
+            # In verify mode the caller provides a pre-computed signature via
+            # extract_signature, so no local keypair is needed.
+            if keypair_to_use is None and verify_mode != "verify":
                 error_code = AuthErrorCode.POP_MISSING
 
                 audit_logger.log(
@@ -834,16 +836,23 @@ def guard(
                 # ── Local sign path (default) ─────────────────────────────────
                 pop_signature = warrant_to_use.sign(keypair_to_use, tool_name, auth_args, int(_time.time()))
                 issuer_pub = getattr(warrant_to_use, "issuer_public_key", None) or getattr(warrant_to_use, "issuer", None)
-                # Priority: explicit trusted_roots param → self-issuer fallback.
-                # The self-issuer fallback enforces PoP binding (proving holder of private key)
-                # but does NOT verify the issuer against an org-level trust anchor.
-                # For production use, pass trusted_roots= explicitly or call configure().
-                # The adapter integrations (LangGraph, AutoGen, etc.) already apply the
-                # configure() fallback via resolve_trusted_roots() before calling here.
+                # Priority: explicit trusted_roots param → global configure() → ConfigurationError.
+                # Unlike the adapter integrations, @guard does NOT fall back to the warrant's own
+                # issuer as a self-signed root — that would silently accept unverified issuers.
+                # Use configure(trusted_roots=[...]) at startup, or pass trusted_roots= explicitly.
                 if trusted_roots:
                     _roots = list(trusted_roots)
                 else:
-                    _roots = [issuer_pub] if issuer_pub is not None else []
+                    from .config import resolve_trusted_roots as _resolve_roots
+                    _resolved = _resolve_roots(None)
+                    if _resolved is None:
+                        raise ConfigurationError(
+                            "@guard requires trusted_roots. Pass trusted_roots=[issuer_public_key] "
+                            "to the decorator, or call tenuo.configure(trusted_roots=[...]) at "
+                            "application startup. Without an explicit trust anchor the Authorizer "
+                            "cannot verify the warrant's issuer (fail-closed)."
+                        )
+                    _roots = _resolved
                 try:
                     _auth = _Authorizer(trusted_roots=_roots)
                     _auth.authorize_one(warrant_to_use, tool_name, auth_args, signature=bytes(pop_signature))
