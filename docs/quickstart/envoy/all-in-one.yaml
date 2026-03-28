@@ -135,9 +135,9 @@ data:
                     envoy_grpc:
                       cluster_name: tenuo-authorizer
                     timeout: 1s
-                  with_request_body:
-                    max_request_bytes: 8192
-                    allow_partial_message: true
+              with_request_body:
+                max_request_bytes: 65536
+                allow_partial_message: true
               - name: envoy.filters.http.router
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router

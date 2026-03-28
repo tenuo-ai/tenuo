@@ -84,21 +84,25 @@ class TestFastAPI:
     def test_get_warrant_header(self):
         from tenuo.fastapi import get_warrant_header
 
+        # Build a minimal mock Request with a .state namespace
+        mock_request = MagicMock()
+        mock_request.state = MagicMock()
+
         # Valid header
         warrant, _ = Warrant.quick_mint(["search"], ttl=300)
         b64 = warrant.to_base64()
 
-        res = get_warrant_header(b64)
+        res = get_warrant_header(mock_request, b64)
         assert isinstance(res, Warrant)
         assert res.id == warrant.id
 
         # Invalid header
         with pytest.raises(HTTPException) as exc:
-            get_warrant_header("invalid-base64")
+            get_warrant_header(mock_request, "invalid-base64")
         assert exc.value.status_code == 400
 
         # Missing header
-        assert get_warrant_header(None) is None
+        assert get_warrant_header(mock_request, None) is None
 
 
 def test_init_command():

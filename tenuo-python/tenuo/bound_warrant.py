@@ -25,6 +25,11 @@ from tenuo_core import PublicKey, SigningKey, Warrant  # type: ignore[import-unt
 
 from .validation import ValidationResult
 
+try:
+    from tenuo_core import WARRANT_HEADER as _WARRANT_HEADER  # type: ignore[attr-defined]
+except ImportError:
+    _WARRANT_HEADER = "X-Tenuo-Warrant"
+
 if TYPE_CHECKING:
     pass
 
@@ -249,7 +254,7 @@ class BoundWarrant:
         # sign returns bytes, encode to base64
         pop_b64 = base64.b64encode(pop_sig).decode("ascii")
         return {
-            "X-Tenuo-Warrant": self._warrant.to_base64(),
+            _WARRANT_HEADER: self._warrant.to_base64(),
             "X-Tenuo-PoP": pop_b64,
         }
 

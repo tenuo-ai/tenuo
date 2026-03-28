@@ -21,7 +21,7 @@
 //! The `serve` command runs an HTTP server that:
 //! 1. Matches incoming requests to routes defined in the gateway config
 //! 2. Extracts constraint values from path, query, headers, and body
-//! 3. Verifies the warrant chain from the `X-Tenuo-Chain` header
+//! 3. Verifies the warrant chain from the `X-Tenuo-Warrant` header
 //! 4. Authorizes the action using the extracted constraints
 //!
 //! # Kubernetes Sidecar Deployment

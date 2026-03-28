@@ -18,6 +18,11 @@ from typing import List, Optional, Tuple
 
 from tenuo_core import SigningKey, Warrant  # type: ignore[import-untyped]
 
+try:
+    from tenuo_core import WARRANT_HEADER as _WARRANT_HEADER  # type: ignore[attr-defined]
+except ImportError:
+    _WARRANT_HEADER = "X-Tenuo-Warrant"
+
 from .exceptions import AuthorizationDenied
 
 
@@ -133,7 +138,7 @@ def deterministic_headers(
     # sign returns bytes, encode to base64
     pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
-    return {"X-Tenuo-Warrant": warrant.to_base64(), "X-Tenuo-PoP": pop_b64}
+    return {_WARRANT_HEADER: warrant.to_base64(), "X-Tenuo-PoP": pop_b64}
 
 
 # ============================================================================

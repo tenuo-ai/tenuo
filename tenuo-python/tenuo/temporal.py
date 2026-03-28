@@ -1781,17 +1781,41 @@ def attenuated_headers(
 
     hdrs = tenuo_headers(child_warrant, key_id, compress=compress)
 
-    # Propagate the delegation chain so the activity interceptor
-    # can call check_chain() for full trust-root verification.
-    existing_chain_b64 = raw_headers.get(TENUO_CHAIN_HEADER)
-    if existing_chain_b64:
-        parent_chain = json.loads(base64.b64decode(existing_chain_b64))
-    else:
-        parent_chain = [parent_warrant.to_base64()]
-    parent_chain.append(child_warrant.to_base64())
-    hdrs[TENUO_CHAIN_HEADER] = base64.b64encode(
-        json.dumps(parent_chain).encode()
-    )
+    # Propagate the delegation chain so the activity interceptor can call
+    # check_chain() for full trust-root verification.
+    #
+    # Wire format: WarrantStack (CBOR array of warrants, base64url-encoded),
+    # stored as UTF-8 bytes.  This matches the canonical X-Tenuo-Warrant
+    # WarrantStack format used by HTTP and A2A transports.
+    # Falls back to the legacy JSON-base64 format if encode_warrant_stack
+    # is unavailable (older tenuo_core binary).
+    existing_chain_raw = raw_headers.get(TENUO_CHAIN_HEADER)
+    try:
+        from tenuo_core import decode_warrant_stack_base64 as _decode_stack
+        from tenuo_core import encode_warrant_stack as _encode_stack
+
+        if existing_chain_raw:
+            # Try decoding as WarrantStack first, then fall back to JSON-base64
+            try:
+                existing_warrants = _decode_stack(existing_chain_raw.decode("utf-8"))
+            except Exception:
+                # Legacy JSON-base64 format from an older sender
+                _legacy = json.loads(base64.b64decode(existing_chain_raw))
+                from tenuo_core import Warrant as _W
+                existing_warrants = [_W.from_base64(w) for w in _legacy]
+        else:
+            existing_warrants = [parent_warrant]
+
+        all_chain = existing_warrants + [child_warrant]
+        hdrs[TENUO_CHAIN_HEADER] = _encode_stack(all_chain).encode("utf-8")
+    except ImportError:
+        # Older tenuo_core without encode_warrant_stack — keep legacy format
+        if existing_chain_raw:
+            parent_chain = json.loads(base64.b64decode(existing_chain_raw))
+        else:
+            parent_chain = [parent_warrant.to_base64()]
+        parent_chain.append(child_warrant.to_base64())
+        hdrs[TENUO_CHAIN_HEADER] = base64.b64encode(json.dumps(parent_chain).encode())
 
     return hdrs
 
@@ -2739,11 +2763,16 @@ class TenuoInterceptor:
         self._config = config
         self._version = self._get_version()
         if not config.trusted_roots:
-            logger.warning(
+            import warnings as _warnings
+            _msg = (
                 "TenuoInterceptor initialized WITHOUT trusted_roots. "
-                "Running in lightweight mode: no PoP verification, no chain-of-trust checks. "
-                "Set trusted_roots=[control_key.public_key] for production security."
+                "Running in lightweight mode: PoP signatures and chain-of-trust are NOT "
+                "verified — any structurally valid warrant is accepted. "
+                "Set trusted_roots=[control_key.public_key] for production security, "
+                "or pass strict_mode=True to fail fast on misconfiguration."
             )
+            logger.warning(_msg)
+            _warnings.warn(_msg, stacklevel=2)
         # Verify tenuo_core is importable — catches missing passthrough_modules early.
         # Inside a Temporal sandbox, tenuo_core must be declared as a passthrough module or
         # it raises "PyO3 modules may only be initialized once per interpreter process".
@@ -2977,8 +3006,14 @@ class TenuoActivityInboundInterceptor:
 
                 chain_header = headers.get(TENUO_CHAIN_HEADER)
                 if chain_header:
-                    chain_list = json.loads(base64.b64decode(chain_header))
-                    chain = [CoreWarrant.from_base64(w) for w in chain_list]
+                    # Decode chain: try WarrantStack format first, then legacy
+                    # JSON-base64 for backward compatibility with older senders.
+                    try:
+                        from tenuo_core import decode_warrant_stack_base64 as _decode_stack
+                        chain = _decode_stack(chain_header.decode("utf-8"))
+                    except Exception:
+                        chain_list = json.loads(base64.b64decode(chain_header))
+                        chain = [CoreWarrant.from_base64(w) for w in chain_list]
                     chain_result = authorizer.check_chain(
                         chain, tool_name, args,
                         signature=pop_bytes,

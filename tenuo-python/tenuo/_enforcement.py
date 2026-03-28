@@ -549,6 +549,7 @@ def enforce_tool_call(
     verify_mode: Literal["sign", "verify"] = "sign",
     precomputed_signature: Optional[bytes] = None,
     authorizer: Optional[Any] = None,
+    warrant_chain: Optional[List[Any]] = None,
     approval_policy: Optional[ApprovalPolicy] = None,
     approval_handler: Optional[ApprovalHandler] = None,
     approvals: Optional[List[Any]] = None,
@@ -583,6 +584,10 @@ def enforce_tool_call(
             full chain verification using Authorizer.check_chain(), which performs
             issuer trust, chain linkage, revocation, clearance, capabilities,
             constraints, and PoP verification in one atomic call.
+        warrant_chain: Optional list of parent warrants (root-first, excluding the
+            leaf) to pass alongside the leaf warrant to check_chain().  Used when
+            a multi-hop delegation chain was received (e.g. via WarrantStack
+            transport) and full cryptographic chain verification is required.
         approval_policy: Optional ApprovalPolicy to check after warrant authorization.
             If a rule matches, the approval_handler is invoked.
         approval_handler: Callable that handles approval requests and returns a
@@ -782,8 +787,11 @@ def enforce_tool_call(
             if authorizer is None:
                 raise ConfigurationError("authorizer required for verify_mode='verify'")
             try:
+                # Build the full chain: [root, ..., parents, leaf]
+                # warrant_chain contains parent warrants in root-first order.
+                full_chain = list(warrant_chain or []) + [bound_warrant.warrant]
                 authorizer.check_chain(
-                    [bound_warrant.warrant],
+                    full_chain,
                     tool_name,
                     tool_args,
                     signature=precomputed_signature,

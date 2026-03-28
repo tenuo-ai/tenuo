@@ -1646,9 +1646,12 @@ class GuardedClient:
             if self._signing_key is None:
                 raise MissingSigningKey()
 
-            # Check warrant isn't expired
-            # Note: 'expired' is a property, 'is_expired()' is a method
-            is_expired = getattr(self._warrant, "expired", False)
+            # Check warrant isn't expired via the canonical is_expired() method.
+            is_expired = (
+                self._warrant.is_expired()
+                if callable(getattr(self._warrant, "is_expired", None))
+                else getattr(self._warrant, "expired", False)
+            )
             if is_expired:
                 raise ConfigurationError("Warrant is expired. Request a new warrant from the control plane.", "CFG_002")
 
