@@ -26,7 +26,7 @@ from tenuo import (
 )
 from tenuo.config import reset_config
 from tenuo.constraints import Constraints
-from tenuo.exceptions import MonotonicityError, ScopeViolation
+from tenuo.exceptions import ScopeViolation
 
 
 @pytest.fixture(autouse=True)

@@ -102,8 +102,6 @@ from typing import (
     Optional,
     Union,
 )
-from urllib.parse import urlparse
-
 # Import constraint types from tenuo core
 from tenuo import (
     CEL,
@@ -136,7 +134,7 @@ check_openai_compat()
 
 # Import shared enforcement logic (after version check)
 from tenuo._enforcement import DenialPolicy, EnforcementResult, enforce_tool_call, handle_denial  # noqa: E402
-from tenuo.config import resolve_trusted_roots
+from tenuo.config import resolve_trusted_roots  # noqa: E402
 
 logger = logging.getLogger("tenuo.openai")
 

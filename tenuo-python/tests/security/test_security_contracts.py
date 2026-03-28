@@ -27,13 +27,10 @@ Three contract categories:
 
 from __future__ import annotations
 
-import time
-from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import tenuo_core
 from tenuo_core import SigningKey, Warrant
 
 
@@ -218,7 +215,8 @@ class TestOnDenialBehaviouralContracts:
             require_pop=False, on_denial="return",
         )
 
-        tool = MagicMock(); tool.name = "delete_everything"
+        tool = MagicMock()
+        tool.name = "delete_everything"
         ctx = MagicMock()
 
         result = guard.before_tool(tool, {}, ctx)
@@ -523,10 +521,9 @@ class TestDryRunIsOptIn:
         you must explicitly set dry_run=True to enter shadow mode.
         """
         from dataclasses import dataclass
-        import logging
 
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoInterceptor, TenuoInterceptorConfig, TENUO_WARRANT_HEADER
+        from tenuo.temporal import KeyResolver, TenuoInterceptor, TenuoInterceptorConfig
 
         class _R(KeyResolver):
             def resolve(self, _kid):
@@ -583,7 +580,7 @@ class TestDryRunIsOptIn:
         from dataclasses import dataclass
 
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoInterceptor, TenuoInterceptorConfig, TENUO_WARRANT_HEADER
+        from tenuo.temporal import KeyResolver, TenuoInterceptor, TenuoInterceptorConfig
 
         class _R(KeyResolver):
             def resolve(self, _kid):

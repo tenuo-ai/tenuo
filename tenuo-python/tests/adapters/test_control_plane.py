@@ -459,7 +459,6 @@ class TestLangGraphControlPlane:
         if not LANGGRAPH_AVAILABLE:
             pytest.skip("LangGraph not available")
 
-        from typing import Any
         from langchain_core.tools import tool
         from langgraph.graph import StateGraph, END, START
 

@@ -271,8 +271,6 @@ class A2AClient:
                                    chain linkage is invalid, or the root issuer
                                    is not trusted.
         """
-        import time
-
         from .errors import ChainValidationError, WarrantExpiredError
 
         roots = trusted_roots

@@ -39,7 +39,7 @@ from tenuo._version_compat import check_langchain_compat  # noqa: E402
 
 from ._enforcement import enforce_tool_call
 from .audit import log_authorization_success
-from .config import allow_passthrough, get_config, resolve_trusted_roots
+from .config import allow_passthrough, resolve_trusted_roots
 from .decorators import get_allowed_tools_context, key_scope, warrant_scope
 from .exceptions import (
     ConfigurationError,
@@ -212,8 +212,6 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             else:
                 # Plain Warrant — bind to key then use enforce_tool_call with
                 # trusted_roots for proper issuer verification (not self-signed).
-                import time
-
                 signing_key = key_scope()
                 if signing_key:
                     bw = warrant.bind(signing_key)

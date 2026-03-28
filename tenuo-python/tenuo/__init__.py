@@ -247,6 +247,7 @@ __all__ = [
     "is_audit_mode",
     "is_enforce_mode",
     "should_block_violation",
+    "resolve_trusted_roots",
     "SigningKey",
     "PublicKey",
     # Protection
@@ -329,6 +330,11 @@ __all__ = [
     "cli_prompt",
     "auto_approve",
     "auto_deny",
+    # PoP replay prevention
+    "NonceStore",
+    "enable_nonce_store",
+    "disable_default_nonce_store",
+    "get_default_nonce_store",
 ]
 
 __version__ = "0.1.0b14"

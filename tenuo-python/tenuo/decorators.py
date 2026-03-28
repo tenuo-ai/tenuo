@@ -835,7 +835,6 @@ def guard(
             else:
                 # ── Local sign path (default) ─────────────────────────────────
                 pop_signature = warrant_to_use.sign(keypair_to_use, tool_name, auth_args, int(_time.time()))
-                issuer_pub = getattr(warrant_to_use, "issuer_public_key", None) or getattr(warrant_to_use, "issuer", None)
                 # Priority: explicit trusted_roots param → global configure() → ConfigurationError.
                 # Unlike the adapter integrations, @guard does NOT fall back to the warrant's own
                 # issuer as a self-signed root — that would silently accept unverified issuers.

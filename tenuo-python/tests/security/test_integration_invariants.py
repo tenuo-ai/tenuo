@@ -43,7 +43,7 @@ import pytest
 
 tenuo_core = pytest.importorskip("tenuo_core", reason="tenuo_core not installed")
 
-from tenuo_core import PublicKey, SigningKey, Warrant  # noqa: E402
+from tenuo_core import SigningKey, Warrant  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -140,8 +140,6 @@ class TestA2AInvariants:
     @pytest.mark.asyncio
     async def test_I1_no_warrant_is_denied(self, root_key):
         """I1: validate_warrant with an empty token must never reach the skill."""
-        from tenuo.a2a.errors import MissingWarrantError
-
         server = self._make_server(root_key)
 
         # The HTTP handler enforces require_warrant before calling validate_warrant;
@@ -305,7 +303,6 @@ class TestA2AInvariants:
         from tenuo.a2a.errors import ConstraintViolationError
         from tenuo_core import Subpath
 
-        from tenuo.a2a.server import A2AServer, SkillDefinition
 
         server = self._make_server(root_key)
         # Register skill with Subpath constraint
@@ -384,8 +381,7 @@ class TestFastAPIInvariants:
             any self-signed warrant to pass authentication.  The fix emits
             warnings.warn() so the misconfiguration is immediately visible.
         """
-        fastapi = pytest.importorskip("fastapi")
-        from unittest.mock import MagicMock
+        pytest.importorskip("fastapi")
 
         from tenuo.fastapi import TenuoGuard, _config
 
@@ -431,10 +427,9 @@ class TestFastAPIInvariants:
         """
         I3: When trusted_issuers is configured, self-signed warrants MUST fail.
         """
-        fastapi = pytest.importorskip("fastapi")
+        pytest.importorskip("fastapi")
 
-        from tenuo.fastapi import TenuoGuard, configure_tenuo, _config
-        from unittest.mock import MagicMock
+        from tenuo.fastapi import TenuoGuard, _config
 
         root_key = SigningKey.generate()
         attacker_key = SigningKey.generate()
@@ -467,7 +462,7 @@ class TestFastAPIInvariants:
 
     def test_I2_expired_warrant_denied_by_guard(self):
         """I2: TenuoGuard.is_expired check must block expired warrants early."""
-        fastapi = pytest.importorskip("fastapi")
+        pytest.importorskip("fastapi")
 
         root_key = SigningKey.generate()
         w = Warrant.issue(
@@ -927,8 +922,10 @@ class _GoogleADKAdapter(_Adapter):
             self._root, capabilities={"search": {}}, ttl_seconds=3600,
             holder=self._holder.public_key,   # issued TO holder, BY root
         )
-        self._tool_search = MagicMock(); self._tool_search.name = "search"
-        self._tool_delete = MagicMock(); self._tool_delete.name = "delete"
+        self._tool_search = MagicMock()
+        self._tool_search.name = "search"
+        self._tool_delete = MagicMock()
+        self._tool_delete.name = "delete"
         self._ctx = MagicMock()
 
         # Production-configured guard: require_pop=True + trusted_roots set
@@ -1027,7 +1024,10 @@ class _LangChainAdapter(_Adapter):
         self._bw_search = BoundWarrant(warrant=self._warrant_search, key=self._holder)
 
         def _mock(name: str) -> Any:
-            t = MagicMock(); t.name = name; t.description = name; t.args_schema = None
+            t = MagicMock()
+            t.name = name
+            t.description = name
+            t.args_schema = None
             return t
 
         self._tool_search_no_bw = TenuoTool(_mock("search"))
@@ -1041,7 +1041,6 @@ class _LangChainAdapter(_Adapter):
         )
 
     def _ok(self, tool: Any, args: Dict[str, Any]) -> bool:
-        from tenuo.langchain import ToolNotAuthorized
         try:
             tool._check_authorization(args)
             return True
@@ -1066,7 +1065,10 @@ class _LangChainAdapter(_Adapter):
                           holder=self._holder.public_key)
         time.sleep(2)
         bw = BoundWarrant(warrant=w, key=self._holder)
-        t = MagicMock(); t.name = "search"; t.description = "search"; t.args_schema = None
+        t = MagicMock()
+        t.name = "search"
+        t.description = "search"
+        t.args_schema = None
         tool = TenuoTool(t, bound_warrant=bw, trusted_roots=[self._root.public_key])
         return self._ok(tool, {})
 
@@ -1076,7 +1078,7 @@ class _LangChainAdapter(_Adapter):
 
     async def check_untrusted_issuer(self) -> Optional[bool]:
         from tenuo import BoundWarrant
-        from tenuo.langchain import TenuoTool, ToolNotAuthorized
+        from tenuo.langchain import TenuoTool
         from unittest.mock import MagicMock
 
         attacker_key = SigningKey.generate()
@@ -1085,7 +1087,10 @@ class _LangChainAdapter(_Adapter):
             holder=attacker_key.public_key,
         )
         attacker_bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
-        t = MagicMock(); t.name = "search"; t.description = "search"; t.args_schema = None
+        t = MagicMock()
+        t.name = "search"
+        t.description = "search"
+        t.args_schema = None
         tool = TenuoTool(t, bound_warrant=attacker_bw,
                          trusted_roots=[self._root.public_key])
         try:
@@ -1102,7 +1107,10 @@ class _LangChainAdapter(_Adapter):
         attacker_key = SigningKey.generate()
         # Warrant issued to self._holder but PoP signed by attacker_key (holder mismatch)
         bw_wrong = BoundWarrant(warrant=self._warrant_search, key=attacker_key)
-        t = MagicMock(); t.name = "search"; t.description = "search"; t.args_schema = None
+        t = MagicMock()
+        t.name = "search"
+        t.description = "search"
+        t.args_schema = None
         tool = TenuoTool(t, bound_warrant=bw_wrong,
                          trusted_roots=[self._root.public_key])
         try:
@@ -1165,8 +1173,6 @@ class _MCPAdapter(_Adapter):
                      # individually in TestMCPInvariants
 
     async def check_untrusted_issuer(self) -> Optional[bool]:
-        from tenuo_core import Authorizer
-        from tenuo.mcp.server import MCPVerifier
         import base64 as _b64
 
         attacker_key = SigningKey.generate()
@@ -1182,7 +1188,6 @@ class _MCPAdapter(_Adapter):
         return self._ok("search", {}, meta)
 
     async def check_wrong_holder(self) -> Optional[bool]:
-        import base64 as _b64
         attacker_key = SigningKey.generate()
         # Warrant issued to self._holder but PoP signed by attacker_key (holder mismatch)
         meta = self._meta(self._warrant, signer=attacker_key)
@@ -1193,7 +1198,6 @@ class _LangGraphAdapter(_Adapter):
 
     def __init__(self) -> None:
         pytest.importorskip("langchain")  # LangGraph requires LangChain
-        from unittest.mock import MagicMock
         from tenuo.keys import KeyRegistry
         from tenuo.langgraph import TenuoMiddleware
 
@@ -1290,7 +1294,6 @@ class _TemporalAdapter(_Adapter):
 
     def __init__(self) -> None:
         pytest.importorskip("temporalio")
-        from unittest.mock import MagicMock
         from tenuo.temporal import (
             KeyResolver, TenuoInterceptor, TenuoInterceptorConfig, TENUO_WARRANT_HEADER,
         )
@@ -2043,7 +2046,7 @@ class TestTemporalInvariants:
     """
 
     def _make_interceptor(self, trusted_key: SigningKey):
-        temporalio = pytest.importorskip("temporalio")
+        pytest.importorskip("temporalio")
         from tenuo.temporal import (
             KeyResolver,
             TenuoInterceptor,
@@ -2282,7 +2285,7 @@ class TestTemporalInvariantsExtended:
         return TenuoInterceptor(cfg)
 
     def _make_input(self, warrant: Warrant, activity_name: str = "test_activity"):
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import MagicMock
         inp = MagicMock()
         inp.headers = {}
         from tenuo.temporal import TENUO_WARRANT_HEADER
@@ -2367,19 +2370,21 @@ class TestGoogleADKInvariantsExtended:
             require_pop=False, on_denial="return",
         )
 
-        tool = MagicMock(); tool.name = "search"
+        tool = MagicMock()
+        tool.name = "search"
         ctx = MagicMock()
 
         # Attacker warrant injected into tool_context — the guard MUST ignore it
         # and use only the configured warrant.  Since the configured warrant IS
         # legitimate here, the call should be allowed.  The real security check:
         # if the attacker tries to call a tool not in the bound warrant, it fails.
-        attacker_w = Warrant.issue(
+        Warrant.issue(
             attacker_key, capabilities={"admin": {}}, ttl_seconds=3600,
             holder=attacker_key.public_key,
         )
         # Try to call 'admin' which is NOT in the bound legitimate warrant
-        admin_tool = MagicMock(); admin_tool.name = "admin"
+        admin_tool = MagicMock()
+        admin_tool.name = "admin"
         result = guard.before_tool(admin_tool, {}, ctx)
         assert result is not None, (
             "Google ADK I3/I4: tool not in bound warrant must be denied "
@@ -2406,7 +2411,10 @@ class TestLangChainInvariantsExtended:
         )
         bw = BoundWarrant(warrant=w, key=root_key)
 
-        t = MagicMock(); t.name = "search"; t.description = "search"; t.args_schema = None
+        t = MagicMock()
+        t.name = "search"
+        t.description = "search"
+        t.args_schema = None
         tool = TenuoTool(t, bound_warrant=bw)
 
         with pytest.raises(Exception) as exc_info:
@@ -2436,7 +2444,10 @@ class TestLangChainInvariantsExtended:
         )
         attacker_bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
 
-        t = MagicMock(); t.name = "search"; t.description = "search"; t.args_schema = None
+        t = MagicMock()
+        t.name = "search"
+        t.description = "search"
+        t.args_schema = None
         # trusted_roots points to real_root_key — attacker's key is NOT trusted
         tool = TenuoTool(t, bound_warrant=attacker_bw, trusted_roots=[real_root_key.public_key])
 
@@ -2572,7 +2583,6 @@ class TestTrustedRootsEnforcement:
         """
         from tenuo._enforcement import enforce_tool_call
         from tenuo import BoundWarrant
-        from tenuo.exceptions import ConfigurationError
         from tenuo.config import reset_config
 
         attacker_w, attacker_key = attacker_warrant_and_key
@@ -2694,7 +2704,7 @@ class TestRegressions:
         Fix: emit warnings.warn() when trusted_issuers is empty.
         Verified: warning is emitted; no silent acceptance.
         """
-        fastapi = pytest.importorskip("fastapi")
+        pytest.importorskip("fastapi")
 
         from tenuo.fastapi import TenuoGuard, _config
 
