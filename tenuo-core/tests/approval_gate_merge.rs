@@ -136,7 +136,7 @@ fn test_unit_merge_per_arg_base_survives_conflict() {
     // Base's Constraint must survive — All from additional must not overwrite it.
     match args.get("path").unwrap() {
         ArgApprovalGate::Constraint(_) => {}
-        ArgApprovalGate::All => {
+        ArgApprovalGate::All | ArgApprovalGate::Exempt(_) => {
             panic!("additional's All must not overwrite base's Constraint gate")
         }
     }
