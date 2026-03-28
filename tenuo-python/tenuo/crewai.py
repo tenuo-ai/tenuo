@@ -897,8 +897,16 @@ class CrewAIGuard:
                     )
                 elif enforcement.error_type == "tool_not_allowed":
                      error = WarrantToolDenied(tool=tool_name, warrant_id=bound.id)  # type: ignore[assignment]
+                elif enforcement.error_type in ("invalid_pop", "signature_invalid", "missing_signature"):
+                    error = InvalidPoP(reason=reason)  # type: ignore[assignment]
+                elif enforcement.error_type in ("authorization_failed", "configuration_error"):
+                    error = InvalidPoP(reason=reason)  # type: ignore[assignment]
                 else:
-                    # Default fallback for PoP failures etc.
+                    # Unknown error_type — treat as PoP failure (fail-closed)
+                    logger.debug(
+                        "Unhandled enforcement error_type %r for tool %r, defaulting to InvalidPoP",
+                        enforcement.error_type, tool_name,
+                    )
                     error = InvalidPoP(reason=reason)  # type: ignore[assignment]
 
                 return self._handle_denial(error, tool_name, args, agent_role)

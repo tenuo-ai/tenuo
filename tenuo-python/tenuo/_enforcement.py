@@ -58,7 +58,7 @@ from .exceptions import (
     ToolNotAuthorized,
 )
 from .schemas import TOOL_SCHEMAS, ToolSchema
-from .validation import ValidationResult
+from .validation import ValidationResult  # kept for API re-export via this module
 
 logger = logging.getLogger("tenuo.enforcement")
 
@@ -768,80 +768,65 @@ def enforce_tool_call(
             )
 
         if verify_mode == "sign":
-            if trusted_roots is not None:
-                # ─────────────────────────────────────────────────────────────
-                # VERIFIED SIGN PATH — sign PoP locally, then verify issuer
-                # trust via Authorizer(trusted_roots).authorize_one().
-                # This is the secure path: the warrant issuer must be one of
-                # the explicitly trusted roots, not just self-consistent.
-                # ─────────────────────────────────────────────────────────────
-                import time as _time
-                from tenuo_core import Authorizer as _Authorizer
+            # ─────────────────────────────────────────────────────────────────
+            # Resolve trusted_roots: explicit parameter > BoundWarrant's own
+            # configured roots > fail closed.
+            # ─────────────────────────────────────────────────────────────────
+            if trusted_roots is None:
+                _bound_roots = getattr(bound_warrant, "_trusted_roots", None)
+                if _bound_roots is None:
+                    raise ConfigurationError(
+                        "enforce_tool_call requires trusted_roots in the sign path. "
+                        "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, or "
+                        "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time "
+                        "so the Rust Authorizer verifies the warrant against an explicit "
+                        "trust anchor. Accepting self-signed warrants is not permitted "
+                        "(fail-closed). See tenuo_core.Authorizer for details."
+                    )
+                trusted_roots = _bound_roots
 
+            # ─────────────────────────────────────────────────────────────────
+            # VERIFIED SIGN PATH — sign PoP locally, then verify issuer
+            # trust via Authorizer(trusted_roots).authorize_one().
+            # The warrant issuer must be one of the explicitly trusted roots.
+            # ─────────────────────────────────────────────────────────────────
+            import time as _time
+            from tenuo_core import Authorizer as _Authorizer
+
+            try:
+                _warrant = bound_warrant.warrant
+                _key = bound_warrant._key
+                _pop = bytes(_warrant.sign(_key, tool_name, tool_args, int(_time.time())))
+                _auth = _Authorizer(trusted_roots=trusted_roots)
+                _auth.authorize_one(
+                    _warrant, tool_name, tool_args,
+                    signature=_pop,
+                    approvals=_gate_approvals or [],
+                )
+            except Exception as _exc:
+                from tenuo.exceptions import ExpiredError as _ExpiredError
+                from tenuo.exceptions import MissingSignature as _MissingSignature
+                from tenuo.exceptions import SignatureInvalid as _SignatureInvalid
+                if isinstance(_exc, (_ExpiredError, _SignatureInvalid, _MissingSignature)):
+                    raise
+                # Use why_denied() to get the structured field name instead of
+                # regexing the error string — why_denied is available even when
+                # authorize_one raises because it interrogates the warrant directly.
                 try:
-                    _warrant = bound_warrant.warrant
-                    _key = bound_warrant._key
-                    _pop = bytes(_warrant.sign(_key, tool_name, tool_args, int(_time.time())))
-                    _auth = _Authorizer(trusted_roots=trusted_roots)
-                    _auth.authorize_one(
-                        _warrant, tool_name, tool_args,
-                        signature=_pop,
-                        approvals=_gate_approvals or [],
-                    )
-                except Exception as _exc:
-                    from tenuo.exceptions import ExpiredError as _ExpiredError
-                    from tenuo.exceptions import MissingSignature as _MissingSignature
-                    from tenuo.exceptions import SignatureInvalid as _SignatureInvalid
-                    if isinstance(_exc, (_ExpiredError, _SignatureInvalid, _MissingSignature)):
-                        raise
-                    violated_field = _extract_violated_field(str(_exc))
-                    logger.debug(f"Authorization denied for {tool_name}: {_exc}")
-                    return EnforcementResult(
-                        allowed=False,
-                        tool=tool_name,
-                        arguments=tool_args,
-                        denial_reason=str(_exc) or "Authorization failed",
-                        constraint_violated=violated_field,
-                        error_type="authorization_failed",
-                        warrant_id=warrant_id,
-                    )
-            else:
-                # ─────────────────────────────────────────────────────────────
-                # SELF-SIGNED PATH — no explicit trusted_roots provided.
-                # BoundWarrant.validate() trusts the warrant's own issuer, so
-                # any self-signed warrant passes.  This is insecure for
-                # untrusted inputs: always supply trusted_roots in production.
-                # ─────────────────────────────────────────────────────────────
-                import warnings
-                from .exceptions import TenuoSecurityWarning
-                warnings.warn(
-                    "enforce_tool_call called without trusted_roots: warrant issuer is "
-                    "implicitly trusted. Supply trusted_roots=[<PublicKey>] to verify "
-                    "the issuer against an explicit trust anchor (see tenuo_core.Authorizer).",
-                    TenuoSecurityWarning,
-                    stacklevel=3,
+                    _why = _warrant.why_denied(tool_name, tool_args)
+                    violated_field = getattr(_why, "field", None)
+                except Exception:
+                    violated_field = None
+                logger.debug(f"Authorization denied for {tool_name}: {_exc}")
+                return EnforcementResult(
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason=str(_exc) or "Authorization failed",
+                    constraint_violated=violated_field,
+                    error_type="authorization_failed",
+                    warrant_id=warrant_id,
                 )
-                # Pass approval gate approvals (if any) so Rust satisfies the gate check.
-                validation_result: ValidationResult = bound_warrant.validate(
-                    tool_name, tool_args, approvals=_gate_approvals
-                )
-
-                if not validation_result.success:
-                    # Extract detailed failure info from ValidationResult
-                    violated_field = _extract_violated_field(validation_result.reason)
-
-                    logger.debug(
-                        f"Authorization denied for {tool_name}: {validation_result.reason}"
-                    )
-                    return EnforcementResult(
-                        allowed=False,
-                        tool=tool_name,
-                        arguments=tool_args,
-                        denial_reason=validation_result.reason or "Authorization failed",
-                        constraint_violated=violated_field,
-                        error_type="authorization_failed",
-                        warrant_id=warrant_id,
-                    )
         else:
             # verify_mode == "verify"
             # Full chain verification: issuer trust, chain linkage, revocation,
@@ -934,7 +919,7 @@ def enforce_tool_call(
             tool=tool_name,
             arguments=tool_args,
             denial_reason=str(e),
-            constraint_violated=_extract_violated_field(str(e)),
+            constraint_violated=getattr(e, "field", None) or _extract_violated_field(str(e)),
             error_type=err_type,
             warrant_id=warrant_id,
         )

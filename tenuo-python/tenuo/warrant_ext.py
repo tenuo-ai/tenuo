@@ -115,16 +115,18 @@ AnyWarrant = Union[Warrant, "BoundWarrant"]
 
 
 class DenyCode:
-    """Stable deny codes for programmatic handling."""
+    """Stable deny codes for programmatic handling.
+
+    These map 1-to-1 with the codes emitted by :meth:`Warrant.why_denied`.
+    All constraint failures (range, cidr, url-pattern, CEL …) collapse to
+    ``CONSTRAINT_MISMATCH``; use ``WhyDenied.field`` to identify the parameter.
+    """
 
     ALLOWED = "ALLOWED"
     TOOL_NOT_FOUND = "TOOL_NOT_FOUND"
     WARRANT_EXPIRED = "WARRANT_EXPIRED"
     CONSTRAINT_MISMATCH = "CONSTRAINT_MISMATCH"
-    CONSTRAINT_RANGE = "CONSTRAINT_RANGE"
-    CONSTRAINT_MISSING = "CONSTRAINT_MISSING"
     CLEARANCE_INSUFFICIENT = "CLEARANCE_INSUFFICIENT"
-    TERMINAL = "TERMINAL"
 
 
 @dataclass

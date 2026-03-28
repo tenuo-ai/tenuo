@@ -1064,11 +1064,13 @@ class A2AServer:
                 logger.warning(f"Warrant expiry check failed: {e}")
                 raise WarrantExpiredError("Expiry check failed (fail-closed)")
         else:
-            # Fallback: check exp claim manually
-            # Note: This path should rarely be taken with tenuo_core warrants
+            # Fallback: check exp claim manually when is_expired() is unavailable.
+            # Mirror Rust's CLOCK_SKEW_TOLERANCE_SECS (30 s) so near-boundary warrants
+            # are not prematurely rejected on the Python path.
+            _CLOCK_SKEW = 30
             now = int(time.time())
             exp = self._get_warrant_prop(warrant, "exp", "expires_at")
-            if exp is not None and exp < now:
+            if exp is not None and exp + _CLOCK_SKEW < now:
                 raise WarrantExpiredError()
 
         # Check issuer trust (direct or via chain)
@@ -1147,57 +1149,61 @@ class A2AServer:
                 # Re-raise other errors (constraint violations, etc.)
                 raise
 
-        # Check skill is granted in warrant
-        grants = getattr(warrant, "grants", [])
-        if not grants:
-            # Try to get grants from tools/capabilities
-            tools = getattr(warrant, "tools", None)
-            if tools:
-                grants = [{"skill": t} for t in tools]
+        # Check skill is granted in warrant — only when PoP was NOT verified by the
+        # Authorizer above.  When require_pop=True the Authorizer already enforces
+        # tool grants and constraints atomically, so running them again in Python
+        # creates a redundant gate that can drift from Rust semantics.
+        if not self.require_pop:
+            grants = getattr(warrant, "grants", [])
+            if not grants:
+                # Try to get grants from tools/capabilities
+                tools = getattr(warrant, "tools", None)
+                if tools:
+                    grants = [{"skill": t} for t in tools]
 
-        granted_skills = [g.get("skill", g) if isinstance(g, dict) else g for g in grants]
-        if skill_id not in granted_skills:
-            raise SkillNotGrantedError(skill_id, granted_skills)
+            granted_skills = [g.get("skill", g) if isinstance(g, dict) else g for g in grants]
+            if skill_id not in granted_skills:
+                raise SkillNotGrantedError(skill_id, granted_skills)
 
-        # Get warrant constraints for this skill (if any)
-        warrant_constraints = {}
-        for grant in grants:
-            if isinstance(grant, dict):
-                grant_skill = grant.get("skill")
-                if grant_skill == skill_id:
-                    warrant_constraints = grant.get("constraints", {})
-                    break
+            # Get warrant constraints for this skill (if any)
+            warrant_constraints = {}
+            for grant in grants:
+                if isinstance(grant, dict):
+                    grant_skill = grant.get("skill")
+                    if grant_skill == skill_id:
+                        warrant_constraints = grant.get("constraints", {})
+                        break
 
-        # Check constraints - warrant constraints take precedence over server constraints
-        # Server constraints define what the skill CAN check
-        # Warrant constraints define what this invocation IS LIMITED TO
-        # Both must pass, but warrant may be more restrictive
-        skill_def = self._skills.get(skill_id)
-        if skill_def:
-            for param, server_constraint in skill_def.constraints.items():
-                if param in arguments:
-                    value = arguments[param]
+            # Check constraints - warrant constraints take precedence over server constraints
+            # Server constraints define what the skill CAN check
+            # Warrant constraints define what this invocation IS LIMITED TO
+            # Both must pass, but warrant may be more restrictive
+            skill_def = self._skills.get(skill_id)
+            if skill_def:
+                for param, server_constraint in skill_def.constraints.items():
+                    if param in arguments:
+                        value = arguments[param]
 
-                    # First check server constraint (the skill's declared requirement)
-                    if not self._check_constraint(server_constraint, value, param):
-                        raise ConstraintViolationError(
-                            param=param,
-                            constraint_type=type(server_constraint).__name__,
-                            value=value,
-                            reason="Value does not satisfy server constraint",
-                        )
-
-                    # Then check warrant constraint if present (may be more restrictive)
-                    if param in warrant_constraints:
-                        # Warrant constraints come as dicts from JSON - deserialize
-                        warrant_constraint = self._deserialize_constraint(warrant_constraints[param], param)
-                        if not self._check_constraint(warrant_constraint, value, param):
+                        # First check server constraint (the skill's declared requirement)
+                        if not self._check_constraint(server_constraint, value, param):
                             raise ConstraintViolationError(
                                 param=param,
-                                constraint_type=type(warrant_constraint).__name__,
+                                constraint_type=type(server_constraint).__name__,
                                 value=value,
-                                reason="Value does not satisfy warrant constraint",
+                                reason="Value does not satisfy server constraint",
                             )
+
+                        # Then check warrant constraint if present (may be more restrictive)
+                        if param in warrant_constraints:
+                            # Warrant constraints come as dicts from JSON - deserialize
+                            warrant_constraint = self._deserialize_constraint(warrant_constraints[param], param)
+                            if not self._check_constraint(warrant_constraint, value, param):
+                                raise ConstraintViolationError(
+                                    param=param,
+                                    constraint_type=type(warrant_constraint).__name__,
+                                    value=value,
+                                    reason="Value does not satisfy warrant constraint",
+                                )
 
         # Log audit event
         latency_ms = int((time.time() - start_time) * 1000)
@@ -1957,9 +1963,11 @@ class A2AServer:
             if callable(is_expired_attr):
                 expired = is_expired_attr()
             else:
+                # Mirror Rust's CLOCK_SKEW_TOLERANCE_SECS (30 s)
+                _CLOCK_SKEW = 30
                 now = int(time.time())
                 exp = getattr(challenge_warrant, "exp", None)
-                expired = exp is not None and exp < now
+                expired = exp is not None and exp + _CLOCK_SKEW < now
             if expired:
                 raise InvalidSignatureError("Challenge token has expired")
         except InvalidSignatureError:
@@ -2236,8 +2244,9 @@ class A2AServer:
                 # Check if result is async generator (streaming skill)
                 if hasattr(result, "__anext__"):
                     async for chunk in result:
-                        # Mid-stream expiry check
-                        if warrant_exp and time.time() > warrant_exp:
+                        # Mid-stream expiry check — mirror Rust's 30 s clock skew tolerance
+                        _CLOCK_SKEW = 30
+                        if warrant_exp and time.time() > warrant_exp + _CLOCK_SKEW:
                             error_event = {
                                 "type": "error",
                                 "task_id": task_id,
@@ -2262,7 +2271,9 @@ class A2AServer:
 
                 # Final expiry check before completion
                 # (catches expiry during long-running non-streaming skills)
-                if warrant_exp and time.time() > warrant_exp:
+                # Mirror Rust's CLOCK_SKEW_TOLERANCE_SECS (30 s)
+                _CLOCK_SKEW = 30
+                if warrant_exp and time.time() > warrant_exp + _CLOCK_SKEW:
                     error_event = {
                         "type": "error",
                         "task_id": task_id,

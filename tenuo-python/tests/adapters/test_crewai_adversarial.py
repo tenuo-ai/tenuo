@@ -836,7 +836,7 @@ class TestReplayAttackProtection:
             .mint(key)
         )
 
-        guard = GuardBuilder().allow("read", path=Subpath("/data")).with_warrant(warrant, key).on_denial("skip").build()
+        guard = GuardBuilder().allow("read", path=Subpath("/data")).with_warrant(warrant, key).with_trusted_roots([key.public_key]).on_denial("skip").build()
 
         # First call with valid key should succeed
         result1 = guard._authorize("read", {"path": "/data/file.txt"})

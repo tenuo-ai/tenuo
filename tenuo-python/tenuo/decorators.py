@@ -480,6 +480,7 @@ def guard(
     keypair: Optional[SigningKey] = None,
     extract_args: Optional[Callable[..., dict]] = None,
     mapping: Optional[dict[str, str]] = None,
+    trusted_roots: Optional[list] = None,
 ):
     """
     Decorator that enforces warrant authorization before function execution.
@@ -508,6 +509,10 @@ def guard(
         @guard(warrant, tool="manage_infrastructure", keypair=keypair)
         def scale_cluster(cluster: str, replicas: int): ...
 
+    5. With explicit trust anchor (production recommended):
+        @guard(trusted_roots=[control_plane_key.public_key])
+        def read_file(path: str): ...
+
     Args:
         warrant_or_tool: If Warrant instance, use it explicitly. If str, treat as tool name.
                         If None, tool is inferred from function name.
@@ -517,6 +522,10 @@ def guard(
                      If None, uses the function's kwargs as args.
         mapping: Optional dictionary mapping function argument names to constraint names.
                  e.g., {"target_env": "cluster"} maps arg 'target_env' to constraint 'cluster'.
+        trusted_roots: Trusted issuer public keys (tenuo_core.PublicKey).  When supplied
+                       the Authorizer verifies the warrant issuer against these roots,
+                       closing the self-signed trust gap.  Highly recommended in production.
+                       Falls back to warrant.issuer when omitted (accepts self-signed warrants).
 
     Raises:
         AuthorizationError: If no warrant/keypair is available, or authorization fails.
@@ -539,7 +548,7 @@ def guard(
         func = warrant_or_tool
         inferred_tool = func.__name__
         # Apply decorator and return immediately
-        inner_decorator = guard(tool=inferred_tool, keypair=keypair, extract_args=extract_args, mapping=mapping)
+        inner_decorator = guard(tool=inferred_tool, keypair=keypair, extract_args=extract_args, mapping=mapping, trusted_roots=trusted_roots)
         return inner_decorator(func)
     else:
         # Pattern: @guard(tool="...") - tool passed as keyword arg
@@ -778,22 +787,50 @@ def guard(
             import time as _time
 
             from tenuo_core import Authorizer as _Authorizer
+            from tenuo.exceptions import (
+                ExpiredError as _ExpiredError,
+                MissingSignature as _MissingSignature,
+                SignatureInvalid as _SignatureInvalid,
+            )
 
             pop_signature = warrant_to_use.sign(keypair_to_use, tool_name, auth_args, int(_time.time()))
             issuer_pub = getattr(warrant_to_use, "issuer_public_key", None) or getattr(warrant_to_use, "issuer", None)
-            _roots = [issuer_pub] if issuer_pub is not None else []
+            # Prefer explicitly-supplied roots; fall back to self-issuer as a last resort.
+            # The fallback still enforces PoP binding but does not verify the issuer
+            # against an org-level trust anchor.  Pass trusted_roots= in production.
+            if trusted_roots:
+                _roots = list(trusted_roots)
+            else:
+                _roots = [issuer_pub] if issuer_pub is not None else []
             try:
                 _auth = _Authorizer(trusted_roots=_roots)
                 _auth.authorize_one(warrant_to_use, tool_name, auth_args, signature=bytes(pop_signature))
                 _pop_ok = True
-            except Exception:
+            except (_ExpiredError, _SignatureInvalid, _MissingSignature):
+                raise  # crypto failures are not policy denials — propagate immediately
+            except Exception as _auth_exc:
+                logger.debug(
+                    "authorize_one denied for tool '%s': %s",
+                    tool_name, _auth_exc,
+                )
                 _pop_ok = False
 
             if not _pop_ok:
-                warrant_tools = warrant_to_use.tools if hasattr(warrant_to_use, "tools") else []
+                # Use core's why_denied() to classify the denial reason so grant
+                # semantics (wildcards, capability shapes) match the Authorizer,
+                # rather than re-implementing tool-grant logic in Python.
+                from .warrant_ext import DenyCode as _DenyCode
+                why = warrant_to_use.why_denied(tool_name, auth_args)
 
-                # Tool not in warrant
-                if tool_name not in (warrant_tools or []):
+                # Tool not in warrant (grant-level denial).
+                # Covers both TOOL_NOT_FOUND (capability-style warrants) and
+                # CONSTRAINT_MISMATCH on the "tool" field (.tools([]) style warrants
+                # where the Rust core represents tool grants as a "tool" constraint).
+                _is_tool_not_granted = why.deny_code == _DenyCode.TOOL_NOT_FOUND or (
+                    why.deny_code == _DenyCode.CONSTRAINT_MISMATCH
+                    and getattr(why, "field", None) == "tool"
+                )
+                if _is_tool_not_granted:
                     error_code = AuthErrorCode.SCOPE_VIOLATION
 
                     audit_logger.log(
@@ -803,40 +840,38 @@ def guard(
                             tool=tool_name,
                             action="denied",
                             error_code=error_code,
-                            details=f"Tool '{tool_name}' not in warrant.tools",
+                            details=f"Tool '{tool_name}' not in warrant grants",
                             metadata={
                                 "callsite": callsite,
                                 "function": func_name,
-                                "warrant_tools": warrant_tools,
                             },
                         )
                     )
 
                     raise ToolNotAuthorized(
                         tool=tool_name,
-                        authorized_tools=warrant_tools,
+                        authorized_tools=getattr(warrant_to_use, "tools", []) or [],
                         hint=f"Add Capability('{tool_name}', ...) to your mint() call",
                     )
 
-                # Tool is in warrant but constraint violation
+                # Tool is in warrant but constraint/policy violation
                 error_code = AuthErrorCode.CONSTRAINT_VIOLATION
 
-                # Get structured denial reason
-                why = warrant_to_use.why_denied(tool_name, auth_args)
+                # Get structured denial reason (why already computed above)
 
                 # Build constraint results for rich error
                 constraint_results = []
-                if hasattr(why, "constraint_failures") and why.constraint_failures:
-                    for field, info in why.constraint_failures.items():
-                        constraint_results.append(
-                            ConstraintResult(
-                                name=field,
-                                passed=False,
-                                constraint_repr=str(info.get("expected", "?")),
-                                value=auth_args.get(field, "<not provided>"),
-                                explanation=info.get("reason", "Constraint not satisfied"),
-                            )
+                # why.field identifies the violated parameter (if a single-field failure)
+                if getattr(why, "field", None):
+                    constraint_results.append(
+                        ConstraintResult(
+                            name=why.field,
+                            passed=False,
+                            constraint_repr="<see warrant>",
+                            value=auth_args.get(why.field, "<not provided>"),
+                            explanation=getattr(why, "suggestion", None) or "Constraint not satisfied",
                         )
+                    )
                 else:
                     # Fallback: build from args
                     for arg_name, arg_value in auth_args.items():
@@ -861,12 +896,11 @@ def guard(
                         error_code=error_code,
                         details=f"Constraint violation for '{tool_name}'",
                         metadata={
-                            "callsite": callsite,
-                            "function": func_name,
-                            "warrant_tools": warrant_tools,
-                            "provided_args": {k: str(v)[:100] for k, v in auth_args.items()},
-                            "suggestion": why.suggestion if hasattr(why, "suggestion") else None,
-                        },
+                                "callsite": callsite,
+                                "function": func_name,
+                                "provided_args": {k: str(v)[:100] for k, v in auth_args.items()},
+                                "suggestion": why.suggestion if hasattr(why, "suggestion") else None,
+                            },
                     )
                 )
 

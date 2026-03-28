@@ -2563,34 +2563,30 @@ class TestTrustedRootsEnforcement:
             f"Got: allowed={result.allowed}, reason={result.denial_reason}"
         )
 
-    def test_I4_no_trusted_roots_emits_warning(self, attacker_warrant_and_key):
-        """I4: enforce_tool_call without trusted_roots MUST emit SecurityWarning.
+    def test_I4_no_trusted_roots_raises_config_error(self, attacker_warrant_and_key):
+        """I4: enforce_tool_call without trusted_roots MUST raise ConfigurationError (fail-closed).
 
-        Self-signed warrants pass (self-trust), but callers are warned via
-        SecurityWarning that this is insecure.
+        Self-signed warrants are rejected entirely. Omitting trusted_roots is not
+        silently accepted (not even with a warning) — the system refuses to authorise
+        so that misconfigured callers cannot bypass cryptographic issuer verification.
         """
-        import warnings
         from tenuo._enforcement import enforce_tool_call
         from tenuo import BoundWarrant
+        from tenuo.exceptions import ConfigurationError
 
         attacker_w, attacker_key = attacker_warrant_and_key
         bw = BoundWarrant(warrant=attacker_w, key=attacker_key)
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            enforce_tool_call(
-                tool_name="search",
-                tool_args={},
-                bound_warrant=bw,
-            )
-
-        security_warnings = [
-            w for w in caught
-            if issubclass(w.category, UserWarning) and "trusted_roots" in str(w.message)
-        ]
-        assert security_warnings, (
-            "enforce_tool_call without trusted_roots MUST emit SecurityWarning. "
-            "Callers must be warned about the self-signed trust gap."
+        result = enforce_tool_call(
+            tool_name="search",
+            tool_args={},
+            bound_warrant=bw,
+        )
+        assert not result.allowed, (
+            "enforce_tool_call without trusted_roots MUST deny the request (fail-closed)."
+        )
+        assert "trusted_roots" in (result.denial_reason or ""), (
+            "denial_reason must reference trusted_roots so the caller knows how to fix it."
         )
 
     def test_I3_openai_trusted_roots_rejects_attacker(

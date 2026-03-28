@@ -1144,6 +1144,11 @@ class TestTier2Warrant:
             .mint(keypair)
         )
 
+    @pytest.fixture
+    def trusted_roots(self, keypair):
+        """Trusted roots — the warrant is self-signed so the issuer == keypair."""
+        return [keypair.public_key]
+
     def test_warrant_requires_signing_key(self, keypair, warrant):
         """Warrant without signing_key should raise MissingSigningKey."""
         response = make_response([("read_file", {"path": "/data/file.txt"})])
@@ -1158,13 +1163,13 @@ class TestTier2Warrant:
         assert "signing_key" in str(exc_info.value).lower()
         assert exc_info.value.code == "T2_002"
 
-    def test_warrant_allows_valid_call(self, keypair, warrant):
+    def test_warrant_allows_valid_call(self, keypair, warrant, trusted_roots):
         """Warrant should allow calls that match capabilities (with PoP)."""
         response = make_response([("read_file", {"path": "/data/file.txt"})])
         mock_client = make_mock_client(response)
 
         # Proper Tier 2: warrant + signing_key
-        client = guard(mock_client, warrant=warrant, signing_key=keypair)
+        client = guard(mock_client, warrant=warrant, signing_key=keypair, trusted_roots=trusted_roots)
         result = client.chat.completions.create(model="gpt-4o", messages=[])
 
         # Should not raise
@@ -1193,7 +1198,7 @@ class TestTier2Warrant:
         with pytest.raises(WarrantDenied):
             client.chat.completions.create(model="gpt-4o", messages=[])
 
-    def test_warrant_with_tier1_defense_in_depth(self, keypair, warrant):
+    def test_warrant_with_tier1_defense_in_depth(self, keypair, warrant, trusted_roots):
         """Both Tier 1 and Tier 2 must pass when configured together."""
         response = make_response([("read_file", {"path": "/data/file.txt"})])
         mock_client = make_mock_client(response)
@@ -1205,25 +1210,26 @@ class TestTier2Warrant:
             mock_client,
             warrant=warrant,
             signing_key=keypair,
+            trusted_roots=trusted_roots,
             deny_tools=["read_file"],  # Tier 1 block
         )
 
         with pytest.raises(ToolDenied):  # Tier 1 denial
             client.chat.completions.create(model="gpt-4o", messages=[])
 
-    def test_warrant_range_constraint(self, keypair, warrant):
+    def test_warrant_range_constraint(self, keypair, warrant, trusted_roots):
         """Warrant should enforce Range constraints."""
         # Valid: within range
         response = make_response([("search", {"max_results": 50})])
         mock_client = make_mock_client(response)
-        client = guard(mock_client, warrant=warrant, signing_key=keypair)
+        client = guard(mock_client, warrant=warrant, signing_key=keypair, trusted_roots=trusted_roots)
         result = client.chat.completions.create(model="gpt-4o", messages=[])
         assert result is not None
 
         # Invalid: out of range
         response2 = make_response([("search", {"max_results": 500})])
         mock_client2 = make_mock_client(response2)
-        client2 = guard(mock_client2, warrant=warrant, signing_key=keypair)
+        client2 = guard(mock_client2, warrant=warrant, signing_key=keypair, trusted_roots=trusted_roots)
         with pytest.raises(WarrantDenied):
             client2.chat.completions.create(model="gpt-4o", messages=[])
 
@@ -1275,13 +1281,13 @@ class TestTier2Warrant:
         mock_client = make_mock_client(response)
 
         # Agent uses its own key for PoP
-        client = guard(mock_client, warrant=warrant, signing_key=agent_key)
+        client = guard(mock_client, warrant=warrant, signing_key=agent_key, trusted_roots=[control_plane_key.public_key])
         result = client.chat.completions.create(model="gpt-4o", messages=[])
 
         # Should succeed
         assert result.choices[0].message.tool_calls[0].function.name == "read_file"
 
-    def test_multiple_tool_calls_with_warrant(self, keypair, warrant):
+    def test_multiple_tool_calls_with_warrant(self, keypair, warrant, trusted_roots):
         """Multiple tool calls in same response, some valid, some invalid."""
         response = make_response(
             [
@@ -1292,7 +1298,7 @@ class TestTier2Warrant:
         )
         mock_client = make_mock_client(response)
 
-        client = guard(mock_client, warrant=warrant, signing_key=keypair)
+        client = guard(mock_client, warrant=warrant, signing_key=keypair, trusted_roots=trusted_roots)
 
         # Should fail on first invalid tool
         with pytest.raises(WarrantDenied) as exc:
@@ -1321,7 +1327,7 @@ class TestTier2Warrant:
         # Tool call should be filtered out
         assert result.choices[0].message.tool_calls is None
 
-    def test_verify_tool_call_with_warrant_directly(self, keypair, warrant):
+    def test_verify_tool_call_with_warrant_directly(self, keypair, warrant, trusted_roots):
         """Test verify_tool_call function directly with warrant."""
         # Valid call should pass
         verify_tool_call(
@@ -1332,6 +1338,7 @@ class TestTier2Warrant:
             constraints=None,
             warrant=warrant,
             signing_key=keypair,
+            trusted_roots=trusted_roots,
         )
 
         # Invalid call should raise
@@ -1344,6 +1351,7 @@ class TestTier2Warrant:
                 constraints=None,
                 warrant=warrant,
                 signing_key=keypair,
+                trusted_roots=trusted_roots,
             )
 
         # Missing signing_key should raise
@@ -1358,7 +1366,7 @@ class TestTier2Warrant:
                 signing_key=None,
             )
 
-    def test_streaming_with_warrant(self, keypair, warrant):
+    def test_streaming_with_warrant(self, keypair, warrant, trusted_roots):
         """Streaming should work with Tier 2 warrant verification."""
         from unittest.mock import Mock
 
@@ -1425,7 +1433,7 @@ class TestTier2Warrant:
         mock_client = Mock()
         mock_client.chat.completions.create.return_value = iter(chunks)
 
-        client = guard(mock_client, warrant=warrant, signing_key=keypair)
+        client = guard(mock_client, warrant=warrant, signing_key=keypair, trusted_roots=trusted_roots)
 
         # Should not raise - valid call
         result = list(client.chat.completions.create(model="gpt-4o", messages=[], stream=True))
@@ -1792,7 +1800,7 @@ class TestAgentsSDKIntegration:
             .mint(key)
         )
 
-        guardrail = create_tier2_guardrail(warrant=warrant, signing_key=key)
+        guardrail = create_tier2_guardrail(warrant=warrant, signing_key=key, trusted_roots=[key.public_key])
 
         input_data = [{"function": {"name": "send_email", "arguments": '{"to": "user@company.com"}'}}]
 

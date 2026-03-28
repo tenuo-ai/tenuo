@@ -3107,6 +3107,21 @@ class TenuoActivityInboundInterceptor:
 
         else:
             # --- Lightweight path (no trusted_roots, no PoP) ---
+            # SECURITY: This path has no cryptographic issuer verification and no
+            # Proof-of-Possession check.  It is suitable only for development or
+            # internal environments where warrants are not received from untrusted
+            # callers.  Configure trusted_roots on TenuoInterceptorConfig for
+            # production deployments so the Rust Authorizer gates every call.
+            import warnings as _warnings
+            from tenuo.exceptions import TenuoSecurityWarning as _TSW
+            _warnings.warn(
+                "TenuoInterceptor has no trusted_roots configured: activity "
+                f"'{tool_name}' is being authorized without issuer trust verification "
+                "or Proof-of-Possession. Set trusted_roots=... on "
+                "TenuoInterceptorConfig to enable full cryptographic enforcement.",
+                _TSW,
+                stacklevel=4,
+            )
             # Check warrant expiry
             if warrant.is_expired():
                 self._emit_denial_event(
@@ -3123,9 +3138,11 @@ class TenuoActivityInboundInterceptor:
                     )
                 return await _deny_or_continue(tool=tool_name, reason="Warrant expired")
 
-            # Check tool is in capabilities
-            tools = warrant.tools or []
-            if tool_name not in tools:
+            # Check tool is in capabilities — delegate to core via why_denied() so
+            # grant semantics (wildcards, capability shapes) match the Authorizer.
+            _why = warrant.why_denied(tool_name, args)
+            from tenuo.warrant_ext import DenyCode as _DC
+            if _why.deny_code == _DC.TOOL_NOT_FOUND:
                 self._emit_denial_event(
                     info=info,
                     warrant=warrant,
@@ -3138,7 +3155,7 @@ class TenuoActivityInboundInterceptor:
                     raise TemporalConstraintViolation(
                         tool=tool_name,
                         arguments=args,
-                        constraint=f"Tool not in warrant capabilities: {tools}",
+                    constraint=f"Tool not in warrant capabilities: {_why.suggestion or tool_name}",
                         warrant_id=warrant.id,
                     )
                 return await _deny_or_continue(

@@ -1532,12 +1532,65 @@ RUST_ERROR_MAP: dict[str, type[TenuoError]] = {
 RUST_ERROR_VARIANTS = list(RUST_ERROR_MAP.keys())
 
 
-def categorize_rust_error(error_message: str) -> TenuoError:
-    """
-    Categorize a Rust error message into the appropriate Python exception.
+def categorize_rust_error(
+    error_message: str,
+    *,
+    error_type: Optional[str] = None,
+) -> "TenuoError":
+    """Categorize a Rust error message into the appropriate Python exception.
 
-    This is used when Rust errors cross the FFI boundary.
+    Parameters
+    ----------
+    error_message:
+        The raw string from the Rust FFI boundary.
+    error_type:
+        Optional structured error discriminant (e.g. ``"expired"``,
+        ``"signature_invalid"``, ``"constraint_mismatch"``).  When provided
+        this is checked *first* so structured information always wins over
+        the substring scan below — prefer passing this wherever it is
+        available to avoid false positive matches.
+
+    .. note::
+       The substring fallback can produce incorrect results when a message
+       contains multiple keywords (e.g. an "invalid signature in approval"
+       message could match the approval branch or the signature branch
+       depending on word order).  Callers that have a typed ``DenyCode``
+       or ``EnforcementResult.error_type`` should pass ``error_type=`` to
+       bypass the scan entirely.
     """
+    # ------------------------------------------------------------------
+    # Fast path: structured error_type discriminant
+    # ------------------------------------------------------------------
+    if error_type:
+        _et = error_type.lower()
+        if _et in ("expired", "warrant_expired"):
+            return ExpiredError(error_message)
+        if _et in ("signature_invalid", "invalid_signature", "signature_mismatch"):
+            return SignatureInvalid(error_message)
+        if _et == "missing_signature":
+            return MissingSignature(error_message)
+        if _et in ("pop_expired", "proof_of_possession_expired"):
+            return PopExpired(error_message)
+        if _et in ("constraint_violation", "constraint_mismatch"):
+            return ConstraintViolation("unknown", error_message)
+        if _et == "tool_not_found":
+            return ToolMismatch("unknown", "unknown")
+        if _et in ("clearance_insufficient", "clearance_violation"):
+            return ClearanceViolation(error_message)
+        if _et in ("chain_error", "broken_chain"):
+            return BrokenChain("unknown", "unknown")
+        if _et == "untrusted_root":
+            return UntrustedRoot()
+        if _et in ("revoked", "revocation"):
+            return RevokedError("unknown")
+        if _et == "approval_required":
+            return ApprovalGateTriggered("unknown")
+        if _et in ("monotonicity_error", "attenuation_error"):
+            return MonotonicityError(error_message)
+
+    # ------------------------------------------------------------------
+    # Slow path: substring scan on the raw message string
+    # ------------------------------------------------------------------
     msg = error_message.lower()
 
     # Feature not enabled (check very early - messages may contain other keywords like "cel")

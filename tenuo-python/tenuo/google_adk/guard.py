@@ -245,9 +245,18 @@ class TenuoGuard:
         return result
 
     def _get_granted_skills(self, warrant: Any) -> set[str]:
-        """Extract set of granted skill names from warrant capabilities."""
+        """Extract set of granted skill names from warrant capabilities or tools."""
+        # Warrants created with .capability("x", ...) store grants in capabilities.
         caps = getattr(warrant, "capabilities", {})
-        return set(caps.keys()) if caps else set()
+        if caps:
+            return set(caps.keys())
+        # Warrants created with .tools(["x"]) store grants as a flat tools list
+        # (no per-tool constraints).  Fall back to that list so Tier 1 doesn't
+        # incorrectly deny all tools for this warrant style.
+        tools = getattr(warrant, "tools", None)
+        if tools:
+            return set(tools)
+        return set()
 
     # -------------------------------------------------------------------------
     # Constraint Checking (Tier 1 Only)
@@ -641,7 +650,7 @@ class TenuoGuard:
         """
         try:
             why = warrant.why_denied(skill_name, args)
-            if why:
+            if why.denied:
                 status_str = str(why)
                 constraint_param = getattr(why, "field", None)
                 constraint = None
@@ -843,6 +852,7 @@ class GuardBuilder:
         self._approval_handler: Optional[Any] = None
         self._approvals = None
         self._control_plane: Optional[Any] = None
+        self._trusted_roots: Optional[List[Any]] = None
 
     @classmethod
     def from_tools(cls, tools: List[Callable]) -> "GuardBuilder":
@@ -1126,6 +1136,31 @@ class GuardBuilder:
         self._approvals = approvals
         return self
 
+    def with_trusted_roots(self, trusted_roots: List[Any]) -> "GuardBuilder":
+        """Set trusted issuer public keys for cryptographic chain-of-trust verification.
+
+        Required for Tier 2 (PoP) authorization.  The Rust ``Authorizer`` verifies
+        that the warrant was issued by one of these keys, closing the self-signed
+        trust gap.  Always supply in production.
+
+        Args:
+            trusted_roots: List of ``tenuo_core.PublicKey`` objects representing
+                           trusted warrant issuers (e.g. your control-plane key).
+
+        Returns:
+            self for chaining
+
+        Example:
+            guard = (
+                GuardBuilder()
+                .with_warrant(warrant, agent_key)
+                .with_trusted_roots([control_plane_key.public_key])
+                .build()
+            )
+        """
+        self._trusted_roots = list(trusted_roots)
+        return self
+
     def build(self) -> TenuoGuard:
         """
         Build the TenuoGuard instance.
@@ -1157,4 +1192,5 @@ class GuardBuilder:
             approval_handler=self._approval_handler,
             approvals=self._approvals,
             control_plane=self._control_plane,
+            trusted_roots=self._trusted_roots,
         )

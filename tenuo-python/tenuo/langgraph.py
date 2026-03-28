@@ -324,8 +324,12 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 return handler(request.override(tools=filtered))
 
         except Exception as e:
-            # Log but don't fail - let tool call handle auth
-            logger.debug(f"Tool filtering skipped: {e}")
+            # Fail closed: if warrant/filter resolution fails, show no tools to
+            # the model so it cannot attempt any tool call.  The subsequent
+            # wrap_tool_call will surface the auth error with a proper message.
+            logger.warning(f"Tool filtering failed, hiding all tools from model: {e}")
+            if hasattr(request, "tools") and request.tools:
+                return handler(request.override(tools=[]))
 
         return handler(request)
 
@@ -350,7 +354,9 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 return await handler(request.override(tools=filtered))
 
         except Exception as e:
-            logger.debug(f"Tool filtering skipped: {e}")
+            logger.warning(f"Tool filtering failed, hiding all tools from model: {e}")
+            if hasattr(request, "tools") and request.tools:
+                return await handler(request.override(tools=[]))
 
         return await handler(request)
 
@@ -626,6 +632,7 @@ def guard_node(
     key_id: Optional[str] = None,
     inject_warrant: bool = False,
     required_tools: Optional[List[str]] = None,
+    trusted_roots: Optional[List[Any]] = None,
 ) -> Callable:
     """
     Wrap a LangGraph node with Tenuo authorization.
@@ -681,7 +688,7 @@ def guard_node(
         if required_tools:
             from ._enforcement import enforce_tool_call
             for tool_name in required_tools:
-                result = enforce_tool_call(tool_name=tool_name, tool_args={}, bound_warrant=bw)
+                result = enforce_tool_call(tool_name=tool_name, tool_args={}, bound_warrant=bw, trusted_roots=trusted_roots)
                 if not result.allowed:
                     raise ConfigurationError(
                         f"Node '{node.__name__}': warrant does not cover required tool "

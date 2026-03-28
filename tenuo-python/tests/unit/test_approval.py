@@ -68,7 +68,7 @@ def bound_warrant(agent_key):
         ttl_seconds=3600,
         holder=agent_key.public_key,
     )
-    return w.bind(agent_key)
+    return w.bind(agent_key, trusted_roots=[agent_key.public_key])
 
 
 @pytest.fixture
@@ -756,8 +756,8 @@ class TestRequestHashBinding:
         agent = SigningKey.generate()
         w_a = Warrant.issue(agent, capabilities={"transfer": {}}, ttl_seconds=3600, holder=agent.public_key)
         w_b = Warrant.issue(agent, capabilities={"transfer": {}}, ttl_seconds=3600, holder=agent.public_key)
-        bound_a = w_a.bind(agent)
-        bound_b = w_b.bind(agent)
+        bound_a = w_a.bind(agent, trusted_roots=[agent.public_key])
+        bound_b = w_b.bind(agent, trusted_roots=[agent.public_key])
 
         policy = ApprovalPolicy(
             require_approval("transfer"),
@@ -1001,7 +1001,7 @@ class TestTTLPropagation:
             ttl_seconds=3600,
             holder=agent_key.public_key,
         )
-        bound = w.bind(agent_key)
+        bound = w.bind(agent_key, trusted_roots=[agent_key.public_key])
 
         policy = ApprovalPolicy(
             require_approval("deploy"),
@@ -1160,6 +1160,7 @@ class TestCrewAIApproval:
             GuardBuilder()
             .allow("search", query=Wildcard())
             .with_warrant(w, agent_key)
+            .with_trusted_roots([agent_key.public_key])
             .approval_policy(policy)
             .build()
         )
@@ -1187,6 +1188,7 @@ class TestCrewAIApproval:
             GuardBuilder()
             .allow("search", query=Wildcard())
             .with_warrant(w, agent_key)
+            .with_trusted_roots([agent_key.public_key])
             .approval_policy(policy)
             .on_approval(handler)
             .build()
@@ -1214,6 +1216,7 @@ class TestCrewAIApproval:
             GuardBuilder()
             .allow("search", query=Wildcard())
             .with_warrant(w, agent_key)
+            .with_trusted_roots([agent_key.public_key])
             .approval_policy(policy)
             .on_approval(handler)
             .build()
@@ -1274,6 +1277,7 @@ class TestAutoGenApproval:
             GuardBuilder()
             .allow("search")
             .with_warrant(w, agent_key)
+            .with_trusted_roots([agent_key.public_key])
             .approval_policy(policy)
             .build()
         )
@@ -1299,6 +1303,7 @@ class TestAutoGenApproval:
             GuardBuilder()
             .allow("search")
             .with_warrant(w, agent_key)
+            .with_trusted_roots([agent_key.public_key])
             .approval_policy(policy)
             .on_approval(handler)
             .build()
@@ -1325,6 +1330,7 @@ class TestAutoGenApproval:
             .allow("list_files")
             .allow("search")
             .with_warrant(w, agent_key)
+            .with_trusted_roots([agent_key.public_key])
             .approval_policy(policy)
             .build()
         )
@@ -1350,6 +1356,7 @@ class TestAutoGenApproval:
             GuardBuilder()
             .allow("search")
             .with_warrant(w, agent_key)
+            .with_trusted_roots([agent_key.public_key])
             .approval_policy(policy)
             .on_approval(handler)
             .build()
@@ -1371,14 +1378,12 @@ class TestApprovalsAsInput:
             ttl_seconds=3600,
             holder=agent_key.public_key,
         )
-        bound = w.bind(agent_key)
+        bound = w.bind(agent_key, trusted_roots=[agent_key.public_key])
         policy = ApprovalPolicy(
             require_approval("transfer"),
             trusted_approvers=[approver_key.public_key],
         )
         return agent_key, approver_key, bound, policy
-
-    def test_matching_approval_succeeds(self):
         """A caller-provided SignedApproval that matches is accepted."""
         from tenuo_core import py_compute_request_hash as _compute_hash
 
@@ -1518,7 +1523,7 @@ class TestApprovalsAsInput:
             other_key, capabilities={"search": {}},
             ttl_seconds=3600, holder=other_key.public_key,
         )
-        bound = w.bind(other_key)
+        bound = w.bind(other_key, trusted_roots=[other_key.public_key])
 
         result = enforce_tool_call(
             "search", {"query": "test"}, bound,
@@ -1574,7 +1579,7 @@ class TestMofN:
             ttl_seconds=3600,
             holder=agent_key.public_key,
         )
-        return agent_key, w.bind(agent_key)
+        return agent_key, w.bind(agent_key, trusted_roots=[agent_key.public_key])
 
     @staticmethod
     def _sign_for_request(approver_key, request_hash, ttl=300):

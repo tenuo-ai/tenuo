@@ -303,7 +303,7 @@ class TestReplayAndBinding:
             .mint(sk)
         )
 
-        guard = TenuoGuard(require_pop=True, signing_key=sk)
+        guard = TenuoGuard(require_pop=True, signing_key=sk, trusted_roots=[sk.public_key])
         mock_context.session_state = {"__tenuo_warrant__": warrant}
 
         # Authorized tool works
@@ -334,7 +334,7 @@ class TestReplayAndBinding:
             .mint(sk)
         )
 
-        guard = TenuoGuard(require_pop=True, signing_key=sk)
+        guard = TenuoGuard(require_pop=True, signing_key=sk, trusted_roots=[sk.public_key])
         mock_context.session_state = {"__tenuo_warrant__": warrant}
         mock_tool.name = "read_file"
 

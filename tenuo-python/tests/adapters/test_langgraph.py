@@ -419,7 +419,7 @@ class TestEnforcementModule:
 
         warrant, key_id = warrant_and_key
         key = registry.get(key_id)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         result = enforce_tool_call(
             tool_name="search",
@@ -436,7 +436,7 @@ class TestEnforcementModule:
 
         warrant, key_id = warrant_and_key
         key = registry.get(key_id)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Use a non-critical tool that's not in warrant (to bypass schema policy)
         result = enforce_tool_call(
@@ -457,7 +457,7 @@ class TestEnforcementModule:
 
         warrant, key_id = warrant_and_key
         key = registry.get(key_id)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Tool is in warrant but not in explicit allowlist
         result = enforce_tool_call(
@@ -499,7 +499,7 @@ class TestEnforcementModule:
 
         warrant, key_id = warrant_and_key
         key = registry.get(key_id)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         tools = [
             MockTool(name="search"),
@@ -547,7 +547,7 @@ class TestEnforcementModule:
             ttl=3600,
         )
         registry.register("many-tools-key", key)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         tools = [
             MockTool(name="search"),
@@ -624,7 +624,7 @@ class TestEnforcementModule:
             .mint(key)
         )
 
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         constraints = _get_constraints_dict(bound)
 
@@ -670,7 +670,7 @@ class TestCoreInvariants:
             .ttl(1)  # Very short TTL
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Wait for expiration
         time.sleep(2)
@@ -701,7 +701,7 @@ class TestCoreInvariants:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Within range - should succeed
         result = enforce_tool_call("transfer", {"amount": 50}, bound)
@@ -732,7 +732,7 @@ class TestCoreInvariants:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Matches pattern - should succeed
         result = enforce_tool_call("read_file", {"path": "/data/file.txt"}, bound)
@@ -766,8 +766,9 @@ class TestCoreInvariants:
             .mint(holder_key)
         )
 
-        # Bind with WRONG key (attacker's key)
-        wrong_bound = warrant.bind(attacker_key)
+        # Bind with WRONG key (attacker's key) — but supply the correct trusted root so
+        # the only failure is the mismatched PoP signature, not a ConfigurationError.
+        wrong_bound = warrant.bind(attacker_key, trusted_roots=[holder_key.public_key])
 
         # Should fail - PoP signature won't verify
         result = enforce_tool_call("search", {"query": "test"}, wrong_bound)
@@ -829,7 +830,7 @@ class TestCoreInvariants:
         registry.register("error-type-key", key)
 
         warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Tool not in warrant - should be "tool_not_allowed" or similar
         result = enforce_tool_call("delete", {}, bound)
@@ -856,7 +857,7 @@ class TestCoreInvariants:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Define delete_file as critical in schemas
         test_schemas = {
@@ -892,7 +893,7 @@ class TestCoreInvariants:
 
         # Warrant only allows "search"
         warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Application tries to allow "delete" which is NOT in warrant
         enforce_tool_call(
@@ -918,7 +919,7 @@ class TestCoreInvariants:
         registry.register("verify-mode-key", key)
 
         warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # verify_mode without signature must raise ConfigurationError
         with pytest.raises(ConfigurationError) as exc_info:
@@ -951,7 +952,7 @@ class TestCoreInvariants:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Any tool should work (Rust handles wildcard)
         result = enforce_tool_call("any_tool", {"arg": "value"}, bound)
@@ -993,7 +994,7 @@ class TestPhilosophyAndDesign:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         with caplog.at_level(logging.INFO, logger="tenuo"):
             result = enforce_tool_call("search", {"query": "test"}, bound)
@@ -1020,7 +1021,7 @@ class TestPhilosophyAndDesign:
         registry.register("audit-denial-key", key)
 
         warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         with caplog.at_level(logging.WARNING, logger="tenuo"):
             result = enforce_tool_call("delete_file", {"path": "/"}, bound)
@@ -1052,7 +1053,7 @@ class TestPhilosophyAndDesign:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Try to exceed constraint
         result = enforce_tool_call("transfer", {"amount": 9999}, bound)
@@ -1092,7 +1093,7 @@ class TestPhilosophyAndDesign:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Violate MULTIPLE constraints
         result = enforce_tool_call(
@@ -1150,7 +1151,7 @@ class TestPhilosophyAndDesign:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         # Layer 1: Tool schema policy requires constraints
         schemas = {
@@ -1184,7 +1185,7 @@ class TestPhilosophyAndDesign:
         registry.register("preserve-args-key", key)
 
         warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         args = {"query": "sensitive data", "limit": 100}
         result = enforce_tool_call("search", args, bound)
@@ -1210,7 +1211,7 @@ class TestPhilosophyAndDesign:
             .ttl(3600)
             .mint(key)
         )
-        bound = warrant.bind(key)
+        bound = warrant.bind(key, trusted_roots=[key.public_key])
 
         result = enforce_tool_call("search", {}, bound)
 
@@ -1250,8 +1251,8 @@ class TestMiddlewareAsync:
         from unittest.mock import AsyncMock, MagicMock
         from tenuo.langgraph import TenuoMiddleware
 
-        warrant, _ = warrant_and_key
-        middleware = TenuoMiddleware(key_id="test-key")
+        warrant, key = warrant_and_key
+        middleware = TenuoMiddleware(key_id="test-key", trusted_roots=[key.public_key])
 
         request = MagicMock()
         request.tool_call = {"name": "search", "args": {"query": "papers"}, "id": "t1"}
@@ -1547,7 +1548,7 @@ class TestMultiAgentDelegation:
             ttl_seconds=300,
         )
 
-        tool_node = TenuoToolNode([search_tool])
+        tool_node = TenuoToolNode([search_tool], trusted_roots=[supervisor_key.public_key])
         state = {
             "messages": [
                 AIMessage(
@@ -1669,7 +1670,7 @@ class TestMultiAgentDelegation:
             )
         ]
 
-        tool_node = TenuoToolNode([search_tool])
+        tool_node = TenuoToolNode([search_tool], trusted_roots=[supervisor_key.public_key])
         result = self._run_tool_node(tool_node, merged_state, "researcher")
         messages = result.get("messages", [])
         assert messages
@@ -1700,7 +1701,7 @@ class TestMultiAgentDelegation:
             return {"result": "done"}
 
         # Guard requires both search AND write_file — should fail fast
-        wrapped = guard_node(worker_node, key_id="worker", required_tools=["search", "write_file"])
+        wrapped = guard_node(worker_node, key_id="worker", required_tools=["search", "write_file"], trusted_roots=[key.public_key])
 
         with pytest.raises(ConfigurationError, match="write_file"):
             wrapped({"warrant": warrant})
@@ -1720,7 +1721,7 @@ class TestMultiAgentDelegation:
         def worker_node(state):
             return {"result": "ok"}
 
-        wrapped = guard_node(worker_node, key_id="worker2", required_tools=["search", "read"])
+        wrapped = guard_node(worker_node, key_id="worker2", required_tools=["search", "read"], trusted_roots=[key.public_key])
         result = wrapped({"warrant": warrant})
         assert result == {"result": "ok"}
 
@@ -1771,7 +1772,13 @@ class TestMultiAgentDelegation:
         )
 
         # Executor TenuoToolNode with both tools available — only search is allowed
-        tool_node = TenuoToolNode([search_tool, write_tool])
+        # trusted_roots covers the full delegation chain:
+        #   orchestrator_key → root_warrant → researcher_warrant
+        #   researcher_key   → executor_warrant (leaf issuer)
+        tool_node = TenuoToolNode(
+            [search_tool, write_tool],
+            trusted_roots=[orchestrator_key.public_key, researcher_key.public_key],
+        )
 
         # Search is allowed
         search_state = {

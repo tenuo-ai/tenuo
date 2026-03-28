@@ -22,7 +22,7 @@ from tenuo import (
     warrant_scope,
 )
 from tenuo.constraints import Constraints
-from tenuo.exceptions import ScopeViolation
+from tenuo.exceptions import ScopeViolation, SignatureInvalid
 
 # ============================================================================
 # PoP Enforcement Tests
@@ -168,10 +168,10 @@ def test_pop_prevents_cross_tenant_misuse():
     with warrant_scope(warrant), key_scope(tenant_a_kp):
         try:
             sensitive_operation(resource="secret-data")
-            assert False, "Should have raised ScopeViolation - wrong keypair!"
-        except ScopeViolation:
-            # Expected: Authorization denied because PoP signature doesn't match authorized_holder
-            # The specific error message may vary, but access MUST be denied
+            assert False, "Should have raised ScopeViolation or SignatureInvalid - wrong keypair!"
+        except (ScopeViolation, SignatureInvalid):
+            # Expected: PoP signature doesn't match authorized_holder — access denied.
+            # SignatureInvalid is raised when the decorator re-raises crypto failures directly.
             pass  # Success - access was denied
 
     # SUCCESS SCENARIO: Tenant B's agent uses the warrant with THEIR keypair

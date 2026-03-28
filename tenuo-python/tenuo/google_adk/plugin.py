@@ -30,7 +30,7 @@ Multi-Tenant Safety:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,7 @@ class TenuoPlugin(BasePlugin):
         skill_map: Optional[Dict[str, str]] = None,
         arg_map: Optional[Dict[str, Dict[str, str]]] = None,
         require_pop: bool = True,
+        trusted_roots: Optional[List[Any]] = None,
     ):
         """
         Initialize TenuoPlugin.
@@ -124,6 +125,8 @@ class TenuoPlugin(BasePlugin):
             skill_map: Map ADK tool names to warrant skill names
             arg_map: Map tool argument names to constraint parameter names
             require_pop: If True (default), requires signing_key for Tier 2 authorization
+            trusted_roots: Trusted issuer public keys for cryptographic chain-of-trust
+                           verification.  Required for Tier 2 in production.
         """
         self._guard = TenuoGuard(
             warrant=warrant,
@@ -132,6 +135,7 @@ class TenuoPlugin(BasePlugin):
             skill_map=skill_map,
             arg_map=arg_map,
             require_pop=require_pop,
+            trusted_roots=trusted_roots,
         )
         self._warrant_key = warrant_key
 

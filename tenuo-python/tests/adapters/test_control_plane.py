@@ -451,7 +451,7 @@ class TestLangGraphControlPlane:
         mw = TenuoMiddleware()
         assert mw._control_plane is None
 
-    def test_toolnode_emits_allow(self, setup, mock_cp):
+    def test_toolnode_emits_allow(self, setup, mock_cp, issuer_key):
         """TenuoToolNode emits allow event for authorized tool call."""
         from langchain_core.messages import AIMessage
         from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
@@ -468,7 +468,7 @@ class TestLangGraphControlPlane:
             """Search the web."""
             return f"results for {query}"
 
-        tool_node = TenuoToolNode([search], control_plane=mock_cp)
+        tool_node = TenuoToolNode([search], control_plane=mock_cp, trusted_roots=[issuer_key.public_key])
 
         state = dict(setup)
         state["messages"] = [
@@ -530,7 +530,7 @@ class TestLangGraphControlPlane:
         assert mock_cp.deny_events[0]["result"].tool == "admin_reset"
 
     @needs_encode_warrant_stack
-    def test_toolnode_warrant_stack_not_none(self, setup, mock_cp):
+    def test_toolnode_warrant_stack_not_none(self, setup, mock_cp, issuer_key):
         """Emitted allow event carries a non-None warrant_stack_override (single-warrant encoding)."""
         from langchain_core.messages import AIMessage
         from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
@@ -547,7 +547,7 @@ class TestLangGraphControlPlane:
             """Read a file."""
             return "content"
 
-        tool_node = TenuoToolNode([read_file], control_plane=mock_cp)
+        tool_node = TenuoToolNode([read_file], control_plane=mock_cp, trusted_roots=[issuer_key.public_key])
         state = dict(setup)
         state["messages"] = [
             AIMessage(
@@ -800,6 +800,7 @@ class TestADKControlPlane:
         guard = TenuoGuard(
             warrant=adk_warrant,
             signing_key=adk_keys,
+            trusted_roots=[adk_keys.public_key],
             control_plane=mock_cp,
         )
         tool = _MockBaseTool("read_file")
@@ -906,6 +907,7 @@ class TestADKControlPlane:
         guard = TenuoGuard(
             warrant=adk_warrant,
             signing_key=adk_keys,
+            trusted_roots=[adk_keys.public_key],
             control_plane=mock_cp,
         )
         tool = _MockBaseTool("read_file")

@@ -498,7 +498,7 @@ class TestEnforcementApprovalGates:
         )
         signed = sign_approval(approval_request, approver)
 
-        result = enforce_tool_call("exec", {}, bound, approvals=[signed])
+        result = enforce_tool_call("exec", {}, bound, approvals=[signed], trusted_roots=[root.public_key])
         assert result.allowed
 
     def test_gate_does_not_fire_no_approval_needed(self, keys):
@@ -518,7 +518,7 @@ class TestEnforcementApprovalGates:
         bound = w.bind(holder)
 
         # read_file is not gated → should be allowed
-        result = enforce_tool_call("read_file", {}, bound)
+        result = enforce_tool_call("read_file", {}, bound, trusted_roots=[root.public_key])
         assert result.allowed
 
     def test_gate_fires_no_approvals_raises_approval_required(self, keys):
@@ -591,5 +591,6 @@ class TestEnforcementApprovalGates:
             "exec", {}, bound,
             approvals=[signed],
             approval_policy=strict_policy,
+            trusted_roots=[root.public_key],
         )
         assert result.allowed
