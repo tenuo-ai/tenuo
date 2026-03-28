@@ -631,6 +631,32 @@ class TestEnforcementModule:
         # Should have flattened constraints from both capabilities
         assert "query" in constraints or "path" in constraints
 
+    def test_enforce_tool_call_exempt_gate(self, warrant_and_key, registry):
+        """enforce_tool_call allows tool calls matching an exempt gate without requiring approval."""
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo_core import Exact
+        from tenuo.approval import ApprovalRequired
+
+        key = registry.get(warrant_and_key[1])
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search")
+            .approval_gates({"search": {"query": {"exempt": Exact("skip")}}})
+            .required_approvers([key.public_key])
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+        bound = warrant.bind(key)
+
+        # "skip" is specifically exempt - no approval handler provided, and should just succeed
+        result = enforce_tool_call("search", {"query": "skip"}, bound)
+        assert result.allowed is True
+
+        # Any other value requires approval, and will raise ApprovalRequired since no handler provided
+        with pytest.raises(ApprovalRequired):
+            enforce_tool_call("search", {"query": "other"}, bound)
+
 
 # =============================================================================
 # Core Invariant Tests

@@ -2337,11 +2337,71 @@ fn constraint_value_to_py(py: Python<'_>, value: &ConstraintValue) -> PyResult<P
 ///
 /// Accepts `{"tool_name": None}` for whole-tool approval gates, or
 /// `{"tool_name": {"arg_name": constraint}}` for per-argument approval gates.
-/// A `None` arg value means `ArgApprovalGate::All`.
+/// Convert a per-argument approval gate value from Python.
+///
+/// Accepted forms:
+/// - `None`                          → `ArgApprovalGate::All`
+/// - any constraint object           → `ArgApprovalGate::Constraint(c)`
+/// - `{"exempt": <constraint>}`      → `ArgApprovalGate::Exempt(c)`
+fn py_to_arg_approval_gate(
+    arg_name: &str,
+    av: &Bound<'_, PyAny>,
+) -> PyResult<crate::approval_gate::ArgApprovalGate> {
+    use crate::approval_gate::ArgApprovalGate;
+
+    if av.is_none() {
+        return Ok(ArgApprovalGate::All);
+    }
+
+    // {"exempt": <constraint>} form — plain Python dict with a single "exempt" key.
+    if let Ok(d) = av.downcast::<PyDict>() {
+        if d.len() != 1 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "arg gate '{}': approval gate dict must have exactly one key ('exempt')",
+                arg_name
+            )));
+        }
+        let inner = d.get_item("exempt")?.ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "arg gate '{}': approval gate dict must have key 'exempt'",
+                arg_name
+            ))
+        })?;
+        let constraint = py_to_constraint(&inner)?;
+        return ArgApprovalGate::exempt(constraint).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "arg gate '{}': invalid Exempt inner constraint — {}",
+                arg_name, e
+            ))
+        });
+    }
+
+    // Any typed constraint object → Constraint gate.
+    let constraint = py_to_constraint(av)?;
+    Ok(ArgApprovalGate::Constraint(constraint))
+}
+
+/// Build an approval gate map from a nested Python dict.
+///
+/// ```python
+/// # Whole-tool gate
+/// approval_gates={"exec": None}
+///
+/// # Per-arg gates
+/// approval_gates={
+///     "browse": {
+///         "url": Pattern("*.safe.com"),          # fire when pattern matches
+///         "timeout": None,                        # fire for every value (All)
+///     },
+///     "file.write": {
+///         "path": {"exempt": OneOf(["/tmp"])},   # fire when path NOT in exempt set
+///     },
+/// }
+/// ```
 fn py_dict_to_approval_gate_map(
     dict: &Bound<'_, PyDict>,
 ) -> PyResult<crate::approval_gate::ApprovalGateMap> {
-    use crate::approval_gate::{ApprovalGateMap, ArgApprovalGate, ToolApprovalGate};
+    use crate::approval_gate::{ApprovalGateMap, ToolApprovalGate};
 
     let mut gm = ApprovalGateMap::new();
     for (key, value) in dict.iter() {
@@ -2352,12 +2412,8 @@ fn py_dict_to_approval_gate_map(
             let mut args = std::collections::BTreeMap::new();
             for (ak, av) in args_dict.iter() {
                 let arg_name: String = ak.extract()?;
-                if av.is_none() {
-                    args.insert(arg_name, ArgApprovalGate::All);
-                } else {
-                    let constraint = py_to_constraint(&av)?;
-                    args.insert(arg_name, ArgApprovalGate::Constraint(constraint));
-                }
+                let gate = py_to_arg_approval_gate(&arg_name, &av)?;
+                args.insert(arg_name, gate);
             }
             gm.insert(tool, ToolApprovalGate::with_args(args));
         } else {

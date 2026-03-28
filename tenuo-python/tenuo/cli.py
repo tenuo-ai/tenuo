@@ -822,7 +822,7 @@ def doctor(verbose: bool = False) -> None:
         print("  ⚠️  LangChain: not installed (uv pip install langchain)")
 
     try:
-        import anthropic  # type: ignore[import-not-found]
+        import anthropic  # type: ignore
 
         print(f"  ✅ Anthropic: v{anthropic.__version__}")
     except ImportError:

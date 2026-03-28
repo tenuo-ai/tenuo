@@ -197,6 +197,9 @@ fn approval_gate_map_to_json(gm: &ApprovalGateMap) -> JsonValue {
                         ArgApprovalGate::Constraint(c) => {
                             args_map.insert(arg.clone(), constraint_to_readable(c));
                         }
+                        ArgApprovalGate::Exempt(c) => {
+                            args_map.insert(arg.clone(), json!({ "exempt": constraint_to_readable(c) }));
+                        }
                     }
                 }
                 map.insert(tool.clone(), json!({ "args": JsonValue::Object(args_map) }));
@@ -206,7 +209,106 @@ fn approval_gate_map_to_json(gm: &ApprovalGateMap) -> JsonValue {
     JsonValue::Object(map)
 }
 
+/// Reconstruct a `Constraint` from the human-readable JSON produced by `constraint_to_readable`.
+///
+/// This is the inverse of `constraint_to_readable`. Returns `None` for unrecognised forms.
+fn json_to_constraint(val: &JsonValue) -> Option<Constraint> {
+    use tenuo::constraints::{
+        All, Any, Cidr, Contains, Exact, Not, NotOneOf, OneOf, Pattern, Range, RegexConstraint,
+        Shlex, Subpath, Subset, UrlPattern, UrlSafe, Wildcard,
+    };
+
+    let obj = val.as_object()?;
+
+    if let Some(p) = obj.get("pattern").and_then(|v| v.as_str()) {
+        return Pattern::new(p).ok().map(Constraint::Pattern);
+    }
+    if let Some(e) = obj.get("exact") {
+        return Some(Constraint::Exact(Exact::new(json_to_constraint_value(e))));
+    }
+    if let Some(arr) = obj.get("oneof").and_then(|v| v.as_array()) {
+        return Some(Constraint::OneOf(OneOf::from_values(arr.iter().map(json_to_constraint_value))));
+    }
+    if let Some(arr) = obj.get("notoneof").and_then(|v| v.as_array()) {
+        return Some(Constraint::NotOneOf(NotOneOf::from_values(arr.iter().map(json_to_constraint_value))));
+    }
+    if let Some(r) = obj.get("regex").and_then(|v| v.as_str()) {
+        return RegexConstraint::new(r).ok().map(Constraint::Regex);
+    }
+    if let Some(arr) = obj.get("contains").and_then(|v| v.as_array()) {
+        return Some(Constraint::Contains(Contains::new(arr.iter().map(json_to_constraint_value))));
+    }
+    if let Some(arr) = obj.get("subset").and_then(|v| v.as_array()) {
+        return Some(Constraint::Subset(Subset::new(arr.iter().map(json_to_constraint_value))));
+    }
+    if let Some(c) = obj.get("cidr").and_then(|v| v.as_str()) {
+        return Cidr::new(c).ok().map(Constraint::Cidr);
+    }
+    if let Some(u) = obj.get("url_pattern").and_then(|v| v.as_str()) {
+        return UrlPattern::new(u).ok().map(Constraint::UrlPattern);
+    }
+    if let Some(arr) = obj.get("all").and_then(|v| v.as_array()) {
+        let inner: Vec<Constraint> = arr.iter().filter_map(json_to_constraint).collect();
+        return Some(Constraint::All(All { constraints: inner }));
+    }
+    if let Some(arr) = obj.get("any").and_then(|v| v.as_array()) {
+        let inner: Vec<Constraint> = arr.iter().filter_map(json_to_constraint).collect();
+        return Some(Constraint::Any(Any { constraints: inner }));
+    }
+    if let Some(inner) = obj.get("not") {
+        return json_to_constraint(inner)
+            .map(|c| Constraint::Not(Not { constraint: Box::new(c) }));
+    }
+    // Range: stored as bare {"min": f64, "max": f64} (no type-discriminator key).
+    if obj.contains_key("min") || obj.contains_key("max") {
+        let min = obj.get("min").and_then(|v| v.as_f64());
+        let max = obj.get("max").and_then(|v| v.as_f64());
+        return Range::new(min, max).ok().map(Constraint::Range);
+    }
+    if let Some(s) = obj.get("subpath").and_then(|v| v.as_object()) {
+        let root = s.get("root").and_then(|v| v.as_str())?;
+        let sp = Subpath::new(root).ok()?;
+        return Some(Constraint::Subpath(sp));
+    }
+    if obj.contains_key("url_safe") {
+        return Some(Constraint::UrlSafe(UrlSafe::default()));
+    }
+    if obj.get("wildcard").and_then(|v| v.as_str()) == Some("*") {
+        return Some(Constraint::Wildcard(Wildcard));
+    }
+    if let Some(sh) = obj.get("shlex").and_then(|v| v.as_object()) {
+        if let Some(arr) = sh.get("allow").and_then(|v| v.as_array()) {
+            let allow: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+            return Some(Constraint::Shlex(Shlex { allow }));
+        }
+    }
+    None
+}
+
+/// Convert a JSON value to a `ConstraintValue` (best-effort).
+fn json_to_constraint_value(val: &JsonValue) -> ConstraintValue {
+    match val {
+        JsonValue::String(s) => ConstraintValue::String(s.clone()),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                ConstraintValue::Integer(i)
+            } else {
+                ConstraintValue::Float(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        JsonValue::Bool(b) => ConstraintValue::Boolean(*b),
+        JsonValue::Null => ConstraintValue::Null,
+        JsonValue::Array(arr) => ConstraintValue::List(arr.iter().map(json_to_constraint_value).collect()),
+        JsonValue::Object(_) => ConstraintValue::Null,
+    }
+}
+
 /// Parse a JSON approval gates object into an ApprovalGateMap for embedding in extensions.
+///
+/// Accepted per-arg gate forms:
+/// - `"all"`                        → `ArgApprovalGate::All`
+/// - `{"exempt": <constraint>}`     → `ArgApprovalGate::Exempt(c)`
+/// - any other constraint object    → `ArgApprovalGate::Constraint(c)`
 fn parse_approval_gates_json(val: &serde_json::Value) -> Option<ApprovalGateMap> {
     let obj = val.as_object()?;
     let mut gm = ApprovalGateMap::new();
@@ -219,8 +321,21 @@ fn parse_approval_gates_json(val: &serde_json::Value) -> Option<ApprovalGateMap>
                 for (arg, ag_val) in args_val {
                     if ag_val.as_str() == Some("all") {
                         args.insert(arg.clone(), ArgApprovalGate::All);
+                    } else if let Some(inner) = ag_val.as_object().and_then(|o| o.get("exempt")) {
+                        // If the inner constraint is unrecognised or rejected by ArgApprovalGate::exempt
+                        // (e.g. Wildcard, Any, Not, Cel, Unknown), the gate is silently skipped and
+                        // the argument is left ungated. This is intentional for the WASM builder path:
+                        // invalid exempt constraints are caught here at warrant-creation time rather than
+                        // propagating a broken gate to the enforcer. The Python binding raises ValueError
+                        // for the same invalid inner constraint types.
+                        if let Some(c) = json_to_constraint(inner) {
+                            if let Ok(gate) = ArgApprovalGate::exempt(c) {
+                                args.insert(arg.clone(), gate);
+                            }
+                        }
+                    } else if let Some(c) = json_to_constraint(ag_val) {
+                        args.insert(arg.clone(), ArgApprovalGate::Constraint(c));
                     }
-                    // Future: parse constraint-based arg gates
                 }
                 gm.insert(tool.clone(), ToolApprovalGate::with_args(args));
             }
@@ -2678,6 +2793,93 @@ mod tests {
             gate.args.as_ref().unwrap().get("command"),
             Some(ArgApprovalGate::All)
         ));
+    }
+
+    #[test]
+    fn roundtrip_per_arg_constraint_pattern() {
+        use tenuo::constraints::Pattern;
+        let mut args = BTreeMap::new();
+        args.insert(
+            "url".to_string(),
+            ArgApprovalGate::Constraint(Constraint::Pattern(Pattern::new("*.safe.com").unwrap())),
+        );
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("browse".to_string(), ToolApprovalGate::with_args(args));
+
+        let json_val = approval_gate_map_to_json(&gm);
+        let parsed = parse_approval_gates_json(&json_val).unwrap();
+        let gate_args = parsed.get("browse").unwrap().args.as_ref().unwrap();
+        assert!(matches!(gate_args.get("url"), Some(ArgApprovalGate::Constraint(Constraint::Pattern(_)))));
+    }
+
+    #[test]
+    fn roundtrip_per_arg_exempt_one_of() {
+        use tenuo::constraints::OneOf;
+        let gate = ArgApprovalGate::exempt(
+            Constraint::OneOf(OneOf::new(["a.com", "b.org"])),
+        ).unwrap();
+        let mut args = BTreeMap::new();
+        args.insert("url".to_string(), gate);
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("browse".to_string(), ToolApprovalGate::with_args(args));
+
+        let json_val = approval_gate_map_to_json(&gm);
+        let parsed = parse_approval_gates_json(&json_val).unwrap();
+        let gate_args = parsed.get("browse").unwrap().args.as_ref().unwrap();
+        assert!(matches!(gate_args.get("url"), Some(ArgApprovalGate::Exempt(Constraint::OneOf(_)))));
+    }
+
+    #[test]
+    fn parse_exempt_gate_from_json() {
+        let input = json!({
+            "browse": {
+                "args": {
+                    "url": { "exempt": { "oneof": ["a.com", "b.org"] } }
+                }
+            }
+        });
+        let gm = parse_approval_gates_json(&input).unwrap();
+        let gate_args = gm.get("browse").unwrap().args.as_ref().unwrap();
+        assert!(matches!(gate_args.get("url"), Some(ArgApprovalGate::Exempt(Constraint::OneOf(_)))));
+    }
+
+    #[test]
+    fn parse_constraint_gate_from_json_pattern() {
+        let input = json!({
+            "browse": {
+                "args": {
+                    "url": { "pattern": "*.safe.com" }
+                }
+            }
+        });
+        let gm = parse_approval_gates_json(&input).unwrap();
+        let gate_args = gm.get("browse").unwrap().args.as_ref().unwrap();
+        assert!(matches!(gate_args.get("url"), Some(ArgApprovalGate::Constraint(Constraint::Pattern(_)))));
+    }
+
+    #[test]
+    fn roundtrip_exempt_preserves_evaluation() {
+        use tenuo::constraints::OneOf;
+        let gate = ArgApprovalGate::exempt(
+            Constraint::OneOf(OneOf::new(["a.com", "b.org"])),
+        ).unwrap();
+        let mut args = BTreeMap::new();
+        args.insert("url".to_string(), gate);
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("browse".to_string(), ToolApprovalGate::with_args(args));
+
+        // Encode → decode via CBOR (the actual warrant wire path)
+        let encoded = tenuo::approval_gate::encode_approval_gate_map(&gm).unwrap();
+        let decoded = tenuo::approval_gate::parse_approval_gate_map(Some(&encoded)).unwrap().unwrap();
+
+        // Exempt gate fires for values outside the exemption set
+        let mut call_args = std::collections::HashMap::new();
+        call_args.insert("url".to_string(), tenuo::constraints::ConstraintValue::String("evil.com".to_string()));
+        assert!(tenuo::approval_gate::evaluate_approval_gates(Some(&decoded), "browse", &call_args).unwrap());
+
+        // Exempt gate does NOT fire for values inside the exemption set
+        call_args.insert("url".to_string(), tenuo::constraints::ConstraintValue::String("a.com".to_string()));
+        assert!(!tenuo::approval_gate::evaluate_approval_gates(Some(&decoded), "browse", &call_args).unwrap());
     }
 
     #[test]
