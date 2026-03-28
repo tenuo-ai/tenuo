@@ -2022,6 +2022,18 @@ impl Authorizer {
             return Err(Error::WarrantRevoked(child.id().to_string()));
         }
 
+        // I1: Delegation Authority (wire-format-spec.md)
+        // Child's issuer must be parent's authorized_holder (proves delegation was authorized).
+        // Without this check, anyone with knowledge of the parent payload could craft a child
+        // with an arbitrary issuer key — the batch sig would verify but the chain would be forged.
+        if child.issuer() != parent.authorized_holder() {
+            return Err(Error::ChainVerificationFailed(format!(
+                "I1 violated: child.issuer ({}) != parent.holder ({})",
+                child.issuer().fingerprint(),
+                parent.authorized_holder().fingerprint()
+            )));
+        }
+
         // Check parent_hash linkage
         let child_parent_hash = child.parent_hash().ok_or_else(|| {
             Error::ChainVerificationFailed("child warrant has no parent_hash".to_string())

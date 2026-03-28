@@ -966,11 +966,12 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 **kwargs,
             )
             self._tenuo_hooks_active = True
-        except TypeError:
-            # langgraph < 0.2.35 does not support wrap_tool_call hooks.
-            # Fall back to base ToolNode without authorization enforcement.
-            super().__init__(tools, **kwargs)
-            self._tenuo_hooks_active = False
+        except TypeError as exc:
+            raise RuntimeError(
+                "TenuoToolNode requires LangGraph >= 0.2.35 (wrap_tool_call support). "
+                "Authorization enforcement cannot be applied on this version. "
+                "Upgrade langgraph or use TenuoMiddleware instead."
+            ) from exc
         # Store for test introspection / approval param checks
         self._require_constraints = require_constraints
         self._approval_policy = approval_policy
