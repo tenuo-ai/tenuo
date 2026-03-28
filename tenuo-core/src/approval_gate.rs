@@ -667,6 +667,22 @@ fn validate_arg_approval_gate_monotonic(
 ///
 /// This normalization is local to the validator — it does not mutate
 /// the stored constraint or affect wire serialization.
+///
+/// ## Sorting strategy
+///
+/// `ConstraintValue` does not implement `Ord` because the `Float` variant
+/// holds `f64`, which has no total order (NaN). Rather than writing a
+/// bespoke `Ord` impl now, we sort by the `Debug` representation.
+///
+/// This is correct for equality comparison: two elements that have the
+/// same debug string are semantically identical, and the induced ordering
+/// is stable within a single binary. It is, however, an internal
+/// implementation detail and not a stable canonical form.
+///
+/// **Future work**: if `ConstraintValue` ever needs a true total order
+/// (e.g. for B-tree storage or cross-process canonical encoding), implement
+/// `Ord` manually with NaN canonicalization (`NaN → f64::MAX`) instead of
+/// using this debug-string proxy.
 fn normalize_for_gate_comparison(c: &Constraint) -> Constraint {
     use crate::constraints::{Contains, NotOneOf, OneOf, Subset};
 
@@ -1342,6 +1358,25 @@ mod tests {
         let encoded = encode_approval_gate_map(&gm).unwrap();
         let decoded = parse_approval_gate_map(Some(&encoded)).unwrap().unwrap();
         assert_eq!(gm, decoded);
+    }
+
+    #[test]
+    fn test_exempt_deserializes_reject_invalid_inner() {
+        use crate::constraints::Wildcard;
+        // Manually build CBOR that bypasses ArgApprovalGate serialization bounds
+        let mut raw_map = BTreeMap::new();
+        raw_map.insert("exempt".to_string(), Constraint::Wildcard(Wildcard));
+
+        let mut buf = Vec::new();
+        ciborium::into_writer(&raw_map, &mut buf).unwrap();
+
+        // Attempt to deserialize it into an ArgApprovalGate
+        let decoded: std::result::Result<ArgApprovalGate, _> =
+            ciborium::from_reader(buf.as_slice());
+        assert!(
+            decoded.is_err(),
+            "deserializing {{'exempt': wildcard}} must fail"
+        );
     }
 
     // -----------------------------------------------------------------------
