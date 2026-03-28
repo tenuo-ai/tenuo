@@ -428,7 +428,7 @@ jobs:
         working-directory: tenuo-python
         run: |
           uv pip install --system pytest pytest-asyncio
-          pytest tests/test_examples.py -v
+          pytest tests/examples/test_examples.py -v
 
       - name: Run Self-Contained Examples
         working-directory: tenuo-python/examples

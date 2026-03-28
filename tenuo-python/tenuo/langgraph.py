@@ -958,12 +958,18 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
             return await handler(request)
 
-        super().__init__(
-            tools,
-            wrap_tool_call=_auth_wrap,
-            awrap_tool_call=_auth_awrap,
-            **kwargs,
-        )
+        try:
+            super().__init__(
+                tools,
+                wrap_tool_call=_auth_wrap,
+                awrap_tool_call=_auth_awrap,
+                **kwargs,
+            )
+        except TypeError:
+            # langgraph < 0.2.35 does not support wrap_tool_call hooks.
+            # Fall back to base ToolNode; authorization will rely on the
+            # _run_one override defined in TenuoToolNode instead.
+            super().__init__(tools, **kwargs)
         # Store for test introspection / approval param checks
         self._require_constraints = require_constraints
         self._approval_policy = approval_policy

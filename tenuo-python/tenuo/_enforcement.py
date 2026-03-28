@@ -950,10 +950,6 @@ def enforce_tool_call(
             warrant_id=warrant_id,
         )
     except TenuoError as e:
-        # ConfigurationError is a programming mistake (misconfiguration), not
-        # an authorization decision — always propagate it so developers see it.
-        if isinstance(e, ConfigurationError):
-            raise
         # Other Tenuo errors - log as warning
         logger.warning(f"Tenuo error during authorization for {tool_name}: {e}")
         return EnforcementResult(
