@@ -1211,6 +1211,14 @@ class TenuoInterceptorConfig:
                 "TenuoInterceptorConfig: dry_run=True enables shadow mode and "
                 "does not enforce authorization denials. Do not use in production."
             )
+            # Elevate to a Python-level warning so it appears in production logs regardless of
+            # logger configuration. Use stacklevel=2 to point at the call site, not this frame.
+            warnings.warn(
+                "TenuoInterceptorConfig: dry_run=True — authorization denials will NOT be "
+                "enforced. This is a shadow/staging mode; remove dry_run=True before "
+                "deploying to production.",
+                stacklevel=2,
+            )
 
         # F1: enforce strict_mode invariants before anything else
         if self.strict_mode and not self.trusted_roots:

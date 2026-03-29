@@ -1081,7 +1081,7 @@ pub fn verify_approval_set(
     };
 
     let mut valid_count = 0u32;
-    let mut seen = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
     for (i, b64) in approval_b64_list.iter().enumerate() {
         let bytes = match decode_b64(b64) {
             Ok(b) => b,
@@ -1095,8 +1095,8 @@ pub fn verify_approval_set(
         if !required_approvers.contains(&approval.approver_key) {
             continue;
         }
-        // No duplicates
-        if !seen.insert(i) {
+        // No duplicates — deduplicate by approver public key, not by list index
+        if !seen.insert(approval.approver_key.to_bytes()) {
             continue;
         }
         // Verify signature and check hash

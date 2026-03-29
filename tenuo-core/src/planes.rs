@@ -2022,6 +2022,18 @@ impl Authorizer {
             return Err(Error::WarrantRevoked(child.id().to_string()));
         }
 
+        // I1: Delegation Authority (wire-format-spec.md)
+        // Child's issuer must be parent's authorized_holder (proves delegation was authorized).
+        // Without this check, anyone with knowledge of the parent payload could craft a child
+        // with an arbitrary issuer key — the batch sig would verify but the chain would be forged.
+        if child.issuer() != parent.authorized_holder() {
+            return Err(Error::ChainVerificationFailed(format!(
+                "I1 violated: child.issuer ({}) != parent.holder ({})",
+                child.issuer().fingerprint(),
+                parent.authorized_holder().fingerprint()
+            )));
+        }
+
         // Check parent_hash linkage
         let child_parent_hash = child.parent_hash().ok_or_else(|| {
             Error::ChainVerificationFailed("child warrant has no parent_hash".to_string())
@@ -2211,6 +2223,31 @@ impl Authorizer {
                     child.r#type()
                 )));
             }
+        }
+
+        // I5: Approval gate monotonicity (wire-level defense-in-depth)
+        // Re-check at verification time what AttenuationBuilder enforces at build time.
+        // A warrant chain forged outside the SDK could weaken or strip approval gates
+        // that the parent warrant established.
+        {
+            use crate::approval_gate::{
+                parse_approval_gate_map, verify_approval_gate_monotonicity,
+                APPROVAL_GATE_EXTENSION_KEY,
+            };
+            let parent_gates =
+                parse_approval_gate_map(parent.extension(APPROVAL_GATE_EXTENSION_KEY))?;
+            let child_gates =
+                parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))?;
+            let empty = std::collections::BTreeMap::new();
+            let child_tools = child.capabilities().unwrap_or(&empty);
+            verify_approval_gate_monotonicity(
+                parent_gates.as_ref(),
+                child_gates.as_ref(),
+                child_tools,
+            )
+            .map_err(|e| {
+                Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
+            })?;
         }
 
         // Note: Signature verification is done in batch at the chain level for performance

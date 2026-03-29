@@ -13,7 +13,7 @@
 use crate::error::{Error, Result};
 use crate::SIGNATURE_CONTEXT;
 use ed25519_dalek::{
-    Signature as DalekSignature, Signer, SigningKey as Ed25519SigningKey, Verifier, VerifyingKey,
+    Signature as DalekSignature, Signer, SigningKey as Ed25519SigningKey, VerifyingKey,
 };
 use pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand::rngs::OsRng;
@@ -138,6 +138,14 @@ impl PublicKey {
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self> {
         let verifying_key =
             VerifyingKey::from_bytes(bytes).map_err(|e| Error::CryptoError(e.to_string()))?;
+        // Reject small-order / weak public keys to prevent cofactor attacks.
+        // An attacker controlling a weak key (order dividing the cofactor 8) can sometimes
+        // forge signatures that verify against multiple distinct messages.
+        if verifying_key.is_weak() {
+            return Err(Error::CryptoError(
+                "small-order or weak public key rejected — cofactor attack surface".to_string(),
+            ));
+        }
         Ok(Self { verifying_key })
     }
 
@@ -157,8 +165,10 @@ impl PublicKey {
     /// Verify a signature against a message.
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<()> {
         let prefixed = SigningKey::prefix_message(message);
+        // Use verify_strict: additionally rejects small-order R points and non-canonical s scalars,
+        // closing the cofactor / signature-malleability gap that default verify leaves open.
         self.verifying_key
-            .verify(&prefixed, &signature.inner)
+            .verify_strict(&prefixed, &signature.inner)
             .map_err(|e| Error::SignatureInvalid(e.to_string()))
     }
 
