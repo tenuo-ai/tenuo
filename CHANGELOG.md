@@ -7,9 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.1.0-beta.15] - 2026-03-28
+
 ### Added
 
 - **`ArgApprovalGate::Exempt`** — new approval gate variant (in development). See Tenuo Cloud documentation for usage details.
+- **`WRAP_TOOL_CALL_SUPPORTED` flag** exported from `tenuo.langgraph` — lets callers detect at runtime whether the installed LangGraph version supports authorization hooks (`wrap_tool_call` requires LangGraph ≥ 0.3 / Python 3.10+).
+- **rand 0.9 upgrade** — `SigningKey::generate` now uses `OsRng.try_fill_bytes` with `Zeroizing<[u8; 32]>` to guarantee secure memory erasure of ephemeral key bytes.
+
+### Security
+
+- **Ed25519 strict verification** — `PublicKey::verify` now uses `verify_strict` (rejecting non-canonical `s` scalars and small-order `R` points) and `PublicKey::from_bytes` rejects small-order / weak public keys at import time, closing the Ed25519 cofactor attack surface.
+- **I1 delegation authority check** added to `Authorizer::verify_link` — child warrant's issuer must equal the parent's `authorized_holder`, preventing forged delegation chains constructed outside the SDK.
+- **Approval gate monotonicity** enforced at wire-verification time in `Authorizer::verify_link` — gates cannot be weakened or stripped in hand-crafted chains that bypass `AttenuationBuilder`.
+- **WASM `verify_approval_set` deduplication** corrected — approval entries are now deduplicated by approver public key rather than by list index, preventing approval replay with duplicate keys.
+- **`TenuoToolNode` fail-fast on unsupported LangGraph** — constructor raises `RuntimeError` (instead of silently creating a non-enforcing node) when `wrap_tool_call` is unavailable.
+- **`guard()` raises on unsupported clients** — passing an Anthropic, Vertex, or unknown client now raises `NotImplementedError` instead of returning an unguarded client.
+- **Temporal `dry_run` visibility** — `TenuoInterceptorConfig(dry_run=True)` now emits a `warnings.warn` (Python-level) in addition to a logger warning, ensuring the shadow-mode flag surfaces even when logging is suppressed.
+
+### Fixed
+
+- **picomatch CVE** (CVSS 5.3 — prototype pollution via POSIX bracket expressions) patched in `tenuo-explorer` build toolchain via npm `overrides` pinning `picomatch ≥ 4.0.4`.
+
+### Dependencies
+
+- `rand` 0.8 → 0.9 (`tenuo-core`)
+- `moka` 0.12.14 → 0.12.15 (`tenuo-core`)
+- `tempfile` 3.26.0 → 3.27.0 (`tenuo-core`)
 
 ---
 
