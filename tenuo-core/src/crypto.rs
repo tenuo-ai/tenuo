@@ -16,7 +16,7 @@ use ed25519_dalek::{
     Signature as DalekSignature, Signer, SigningKey as Ed25519SigningKey, VerifyingKey,
 };
 use pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
-use rand::rngs::OsRng;
+use rand::TryRngCore;
 use secrecy::{CloneableSecret, ExposeSecret, SecretBox};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
@@ -64,7 +64,11 @@ impl std::fmt::Debug for SigningKey {
 impl SigningKey {
     /// Generate a new random signing key.
     pub fn generate() -> Self {
-        let signing_key = Ed25519SigningKey::generate(&mut OsRng);
+        let mut key_bytes = [0u8; 32];
+        rand::rngs::OsRng
+            .try_fill_bytes(&mut key_bytes)
+            .expect("OS RNG unavailable — cannot generate signing key");
+        let signing_key = Ed25519SigningKey::from_bytes(&key_bytes);
         Self {
             signing_key: SecretBox::new(Box::new(Ed25519SigningKeyWrapper(signing_key))),
         }
