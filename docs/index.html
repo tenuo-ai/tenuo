@@ -265,6 +265,21 @@
             border-color: rgba(56,189,248,0.3);
         }
 
+        .signin-hint {
+            margin-top: 64px;
+            font-size: 0.8rem;
+            color: var(--muted-dim);
+        }
+
+        .signin-hint a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .signin-hint a:hover {
+            color: var(--text);
+        }
+
         /* Features */
         .features {
             display: grid;
@@ -516,9 +531,9 @@
         /* Integrations */
         .integrations-inline {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(5, 1fr);
             gap: 8px;
-            max-width: 480px;
+            max-width: 700px;
             margin: 0 auto;
         }
 
@@ -644,6 +659,7 @@
                 <a href="quickstart">Docs</a>
                 <a href="/explorer">Explorer</a>
                 <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
+                <a href="https://cloud.tenuo.ai">Sign in</a>
             </div>
         </nav>
 
@@ -657,6 +673,7 @@
                 <a href="early-access.html" class="btn btn-primary">Request Early Access</a>
                 <a href="https://github.com/tenuo-ai/tenuo" class="btn btn-secondary">GitHub ↗</a>
             </div>
+            <p class="signin-hint">Already have access? <a href="https://cloud.tenuo.ai">Sign in to Tenuo Cloud</a></p>
         </section>
 
         <div class="features">
@@ -875,12 +892,13 @@
                 <a href="autogen">AutoGen</a>
                 <a href="mcp">MCP</a>
                 <a href="a2a">A2A</a>
+                <a href="kubernetes">Kubernetes</a>
             </div>
         </section>
 
 
         <section class="production">
-            <p>Deploy on your infrastructure. Every action auditable, every delegation traceable.<br>
+            <p>Rust core. Open source. Ready for your pipeline.<br>
             <a href="early-access.html">Talk to us about your deployment</a></p>
         </section>
     </div>
