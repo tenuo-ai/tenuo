@@ -230,6 +230,7 @@
             align-items: center;
             gap: 8px;
             padding: 12px 26px;
+            border-radius: 6px;
             font-family: 'Inter', sans-serif;
             font-size: 0.85rem;
             font-weight: 500;
@@ -255,7 +256,7 @@
             font-size: 0.8rem;
             letter-spacing: 0.04em;
             background: transparent;
-            color: var(--muted-dim);
+            color: var(--muted);
             border: 1px solid rgba(56,189,248,0.15);
         }
 
@@ -511,64 +512,13 @@
             }
         }
 
-        /* How it works */
-        .how-it-works {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 24px;
-            max-width: 740px;
-            margin: 0 auto;
-        }
-
-        .how-step {
-            text-align: center;
-            padding: 24px 16px;
-        }
-
-        .how-step-num {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.7rem;
-            color: var(--accent);
-            letter-spacing: 0.1em;
-            margin-bottom: 12px;
-        }
-
-        .how-step h3 {
-            font-size: 1rem;
-            font-weight: 600;
-            color: #e8e8e8;
-            margin-bottom: 8px;
-        }
-
-        .how-step p {
-            font-size: 0.85rem;
-            color: #9ab4c4;
-            line-height: 1.5;
-        }
-
-        .how-step code {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.78rem;
-            color: var(--accent);
-            background: rgba(56,189,248,0.06);
-            padding: 1px 5px;
-            border-radius: 3px;
-        }
-
-        @media (max-width: 640px) {
-            .how-it-works {
-                grid-template-columns: 1fr;
-                gap: 0;
-            }
-        }
 
         /* Integrations */
         .integrations-inline {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
             gap: 8px;
-            max-width: 700px;
+            max-width: 480px;
             margin: 0 auto;
         }
 
@@ -577,6 +527,7 @@
             font-size: 0.8rem;
             color: var(--muted);
             text-decoration: none;
+            text-align: center;
             padding: 6px 16px;
             border: 1px solid rgba(56,189,248,0.09);
             transition: all 0.2s;
@@ -690,9 +641,8 @@
                 <span></span>
             </button>
             <div class="nav-links">
-                <a href="quickstart">Quick Start</a>
+                <a href="quickstart">Docs</a>
                 <a href="/explorer">Explorer</a>
-                <a href="early-access.html">Early Access</a>
                 <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
             </div>
         </nav>
@@ -701,11 +651,11 @@
             <div class="badge"><div class="badge-dot"></div> <span>Private beta</span> · Select partners only</div>
             <h1>Your agents act<br><em>beyond their mandate.</em></h1>
             <p>
-                Tenuo issues task-scoped warrants that <strong>narrow as agents delegate</strong> and expire when tasks end.
+                Tenuo issues task-scoped warrants that <strong>narrow as agents delegate.</strong>
             </p>
             <div class="cta">
                 <a href="early-access.html" class="btn btn-primary">Request Early Access</a>
-                <a href="https://github.com/tenuo-ai/tenuo" class="btn btn-secondary">github ↗</a>
+                <a href="https://github.com/tenuo-ai/tenuo" class="btn btn-secondary">GitHub ↗</a>
             </div>
         </section>
 
@@ -713,17 +663,17 @@
             <div class="feature">
                 <div class="feature-icon">SCOPE</div>
                 <h3>Task-level authority</h3>
-                <p>Each agent gets a warrant for its task. Specific tools, specific arguments, bounded lifetime.</p>
+                <p>Each agent gets a warrant for its task. Specific tools, specific arguments, bounded lifetime. Bound to the holder's key, useless if stolen.</p>
             </div>
             <div class="feature">
                 <div class="feature-icon">DELEGATE</div>
                 <h3>Authority only narrows</h3>
-                <p>No derived warrant can exceed its parent. Every delegation hop is cryptographically bound to the one before it.</p>
+                <p>No derived warrant can exceed its parent. Every delegation hop is cryptographically chained to the one before it.</p>
             </div>
             <div class="feature">
                 <div class="feature-icon">VERIFY</div>
                 <h3>Every hop is auditable</h3>
-                <p>The full chain is signed and verifiable offline. Who authorized what, at which hop, with what constraints.</p>
+                <p>The full chain is signed and verifiable offline in ~27&micro;s. Who authorized what, at which hop, with what constraints.</p>
             </div>
         </div>
 
@@ -928,29 +878,6 @@
             </div>
         </section>
 
-        <!-- How It Works -->
-        <section class="section">
-            <div class="section-header">
-                <h2>Three verbs, one chain</h2>
-            </div>
-            <div class="how-it-works">
-                <div class="how-step">
-                    <div class="how-step-num">01 ISSUE</div>
-                    <h3>Mint a root warrant</h3>
-                    <p>Your control plane issues a signed warrant listing allowed capabilities and a TTL.</p>
-                </div>
-                <div class="how-step">
-                    <div class="how-step-num">02 ATTENUATE</div>
-                    <h3>Narrow at each hop</h3>
-                    <p>Every agent calls <code>.attenuate()</code> to pass a strictly smaller warrant to the next agent.</p>
-                </div>
-                <div class="how-step">
-                    <div class="how-step-num">03 VERIFY</div>
-                    <h3>Check offline in ~27&micro;s</h3>
-                    <p>Any node can verify the full chain locally. No round-trips, no central authority at runtime.</p>
-                </div>
-            </div>
-        </section>
 
         <section class="production">
             <p>Deploy on your infrastructure. Every action auditable, every delegation traceable.<br>
