@@ -4,86 +4,97 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>tenuo - Capability Tokens for AI Agents</title>
+    <title>Tenuo — Warrant-based authorization for AI agents</title>
 
     <!-- SEO -->
     <meta name="description"
-        content="Tenuo is an open-source capability token library for AI agents. Rust core, Python bindings, ~27μs verification. Stop ambient authority.">
+        content="Tenuo issues task-scoped warrants that narrow as agents delegate. Cryptographically enforced, verified offline in ~27μs. Rust core with Python bindings.">
     <meta name="keywords"
-        content="AI agents, capability tokens, authorization, LangChain, LangGraph, security, Rust, Python">
+        content="AI agent authorization, capability tokens, delegation warrants, LangChain, CrewAI, LangGraph, agentic security, Rust, Python">
     <meta name="author" content="Tenuo">
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://tenuo.ai/">
-    <meta property="og:title" content="Tenuo - Capability Tokens for AI Agents">
+    <meta property="og:title" content="Tenuo — Warrant-based authorization for AI agents">
     <meta property="og:description"
-        content="Stop ambient authority. Signed tokens that carry delegation provenance and task context. ~27μs verification.">
+        content="Task-scoped warrants that narrow as agents delegate. Every hop signed, every chain verifiable offline.">
     <meta property="og:image" content="https://tenuo.ai/images/og-preview.png">
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:url" content="https://tenuo.ai/">
-    <meta name="twitter:title" content="Tenuo - Capability Tokens for AI Agents">
+    <meta name="twitter:title" content="Tenuo — Warrant-based authorization for AI agents">
     <meta name="twitter:description"
-        content="Stop ambient authority. Signed tokens that carry delegation provenance and task context. ~27μs verification.">
+        content="Task-scoped warrants that narrow as agents delegate. Every hop signed, every chain verifiable offline.">
     <meta name="twitter:image" content="https://tenuo.ai/images/og-preview.png">
 
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="images/favicon-t.svg">
     <link rel="apple-touch-icon" href="images/apple-touch-icon.png">
 
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-        * {
+    <style>
+
+        *, *::before, *::after {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
+        html {
+            scroll-behavior: smooth;
+        }
+
         :root {
-            --bg: #000;
-            --surface: #111;
-            --surface-2: #1a1a1a;
-            --border: #222;
-            --text: #fff;
-            --muted: #888;
-            --accent: #00d4ff;
+            --bg: #040a0f;
+            --surface: #0a1018;
+            --surface-2: #0e1620;
+            --border: rgba(56,189,248,0.09);
+            --text: #c8d8e4;
+            --text-bright: #e8e8e8;
+            --muted: #7a9aaa;
+            --muted-dim: #4a6a7a;
+            --accent: #38bdf8;
             --accent2: #a855f7;
             --green: #00ff88;
             --red: #ff4466;
+            --gold: #c8a96e;
         }
 
         body {
             font-family: 'Inter', -apple-system, sans-serif;
+            font-weight: 400;
             background: var(--bg);
             color: var(--text);
             line-height: 1.6;
             overflow-x: hidden;
         }
 
-        .orb {
+        .grid-bg {
             position: fixed;
-            width: 600px;
-            height: 600px;
-            border-radius: 50%;
-            filter: blur(120px);
-            opacity: 0.15;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(56,189,248,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(56,189,248,0.03) 1px, transparent 1px);
+            background-size: 48px 48px;
             pointer-events: none;
             z-index: 0;
         }
 
-        .orb-1 {
-            background: var(--accent);
-            top: -200px;
-            left: -200px;
-        }
-
-        .orb-2 {
-            background: var(--accent2);
-            bottom: -200px;
-            right: -200px;
+        .glow {
+            position: fixed;
+            top: -80px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 560px;
+            height: 420px;
+            background: radial-gradient(ellipse, rgba(56,189,248,0.07) 0%, transparent 65%);
+            pointer-events: none;
+            z-index: 0;
         }
 
         .container {
@@ -100,12 +111,13 @@
             justify-content: space-between;
             align-items: center;
             padding: 24px 0;
-            border-bottom: 1px solid var(--border);
+            border-bottom: 1px solid rgba(56,189,248,0.07);
         }
 
         .nav-logo {
             font-size: 1.25rem;
             font-weight: 600;
+            color: var(--text-bright);
         }
 
         .nav-links {
@@ -114,9 +126,12 @@
         }
 
         .nav-links a {
-            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--muted-dim);
             text-decoration: none;
-            font-size: 0.9rem;
+            font-size: 0.8rem;
+            font-weight: 400;
+            letter-spacing: 0.04em;
             transition: color 0.2s;
         }
 
@@ -131,18 +146,41 @@
         }
 
         .badge {
-            display: inline-block;
-            padding: 6px 14px;
-            background: var(--surface);
-            border: 1px solid var(--border);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            background: transparent;
+            border: 1px solid rgba(56,189,248,0.14);
             border-radius: 100px;
-            font-size: 0.8rem;
-            color: var(--muted);
-            margin-bottom: 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            font-weight: 400;
+            letter-spacing: 0.06em;
+            color: var(--muted-dim);
+            margin-bottom: 38px;
+        }
+
+        .badge-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent);
+            animation: pulse-dot 2.5s ease infinite;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
         }
 
         .badge span {
             color: var(--accent);
+        }
+
+        h1 em {
+            font-style: italic;
+            color: #e8e8e8;
         }
 
         h1 {
@@ -150,7 +188,8 @@
             font-weight: 700;
             letter-spacing: -2px;
             line-height: 1.1;
-            margin-bottom: 24px;
+            margin-bottom: 22px;
+            color: var(--text);
         }
 
         h1 .gradient {
@@ -160,11 +199,25 @@
             -webkit-text-fill-color: transparent;
         }
 
+        h1 em {
+            font-style: italic;
+            font-family: Georgia, serif;
+            font-weight: 400;
+            color: var(--accent);
+        }
+
         .hero p {
             font-size: 1.1rem;
+            font-weight: 400;
+            line-height: 1.6;
             color: var(--muted);
             max-width: 540px;
             margin: 0 auto 32px;
+        }
+
+        .hero p strong {
+            color: var(--accent);
+            font-weight: 400;
         }
 
         .cta {
@@ -176,66 +229,39 @@
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-size: 0.9rem;
+            padding: 12px 26px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.85rem;
             font-weight: 500;
+            letter-spacing: 0.01em;
             text-decoration: none;
+            border: none;
+            cursor: pointer;
             transition: all 0.2s;
         }
 
         .btn-primary {
-            background: var(--text);
-            color: var(--bg);
+            background: #fff;
+            color: #040a0f;
         }
 
         .btn-primary:hover {
-            transform: translateY(-2px);
+            transform: translateY(-1px);
             box-shadow: 0 8px 24px rgba(255, 255, 255, 0.1);
         }
 
         .btn-secondary {
-            background: var(--surface);
-            color: var(--text);
-            border: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            letter-spacing: 0.04em;
+            background: transparent;
+            color: var(--muted-dim);
+            border: 1px solid rgba(56,189,248,0.15);
         }
 
         .btn-secondary:hover {
-            border-color: #444;
-        }
-
-        /* Install */
-        .install {
-            margin: 48px auto;
-            max-width: 400px;
-        }
-
-        .install-box {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 16px 20px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.9rem;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .install-box code {
-            color: var(--accent);
-        }
-
-        .install-box button {
-            background: none;
-            border: none;
-            color: var(--muted);
-            cursor: pointer;
-            padding: 4px;
-        }
-
-        .install-box button:hover {
             color: var(--text);
+            border-color: rgba(56,189,248,0.3);
         }
 
         /* Features */
@@ -243,38 +269,47 @@
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 1px;
-            background: var(--border);
-            border: 1px solid var(--border);
-            border-radius: 16px;
+            background: rgba(56,189,248,0.07);
+            border: 1px solid rgba(56,189,248,0.09);
+            border-radius: 0;
             overflow: hidden;
             margin: 60px 0;
         }
 
         .feature {
             background: var(--bg);
-            padding: 28px;
+            padding: 24px 24px 28px;
         }
 
         .feature-icon {
-            font-size: 1.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            font-weight: 400;
+            letter-spacing: 0.1em;
+            color: var(--accent);
             margin-bottom: 12px;
+            opacity: 0.7;
         }
 
         .feature h3 {
             font-size: 0.95rem;
             font-weight: 600;
-            margin-bottom: 6px;
+            color: #e8e8e8;
+            margin-bottom: 8px;
+            line-height: 1.4;
         }
 
         .feature p {
             font-size: 0.85rem;
-            color: var(--muted);
+            font-weight: 400;
+            color: #9ab4c4;
+            line-height: 1.6;
         }
 
         /* Code Example */
         .section {
             padding: 60px 0;
-            border-top: 1px solid var(--border);
+            border-top: 1px solid rgba(56,189,248,0.07);
         }
 
         .section-header {
@@ -285,6 +320,7 @@
         .section-header h2 {
             font-size: 1.5rem;
             font-weight: 600;
+            color: var(--text);
             margin-bottom: 8px;
         }
 
@@ -292,219 +328,268 @@
             color: var(--muted);
         }
 
-        .code-example {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            overflow: hidden;
-        }
-
-        .code-header {
-            display: flex;
-            gap: 8px;
-            padding: 12px 16px;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .code-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: var(--border);
-        }
-
-        .code-content {
-            padding: 20px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
-            line-height: 1.7;
-            overflow-x: auto;
-        }
-
-        .code-content .comment {
-            color: #6a737d;
-        }
-
-        .code-content .keyword {
-            color: var(--accent2);
-        }
-
-        .code-content .string {
-            color: var(--green);
-        }
-
-        .code-content .function {
-            color: var(--accent);
-        }
-
-        /* Attack Scenario */
-        .attack-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 24px;
-        }
-
-        .attack-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 28px;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .attack-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-        }
-
-        .attack-card.bad::before {
-            background: linear-gradient(90deg, var(--red), transparent);
-        }
-
-        .attack-card.good::before {
-            background: linear-gradient(90deg, var(--accent), var(--accent2));
-        }
-
-        .attack-card h4 {
-            font-size: 0.85rem;
-            font-weight: 600;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .attack-card.bad h4 {
-            color: var(--muted);
-        }
-
-        .attack-card.good h4 {
-            color: var(--text);
-        }
-
-        .attack-step {
-            font-size: 0.85rem;
-            color: var(--muted);
-            padding: 10px 0;
-            display: flex;
-            align-items: flex-start;
-            gap: 14px;
-        }
-
-        .attack-step .num {
-            background: var(--surface-2);
-            color: var(--muted);
-            padding: 3px 10px;
-            border-radius: 12px;
-            font-size: 0.7rem;
-            font-weight: 500;
-            flex-shrink: 0;
-        }
-
-        .attack-card.good .attack-step .num {
-            background: rgba(0, 212, 255, 0.1);
-            color: var(--accent);
-        }
-
-        .attack-result {
-            margin-top: 20px;
-            padding: 14px 16px;
-            border-radius: 8px;
-            font-size: 0.85rem;
-            font-weight: 500;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .attack-card.bad .attack-result {
-            background: rgba(255, 68, 102, 0.08);
-            border: 1px solid rgba(255, 68, 102, 0.2);
-            color: #ff6b7a;
-        }
-
-        .attack-card.good .attack-result {
-            background: rgba(0, 212, 255, 0.08);
-            border: 1px solid rgba(0, 212, 255, 0.2);
-            color: var(--accent);
-        }
-
-        /* Integrations */
-        .integrations {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 24px;
-            max-width: 900px;
+        /* Tree Diagram */
+        .tree-wrap {
+            max-width: 700px;
             margin: 0 auto;
         }
 
-        .integration {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 16px 24px;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            text-decoration: none;
-            color: var(--text);
-            transition: border-color 0.2s;
+        .tree-wrap svg {
+            width: 100%;
+            height: auto;
+            display: block;
         }
 
-        .integration:hover {
-            border-color: #444;
+        .tree-wrap .edge {
+            fill: none;
+            stroke: rgba(56,189,248,0.18);
+            stroke-width: 1.5;
         }
 
-        .integration-icon {
-            font-size: 1.5rem;
+        .tree-wrap .node-rect {
+            fill: #0a1018;
+            stroke: rgba(56,189,248,0.15);
+            stroke-width: 1;
+            rx: 6;
+            transition: stroke 0.5s ease;
         }
 
-        .integration-name {
+        .tree-wrap .node-dot {
+            fill: #38bdf8;
+        }
+
+        .tree-wrap .node-label {
+            fill: #e8e8e8;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
             font-weight: 500;
-            font-size: 0.9rem;
         }
 
-        /* Docs */
-        .docs {
+        .tree-wrap .edge-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            fill: #7a9aaa;
+        }
+
+        .tree-wrap .edge-label.narrow {
+            fill: #5ecfff;
+        }
+
+        .tree-wrap .verdict-text {
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            fill: #7a9aaa;
+        }
+
+        /* Pulse animation along edges */
+        .pulse {
+            fill: #38bdf8;
+            opacity: 0;
+        }
+
+        .tree-wrap.is-visible .pulse {
+            opacity: 1;
+        }
+
+        .tree-wrap.is-visible .node-rect {
+            stroke: rgba(56,189,248,0.3);
+        }
+
+        /* SVG element fade-in */
+        .tree-wrap .fade-in {
+            opacity: 0;
+            transition: opacity 0.6s ease;
+        }
+
+        .tree-wrap.is-visible .fade-in {
+            opacity: 1;
+        }
+
+        /* Enforcement cards */
+        .enforcement-cards {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 16px;
+            max-width: 900px;
+            margin: 40px auto 0;
         }
 
-        .doc {
+        .enforcement-card {
             background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 24px;
-            text-decoration: none;
-            color: inherit;
-            transition: border-color 0.2s;
+            border: 1px solid rgba(56,189,248,0.1);
+            border-radius: 8px;
+            padding: 18px 16px;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.5s ease, transform 0.5s ease;
         }
 
-        .doc:hover {
-            border-color: #444;
+        .enforcement-card:nth-child(1) { transition-delay: 0.2s; }
+        .enforcement-card:nth-child(2) { transition-delay: 0.4s; }
+        .enforcement-card:nth-child(3) { transition-delay: 0.6s; }
+
+        .enforcement-cards.is-visible .enforcement-card {
+            opacity: 1;
+            transform: translateY(0);
         }
 
-        .doc-icon {
-            font-size: 1.5rem;
+        .card-warrant {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            color: var(--accent);
+            background: rgba(56,189,248,0.06);
+            padding: 6px 10px;
+            border-radius: 4px;
+            margin-bottom: 14px;
+            line-height: 1.6;
+        }
+
+        .card-warrant .warrant-scope {
+            white-space: nowrap;
+        }
+
+        .card-warrant .warrant-label {
+            color: var(--muted);
+            display: block;
+            margin-bottom: 2px;
+            font-size: 0.6rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .card-warrant.expired {
+            border: 1px solid rgba(255,68,102,0.15);
+            background: rgba(255,68,102,0.04);
+        }
+
+        .card-warrant.expired .warrant-label {
+            color: var(--red);
+        }
+
+        .log-entry {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            padding: 5px 0;
+            border-top: 1px solid rgba(56,189,248,0.04);
+            white-space: nowrap;
+            overflow: hidden;
+        }
+
+        .log-entry:first-of-type {
+            border-top: none;
+        }
+
+        .log-icon {
+            font-size: 0.75rem;
+            flex-shrink: 0;
+            width: 12px;
+            text-align: center;
+        }
+
+        .log-entry.allowed .log-icon { color: var(--green); }
+        .log-entry.blocked .log-icon { color: var(--red); }
+
+        .log-entry code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.62rem;
+            color: var(--text);
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .log-result {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.58rem;
+            flex-shrink: 0;
+        }
+
+        .log-entry.allowed .log-result { color: var(--green); }
+        .log-entry.blocked .log-result { color: var(--red); opacity: 0.85; }
+
+        @media (max-width: 768px) {
+            .enforcement-cards {
+                grid-template-columns: 1fr;
+                max-width: 400px;
+            }
+        }
+
+        /* How it works */
+        .how-it-works {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            max-width: 740px;
+            margin: 0 auto;
+        }
+
+        .how-step {
+            text-align: center;
+            padding: 24px 16px;
+        }
+
+        .how-step-num {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--accent);
+            letter-spacing: 0.1em;
             margin-bottom: 12px;
         }
 
-        .doc h4 {
-            font-size: 0.95rem;
-            margin-bottom: 4px;
+        .how-step h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #e8e8e8;
+            margin-bottom: 8px;
         }
 
-        .doc p {
+        .how-step p {
+            font-size: 0.85rem;
+            color: #9ab4c4;
+            line-height: 1.5;
+        }
+
+        .how-step code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem;
+            color: var(--accent);
+            background: rgba(56,189,248,0.06);
+            padding: 1px 5px;
+            border-radius: 3px;
+        }
+
+        @media (max-width: 640px) {
+            .how-it-works {
+                grid-template-columns: 1fr;
+                gap: 0;
+            }
+        }
+
+        /* Integrations */
+        .integrations-inline {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 8px;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .integrations-inline a {
+            font-family: 'JetBrains Mono', monospace;
             font-size: 0.8rem;
             color: var(--muted);
+            text-decoration: none;
+            padding: 6px 16px;
+            border: 1px solid rgba(56,189,248,0.09);
+            transition: all 0.2s;
+        }
+
+        .integrations-inline a:hover {
+            color: var(--text);
+            border-color: rgba(56,189,248,0.25);
         }
 
         /* Production CTA */
@@ -527,10 +612,12 @@
         /* Footer */
         footer {
             padding: 48px 0;
-            border-top: 1px solid var(--border);
+            border-top: 1px solid rgba(56,189,248,0.07);
             text-align: center;
             color: var(--muted);
-            font-size: 0.85rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            letter-spacing: 0.04em;
         }
 
         footer a {
@@ -540,13 +627,6 @@
 
         footer a:hover {
             color: var(--text);
-        }
-
-        .footer-tech {
-            margin-bottom: 16px;
-            font-size: 0.9rem;
-            color: var(--text);
-            opacity: 0.7;
         }
 
         /* Hamburger menu button */
@@ -570,10 +650,7 @@
 
         @media (max-width: 768px) {
 
-            .features,
-            .docs,
-            .attack-grid,
-            .integrations {
+            .features {
                 grid-template-columns: 1fr;
             }
 
@@ -588,7 +665,7 @@
                 left: 0;
                 right: 0;
                 background: var(--bg);
-                border-bottom: 1px solid var(--border);
+                border-bottom: 1px solid rgba(56,189,248,0.07);
                 padding: 16px 24px;
                 flex-direction: column;
                 gap: 16px;
@@ -605,8 +682,8 @@
 </head>
 
 <body>
-    <div class="orb orb-1"></div>
-    <div class="orb orb-2"></div>
+    <div class="grid-bg"></div>
+    <div class="glow"></div>
 
     <div class="container">
         <nav>
@@ -619,8 +696,6 @@
             </button>
             <div class="nav-links">
                 <a href="quickstart">Quick Start</a>
-                <a href="concepts">Concepts</a>
-                <a href="api-reference">API</a>
                 <a href="/explorer">Explorer</a>
                 <a href="early-access.html">Early Access</a>
                 <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
@@ -628,206 +703,281 @@
         </nav>
 
         <section class="hero">
-            <div class="badge">v0.1 · <span>MIT/Apache-2.0</span></div>
-            <h1>Task-Scoped Authority<br>for <span class="gradient">AI Agents</span></h1>
+            <div class="badge"><div class="badge-dot"></div> <span>Private beta</span> · Select partners only</div>
+            <h1>Your agents act<br><em>beyond their mandate.</em></h1>
             <p>
-                Ambient authority is dangerous for AI agents. Tenuo enforces least-privilege cryptographically.
-                Warrants <em>narrow as they delegate</em> and expire when tasks end.
+                Tenuo issues task-scoped warrants that <strong>narrow as agents delegate</strong> and expire when tasks end.
             </p>
             <div class="cta">
-                <a href="quickstart" class="btn btn-primary">Get Started</a>
-                <a href="https://github.com/tenuo-ai/tenuo" class="btn btn-secondary">GitHub</a>
+                <a href="early-access.html" class="btn btn-primary">Request Early Access</a>
+                <a href="https://github.com/tenuo-ai/tenuo" class="btn btn-secondary">github ↗</a>
             </div>
         </section>
-
-        <div class="install">
-            <div class="install-box">
-                <code>uv pip install tenuo</code>
-                <button onclick="navigator.clipboard.writeText('uv pip install tenuo')"
-                    title="Copy to clipboard">⎘</button>
-            </div>
-        </div>
 
         <div class="features">
             <div class="feature">
-                <div class="feature-icon">📋</div>
-                <h3>Task-scoped authority</h3>
-                <p>Constraints scope authority to exactly what each task needs. Tools, paths, arguments, TTLs.</p>
+                <div class="feature-icon">SCOPE</div>
+                <h3>Task-level authority</h3>
+                <p>Each agent gets a warrant for its task. Specific tools, specific arguments, bounded lifetime.</p>
             </div>
             <div class="feature">
-                <div class="feature-icon">⬇️</div>
-                <h3>Monotonic bounds</h3>
-                <p>Capabilities can only shrink. $1000 → $500. "staging-*" → "staging-web".</p>
+                <div class="feature-icon">DELEGATE</div>
+                <h3>Authority only narrows</h3>
+                <p>No derived warrant can exceed its parent. Every delegation hop is cryptographically bound to the one before it.</p>
             </div>
             <div class="feature">
-                <div class="feature-icon">🔗</div>
-                <h3>Delegation provenance</h3>
-                <p>Cryptographically verify who authorized an action and trace the full chain.</p>
+                <div class="feature-icon">VERIFY</div>
+                <h3>Every hop is auditable</h3>
+                <p>The full chain is signed and verifiable offline. Who authorized what, at which hop, with what constraints.</p>
             </div>
         </div>
 
-        <!-- Code Example -->
+        <!-- Authority Attenuation Tree -->
         <section class="section">
             <div class="section-header">
-                <h2>Protect your tools in 3 steps</h2>
-                <p>Native protection for OpenAI, CrewAI, LangChain, Temporal, and more</p>
+                <h2>Warrants narrow at every hop</h2>
+                <p>No child warrant can exceed its parent. Enforced cryptographically.</p>
             </div>
-            <div class="code-example">
-                <div class="code-header">
-                    <div class="code-dot"></div>
-                    <div class="code-dot"></div>
-                    <div class="code-dot"></div>
-                </div>
-                <pre class="code-content"><span class="keyword">from</span> tenuo <span class="keyword">import</span> <span class="function">configure</span>, <span class="function">mint</span>, <span class="function">guard_tools</span>, <span class="function">Capability</span>, <span class="function">Subpath</span>
 
-<span class="comment"># 1. Start safely (dev mode auto-generates keys)</span>
-<span class="function">configure</span>(dev_mode=<span class="keyword">True</span>)
-<span class="function">guard_tools</span>([read_file, send_email, query_db])
+            <div class="tree-wrap" id="tree-diagram">
+                <svg viewBox="0 0 760 350" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <filter id="glow-pulse" x="-50%" y="-50%" width="200%" height="200%">
+                            <feGaussianBlur stdDeviation="3" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
 
-<span class="comment"># 2. Scope authority. The agent can ONLY read /data/.</span>
-<span class="comment"># send_email and query_db are strictly BLOCKED.</span>
-<span class="keyword">async with</span> <span class="function">mint</span>(<span class="function">Capability</span>(<span class="string">"read_file"</span>, path=<span class="function">Subpath</span>(<span class="string">"/data"</span>))):
-    <span class="keyword">await</span> agent.run(<span class="string">"Summarize Q3 reports"</span>)</pre>
+                    <!-- Edges -->
+                    <line class="edge fade-in" x1="380" y1="50" x2="380" y2="100" style="transition-delay:0.3s"/>
+                    <path class="edge fade-in" d="M 380 140 C 380 172, 195 178, 195 200" style="transition-delay:0.8s"/>
+                    <path class="edge fade-in" d="M 380 140 C 380 172, 565 178, 565 200" style="transition-delay:0.8s"/>
+                    <line class="edge fade-in" x1="195" y1="240" x2="120" y2="286" style="transition-delay:1.3s"/>
+                    <line class="edge fade-in" x1="565" y1="240" x2="640" y2="286" style="transition-delay:1.3s"/>
+
+                    <!-- Animated pulses -->
+                    <circle class="pulse pulse-1" r="3" filter="url(#glow-pulse)">
+                        <animateMotion dur="3s" repeatCount="indefinite" begin="0.6s"
+                            path="M 380,50 L 380,100" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                    </circle>
+                    <circle class="pulse pulse-2" r="2.5" filter="url(#glow-pulse)">
+                        <animateMotion dur="3s" repeatCount="indefinite" begin="1.4s"
+                            path="M 380,140 C 380,172 195,178 195,200" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                    </circle>
+                    <circle class="pulse pulse-3" r="2.5" filter="url(#glow-pulse)">
+                        <animateMotion dur="3s" repeatCount="indefinite" begin="1.4s"
+                            path="M 380,140 C 380,172 565,178 565,200" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                    </circle>
+                    <circle class="pulse" r="2" filter="url(#glow-pulse)">
+                        <animateMotion dur="3s" repeatCount="indefinite" begin="2.0s"
+                            path="M 195,240 L 120,286" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                    </circle>
+                    <circle class="pulse" r="2" filter="url(#glow-pulse)">
+                        <animateMotion dur="3s" repeatCount="indefinite" begin="2.0s"
+                            path="M 565,240 L 640,286" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                    </circle>
+
+                    <!-- Warrant scope labels -->
+                    <text class="edge-label fade-in" x="394" y="82" style="transition-delay:0.5s">12 capabilities · ttl 1h</text>
+                    <text class="edge-label narrow fade-in" x="246" y="176" style="transition-delay:1.0s">query_db · search_kb</text>
+                    <text class="edge-label narrow fade-in" x="430" y="176" style="transition-delay:1.0s">read_file · draft_response</text>
+                    <text class="edge-label narrow fade-in" x="110" y="268" text-anchor="middle" style="transition-delay:1.5s">query_db · /customers/* · 60s</text>
+                    <text class="edge-label narrow fade-in" x="650" y="268" text-anchor="middle" style="transition-delay:1.5s">read_file · /templates/* · 60s</text>
+
+                    <!-- Level 0: User -->
+                    <g class="fade-in" style="transition-delay:0s">
+                        <rect class="node-rect" x="330" y="16" width="100" height="34"/>
+                        <circle class="node-dot" cx="348" cy="33" r="3.5"/>
+                        <text class="node-label" x="358" y="38">User</text>
+                    </g>
+
+                    <!-- Level 1: Orchestrator -->
+                    <g class="fade-in" style="transition-delay:0.5s">
+                        <rect class="node-rect" x="305" y="100" width="150" height="40"/>
+                        <circle class="node-dot" cx="323" cy="120" r="3.5"/>
+                        <text class="node-label" x="335" y="125">Orchestrator</text>
+                    </g>
+
+                    <!-- Level 2: Research Agent -->
+                    <g class="fade-in" style="transition-delay:1.0s">
+                        <rect class="node-rect" x="118" y="200" width="154" height="40"/>
+                        <circle class="node-dot" cx="136" cy="220" r="3.5"/>
+                        <text class="node-label" x="148" y="225">Research Agent</text>
+                    </g>
+
+                    <!-- Level 2: Writer Agent -->
+                    <g class="fade-in" style="transition-delay:1.0s">
+                        <rect class="node-rect" x="488" y="200" width="154" height="40"/>
+                        <circle class="node-dot" cx="506" cy="220" r="3.5"/>
+                        <text class="node-label" x="518" y="225">Writer Agent</text>
+                    </g>
+
+                    <!-- Level 3: DB Worker -->
+                    <g class="fade-in" style="transition-delay:1.5s">
+                        <rect class="node-rect" x="50" y="286" width="140" height="36"/>
+                        <circle class="node-dot" cx="68" cy="304" r="3"/>
+                        <text class="node-label" x="80" y="309">DB Worker</text>
+                    </g>
+
+                    <!-- Level 3: File Worker -->
+                    <g class="fade-in" style="transition-delay:1.5s">
+                        <rect class="node-rect" x="570" y="286" width="140" height="36"/>
+                        <circle class="node-dot" cx="588" cy="304" r="3"/>
+                        <text class="node-label" x="600" y="309">File Worker</text>
+                    </g>
+
+                    <!-- Bottom verdict -->
+                    <text class="verdict-text fade-in" x="380" y="346" text-anchor="middle" style="transition-delay:2.2s">
+                        <tspan fill="#5ecfff">Signed at every hop.</tspan>
+                        <tspan fill="#7a9aaa"> Full warrant chain verifiable offline.</tspan>
+                    </text>
+
+                </svg>
             </div>
-        </section>
 
-        <!-- Attack Scenario -->
-        <section class="section">
-            <div class="section-header">
-                <h2>Prompt Injections, Bounded</h2>
-                <p>The model gets tricked. The damage stays contained.</p>
-            </div>
-            <div class="attack-grid">
-                <div class="attack-card bad">
-                    <h4>Without tenuo</h4>
-                    <div class="attack-step"><span class="num">1</span> User: "Summarize Q3 report"</div>
-                    <div class="attack-step"><span class="num">2</span> Agent inherits <strong>ambient
-                            authority</strong> (full credentials)</div>
-                    <div class="attack-step"><span class="num">3</span> Worker reads /data/q3.pdf</div>
-                    <div class="attack-step"><span class="num">4</span> PDF contains malicious prompt injection</div>
-                    <div class="attack-step"><span class="num">5</span> Worker has send_email capability (inherited)
+            <!-- Same agent, three different warrants -->
+            <div class="enforcement-cards" id="enforcement-cards">
+
+                <!-- Card 1: Research task -->
+                <div class="enforcement-card">
+                    <div class="card-warrant">
+                        <span class="warrant-label">Warrant — research task</span>
+                        <span class="warrant-scope">query_db /customers/* 300s</span>
                     </div>
-                    <div class="attack-result">⚠️ Data exfiltrated via email</div>
+                    <div class="log-entry allowed">
+                        <span class="log-icon">&#10003;</span>
+                        <code>query_db /customers/acme</code>
+                        <span class="log-result">200</span>
+                    </div>
+                    <div class="log-entry blocked">
+                        <span class="log-icon">&#10007;</span>
+                        <code>query_db /billing/inv</code>
+                        <span class="log-result">path</span>
+                    </div>
+                    <div class="log-entry blocked">
+                        <span class="log-icon">&#10007;</span>
+                        <code>send_email ceo@acme</code>
+                        <span class="log-result">no tool</span>
+                    </div>
                 </div>
-                <div class="attack-card good">
-                    <h4>With tenuo</h4>
-                    <div class="attack-step"><span class="num">1</span> User: "Summarize Q3 report"</div>
-                    <div class="attack-step"><span class="num">2</span> Warrant issued: read_file, path=/data/q3.pdf,
-                        ttl=60s</div>
-                    <div class="attack-step"><span class="num">3</span> Worker reads /data/q3.pdf</div>
-                    <div class="attack-step"><span class="num">4</span> PDF contains malicious prompt injection</div>
-                    <div class="attack-step"><span class="num">5</span> Worker attempts send_email → Denied</div>
-                    <div class="attack-result">✓ Attack blocked — tool not in warrant</div>
+
+                <!-- Card 2: Analytics task — same agent, different warrant -->
+                <div class="enforcement-card">
+                    <div class="card-warrant">
+                        <span class="warrant-label">Warrant — analytics task</span>
+                        <span class="warrant-scope">query_db /billing/* 120s</span>
+                    </div>
+                    <div class="log-entry allowed">
+                        <span class="log-icon">&#10003;</span>
+                        <code>query_db /billing/inv</code>
+                        <span class="log-result">200</span>
+                    </div>
+                    <div class="log-entry blocked">
+                        <span class="log-icon">&#10007;</span>
+                        <code>query_db /customers/acme</code>
+                        <span class="log-result">path</span>
+                    </div>
+                    <div class="log-entry blocked">
+                        <span class="log-icon">&#10007;</span>
+                        <code>delete_row /billing/old</code>
+                        <span class="log-result">no tool</span>
+                    </div>
                 </div>
+
+                <!-- Card 3: Expired warrant -->
+                <div class="enforcement-card">
+                    <div class="card-warrant expired">
+                        <span class="warrant-label">Warrant — expired</span>
+                        <span class="warrant-scope">query_db /billing/* 0s</span>
+                    </div>
+                    <div class="log-entry blocked">
+                        <span class="log-icon">&#10007;</span>
+                        <code>query_db /billing/inv</code>
+                        <span class="log-result">expired</span>
+                    </div>
+                    <div class="log-entry blocked">
+                        <span class="log-icon">&#10007;</span>
+                        <code>query_db /billing/reports</code>
+                        <span class="log-result">expired</span>
+                    </div>
+                </div>
+
             </div>
         </section>
 
         <!-- Integrations -->
         <section class="section">
             <div class="section-header">
-                <h2>Integrations</h2>
-                <p>First-class support for popular frameworks</p>
+                <h2>Works with your stack</h2>
             </div>
-            <div class="integrations">
-                <a href="openai" class="integration">
-                    <div class="integration-icon">🤖</div>
-                    <div class="integration-name">OpenAI</div>
-                </a>
-                <a href="crewai" class="integration">
-                    <div class="integration-icon">👥</div>
-                    <div class="integration-name">CrewAI</div>
-                </a>
-                <a href="langchain" class="integration">
-                    <div class="integration-icon">🦜</div>
-                    <div class="integration-name">LangChain</div>
-                </a>
-                <a href="temporal" class="integration">
-                    <div class="integration-icon">⏱️</div>
-                    <div class="integration-name">Temporal</div>
-                </a>
-                <a href="google-adk" class="integration">
-                    <div class="integration-icon">🔷</div>
-                    <div class="integration-name">Google ADK</div>
-                </a>
-                <a href="langgraph" class="integration">
-                    <div class="integration-icon">📊</div>
-                    <div class="integration-name">LangGraph</div>
-                </a>
-                <a href="autogen" class="integration">
-                    <div class="integration-icon">🤖</div>
-                    <div class="integration-name">AutoGen</div>
-                </a>
-                <a href="mcp" class="integration">
-                    <div class="integration-icon">🔌</div>
-                    <div class="integration-name">MCP</div>
-                </a>
-                <a href="a2a" class="integration">
-                    <div class="integration-icon">🔗</div>
-                    <div class="integration-name">A2A</div>
-                </a>
+            <div class="integrations-inline">
+                <a href="openai">OpenAI</a>
+                <a href="crewai">CrewAI</a>
+                <a href="langchain">LangChain</a>
+                <a href="langgraph">LangGraph</a>
+                <a href="temporal">Temporal</a>
+                <a href="google-adk">Google ADK</a>
+                <a href="autogen">AutoGen</a>
+                <a href="mcp">MCP</a>
+                <a href="a2a">A2A</a>
             </div>
         </section>
 
-        <!-- Docs -->
+        <!-- How It Works -->
         <section class="section">
             <div class="section-header">
-                <h2>Documentation</h2>
-                <p>Everything you need to get started</p>
+                <h2>Three verbs, one chain</h2>
             </div>
-            <div class="docs">
-                <a href="kubernetes" class="doc">
-                    <div class="doc-icon">☸️</div>
-                    <h4>Kubernetes</h4>
-                    <p>Deploy as sidecar or admission controller</p>
-                </a>
-                <a href="concepts" class="doc">
-                    <div class="doc-icon">💡</div>
-                    <h4>Concepts</h4>
-                    <p>Why tenuo? Threat model explained</p>
-                </a>
-                <a href="enforcement" class="doc">
-                    <div class="doc-icon">🛡️</div>
-                    <h4>Enforcement Models</h4>
-                    <p>In-process, sidecar, gateway, MCP</p>
-                </a>
-                <a href="security" class="doc">
-                    <div class="doc-icon">🔒</div>
-                    <h4>Security</h4>
-                    <p>PoP, replay protection, best practices</p>
-                </a>
-                <a href="ai-agents" class="doc">
-                    <div class="doc-icon">🤖</div>
-                    <h4>AI Agent Patterns</h4>
-                    <p>P-LLM/Q-LLM, prompt injection defense</p>
-                </a>
-                <a href="api-reference" class="doc">
-                    <div class="doc-icon">📖</div>
-                    <h4>API Reference</h4>
-                    <p>Complete SDK documentation</p>
-                </a>
+            <div class="how-it-works">
+                <div class="how-step">
+                    <div class="how-step-num">01 ISSUE</div>
+                    <h3>Mint a root warrant</h3>
+                    <p>Your control plane issues a signed warrant listing allowed capabilities and a TTL.</p>
+                </div>
+                <div class="how-step">
+                    <div class="how-step-num">02 ATTENUATE</div>
+                    <h3>Narrow at each hop</h3>
+                    <p>Every agent calls <code>.attenuate()</code> to pass a strictly smaller warrant to the next agent.</p>
+                </div>
+                <div class="how-step">
+                    <div class="how-step-num">03 VERIFY</div>
+                    <h3>Check offline in ~27&micro;s</h3>
+                    <p>Any node can verify the full chain locally. No round-trips, no central authority at runtime.</p>
+                </div>
             </div>
         </section>
 
         <section class="production">
-            <p>Deploying to production? Self-hosted is free forever. <a href="early-access.html">Request early access</a> to Tenuo Cloud.</p>
+            <p>Deploy on your infrastructure. Every action auditable, every delegation traceable.<br>
+            <a href="early-access.html">Talk to us about your deployment</a></p>
         </section>
     </div>
 
     <footer>
-        <p class="footer-tech">
-            <a href="https://crates.io/crates/tenuo">🦀 Rust core</a> •
-            <a href="https://pypi.org/project/tenuo/">🐍 Python SDK</a> •
-            ⚡ ~27μs verification
-        </p>
         <p>
+            © 2026 Tenuo ·
+            <a href="quickstart">Docs</a> ·
             <a href="https://github.com/tenuo-ai/tenuo">GitHub</a> ·
-            <a href="quickstart">Quick Start</a> ·
-            <a href="api-reference">API Reference</a> ·
-            <a href="security">Security</a> ·
-            <a href="early-access.html">Early Access</a> ·
-            MIT/Apache-2.0
+            <a href="early-access.html">Early Access</a>
         </p>
     </footer>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        var observer = new IntersectionObserver(function(entries) {
+            entries.forEach(function(entry) {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('is-visible');
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, { threshold: 0.2 });
+
+        document.querySelectorAll('.tree-wrap, .enforcement-cards').forEach(function(el) {
+            observer.observe(el);
+        });
+    });
+    </script>
 
     <!-- GoatCounter Analytics -->
     <script data-goatcounter="https://tenuo-ai.goatcounter.com/count"
