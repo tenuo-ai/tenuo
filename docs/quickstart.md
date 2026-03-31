@@ -9,9 +9,9 @@ Get Tenuo running in 5 minutes. For a visual walkthrough, see the [Demo](./demo.
 
 ## What is Tenuo?
 
-Tenuo is a capability-based authorization library for AI agent workflows. It uses signed tokens called **warrants** to control what actions agents can perform.
+Tenuo is a warrant-based authorization library for AI agent workflows. A **warrant** is a signed token specifying which tools an agent can call, under what constraints, and for how long.
 
-**Core invariant**: When a warrant is delegated, its capabilities can only **shrink**. 15 replicas becomes 10. Access to `staging-*` narrows to `staging-web`.
+**Core invariant**: When a warrant is delegated, its capabilities can only **narrow**. 15 replicas becomes 10. Access to `staging-*` narrows to `staging-web`. Enforced cryptographically.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -49,7 +49,7 @@ uv pip install "tenuo[fastapi]"     # FastAPI integration
 
 > **Note:** Quotes are required in zsh (default macOS shell) since `[]` are glob characters.
 
-> **Rust SDK**: If you're using Rust directly, add `tenuo = "0.1.0-beta.6"` to your `Cargo.toml`. See the [crates.io documentation](https://crates.io/crates/tenuo) for Rust-specific examples. This guide focuses on Python.
+> **Rust SDK**: If you're using Rust directly, add `tenuo = "0.1.0-beta.15"` to your `Cargo.toml`. See the [crates.io documentation](https://crates.io/crates/tenuo) for Rust-specific examples. This guide focuses on Python.
 
 ---
 
@@ -129,13 +129,11 @@ headers = warrant.headers(key, "search", {"query": "test"})
 
 # Delegation with attenuation
 worker_key = SigningKey.generate()
-child = warrant.grant(
-    to=worker_key.public_key,
-    allow="search",
-    ttl=300,
-    key=key,  # Parent signs
-    query=Pattern("safe*")  # Constraint as kwarg
-)
+child = (warrant.grant_builder()
+    .capability("search", query=Pattern("safe*"))
+    .holder(worker_key.public_key)
+    .ttl(300)
+    .grant(key))  # Parent signs
 ```
 
 #### Pattern 2: BoundWarrant (For Repeated Operations)
@@ -143,9 +141,10 @@ child = warrant.grant(
 ```python
 from tenuo import Warrant, SigningKey
 
+key = SigningKey.from_env("MY_KEY")
+
 # warrant = receive_warrant_from_orchestrator()  # In real code
 warrant = (Warrant.mint_builder().tool("process").holder(key.public_key).ttl(3600).mint(key))
-key = SigningKey.from_env("MY_KEY")
 
 # Bind key for repeated use
 bound = warrant.bind(key)
@@ -196,17 +195,21 @@ Tenuo supports three enforcement modes for gradual adoption:
 | `audit` | Log violations but allow execution | Gradual adoption, discovery |
 | `permissive` | Log + warn header, allow execution | Development, testing |
 
+Start with audit mode, then switch to enforce after analyzing logs:
+
 ```python
 from tenuo import configure, SigningKey
 
-# Audit mode - deploy without breaking anything
+# Stage 1: Audit mode - deploy without breaking anything
 configure(
     issuer_key=SigningKey.generate(),
     mode="audit",  # Log violations, don't block
     dev_mode=True,
 )
+```
 
-# After analyzing logs, switch to enforce
+```python
+# Stage 2: After analyzing logs, switch to enforce
 configure(
     issuer_key=issuer_key,
     mode="enforce",  # Block violations
@@ -336,7 +339,7 @@ result = await client.send_task("search_papers", {...}, warrant=task_warrant)
 Protect OpenAI tool calls with the `guard()` wrapper:
 
 ```python
-from tenuo import SigningKey, Warrant
+from tenuo import SigningKey, Warrant, Subpath
 from tenuo.openai import guard
 import openai
 
