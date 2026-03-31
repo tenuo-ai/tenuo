@@ -381,14 +381,9 @@
             fill: #7a9aaa;
         }
 
-        /* Pulse animation along edges */
+        /* Pulse dots along edges — opacity handled in SVG */
         .pulse {
             fill: #38bdf8;
-            opacity: 0;
-        }
-
-        .tree-wrap.is-visible .pulse {
-            opacity: 1;
         }
 
         .tree-wrap.is-visible .node-rect {
@@ -755,26 +750,36 @@
                     <line class="edge fade-in" x1="195" y1="240" x2="120" y2="286" style="transition-delay:1.3s"/>
                     <line class="edge fade-in" x1="565" y1="240" x2="640" y2="286" style="transition-delay:1.3s"/>
 
-                    <!-- Animated pulses -->
-                    <circle class="pulse pulse-1" r="3" filter="url(#glow-pulse)">
+                    <!-- Animated pulses — opacity synced with motion so they never flash at (0,0) -->
+                    <circle class="pulse" r="3" opacity="0" filter="url(#glow-pulse)">
                         <animateMotion dur="3s" repeatCount="indefinite" begin="0.6s"
                             path="M 380,50 L 380,100" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                        <animate attributeName="opacity" dur="3s" repeatCount="indefinite" begin="0.6s"
+                            values="0;0.8;0.8;0;0" keyTimes="0;0.05;0.35;0.45;1"/>
                     </circle>
-                    <circle class="pulse pulse-2" r="2.5" filter="url(#glow-pulse)">
+                    <circle class="pulse" r="2.5" opacity="0" filter="url(#glow-pulse)">
                         <animateMotion dur="3s" repeatCount="indefinite" begin="1.4s"
                             path="M 380,140 C 380,172 195,178 195,200" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                        <animate attributeName="opacity" dur="3s" repeatCount="indefinite" begin="1.4s"
+                            values="0;0.8;0.8;0;0" keyTimes="0;0.05;0.35;0.45;1"/>
                     </circle>
-                    <circle class="pulse pulse-3" r="2.5" filter="url(#glow-pulse)">
+                    <circle class="pulse" r="2.5" opacity="0" filter="url(#glow-pulse)">
                         <animateMotion dur="3s" repeatCount="indefinite" begin="1.4s"
                             path="M 380,140 C 380,172 565,178 565,200" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                        <animate attributeName="opacity" dur="3s" repeatCount="indefinite" begin="1.4s"
+                            values="0;0.8;0.8;0;0" keyTimes="0;0.05;0.35;0.45;1"/>
                     </circle>
-                    <circle class="pulse" r="2" filter="url(#glow-pulse)">
+                    <circle class="pulse" r="2" opacity="0" filter="url(#glow-pulse)">
                         <animateMotion dur="3s" repeatCount="indefinite" begin="2.0s"
                             path="M 195,240 L 120,286" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                        <animate attributeName="opacity" dur="3s" repeatCount="indefinite" begin="2.0s"
+                            values="0;0.8;0.8;0;0" keyTimes="0;0.05;0.35;0.45;1"/>
                     </circle>
-                    <circle class="pulse" r="2" filter="url(#glow-pulse)">
+                    <circle class="pulse" r="2" opacity="0" filter="url(#glow-pulse)">
                         <animateMotion dur="3s" repeatCount="indefinite" begin="2.0s"
                             path="M 565,240 L 640,286" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                        <animate attributeName="opacity" dur="3s" repeatCount="indefinite" begin="2.0s"
+                            values="0;0.8;0.8;0;0" keyTimes="0;0.05;0.35;0.45;1"/>
                     </circle>
 
                     <!-- Warrant scope labels -->
