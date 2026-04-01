@@ -35,7 +35,7 @@ use crate::constraints::{Constraint, ConstraintSet, ConstraintValue};
 use crate::crypto::{PublicKey, SigningKey};
 use crate::error::{Error, Result};
 use crate::revocation::RevocationRequest;
-use crate::warrant::{Clearance, Warrant, WarrantType};
+use crate::warrant::{Clearance, Warrant, WarrantId, WarrantType};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
@@ -862,14 +862,16 @@ impl DataPlane {
         }
 
         // CYCLE DETECTION: Track seen warrant IDs
-        let mut seen_ids: HashSet<String> = HashSet::new();
-        for warrant in chain {
-            let id = &warrant.id().to_string();
-            if !seen_ids.insert(id.clone()) {
-                return Err(Error::ChainVerificationFailed(format!(
-                    "cycle detected: warrant ID '{}' appears multiple times in chain",
-                    id
-                )));
+        // Single-element chains cannot have cycles; skip the HashSet entirely.
+        if chain.len() > 1 {
+            let mut seen_ids: HashSet<WarrantId> = HashSet::with_capacity(chain.len());
+            for warrant in chain {
+                if !seen_ids.insert(warrant.id().clone()) {
+                    return Err(Error::ChainVerificationFailed(format!(
+                        "cycle detected: warrant ID '{}' appears multiple times in chain",
+                        warrant.id()
+                    )));
+                }
             }
         }
 
@@ -1967,14 +1969,16 @@ impl Authorizer {
         }
 
         // CYCLE DETECTION: Track seen warrant IDs
-        let mut seen_ids: HashSet<String> = HashSet::new();
-        for warrant in chain {
-            let id = &warrant.id().to_string();
-            if !seen_ids.insert(id.clone()) {
-                return Err(Error::ChainVerificationFailed(format!(
-                    "cycle detected: warrant ID '{}' appears multiple times in chain",
-                    id
-                )));
+        // Single-element chains cannot have cycles; skip the HashSet entirely.
+        if chain.len() > 1 {
+            let mut seen_ids: HashSet<WarrantId> = HashSet::with_capacity(chain.len());
+            for warrant in chain {
+                if !seen_ids.insert(warrant.id().clone()) {
+                    return Err(Error::ChainVerificationFailed(format!(
+                        "cycle detected: warrant ID '{}' appears multiple times in chain",
+                        warrant.id()
+                    )));
+                }
             }
         }
 

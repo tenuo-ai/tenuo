@@ -1036,6 +1036,11 @@ impl Warrant {
 
         let mut verified = false;
 
+        // Hoist loop-invariant values: id hex and buffers are reused across windows
+        let id_hex = self.payload.id.to_hex();
+        let mut challenge_bytes = Vec::with_capacity(256);
+        let mut preimage = Vec::with_capacity(256);
+
         // Bidirectional window checking: check current window first, then alternate
         // between past and future windows. This handles clock skew in both directions.
         //
@@ -1061,14 +1066,14 @@ impl Warrant {
             }
 
             let window_ts = (now / window_secs + offset) * window_secs;
-            let challenge_data = (self.payload.id.to_hex(), tool, &sorted_args, window_ts);
-            let mut challenge_bytes = Vec::new();
+            let challenge_data = (&id_hex, tool, &sorted_args, window_ts);
+            challenge_bytes.clear();
             if ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes).is_err() {
                 continue;
             }
 
-            // Prepend domain separation context
-            let mut preimage = POP_CONTEXT.to_vec();
+            preimage.clear();
+            preimage.extend_from_slice(POP_CONTEXT);
             preimage.extend_from_slice(&challenge_bytes);
 
             if self.payload.holder.verify(&preimage, signature).is_ok() {
