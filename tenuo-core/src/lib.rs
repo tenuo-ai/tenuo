@@ -92,7 +92,7 @@ pub use crypto::{PublicKey, Signature, SigningKey};
 pub use error::{Error, Result};
 pub use planes::{
     Authorizer, AuthorizerBuilder, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,
-    DEFAULT_CLOCK_TOLERANCE_SECS,
+    VerifiedApproval, DEFAULT_CLOCK_TOLERANCE_SECS,
 };
 pub use revocation::{
     RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,

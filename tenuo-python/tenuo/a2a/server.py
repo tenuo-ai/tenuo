@@ -1029,10 +1029,10 @@ class A2AServer:
                 f"{MAX_WARRANT_TOKEN_BYTES}-byte limit"
             )
 
-        try:
-            from tenuo_core import Warrant
-        except ImportError as e:
-            raise RuntimeError("tenuo_core not available") from e
+        _tc = sys.modules.get("tenuo_core")
+        if _tc is None:
+            raise RuntimeError("tenuo_core not available")
+        Warrant = _tc.Warrant
 
         # Decode and verify warrant signature
         # Note: Warrant.from_base64() / from_jwt() performs cryptographic verification
@@ -1110,9 +1110,11 @@ class A2AServer:
             if aud != self.url:
                 raise AudienceMismatchError(expected=self.url, actual=aud)
 
+        # Extract JTI once — reused for replay check and audit event
+        jti = self._get_warrant_prop(warrant, "jti", "id")
+
         # Check replay
         if self.check_replay:
-            jti = self._get_warrant_prop(warrant, "jti", "id")
             if jti:
                 is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
                 if not is_new:
@@ -1217,7 +1219,7 @@ class A2AServer:
                 event=AuditEventType.WARRANT_VALIDATED,
                 task_id="",
                 skill=skill_id,
-                warrant_jti=self._get_warrant_prop(warrant, "jti", "id", default=""),
+                warrant_jti=jti or "",
                 warrant_iss=issuer_normalized or "",
                 warrant_sub=self._normalize_key(self._get_warrant_prop(warrant, "sub", "subject")) or "",
                 outcome="allowed",
@@ -1765,12 +1767,18 @@ class A2AServer:
             else:
                 self.audit_log(event)
         elif hasattr(self.audit_log, "write"):
-            # File-like object
+            # File-like object — offload blocking I/O to the thread pool
             if self.audit_format == "json":
-                self.audit_log.write(json.dumps(event.to_dict()) + "\n")
+                line = json.dumps(event.to_dict()) + "\n"
             else:
-                self.audit_log.write(f"[{event.event.value}] {event.skill}: {event.outcome}\n")
-            self.audit_log.flush()
+                line = f"[{event.event.value}] {event.skill}: {event.outcome}\n"
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._write_and_flush_audit, line)
+
+    def _write_and_flush_audit(self, line: str) -> None:
+        """Synchronous write+flush, intended to run in a thread pool executor."""
+        self.audit_log.write(line)
+        self.audit_log.flush()
 
     # -------------------------------------------------------------------------
     # Agent Card

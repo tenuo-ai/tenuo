@@ -64,8 +64,8 @@ use tenuo::{
     extraction::RequestContext,
     gateway_config::{CompiledGatewayConfig, GatewayConfig},
     heartbeat::{
-        self, create_audit_channel, AuditEventSender, AuthorizationEvent, EnvironmentInfo,
-        HeartbeatConfig, MetricsCollector,
+        self, create_audit_channel, ApprovalRecord, AuditEventSender, AuthorizationEvent,
+        EnvironmentInfo, HeartbeatConfig, MetricsCollector,
     },
     planes::Authorizer,
     revocation::SignedRevocationList,
@@ -855,6 +855,7 @@ async fn handle_request(
                     0,
                     request_id.clone(),
                     None,
+                    None,
                 ),
             )
             .await;
@@ -912,6 +913,7 @@ async fn handle_request(
                     None,
                     0,
                     request_id.clone(),
+                    None,
                     None,
                 ),
             )
@@ -1125,7 +1127,7 @@ async fn handle_request(
     let warrant_stack_b64 = encode_warrant_stack_for_audit(&chain);
 
     match result {
-        Ok(_) => {
+        Ok(ref cvr) => {
             info!(
                 request_id = %request_id,
                 warrant_id = %warrant_id,
@@ -1133,6 +1135,23 @@ async fn handle_request(
                 event = "authorization_success",
                 "Request authorized"
             );
+
+            let approval_records = if cvr.verified_approvals.is_empty() {
+                None
+            } else {
+                Some(
+                    cvr.verified_approvals
+                        .iter()
+                        .map(|va| ApprovalRecord {
+                            approver_key: hex::encode(va.approver_key),
+                            external_id: va.external_id.clone(),
+                            approved_at: va.approved_at,
+                            expires_at: va.expires_at,
+                            request_hash: hex::encode(va.request_hash),
+                        })
+                        .collect(),
+                )
+            };
 
             // Emit audit event (if control plane connected)
             emit_audit_event(
@@ -1147,6 +1166,7 @@ async fn handle_request(
                     latency_us,
                     request_id.clone(),
                     arguments_json.clone(),
+                    approval_records,
                 ),
             )
             .await;
@@ -1277,6 +1297,7 @@ async fn handle_request(
                     latency_us,
                     request_id.clone(),
                     arguments_json,
+                    None,
                 ),
             )
             .await;
