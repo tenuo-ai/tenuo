@@ -559,7 +559,7 @@
         /* Integrations */
         .integrations-inline {
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
+            grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.45fr);
             gap: 12px;
             width: 100%;
             max-width: 900px;
@@ -611,6 +611,12 @@
             opacity: 0.8;
         }
 
+        .integration-openai {
+            font-size: 0.78rem;
+            gap: 6px;
+            letter-spacing: -0.01em;
+        }
+
         @media (max-width: 1100px) {
             .integrations-inline {
                 grid-template-columns: repeat(3, 1fr);
@@ -630,7 +636,7 @@
             }
 
             .integration-openai {
-                font-size: 0.78rem;
+                font-size: 0.72rem;
             }
         }
 
@@ -971,8 +977,8 @@
                 <a href="crewai"><img class="integration-logo" src="images/integrations/crewai.svg" alt="CrewAI logo">CrewAI</a>
                 <a href="langchain"><img class="integration-logo" src="images/integrations/langchain.svg" alt="LangChain logo">LangChain</a>
                 <a href="langgraph"><img class="integration-logo" src="images/integrations/langgraph.svg" alt="LangGraph logo">LangGraph</a>
-                <a href="openai" class="integration-openai"><img class="integration-logo" src="images/integrations/openai.svg" alt="OpenAI Agents SDK logo">OpenAI Agents SDK</a>
                 <a href="temporal"><img class="integration-logo" src="images/integrations/temporal.svg" alt="Temporal logo">Temporal</a>
+                <a href="openai" class="integration-openai"><img class="integration-logo" src="images/integrations/openai.svg" alt="OpenAI Agents SDK logo">OpenAI Agents SDK</a>
                 <a href="google-adk"><img class="integration-logo" src="images/integrations/google-adk.png" alt="Google ADK logo">Google ADK</a>
                 <a href="autogen"><img class="integration-logo integration-logo--native" src="images/integrations/autogen.png" alt="AutoGen logo">AutoGen</a>
                 <a href="mcp"><img class="integration-logo" src="images/integrations/mcp.svg" alt="MCP logo">MCP</a>
