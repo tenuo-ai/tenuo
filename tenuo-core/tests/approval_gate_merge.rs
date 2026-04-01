@@ -10,9 +10,9 @@ use std::time::Duration;
 use tenuo::{
     approval_gate::{
         encode_approval_gate_map, evaluate_approval_gates, merge_approval_gate_maps,
-        ApprovalGateMap, ArgApprovalGate, ToolApprovalGate,
+        parse_approval_gate_map, ApprovalGateMap, ArgApprovalGate, ToolApprovalGate,
     },
-    constraints::{ConstraintSet, ConstraintValue, Subpath},
+    constraints::{Constraint, ConstraintSet, ConstraintValue, OneOf, Subpath},
     crypto::SigningKey,
     warrant::{OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant, WarrantType},
     wire,
@@ -136,7 +136,7 @@ fn test_unit_merge_per_arg_base_survives_conflict() {
     // Base's Constraint must survive — All from additional must not overwrite it.
     match args.get("path").unwrap() {
         ArgApprovalGate::Constraint(_) => {}
-        ArgApprovalGate::All => {
+        ArgApprovalGate::All | ArgApprovalGate::Exempt(_) => {
             panic!("additional's All must not overwrite base's Constraint gate")
         }
     }
@@ -683,4 +683,192 @@ fn test_issuance_builder_merge_with_existing_gates() {
 
     // write is dropped since tool was not in the child capability set
     assert!(!issued_gates.contains_tool("write"));
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests: Exempt gate through attenuation + wire roundtrip
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_exempt_gate_survives_attenuation() {
+    let root_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
+    let parent = make_warrant_with_tools(&root_kp, &["browse"], None);
+
+    let mut attn = OwnedAttenuationBuilder::new(parent);
+    attn.inherit_all();
+    attn.set_holder(child_kp.public_key());
+    attn.set_ttl(Duration::from_secs(1800));
+
+    let exempt_gate =
+        ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com", "b.org"]))).unwrap();
+    let mut arg_gates = BTreeMap::new();
+    arg_gates.insert("url".to_string(), exempt_gate);
+    let mut gm = ApprovalGateMap::new();
+    gm.insert("browse".to_string(), ToolApprovalGate::with_args(arg_gates));
+    let gate_bytes = encode_approval_gate_map(&gm).unwrap();
+    attn.set_approval_gates_extension(gate_bytes).unwrap();
+
+    let child = attn.build(&root_kp).unwrap();
+
+    let child_gates = parse_approval_gate_map(child.extension(tenuo::APPROVAL_GATE_EXTENSION_KEY))
+        .unwrap()
+        .unwrap();
+
+    let gate_args = child_gates.get("browse").unwrap().args.as_ref().unwrap();
+    assert!(
+        matches!(gate_args.get("url"), Some(ArgApprovalGate::Exempt(_))),
+        "Exempt gate must survive attenuation"
+    );
+}
+
+#[test]
+fn test_exempt_gate_evaluation_after_attenuation() {
+    let root_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
+    let parent = make_warrant_with_tools(&root_kp, &["browse"], None);
+
+    let mut attn = OwnedAttenuationBuilder::new(parent);
+    attn.inherit_all();
+    attn.set_holder(child_kp.public_key());
+    attn.set_ttl(Duration::from_secs(1800));
+
+    let exempt_gate =
+        ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com", "b.org"]))).unwrap();
+    let mut arg_gates = BTreeMap::new();
+    arg_gates.insert("url".to_string(), exempt_gate);
+    let mut gm = ApprovalGateMap::new();
+    gm.insert("browse".to_string(), ToolApprovalGate::with_args(arg_gates));
+    let gate_bytes = encode_approval_gate_map(&gm).unwrap();
+    attn.set_approval_gates_extension(gate_bytes).unwrap();
+
+    let child = attn.build(&root_kp).unwrap();
+    let child_gates =
+        parse_approval_gate_map(child.extension(tenuo::APPROVAL_GATE_EXTENSION_KEY)).unwrap();
+
+    let mut args_exempt = HashMap::new();
+    args_exempt.insert(
+        "url".to_string(),
+        ConstraintValue::String("a.com".to_string()),
+    );
+    assert!(
+        !evaluate_approval_gates(child_gates.as_ref(), "browse", &args_exempt).unwrap(),
+        "exempt value must not trigger the gate"
+    );
+
+    let mut args_non_exempt = HashMap::new();
+    args_non_exempt.insert(
+        "url".to_string(),
+        ConstraintValue::String("evil.com".to_string()),
+    );
+    assert!(
+        evaluate_approval_gates(child_gates.as_ref(), "browse", &args_non_exempt).unwrap(),
+        "non-exempt value must trigger the gate"
+    );
+}
+
+#[test]
+fn test_exempt_gate_wire_roundtrip() {
+    let root_kp = SigningKey::generate();
+
+    let exempt_gate =
+        ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com", "b.org"]))).unwrap();
+    let mut arg_gates = BTreeMap::new();
+    arg_gates.insert("url".to_string(), exempt_gate);
+    let mut gm = ApprovalGateMap::new();
+    gm.insert("browse".to_string(), ToolApprovalGate::with_args(arg_gates));
+    let gate_bytes = encode_approval_gate_map(&gm).unwrap();
+
+    let warrant = Warrant::builder()
+        .capability("browse", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .holder(root_kp.public_key())
+        .extension(tenuo::APPROVAL_GATE_EXTENSION_KEY, gate_bytes)
+        .build(&root_kp)
+        .unwrap();
+
+    let wire_bytes = wire::encode(&warrant).unwrap();
+    let decoded = wire::decode(&wire_bytes).unwrap();
+
+    let decoded_gates =
+        parse_approval_gate_map(decoded.extension(tenuo::APPROVAL_GATE_EXTENSION_KEY))
+            .unwrap()
+            .unwrap();
+
+    let gate_args = decoded_gates.get("browse").unwrap().args.as_ref().unwrap();
+    assert!(
+        matches!(gate_args.get("url"), Some(ArgApprovalGate::Exempt(_))),
+        "Exempt gate must survive wire roundtrip"
+    );
+
+    let mut args_exempt = HashMap::new();
+    args_exempt.insert(
+        "url".to_string(),
+        ConstraintValue::String("a.com".to_string()),
+    );
+    assert!(
+        !evaluate_approval_gates(Some(&decoded_gates), "browse", &args_exempt).unwrap(),
+        "exempt value must not trigger gate after wire roundtrip"
+    );
+
+    let mut args_non_exempt = HashMap::new();
+    args_non_exempt.insert(
+        "url".to_string(),
+        ConstraintValue::String("evil.com".to_string()),
+    );
+    assert!(
+        evaluate_approval_gates(Some(&decoded_gates), "browse", &args_non_exempt).unwrap(),
+        "non-exempt value must trigger gate after wire roundtrip"
+    );
+}
+
+#[test]
+fn test_exempt_gate_inherited_by_second_attenuation() {
+    // Multi-hop: root → child1 (adds Exempt gate) → child2 (narrows tools).
+    // Exempt gate must survive the second delegation hop.
+    let root_kp = SigningKey::generate();
+    let child1_kp = SigningKey::generate();
+    let child2_kp = SigningKey::generate();
+
+    let root = make_warrant_with_tools(&root_kp, &["browse", "search"], None);
+
+    let mut attn1 = OwnedAttenuationBuilder::new(root);
+    attn1.inherit_all();
+    attn1.set_holder(child1_kp.public_key());
+    attn1.set_ttl(Duration::from_secs(3600));
+
+    let exempt_gate = ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com"]))).unwrap();
+    let mut arg_gates = BTreeMap::new();
+    arg_gates.insert("url".to_string(), exempt_gate);
+    let mut gm = ApprovalGateMap::new();
+    gm.insert("browse".to_string(), ToolApprovalGate::with_args(arg_gates));
+    let gate_bytes = encode_approval_gate_map(&gm).unwrap();
+    attn1.set_approval_gates_extension(gate_bytes).unwrap();
+
+    let child1 = attn1.build(&root_kp).unwrap();
+
+    let mut attn2 = OwnedAttenuationBuilder::new(child1);
+    attn2.inherit_all();
+    attn2.retain_capability("browse");
+    attn2.set_holder(child2_kp.public_key());
+    attn2.set_ttl(Duration::from_secs(1800));
+    let child2 = attn2.build(&child1_kp).unwrap();
+
+    let gates = parse_approval_gate_map(child2.extension(tenuo::APPROVAL_GATE_EXTENSION_KEY))
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        matches!(
+            gates
+                .get("browse")
+                .unwrap()
+                .args
+                .as_ref()
+                .unwrap()
+                .get("url"),
+            Some(ArgApprovalGate::Exempt(_))
+        ),
+        "Exempt gate must survive second attenuation hop"
+    );
 }

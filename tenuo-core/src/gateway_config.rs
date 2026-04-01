@@ -624,12 +624,9 @@ impl CompiledGatewayConfig {
                         tool: route.tool.clone(),
                     })?;
 
-            // Convert pattern from {param} to :param for matchit
-            let matchit_pattern = convert_pattern_to_matchit(&route.pattern);
-
-            // Add to router
+            // matchit 0.8+ uses {param} natively — no conversion needed
             router
-                .insert(matchit_pattern, i)
+                .insert(&route.pattern, i)
                 .map_err(|e| CompileError::RouterConflict {
                     route_index: i,
                     pattern: route.pattern.clone(),
@@ -713,31 +710,6 @@ impl CompiledGatewayConfig {
             approvals_base64: Vec::new(),
         })
     }
-}
-
-/// Convert a pattern from `{param}` format to `:param` format for matchit.
-fn convert_pattern_to_matchit(pattern: &str) -> String {
-    let mut result = String::with_capacity(pattern.len());
-    let mut in_brace = false;
-
-    for c in pattern.chars() {
-        match c {
-            '{' => {
-                in_brace = true;
-                result.push(':');
-            }
-            '}' => {
-                in_brace = false;
-            }
-            _ => {
-                if in_brace || c != '{' {
-                    result.push(c);
-                }
-            }
-        }
-    }
-
-    result
 }
 
 #[cfg(test)]
@@ -1007,21 +979,10 @@ routes:
     }
 
     #[test]
-    fn test_pattern_to_matchit_conversion() {
-        assert_eq!(convert_pattern_to_matchit("/api/{id}"), "/api/:id");
-        assert_eq!(
-            convert_pattern_to_matchit("/api/{cluster}/{action}"),
-            "/api/:cluster/:action"
-        );
-        assert_eq!(convert_pattern_to_matchit("/static/path"), "/static/path");
-    }
-
-    #[test]
     fn test_matchit_directly() {
         let mut router: matchit::Router<usize> = matchit::Router::new();
 
-        // Test param matching
-        router.insert("/api/:cluster/:action", 0).unwrap();
+        router.insert("/api/{cluster}/{action}", 0).unwrap();
         let matched = router.at("/api/staging-web/scale");
         assert!(matched.is_ok());
 

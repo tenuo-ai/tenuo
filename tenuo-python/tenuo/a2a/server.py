@@ -105,9 +105,19 @@ __all__ = [
     "SkillDefinition",
 ]
 
-# Maximum warrant token size accepted (64 KB). Warrants above this size are
-# almost certainly malformed or an attempt to trigger a DoS via parsing cost.
+# Maximum warrant token size accepted (64 KB) — mirrors wire.MAX_WARRANT_SIZE.
+# WarrantStack inputs may be larger (up to 256 KB); the limit here applies only
+# to the extracted leaf token passed into validate_warrant.
 MAX_WARRANT_TOKEN_BYTES = 65_536
+
+# HTTP header names — imported from tenuo_core so they stay in sync with the wire spec.
+try:
+    from tenuo_core import WARRANT_HEADER
+except ImportError:
+    WARRANT_HEADER = "X-Tenuo-Warrant"
+
+# Delegation chain header (legacy transport; WarrantStack is preferred).
+WARRANT_CHAIN_HEADER = "X-Tenuo-Warrant-Chain"
 
 logger = logging.getLogger("tenuo.a2a.server")
 
@@ -132,7 +142,7 @@ class ReplayBackend(Protocol):
     Example (Redis backend sketch)::
 
         class RedisReplayBackend:
-            def __init__(self, redis_client):
+            def __init__(self, redis_client) -> None:
                 self._redis = redis_client
 
             async def check_and_add(self, jti: str, ttl_seconds: int) -> bool:
@@ -181,7 +191,7 @@ class InMemoryReplayBackend:
 
     CLEANUP_INTERVAL = 1000  # Cleanup every N requests
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._cache: Dict[str, float] = {}  # jti -> expiry_time (wall clock)
         self._lock: Optional[asyncio.Lock] = None  # Lazy init to avoid event loop issues
         self._counter: int = 0  # Request counter for amortized cleanup
@@ -249,7 +259,7 @@ class SkillDefinition:
         func: Callable,
         constraints: Dict[str, Any],
         name: Optional[str] = None,
-    ):
+    ) -> None:
         self.skill_id = skill_id
         self.func = func
         self.constraints = constraints
@@ -624,7 +634,7 @@ class A2AServer:
         revoked_issuers: Optional[List[Any]] = None,
         signing_key: Optional[Any] = None,
         registration_handler: Optional[Callable] = None,
-    ):
+    ) -> None:
         """
         Initialize A2A server.
 
@@ -989,16 +999,19 @@ class A2AServer:
         arguments: Dict[str, Any],
         *,
         warrant_chain: Optional[str] = None,
+        _preloaded_parents: Optional[List[Any]] = None,
         pop_signature: Optional[bytes] = None,
     ) -> "Warrant":
         """
         Validate a warrant for a skill invocation.
 
         Args:
-            warrant_token: JWT warrant token
+            warrant_token: Base64-encoded leaf warrant token
             skill_id: Requested skill
             arguments: Skill arguments to check against constraints
-            warrant_chain: Optional semicolon-separated chain of parent warrants
+            warrant_chain: Optional semicolon-separated parent warrants (legacy)
+            _preloaded_parents: Already-decoded parent warrants from a WarrantStack
+                (takes precedence over ``warrant_chain`` when provided)
             pop_signature: Optional Proof-of-Possession signature bytes
 
         Returns:
@@ -1016,10 +1029,10 @@ class A2AServer:
                 f"{MAX_WARRANT_TOKEN_BYTES}-byte limit"
             )
 
-        try:
-            from tenuo_core import Warrant
-        except ImportError as e:
-            raise RuntimeError("tenuo_core not available") from e
+        _tc = sys.modules.get("tenuo_core")
+        if _tc is None:
+            raise RuntimeError("tenuo_core not available")
+        Warrant = _tc.Warrant
 
         # Decode and verify warrant signature
         # Note: Warrant.from_base64() / from_jwt() performs cryptographic verification
@@ -1051,11 +1064,13 @@ class A2AServer:
                 logger.warning(f"Warrant expiry check failed: {e}")
                 raise WarrantExpiredError("Expiry check failed (fail-closed)")
         else:
-            # Fallback: check exp claim manually
-            # Note: This path should rarely be taken with tenuo_core warrants
+            # Fallback: check exp claim manually when is_expired() is unavailable.
+            # Mirror Rust's CLOCK_SKEW_TOLERANCE_SECS (30 s) so near-boundary warrants
+            # are not prematurely rejected on the Python path.
+            _CLOCK_SKEW = 30
             now = int(time.time())
             exp = self._get_warrant_prop(warrant, "exp", "expires_at")
-            if exp is not None and exp < now:
+            if exp is not None and exp + _CLOCK_SKEW < now:
                 raise WarrantExpiredError()
 
         # Check issuer trust (direct or via chain)
@@ -1067,10 +1082,22 @@ class A2AServer:
         if issuer_normalized and issuer_normalized in self._revoked_issuers:
             raise RevokedError(f"Issuer key '{issuer_normalized}' is revoked")
 
+        # Decoded parent warrants from the chain (populated when delegation is used).
+        # Kept in scope so the PoP check can call check_chain instead of authorize_one
+        # when the leaf's issuer is a delegated agent (not a direct trusted root).
+        _resolved_chain_parents: Optional[List[Any]] = None
+
         if issuer_normalized and issuer_normalized not in self.trusted_issuers:
-            if self.trust_delegated and warrant_chain:
-                # Validate delegation chain
-                await self._validate_chain(warrant, warrant_chain)
+            if _preloaded_parents is not None and len(_preloaded_parents) > 0:
+                # WarrantStack path: parents already decoded by the HTTP handler.
+                # Verify chain structure now; PoP (if required) is done below
+                # via check_chain so the full chain is validated atomically.
+                if not self.require_pop:
+                    await self._validate_chain_warrants(warrant, _preloaded_parents)
+                _resolved_chain_parents = _preloaded_parents
+            elif self.trust_delegated and warrant_chain:
+                # Legacy path: semicolon-separated header.
+                _resolved_chain_parents = await self._validate_chain(warrant, warrant_chain)
             else:
                 raise UntrustedIssuerError(issuer_normalized)
 
@@ -1083,9 +1110,11 @@ class A2AServer:
             if aud != self.url:
                 raise AudienceMismatchError(expected=self.url, actual=aud)
 
+        # Extract JTI once — reused for replay check and audit event
+        jti = self._get_warrant_prop(warrant, "jti", "id")
+
         # Check replay
         if self.check_replay:
-            jti = self._get_warrant_prop(warrant, "jti", "id")
             if jti:
                 is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
                 if not is_new:
@@ -1096,23 +1125,23 @@ class A2AServer:
             if pop_signature is None:
                 raise PopRequiredError()
 
-            # Convert arguments to ConstraintValue format for authorization
+            # Verify PoP via the cached Authorizer.
+            # Both authorize_one and check_chain accept plain bytes for the
+            # signature and a plain dict for args — no ConstraintValue needed.
+            # When a delegation chain was supplied, use check_chain so the full
+            # chain (issuer trust + linkage + capabilities + PoP) is verified
+            # atomically.  Using authorize_one on the leaf alone would fail
+            # because the leaf's issuer is a delegated agent, not a trusted root.
             try:
-                from tenuo_core import ConstraintValue, Signature
-
-                args_cv = {k: ConstraintValue.from_any(v) for k, v in arguments.items()}
-                # Create Signature object from bytes
-                pop_sig = Signature.from_bytes(pop_signature)
-            except ImportError:
-                # If ConstraintValue not available, we can't verify PoP
-                raise PopVerificationError("tenuo_core ConstraintValue not available")
-            except Exception as e:
-                raise PopVerificationError(f"Failed to parse PoP signature: {e}")
-
-            # Verify PoP via the cached Authorizer (built at server init from trusted_issuers).
-            # Performs full verification: issuer trust, PoP signature, skill grant, constraints.
-            try:
-                self._authorizer.authorize_one(warrant, skill_id, args_cv, signature=pop_sig)
+                if _resolved_chain_parents:
+                    all_chain = list(_resolved_chain_parents) + [warrant]
+                    self._authorizer.check_chain(
+                        all_chain, skill_id, arguments, signature=pop_signature
+                    )
+                else:
+                    self._authorizer.authorize_one(
+                        warrant, skill_id, arguments, signature=pop_signature
+                    )
                 logger.debug(f"PoP verified for skill '{skill_id}'")
             except Exception as e:
                 # Map tenuo_core errors to A2A errors
@@ -1122,56 +1151,64 @@ class A2AServer:
                 # Re-raise other errors (constraint violations, etc.)
                 raise
 
-        # Check skill is granted in warrant
-        grants = getattr(warrant, "grants", [])
-        if not grants:
-            # Try to get grants from tools/capabilities
-            tools = getattr(warrant, "tools", None)
-            if tools:
-                grants = [{"skill": t} for t in tools]
-
-        granted_skills = [g.get("skill", g) if isinstance(g, dict) else g for g in grants]
-        if skill_id not in granted_skills:
-            raise SkillNotGrantedError(skill_id, granted_skills)
-
-        # Get warrant constraints for this skill (if any)
-        warrant_constraints = {}
-        for grant in grants:
-            if isinstance(grant, dict):
-                grant_skill = grant.get("skill")
-                if grant_skill == skill_id:
-                    warrant_constraints = grant.get("constraints", {})
-                    break
-
-        # Check constraints - warrant constraints take precedence over server constraints
-        # Server constraints define what the skill CAN check
-        # Warrant constraints define what this invocation IS LIMITED TO
-        # Both must pass, but warrant may be more restrictive
-        skill_def = self._skills.get(skill_id)
-        if skill_def:
-            for param, server_constraint in skill_def.constraints.items():
-                if param in arguments:
-                    value = arguments[param]
-
-                    # First check server constraint (the skill's declared requirement)
-                    if not self._check_constraint(server_constraint, value, param):
+        # Check skill is granted in warrant — only when PoP was NOT verified by the
+        # Authorizer above.  When require_pop=True the Authorizer already enforces
+        # tool grants and constraints atomically, so running them again in Python
+        # creates a redundant gate that can drift from Rust semantics.
+        if not self.require_pop:
+            # Use Rust's why_denied() for warrant-level grant and constraint checks
+            # so semantics stay in sync with the Authorizer (wildcards, capability
+            # shapes, etc.).  Server-level constraints (SkillDefinition.constraints)
+            # are checked separately below because they are not encoded in the warrant.
+            _why_denied_available = hasattr(warrant, "why_denied")
+            if _why_denied_available:
+                _why = warrant.why_denied(skill_id, arguments)
+                # Guard against mock objects — only trust a real WhyDenied boolean.
+                _why_denied_bool = getattr(_why, "denied", None)
+                if isinstance(_why_denied_bool, bool):
+                    if _why_denied_bool:
+                        from tenuo.warrant_ext import DenyCode as _DC
+                        if _why.deny_code == _DC.TOOL_NOT_FOUND or (
+                            _why.deny_code == _DC.CONSTRAINT_MISMATCH and getattr(_why, "field", None) == "tool"
+                        ):
+                            raise SkillNotGrantedError(skill_id, [])
                         raise ConstraintViolationError(
-                            param=param,
-                            constraint_type=type(server_constraint).__name__,
-                            value=value,
-                            reason="Value does not satisfy server constraint",
+                            param=getattr(_why, "field", None) or skill_id,
+                            constraint_type="warrant",
+                            value=arguments.get(getattr(_why, "field", skill_id), "<unknown>"),
+                            reason=getattr(_why, "suggestion", None) or str(_why),
                         )
+                    # why_denied returned False → warrant grants the skill, continue
+                else:
+                    # why_denied result is not a real WhyDenied (e.g. mock object);
+                    # fall back to inspecting warrant.grants directly.
+                    _why_denied_available = False
 
-                    # Then check warrant constraint if present (may be more restrictive)
-                    if param in warrant_constraints:
-                        # Warrant constraints come as dicts from JSON - deserialize
-                        warrant_constraint = self._deserialize_constraint(warrant_constraints[param], param)
-                        if not self._check_constraint(warrant_constraint, value, param):
+            if not _why_denied_available:
+                # Fallback for non-tenuo_core warrant objects (plain dicts or mocks)
+                grants = getattr(warrant, "grants", [])
+                if not grants:
+                    tools = getattr(warrant, "tools", None)
+                    if tools:
+                        grants = [{"skill": t} for t in tools]
+                granted_skills = [g.get("skill", g) if isinstance(g, dict) else g for g in grants]
+                if skill_id not in granted_skills:
+                    raise SkillNotGrantedError(skill_id, granted_skills)
+
+            # Always check server-level constraints (declared on SkillDefinition).
+            # These represent the skill's own input requirements and are NOT encoded
+            # in the warrant — why_denied() cannot see them.
+            skill_def = self._skills.get(skill_id)
+            if skill_def:
+                for param, server_constraint in skill_def.constraints.items():
+                    if param in arguments:
+                        value = arguments[param]
+                        if not self._check_constraint(server_constraint, value, param):
                             raise ConstraintViolationError(
                                 param=param,
-                                constraint_type=type(warrant_constraint).__name__,
+                                constraint_type=type(server_constraint).__name__,
                                 value=value,
-                                reason="Value does not satisfy warrant constraint",
+                                reason="Value does not satisfy server constraint",
                             )
 
         # Log audit event
@@ -1182,7 +1219,7 @@ class A2AServer:
                 event=AuditEventType.WARRANT_VALIDATED,
                 task_id="",
                 skill=skill_id,
-                warrant_jti=self._get_warrant_prop(warrant, "jti", "id", default=""),
+                warrant_jti=jti or "",
                 warrant_iss=issuer_normalized or "",
                 warrant_sub=self._normalize_key(self._get_warrant_prop(warrant, "sub", "subject")) or "",
                 outcome="allowed",
@@ -1192,136 +1229,129 @@ class A2AServer:
 
         return warrant
 
+    async def _validate_chain_warrants(
+        self,
+        leaf_warrant: Any,
+        parents: List[Any],
+    ) -> None:
+        """
+        Validate a delegation chain using the Rust ``Authorizer.verify_chain``.
+
+        The Rust core performs full cryptographic validation:
+          - Root warrant issuer is in the server's trusted roots
+          - Every warrant's signature is cryptographically valid
+          - Each child carries a ``parent_hash`` that matches the hash of its
+            parent (stronger than mere issuer/holder key comparison)
+          - No warrant in the chain is expired
+          - Capability monotonicity is enforced at the Rust level
+
+        The only server-side policy applied here in Python is ``max_chain_depth``,
+        which is a deployment limit not encoded into the warrant payloads.
+
+        Args:
+            leaf_warrant: The leaf warrant (already decoded, NOT included in parents)
+            parents: Parent warrants in root-first order, excluding the leaf
+
+        Raises:
+            ChainValidationError, UntrustedIssuerError, WarrantExpiredError
+        """
+        if not parents:
+            raise ChainValidationError("Empty warrant chain")
+
+        if len(parents) > self.max_chain_depth:
+            raise ChainValidationError(
+                f"Chain depth {len(parents)} exceeds maximum {self.max_chain_depth}"
+            )
+
+        # Full chain passed to the Rust verifier: [root, ..., intermediates, leaf]
+        all_warrants = list(parents) + [leaf_warrant]
+
+        try:
+            self._authorizer.verify_chain(all_warrants)
+        except Exception as e:
+            _msg = str(e)
+            try:
+                from tenuo.exceptions import ChainError, ExpiredError, SignatureInvalid
+            except ImportError:
+                raise ChainValidationError(f"Chain verification error: {_msg}") from e
+
+            if isinstance(e, ExpiredError):
+                raise WarrantExpiredError(_msg) from e
+
+            if isinstance(e, SignatureInvalid):
+                # "root warrant issuer not trusted" surfaces as SignatureInvalid
+                root = all_warrants[0]
+                root_issuer = getattr(root, "iss", None) or getattr(root, "issuer", None)
+                root_issuer_str = self._normalize_key(root_issuer) if root_issuer else "unknown"
+                raise UntrustedIssuerError(
+                    root_issuer_str,
+                    reason=f"Chain validation failed: {_msg}",
+                ) from e
+
+            if isinstance(e, (ChainError, ValueError)):
+                raise ChainValidationError(_msg) from e
+
+            # Unexpected Rust error — surface as generic chain failure
+            raise ChainValidationError(f"Chain verification error: {_msg}") from e
+
+        logger.debug("Chain validated via Authorizer: %d warrants", len(all_warrants))
+
     async def _validate_chain(
         self,
         leaf_warrant: Any,
         chain_header: str,
-    ) -> None:
+    ) -> List[Any]:
         """
-        Validate a delegation chain.
+        Validate a delegation chain from a semicolon-separated header string.
 
-        The chain header contains semicolon-separated JWTs ordered parent-first:
-            root_warrant;middle_warrant;leaf_warrant
+        The chain header contains parent warrants in root-first order; the leaf
+        warrant is passed separately and is NOT expected to appear in the header.
 
-        Validation rules:
-            1. Root warrant must be from a trusted issuer
-            2. Each warrant must have valid signature
-            3. Each child's issuer must match parent's subject/holder
-            4. Chain depth must not exceed max_chain_depth
-            5. All warrants in chain must not be expired
-            6. Grants must narrow (monotonicity)
+        This is the legacy transport interface kept for backward compatibility.
+        New clients should use WarrantStack transport (a single
+        ``X-Tenuo-Warrant`` header containing the packed CBOR array) instead.
 
         Args:
-            leaf_warrant: The final warrant being validated
-            chain_header: Semicolon-separated JWT chain
+            leaf_warrant: The leaf warrant (already decoded)
+            chain_header: Semicolon-separated base64 parent warrants (parent-first)
+
+        Returns:
+            Decoded parent warrants (root-first order, excluding the leaf), so
+            the caller can pass the full chain to ``check_chain`` for PoP.
 
         Raises:
-            A2AError on validation failure
+            ChainValidationError, UntrustedIssuerError, WarrantExpiredError
         """
-
         try:
             from tenuo_core import Warrant
         except ImportError as e:
             raise RuntimeError("tenuo_core not available") from e
 
-        # Parse chain (parent-first order)
+        # Parse parent chain (root-first order)
         chain_tokens = [t.strip() for t in chain_header.split(";") if t.strip()]
 
         if not chain_tokens:
             raise ChainValidationError("Empty warrant chain")
 
         if len(chain_tokens) > self.max_chain_depth:
-            raise ChainValidationError(f"Chain depth {len(chain_tokens)} exceeds maximum {self.max_chain_depth}")
+            raise ChainValidationError(
+                f"Chain depth {len(chain_tokens)} exceeds maximum {self.max_chain_depth}"
+            )
 
-        # Decode all warrants in chain
-        chain_warrants = []
+        parents: List[Any] = []
         for i, token in enumerate(chain_tokens):
             try:
-                # Use from_base64 consistently (same as main warrant parsing)
                 w = Warrant.from_base64(token)
-                chain_warrants.append(w)
+                parents.append(w)
             except Exception as e:
                 raise ChainValidationError(f"Invalid warrant at position {i}: {e}")
 
-        # Validate root warrant is from trusted issuer
-        root = chain_warrants[0]
-        root_issuer = getattr(root, "iss", None) or getattr(root, "issuer", None)
-        root_issuer_normalized = self._normalize_key(root_issuer) if root_issuer else None
+        # Validate structure now (skipped when PoP is required — check_chain does
+        # both structure and PoP atomically in validate_warrant's PoP step).
+        if not self.require_pop:
+            await self._validate_chain_warrants(leaf_warrant, parents)
 
-        if root_issuer_normalized not in self.trusted_issuers:
-            raise UntrustedIssuerError(
-                root_issuer_normalized or "unknown",
-                reason=f"Root warrant issuer '{root_issuer_normalized}' is not trusted",
-            )
-
-        # Validate chain linkage
-        now = int(time.time())
-
-        for i in range(len(chain_warrants)):
-            current = chain_warrants[i]
-
-            # Check expiry
-            exp = getattr(current, "exp", None)
-            if exp and exp < now:
-                raise WarrantExpiredError(f"Warrant at position {i} has expired")
-
-            # Check chain linkage (child's issuer should be parent's holder)
-            if i > 0:
-                parent = chain_warrants[i - 1]
-
-                # Get parent's authorized holder (the one who can delegate)
-                parent_holder = (
-                    getattr(parent, "sub", None)
-                    or getattr(parent, "subject", None)
-                    or getattr(parent, "authorized_holder", None)
-                )
-
-                # Get current warrant's issuer
-                current_issuer = getattr(current, "iss", None) or getattr(current, "issuer", None)
-
-                # SECURITY: Strict chain linkage for A2A delegation
-                # - Parent MUST have a holder (sub/subject) to enable delegation
-                # - Child MUST have an issuer
-                # - They MUST match for the chain to be valid
-                # Note: Root warrants (i=0) can be bearer tokens without sub
-                if not parent_holder:
-                    raise ChainValidationError(
-                        f"Chain broken at position {i}: parent warrant (position {i - 1}) "
-                        f"has no holder (sub/subject) - cannot delegate a bearer token",
-                        depth=i,
-                    )
-                if not current_issuer:
-                    raise ChainValidationError(
-                        f"Chain broken at position {i}: warrant has no issuer (iss)",
-                        depth=i,
-                    )
-                # Normalize keys for comparison (handles both PublicKey objects and strings)
-                parent_holder_normalized = self._normalize_key(parent_holder)
-                current_issuer_normalized = self._normalize_key(current_issuer)
-                if parent_holder_normalized != current_issuer_normalized:
-                    raise ChainValidationError(
-                        f"Chain broken at position {i}: parent holder != child issuer",
-                        depth=i,
-                    )
-
-                # Monotonicity check: child grants must be subset of parent grants
-                if not self._grants_are_subset(current, parent):
-                    raise ChainValidationError(
-                        f"Monotonicity violation at position {i}: child grants exceed parent grants",
-                        depth=i,
-                    )
-
-        # Verify leaf warrant in chain matches the leaf_warrant being validated
-        leaf_jti = getattr(leaf_warrant, "jti", None) or getattr(leaf_warrant, "id", None)
-        chain_leaf = chain_warrants[-1] if chain_warrants else None
-        chain_leaf_jti = getattr(chain_leaf, "jti", None) or getattr(chain_leaf, "id", None) if chain_leaf else None
-
-        if leaf_jti and chain_leaf_jti and leaf_jti != chain_leaf_jti:
-            raise ChainValidationError(
-                f"Leaf warrant mismatch: warrant jti '{leaf_jti}' != chain tail '{chain_leaf_jti}'"
-            )
-
-        logger.debug(f"Chain validated: {len(chain_warrants)} warrants, root issuer: {root_issuer_normalized}")
+        return parents
 
     def _grants_are_subset(self, child: Any, parent: Any) -> bool:
         """
@@ -1737,12 +1767,18 @@ class A2AServer:
             else:
                 self.audit_log(event)
         elif hasattr(self.audit_log, "write"):
-            # File-like object
+            # File-like object — offload blocking I/O to the thread pool
             if self.audit_format == "json":
-                self.audit_log.write(json.dumps(event.to_dict()) + "\n")
+                line = json.dumps(event.to_dict()) + "\n"
             else:
-                self.audit_log.write(f"[{event.event.value}] {event.skill}: {event.outcome}\n")
-            self.audit_log.flush()
+                line = f"[{event.event.value}] {event.skill}: {event.outcome}\n"
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._write_and_flush_audit, line)
+
+    def _write_and_flush_audit(self, line: str) -> None:
+        """Synchronous write+flush, intended to run in a thread pool executor."""
+        self.audit_log.write(line)
+        self.audit_log.flush()
 
     # -------------------------------------------------------------------------
     # Agent Card
@@ -1939,9 +1975,11 @@ class A2AServer:
             if callable(is_expired_attr):
                 expired = is_expired_attr()
             else:
+                # Mirror Rust's CLOCK_SKEW_TOLERANCE_SECS (30 s)
+                _CLOCK_SKEW = 30
                 now = int(time.time())
                 exp = getattr(challenge_warrant, "exp", None)
-                expired = exp is not None and exp < now
+                expired = exp is not None and exp + _CLOCK_SKEW < now
             if expired:
                 raise InvalidSignatureError("Challenge token has expired")
         except InvalidSignatureError:
@@ -2041,14 +2079,34 @@ class A2AServer:
         task_id = task.get("id") or str(uuid.uuid4())
 
         # Get warrant from header or params
-        warrant_token = request.headers.get("X-Tenuo-Warrant")
-        if not warrant_token:
-            warrant_token = params.get("x-tenuo-warrant")
+        warrant_token_raw = request.headers.get(WARRANT_HEADER)
+        if not warrant_token_raw:
+            warrant_token_raw = params.get("x-tenuo-warrant")
 
-        # Get delegation chain (semicolon-separated, parent-first)
-        warrant_chain = request.headers.get("X-Tenuo-Warrant-Chain")
-        if not warrant_chain:
-            warrant_chain = params.get("x-tenuo-warrant-chain")
+        # Try to decode as a packed WarrantStack (new single-header transport).
+        # If the value is a multi-warrant CBOR array, split it into leaf + parents
+        # so the chain validation path can proceed without the legacy chain header.
+        _preloaded_parents: Optional[List[Any]] = None
+        warrant_token = warrant_token_raw
+        if warrant_token_raw:
+            try:
+                from tenuo_core import decode_warrant_stack_base64
+
+                stack_warrants = decode_warrant_stack_base64(warrant_token_raw)
+                if len(stack_warrants) >= 1:
+                    # Re-encode only the leaf so validate_warrant sees a normal token
+                    warrant_token = stack_warrants[-1].to_base64()
+                    _preloaded_parents = stack_warrants[:-1]  # empty list for 1-element stacks
+            except Exception:
+                # Not a WarrantStack — treat as a plain single-warrant token
+                pass
+
+        # Legacy fallback: chain header (only consulted when no WarrantStack decoded).
+        warrant_chain: Optional[str] = None
+        if not _preloaded_parents:
+            warrant_chain = request.headers.get(WARRANT_CHAIN_HEADER)
+            if not warrant_chain:
+                warrant_chain = params.get("x-tenuo-warrant-chain")
 
         # Get Proof-of-Possession signature (base64 URL-safe encoded)
         pop_b64 = request.headers.get("X-Tenuo-PoP")
@@ -2075,6 +2133,7 @@ class A2AServer:
                 skill_id,
                 arguments,
                 warrant_chain=warrant_chain,
+                _preloaded_parents=_preloaded_parents,
                 pop_signature=pop_signature,
             )
 
@@ -2114,9 +2173,25 @@ class A2AServer:
         arguments = task.get("arguments", {})
         task_id = task.get("id") or str(uuid.uuid4())
 
-        # Get warrant from header or params
-        warrant_token = request.headers.get("X-Tenuo-Warrant") or params.get("x-tenuo-warrant")
-        warrant_chain = request.headers.get("X-Tenuo-Warrant-Chain") or params.get("x-tenuo-warrant-chain")
+        # Get warrant from header or params — same WarrantStack logic as task/send
+        warrant_token_raw = request.headers.get(WARRANT_HEADER) or params.get("x-tenuo-warrant")
+
+        _preloaded_parents: Optional[List[Any]] = None
+        warrant_token = warrant_token_raw
+        if warrant_token_raw:
+            try:
+                from tenuo_core import decode_warrant_stack_base64
+
+                stack_warrants = decode_warrant_stack_base64(warrant_token_raw)
+                if len(stack_warrants) >= 1:
+                    warrant_token = stack_warrants[-1].to_base64()
+                    _preloaded_parents = stack_warrants[:-1]
+            except Exception:
+                pass
+
+        warrant_chain: Optional[str] = None
+        if not _preloaded_parents:
+            warrant_chain = request.headers.get(WARRANT_CHAIN_HEADER) or params.get("x-tenuo-warrant-chain")
 
         # Get Proof-of-Possession signature
         pop_b64 = request.headers.get("X-Tenuo-PoP") or params.get("x-tenuo-pop")
@@ -2140,6 +2215,7 @@ class A2AServer:
                 skill_id,
                 arguments,
                 warrant_chain=warrant_chain,
+                _preloaded_parents=_preloaded_parents,
                 pop_signature=pop_signature,
             )
 
@@ -2180,8 +2256,9 @@ class A2AServer:
                 # Check if result is async generator (streaming skill)
                 if hasattr(result, "__anext__"):
                     async for chunk in result:
-                        # Mid-stream expiry check
-                        if warrant_exp and time.time() > warrant_exp:
+                        # Mid-stream expiry check — mirror Rust's 30 s clock skew tolerance
+                        _CLOCK_SKEW = 30
+                        if warrant_exp and time.time() > warrant_exp + _CLOCK_SKEW:
                             error_event = {
                                 "type": "error",
                                 "task_id": task_id,
@@ -2206,7 +2283,9 @@ class A2AServer:
 
                 # Final expiry check before completion
                 # (catches expiry during long-running non-streaming skills)
-                if warrant_exp and time.time() > warrant_exp:
+                # Mirror Rust's CLOCK_SKEW_TOLERANCE_SECS (30 s)
+                _CLOCK_SKEW = 30
+                if warrant_exp and time.time() > warrant_exp + _CLOCK_SKEW:
                     error_event = {
                         "type": "error",
                         "task_id": task_id,

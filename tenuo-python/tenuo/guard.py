@@ -116,8 +116,14 @@ def guard(
             on_denial="log" if audit else on_denial,
         )
     else:
-        logger.warning(f"Unknown client type: {type(client)}. Returning unguarded.")
-        return client
+        client_name = type(client).__name__
+        detected = _detect_client_type(client)
+        raise NotImplementedError(
+            f"guard() does not support {client_name!r} clients (detected type: {detected!r}). "
+            "Returning an unguarded client would create a false sense of security. "
+            "Supported: OpenAI. For Anthropic and other integrations, use "
+            "enforce_tool_call() directly or see https://docs.tenuo.ai/integrations."
+        )
 
 
 def _detect_client_type(client: Any) -> str:
@@ -185,9 +191,13 @@ def _guard_anthropic(
     client: Any,
     **kwargs,
 ) -> Any:
-    """Guard an Anthropic client (placeholder for future implementation)."""
-    logger.warning("Anthropic guard not yet implemented. Returning unguarded client.")
-    return client
+    """Guard an Anthropic client (not yet supported)."""
+    raise NotImplementedError(
+        "guard() does not yet support Anthropic clients. "
+        "Returning an unguarded client would create a false sense of security. "
+        "Use enforce_tool_call() directly for Anthropic integrations, or see "
+        "https://docs.tenuo.ai/integrations for the Anthropic adapter roadmap."
+    )
 
 
 def _extract_openai_tools(client: Any) -> List[Dict[str, Any]]:

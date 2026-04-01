@@ -162,7 +162,7 @@ class A2AError(Exception):
 
     code: int = A2AErrorCode.INTERNAL_ERROR
 
-    def __init__(self, message: str, data: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(message)
         self.message = message
         self.data = data or {}
@@ -214,7 +214,7 @@ class UntrustedIssuerError(A2AError):
 
     code = A2AErrorCode.UNTRUSTED_ISSUER
 
-    def __init__(self, issuer: str, message: str = "Issuer not trusted", *, reason: str = ""):
+    def __init__(self, issuer: str, message: str = "Issuer not trusted", *, reason: str = "") -> None:
         super().__init__(reason if reason else message, {"issuer": issuer, "reason": reason if reason else message})
 
 
@@ -223,7 +223,7 @@ class WarrantExpiredError(A2AError):
 
     code = A2AErrorCode.EXPIRED
 
-    def __init__(self, message: str = "Warrant expired", mid_stream: bool = False):
+    def __init__(self, message: str = "Warrant expired", mid_stream: bool = False) -> None:
         super().__init__(message, {"mid_stream": mid_stream})
 
 
@@ -232,7 +232,7 @@ class AudienceMismatchError(A2AError):
 
     code = A2AErrorCode.AUDIENCE_MISMATCH
 
-    def __init__(self, expected: str, actual: str, reason: str = ""):
+    def __init__(self, expected: str, actual: str, reason: str = "") -> None:
         message = reason if reason else f"Audience mismatch: expected {expected}, got {actual}"
         data = {"expected": expected, "actual": actual}
         if reason:
@@ -245,7 +245,7 @@ class ReplayDetectedError(A2AError):
 
     code = A2AErrorCode.REPLAY_DETECTED
 
-    def __init__(self, jti: str):
+    def __init__(self, jti: str) -> None:
         super().__init__(f"Warrant {jti} already used", {"jti": jti})
 
 
@@ -263,7 +263,7 @@ class SkillNotGrantedError(A2AError):
 
     code = A2AErrorCode.SKILL_NOT_GRANTED
 
-    def __init__(self, skill: str, granted_skills: list[str]):
+    def __init__(self, skill: str, granted_skills: list[str]) -> None:
         # SECURITY: Don't expose granted_skills in error response to prevent enumeration
         super().__init__(f"Skill '{skill}' not granted in warrant", {"skill": skill})
         # Store internally for logging/debugging but not in wire format
@@ -280,7 +280,7 @@ class SkillNotFoundError(A2AError):
 
     code = A2AErrorCode.SKILL_NOT_FOUND
 
-    def __init__(self, skill: str, available_skills: list[str]):
+    def __init__(self, skill: str, available_skills: list[str]) -> None:
         # SECURITY: Don't expose available_skills in error response to prevent enumeration
         super().__init__(f"Skill '{skill}' not found on this server", {"skill": skill})
         # Store internally for logging/debugging but not in wire format
@@ -297,7 +297,7 @@ class ConstraintViolationError(A2AError):
 
     code = A2AErrorCode.CONSTRAINT_VIOLATION
 
-    def __init__(self, param: str, constraint_type: str, value: Any, reason: str = ""):
+    def __init__(self, param: str, constraint_type: str, value: Any, reason: str = "") -> None:
         # SECURITY: Don't expose actual value in error response - could leak
         # attempted attack payloads (path traversal, SSRF targets, etc.)
         super().__init__(
@@ -317,7 +317,7 @@ class UnknownConstraintError(A2AError):
 
     code = A2AErrorCode.UNKNOWN_CONSTRAINT
 
-    def __init__(self, constraint_type: str, param: str):
+    def __init__(self, constraint_type: str, param: str) -> None:
         super().__init__(
             f"Unknown constraint type '{constraint_type}' on '{param}' - denied for security",
             {"constraint_type": constraint_type, "param": param},
@@ -364,7 +364,7 @@ class ChainInvalidError(A2AError):
         expected_issuer: Optional[str] = None,
         actual_issuer: Optional[str] = None,
         warrant_jti: Optional[str] = None,
-    ):
+    ) -> None:
         data = {"reason": reason, "depth": depth}
         if expected_issuer:
             data["expected_issuer"] = expected_issuer
@@ -394,7 +394,7 @@ class ChainValidationError(A2AError):
 
     code = A2AErrorCode.CHAIN_INVALID
 
-    def __init__(self, message: str, depth: int = 0):
+    def __init__(self, message: str, depth: int = 0) -> None:
         super().__init__(message, {"reason": message, "depth": depth})
 
 
@@ -408,7 +408,7 @@ class KeyMismatchError(A2AError):
 
     code = A2AErrorCode.KEY_MISMATCH
 
-    def __init__(self, expected: str, actual: str):
+    def __init__(self, expected: str, actual: str) -> None:
         super().__init__(
             f"Key mismatch: expected {expected[:20]}..., got {actual[:20]}...", {"expected": expected, "actual": actual}
         )
@@ -426,7 +426,7 @@ class ConstraintBindingError(Exception):
     Raised at server startup to catch configuration errors.
     """
 
-    def __init__(self, skill: str, constraint_key: str, available_params: list[str]):
+    def __init__(self, skill: str, constraint_key: str, available_params: list[str]) -> None:
         self.skill = skill
         self.constraint_key = constraint_key
         self.available_params = available_params
@@ -446,7 +446,7 @@ class PopRequiredError(A2AError):
 
     code = A2AErrorCode.POP_REQUIRED
 
-    def __init__(self, message: str = "Proof-of-Possession required"):
+    def __init__(self, message: str = "Proof-of-Possession required") -> None:
         super().__init__(message, {"reason": "pop_header_missing"})
 
 
@@ -455,7 +455,7 @@ class PopVerificationError(A2AError):
 
     code = A2AErrorCode.POP_FAILED
 
-    def __init__(self, reason: str = "signature verification failed"):
+    def __init__(self, reason: str = "signature verification failed") -> None:
         super().__init__(
             f"Proof-of-Possession failed: {reason}",
             {"reason": reason},
@@ -470,7 +470,7 @@ class MissingSigningKeyError(A2AError):
 
     code = A2AErrorCode.POP_REQUIRED
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             "Signing key required for Proof-of-Possession. "
             "The agent requires PoP authentication. "

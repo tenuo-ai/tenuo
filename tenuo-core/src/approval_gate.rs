@@ -111,6 +111,49 @@ pub enum ArgApprovalGate {
 
     /// Only values satisfying this constraint trigger the gate.
     Constraint(Constraint),
+
+    /// Gate fires for all values NOT in the exemption set defined by the inner constraint.
+    ///
+    /// Use this instead of `Constraint(not(c))`: the `not` constraint has identity-only
+    /// subsumption under the AAT spec, making `Constraint(not(c))` gates unattenuatable
+    /// in derived tokens. `Exempt` defines its own monotonicity rules that permit
+    /// narrowing the exemption set across delegation hops.
+    ///
+    /// Construct via [`ArgApprovalGate::exempt`] — not constructable directly, as
+    /// certain inner constraint types are rejected at construction.
+    ///
+    /// Wire format: `{"exempt": [type_id, value]}`
+    Exempt(Constraint),
+}
+
+impl ArgApprovalGate {
+    /// Construct an `Exempt` gate, validating the inner constraint type.
+    ///
+    /// Rejects `Wildcard` (gate would never fire), `Any` (identity-only
+    /// subsumption — delegation frozen), `Not` (double negation — use
+    /// `Constraint(c)` directly), `Cel` (approximate subsumption produces
+    /// opaque errors — use `pattern`, `one_of`, or `range`), and `Unknown`
+    /// (unrecognised constraint type — semantics undefined).
+    pub fn exempt(c: Constraint) -> std::result::Result<Self, ApprovalGateError> {
+        match &c {
+            Constraint::Wildcard(_) => Err(ApprovalGateError::ExemptInnerConstraintInvalid {
+                reason: "wildcard exempts all values; gate would never fire",
+            }),
+            Constraint::Any(_) => Err(ApprovalGateError::ExemptInnerConstraintInvalid {
+                reason: "any has identity-only subsumption; use Exempt(one_of) or derive separate warrants",
+            }),
+            Constraint::Not(_) => Err(ApprovalGateError::ExemptInnerConstraintInvalid {
+                reason: "double negation; use Constraint(c) directly",
+            }),
+            Constraint::Cel(_) => Err(ApprovalGateError::ExemptInnerConstraintInvalid {
+                reason: "CEL has approximate subsumption; use pattern, one_of, or range instead",
+            }),
+            Constraint::Unknown { .. } => Err(ApprovalGateError::ExemptInnerConstraintInvalid {
+                reason: "unknown constraint type; semantics are undefined inside Exempt",
+            }),
+            _ => Ok(ArgApprovalGate::Exempt(c)),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +242,11 @@ impl Serialize for ArgApprovalGate {
         match self {
             ArgApprovalGate::All => serializer.serialize_str("all"),
             ArgApprovalGate::Constraint(c) => c.serialize(serializer),
+            ArgApprovalGate::Exempt(c) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("exempt", c)?;
+                map.end()
+            }
         }
     }
 }
@@ -214,7 +262,9 @@ impl<'de> Deserialize<'de> for ArgApprovalGate {
             type Value = ArgApprovalGate;
 
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("\"all\" or a [type_id, value] constraint")
+                f.write_str(
+                    "\"all\", a [type_id, value] constraint, or {\"exempt\": [type_id, value]}",
+                )
             }
 
             fn visit_str<E>(self, v: &str) -> std::result::Result<ArgApprovalGate, E>
@@ -235,6 +285,25 @@ impl<'de> Deserialize<'de> for ArgApprovalGate {
                 let constraint =
                     Constraint::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
                 Ok(ArgApprovalGate::Constraint(constraint))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> std::result::Result<ArgApprovalGate, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let key = map
+                    .next_key::<String>()?
+                    .ok_or_else(|| de::Error::custom("expected 'exempt' key in Exempt gate map"))?;
+                if key != "exempt" {
+                    return Err(de::Error::unknown_field(&key, &["exempt"]));
+                }
+                let constraint: Constraint = map.next_value()?;
+                if map.next_key::<de::IgnoredAny>()?.is_some() {
+                    return Err(de::Error::custom(
+                        "unexpected extra key in Exempt gate map; only 'exempt' is allowed",
+                    ));
+                }
+                ArgApprovalGate::exempt(constraint).map_err(de::Error::custom)
             }
         }
 
@@ -321,6 +390,11 @@ pub fn evaluate_approval_gates(
                 ArgApprovalGate::All => return Ok(true),
                 ArgApprovalGate::Constraint(constraint) => {
                     if constraint.matches(arg_value)? {
+                        return Ok(true);
+                    }
+                }
+                ArgApprovalGate::Exempt(constraint) => {
+                    if !constraint.matches(arg_value)? {
                         return Ok(true);
                     }
                 }
@@ -425,6 +499,11 @@ pub enum ApprovalGateError {
     ArgApprovalGateWeakened,
     /// A per-argument gate constraint changed (Phase 1: exact equality required).
     ArgApprovalGateConstraintChanged,
+    /// Inner constraint type not permitted inside `Exempt`.
+    ExemptInnerConstraintInvalid { reason: &'static str },
+    /// Child and parent arg gates are different variants (`Exempt` vs `Constraint`)
+    /// and are incomparable. Re-derive the warrant from root to change gate variant.
+    ArgApprovalGateIncomparableVariants,
 }
 
 impl fmt::Display for ApprovalGateError {
@@ -447,6 +526,14 @@ impl fmt::Display for ApprovalGateError {
                     "arg gate constraint changed (Phase 1: exact equality required)"
                 )
             }
+            Self::ExemptInnerConstraintInvalid { reason } => {
+                write!(f, "invalid inner constraint for Exempt gate: {}", reason)
+            }
+            Self::ArgApprovalGateIncomparableVariants => write!(
+                f,
+                "Exempt and Constraint gate variants are incomparable; \
+                 re-derive from root to change gate variant"
+            ),
         }
     }
 }
@@ -523,17 +610,44 @@ fn validate_arg_approval_gate_monotonic(
     parent: &ArgApprovalGate,
 ) -> std::result::Result<(), ApprovalGateError> {
     match (child, parent) {
-        (ArgApprovalGate::All, ArgApprovalGate::All) => Ok(()),
+        // Identical (any variant) — fast path
+        (c, p) if c == p => Ok(()),
 
-        // Child All, parent Constraint → child gates more values (stricter)
-        (ArgApprovalGate::All, ArgApprovalGate::Constraint(_)) => Ok(()),
+        // All is the strictest gate — valid child for any parent variant
+        (ArgApprovalGate::All, _) => Ok(()),
 
         // Child Constraint, parent All → child gates fewer values (weaker)
         (ArgApprovalGate::Constraint(_), ArgApprovalGate::All) => {
             Err(ApprovalGateError::ArgApprovalGateWeakened)
         }
 
-        // Phase 1: exact equality only
+        // Child Exempt, parent All → child exempts some values; parent gated everything (weaker)
+        (ArgApprovalGate::Exempt(_), ArgApprovalGate::All) => {
+            Err(ApprovalGateError::ArgApprovalGateWeakened)
+        }
+
+        // Exempt↔Exempt: child exemption set ⊆ parent exemption set.
+        // Equivalent to c_child ⊑ c_parent under standard I4 subsumption.
+        // Normalize array-valued inner constraints before comparison to avoid
+        // spurious rejections from element-ordering differences.
+        (ArgApprovalGate::Exempt(c_child), ArgApprovalGate::Exempt(c_parent)) => {
+            let nc = normalize_for_gate_comparison(c_child);
+            let np = normalize_for_gate_comparison(c_parent);
+            if nc == np {
+                return Ok(());
+            }
+            np.validate_attenuation(&nc)
+                .map_err(|_| ApprovalGateError::ArgApprovalGateWeakened)
+        }
+
+        // Cross-type Exempt↔Constraint: incomparable partial order — always reject.
+        // To change gate variant, re-derive the warrant from root.
+        (ArgApprovalGate::Exempt(_), ArgApprovalGate::Constraint(_))
+        | (ArgApprovalGate::Constraint(_), ArgApprovalGate::Exempt(_)) => {
+            Err(ApprovalGateError::ArgApprovalGateIncomparableVariants)
+        }
+
+        // Constraint↔Constraint: Phase 1 exact equality
         (ArgApprovalGate::Constraint(c_child), ArgApprovalGate::Constraint(c_parent)) => {
             if c_child == c_parent {
                 Ok(())
@@ -544,6 +658,63 @@ fn validate_arg_approval_gate_monotonic(
     }
 }
 
+/// Normalize array-valued inner constraints for gate comparison.
+///
+/// Element order is semantically irrelevant for set-typed constraints but
+/// structurally significant under `PartialEq`. Sorting before comparison
+/// prevents spurious monotonicity rejections when the same set is written
+/// with different element ordering across delegation hops.
+///
+/// This normalization is local to the validator — it does not mutate
+/// the stored constraint or affect wire serialization.
+///
+/// ## Sorting strategy
+///
+/// `ConstraintValue` does not implement `Ord` because the `Float` variant
+/// holds `f64`, which has no total order (NaN). Rather than writing a
+/// bespoke `Ord` impl now, we sort by the `Debug` representation.
+///
+/// This is correct for equality comparison: two elements that have the
+/// same debug string are semantically identical, and the induced ordering
+/// is stable within a single binary. It is, however, an internal
+/// implementation detail and not a stable canonical form.
+///
+/// **Future work**: if `ConstraintValue` ever needs a true total order
+/// (e.g. for B-tree storage or cross-process canonical encoding), implement
+/// `Ord` manually with NaN canonicalization (`NaN → f64::MAX`) instead of
+/// using this debug-string proxy.
+fn normalize_for_gate_comparison(c: &Constraint) -> Constraint {
+    use crate::constraints::{Contains, NotOneOf, OneOf, Subset};
+
+    fn sorted(
+        vals: &[crate::constraints::ConstraintValue],
+    ) -> Vec<crate::constraints::ConstraintValue> {
+        let mut v = vals.to_vec();
+        // ConstraintValue doesn't implement Ord; sort by debug representation
+        // for a canonical, deterministic ordering of equal sets.
+        v.sort_unstable_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        v
+    }
+
+    match c {
+        Constraint::OneOf(o) => Constraint::OneOf(OneOf {
+            values: sorted(&o.values),
+        }),
+        Constraint::NotOneOf(n) => Constraint::NotOneOf(NotOneOf {
+            excluded: sorted(&n.excluded),
+        }),
+        Constraint::Contains(ct) => Constraint::Contains(Contains {
+            required: sorted(&ct.required),
+        }),
+        Constraint::Subset(s) => Constraint::Subset(Subset {
+            allowed: sorted(&s.allowed),
+        }),
+        // All other types: structural equality is already order-insensitive,
+        // or order is semantically significant (pattern, range, regex).
+        _ => c.clone(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -551,7 +722,7 @@ fn validate_arg_approval_gate_monotonic(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constraints::{Pattern, Subpath};
+    use crate::constraints::{ConstraintValue, Pattern, Subpath};
 
     fn make_args(pairs: &[(&str, &str)]) -> HashMap<String, ConstraintValue> {
         pairs
@@ -976,5 +1147,380 @@ mod tests {
         // file.write to /etc → requires approval
         let args = make_args(&[("path", "/etc/nginx/nginx.conf")]);
         assert!(evaluate_approval_gates(Some(&gm), "file.write", &args).unwrap());
+    }
+
+    // -----------------------------------------------------------------------
+    // Exempt: Gate firing (§11 test matrix)
+    // -----------------------------------------------------------------------
+
+    fn make_string_arg(k: &str, v: &str) -> HashMap<String, ConstraintValue> {
+        let mut m = HashMap::new();
+        m.insert(k.to_string(), ConstraintValue::String(v.to_string()));
+        m
+    }
+
+    fn make_int_arg(k: &str, v: i64) -> HashMap<String, ConstraintValue> {
+        let mut m = HashMap::new();
+        m.insert(k.to_string(), ConstraintValue::Integer(v));
+        m
+    }
+
+    fn exempt_gate_map(tool: &str, arg: &str, gate: ArgApprovalGate) -> ApprovalGateMap {
+        let mut args = BTreeMap::new();
+        args.insert(arg.to_string(), gate);
+        let mut gm = ApprovalGateMap::new();
+        gm.insert(tool.to_string(), ToolApprovalGate::with_args(args));
+        gm
+    }
+
+    #[test]
+    fn test_exempt_one_of_in_set_no_fire() {
+        use crate::constraints::OneOf;
+        let gate =
+            ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com", "b.org"]))).unwrap();
+        let gm = exempt_gate_map("browse", "url", gate);
+
+        let args = make_string_arg("url", "a.com");
+        assert!(
+            !evaluate_approval_gates(Some(&gm), "browse", &args).unwrap(),
+            "in exemption set — gate must not fire"
+        );
+
+        let args = make_string_arg("url", "b.org");
+        assert!(
+            !evaluate_approval_gates(Some(&gm), "browse", &args).unwrap(),
+            "in exemption set — gate must not fire"
+        );
+    }
+
+    #[test]
+    fn test_exempt_one_of_outside_set_fires() {
+        use crate::constraints::OneOf;
+        let gate =
+            ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com", "b.org"]))).unwrap();
+        let gm = exempt_gate_map("browse", "url", gate);
+
+        let args = make_string_arg("url", "evil.com");
+        assert!(
+            evaluate_approval_gates(Some(&gm), "browse", &args).unwrap(),
+            "outside exemption set — gate must fire"
+        );
+    }
+
+    #[test]
+    fn test_exempt_pattern_matching_no_fire() {
+        let gate =
+            ArgApprovalGate::exempt(Constraint::Pattern(Pattern::new("*.safe.com").unwrap()))
+                .unwrap();
+        let gm = exempt_gate_map("browse", "url", gate);
+
+        let args = make_string_arg("url", "x.safe.com");
+        assert!(
+            !evaluate_approval_gates(Some(&gm), "browse", &args).unwrap(),
+            "matches exemption pattern — gate must not fire"
+        );
+    }
+
+    #[test]
+    fn test_exempt_pattern_no_match_fires() {
+        let gate =
+            ArgApprovalGate::exempt(Constraint::Pattern(Pattern::new("*.safe.com").unwrap()))
+                .unwrap();
+        let gm = exempt_gate_map("browse", "url", gate);
+
+        let args = make_string_arg("url", "safe.com");
+        assert!(
+            evaluate_approval_gates(Some(&gm), "browse", &args).unwrap(),
+            "no subdomain — does not match pattern — gate must fire"
+        );
+
+        let args = make_string_arg("url", "evil.com");
+        assert!(
+            evaluate_approval_gates(Some(&gm), "browse", &args).unwrap(),
+            "outside exemption pattern — gate must fire"
+        );
+    }
+
+    #[test]
+    fn test_exempt_range_within_no_fire() {
+        use crate::constraints::Range;
+        let gate = ArgApprovalGate::exempt(Constraint::Range(
+            Range::new(Some(0.0), Some(100.0)).unwrap(),
+        ))
+        .unwrap();
+        let gm = exempt_gate_map("api_call", "timeout", gate);
+
+        let args = make_int_arg("timeout", 50);
+        assert!(
+            !evaluate_approval_gates(Some(&gm), "api_call", &args).unwrap(),
+            "within exempt range — gate must not fire"
+        );
+    }
+
+    #[test]
+    fn test_exempt_range_outside_fires() {
+        use crate::constraints::Range;
+        let gate = ArgApprovalGate::exempt(Constraint::Range(
+            Range::new(Some(0.0), Some(100.0)).unwrap(),
+        ))
+        .unwrap();
+        let gm = exempt_gate_map("api_call", "timeout", gate);
+
+        let args = make_int_arg("timeout", 150);
+        assert!(
+            evaluate_approval_gates(Some(&gm), "api_call", &args).unwrap(),
+            "outside exempt range — gate must fire"
+        );
+    }
+
+    #[test]
+    fn test_exempt_absent_argument_fires_gate() {
+        use crate::constraints::OneOf;
+        let gate = ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com"]))).unwrap();
+        let gm = exempt_gate_map("browse", "url", gate);
+
+        // No "url" argument → fail-safe: gate fires
+        let args = make_string_arg("other", "value");
+        assert!(
+            evaluate_approval_gates(Some(&gm), "browse", &args).unwrap(),
+            "absent gated argument — gate must fire (fail-safe)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Exempt: Constructor rejections (§11 test matrix)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_exempt_rejects_wildcard() {
+        use crate::constraints::Wildcard;
+        let result = ArgApprovalGate::exempt(Constraint::Wildcard(Wildcard));
+        assert!(matches!(
+            result,
+            Err(ApprovalGateError::ExemptInnerConstraintInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn test_exempt_rejects_any() {
+        use crate::constraints::{Any, Exact};
+        let result = ArgApprovalGate::exempt(Constraint::Any(Any {
+            constraints: vec![Constraint::Exact(Exact::new("a.com"))],
+        }));
+        assert!(matches!(
+            result,
+            Err(ApprovalGateError::ExemptInnerConstraintInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn test_exempt_rejects_not() {
+        use crate::constraints::{Exact, Not};
+        let result = ArgApprovalGate::exempt(Constraint::Not(Not {
+            constraint: Box::new(Constraint::Exact(Exact::new("a.com"))),
+        }));
+        assert!(matches!(
+            result,
+            Err(ApprovalGateError::ExemptInnerConstraintInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn test_exempt_rejects_cel() {
+        use crate::constraints::CelConstraint;
+        let result = ArgApprovalGate::exempt(Constraint::Cel(CelConstraint {
+            expression: "url.startsWith('https://')".to_string(),
+            parent_expression: None,
+        }));
+        assert!(matches!(
+            result,
+            Err(ApprovalGateError::ExemptInnerConstraintInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn test_exempt_accepts_one_of() {
+        use crate::constraints::OneOf;
+        let result = ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com"])));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_exempt_roundtrip_cbor() {
+        use crate::constraints::OneOf;
+        let gate =
+            ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com", "b.org"]))).unwrap();
+        let mut args = BTreeMap::new();
+        args.insert("url".to_string(), gate.clone());
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("browse".to_string(), ToolApprovalGate::with_args(args));
+
+        let encoded = encode_approval_gate_map(&gm).unwrap();
+        let decoded = parse_approval_gate_map(Some(&encoded)).unwrap().unwrap();
+        assert_eq!(gm, decoded);
+    }
+
+    #[test]
+    fn test_exempt_deserializes_reject_invalid_inner() {
+        use crate::constraints::Wildcard;
+        // Manually build CBOR that bypasses ArgApprovalGate serialization bounds
+        let mut raw_map = BTreeMap::new();
+        raw_map.insert("exempt".to_string(), Constraint::Wildcard(Wildcard));
+
+        let mut buf = Vec::new();
+        ciborium::into_writer(&raw_map, &mut buf).unwrap();
+
+        // Attempt to deserialize it into an ArgApprovalGate
+        let decoded: std::result::Result<ArgApprovalGate, _> =
+            ciborium::from_reader(buf.as_slice());
+        assert!(
+            decoded.is_err(),
+            "deserializing {{'exempt': wildcard}} must fail"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Exempt: Monotonicity (§11 test matrix)
+    // -----------------------------------------------------------------------
+
+    fn verify_arg_gates(
+        child: ArgApprovalGate,
+        parent: ArgApprovalGate,
+    ) -> std::result::Result<(), ApprovalGateError> {
+        let tool = "browse";
+        let arg = "url";
+        let mut parent_args = BTreeMap::new();
+        parent_args.insert(arg.to_string(), parent);
+        let mut child_args = BTreeMap::new();
+        child_args.insert(arg.to_string(), child);
+        let mut parent_gm = ApprovalGateMap::new();
+        parent_gm.insert(tool.to_string(), ToolApprovalGate::with_args(parent_args));
+        let mut child_gm = ApprovalGateMap::new();
+        child_gm.insert(tool.to_string(), ToolApprovalGate::with_args(child_args));
+        let mut child_tools = BTreeMap::new();
+        child_tools.insert(tool.to_string(), crate::constraints::ConstraintSet::new());
+        verify_approval_gate_monotonicity(Some(&parent_gm), Some(&child_gm), &child_tools)
+    }
+
+    #[test]
+    fn test_exempt_monotonicity_child_subset_of_parent_ok() {
+        use crate::constraints::OneOf;
+        let child = ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com"]))).unwrap();
+        let parent =
+            ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com", "b.org"]))).unwrap();
+        assert!(
+            verify_arg_gates(child, parent).is_ok(),
+            "child exempts ⊆ parent exempts — must be valid"
+        );
+    }
+
+    #[test]
+    fn test_exempt_monotonicity_child_superset_of_parent_fails() {
+        use crate::constraints::OneOf;
+        let child =
+            ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com", "b.org"]))).unwrap();
+        let parent = ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com"]))).unwrap();
+        assert_eq!(
+            verify_arg_gates(child, parent),
+            Err(ApprovalGateError::ArgApprovalGateWeakened),
+            "child exempts ⊋ parent exempts — must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_exempt_monotonicity_different_order_ok() {
+        use crate::constraints::OneOf;
+        // Same set, different element order — should be treated as equal after normalization
+        let child =
+            ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["b.org", "a.com"]))).unwrap();
+        let parent =
+            ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com", "b.org"]))).unwrap();
+        assert!(
+            verify_arg_gates(child, parent).is_ok(),
+            "same set different order — must be valid after normalization"
+        );
+    }
+
+    #[test]
+    fn test_exempt_monotonicity_exact_into_one_of_ok() {
+        use crate::constraints::{Exact, OneOf};
+        let child = ArgApprovalGate::exempt(Constraint::Exact(Exact::new("a.com"))).unwrap();
+        let parent =
+            ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com", "b.org"]))).unwrap();
+        assert!(
+            verify_arg_gates(child, parent).is_ok(),
+            "exact ⊑ one_of via cross-type rule — must be valid"
+        );
+    }
+
+    #[test]
+    fn test_exempt_monotonicity_equal_ok() {
+        use crate::constraints::OneOf;
+        let child = ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com"]))).unwrap();
+        let parent = ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com"]))).unwrap();
+        assert!(
+            verify_arg_gates(child, parent).is_ok(),
+            "equal sets — must be valid"
+        );
+    }
+
+    #[test]
+    fn test_exempt_monotonicity_all_child_is_valid() {
+        use crate::constraints::OneOf;
+        let child = ArgApprovalGate::All;
+        let parent = ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com"]))).unwrap();
+        assert!(
+            verify_arg_gates(child, parent).is_ok(),
+            "All is strictest — valid child for any parent"
+        );
+    }
+
+    #[test]
+    fn test_exempt_monotonicity_child_of_all_parent_fails() {
+        use crate::constraints::OneOf;
+        let child = ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com"]))).unwrap();
+        let parent = ArgApprovalGate::All;
+        assert_eq!(
+            verify_arg_gates(child, parent),
+            Err(ApprovalGateError::ArgApprovalGateWeakened),
+            "Exempt child of All parent — child exempts values parent required approval for"
+        );
+    }
+
+    #[test]
+    fn test_exempt_monotonicity_cross_type_exempt_constraint_fails() {
+        use crate::constraints::OneOf;
+        let child = ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com"]))).unwrap();
+        let parent = ArgApprovalGate::Constraint(Pattern::new("*.company.com").unwrap().into());
+        assert_eq!(
+            verify_arg_gates(child, parent),
+            Err(ApprovalGateError::ArgApprovalGateIncomparableVariants),
+            "Exempt↔Constraint cross-type — must be rejected as incomparable"
+        );
+    }
+
+    #[test]
+    fn test_exempt_monotonicity_cross_type_constraint_exempt_fails() {
+        use crate::constraints::OneOf;
+        let child = ArgApprovalGate::Constraint(Pattern::new("*.company.com").unwrap().into());
+        let parent = ArgApprovalGate::exempt(Constraint::OneOf(OneOf::new(["a.com"]))).unwrap();
+        assert_eq!(
+            verify_arg_gates(child, parent),
+            Err(ApprovalGateError::ArgApprovalGateIncomparableVariants),
+            "Constraint↔Exempt cross-type — must be rejected as incomparable"
+        );
+    }
+
+    #[test]
+    fn test_constraint_constraint_monotonicity_unchanged() {
+        use crate::constraints::OneOf;
+        let child = ArgApprovalGate::Constraint(Constraint::OneOf(OneOf::new(["a"])));
+        let parent = ArgApprovalGate::Constraint(Constraint::OneOf(OneOf::new(["a", "b"])));
+        // Phase 1: Constraint↔Constraint requires exact equality — different constraints rejected
+        assert_eq!(
+            verify_arg_gates(child, parent),
+            Err(ApprovalGateError::ArgApprovalGateConstraintChanged),
+            "Constraint↔Constraint with different constraints — unchanged Phase 1 behaviour"
+        );
     }
 }

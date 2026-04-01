@@ -566,6 +566,8 @@ warrant = (Warrant.mint_builder()
 
 Warrants can embed **approval gates** that require human approval before a tool call proceeds. When an approval gate triggers, the MCP integration returns a structured error so clients can collect approvals and retry.
 
+> **Note:** Per-argument approval gate configuration is currently in development. Contact the team or see Tenuo Cloud documentation for details.
+
 ### Server-Side (MCPVerifier)
 
 ```python

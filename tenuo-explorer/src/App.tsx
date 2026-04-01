@@ -15,11 +15,12 @@ interface DecodedWarrant {
   id: string;
   issuer: string;
   tools: string[];
-  capabilities: Record<string, unknown>;
+  capabilities: Record<string, any>;
   issued_at: number;
   expires_at: number;
   authorized_holder: string;
   depth: number;
+  approval_gates?: Record<string, any> | null;
 }
 
 interface ConstraintNarrowing {
@@ -624,7 +625,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           type: 'oneof',
           pythonCode: `AnyOf([Pattern("${values.join('"), Pattern("')}")])`,
           rustCode: `Constraint::AnyOf(vec![${values.map(x => `Pattern::new("${x}")?`).join(', ')}])`,
-          exampleValue: values[0].replace('*', 'example') || 'value'
+          exampleValue: values[0].replaceAll('*', 'example') || 'value'
         };
       }
 
@@ -1021,6 +1022,12 @@ ${argsLines}
 
 // Validation Warnings Component
 const ValidationWarnings = ({ decoded, tool, args }: { decoded: DecodedWarrant | null; tool: string; args: string }) => {
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    setDismissed(false);
+  }, [decoded]);
+
   const warnings = useMemo<ValidationWarning[]>(() => {
     const w: ValidationWarning[] = [];
     if (!decoded) return w;
@@ -1070,10 +1077,17 @@ const ValidationWarnings = ({ decoded, tool, args }: { decoded: DecodedWarrant |
     return w;
   }, [decoded, tool, args]);
 
-  if (warnings.length === 0) return null;
+  if (warnings.length === 0 || dismissed) return null;
 
   return (
-    <div className="warnings-panel">
+    <div className="warnings-panel" style={{ position: 'relative' }}>
+      <button 
+        onClick={() => setDismissed(true)} 
+        style={{ position: 'absolute', top: '8px', right: '8px', background: 'none', border: 'none', cursor: 'pointer', opacity: 0.5 }}
+        title="Dismiss warnings"
+      >
+        ✕
+      </button>
       {warnings.map((w, i) => (
         <div key={i} className={`warning warning-${w.type}`}>
           <span>{w.type === 'danger' ? '🚨' : w.type === 'warning' ? '⚠️' : 'ℹ️'}</span>
@@ -1655,6 +1669,26 @@ const ChainTester = () => {
                     <div style={{ color: 'var(--muted)', fontStyle: 'italic' }}>No detailed capabilities</div>
                   )}
 
+                  {warrant.decoded.approval_gates && Object.keys(warrant.decoded.approval_gates).length > 0 && (
+                    <div style={{ marginTop: '8px' }}>
+                      <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                        <strong>🛡️ Approval Gates:</strong>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {Object.entries(warrant.decoded.approval_gates).map(([tool, gateDef]) => (
+                          <div key={tool} style={{ background: 'rgba(0,0,0,0.1)', padding: '4px', borderRadius: '4px' }}>
+                            <span style={{ color: 'var(--text)', fontWeight: 600 }}>{tool}</span>
+                            <div style={{ paddingLeft: '8px', borderLeft: '2px solid var(--border)', marginTop: '2px' }}>
+                              <span style={{ color: 'var(--accent)', fontFamily: 'monospace' }}>
+                                {typeof gateDef === 'object' ? JSON.stringify(gateDef) : String(gateDef)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div style={{ color: 'var(--muted)', marginTop: '6px' }}>
                     Holder: <span style={{ color: 'var(--text)', fontFamily: 'monospace', fontSize: '10px' }}>
                       {truncate(warrant.decoded.authorized_holder || '', 16)}
@@ -2017,6 +2051,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'decode' | 'debug' | 'code'>('decode');
   const [mode, setMode] = useState<'decoder' | 'builder' | 'chain' | 'diff'>('decoder');
   const [builderPreview, setBuilderPreview] = useState<unknown>(null);
+  const [showBuilderJson, setShowBuilderJson] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(true);
   const [samples, setSamples] = useState<Record<string, SampleDef>>({});
   const [pemDetected, setPemDetected] = useState(false);
@@ -2401,13 +2436,22 @@ function App() {
                       <>
                         {/* Warrant Base64 */}
                         <div style={{ marginBottom: '16px' }}>
-                          <label className="label">Warrant (base64)</label>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                            <label className="label" style={{ marginBottom: 0 }}>Warrant (base64)</label>
+                            <button
+                              onClick={() => setShowBuilderJson(!showBuilderJson)}
+                              className="btn btn-secondary"
+                              style={{ fontSize: '10px', padding: '2px 6px' }}
+                            >
+                              {showBuilderJson ? 'Show Base64' : 'Show JSON'}
+                            </button>
+                          </div>
                           <div style={{ position: 'relative' }}>
                             <textarea
                               className="input"
                               readOnly
-                              value={(builderPreview as { warrant_b64: string }).warrant_b64}
-                              style={{ height: '80px', fontSize: '10px', fontFamily: 'monospace' }}
+                              value={showBuilderJson ? JSON.stringify((builderPreview as { config?: unknown }).config || builderPreview, null, 2) : (builderPreview as { warrant_b64: string }).warrant_b64}
+                              style={{ height: showBuilderJson ? '200px' : '80px', fontSize: '10px', fontFamily: 'monospace' }}
                             />
                             <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px' }}>
                               <button
@@ -2607,7 +2651,7 @@ function App() {
                                   const exampleArgs: Record<string, any> = {};
                                   Object.entries(toolCaps).forEach(([field, constraint]: [string, any]) => {
                                     if (constraint?.pattern) {
-                                      exampleArgs[field] = constraint.pattern.replace('*', 'example');
+                                      exampleArgs[field] = constraint.pattern.replaceAll('*', 'example');
                                     } else if (constraint?.exact !== undefined) {
                                       exampleArgs[field] = constraint.exact;
                                     } else if (constraint?.range) {
@@ -2830,6 +2874,13 @@ function App() {
                             <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>📋 Constraints</div>
                             <pre className="code-block" style={{ height: '120px', minHeight: '80px', maxHeight: '400px', resize: 'vertical' }}>{JSON.stringify(decodedWarrant.capabilities, null, 2)}</pre>
                           </div>
+
+                          {decodedWarrant.approval_gates && (
+                            <div style={{ padding: '12px', background: 'var(--surface-2)', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>🛡️ Approval Gates</div>
+                              <pre className="code-block" style={{ height: '120px', minHeight: '80px', maxHeight: '400px', resize: 'vertical' }}>{JSON.stringify(decodedWarrant.approval_gates, null, 2)}</pre>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

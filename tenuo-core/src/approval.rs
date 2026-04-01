@@ -1681,4 +1681,265 @@ mod tests {
         let result = registry.register_key(binding, &proof, &notary);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_signed_approval_create_verify_roundtrip() {
+        let approver = SigningKey::generate();
+        let nonce: [u8; 16] = rand::random();
+        let now = Utc::now();
+
+        let payload = ApprovalPayload::new(
+            [0xAA; 32],
+            nonce,
+            "arn:aws:iam::123:user/admin".to_string(),
+            now,
+            now + chrono::Duration::seconds(300),
+        );
+
+        let signed = SignedApproval::create(payload, &approver);
+        let verified = signed.verify().expect("verify should succeed");
+
+        assert_eq!(verified.external_id, "arn:aws:iam::123:user/admin");
+        assert_eq!(verified.request_hash, [0xAA; 32]);
+        assert_eq!(verified.nonce, nonce);
+    }
+
+    #[test]
+    fn test_signed_approval_rejects_tampered_payload() {
+        let approver = SigningKey::generate();
+        let now = Utc::now();
+
+        let payload = ApprovalPayload::new(
+            [0xBB; 32],
+            rand::random(),
+            "user@corp.com".to_string(),
+            now,
+            now + chrono::Duration::seconds(300),
+        );
+
+        let mut signed = SignedApproval::create(payload, &approver);
+
+        // Tamper with the CBOR payload after signing
+        if let Some(byte) = signed.payload.last_mut() {
+            *byte ^= 0xFF;
+        }
+
+        assert!(
+            signed.verify().is_err(),
+            "tampered payload must fail verification"
+        );
+    }
+
+    #[test]
+    fn test_signed_approval_rejects_wrong_key() {
+        let real_approver = SigningKey::generate();
+        let impersonator = SigningKey::generate();
+        let now = Utc::now();
+
+        let payload = ApprovalPayload::new(
+            [0xCC; 32],
+            rand::random(),
+            "victim@corp.com".to_string(),
+            now,
+            now + chrono::Duration::seconds(300),
+        );
+
+        let signed = SignedApproval::create(payload, &real_approver);
+
+        // Replace the public key with the impersonator's key
+        let forged = SignedApproval {
+            approver_key: impersonator.public_key(),
+            ..signed
+        };
+
+        assert!(
+            forged.verify().is_err(),
+            "approval with wrong public key must fail verification"
+        );
+    }
+
+    #[test]
+    fn test_signed_approval_matches_request() {
+        let approver = SigningKey::generate();
+        let now = Utc::now();
+        let hash = [0xDD; 32];
+
+        let payload = ApprovalPayload::new(
+            hash,
+            rand::random(),
+            "approver@test.com".to_string(),
+            now,
+            now + chrono::Duration::seconds(300),
+        );
+
+        let signed = SignedApproval::create(payload, &approver);
+
+        assert!(signed.matches_request(&hash).unwrap());
+        assert!(!signed.matches_request(&[0xEE; 32]).unwrap());
+    }
+
+    #[test]
+    fn test_signed_approval_rejects_future_timestamp() {
+        let approver = SigningKey::generate();
+        let far_future = Utc::now() + chrono::Duration::hours(24);
+
+        let payload = ApprovalPayload::new(
+            [0x11; 32],
+            rand::random(),
+            "time-traveler@test.com".to_string(),
+            far_future,
+            far_future + chrono::Duration::seconds(300),
+        );
+
+        let signed = SignedApproval::create(payload, &approver);
+        let result = signed.verify();
+
+        assert!(
+            result.is_err(),
+            "approval with far-future approved_at must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_signed_approval_rejects_bad_expiry_order() {
+        let approver = SigningKey::generate();
+        let now = Utc::now();
+
+        let payload = ApprovalPayload {
+            version: 1,
+            request_hash: [0x22; 32],
+            nonce: rand::random(),
+            external_id: "bad-expiry@test.com".to_string(),
+            approved_at: now.timestamp() as u64,
+            expires_at: now.timestamp() as u64, // equal, not strictly greater
+            extensions: None,
+        };
+
+        let signed = SignedApproval::create(payload, &approver);
+        let result = signed.verify();
+
+        assert!(
+            result.is_err(),
+            "approval with expires_at <= approved_at must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_domain_separation_prevents_cross_context_replay() {
+        let keypair = SigningKey::generate();
+        let now = Utc::now();
+
+        let payload = ApprovalPayload::new(
+            [0x33; 32],
+            rand::random(),
+            "user@test.com".to_string(),
+            now,
+            now + chrono::Duration::seconds(300),
+        );
+
+        let signed = SignedApproval::create(payload, &keypair);
+
+        // The preimage format is "tenuo-approval-v1" || version || payload_bytes.
+        // Verify that the raw payload bytes alone (without domain prefix) cannot
+        // pass verification, proving domain separation works.
+        let raw_sig = keypair.sign(&signed.payload);
+        let forged = SignedApproval {
+            approval_version: 1,
+            payload: signed.payload.clone(),
+            approver_key: keypair.public_key(),
+            signature: raw_sig,
+        };
+
+        assert!(
+            forged.verify().is_err(),
+            "signature over raw payload (without domain prefix) must fail"
+        );
+    }
+
+    #[test]
+    fn test_registration_proof_roundtrip() {
+        let keypair = SigningKey::generate();
+        let ts = Utc::now().timestamp();
+
+        let proof =
+            RegistrationProof::create(&keypair, "aws-iam", "arn:aws:iam::123:user/admin", ts);
+
+        assert!(proof
+            .verify(
+                &keypair.public_key(),
+                "aws-iam",
+                "arn:aws:iam::123:user/admin"
+            )
+            .is_ok());
+
+        // Wrong provider must fail
+        assert!(proof
+            .verify(&keypair.public_key(), "okta", "arn:aws:iam::123:user/admin")
+            .is_err());
+
+        // Wrong identity must fail
+        assert!(proof
+            .verify(
+                &keypair.public_key(),
+                "aws-iam",
+                "arn:aws:iam::999:user/evil"
+            )
+            .is_err());
+
+        // Wrong key must fail
+        let other = SigningKey::generate();
+        assert!(proof
+            .verify(
+                &other.public_key(),
+                "aws-iam",
+                "arn:aws:iam::123:user/admin"
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_rotation_proof_roundtrip() {
+        let old_keypair = SigningKey::generate();
+        let new_keypair = SigningKey::generate();
+        let ts = Utc::now().timestamp();
+
+        let proof = RotationProof::create(
+            &old_keypair,
+            "test",
+            "user@test.com",
+            &new_keypair.public_key(),
+            ts,
+        );
+
+        assert!(proof
+            .verify(
+                &old_keypair.public_key(),
+                "test",
+                "user@test.com",
+                &new_keypair.public_key()
+            )
+            .is_ok());
+
+        // Wrong old key must fail
+        let imposter = SigningKey::generate();
+        assert!(proof
+            .verify(
+                &imposter.public_key(),
+                "test",
+                "user@test.com",
+                &new_keypair.public_key()
+            )
+            .is_err());
+
+        // Different new key must fail
+        let other_new = SigningKey::generate();
+        assert!(proof
+            .verify(
+                &old_keypair.public_key(),
+                "test",
+                "user@test.com",
+                &other_new.public_key()
+            )
+            .is_err());
+    }
 }

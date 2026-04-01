@@ -91,6 +91,31 @@ List pods:
 kubectl get pods -n tenuo-system
 ```
 
+## Multi-hop Delegation Chains
+
+`X-Tenuo-Warrant` accepts both a single warrant and a full delegation chain. The authorizer automatically distinguishes between the two: a chain is a CBOR array of warrants base64url-encoded as a single value; a single warrant is a CBOR-encoded warrant base64url-encoded directly.
+
+For service-to-service calls in a mesh, each service that needs to delegate to a downstream service should:
+
+1. Receive the chain in `X-Tenuo-Warrant`
+2. Derive a narrower warrant from its own leaf token
+3. Append the derived token to the chain and re-encode it
+4. Forward the updated chain to the downstream service in `X-Tenuo-Warrant`
+
+```python
+# Example: attenuate and forward the chain (Python SDK)
+from tenuo import current_warrant, attenuate, encode_chain
+
+# Attenuate the current warrant for the downstream call
+child = attenuate(current_warrant(), tool="read_file", path="/data/reports/*")
+
+# Encode the updated chain (parent + child) and forward it
+chain_b64 = encode_chain([*current_chain(), child])
+requests.post("http://downstream/api", headers={"X-Tenuo-Warrant": chain_b64})
+```
+
+The downstream authorizer verifies the full chain — every link from root to leaf — offline, with no network calls.
+
 ## Next Steps
 
 - [Istio Quickstart](../istio/) - Service mesh alternative

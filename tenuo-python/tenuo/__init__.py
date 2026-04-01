@@ -111,7 +111,16 @@ from .config import (
     is_configured,
     is_enforce_mode,
     reset_config,
+    resolve_trusted_roots,
     should_block_violation,
+)
+
+# Nonce store for PoP replay prevention
+from .nonce import (
+    NonceStore,
+    disable_default_nonce_store,
+    enable_default_nonce_store as enable_nonce_store,
+    get_default_nonce_store,
 )
 
 # Constraints
@@ -238,6 +247,7 @@ __all__ = [
     "is_audit_mode",
     "is_enforce_mode",
     "should_block_violation",
+    "resolve_trusted_roots",
     "SigningKey",
     "PublicKey",
     # Protection
@@ -249,6 +259,8 @@ __all__ = [
     # Context
     "warrant_scope",
     "key_scope",
+    # Timestamp helper (use in warrant.sign() calls; in Temporal use workflow.now())
+    "now",
     # Common constraints
     "Pattern",
     "Exact",
@@ -315,10 +327,14 @@ __all__ = [
     "ApprovalVerificationError",
     "require_approval",
     "sign_approval",
-    "compute_request_hash",
     "cli_prompt",
     "auto_approve",
     "auto_deny",
+    # PoP replay prevention
+    "NonceStore",
+    "enable_nonce_store",
+    "disable_default_nonce_store",
+    "get_default_nonce_store",
 ]
 
-__version__ = "0.1.0b11"
+__version__ = "0.1.0b14"

@@ -31,6 +31,7 @@ from typing import (
 
 from ._builder import BaseGuardBuilder
 from ._enforcement import EnforcementResult, enforce_tool_call, handle_denial
+from .config import resolve_trusted_roots
 from .exceptions import (
     AuthorizationDenied,
     ConstraintViolation,
@@ -41,6 +42,25 @@ from .exceptions import (
 AUTOGEN_AVAILABLE = importlib.util.find_spec("autogen_agentchat") is not None
 
 logger = logging.getLogger("tenuo.autogen")
+
+
+_TOOL_NOT_AUTH_PATTERNS = (
+    "not in warrant",
+    "does not authorize tool",
+    "tool not in warrant",
+    "tool not granted",
+    "not authorized to call",
+)
+
+
+def _is_tool_not_authorized(denial_reason: str) -> bool:
+    """Return True if the denial reason indicates the tool is not in the warrant.
+
+    Clearance, constraint, and PoP failures are intentionally excluded — they
+    fall through to ``AuthorizationDenied``, not ``ToolNotAuthorized``.
+    """
+    low = denial_reason.lower()
+    return any(p in low for p in _TOOL_NOT_AUTH_PATTERNS)
 
 
 def _resolve_tool_name(tool: Any, explicit: Optional[str] = None) -> str:
@@ -175,6 +195,7 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
         return _Guard(
             constraints=self._constraints,
             bound=bound,
+            trusted_roots=self._trusted_roots,
             on_denial=self._on_denial,
             approval_policy=self._approval_policy,
             approval_handler=self._approval_handler,
@@ -195,6 +216,7 @@ class _Guard:
         *,
         constraints: Dict[str, Dict[str, Any]],
         bound: Any,
+        trusted_roots: Any = None,
         on_denial: str,
         approval_policy: Any = None,
         approval_handler: Any = None,
@@ -202,6 +224,7 @@ class _Guard:
     ) -> None:
         self._constraints = constraints
         self._bound = bound
+        self._trusted_roots = trusted_roots
         self._on_denial = on_denial
         self._approval_policy = approval_policy
         self._approval_handler = approval_handler
@@ -385,6 +408,7 @@ class _Guard:
             # Tier 2: Use shared enforcement logic
             result = enforce_tool_call(
                 tool_name, auth_args, self._bound,
+                trusted_roots=resolve_trusted_roots(self._trusted_roots),
                 approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
@@ -398,8 +422,14 @@ class _Guard:
                     raise ExpiredError(result.denial_reason or "Warrant has expired")
                 elif result.error_type == "tool_not_allowed":
                     raise ToolNotAuthorized(tool=tool_name)
-                elif "not in warrant" in (result.denial_reason or "").lower():
-                    # Handle tool not in warrant from validation path
+                elif result.error_type == "clearance_insufficient":
+                    raise AuthorizationDenied(
+                        tool=tool_name,
+                        constraint_results=[],
+                        reason=result.denial_reason or "Insufficient clearance",
+                    )
+                elif _is_tool_not_authorized(result.denial_reason or ""):
+                    # Handle tool not in warrant from Rust Authorizer messages
                     raise ToolNotAuthorized(tool=tool_name)
 
                 # Default to AuthorizationDenied for constraint violations and others

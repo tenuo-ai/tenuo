@@ -49,7 +49,7 @@ Security Philosophy (Fail-Closed by Default):
     - Missing warrant headers: Denied (require_warrant=True by default)
     - Invalid warrant: Raises ChainValidationError
     - Expired warrant: Raises WarrantExpired
-    - Constraint violation: Raises ConstraintViolation
+    - Constraint violation: Raises TemporalConstraintViolation
     - PoP failure: Raises PopVerificationError (PoP is always mandatory)
     - Local activity without @unprotected: Raises LocalActivityError
 
@@ -115,14 +115,14 @@ Troubleshooting:
         client calls ``TenuoClientInterceptor.set_headers_for_workflow(
         workflow_id, tenuo_headers(...))`` before ``client.execute_workflow()``.
 
-    ``ConstraintViolation: No warrant provided (require_warrant=True)``
+    ``TemporalConstraintViolation: No warrant provided (require_warrant=True)``
         The activity interceptor received no warrant.  Common causes:
         (a) ``set_headers()`` / ``set_headers_for_workflow()`` was never
         called, (b) headers were cleared before start, or (c) the
         ``TenuoClientInterceptor`` is missing from the client's interceptor
         list.
 
-    ``ConstraintViolation: ... Incorrect padding`` or ``signature must be 64 bytes``
+    ``TemporalConstraintViolation: ... Incorrect padding`` or ``signature must be 64 bytes``
         PoP/header encoding mismatch. Ensure the worker has
         ``TenuoInterceptor(...)`` registered and that Tenuo headers are
         injected at workflow start. ``workflow.execute_activity()`` is
@@ -227,7 +227,7 @@ class LocalActivityError(TenuoTemporalError):
 
     error_code = "LOCAL_ACTIVITY_BLOCKED"
 
-    def __init__(self, activity_name: str):
+    def __init__(self, activity_name: str) -> None:
         self.activity_name = activity_name
         super().__init__(
             f"Activity '{activity_name}' cannot be used as local activity. "
@@ -255,7 +255,7 @@ class PopVerificationError(TenuoTemporalError):
 
 
 @dataclass
-class ConstraintViolation(TenuoTemporalError):
+class TemporalConstraintViolation(TenuoTemporalError):
     """Raised when an activity violates warrant constraints.
 
     Attributes:
@@ -1052,7 +1052,7 @@ class TenuoInterceptorConfig:
     on_denial: Literal["raise", "log", "skip"] = "raise"
     """
     Behavior when authorization fails:
-    - "raise": Raise ConstraintViolation (default)
+    - "raise": Raise TemporalConstraintViolation (default)
     - "log": Log denial, continue execution
     - "skip": Silent denial, return None
     """
@@ -1211,16 +1211,32 @@ class TenuoInterceptorConfig:
                 "TenuoInterceptorConfig: dry_run=True enables shadow mode and "
                 "does not enforce authorization denials. Do not use in production."
             )
+            # Elevate to a Python-level warning so it appears in production logs regardless of
+            # logger configuration. Use stacklevel=2 to point at the call site, not this frame.
+            warnings.warn(
+                "TenuoInterceptorConfig: dry_run=True — authorization denials will NOT be "
+                "enforced. This is a shadow/staging mode; remove dry_run=True before "
+                "deploying to production.",
+                stacklevel=2,
+            )
 
         # F1: enforce strict_mode invariants before anything else
         if self.strict_mode and not self.trusted_roots:
-            raise ValueError(
-                "TenuoInterceptorConfig: strict_mode=True requires trusted_roots to be set. "
-                "Without trusted_roots, PoP and chain-of-trust verification are skipped, "
-                "reducing security to lightweight constraint checks only. "
-                "Pass trusted_roots=[control_key.public_key] or set strict_mode=False "
-                "to acknowledge running in lightweight mode."
-            )
+            # Try global configure() first — allows setting trusted_roots once at startup
+            from tenuo.config import resolve_trusted_roots as _resolve
+            _global = _resolve(None)
+            if _global:
+                self.trusted_roots = _global  # type: ignore[assignment]
+            else:
+                from tenuo.exceptions import ConfigurationError
+                raise ConfigurationError(
+                    "TenuoInterceptorConfig: strict_mode=True requires trusted_roots to be set. "
+                    "Without trusted_roots, PoP and chain-of-trust verification are skipped, "
+                    "reducing security to lightweight constraint checks only. "
+                    "Pass trusted_roots=[control_key.public_key], call "
+                    "tenuo.configure(trusted_roots=[...]) at startup, or set strict_mode=False "
+                    "to acknowledge running in lightweight mode."
+                )
 
         self._activity_registry: Dict[str, Callable] = {}
         if self.activity_fns:
@@ -1669,7 +1685,7 @@ def attenuated_headers(
 
     Raises:
         TenuoContextError: If no parent warrant in context
-        ConstraintViolation: If requested tools exceed parent scope
+        TemporalConstraintViolation: If requested tools exceed parent scope
     """
     try:
         from temporalio import workflow  # type: ignore[import-not-found]  # noqa: F401
@@ -1686,7 +1702,7 @@ def attenuated_headers(
         requested_tools = set(tools)
         if not requested_tools.issubset(parent_tools):
             excess = requested_tools - parent_tools
-            raise ConstraintViolation(
+            raise TemporalConstraintViolation(
                 tool=str(list(excess)[0]),
                 arguments={},
                 constraint=f"Cannot delegate tools not in parent: {excess}",
@@ -1757,7 +1773,7 @@ def attenuated_headers(
         # this check.
         unknown_keys = set(narrowing) - set(base)
         if unknown_keys:
-            raise ConstraintViolation(
+            raise TemporalConstraintViolation(
                 tool=tool_key,
                 arguments={},
                 constraint=(
@@ -1781,17 +1797,41 @@ def attenuated_headers(
 
     hdrs = tenuo_headers(child_warrant, key_id, compress=compress)
 
-    # Propagate the delegation chain so the activity interceptor
-    # can call check_chain() for full trust-root verification.
-    existing_chain_b64 = raw_headers.get(TENUO_CHAIN_HEADER)
-    if existing_chain_b64:
-        parent_chain = json.loads(base64.b64decode(existing_chain_b64))
-    else:
-        parent_chain = [parent_warrant.to_base64()]
-    parent_chain.append(child_warrant.to_base64())
-    hdrs[TENUO_CHAIN_HEADER] = base64.b64encode(
-        json.dumps(parent_chain).encode()
-    )
+    # Propagate the delegation chain so the activity interceptor can call
+    # check_chain() for full trust-root verification.
+    #
+    # Wire format: WarrantStack (CBOR array of warrants, base64url-encoded),
+    # stored as UTF-8 bytes.  This matches the canonical X-Tenuo-Warrant
+    # WarrantStack format used by HTTP and A2A transports.
+    # Falls back to the legacy JSON-base64 format if encode_warrant_stack
+    # is unavailable (older tenuo_core binary).
+    existing_chain_raw = raw_headers.get(TENUO_CHAIN_HEADER)
+    try:
+        from tenuo_core import decode_warrant_stack_base64 as _decode_stack
+        from tenuo_core import encode_warrant_stack as _encode_stack
+
+        if existing_chain_raw:
+            # Try decoding as WarrantStack first, then fall back to JSON-base64
+            try:
+                existing_warrants = _decode_stack(existing_chain_raw.decode("utf-8"))
+            except Exception:
+                # Legacy JSON-base64 format from an older sender
+                _legacy = json.loads(base64.b64decode(existing_chain_raw))
+                from tenuo_core import Warrant as _W
+                existing_warrants = [_W.from_base64(w) for w in _legacy]
+        else:
+            existing_warrants = [parent_warrant]
+
+        all_chain = existing_warrants + [child_warrant]
+        hdrs[TENUO_CHAIN_HEADER] = _encode_stack(all_chain).encode("utf-8")
+    except ImportError:
+        # Older tenuo_core without encode_warrant_stack — keep legacy format
+        if existing_chain_raw:
+            parent_chain = json.loads(base64.b64decode(existing_chain_raw))
+        else:
+            parent_chain = [parent_warrant.to_base64()]
+        parent_chain.append(child_warrant.to_base64())
+        hdrs[TENUO_CHAIN_HEADER] = base64.b64encode(json.dumps(parent_chain).encode())
 
     return hdrs
 
@@ -1947,7 +1987,7 @@ def workflow_grant(
 
     Raises:
         TenuoContextError: If called outside workflow context
-        ConstraintViolation: If tool not in parent warrant
+        TemporalConstraintViolation: If tool not in parent warrant
     """
     try:
         from temporalio import workflow  # type: ignore[import-not-found]  # noqa: F401
@@ -1958,7 +1998,7 @@ def workflow_grant(
 
     parent_tools = parent_warrant.tools or []
     if tool not in parent_tools:
-        raise ConstraintViolation(
+        raise TemporalConstraintViolation(
             tool=tool,
             arguments={},
             constraint=f"Tool '{tool}' not in parent warrant capabilities",
@@ -2237,7 +2277,7 @@ class AuthorizedWorkflow:
             The activity result
 
         Raises:
-            ConstraintViolation: If activity violates warrant constraints
+            TemporalConstraintViolation: If activity violates warrant constraints
             WarrantExpired: If warrant has expired
             ChainValidationError: If warrant chain is invalid
         """
@@ -2653,7 +2693,7 @@ class _TenuoWorkflowInboundInterceptor:
                 logger.warning(
                     f"Signal '{signal_name}' denied: not in authorized_signals"
                 )
-                raise ConstraintViolation(
+                raise TemporalConstraintViolation(
                     tool=f"signal:{signal_name}",
                     arguments={},
                     constraint=f"Signal not authorized: {signal_name}",
@@ -2673,7 +2713,7 @@ class _TenuoWorkflowInboundInterceptor:
                     f"Update '{update_name}' rejected at validation: "
                     "not in authorized_updates"
                 )
-                raise ConstraintViolation(
+                raise TemporalConstraintViolation(
                     tool=f"update:{update_name}",
                     arguments={},
                     constraint=f"Update not authorized: {update_name}",
@@ -2686,7 +2726,7 @@ class _TenuoWorkflowInboundInterceptor:
         if config and config.authorized_updates is not None:
             update_name = getattr(input, "update", None)
             if update_name not in config.authorized_updates:
-                raise ConstraintViolation(
+                raise TemporalConstraintViolation(
                     tool=f"update:{update_name}",
                     arguments={},
                     constraint=f"Update not authorized: {update_name}",
@@ -2739,11 +2779,26 @@ class TenuoInterceptor:
         self._config = config
         self._version = self._get_version()
         if not config.trusted_roots:
-            logger.warning(
+            _msg = (
                 "TenuoInterceptor initialized WITHOUT trusted_roots. "
-                "Running in lightweight mode: no PoP verification, no chain-of-trust checks. "
-                "Set trusted_roots=[control_key.public_key] for production security."
+                "Running in lightweight mode: PoP signatures and chain-of-trust are NOT "
+                "verified — any structurally valid warrant is accepted. "
+                "Set trusted_roots=[control_key.public_key] for production security, "
+                "call tenuo.configure(trusted_roots=[...]) and set strict_mode=True, "
+                "or pass strict_mode=True to fail fast on misconfiguration."
             )
+            if getattr(config, "strict_mode", False):
+                # strict_mode already checked in __post_init__, but guard here too
+                # in case the config was built without __post_init__ running.
+                from tenuo.exceptions import ConfigurationError as _ConfigError
+                raise _ConfigError(
+                    "TenuoInterceptor strict_mode=True requires trusted_roots. "
+                    "Pass trusted_roots=[issuer_public_key] to TenuoInterceptorConfig or "
+                    "call tenuo.configure(trusted_roots=[...]) at application startup."
+                )
+            import warnings as _warnings
+            logger.warning(_msg)
+            _warnings.warn(_msg, stacklevel=2)
         # Verify tenuo_core is importable — catches missing passthrough_modules early.
         # Inside a Temporal sandbox, tenuo_core must be declared as a passthrough module or
         # it raises "PyO3 modules may only be initialized once per interpreter process".
@@ -2905,7 +2960,7 @@ class TenuoActivityInboundInterceptor:
                 # Fail-closed: deny activities without warrant
                 logger.warning(f"No warrant for activity {info.activity_type}, denying (require_warrant=True)")
                 if self._config.on_denial == "raise" and not self._config.dry_run:
-                    raise ConstraintViolation(
+                    raise TemporalConstraintViolation(
                         tool=info.activity_type,
                         arguments={},
                         constraint="No warrant provided (require_warrant=True)",
@@ -2977,8 +3032,14 @@ class TenuoActivityInboundInterceptor:
 
                 chain_header = headers.get(TENUO_CHAIN_HEADER)
                 if chain_header:
-                    chain_list = json.loads(base64.b64decode(chain_header))
-                    chain = [CoreWarrant.from_base64(w) for w in chain_list]
+                    # Decode chain: try WarrantStack format first, then legacy
+                    # JSON-base64 for backward compatibility with older senders.
+                    try:
+                        from tenuo_core import decode_warrant_stack_base64 as _decode_stack
+                        chain = _decode_stack(chain_header.decode("utf-8"))
+                    except Exception:
+                        chain_list = json.loads(base64.b64decode(chain_header))
+                        chain = [CoreWarrant.from_base64(w) for w in chain_list]
                     chain_result = authorizer.check_chain(
                         chain, tool_name, args,
                         signature=pop_bytes,
@@ -3034,7 +3095,7 @@ class TenuoActivityInboundInterceptor:
                                 for k, _ in by_age[:excess]:
                                     del _pop_dedup_cache[k]
 
-            except (ConstraintViolation, PopVerificationError, ChainValidationError, WarrantExpired):
+            except (TemporalConstraintViolation, PopVerificationError, ChainValidationError, WarrantExpired):
                 raise
             except Exception as e:
                 # Distinguish authorization denials (from tenuo_core or Temporal
@@ -3055,7 +3116,7 @@ class TenuoActivityInboundInterceptor:
                         reason=str(e),
                     )
                     if self._config.on_denial == "raise" and not self._config.dry_run:
-                        raise ConstraintViolation(
+                        raise TemporalConstraintViolation(
                             tool=tool_name,
                             arguments=args,
                             constraint=str(e),
@@ -3072,6 +3133,21 @@ class TenuoActivityInboundInterceptor:
 
         else:
             # --- Lightweight path (no trusted_roots, no PoP) ---
+            # SECURITY: This path has no cryptographic issuer verification and no
+            # Proof-of-Possession check.  It is suitable only for development or
+            # internal environments where warrants are not received from untrusted
+            # callers.  Configure trusted_roots on TenuoInterceptorConfig for
+            # production deployments so the Rust Authorizer gates every call.
+            import warnings as _warnings
+            from tenuo.exceptions import TenuoSecurityWarning as _TSW
+            _warnings.warn(
+                "TenuoInterceptor has no trusted_roots configured: activity "
+                f"'{tool_name}' is being authorized without issuer trust verification "
+                "or Proof-of-Possession. Set trusted_roots=... on "
+                "TenuoInterceptorConfig to enable full cryptographic enforcement.",
+                _TSW,
+                stacklevel=4,
+            )
             # Check warrant expiry
             if warrant.is_expired():
                 self._emit_denial_event(
@@ -3088,9 +3164,11 @@ class TenuoActivityInboundInterceptor:
                     )
                 return await _deny_or_continue(tool=tool_name, reason="Warrant expired")
 
-            # Check tool is in capabilities
-            tools = warrant.tools or []
-            if tool_name not in tools:
+            # Check tool is in capabilities — delegate to core via why_denied() so
+            # grant semantics (wildcards, capability shapes) match the Authorizer.
+            _why = warrant.why_denied(tool_name, args)
+            from tenuo.warrant_ext import DenyCode as _DC
+            if _why.deny_code == _DC.TOOL_NOT_FOUND:
                 self._emit_denial_event(
                     info=info,
                     warrant=warrant,
@@ -3100,10 +3178,10 @@ class TenuoActivityInboundInterceptor:
                     constraint="tool_not_allowed",
                 )
                 if self._config.on_denial == "raise" and not self._config.dry_run:
-                    raise ConstraintViolation(
+                    raise TemporalConstraintViolation(
                         tool=tool_name,
                         arguments=args,
-                        constraint=f"Tool not in warrant capabilities: {tools}",
+                    constraint=f"Tool not in warrant capabilities: {_why.suggestion or tool_name}",
                         warrant_id=warrant.id,
                     )
                 return await _deny_or_continue(
@@ -3124,7 +3202,7 @@ class TenuoActivityInboundInterceptor:
                         constraint="constraint_violated",
                     )
                     if self._config.on_denial == "raise" and not self._config.dry_run:
-                        raise ConstraintViolation(
+                        raise TemporalConstraintViolation(
                             tool=tool_name,
                             arguments=args,
                             constraint=str(violation),
@@ -3135,7 +3213,7 @@ class TenuoActivityInboundInterceptor:
                         reason=f"Constraint violated: {violation}",
                     )
 
-            except ConstraintViolation:
+            except TemporalConstraintViolation:
                 raise
             except Exception as e:
                 logger.error(f"Constraint check error: {e}")
@@ -3147,7 +3225,7 @@ class TenuoActivityInboundInterceptor:
                     reason=f"Constraint check error: {e}",
                 )
                 if self._config.on_denial == "raise" and not self._config.dry_run:
-                    raise ConstraintViolation(
+                    raise TemporalConstraintViolation(
                         tool=tool_name,
                         arguments=args,
                         constraint=f"Constraint check failed: {e}",
@@ -3174,7 +3252,7 @@ class TenuoActivityInboundInterceptor:
                         constraint="approval_gate_triggered",
                     )
                     if self._config.on_denial == "raise" and not self._config.dry_run:
-                        raise ConstraintViolation(
+                        raise TemporalConstraintViolation(
                             tool=tool_name,
                             arguments=args,
                             constraint=f"Approval gate triggered for '{tool_name}'. "
@@ -3185,7 +3263,7 @@ class TenuoActivityInboundInterceptor:
                         tool=tool_name,
                         reason=f"Approval gate triggered for '{tool_name}'",
                     )
-            except ConstraintViolation:
+            except TemporalConstraintViolation:
                 raise
             except ImportError:
                 pass
@@ -3291,7 +3369,7 @@ class TenuoActivityInboundInterceptor:
                 if self._config and self._config.approval_threshold is not None:
                     warrant_min = warrant.approval_threshold()
                     if warrant_min is not None and threshold < warrant_min:
-                        raise ConstraintViolation(
+                        raise TemporalConstraintViolation(
                             tool=tool_name,
                             arguments=args,
                             constraint=(
@@ -3493,7 +3571,7 @@ __all__ = [
     # Exceptions
     "TenuoTemporalError",
     "TenuoContextError",
-    "ConstraintViolation",
+    "TemporalConstraintViolation",
     "WarrantExpired",
     "ChainValidationError",
     "KeyResolutionError",

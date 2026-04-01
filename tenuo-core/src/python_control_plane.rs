@@ -336,6 +336,7 @@ impl PyControlPlaneClient {
             latency_us,
             request_id,
             arguments,
+            None,
         );
         let _ = self.sender.try_send(event);
         Ok(())
@@ -375,6 +376,7 @@ impl PyControlPlaneClient {
             latency_us,
             request_id,
             arguments,
+            None,
         );
         let _ = self.sender.try_send(event);
         Ok(())

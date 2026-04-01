@@ -128,7 +128,7 @@ def check_version_compatibility(package_name: str, warn: bool = True) -> List[Tu
                     f"Tenuo compatibility notice: {package_name}=={version_str}\n"
                     f"  Issue: {issue}\n"
                     f"  Recommendation: {recommendation}\n"
-                    f"  See: https://tenuo.dev/docs/compatibility-matrix"
+                    f"  See: https://tenuo.ai/docs/compatibility-matrix"
                 )
                 warnings.warn(warning_msg, UserWarning, stacklevel=3)
                 logger.info(warning_msg)

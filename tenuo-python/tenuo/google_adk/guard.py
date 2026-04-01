@@ -67,6 +67,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from tenuo._enforcement import EnforcementResult, enforce_tool_call
+from tenuo.config import resolve_trusted_roots
 
 if TYPE_CHECKING:
     from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
@@ -77,7 +78,7 @@ logger = logging.getLogger(__name__)
 
 
 class ToolAuthorizationError(Exception):
-    """Raised when tool authorization fails and on_deny='raise'."""
+    """Raised when tool authorization fails and on_denial='raise'."""
 
     def __init__(self, message: str, tool_name: str, tool_args: Dict[str, Any]):
         super().__init__(message)
@@ -114,6 +115,7 @@ class TenuoGuard:
         self,
         warrant: Optional["Warrant"] = None,
         signing_key: Optional["SigningKey"] = None,
+        trusted_roots: Optional[list] = None,
         warrant_key: Optional[str] = "__tenuo_warrant__",
         skill_map: Optional[Dict[str, str]] = None,
         arg_map: Optional[Dict[str, Dict[str, str]]] = None,
@@ -121,7 +123,8 @@ class TenuoGuard:
         allow_tools: Optional[List[str]] = None,  # Allowlist for Tier 1 (explicit grants)
         denial_detail: str = "full",  # "full", "minimal", "silent"
         audit_log: Union[None, str, Any] = None,
-        on_deny: str = "return",  # "return" or "raise"
+        on_denial: str = "return",  # "return" or "raise"
+        on_deny: Optional[str] = None,  # Deprecated: use on_denial
         require_pop: bool = True,  # Default to secure mode
         dry_run: bool = False,  # Log denials but don't block
         include_hints: bool = True,  # Include recovery hints in denials
@@ -129,13 +132,17 @@ class TenuoGuard:
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         control_plane: Optional[Any] = None,
-    ):
+    ) -> None:
         """
         Initialize TenuoGuard.
 
         Args:
             warrant: Static warrant to use for all tool calls
             signing_key: Signing key for Proof-of-Possession (required for Tier 2)
+            trusted_roots: List of trusted issuer public keys (tenuo_core.PublicKey).
+                Warrant issuers are verified against these roots via
+                Authorizer.authorize_one() — closes the self-signed trust gap.
+                Always supply in production. Emits SecurityWarning when omitted.
             warrant_key: Key to look up warrant in ToolContext.state (for dynamic warrants)
             skill_map: Map ADK tool names to warrant skill names
             arg_map: Map tool argument names to constraint parameter names
@@ -144,7 +151,9 @@ class TenuoGuard:
             allow_tools: Allowlist of tools (Tier 1 mode) - explicit grants only
             denial_detail: Detail level for denial messages ("full", "minimal", "silent")
             audit_log: File path or file-like object for audit logging
-            on_deny: "return" error dict or "raise" exception
+            on_denial: How to handle denied calls — "return" (return an error dict,
+                default) or "raise" (raise ToolAuthorizationError).
+            on_deny: Deprecated alias for on_denial. Use on_denial instead.
             require_pop: If True (default), requires signing_key for Tier 2 authorization.
                         Set to False for Tier 1 guardrails-only mode.
             dry_run: If True, log denials but don't block. Useful for testing.
@@ -153,15 +162,24 @@ class TenuoGuard:
                            When provided, every allow and deny decision is streamed to the
                            Tenuo Cloud control plane for audit and observability.
         """
+        if on_deny is not None:
+            import warnings
+            warnings.warn(
+                "TenuoGuard: 'on_deny' is deprecated, use 'on_denial' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            on_denial = on_deny
         self._warrant = warrant
         self._signing_key = signing_key
+        self._trusted_roots = trusted_roots
         self._warrant_key = warrant_key
         self._skill_map = skill_map or {}
         self._arg_map = arg_map or {}
         self._constraints = constraints or {}  # Direct constraints for Tier 1
         self._allow_tools = allow_tools or []  # Allowlist (explicit grants)
         self._denial_detail = denial_detail
-        self._on_deny = on_deny
+        self._on_denial = on_denial
         self._require_pop = require_pop
         self._dry_run = dry_run
         self._include_hints = include_hints
@@ -228,9 +246,18 @@ class TenuoGuard:
         return result
 
     def _get_granted_skills(self, warrant: Any) -> set[str]:
-        """Extract set of granted skill names from warrant capabilities."""
+        """Extract set of granted skill names from warrant capabilities or tools."""
+        # Warrants created with .capability("x", ...) store grants in capabilities.
         caps = getattr(warrant, "capabilities", {})
-        return set(caps.keys()) if caps else set()
+        if caps:
+            return set(caps.keys())
+        # Warrants created with .tools(["x"]) store grants as a flat tools list
+        # (no per-tool constraints).  Fall back to that list so Tier 1 doesn't
+        # incorrectly deny all tools for this warrant style.
+        tools = getattr(warrant, "tools", None)
+        if tools:
+            return set(tools)
+        return set()
 
     # -------------------------------------------------------------------------
     # Constraint Checking (Tier 1 Only)
@@ -356,6 +383,7 @@ class TenuoGuard:
                     tool_name=skill_name,
                     tool_args=validation_args,
                     bound_warrant=bound_warrant,
+                    trusted_roots=resolve_trusted_roots(self._trusted_roots),
                     approval_policy=self._approval_policy,
                     approval_handler=self._approval_handler,
                     approvals=self._approvals,
@@ -555,20 +583,19 @@ class TenuoGuard:
         Fails closed on exceptions (treats as expired).
         """
         try:
-            is_expired = getattr(warrant, "is_expired", None)
+            # Prefer the canonical is_expired() method from the Rust core.
+            # For a real Warrant object, warrant.is_expired is a callable method;
+            # for PropertyMock-based test doubles, accessing it returns a bool directly.
+            # Fall back to the .expired property (added by warrant_ext).
+            is_expired_attr = getattr(warrant, "is_expired", None)
+            if callable(is_expired_attr):
+                return is_expired_attr()
+            if is_expired_attr is not None:
+                return bool(is_expired_attr)
 
-            # Handle method vs property
-            if callable(is_expired):
-                return is_expired()
-            elif is_expired is not None:
-                return bool(is_expired)
-
-            # Fallback: check exp claim manually
-            import time
-
-            exp = getattr(warrant, "exp", None)
-            if exp is not None:
-                return time.time() > exp
+            expired_prop = getattr(warrant, "expired", None)
+            if expired_prop is not None:
+                return bool(expired_prop)
 
             return False
         except Exception as e:
@@ -624,7 +651,7 @@ class TenuoGuard:
         """
         try:
             why = warrant.why_denied(skill_name, args)
-            if why:
+            if why.denied:
                 status_str = str(why)
                 constraint_param = getattr(why, "field", None)
                 constraint = None
@@ -658,7 +685,7 @@ class TenuoGuard:
         start_ns: Optional[int] = None,
         _cp_already_emitted: bool = False,
     ) -> Optional[Dict[str, Any]]:
-        """Handle denial based on on_deny setting."""
+        """Handle denial based on on_denial setting."""
         # Dry run mode: log but don't block
         if self._dry_run:
             logger.warning(f"DRY RUN: Would deny {tool_name} - {reason}")
@@ -685,7 +712,7 @@ class TenuoGuard:
             )
             self._control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
 
-        if self._on_deny == "raise":
+        if self._on_denial == "raise":
             raise ToolAuthorizationError(reason, tool_name, args)
 
         # Construct user-facing message based on detail level
@@ -817,7 +844,7 @@ class GuardBuilder:
         self._constraints: Dict[str, Dict[str, Any]] = {}  # Direct constraints
         self._allow_tools: List[str] = []  # Allowlist (explicit grants only)
         self._denial_detail: str = "full"
-        self._on_deny: str = "return"
+        self._on_denial: str = "return"
         self._require_pop: bool = True
         self._dry_run: bool = False
         self._include_hints: bool = True
@@ -826,6 +853,7 @@ class GuardBuilder:
         self._approval_handler: Optional[Any] = None
         self._approvals = None
         self._control_plane: Optional[Any] = None
+        self._trusted_roots: Optional[List[Any]] = None
 
     @classmethod
     def from_tools(cls, tools: List[Callable]) -> "GuardBuilder":
@@ -1023,7 +1051,7 @@ class GuardBuilder:
         """
         if mode not in ("return", "raise"):
             raise ValueError(f"on_denial must be 'return' or 'raise', got {mode!r}")
-        self._on_deny = mode
+        self._on_denial = mode
         return self
 
     def detail_level(self, level: str) -> "GuardBuilder":
@@ -1109,6 +1137,31 @@ class GuardBuilder:
         self._approvals = approvals
         return self
 
+    def with_trusted_roots(self, trusted_roots: List[Any]) -> "GuardBuilder":
+        """Set trusted issuer public keys for cryptographic chain-of-trust verification.
+
+        Required for Tier 2 (PoP) authorization.  The Rust ``Authorizer`` verifies
+        that the warrant was issued by one of these keys, closing the self-signed
+        trust gap.  Always supply in production.
+
+        Args:
+            trusted_roots: List of ``tenuo_core.PublicKey`` objects representing
+                           trusted warrant issuers (e.g. your control-plane key).
+
+        Returns:
+            self for chaining
+
+        Example:
+            guard = (
+                GuardBuilder()
+                .with_warrant(warrant, agent_key)
+                .with_trusted_roots([control_plane_key.public_key])
+                .build()
+            )
+        """
+        self._trusted_roots = list(trusted_roots)
+        return self
+
     def build(self) -> TenuoGuard:
         """
         Build the TenuoGuard instance.
@@ -1131,7 +1184,7 @@ class GuardBuilder:
             constraints=self._constraints,
             allow_tools=self._allow_tools,
             denial_detail=self._denial_detail,
-            on_deny=self._on_deny,
+            on_denial=self._on_denial,
             require_pop=self._require_pop,
             dry_run=self._dry_run,
             include_hints=self._include_hints,
@@ -1140,4 +1193,5 @@ class GuardBuilder:
             approval_handler=self._approval_handler,
             approvals=self._approvals,
             control_plane=self._control_plane,
+            trusted_roots=self._trusted_roots,
         )

@@ -489,6 +489,10 @@ class Shlex:
 
         return True
 
+    def satisfies(self, value: Any) -> bool:
+        """Unified constraint interface — delegates to matches()."""
+        return self.matches(value)
+
     def __repr__(self) -> str:
         return f"Shlex(allow={sorted(self.allowed_bins)!r})"
 

@@ -58,7 +58,7 @@ from .exceptions import (
     ToolNotAuthorized,
 )
 from .schemas import TOOL_SCHEMAS, ToolSchema
-from .validation import ValidationResult
+from .validation import ValidationResult  # noqa: F401  # kept for API re-export via this module
 
 logger = logging.getLogger("tenuo.enforcement")
 
@@ -549,9 +549,12 @@ def enforce_tool_call(
     verify_mode: Literal["sign", "verify"] = "sign",
     precomputed_signature: Optional[bytes] = None,
     authorizer: Optional[Any] = None,
+    warrant_chain: Optional[List[Any]] = None,
+    trusted_roots: Optional[List[Any]] = None,
     approval_policy: Optional[ApprovalPolicy] = None,
     approval_handler: Optional[ApprovalHandler] = None,
     approvals: Optional[List[Any]] = None,
+    nonce_store: Optional[Any] = None,
 ) -> EnforcementResult:
     """
     Core enforcement logic for tool authorization.
@@ -583,6 +586,19 @@ def enforce_tool_call(
             full chain verification using Authorizer.check_chain(), which performs
             issuer trust, chain linkage, revocation, clearance, capabilities,
             constraints, and PoP verification in one atomic call.
+        warrant_chain: Optional list of parent warrants (root-first, excluding the
+            leaf) to pass alongside the leaf warrant to check_chain().  Used when
+            a multi-hop delegation chain was received (e.g. via WarrantStack
+            transport) and full cryptographic chain verification is required.
+        trusted_roots: Explicit list of trusted issuer public keys (tenuo_core.PublicKey).
+            When provided, enforce_tool_call builds an Authorizer(trusted_roots=...)
+            and verifies the warrant issuer against those roots via
+            Authorizer.authorize_one() after signing PoP locally.  This closes the
+            self-signed trust gap in the default verify_mode="sign" path where
+            BoundWarrant.validate() would accept any warrant whose issuer matches
+            its own signature key.
+            When NOT provided a SecurityWarning is emitted — callers should always
+            supply trusted_roots in production deployments.
         approval_policy: Optional ApprovalPolicy to check after warrant authorization.
             If a rule matches, the approval_handler is invoked.
         approval_handler: Callable that handles approval requests and returns a
@@ -753,23 +769,86 @@ def enforce_tool_call(
             )
 
         if verify_mode == "sign":
-            # Pass approval gate approvals (if any) so Rust satisfies the gate check.
-            validation_result: ValidationResult = bound_warrant.validate(
-                tool_name, tool_args, approvals=_gate_approvals
-            )
+            # ─────────────────────────────────────────────────────────────────
+            # Resolve trusted_roots:
+            #   1. Explicit parameter passed to this call
+            #   2. BoundWarrant's own configured roots (set at bind time)
+            #   3. Global tenuo.configure(trusted_roots=[...]) fallback
+            #   4. Fail-closed — raise ConfigurationError
+            # ─────────────────────────────────────────────────────────────────
+            if trusted_roots is None:
+                _bound_roots = getattr(bound_warrant, "_trusted_roots", None)
+                if _bound_roots is not None:
+                    trusted_roots = _bound_roots
+                else:
+                    from .config import resolve_trusted_roots as _resolve_roots
+                    trusted_roots = _resolve_roots(None)
+                    if trusted_roots is None:
+                        raise ConfigurationError(
+                            "enforce_tool_call requires trusted_roots in the sign path. "
+                            "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
+                            "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
+                            "or call tenuo.configure(trusted_roots=[...]) at application startup. "
+                            "Accepting self-signed warrants is not permitted (fail-closed). "
+                            "See tenuo_core.Authorizer for details."
+                        )
 
-            if not validation_result.success:
-                # Extract detailed failure info from ValidationResult
-                violated_field = _extract_violated_field(validation_result.reason)
+            # ─────────────────────────────────────────────────────────────────
+            # VERIFIED SIGN PATH — sign PoP locally, then verify issuer
+            # trust via Authorizer(trusted_roots).authorize_one().
+            # The warrant issuer must be one of the explicitly trusted roots.
+            # ─────────────────────────────────────────────────────────────────
+            import time as _time
+            from tenuo_core import Authorizer as _Authorizer
 
-                logger.debug(
-                    f"Authorization denied for {tool_name}: {validation_result.reason}"
+            try:
+                _warrant = bound_warrant.warrant
+                _key = bound_warrant._key
+                _pop = bytes(_warrant.sign(_key, tool_name, tool_args, int(_time.time())))
+                _auth = _Authorizer(trusted_roots=trusted_roots)
+                _auth.authorize_one(
+                    _warrant, tool_name, tool_args,
+                    signature=_pop,
+                    approvals=_gate_approvals or [],
                 )
+                # ── Replay prevention ────────────────────────────────────────
+                # Resolve nonce_store: explicit param > module-level default.
+                # Ed25519 PoP is deterministic, so an exact replay of the same
+                # (key, tool, args, timestamp) triple produces the same bytes.
+                # The nonce store rejects exact replays within the TTL window.
+                _ns = nonce_store
+                if _ns is None:
+                    from .nonce import get_default_nonce_store as _get_ns
+                    _ns = _get_ns()
+                if _ns is not None and not _ns.check_and_record(_pop):
+                    return EnforcementResult(
+                        allowed=False,
+                        tool=tool_name,
+                        arguments=tool_args,
+                        denial_reason="PoP replay detected — this exact authorization token was already consumed.",
+                        error_type="invalid_pop",
+                        warrant_id=warrant_id,
+                    )
+            except Exception as _exc:
+                from tenuo.exceptions import ExpiredError as _ExpiredError
+                from tenuo.exceptions import MissingSignature as _MissingSignature
+                from tenuo.exceptions import SignatureInvalid as _SignatureInvalid
+                if isinstance(_exc, (_ExpiredError, _SignatureInvalid, _MissingSignature)):
+                    raise
+                # Use why_denied() to get the structured field name instead of
+                # regexing the error string — why_denied is available even when
+                # authorize_one raises because it interrogates the warrant directly.
+                try:
+                    _why = _warrant.why_denied(tool_name, tool_args)
+                    violated_field = getattr(_why, "field", None)
+                except Exception:
+                    violated_field = None
+                logger.debug(f"Authorization denied for {tool_name}: {_exc}")
                 return EnforcementResult(
                     allowed=False,
                     tool=tool_name,
                     arguments=tool_args,
-                    denial_reason=validation_result.reason or "Authorization failed",
+                    denial_reason=str(_exc) or "Authorization failed",
                     constraint_violated=violated_field,
                     error_type="authorization_failed",
                     warrant_id=warrant_id,
@@ -782,8 +861,11 @@ def enforce_tool_call(
             if authorizer is None:
                 raise ConfigurationError("authorizer required for verify_mode='verify'")
             try:
+                # Build the full chain: [root, ..., parents, leaf]
+                # warrant_chain contains parent warrants in root-first order.
+                full_chain = list(warrant_chain or []) + [bound_warrant.warrant]
                 authorizer.check_chain(
-                    [bound_warrant.warrant],
+                    full_chain,
                     tool_name,
                     tool_args,
                     signature=precomputed_signature,
@@ -863,7 +945,7 @@ def enforce_tool_call(
             tool=tool_name,
             arguments=tool_args,
             denial_reason=str(e),
-            constraint_violated=_extract_violated_field(str(e)),
+            constraint_violated=getattr(e, "field", None) or _extract_violated_field(str(e)),
             error_type=err_type,
             warrant_id=warrant_id,
         )

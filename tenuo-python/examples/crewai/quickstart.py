@@ -11,7 +11,7 @@ Requires: pip install tenuo crewai>=0.80.0
 # Import Tenuo CrewAI integration
 from tenuo.crewai import (
     HOOKS_AVAILABLE,
-    ConstraintViolation,
+    CrewAIConstraintViolation,
     GuardBuilder,
     Pattern,
     Range,
@@ -93,9 +93,9 @@ def main():
 
     tests_denied = [
         ("delete_all", {}, ToolDenied, "unknown tool"),
-        ("read_file", {"path": "/etc/passwd"}, ConstraintViolation, "path traversal"),
+        ("read_file", {"path": "/etc/passwd"}, CrewAIConstraintViolation, "path traversal"),
         ("send_email", {"to": "hacker@evil.com", "subject": "Hi", "body": "..."},
-         ConstraintViolation, "external email"),
+         CrewAIConstraintViolation, "external email"),
         ("search", {"query": "test", "admin_flag": True}, UnlistedArgument, "extra arg"),
     ]
 

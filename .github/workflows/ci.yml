@@ -207,7 +207,7 @@ jobs:
 
       - name: Type check
         working-directory: tenuo-python
-        run: mypy .
+        run: mypy tenuo/
 
       - name: Test
         working-directory: tenuo-python
@@ -262,7 +262,7 @@ jobs:
         timeout-minutes: 10  # Tests should complete in <5 minutes
         env:
           TEMPORAL_LIVE_TESTS: "1"
-        run: pytest tests/test_temporal_live.py -v -m temporal_live --timeout=300
+        run: pytest tests/e2e/test_temporal_live.py -v -m temporal_live --timeout=300
 
   # ============================================================================
   # LANGCHAIN COMPATIBILITY
@@ -318,7 +318,7 @@ jobs:
 
       - name: Test LangChain integration
         working-directory: tenuo-python
-        run: pytest tests/test_langchain_integration.py tests/test_langgraph.py -v
+        run: pytest tests/adapters/test_langchain_integration.py tests/adapters/test_langgraph.py -v
 
   # ============================================================================
   # SECURITY AUDIT
@@ -362,10 +362,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Build Control Plane
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: tenuo-core
           file: tenuo-core/deploy/docker/Dockerfile.control
@@ -375,7 +375,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=control
 
       - name: Build Authorizer
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: tenuo-core
           file: tenuo-core/deploy/docker/Dockerfile.authorizer
@@ -428,7 +428,7 @@ jobs:
         working-directory: tenuo-python
         run: |
           uv pip install --system pytest pytest-asyncio
-          pytest tests/test_examples.py -v
+          pytest tests/examples/test_examples.py -v
 
       - name: Run Self-Contained Examples
         working-directory: tenuo-python/examples
@@ -698,7 +698,7 @@ jobs:
           pytest --cov=tenuo --cov-report=xml --cov-report=term-missing -q
 
       - name: Upload Rust coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: tenuo-core/lcov-rust.info
           flags: rust
@@ -706,7 +706,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload Python coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: tenuo-python/coverage.xml
           flags: python

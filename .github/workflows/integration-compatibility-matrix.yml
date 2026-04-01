@@ -86,7 +86,7 @@ jobs:
 
       - name: Run smoke tests (API contracts)
         run: |
-          pytest tenuo-python/tests/integration/test_smoke.py \
+          pytest tenuo-python/tests/e2e/test_smoke.py \
             -k "test_${{ matrix.integration }}" \
             -v --tb=short
 
@@ -95,12 +95,12 @@ jobs:
           # Run integration-specific tests if they exist
           pytest tenuo-python/tests/ \
             -k "${{ matrix.integration }}" \
-            --ignore=tenuo-python/tests/integration/ \
+            --ignore=tenuo-python/tests/e2e/ \
             -v --tb=short || echo "No integration tests found"
 
       - name: Check for deprecation warnings
         run: |
-          pytest tenuo-python/tests/integration/test_smoke.py \
+          pytest tenuo-python/tests/e2e/test_smoke.py \
             -k "test_${{ matrix.integration }}" \
             -W error::DeprecationWarning \
             -W error::PendingDeprecationWarning \

@@ -37,6 +37,14 @@ __all__ = [
 
 logger = logging.getLogger("tenuo.a2a.client")
 
+# HTTP header names — imported from tenuo_core to stay in sync with the wire spec.
+try:
+    from tenuo_core import WARRANT_HEADER
+except ImportError:
+    WARRANT_HEADER = "X-Tenuo-Warrant"
+
+WARRANT_CHAIN_HEADER = "X-Tenuo-Warrant-Chain"  # legacy transport fallback
+
 
 # =============================================================================
 # A2A Client Builder
@@ -200,7 +208,7 @@ class A2AClient:
         auth: Optional[Any] = None,
         pin_key: Optional[str] = None,
         timeout: float = 30.0,
-    ):
+    ) -> None:
         """
         Initialize A2A client.
 
@@ -232,29 +240,37 @@ class A2AClient:
     ) -> bool:
         """Validate a warrant delegation chain.
 
-        Thin wrapper over the Rust warrant parser for client-side chain
-        validation.  Useful when the client receives a chain (e.g., from an
-        agent-card or a task response) and wants to verify its integrity before
-        trusting it.
+        Performs full client-side chain validation:
+          1. Parses all warrants from base64.
+          2. Checks every warrant for expiry via Rust ``is_expired()``.
+          3. Verifies delegation linkage (each child's issuer == parent's holder).
+          4. Checks that the root warrant's issuer is in ``trusted_roots``,
+             closing the self-signed trust gap on the client side.
+
+        Note: This does **not** perform Proof-of-Possession verification — PoP
+        is a runtime check done at the server when the chain is presented with
+        a signed request.  Passing ``validate_chain`` means the chain is
+        structurally sound and anchored to a trusted issuer, not that the
+        bearer controls the holder key.
 
         Args:
-            chain: List of warrant tokens (base64 strings) in parent-first order,
-                   matching the ``X-Tenuo-Warrant-Chain`` header convention.
+            chain: List of warrant tokens (base64 strings) in parent-first order
+                   (root first, leaf last).  This is the same ordering used when
+                   packing a WarrantStack for the ``X-Tenuo-Warrant`` header.
             trusted_roots: Public keys trusted as root issuers.  If ``None``,
                            falls back to the pinned key (``pin_key``) if set.
 
         Returns:
-            ``True`` if the chain is structurally valid and all warrants are
-            unexpired.
+            ``True`` if the chain is structurally valid, all warrants are
+            unexpired, and the root issuer is in the trusted set.
 
         Raises:
             ValueError: If no trusted roots are available.
             ImportError: If ``tenuo_core`` is not installed.
-            ChainValidationError: If any warrant is malformed, expired, or the
-                                   chain linkage is invalid.
+            ChainValidationError: If any warrant is malformed, expired, the
+                                   chain linkage is invalid, or the root issuer
+                                   is not trusted.
         """
-        import time
-
         from .errors import ChainValidationError, WarrantExpiredError
 
         roots = trusted_roots
@@ -284,11 +300,9 @@ class A2AClient:
             except Exception as e:
                 raise ChainValidationError(f"Invalid warrant at position {i}: {e}")
 
-        # Check expiry of every warrant in the chain
-        now = int(time.time())
+        # Check expiry via Rust's is_expired() to ensure semantics match the server.
         for i, w in enumerate(chain_warrants):
-            exp = getattr(w, "exp", None)
-            if exp and exp < now:
+            if w.is_expired():
                 raise WarrantExpiredError(f"Warrant at position {i} has expired")
 
         # Verify chain linkage: each child's issuer must match its parent's holder.
@@ -297,15 +311,48 @@ class A2AClient:
             child = chain_warrants[i]
             parent_holder = getattr(parent, "sub", None) or getattr(parent, "holder", None)
             child_issuer = getattr(child, "iss", None) or getattr(child, "issuer", None)
-            if parent_holder and child_issuer and str(parent_holder) != str(child_issuer):
+            if parent_holder and child_issuer:
+                # Compare by canonical bytes when available; fall back to str() only
+                # when the Rust PublicKey type is not present (e.g. plain-dict warrants).
+                def _key_bytes(k: Any) -> Optional[bytes]:
+                    try:
+                        return bytes(k.to_bytes()) if hasattr(k, "to_bytes") else None
+                    except Exception:
+                        return None
+
+                ph_bytes = _key_bytes(parent_holder)
+                ci_bytes = _key_bytes(child_issuer)
+                mismatch = (
+                    ph_bytes != ci_bytes
+                    if ph_bytes is not None and ci_bytes is not None
+                    else str(parent_holder) != str(child_issuer)
+                )
+                if mismatch:
+                    raise ChainValidationError(
+                        f"Chain linkage broken at position {i}: "
+                        f"parent holder does not match child issuer"
+                    )
+
+        # Verify the root warrant's issuer is in the trusted set.
+        # This is the cryptographic trust anchor check — without it, an attacker
+        # could present a structurally-valid chain signed by a key they control.
+        root = chain_warrants[0]
+        root_issuer = getattr(root, "issuer", None)
+        if root_issuer is not None:
+            root_issuer_bytes = bytes(root_issuer.to_bytes()) if hasattr(root_issuer, "to_bytes") else None
+            trusted_bytes = []
+            for r in roots:
+                try:
+                    trusted_bytes.append(bytes(r.to_bytes()) if hasattr(r, "to_bytes") else None)
+                except Exception:
+                    pass
+            trusted_bytes = [b for b in trusted_bytes if b is not None]
+            if trusted_bytes and root_issuer_bytes not in trusted_bytes:
                 raise ChainValidationError(
-                    f"Chain linkage broken at position {i}: "
-                    f"parent holder '{parent_holder}' != child issuer '{child_issuer}'"
+                    "Root warrant issuer is not in trusted_roots — chain rejected. "
+                    "Ensure trusted_roots contains the public key of the warrant authority."
                 )
 
-        # Note: cryptographic root-trust verification (issuer in trusted_roots) is
-        # performed by the Rust Authorizer on the server side.  Client-side we
-        # validate structure and expiry only.
         return True
 
     async def _get_client(self):
@@ -572,19 +619,31 @@ class A2AClient:
         # Warrant must be a tenuo Warrant object with to_base64()
         if not hasattr(warrant, "to_base64"):
             raise TypeError(f"warrant must be a Warrant object with to_base64() method, got {type(warrant).__name__}")
-        warrant_token = warrant.to_base64()
 
-        # Build headers
-        headers: Dict[str, str] = {"X-Tenuo-Warrant": warrant_token}
-
-        # Add delegation chain if provided (semicolon-separated, parent-first)
+        # Build headers — pack chain + leaf into a single WarrantStack when a
+        # delegation chain is present.  This avoids the two-header split and
+        # matches the CBOR WarrantStack format used by tenuo-core.
+        headers: Dict[str, str] = {}
         if warrant_chain:
-            chain_tokens = []
             for w in warrant_chain:
                 if not hasattr(w, "to_base64"):
                     raise TypeError(f"warrant_chain items must have to_base64() method, got {type(w).__name__}")
-                chain_tokens.append(w.to_base64())
-            headers["X-Tenuo-Warrant-Chain"] = ";".join(chain_tokens)
+            try:
+                from tenuo_core import encode_warrant_stack
+
+                all_warrants = list(warrant_chain) + [warrant]
+                stack_b64 = encode_warrant_stack(all_warrants)
+                if stack_b64:
+                    headers[WARRANT_HEADER] = stack_b64
+                else:
+                    raise ValueError("encode_warrant_stack returned None")
+            except Exception as _e:
+                # Graceful fallback: legacy two-header format
+                logger.warning("WarrantStack encode failed, falling back to legacy format: %s", _e)
+                headers[WARRANT_HEADER] = warrant.to_base64()
+                headers[WARRANT_CHAIN_HEADER] = ";".join(w.to_base64() for w in warrant_chain)
+        else:
+            headers[WARRANT_HEADER] = warrant.to_base64()
 
         # Generate Proof-of-Possession signature if signing_key provided
         args = arguments or {}
@@ -734,22 +793,29 @@ class A2AClient:
         # Serialize warrant
         if not hasattr(warrant, "to_base64"):
             raise TypeError(f"warrant must be a Warrant object with to_base64() method, got {type(warrant).__name__}")
-        warrant_token = warrant.to_base64()
 
-        # Build headers
-        headers: Dict[str, str] = {
-            "X-Tenuo-Warrant": warrant_token,
-            "Accept": "text/event-stream",
-        }
-
-        # Add delegation chain if provided
+        # Build headers — pack chain + leaf into a single WarrantStack when a
+        # delegation chain is present (same logic as send_task).
+        headers: Dict[str, str] = {"Accept": "text/event-stream"}
         if warrant_chain:
-            chain_tokens = []
             for w in warrant_chain:
                 if not hasattr(w, "to_base64"):
                     raise TypeError(f"warrant_chain items must have to_base64() method, got {type(w).__name__}")
-                chain_tokens.append(w.to_base64())
-            headers["X-Tenuo-Warrant-Chain"] = ";".join(chain_tokens)
+            try:
+                from tenuo_core import encode_warrant_stack
+
+                all_warrants = list(warrant_chain) + [warrant]
+                stack_b64 = encode_warrant_stack(all_warrants)
+                if stack_b64:
+                    headers[WARRANT_HEADER] = stack_b64
+                else:
+                    raise ValueError("encode_warrant_stack returned None")
+            except Exception as _e:
+                logger.warning("WarrantStack encode failed, falling back to legacy format: %s", _e)
+                headers[WARRANT_HEADER] = warrant.to_base64()
+                headers[WARRANT_CHAIN_HEADER] = ";".join(w.to_base64() for w in warrant_chain)
+        else:
+            headers[WARRANT_HEADER] = warrant.to_base64()
 
         # Generate Proof-of-Possession signature if signing_key provided
         args = arguments or {}

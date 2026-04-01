@@ -116,7 +116,8 @@ from tenuo import (
     Warrant,
     Wildcard,
 )
-from tenuo._builder import BaseGuardBuilder
+from ._builder import BaseGuardBuilder
+from .config import resolve_trusted_roots
 
 # Import unified enforcement logic
 from tenuo._enforcement import (
@@ -242,7 +243,7 @@ class ToolDenied(TenuoCrewAIError):
         super().__init__(msg)
 
 
-class ConstraintViolation(TenuoCrewAIError):
+class CrewAIConstraintViolation(TenuoCrewAIError):
     """Raised when a tool argument violates a constraint.
 
     Attributes:
@@ -327,7 +328,7 @@ class MissingSigningKey(TenuoCrewAIError):
         )
 
 
-class ConfigurationError(TenuoCrewAIError):
+class CrewAIConfigurationError(TenuoCrewAIError):
     """Raised when guard configuration is invalid."""
 
     error_code = "CONFIGURATION_ERROR"
@@ -556,7 +557,7 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
                 - "skip": Return DenialResult silently (still audited)
         """
         if mode not in ("raise", "log", "skip"):
-            raise ConfigurationError(f"Invalid on_denial mode: {mode}")
+            raise CrewAIConfigurationError(f"Invalid on_denial mode: {mode}")
         self._on_denial = mode
         return self
 
@@ -582,6 +583,7 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
             allowed=self._constraints.copy(),
             warrant=self._warrant,
             signing_key=self._signing_key,
+            trusted_roots=self._trusted_roots,
             on_denial=self._on_denial,
             audit_callback=self._audit_callback,
             approval_policy=self._approval_policy,
@@ -611,6 +613,7 @@ class CrewAIGuard:
         allowed: Dict[str, Dict[str, Constraint]],
         warrant: Optional[Warrant],
         signing_key: Optional[SigningKey],
+        trusted_roots: Optional[list],
         on_denial: str,
         audit_callback: Optional[AuditCallback],
         approval_policy: Optional["ApprovalPolicy"] = None,
@@ -620,6 +623,7 @@ class CrewAIGuard:
         self._allowed = allowed
         self._warrant = warrant
         self._signing_key = signing_key
+        self._trusted_roots = trusted_roots
         self._on_denial = on_denial
         self._audit_callback = audit_callback
         self._approval_policy = approval_policy
@@ -822,7 +826,7 @@ class CrewAIGuard:
             None if authorized, DenialResult if denied and on_denial != "raise"
 
         Raises:
-            ToolDenied, ConstraintViolation, UnlistedArgument: If denied and on_denial == "raise"
+            ToolDenied, CrewAIConstraintViolation, UnlistedArgument: If denied and on_denial == "raise"
         """
         logger.debug(f"Authorizing {tool_name} with args {list(args.keys())}")
 
@@ -853,7 +857,7 @@ class CrewAIGuard:
         for arg_name, arg_value in args.items():
             constraint = constraints[arg_name]
             if not check_constraint(constraint, arg_value):
-                error = ConstraintViolation(  # type: ignore[assignment]
+                error = CrewAIConstraintViolation(  # type: ignore[assignment]
                     tool=tool_name,
                     argument=arg_name,
                     value=arg_value,
@@ -869,6 +873,7 @@ class CrewAIGuard:
                 tool_name=tool_name,
                 tool_args=args,
                 bound_warrant=bound,
+                trusted_roots=resolve_trusted_roots(self._trusted_roots),
                 approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
@@ -884,7 +889,7 @@ class CrewAIGuard:
                      # Best-effort constraint violation mapping
                      from tenuo import Wildcard
                      violated_field = enforcement.constraint_violated or "unknown_field"
-                     error = ConstraintViolation(  # type: ignore[assignment]
+                     error = CrewAIConstraintViolation(  # type: ignore[assignment]
                         tool=tool_name,
                         argument=violated_field,
                         value=args.get(violated_field),
@@ -893,8 +898,16 @@ class CrewAIGuard:
                     )
                 elif enforcement.error_type == "tool_not_allowed":
                      error = WarrantToolDenied(tool=tool_name, warrant_id=bound.id)  # type: ignore[assignment]
+                elif enforcement.error_type in ("invalid_pop", "signature_invalid", "missing_signature"):
+                    error = InvalidPoP(reason=reason)  # type: ignore[assignment]
+                elif enforcement.error_type in ("authorization_failed", "configuration_error"):
+                    error = InvalidPoP(reason=reason)  # type: ignore[assignment]
                 else:
-                    # Default fallback for PoP failures etc.
+                    # Unknown error_type — treat as PoP failure (fail-closed)
+                    logger.debug(
+                        "Unhandled enforcement error_type %r for tool %r, defaulting to InvalidPoP",
+                        enforcement.error_type, tool_name,
+                    )
                     error = InvalidPoP(reason=reason)  # type: ignore[assignment]
 
                 return self._handle_denial(error, tool_name, args, agent_role)
@@ -1178,40 +1191,47 @@ class CrewAIGuard:
             "tier": 2,
         }
 
-        # Get warrant ID if available
-        if hasattr(self._warrant, "id"):
-            try:
-                info["warrant_id"] = self._warrant.id()
-            except Exception:
-                pass
+        # Helper: safely read a value that may be a property or a method.
+        def _read(attr: str) -> Any:
+            val = getattr(self._warrant, attr, None)
+            if val is None:
+                return None
+            return val() if callable(val) else val
 
-        # Get TTL info if available
-        if hasattr(self._warrant, "ttl_seconds"):
-            try:
-                info["ttl_remaining"] = self._warrant.ttl_seconds()
-            except Exception:
-                pass
+        try:
+            wid = _read("id")
+            if wid is not None:
+                info["warrant_id"] = wid
+        except Exception:
+            pass
 
-        # Get expiry status if available
-        if hasattr(self._warrant, "is_expired"):
-            try:
-                info["is_expired"] = self._warrant.is_expired()
-            except Exception:
-                pass
+        try:
+            ttl = _read("ttl_seconds")
+            if ttl is not None:
+                info["ttl_remaining"] = ttl
+        except Exception:
+            pass
 
-        # Get authorized tools if available
-        if hasattr(self._warrant, "tools"):
-            try:
-                info["tools"] = list(self._warrant.tools())
-            except Exception:
-                pass
+        try:
+            expired = _read("is_expired")
+            if expired is not None:
+                info["is_expired"] = bool(expired)
+        except Exception:
+            pass
 
-        # Get delegation depth if available
-        if hasattr(self._warrant, "depth"):
-            try:
-                info["depth"] = self._warrant.depth()
-            except Exception:
-                pass
+        try:
+            tools = _read("tools")
+            if tools is not None:
+                info["tools"] = list(tools)
+        except Exception:
+            pass
+
+        try:
+            depth = _read("depth")
+            if depth is not None:
+                info["depth"] = depth
+        except Exception:
+            pass
 
         return info
 
@@ -1336,19 +1356,26 @@ class WarrantDelegator:
         """Get the set of tools the parent warrant authorizes.
 
         Returns:
-            Set of tool names the parent authorizes
+            Set of tool names the parent authorizes, or empty set if the
+            parent warrant has no tool restriction.
 
         Raises:
-            EscalationAttempt: If tools cannot be retrieved (fail-closed)
+            EscalationAttempt: If tools attribute exists but cannot be read.
         """
-        if hasattr(parent_warrant, "tools"):
-            try:
-                return set(parent_warrant.tools())
-            except Exception as e:
-                # SECURITY: Fail-closed - if we can't verify parent tools, deny delegation
-                raise EscalationAttempt(f"Cannot verify parent warrant tools: {e}. Delegation denied (fail-closed).")
-        # No tools() method - assume warrant doesn't restrict tools
-        return set()
+        tools_attr = getattr(parent_warrant, "tools", None)
+        if tools_attr is None:
+            # Warrant does not restrict tools at all
+            return set()
+        try:
+            # tools is a property on Rust Warrant objects (returns a list).
+            # Guard against it being a callable (e.g. on mock objects).
+            tools = tools_attr() if callable(tools_attr) else tools_attr
+            return set(tools) if tools is not None else set()
+        except Exception as e:
+            # SECURITY: Fail-closed — if we can't read the tool list, deny delegation.
+            raise EscalationAttempt(
+                f"Cannot verify parent warrant tools: {e}. Delegation denied (fail-closed)."
+            )
 
     def _validate_tool_delegation(
         self,
@@ -1817,7 +1844,7 @@ class _GuardedCrewImpl:
             except Exception as e:
                 # SECURITY: Fail-closed - if issuer is configured but delegation fails,
                 # don't proceed with unguarded agent
-                raise ConfigurationError(
+                raise CrewAIConfigurationError(
                     f"Failed to issue warrant to agent '{role}': {e}. "
                     "Warrant issuance is required when .with_issuer() is configured. "
                     "Check that the issuer warrant has the necessary capabilities."
@@ -1832,7 +1859,7 @@ class _GuardedCrewImpl:
 
             if role not in self._policy:
                 # SECURITY: Fail-closed - agents not in policy cannot execute
-                raise ConfigurationError(
+                raise CrewAIConfigurationError(
                     f"Agent '{role}' is not listed in policy. "
                     "All agents must be covered by the policy for security. "
                     f"Add '{role}' to .policy() configuration."
@@ -1981,10 +2008,10 @@ __all__ = [
     # Exceptions
     "TenuoCrewAIError",
     "ToolDenied",
-    "ConstraintViolation",
+    "CrewAIConstraintViolation",
     "UnlistedArgument",
     "MissingSigningKey",
-    "ConfigurationError",
+    "CrewAIConfigurationError",
     "EscalationAttempt",
     "UnguardedToolError",
     # Tier 2 exceptions (Phase 3)
