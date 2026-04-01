@@ -68,6 +68,7 @@
         body {
             font-family: 'Inter', -apple-system, sans-serif;
             font-weight: 400;
+            font-size: 137.5%;
             background: var(--bg);
             color: var(--text);
             line-height: 1.6;
@@ -225,6 +226,10 @@
             gap: 12px;
         }
 
+        .hero-signin {
+            margin-top: 44px;
+        }
+
         .btn {
             display: inline-flex;
             align-items: center;
@@ -266,12 +271,14 @@
         }
 
         .signin-hint {
-            margin-top: 64px;
-            font-size: 0.8rem;
+            margin-top: 0;
+            font-size: 10px;
+            line-height: 1.35;
             color: var(--muted-dim);
         }
 
         .signin-hint a {
+            font-size: inherit;
             color: var(--accent);
             text-decoration: none;
         }
@@ -344,9 +351,30 @@
             color: var(--muted);
         }
 
+        /* Authority attenuation section sizing */
+        .attenuation-section {
+            font-size: 120%;
+        }
+
+        .attenuation-section .tree-wrap .node-label {
+            font-size: 15.73px;
+        }
+
+        .attenuation-section .tree-wrap .edge-label {
+            font-size: 13.31px;
+        }
+
+        .attenuation-section .tree-wrap .verdict-text {
+            font-size: 15.73px;
+        }
+
+        .attenuation-section .section-header p {
+            font-size: 80%;
+        }
+
         /* Tree Diagram */
         .tree-wrap {
-            max-width: 700px;
+            max-width: 740px;
             margin: 0 auto;
         }
 
@@ -446,7 +474,7 @@
 
         .card-warrant {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.65rem;
+            font-size: 0.76rem;
             color: var(--accent);
             background: rgba(56,189,248,0.06);
             padding: 6px 10px;
@@ -463,7 +491,7 @@
             color: var(--muted);
             display: block;
             margin-bottom: 2px;
-            font-size: 0.6rem;
+            font-size: 0.7rem;
             letter-spacing: 0.08em;
             text-transform: uppercase;
         }
@@ -503,7 +531,7 @@
 
         .log-entry code {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.62rem;
+            font-size: 0.68rem;
             color: var(--text);
             flex: 1;
             min-width: 0;
@@ -513,7 +541,7 @@
 
         .log-result {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.58rem;
+            font-size: 0.64rem;
             flex-shrink: 0;
         }
 
@@ -532,25 +560,78 @@
         .integrations-inline {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
-            gap: 8px;
-            max-width: 700px;
+            gap: 12px;
+            width: 100%;
+            max-width: 900px;
             margin: 0 auto;
         }
 
+        .integrations-section .section-header {
+            margin-bottom: 52px;
+        }
+
         .integrations-inline a {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
+            font-size: 0.92rem;
             color: var(--muted);
             text-decoration: none;
             text-align: center;
-            padding: 6px 16px;
+            white-space: nowrap;
+            min-width: 0;
+            min-height: 48px;
+            padding: 10px 18px;
             border: 1px solid rgba(56,189,248,0.09);
             transition: all 0.2s;
+        }
+
+        .integration-logo {
+            height: 22px;
+            width: auto;
+            object-fit: contain;
+            flex-shrink: 0;
+            filter: brightness(0) invert(1);
+            opacity: 0.55;
+        }
+
+        .integration-logo--native {
+            filter: none;
+            opacity: 0.62;
         }
 
         .integrations-inline a:hover {
             color: var(--text);
             border-color: rgba(56,189,248,0.25);
+        }
+
+        .integrations-inline a:hover .integration-logo {
+            opacity: 0.8;
+        }
+
+        @media (max-width: 1100px) {
+            .integrations-inline {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        @media (max-width: 760px) {
+            .integrations-inline {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .integrations-inline a {
+                white-space: normal;
+                line-height: 1.25;
+                font-size: 0.84rem;
+                padding: 10px 12px;
+            }
+
+            .integration-openai {
+                font-size: 0.78rem;
+            }
         }
 
         /* Production CTA */
@@ -669,11 +750,15 @@
             <p>
                 Tenuo issues task-scoped warrants that <strong>narrow as agents delegate.</strong>
             </p>
-            <div class="cta">
-                <a href="early-access.html" class="btn btn-primary">Request Early Access</a>
-                <a href="https://github.com/tenuo-ai/tenuo" class="btn btn-secondary">GitHub ↗</a>
+            <div class="hero-cta">
+                <div class="cta">
+                    <a href="early-access.html" class="btn btn-primary">Request Early Access</a>
+                    <a href="https://github.com/tenuo-ai/tenuo" class="btn btn-secondary">GitHub ↗</a>
+                </div>
             </div>
-            <p class="signin-hint">Already have access? <a href="https://cloud.tenuo.ai">Sign in to Tenuo Cloud</a></p>
+            <div class="hero-signin">
+                <p class="signin-hint">Already have access? <a href="https://cloud.tenuo.ai">Sign in to Tenuo Cloud</a></p>
+            </div>
         </section>
 
         <div class="features">
@@ -695,14 +780,14 @@
         </div>
 
         <!-- Authority Attenuation Tree -->
-        <section class="section">
+        <section class="section attenuation-section">
             <div class="section-header">
                 <h2>Warrants narrow at every hop</h2>
                 <p>No child warrant can exceed its parent. Enforced cryptographically.</p>
             </div>
 
             <div class="tree-wrap" id="tree-diagram">
-                <svg viewBox="0 0 760 350" xmlns="http://www.w3.org/2000/svg">
+                <svg viewBox="0 0 760 430" xmlns="http://www.w3.org/2000/svg">
                     <defs>
                         <filter id="glow-pulse" x="-50%" y="-50%" width="200%" height="200%">
                             <feGaussianBlur stdDeviation="3" result="blur"/>
@@ -712,10 +797,10 @@
 
                     <!-- Edges -->
                     <line class="edge fade-in" x1="380" y1="50" x2="380" y2="100" style="transition-delay:0.3s"/>
-                    <path class="edge fade-in" d="M 380 140 C 380 172, 195 178, 195 200" style="transition-delay:0.8s"/>
-                    <path class="edge fade-in" d="M 380 140 C 380 172, 565 178, 565 200" style="transition-delay:0.8s"/>
-                    <line class="edge fade-in" x1="195" y1="240" x2="120" y2="286" style="transition-delay:1.3s"/>
-                    <line class="edge fade-in" x1="565" y1="240" x2="640" y2="286" style="transition-delay:1.3s"/>
+                    <path class="edge fade-in" d="M 380 140 C 380 190, 195 200, 195 226" style="transition-delay:0.8s"/>
+                    <path class="edge fade-in" d="M 380 140 C 380 190, 565 200, 565 226" style="transition-delay:0.8s"/>
+                    <line class="edge fade-in" x1="195" y1="266" x2="110" y2="334" style="transition-delay:1.3s"/>
+                    <line class="edge fade-in" x1="565" y1="266" x2="650" y2="334" style="transition-delay:1.3s"/>
 
                     <!-- Animated pulses — opacity synced with motion so they never flash at (0,0) -->
                     <circle class="pulse" r="3" opacity="0" filter="url(#glow-pulse)">
@@ -726,35 +811,35 @@
                     </circle>
                     <circle class="pulse" r="2.5" opacity="0" filter="url(#glow-pulse)">
                         <animateMotion dur="3s" repeatCount="indefinite" begin="1.4s"
-                            path="M 380,140 C 380,172 195,178 195,200" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                            path="M 380,140 C 380,190 195,200 195,226" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
                         <animate attributeName="opacity" dur="3s" repeatCount="indefinite" begin="1.4s"
                             values="0;0.8;0.8;0;0" keyTimes="0;0.05;0.35;0.45;1"/>
                     </circle>
                     <circle class="pulse" r="2.5" opacity="0" filter="url(#glow-pulse)">
                         <animateMotion dur="3s" repeatCount="indefinite" begin="1.4s"
-                            path="M 380,140 C 380,172 565,178 565,200" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                            path="M 380,140 C 380,190 565,200 565,226" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
                         <animate attributeName="opacity" dur="3s" repeatCount="indefinite" begin="1.4s"
                             values="0;0.8;0.8;0;0" keyTimes="0;0.05;0.35;0.45;1"/>
                     </circle>
                     <circle class="pulse" r="2" opacity="0" filter="url(#glow-pulse)">
                         <animateMotion dur="3s" repeatCount="indefinite" begin="2.0s"
-                            path="M 195,240 L 120,286" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                            path="M 195,266 L 110,334" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
                         <animate attributeName="opacity" dur="3s" repeatCount="indefinite" begin="2.0s"
                             values="0;0.8;0.8;0;0" keyTimes="0;0.05;0.35;0.45;1"/>
                     </circle>
                     <circle class="pulse" r="2" opacity="0" filter="url(#glow-pulse)">
                         <animateMotion dur="3s" repeatCount="indefinite" begin="2.0s"
-                            path="M 565,240 L 640,286" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
+                            path="M 565,266 L 650,334" keyTimes="0;0.35;1" keyPoints="0;1;1" calcMode="linear"/>
                         <animate attributeName="opacity" dur="3s" repeatCount="indefinite" begin="2.0s"
                             values="0;0.8;0.8;0;0" keyTimes="0;0.05;0.35;0.45;1"/>
                     </circle>
 
                     <!-- Warrant scope labels -->
                     <text class="edge-label fade-in" x="394" y="82" style="transition-delay:0.5s">12 capabilities · ttl 1h</text>
-                    <text class="edge-label narrow fade-in" x="246" y="176" style="transition-delay:1.0s">query_db · search_kb</text>
-                    <text class="edge-label narrow fade-in" x="430" y="176" style="transition-delay:1.0s">read_file · draft_response</text>
-                    <text class="edge-label narrow fade-in" x="110" y="268" text-anchor="middle" style="transition-delay:1.5s">query_db · /customers/* · 60s</text>
-                    <text class="edge-label narrow fade-in" x="650" y="268" text-anchor="middle" style="transition-delay:1.5s">read_file · /templates/* · 60s</text>
+                    <text class="edge-label narrow fade-in" x="226" y="192" style="transition-delay:1.0s">query_db · search_kb</text>
+                    <text class="edge-label narrow fade-in" x="450" y="192" style="transition-delay:1.0s">read_file · draft_response</text>
+                    <text class="edge-label narrow fade-in" x="130" y="312" text-anchor="middle" style="transition-delay:1.5s">query_db · /customers/* · 60s</text>
+                    <text class="edge-label narrow fade-in" x="630" y="312" text-anchor="middle" style="transition-delay:1.5s">read_file · /templates/* · 60s</text>
 
                     <!-- Level 0: User -->
                     <g class="fade-in" style="transition-delay:0s">
@@ -772,34 +857,34 @@
 
                     <!-- Level 2: Research Agent -->
                     <g class="fade-in" style="transition-delay:1.0s">
-                        <rect class="node-rect" x="118" y="200" width="154" height="40"/>
-                        <circle class="node-dot" cx="136" cy="220" r="3.5"/>
-                        <text class="node-label" x="148" y="225">Research Agent</text>
+                        <rect class="node-rect" x="109" y="226" width="172" height="40"/>
+                        <circle class="node-dot" cx="127" cy="246" r="3.5"/>
+                        <text class="node-label" x="139" y="251">Research Agent</text>
                     </g>
 
                     <!-- Level 2: Writer Agent -->
                     <g class="fade-in" style="transition-delay:1.0s">
-                        <rect class="node-rect" x="488" y="200" width="154" height="40"/>
-                        <circle class="node-dot" cx="506" cy="220" r="3.5"/>
-                        <text class="node-label" x="518" y="225">Writer Agent</text>
+                        <rect class="node-rect" x="479" y="226" width="172" height="40"/>
+                        <circle class="node-dot" cx="497" cy="246" r="3.5"/>
+                        <text class="node-label" x="509" y="251">Writer Agent</text>
                     </g>
 
                     <!-- Level 3: DB Worker -->
                     <g class="fade-in" style="transition-delay:1.5s">
-                        <rect class="node-rect" x="50" y="286" width="140" height="36"/>
-                        <circle class="node-dot" cx="68" cy="304" r="3"/>
-                        <text class="node-label" x="80" y="309">DB Worker</text>
+                        <rect class="node-rect" x="40" y="334" width="140" height="36"/>
+                        <circle class="node-dot" cx="58" cy="352" r="3"/>
+                        <text class="node-label" x="70" y="357">DB Worker</text>
                     </g>
 
                     <!-- Level 3: File Worker -->
                     <g class="fade-in" style="transition-delay:1.5s">
-                        <rect class="node-rect" x="570" y="286" width="140" height="36"/>
-                        <circle class="node-dot" cx="588" cy="304" r="3"/>
-                        <text class="node-label" x="600" y="309">File Worker</text>
+                        <rect class="node-rect" x="580" y="334" width="140" height="36"/>
+                        <circle class="node-dot" cx="598" cy="352" r="3"/>
+                        <text class="node-label" x="610" y="357">File Worker</text>
                     </g>
 
                     <!-- Bottom verdict -->
-                    <text class="verdict-text fade-in" x="380" y="346" text-anchor="middle" style="transition-delay:2.2s">
+                    <text class="verdict-text fade-in" x="380" y="414" text-anchor="middle" style="transition-delay:2.2s">
                         <tspan fill="#5ecfff">Signed at every hop.</tspan>
                         <tspan fill="#7a9aaa"> Full warrant chain verifiable offline.</tspan>
                     </text>
@@ -878,21 +963,21 @@
         </section>
 
         <!-- Integrations -->
-        <section class="section">
+        <section class="section integrations-section">
             <div class="section-header">
-                <h2>Works with your stack</h2>
+                <h2>Drop-in for your stack</h2>
             </div>
             <div class="integrations-inline">
-                <a href="openai">OpenAI</a>
-                <a href="crewai">CrewAI</a>
-                <a href="langchain">LangChain</a>
-                <a href="langgraph">LangGraph</a>
-                <a href="temporal">Temporal</a>
-                <a href="google-adk">Google ADK</a>
-                <a href="autogen">AutoGen</a>
-                <a href="mcp">MCP</a>
-                <a href="a2a">A2A</a>
-                <a href="kubernetes">Kubernetes</a>
+                <a href="crewai"><img class="integration-logo" src="images/integrations/crewai.svg" alt="CrewAI logo">CrewAI</a>
+                <a href="langchain"><img class="integration-logo" src="images/integrations/langchain.svg" alt="LangChain logo">LangChain</a>
+                <a href="langgraph"><img class="integration-logo" src="images/integrations/langgraph.svg" alt="LangGraph logo">LangGraph</a>
+                <a href="openai" class="integration-openai"><img class="integration-logo" src="images/integrations/openai.svg" alt="OpenAI Agents SDK logo">OpenAI Agents SDK</a>
+                <a href="temporal"><img class="integration-logo" src="images/integrations/temporal.svg" alt="Temporal logo">Temporal</a>
+                <a href="google-adk"><img class="integration-logo" src="images/integrations/google-adk.png" alt="Google ADK logo">Google ADK</a>
+                <a href="autogen"><img class="integration-logo integration-logo--native" src="images/integrations/autogen.png" alt="AutoGen logo">AutoGen</a>
+                <a href="mcp"><img class="integration-logo" src="images/integrations/mcp.svg" alt="MCP logo">MCP</a>
+                <a href="a2a"><img class="integration-logo" src="images/integrations/a2a.svg" alt="A2A logo">A2A</a>
+                <a href="kubernetes"><img class="integration-logo" src="images/integrations/kubernetes.svg" alt="Kubernetes logo">Kubernetes</a>
             </div>
         </section>
 
