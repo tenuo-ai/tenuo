@@ -86,8 +86,8 @@ required-features = ["data-plane"]
 [dependencies]
 # Cryptography
 ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "batch", "pkcs8", "zeroize"] }
-rand = "0.9"
-sha2 = "0.10"
+rand = "0.10"
+sha2 = "0.11"
 subtle = "2.6"  # Constant-time comparison for secrets
 secrecy = { version = "0.10", features = ["serde"] }
 zeroize = "1.7"
@@ -156,8 +156,10 @@ humantime = "2.1"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # getrandom 0.2 — required by rand_core 0.6 / ed25519-dalek via the old RNG trait stack
 getrandom = { version = "0.2", features = ["js"] }
-# getrandom 0.3 — pulled in by rand 0.9 / rand_core 0.9 on WASM targets; needs wasm_js backend
+# getrandom 0.3 — pulled in by rand_core 0.9 on WASM targets
 getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+# getrandom 0.4 — pulled in by rand 0.10 / rand_core 0.10 on WASM targets
+getrandom4 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 
 [dev-dependencies]
 proptest = "1.4"
