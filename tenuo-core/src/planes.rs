@@ -58,16 +58,16 @@ fn verify_approvals_with_tolerance(
     args: &HashMap<String, ConstraintValue>,
     approvals: &[crate::approval::SignedApproval],
     clock_tolerance: chrono::Duration,
-) -> Result<()> {
+) -> Result<Vec<VerifiedApproval>> {
     // Check if multi-sig is required
     let required_approvers = match warrant.required_approvers() {
         Some(approvers) if !approvers.is_empty() => approvers,
-        _ => return Ok(()), // No multi-sig required
+        _ => return Ok(Vec::new()), // No multi-sig required
     };
 
     let threshold = warrant.approval_threshold();
     if threshold == 0 {
-        return Ok(()); // Defensive: no threshold means no requirement
+        return Ok(Vec::new()); // Defensive: no threshold means no requirement
     }
 
     // DoS protection: limit approval count
@@ -102,6 +102,7 @@ fn verify_approvals_with_tolerance(
     let now = chrono::Utc::now().timestamp() as u64;
     let tolerance_secs = clock_tolerance.num_seconds() as u64;
     let mut rejections: Vec<Rejection> = Vec::new();
+    let mut verified: Vec<VerifiedApproval> = Vec::new();
 
     for approval in approvals {
         let payload = match approval.verify() {
@@ -132,11 +133,18 @@ fn verify_approvals_with_tolerance(
             continue;
         }
 
+        verified.push(VerifiedApproval {
+            approver_key: approval.approver_key.to_bytes(),
+            external_id: payload.external_id.clone(),
+            approved_at: payload.approved_at,
+            expires_at: payload.expires_at,
+            request_hash: payload.request_hash,
+        });
         valid_count = valid_count.saturating_add(1);
         seen_approvers.insert(approval.approver_key.clone());
 
         if valid_count >= threshold {
-            return Ok(());
+            return Ok(verified);
         }
     }
 
@@ -215,6 +223,23 @@ fn verify_approvals_with_tolerance(
 // CHAIN VERIFICATION TYPES
 // ============================================================================
 
+/// An approval that passed full cryptographic and semantic verification
+/// during `check_chain`. Only approvals that contributed to meeting the
+/// threshold are included.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifiedApproval {
+    /// Ed25519 public key of the approver (raw 32 bytes).
+    pub approver_key: [u8; 32],
+    /// External identity reference (e.g., "arn:aws:iam::123:user/admin").
+    pub external_id: String,
+    /// When the approval was granted (Unix seconds).
+    pub approved_at: u64,
+    /// When the approval expires (Unix seconds).
+    pub expires_at: u64,
+    /// Hash binding the approval to (warrant_id, tool, args, holder).
+    pub request_hash: [u8; 32],
+}
+
 /// Result of a successful chain verification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainVerificationResult {
@@ -230,6 +255,9 @@ pub struct ChainVerificationResult {
     /// Populated by check_chain(); None when computed from a single warrant
     /// via authorize_one() without a full chain.
     pub warrant_stack_b64: Option<String>,
+    /// Approvals that passed full verification and contributed to meeting
+    /// the approval threshold. Empty when no approvals were required.
+    pub verified_approvals: Vec<VerifiedApproval>,
 }
 
 /// A single step in the verified chain.
@@ -851,6 +879,7 @@ impl DataPlane {
             leaf_depth: 0,
             verified_steps: Vec::new(),
             warrant_stack_b64: None,
+            verified_approvals: Vec::new(),
         };
 
         // Step 1: Verify the root warrant is from a trusted key
@@ -1202,21 +1231,25 @@ impl DataPlane {
                     );
                 }
             }
-            auth_result?;
+            let verified_approvals = auth_result?;
+
+            use base64::Engine;
+            let warrant_stack_b64 =
+                crate::wire::encode_stack(&crate::wire::WarrantStack(chain.to_vec()))
+                    .ok()
+                    .map(|b| base64::engine::general_purpose::STANDARD.encode(b));
+            let mut result = result;
+            result.warrant_stack_b64 = warrant_stack_b64;
+            result.verified_approvals = verified_approvals;
+
+            return Ok(result);
         }
 
         use base64::Engine;
-        let warrant_stack_b64 = if chain.len() > 1 {
-            let stack = crate::wire::WarrantStack(chain.to_vec());
-            crate::wire::encode_stack(&stack)
-                .ok()
-                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
-        } else {
-            // Single warrant — encode it directly for audit completeness
+        let warrant_stack_b64 =
             crate::wire::encode_stack(&crate::wire::WarrantStack(chain.to_vec()))
                 .ok()
-                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
-        };
+                .map(|b| base64::engine::general_purpose::STANDARD.encode(b));
         let mut result = result;
         result.warrant_stack_b64 = warrant_stack_b64;
 
@@ -1852,7 +1885,7 @@ impl Authorizer {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
         approvals: &[crate::approval::SignedApproval],
-    ) -> Result<()> {
+    ) -> Result<Vec<VerifiedApproval>> {
         verify_approvals_with_tolerance(warrant, tool, args, approvals, self.clock_tolerance)
     }
 
@@ -1952,6 +1985,7 @@ impl Authorizer {
             leaf_depth: 0,
             verified_steps: Vec::new(),
             warrant_stack_b64: None,
+            verified_approvals: Vec::new(),
         };
 
         // Root must be from a trusted key
@@ -2278,6 +2312,7 @@ impl Authorizer {
         approvals: &[crate::approval::SignedApproval],
     ) -> Result<ChainVerificationResult> {
         let result = self.verify_chain(chain)?;
+        let mut verified_approvals = Vec::new();
 
         if let Some(leaf) = chain.last() {
             // Clearance check
@@ -2351,26 +2386,20 @@ impl Authorizer {
                 }
                 // Approvals were provided — verify them. If they're insufficient
                 // or invalid, InsufficientApprovals propagates with diagnostics.
-                self.verify_approvals(leaf, tool, args, approvals)?;
+                verified_approvals = self.verify_approvals(leaf, tool, args, approvals)?;
             }
             // needs_approval = false → tool is free (either approval gate map present
             // and no approval gate matched, or no approval gate map and no required_approvers)
         }
 
         use base64::Engine;
-        let warrant_stack_b64 = if chain.len() > 1 {
-            let stack = crate::wire::WarrantStack(chain.to_vec());
-            crate::wire::encode_stack(&stack)
-                .ok()
-                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
-        } else {
-            // Single warrant — encode it directly for audit completeness
+        let warrant_stack_b64 =
             crate::wire::encode_stack(&crate::wire::WarrantStack(chain.to_vec()))
                 .ok()
-                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
-        };
+                .map(|b| base64::engine::general_purpose::STANDARD.encode(b));
         let mut result = result;
         result.warrant_stack_b64 = warrant_stack_b64;
+        result.verified_approvals = verified_approvals;
 
         Ok(result)
     }
@@ -4672,5 +4701,345 @@ mod tests {
                 .unwrap()
                 .unwrap();
         assert!(child_approval_gates.contains_tool("email.delete"));
+    }
+
+    // =========================================================================
+    // Approval Verification Security Pin Tests
+    //
+    // These tests pin the exact security properties of approval verification
+    // that must be preserved across refactors. Each test isolates a single
+    // rejection reason at the check_chain / authorize_one level.
+    // =========================================================================
+
+    /// Helper: build a warrant + authorizer + approval infrastructure for pin tests.
+    fn approval_pin_test_setup() -> (
+        Warrant,
+        Authorizer,
+        SigningKey, // issuer (also holder for simplicity)
+        SigningKey, // admin1 (authorized approver)
+        SigningKey, // admin2 (authorized approver)
+        HashMap<String, ConstraintValue>,
+    ) {
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
+
+        let issuer = SigningKey::generate();
+        let admin1 = SigningKey::generate();
+        let admin2 = SigningKey::generate();
+
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("action".into(), ToolApprovalGate::whole_tool());
+
+        let warrant = Warrant::builder()
+            .capability("action", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![admin1.public_key(), admin2.public_key()])
+            .min_approvals(1)
+            .holder(issuer.public_key())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .build(&issuer)
+            .unwrap();
+
+        let authorizer = Authorizer::new().with_trusted_root(issuer.public_key());
+        let args = HashMap::new();
+
+        (warrant, authorizer, issuer, admin1, admin2, args)
+    }
+
+    /// Helper: create a valid approval for the pin test warrant.
+    fn make_pin_approval(
+        warrant: &Warrant,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        approver: &SigningKey,
+        external_id: &str,
+        ttl_secs: i64,
+    ) -> crate::approval::SignedApproval {
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+
+        let request_hash = compute_request_hash(
+            &warrant.id().to_string(),
+            tool,
+            args,
+            Some(warrant.authorized_holder()),
+        );
+        let now = chrono::Utc::now();
+        let payload = ApprovalPayload::new(
+            request_hash,
+            rand::random(),
+            external_id.to_string(),
+            now,
+            now + chrono::Duration::seconds(ttl_secs),
+        );
+        SignedApproval::create(payload, approver)
+    }
+
+    #[test]
+    fn test_pin_forged_signature_rejected_at_check_chain() {
+        let (warrant, authorizer, issuer, admin1, _, args) = approval_pin_test_setup();
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+
+        let mut approval = make_pin_approval(&warrant, "action", &args, &admin1, "admin1", 300);
+        // Tamper with the CBOR payload after signing
+        if let Some(byte) = approval.payload.last_mut() {
+            *byte ^= 0xFF;
+        }
+
+        let result = authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[approval]);
+        assert!(result.is_err(), "forged approval must be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("invalid signature") || err_msg.contains("Insufficient"),
+            "expected signature rejection, got: {}",
+            err_msg,
+        );
+    }
+
+    #[test]
+    fn test_pin_duplicate_approver_does_not_double_count() {
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
+
+        let issuer = SigningKey::generate();
+        let admin1 = SigningKey::generate();
+        let admin2 = SigningKey::generate();
+
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("action".into(), ToolApprovalGate::whole_tool());
+
+        // Require 2-of-2 approvals
+        let warrant = Warrant::builder()
+            .capability("action", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![admin1.public_key(), admin2.public_key()])
+            .min_approvals(2)
+            .holder(issuer.public_key())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .build(&issuer)
+            .unwrap();
+
+        let authorizer = Authorizer::new().with_trusted_root(issuer.public_key());
+        let args = HashMap::new();
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+
+        // Submit admin1 twice (different nonces) — must not count as 2
+        let a1 = make_pin_approval(&warrant, "action", &args, &admin1, "admin1", 300);
+        let a2 = make_pin_approval(&warrant, "action", &args, &admin1, "admin1", 300);
+
+        let result = authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[a1, a2]);
+        assert!(
+            result.is_err(),
+            "duplicate approvals from same key must not satisfy 2-of-2 threshold"
+        );
+    }
+
+    #[test]
+    fn test_pin_expired_approval_rejected() {
+        let (warrant, authorizer, issuer, admin1, _, args) = approval_pin_test_setup();
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+
+        // Create approval that expired 2 hours ago
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+        let request_hash = compute_request_hash(
+            &warrant.id().to_string(),
+            "action",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+        let past = chrono::Utc::now() - chrono::Duration::hours(3);
+        let payload = ApprovalPayload::new(
+            request_hash,
+            rand::random(),
+            "admin1".to_string(),
+            past,
+            past + chrono::Duration::seconds(300), // expired 2+ hours ago
+        );
+        let expired = SignedApproval::create(payload, &admin1);
+
+        let result = authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[expired]);
+        assert!(result.is_err(), "expired approval must be rejected");
+    }
+
+    #[test]
+    fn test_pin_wrong_request_hash_rejected() {
+        let (warrant, authorizer, issuer, admin1, _, args) = approval_pin_test_setup();
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+
+        // Create approval with wrong request hash (different tool name)
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+        let wrong_hash = compute_request_hash(
+            &warrant.id().to_string(),
+            "WRONG_TOOL",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+        let now = chrono::Utc::now();
+        let payload = ApprovalPayload::new(
+            wrong_hash,
+            rand::random(),
+            "admin1".to_string(),
+            now,
+            now + chrono::Duration::seconds(300),
+        );
+        let mismatched = SignedApproval::create(payload, &admin1);
+
+        let result = authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[mismatched]);
+        assert!(
+            result.is_err(),
+            "approval for wrong request must be rejected"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("hash mismatch") || err_msg.contains("request hash"),
+            "expected hash mismatch rejection, got: {}",
+            err_msg,
+        );
+    }
+
+    #[test]
+    fn test_pin_mixed_valid_and_invalid_approvals_threshold_met() {
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
+
+        let issuer = SigningKey::generate();
+        let admin1 = SigningKey::generate();
+        let admin2 = SigningKey::generate();
+        let rando = SigningKey::generate();
+
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("action".into(), ToolApprovalGate::whole_tool());
+
+        let warrant = Warrant::builder()
+            .capability("action", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![admin1.public_key(), admin2.public_key()])
+            .min_approvals(2)
+            .holder(issuer.public_key())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .build(&issuer)
+            .unwrap();
+
+        let authorizer = Authorizer::new().with_trusted_root(issuer.public_key());
+        let args = HashMap::new();
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+
+        // 3 approvals: 1 from unauthorized key, 2 from authorized keys
+        let unauthorized = make_pin_approval(&warrant, "action", &args, &rando, "rando", 300);
+        let valid1 = make_pin_approval(&warrant, "action", &args, &admin1, "admin1", 300);
+        let valid2 = make_pin_approval(&warrant, "action", &args, &admin2, "admin2", 300);
+
+        // Unauthorized first, then valid — should still succeed
+        let result = authorizer.authorize_one(
+            &warrant,
+            "action",
+            &args,
+            Some(&sig),
+            &[unauthorized, valid1, valid2],
+        );
+        assert!(
+            result.is_ok(),
+            "valid approvals meeting threshold should succeed despite invalid ones: {:?}",
+            result,
+        );
+    }
+
+    #[test]
+    fn test_pin_verified_approvals_in_chain_result() {
+        let (warrant, authorizer, issuer, admin1, _, args) = approval_pin_test_setup();
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+
+        let approval =
+            make_pin_approval(&warrant, "action", &args, &admin1, "admin1@corp.com", 300);
+
+        let result = authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[approval]);
+        assert!(result.is_ok(), "should succeed: {:?}", result);
+        let cvr = result.unwrap();
+
+        assert_eq!(cvr.chain_length, 1);
+        assert!(cvr.warrant_stack_b64.is_some());
+
+        // verified_approvals carries exactly the threshold-contributing approvals
+        assert_eq!(cvr.verified_approvals.len(), 1);
+        assert_eq!(cvr.verified_approvals[0].external_id, "admin1@corp.com");
+        assert_eq!(
+            cvr.verified_approvals[0].approver_key,
+            admin1.public_key().to_bytes(),
+        );
+    }
+
+    #[test]
+    fn test_pin_no_approvals_when_not_required() {
+        let control_plane = ControlPlane::generate();
+        let holder = SigningKey::generate();
+
+        let warrant = control_plane
+            .issue_bound_warrant(
+                "read_file",
+                &[],
+                Duration::from_secs(60),
+                &holder.public_key(),
+            )
+            .unwrap();
+
+        let authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
+        let args = HashMap::new();
+        let sig = warrant.sign(&holder, "read_file", &args).unwrap();
+
+        let result = authorizer.authorize_one(&warrant, "read_file", &args, Some(&sig), &[]);
+        assert!(result.is_ok());
+        let cvr = result.unwrap();
+
+        assert!(
+            cvr.verified_approvals.is_empty(),
+            "no approvals should be present when not required"
+        );
+    }
+
+    #[test]
+    fn test_pin_only_contributing_approvals_in_result() {
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
+
+        let issuer = SigningKey::generate();
+        let admin1 = SigningKey::generate();
+        let admin2 = SigningKey::generate();
+        let rando = SigningKey::generate();
+
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("action".into(), ToolApprovalGate::whole_tool());
+
+        let warrant = Warrant::builder()
+            .capability("action", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![admin1.public_key(), admin2.public_key()])
+            .min_approvals(1) // only need 1
+            .holder(issuer.public_key())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .build(&issuer)
+            .unwrap();
+
+        let authorizer = Authorizer::new().with_trusted_root(issuer.public_key());
+        let args = HashMap::new();
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+
+        // Submit: unauthorized rando, then admin1 (who meets threshold)
+        let bad = make_pin_approval(&warrant, "action", &args, &rando, "rando", 300);
+        let good = make_pin_approval(&warrant, "action", &args, &admin1, "admin1", 300);
+
+        let result = authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[bad, good]);
+        assert!(result.is_ok(), "should succeed: {:?}", result);
+        let cvr = result.unwrap();
+
+        // Only admin1 should appear (rando was not authorized)
+        assert_eq!(cvr.verified_approvals.len(), 1);
+        assert_eq!(cvr.verified_approvals[0].external_id, "admin1");
     }
 }
