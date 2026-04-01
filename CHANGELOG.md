@@ -9,12 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.0-beta.16] - 2026-03-31
+
+### Added
+
+- **Approval records in authorizer receipts** — `AuthorizationEvent` now includes verified `ApprovalRecord`s when human-in-the-loop approvals contributed to an authorization decision. Only approvals that passed all cryptographic and policy checks are included.
+- `**VerifiedApproval` struct** — new type propagated through `ChainVerificationResult` to avoid redundant Ed25519 re-verification in the audit path.
+
+### Security
+
+- **15 new cryptographic tests** — comprehensive round-trip, tamper-detection, and domain-separation tests for `SignedApproval`, `SignedEvent`, and `RegistrationProof`/`RotationProof`.
+- **8 pin tests for approval verification** — lock down security properties (forged signatures, duplicate approvers, expired approvals, wrong request hashes) across refactoring.
+- **CodeQL alerts resolved** — `replaceAll` for wildcard patterns in explorer (#33, #50), SRI integrity on CDN resources (#34).
+
+### Changed
+
+- **A2A server hot-path optimizations** — `Warrant` class lookup via `sys.modules` instead of per-request import; audit log `write`+`flush` offloaded to thread pool via `run_in_executor`; JTI extracted once and reused.
+- **PoP verification allocation reduction** — `id.to_hex()` hoisted above the window loop; `challenge_bytes` and `preimage` buffers pre-allocated and reused across iterations.
+- **Cycle detection optimized** — single-element chains skip `HashSet` entirely; multi-warrant chains use `WarrantId` bytes instead of `String` formatting.
+- **matchit 0.8 migration** — route patterns now use native `{param}` syntax; removed the `convert_pattern_to_matchit` translation layer.
+
+### Dependencies
+
+- `rand` 0.9 → 0.10, `sha2` 0.10 → 0.11 (`tenuo-core`)
+- `matchit` 0.7 → 0.8 (`tenuo-core`)
+- `vitest` 3 → 4, `@vitest/ui` 3 → 4 (`tenuo-explorer`)
+- `codecov/codecov-action` 5 → 6
+- `docker/build-push-action` 6 → 7, `docker/login-action` 3 → 4, `docker/setup-buildx-action` 3 → 4, `docker/setup-qemu-action` 3 → 4
+
+---
+
 ## [0.1.0-beta.15] - 2026-03-28
 
 ### Added
 
-- **`ArgApprovalGate::Exempt`** — new approval gate variant (in development). See Tenuo Cloud documentation for usage details.
-- **`WRAP_TOOL_CALL_SUPPORTED` flag** exported from `tenuo.langgraph` — lets callers detect at runtime whether the installed LangGraph version supports authorization hooks (`wrap_tool_call` requires LangGraph ≥ 0.3 / Python 3.10+).
+- `**ArgApprovalGate::Exempt`** — new approval gate variant (in development). See Tenuo Cloud documentation for usage details.
+- `**WRAP_TOOL_CALL_SUPPORTED` flag** exported from `tenuo.langgraph` — lets callers detect at runtime whether the installed LangGraph version supports authorization hooks (`wrap_tool_call` requires LangGraph ≥ 0.3 / Python 3.10+).
 - **rand 0.9 upgrade** — `SigningKey::generate` now uses `OsRng.try_fill_bytes` with `Zeroizing<[u8; 32]>` to guarantee secure memory erasure of ephemeral key bytes.
 
 ### Security
@@ -23,8 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **I1 delegation authority check** added to `Authorizer::verify_link` — child warrant's issuer must equal the parent's `authorized_holder`, preventing forged delegation chains constructed outside the SDK.
 - **Approval gate monotonicity** enforced at wire-verification time in `Authorizer::verify_link` — gates cannot be weakened or stripped in hand-crafted chains that bypass `AttenuationBuilder`.
 - **WASM `verify_approval_set` deduplication** corrected — approval entries are now deduplicated by approver public key rather than by list index, preventing approval replay with duplicate keys.
-- **`TenuoToolNode` fail-fast on unsupported LangGraph** — constructor raises `RuntimeError` (instead of silently creating a non-enforcing node) when `wrap_tool_call` is unavailable.
-- **`guard()` raises on unsupported clients** — passing an Anthropic, Vertex, or unknown client now raises `NotImplementedError` instead of returning an unguarded client.
+- `**TenuoToolNode` fail-fast on unsupported LangGraph** — constructor raises `RuntimeError` (instead of silently creating a non-enforcing node) when `wrap_tool_call` is unavailable.
+- `**guard()` raises on unsupported clients** — passing an Anthropic, Vertex, or unknown client now raises `NotImplementedError` instead of returning an unguarded client.
 - **Temporal `dry_run` visibility** — `TenuoInterceptorConfig(dry_run=True)` now emits a `warnings.warn` (Python-level) in addition to a logger warning, ensuring the shadow-mode flag surfaces even when logging is suppressed.
 
 ### Fixed
@@ -59,10 +89,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`TENUO_CONNECT_TOKEN`**: Single-token onboarding for the `tenuo-authorizer` binary and Python SDK. Copy the token from the dashboard — no separate URL, API key, or signing key env vars needed.
+- `**TENUO_CONNECT_TOKEN`**: Single-token onboarding for the `tenuo-authorizer` binary and Python SDK. Copy the token from the dashboard — no separate URL, API key, or signing key env vars needed.
   - Signing key is auto-generated if not provided.
   - Authorizer name defaults to pod/hostname when not set explicitly.
-- **`/status` endpoint** on the authorizer binary: exposes registration state and uptime for health checks and readiness probes.
+- `**/status` endpoint** on the authorizer binary: exposes registration state and uptime for health checks and readiness probes.
 
 ### Fixed
 
@@ -97,38 +127,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### MCP Server-Side Verification
-- **`MCPVerifier`**: Framework-agnostic server-side warrant verification for MCP tool handlers
-- **`verify_mcp_call()`**: Standalone convenience function for one-off verification
+
+- `**MCPVerifier`**: Framework-agnostic server-side warrant verification for MCP tool handlers
+- `**verify_mcp_call()**`: Standalone convenience function for one-off verification
 - **Multi-transport client**: `SecureMCPClient` now supports SSE and StreamableHTTP transports in addition to stdio
-- **`params._meta` transport**: Warrant + PoP are carried in the MCP spec's extension point (`params._meta["tenuo"]`), keeping tool arguments clean — no schema pollution
+- `**params._meta` transport**: Warrant + PoP are carried in the MCP spec's extension point (`params._meta["tenuo"]`), keeping tool arguments clean — no schema pollution
 - **MCP session reconnection**: `SecureMCPClient` auto-reconnects on transport failures (`EOFError`, `EPIPE`, `ECONNRESET`, `anyio.ClosedResourceError`) with a single retry
 - **JSON-RPC error codes**: `-32001` (denied), `-32002` (approval required), `-32602` (invalid params)
 
 #### A2A Automated Handshake (CSR Pattern)
-- **`agent/register` endpoint**: Agents request warrants at runtime without pre-configured key sharing
-- **`WarrantRequest` / `VerifiedWarrantRequest`**: Typed dataclasses for the registration protocol
+
+- `**agent/register` endpoint**: Agents request warrants at runtime without pre-configured key sharing
+- `**WarrantRequest` / `VerifiedWarrantRequest`**: Typed dataclasses for the registration protocol
 - **Self-signed challenge token**: Proves key ownership via Ed25519 without a round-trip
-- **`issue()` oracle**: Handler receives a bound callable — the signing key never leaves the server
-- **`RegistrationDisabledError` (-32017)** / **`RegistrationDeniedError` (-32018)**: Structured errors for the registration flow
-- **`A2AClient.request_warrant()`**: Client-side method to perform the full CSR handshake
-- **`A2AServerBuilder.registration_handler()`**: Server-side configuration for the handler
+- `**issue()` oracle**: Handler receives a bound callable — the signing key never leaves the server
+- `**RegistrationDisabledError` (-32017)** / `**RegistrationDeniedError` (-32018)**: Structured errors for the registration flow
+- `**A2AClient.request_warrant()`**: Client-side method to perform the full CSR handshake
+- `**A2AServerBuilder.registration_handler()**`: Server-side configuration for the handler
 
 #### Approval Gates (renamed from Guards)
-- **`approval_gate.rs`**: Renamed guard module to approval gate for clarity — per-tool approval policy evaluation
-- **`ApprovalGate`**: Replaces `Guard` across core, Python bindings, and all integrations
-- **`GuardTriggered` exception**: Exposed in Python SDK for approval gate evaluation results
+
+- `**approval_gate.rs**`: Renamed guard module to approval gate for clarity — per-tool approval policy evaluation
+- `**ApprovalGate**`: Replaces `Guard` across core, Python bindings, and all integrations
+- `**GuardTriggered` exception**: Exposed in Python SDK for approval gate evaluation results
 
 #### Core Hardening
+
 - **Clearance monotonicity fix**: Clearance levels now correctly enforce monotonic narrowing during delegation
 - **Extension validation**: Fixed gaps in warrant extension validation
 - **PoP error clarity**: `PopExpired` message now says "outside replay window" instead of ambiguous wording
 
 #### A2A Protocol
+
 - **Structured error types**: `TenuoA2AError`, `HandshakeError`, `VerificationError` for better error handling
 - **Typed protocol messages**: `TaskRequest`, `TaskResponse`, `StreamEvent` dataclasses
 - **Improved client**: Retry logic, connection pooling, and better error propagation
 
 ### Fixed
+
 - Flaky timing-sensitive tests in CI (autogen expiry, MCP guard denial mode)
 - mypy compatibility for optional `mcp` stubs on Python 3.9
 - Deprecated API references in docs (`.attenuate()`, `Warrant.issue()`)
@@ -137,6 +173,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explorer clipboard error handling and tool arg auto-populate
 
 ### Documentation
+
 - Updated `docs/mcp.md` with server-side verification and multi-transport examples
 - Removed deprecated API patterns from cross-language comparison table
 
@@ -147,6 +184,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Human-in-the-Loop Approvals
+
 - **ApprovalPolicy**: Cryptographically verified human authorization for sensitive tool calls
 - **M-of-N multi-sig**: `threshold` parameter on `ApprovalPolicy` — require multiple approvers (e.g., 2-of-3) before execution
 - **Configurable TTL hierarchy**: Policy `default_ttl` → handler `ttl_seconds` → 300s fallback
@@ -156,17 +194,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **13 Rust security tests** for m-of-n verification, **11 Python m-of-n tests**, **9 TTL propagation tests**
 
 #### Temporal Integration Improvements
+
 - **Transparent PoP**: Outbound workflow interceptor computes Proof-of-Possession automatically for `workflow.execute_activity()` — no wrapper needed
-- **`activity_fns` config**: `TenuoInterceptorConfig` accepts activity functions for parameter name resolution
+- `**activity_fns` config**: `TenuoInterceptorConfig` accepts activity functions for parameter name resolution
 - **Authorizer API hardening**: `check_chain()` and `authorize_one()` — two independent security boundaries
 - **Mandatory PoP timestamp**: `warrant.sign()` requires explicit `timestamp` argument for replay safety
 
 #### Developer Experience
+
 - **Wire fidelity tests**: Verify all constraint types survive serialization roundtrip
 - **Example rot detection**: `test_examples.py` validates all examples import and parse correctly
 - **Examples README**: Comprehensive listing of all 80+ examples across all integrations
 
 ### Fixed
+
 - Temporal interceptor: add missing `init()` and `workflow_interceptor_class()` methods
 - `tenuo_headers()`: use `secret_key_bytes()` for `SigningKey`
 - Deprecated `.attenuate()` calls in Google ADK docs, `Warrant.issue()` in docs and notebook
@@ -174,18 +215,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.9 dropped from macOS/ARM CI runners (EOL, prebuilt packages broken on newer macOS)
 
 ### Documentation
-- **`docs/approvals.md`**: Complete approval policy guide with m-of-n, TTL hierarchy, framework integration, and security properties
+
+- `**docs/approvals.md`**: Complete approval policy guide with m-of-n, TTL hierarchy, framework integration, and security properties
 
 ## [0.1.0-beta.9] - 2026-02-17
 
 ### Added
+
 - **Temporal distributed deployment**: Header propagation via outbound interceptor — works when client and worker are separate processes
-- **`AuthorizedWorkflow`**: Base class with fail-fast validation and automatic PoP
-- **`TenuoClientInterceptor`**: Client-side warrant header injection
+- `**AuthorizedWorkflow`**: Base class with fail-fast validation and automatic PoP
+- `**TenuoClientInterceptor**`: Client-side warrant header injection
 - **Live integration tests**: 36 tests including 5 against an in-process Temporal server
 - **Examples**: `demo.py`, `multi_warrant.py`, `delegation.py`
 
 ### Fixed
+
 - Broken header propagation in distributed Temporal deployments
 - AWS/GCP key resolver tests on CI without cloud SDKs installed
 - mypy errors for optional dependencies (`temporalio`, `google.adk`, `agents`)
@@ -195,33 +239,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Unified Enforcement Module
+
 - **Shared `enforce_tool_call()` function**: Single code path for all Python integrations (LangGraph, CrewAI, AutoGen, OpenAI, Google ADK)
-- **`_enforcement.py`**: 670+ lines of shared enforcement logic with consistent behavior across frameworks
-- **`BaseGuardBuilder`**: DRY builder pattern extracted to `_builder.py` for all integration guard builders
+- `**_enforcement.py`**: 670+ lines of shared enforcement logic with consistent behavior across frameworks
+- `**BaseGuardBuilder**`: DRY builder pattern extracted to `_builder.py` for all integration guard builders
 - **Defense-in-depth documentation**: Clear separation between Python-side policies (UX) and Rust core (security boundary)
 - **Tool risk schemas**: `ToolSchema` with risk levels (`critical`, `high`, `medium`, `low`) and recommended constraints
 
 #### Temporal Integration (`tenuo[temporal]`)
+
 - **Workflow authorization**: Warrant-based protection for Temporal workflows
 - **Activity guards**: Constraint enforcement on Temporal activities
 
 #### Authorizer Improvements
+
 - **Signing key requirement**: Authorizers now require signing keys for cryptographic receipts (breaking change)
 - **Audit events for denials**: Missing/invalid warrant denials now emit audit events
 - **CBOR encoding fix**: Warrant chains encoded as byte strings (not arrays) per spec
 
 #### CrewAI Integration (`tenuo[crewai]`)
+
 - **GuardBuilder API**: Fluent builder for protecting CrewAI tools with Tenuo authorization
 - **Tier 1 (constraints-only)**: Lightweight validation using `GuardBuilder().allow("tool", arg=Constraint).build()`
 - **Tier 2 (warrants + PoP)**: Cryptographic enforcement with `WarrantDelegator` for hierarchical delegation
 - **GuardedCrew**: Policy-based multi-agent crew protection with seal mode to prevent delegation circumvention
 - **Tool Namespacing**: `agent_role::tool_name` prevents cross-agent confusion in multi-agent scenarios
 - **Hierarchical Delegation**: Manager → Worker patterns with attenuation-only narrowing
-- **`on_denial` modes**: `raise` (default), `log`, or `skip` for flexible error handling
+- `**on_denial` modes**: `raise` (default), `log`, or `skip` for flexible error handling
 - **4 complete examples**: Basic protection, hierarchical delegation, guarded crew, and flow integration
 - **3,074 lines of tests**: Comprehensive unit, adversarial, and integration test coverage
 
 #### Version Compatibility System
+
 - **Runtime Version Warnings**: Non-blocking warnings for known version issues instead of hard failures
 - **Compatibility Matrix Documentation**: Tracks minimum/recommended/latest versions for all integrations (OpenAI, AutoGen, CrewAI, LangChain, LangGraph, MCP, Google ADK)
 - **Automated Monitoring**: Dependabot + CI compatibility matrix + upstream release monitor for early breaking change detection
@@ -229,6 +278,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Smoke Tests**: API contract verification across minimum and latest dependency versions
 
 #### Security & Reliability Improvements
+
 - **A2A Security Fixes**: 4 critical security issues resolved in A2A server
   - Fail-closed audience validation (missing/mismatched `aud` claims now rejected)
   - Robust expiry checking with proper None handling
@@ -238,11 +288,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Google ADK Warnings**: Added security warnings and runtime detection for argument remapping validation bypass risks
 
 ### Changed
+
 - **Version Constraints**: Relaxed to permissive constraints with runtime warnings (e.g., `crewai>=1.0` instead of pinned versions)
 - **Holder Verification**: Removed redundant Python-side holder checks in CrewAI (Rust core's `verify_pop()` provides cryptographic enforcement)
 - **Maturin 1.12 compatibility**: Updated build configuration for latest maturin
 
 ### Dependencies
+
 - Upgraded `axum` from 0.7.9 to 0.8.8
 - Upgraded `cel-interpreter` from 0.8.1 to 0.10.0
 - Upgraded `moka` from 0.12.12 to 0.12.13
@@ -250,6 +302,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explorer: React 18 → 19, jsdom 23 → 28, Playwright 1.58
 
 ### Documentation
+
 - Added "Shared Enforcement Core" section to `enforcement.md`
 - Added "Tool Policies (Defense in Depth)" section explaining risk levels and schemas
 - Added FastAPI/A2A troubleshooting to `debugging.md`
@@ -266,15 +319,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### AutoGen Integration (`tenuo[autogen]`)
+
 - **GuardBuilder API**: Fluent builder for protecting AutoGen AgentChat tools with Tenuo authorization
 - **Tier 1 (constraints-only)**: Lightweight validation using `GuardBuilder().allow("tool", arg=Constraint).build()`
 - **Tier 2 (warrant + PoP)**: Cryptographic enforcement with `with_warrant(warrant, signing_key)`
 - **Streaming TOCTOU protection**: Buffer-verify-emit strategy via `guard_stream()` prevents time-of-check time-of-use attacks
 - **Flexible argument extraction**: Handles dicts, Pydantic models, dataclasses, and positional/keyword args
-- **`on_denial` modes**: `raise` (default), `log`, or `skip` for flexible error handling
+- `**on_denial` modes**: `raise` (default), `log`, or `skip` for flexible error handling
 - **5 demo files**: Unprotected baseline, protected tools, attenuation, GuardBuilder Tier 1/2
 
 #### Authorizer Observability
+
 - **Audit Event Streaming**: Authorization decisions streamed to control plane with full warrant chain (base64-encoded CBOR `WarrantStack` for chain reconstruction)
 - **Runtime Metrics**: Uptime, request counts, avg/p99 latency, memory usage sent with each heartbeat
 - **Environment Labels**: Auto-detected K8s context (namespace, pod, node), cloud region, and deployment identifiers
@@ -282,15 +337,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SRL Health**: Tracks revocation list fetch status, verification failures, and current SRL version
 
 ### Core & Protocol
+
 - **Approval Envelope**: Refactored `Approval` to use the `SignedApproval` envelope pattern (separating `ApprovalPayload` from signature), aligning with the v1.0 spec and matching the Warrant architecture.
 - **Protocol Parity**: Synchronized `tenuo-core` with v1.0 spec, updating `WarrantType` serialization to integers (CBOR) and reconciling all test vectors.
 - **Test Vectors**: Updated `docs/spec/test-vectors.md` and fixed vectors A.12/A.13 to match the canonical generator output.
 
 ### Infrastructure
+
 - **Unified `uv` Toolchain**: Migrated all Python dependency management to `uv` for consistent, fast, and reliable builds.
 - **CI Stability**: Fixed "No virtual environment" errors in GitHub Actions by using `--system` flag with `uv pip install`.
 
 ### Documentation
+
 - **AutoGen Integration**: Added `docs/autogen.md` guide and 5 example demos
 - **AgentQL Integration**: Added AgentQL integration examples.
 - **Example consistency**: Standardized all `pip install` instructions in examples and notebooks to use `uv pip install`.
@@ -302,6 +360,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### A2A Integration (`tenuo[a2a]`)
+
 - **A2AServer**: ASGI server for receiving warrant-authorized tasks from other agents
 - **A2AClient**: Client for delegating tasks to remote agents with warrant-based authorization
 - **Streaming support**: Server-Sent Events (SSE) for real-time task updates with `send_task_streaming()`
@@ -314,6 +373,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Comprehensive error types**: `MissingWarrantError`, `UntrustedIssuerError`, `SkillNotGrantedError`, etc.
 
 #### Google ADK Integration (`tenuo.google_adk`)
+
 - **TenuoGuard**: Core class for tool authorization in ADK agents
 - **TenuoPlugin**: Plugin-based integration for `InMemoryRunner`
 - **GuardBuilder**: Fluent API for constraint definition (`.allow()`, `.with_warrant()`, `.map_skill()`)
@@ -325,6 +385,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Audit callbacks**: Track all authorization decisions
 
 #### Core Improvements
+
 - **Unified `satisfies()` method**: All constraints now expose `constraint.satisfies(value)` in Python bindings
 - **Explicit `Range` coercion**: String-encoded numbers are coerced to float for Range constraints
 - **Better type annotations**: Fixed mypy errors across google_adk, a2a, fastapi modules
@@ -354,6 +415,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### OpenAI Integration
+
 - **Direct API wrapping**: `guard()` function wraps `openai.OpenAI()` client with guardrails
 - **GuardBuilder fluent API**: `.allow()`, `.deny()`, `.constrain()` for clean constraint definition
 - **Two-tier protection**: Tier 1 (runtime guardrails) and Tier 2 (warrant + PoP)
@@ -363,6 +425,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tool schema validation**: Warns on typos in constraint parameter names
 
 #### New Constraints
+
 - **Subpath constraint**: Secure path containment that blocks `..` traversal attacks (normalizes paths lexically, blocks null bytes, requires absolute paths)
 - **UrlSafe constraint**: SSRF protection that blocks dangerous URLs by default (private IPs, loopback, cloud metadata, IP encoding bypasses)
 - **Shlex constraint**: Shell injection protection that validates command strings (blocks operators, substitution, expansion; requires binary allowlist)
@@ -382,16 +445,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Cryptographic Benchmark Suite
+
 - **37 security tests** validating forgery resistance, delegation monotonicity, key separation, multi-sig enforcement, and temporal constraints
 - Comprehensive report generation with `python -m benchmarks.cryptographic.report`
 
 #### AgentDojo Integration
+
 - Full prompt injection benchmark with Tenuo constraint enforcement
 - **CEL constraints** for list validation (`value.all(r, r.endsWith('@company.com'))`)
 - **JIT warrant mode** (`--jit`) for task-specific constraint policies
 - Task-aware policy selection via `task_policies.py`
 
 #### Enhanced Diagnostics
+
 - `check_constraints_detailed()` returns structured `(field, reason)` tuples
 - Robust field extraction in `why_denied()` (no more regex parsing)
 
@@ -415,11 +481,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Approval Security Hardening
+
 - **Domain separation**: Approval signatures now include `tenuo-approval-v1` context prefix, preventing cross-protocol signature reuse attacks
 - **Nonce for replay protection**: Each approval includes a 128-bit random nonce for cryptographic uniqueness
 - **Stateless by design**: Nonces are not tracked server-side (intentional); applications can opt into tracking if needed
 
 #### Documentation
+
 - New "Stateless Design & Replay Protection" section in approval module docs
 - Documented 6 layers of replay protection
 
@@ -430,23 +498,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Zero-Trust Constraints (Trust Cliff)
+
 - When **any** constraint is defined on a capability, unknown fields are now **rejected by default**
 - Use `Wildcard()` or `Any()` to explicitly allow specific fields
 - Use `_allow_unknown=True` to opt out entirely
 - `_allow_unknown` is NOT inherited during attenuation (security by design)
 
 #### Multi-Signature Approval
+
 - New `Approval` class for cryptographic multi-sig workflows
 - `Authorizer.authorize()` now accepts a list of approvals
 - `compute_approval_hash()` for creating approval request hashes
 - Full CBOR/JSON serialization support for approvals
 
 #### Enhanced Authorization Diagnostics
+
 - `check_constraints()` for constraint validation without PoP
 - Enhanced `why_denied()` with zero-trust hints and suggestions
 - Exported advanced constraint types: `AnyOf`, `All`, `Not`, `Cidr`, `UrlPattern`, `Regex`, `CEL`
 
 #### New Demos
+
 - **JIT Warrant Demo**: Just-in-time capability proposal with human approval, orchestrator-worker delegation
 - **Local LLM Demo**: Prompt injection defense with local LLMs
 - **Trust Cliff Demo**: Interactive demonstration of zero-trust behavior
