@@ -625,7 +625,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           type: 'oneof',
           pythonCode: `AnyOf([Pattern("${values.join('"), Pattern("')}")])`,
           rustCode: `Constraint::AnyOf(vec![${values.map(x => `Pattern::new("${x}")?`).join(', ')}])`,
-          exampleValue: values[0].replace('*', 'example') || 'value'
+          exampleValue: values[0].replaceAll('*', 'example') || 'value'
         };
       }
 
@@ -2651,7 +2651,7 @@ function App() {
                                   const exampleArgs: Record<string, any> = {};
                                   Object.entries(toolCaps).forEach(([field, constraint]: [string, any]) => {
                                     if (constraint?.pattern) {
-                                      exampleArgs[field] = constraint.pattern.replace('*', 'example');
+                                      exampleArgs[field] = constraint.pattern.replaceAll('*', 'example');
                                     } else if (constraint?.exact !== undefined) {
                                       exampleArgs[field] = constraint.exact;
                                     } else if (constraint?.range) {
