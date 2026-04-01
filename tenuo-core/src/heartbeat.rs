@@ -45,6 +45,21 @@ use tracing::{debug, info, warn};
 // Audit Event Streaming
 // ============================================================================
 
+/// A verified approval record included in authorization events.
+#[derive(Clone, Debug, Serialize)]
+pub struct ApprovalRecord {
+    /// Hex-encoded Ed25519 public key of the approver
+    pub approver_key: String,
+    /// External identity reference (e.g., "arn:aws:iam::123:user/admin")
+    pub external_id: String,
+    /// When the approval was granted (Unix seconds)
+    pub approved_at: u64,
+    /// When the approval expires (Unix seconds)
+    pub expires_at: u64,
+    /// Hex-encoded hash binding the approval to (warrant_id, tool, args, holder)
+    pub request_hash: String,
+}
+
 /// An authorization event to be sent to the control plane for dashboard/analytics.
 #[derive(Clone, Debug, Serialize)]
 pub struct AuthorizationEvent {
@@ -80,6 +95,9 @@ pub struct AuthorizationEvent {
     /// JSON string of the tool arguments passed by the agent
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<String>,
+    /// Verified approval records (present when human-in-the-loop approvals were required)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approvals: Option<Vec<ApprovalRecord>>,
 }
 
 impl AuthorizationEvent {
@@ -95,6 +113,7 @@ impl AuthorizationEvent {
         latency_us: u64,
         request_id: String,
         arguments: Option<String>,
+        approvals: Option<Vec<ApprovalRecord>>,
     ) -> Self {
         Self {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -110,6 +129,7 @@ impl AuthorizationEvent {
             latency_us,
             request_id,
             arguments,
+            approvals,
         }
     }
 
@@ -127,6 +147,7 @@ impl AuthorizationEvent {
         latency_us: u64,
         request_id: String,
         arguments: Option<String>,
+        approvals: Option<Vec<ApprovalRecord>>,
     ) -> Self {
         Self {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -142,6 +163,7 @@ impl AuthorizationEvent {
             latency_us,
             request_id,
             arguments,
+            approvals,
         }
     }
 }
@@ -1581,12 +1603,14 @@ mod tests {
             1234,
             "req-789".to_string(),
             None,
+            None,
         );
         assert_eq!(event.decision, "allow");
         assert!(event.deny_reason.is_none());
         assert_eq!(event.tool, "read_file");
         assert_eq!(event.chain_depth, 0);
         assert_eq!(event.warrant_stack, Some("base64stack".to_string()));
+        assert!(event.approvals.is_none());
     }
 
     #[test]
@@ -1603,12 +1627,45 @@ mod tests {
             5678,
             "req-999".to_string(),
             None,
+            None,
         );
         assert_eq!(event.decision, "deny");
         assert_eq!(event.deny_reason, Some("constraint_violation".to_string()));
         assert_eq!(event.failed_constraint, Some("path".to_string()));
         assert_eq!(event.chain_depth, 1);
         assert_eq!(event.warrant_stack, Some("base64stack".to_string()));
+        assert!(event.approvals.is_none());
+    }
+
+    #[test]
+    fn test_authorization_event_with_approvals() {
+        let records = vec![ApprovalRecord {
+            approver_key: "abcd1234".to_string(),
+            external_id: "arn:aws:iam::123:user/admin".to_string(),
+            approved_at: 1700000000,
+            expires_at: 1700000300,
+            request_hash: "deadbeef".to_string(),
+        }];
+        let event = AuthorizationEvent::allow(
+            "auth-123".to_string(),
+            "wid-456".to_string(),
+            "execute_payment".to_string(),
+            2,
+            Some("root-pk".to_string()),
+            None,
+            500,
+            "req-approval".to_string(),
+            None,
+            Some(records),
+        );
+        assert_eq!(event.decision, "allow");
+        let approvals = event.approvals.as_ref().unwrap();
+        assert_eq!(approvals.len(), 1);
+        assert_eq!(approvals[0].external_id, "arn:aws:iam::123:user/admin");
+        assert_eq!(approvals[0].approved_at, 1700000000);
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"approvals\""));
+        assert!(json.contains("arn:aws:iam::123:user/admin"));
     }
 
     #[test]
@@ -1623,6 +1680,7 @@ mod tests {
             1234,
             "req-789".to_string(),
             None,
+            None,
         );
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"decision\":\"allow\""));
@@ -1630,6 +1688,7 @@ mod tests {
         // Optional fields should be omitted when None
         assert!(!json.contains("deny_reason"));
         assert!(!json.contains("warrant_stack"));
+        assert!(!json.contains("approvals"));
     }
 
     #[test]
@@ -1722,6 +1781,274 @@ mod tests {
         assert_eq!(
             hex_str, go_hex,
             "Rust CBOR encoding must match Go encoding for signature verification"
+        );
+    }
+
+    #[test]
+    fn test_receipt_signing_payload_with_root_principal() {
+        let payload = ReceiptSigningPayload {
+            authorizer_id: "auth-1",
+            warrant_chain: &[],
+            action: "tool:read",
+            outcome: "allow",
+            timestamp: 1000,
+            root_principal: Some("org:acme"),
+        };
+
+        let mut buf = Vec::new();
+        ciborium::into_writer(&payload, &mut buf).unwrap();
+
+        // Map of 6 items when root_principal is present
+        assert_eq!(buf[0], 0xa6, "Expected CBOR map of 6 items");
+
+        // Verify deterministic: re-encode produces identical bytes
+        let mut buf2 = Vec::new();
+        ciborium::into_writer(&payload, &mut buf2).unwrap();
+        assert_eq!(buf, buf2, "CBOR encoding must be deterministic");
+    }
+
+    #[test]
+    fn test_sign_event_produces_verifiable_signature() {
+        let signing_key = SigningKey::generate();
+
+        let event = AuthorizationEvent::allow(
+            "".to_string(),
+            "wrt-test-456".to_string(),
+            "send_email".to_string(),
+            2,
+            Some("org:acme".to_string()),
+            Some(base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                b"fake-chain",
+            )),
+            42,
+            "req-sign-test".to_string(),
+            None,
+            None,
+        );
+
+        let signed = sign_event(&event, &signing_key, "authz-real-id");
+
+        // Verify the authorizer_id was patched
+        assert_eq!(signed.event.authorizer_id, "authz-real-id");
+
+        // Decode signing_payload and verify the signature
+        let payload_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &signed.signing_payload,
+        )
+        .expect("signing_payload must be valid base64");
+
+        let sig_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &signed.signature,
+        )
+        .expect("signature must be valid base64");
+
+        let sig = crate::crypto::Signature::from_bytes(
+            sig_bytes
+                .as_slice()
+                .try_into()
+                .expect("signature is 64 bytes"),
+        )
+        .expect("valid Ed25519 signature");
+
+        assert!(
+            signing_key
+                .public_key()
+                .verify(&payload_bytes, &sig)
+                .is_ok(),
+            "receipt signature must be verifiable with the signing key's public key"
+        );
+    }
+
+    #[test]
+    fn test_sign_event_different_keys_produce_different_signatures() {
+        let key1 = SigningKey::generate();
+        let key2 = SigningKey::generate();
+
+        let event = AuthorizationEvent::allow(
+            "".to_string(),
+            "wrt-1".to_string(),
+            "read_file".to_string(),
+            0,
+            None,
+            None,
+            10,
+            "req-1".to_string(),
+            None,
+            None,
+        );
+
+        let signed1 = sign_event(&event, &key1, "auth-1");
+        let signed2 = sign_event(&event, &key2, "auth-1");
+
+        assert_ne!(
+            signed1.signature, signed2.signature,
+            "different keys must produce different signatures"
+        );
+    }
+
+    #[test]
+    fn test_sign_event_tampered_payload_fails_verification() {
+        let signing_key = SigningKey::generate();
+
+        let event = AuthorizationEvent::deny(
+            "".to_string(),
+            "wrt-deny".to_string(),
+            "delete_db".to_string(),
+            "constraint_violation".to_string(),
+            Some("path".to_string()),
+            1,
+            None,
+            None,
+            99,
+            "req-deny".to_string(),
+            None,
+            None,
+        );
+
+        let signed = sign_event(&event, &signing_key, "auth-id");
+
+        // Decode signing payload and tamper with it
+        let mut payload_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &signed.signing_payload,
+        )
+        .unwrap();
+        if let Some(byte) = payload_bytes.last_mut() {
+            *byte ^= 0xFF;
+        }
+
+        let sig_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &signed.signature,
+        )
+        .unwrap();
+        let sig = crate::crypto::Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap())
+            .expect("valid Ed25519 signature bytes");
+
+        assert!(
+            signing_key
+                .public_key()
+                .verify(&payload_bytes, &sig)
+                .is_err(),
+            "tampered payload must fail signature verification"
+        );
+    }
+
+    #[test]
+    fn test_sign_event_with_approvals_in_event() {
+        let signing_key = SigningKey::generate();
+
+        let records = vec![
+            ApprovalRecord {
+                approver_key: "aabb".to_string(),
+                external_id: "admin@corp.com".to_string(),
+                approved_at: 1700000000,
+                expires_at: 1700000300,
+                request_hash: "ccdd".to_string(),
+            },
+            ApprovalRecord {
+                approver_key: "eeff".to_string(),
+                external_id: "security@corp.com".to_string(),
+                approved_at: 1700000001,
+                expires_at: 1700000301,
+                request_hash: "ccdd".to_string(),
+            },
+        ];
+
+        let event = AuthorizationEvent::allow(
+            "".to_string(),
+            "wrt-approval".to_string(),
+            "execute_payment".to_string(),
+            1,
+            Some("org:bank".to_string()),
+            None,
+            50,
+            "req-approval".to_string(),
+            None,
+            Some(records),
+        );
+
+        let signed = sign_event(&event, &signing_key, "auth-bank");
+
+        // Approvals are present in the serialized event but NOT in the signing payload.
+        // This is by design: individual approvals are self-signed by their approver keys.
+        let json = serde_json::to_string(&signed).unwrap();
+        assert!(json.contains("admin@corp.com"));
+        assert!(json.contains("security@corp.com"));
+        assert!(json.contains("approvals"));
+
+        // The signing payload (CBOR of ReceiptSigningPayload) should NOT contain approval data
+        let payload_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &signed.signing_payload,
+        )
+        .unwrap();
+        let payload_hex: String = payload_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+        assert!(
+            !payload_hex.contains(&hex::encode(b"admin@corp.com")),
+            "approval data must not leak into the signing payload"
+        );
+
+        // Signature must still verify
+        let sig_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &signed.signature,
+        )
+        .unwrap();
+        let sig = crate::crypto::Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap())
+            .expect("valid Ed25519 signature bytes");
+        assert!(
+            signing_key
+                .public_key()
+                .verify(&payload_bytes, &sig)
+                .is_ok(),
+            "signature must verify even with approvals in the event"
+        );
+    }
+
+    #[test]
+    fn test_approval_record_serialization_skip_none() {
+        let event_with = AuthorizationEvent::allow(
+            "a".into(),
+            "w".into(),
+            "t".into(),
+            0,
+            None,
+            None,
+            0,
+            "r".into(),
+            None,
+            Some(vec![ApprovalRecord {
+                approver_key: "key".into(),
+                external_id: "id".into(),
+                approved_at: 1,
+                expires_at: 2,
+                request_hash: "hash".into(),
+            }]),
+        );
+        let event_without = AuthorizationEvent::allow(
+            "a".into(),
+            "w".into(),
+            "t".into(),
+            0,
+            None,
+            None,
+            0,
+            "r".into(),
+            None,
+            None,
+        );
+
+        let json_with = serde_json::to_string(&event_with).unwrap();
+        let json_without = serde_json::to_string(&event_without).unwrap();
+
+        assert!(json_with.contains("\"approvals\""));
+        assert!(
+            !json_without.contains("\"approvals\""),
+            "None approvals must be omitted from JSON (skip_serializing_if)"
         );
     }
 }

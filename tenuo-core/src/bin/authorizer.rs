@@ -64,8 +64,8 @@ use tenuo::{
     extraction::RequestContext,
     gateway_config::{CompiledGatewayConfig, GatewayConfig},
     heartbeat::{
-        self, create_audit_channel, AuditEventSender, AuthorizationEvent, EnvironmentInfo,
-        HeartbeatConfig, MetricsCollector,
+        self, create_audit_channel, ApprovalRecord, AuditEventSender, AuthorizationEvent,
+        EnvironmentInfo, HeartbeatConfig, MetricsCollector,
     },
     planes::Authorizer,
     revocation::SignedRevocationList,
@@ -855,6 +855,7 @@ async fn handle_request(
                     0,
                     request_id.clone(),
                     None,
+                    None,
                 ),
             )
             .await;
@@ -912,6 +913,7 @@ async fn handle_request(
                     None,
                     0,
                     request_id.clone(),
+                    None,
                     None,
                 ),
             )
@@ -1147,6 +1149,7 @@ async fn handle_request(
                     latency_us,
                     request_id.clone(),
                     arguments_json.clone(),
+                    verified_approval_records(&approvals),
                 ),
             )
             .await;
@@ -1277,6 +1280,7 @@ async fn handle_request(
                     latency_us,
                     request_id.clone(),
                     arguments_json,
+                    None,
                 ),
             )
             .await;
@@ -1314,6 +1318,41 @@ fn encode_warrant_stack_for_audit(chain: &[tenuo::Warrant]) -> Option<String> {
             warn!(error = %e, "Failed to encode warrant stack for audit");
             None
         }
+    }
+}
+
+/// Extract ApprovalRecords from SignedApprovals for the audit trail.
+///
+/// Each approval's Ed25519 signature is re-verified before inclusion.
+/// This is intentional: the audit trail must only contain cryptographically
+/// valid records. `SignedApproval::verify()` checks signature validity and
+/// structural sanity but does NOT check current-time expiry (that's done
+/// by `verify_approvals_with_tolerance`), so there is no TOCTOU risk.
+///
+/// Only call on the allow path. On deny paths, `check_chain` may have
+/// failed before reaching approval verification, so pass `None` instead.
+///
+/// Returns None if no approvals pass verification.
+fn verified_approval_records(approvals: &[SignedApproval]) -> Option<Vec<ApprovalRecord>> {
+    if approvals.is_empty() {
+        return None;
+    }
+    let records: Vec<ApprovalRecord> = approvals
+        .iter()
+        .filter_map(|sa| {
+            sa.verify().ok().map(|p| ApprovalRecord {
+                approver_key: hex::encode(sa.approver_key.to_bytes()),
+                external_id: p.external_id,
+                approved_at: p.approved_at,
+                expires_at: p.expires_at,
+                request_hash: hex::encode(p.request_hash),
+            })
+        })
+        .collect();
+    if records.is_empty() {
+        None
+    } else {
+        Some(records)
     }
 }
 
