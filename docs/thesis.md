@@ -1,12 +1,12 @@
 ---
-title: "Agents Turn Sessions into Blank Checks"
-description: "A technical thesis on warrant-based authorization for agentic systems"
+title: "Authorization for Agentic Systems"
+description: "Task-scoped authority for AI agents"
 layout: default
 ---
 
-# Agents Turn Sessions into Blank Checks
+# Authorization for Agentic Systems
 
-### A technical thesis on warrant-based authorization for agentic systems
+### Task-Scoped Authority for AI Agents
 
 ---
 
@@ -17,6 +17,8 @@ AI agents are moving from conversation to execution. They issue refunds, modify 
 That shift creates an authorization gap. Authentication tells you *who* the agent is. Orchestration tells you *what workflow* it is running. Neither proves, at execution time, that a specific action with specific parameters is the authorized continuation of a legitimate task.
 
 Tenuo is authorization infrastructure for agentic systems. It implements **warrant-based authorization**: signed, scoped, time-bound capability artifacts that attenuate through delegation chains, verify offline at microsecond scale, and produce signed receipts for every action.
+
+The core model is simple: delegation safety requires authority to be **derived, not inferred** from identity at each hop.
 
 This thesis explains why existing authorization primitives are structurally insufficient for multi-agent systems, how warrants close that gap, and why this model aligns with real production patterns while strengthening enterprise security and compliance posture.
 
@@ -132,6 +134,8 @@ A **warrant** is a cryptographic authorization token with the following properti
 | **Time-limited** | Expires after a configurable TTL |
 | **Attenuating** | Can be delegated, but delegated warrants can only narrow scope, never expand it |
 | **Receipt-producing** | Integrated enforcement points can emit signed receipts linking authorization to execution |
+
+Intuitively, a warrant is a valet key for software agents: task-specific authority, bounded scope, short lifetime.
 
 ### Subtractive delegation
 
@@ -378,11 +382,11 @@ This gives enterprises a pragmatic adoption path: deploy with today's OAuth and 
 
 **1. Authority must follow the task, not the session.**
 
-Agents decompose tasks. IAM consolidates authority. The friction is structural. Warrants make authority task-scoped: broad at the source, narrower at each delegation, gone when the task ends.
+Agents decompose tasks. IAM consolidates authority. The friction is structural. Warrants make authority task-scoped: broad at the source, narrower at each delegation, gone when the task ends. Authority appears with the task and disappears with the task.
 
 **2. Deterministic enforcement is the foundation.**
 
-At agent velocity, policy round-trips can become bottlenecks and probabilistic filters can be bypassed. Guardrails remain useful as risk-reduction layers, but they are not sufficient as the primary authorization boundary. Constraints verified by signatures and semantic parsing provide deterministic execution-time enforcement independent of model behavior. Warrants make RBAC/ABAC delegation-safe by turning policy into cryptographically verifiable proof.
+At agent velocity, policy round-trips can become bottlenecks and probabilistic filters can be bypassed. Guardrails remain useful as risk-reduction layers, but they are not sufficient as the primary authorization boundary. Constraints verified by signatures and semantic parsing provide deterministic execution-time enforcement independent of model behavior. This cleanly separates intelligence (which can be wrong) from authority (which must remain mechanically bounded). Warrants make RBAC/ABAC delegation-safe by turning policy into cryptographically verifiable proof.
 
 **3. Offline verification is architecturally superior for agent-speed systems.**
 
