@@ -1,6 +1,6 @@
 # Integration Compatibility Matrix
 
-**Last Updated**: 2026-02-03
+**Last Updated**: 2026-04-03
 
 Tracks compatibility between Tenuo and upstream integration libraries.
 
@@ -8,11 +8,11 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 
 | Integration | Minimum (pyproject) | Recommended | Latest Tested | Status | Notes |
 |-------------|---------------------|-------------|---------------|--------|-------|
-| **OpenAI** | 1.0.0 | 1.50+ | 1.52.0 | Stable | Full feature support |
-| **CrewAI** | 1.0.0 | 1.9+ | 1.9.4 | Stable | All tiers supported |
-| **AutoGen** | 0.7.0 | 0.9+ | 0.9.2 | Stable | AgentChat integration |
-| **LangChain** | 0.2.0 | 0.3+ | 0.3.5 | Stable | LangChain Core |
-| **LangGraph** | 0.2.0 | 0.2+ | 0.2.8 | Stable | StateGraph support |
+| **OpenAI** | 1.0.0 | 1.x latest | 2.30.0 | Stable | Validated in [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744) |
+| **CrewAI** | 1.0.0 | 1.x latest | 1.12.2 | Stable | Validated in [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744) |
+| **AutoGen** | 0.7.0 | 0.7+ latest | 0.7.5 | Stable | Validated in [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744) |
+| **LangChain** | 0.2.0 | 0.2+ latest | 1.2.23 | Stable | Validated in [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744) |
+| **LangGraph** | 0.2.0 | 0.2+ latest | 1.1.3 | Stable | Validated in [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744) |
 | **MCP** | 1.0.0 | 1.1+ | 1.1.3 | Stable | Model Context Protocol |
 | **Google ADK** | 0.1.0 | 0.1+ | 0.1.2 | Beta | Early access |
 
@@ -36,55 +36,49 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 ## Known Issues
 
 ### OpenAI
-**Current Status**: No known issues (1.6+)
+**Current Status**: Stable (minimum + latest passing)
 
 **Version Notes**:
-- **1.0-1.5**: May have httpx compatibility issues (`proxies` argument conflict). Tenuo will warn at runtime but allow installation.
-- **1.6+**: Fully compatible, no known issues.
+- Minimum and latest tracks are monitored by automation.
+- Latest matrix verification: [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744).
 
 **Recent Changes**:
 - 1.50.0: Added streaming support for tool calls (Compatible)
 - 1.40.0: Response format changes (Compatible)
 - 1.6.0: Fixed httpx compatibility
 
-**Next Breaking Change**: OpenAI 2.0 (TBD)
-- Expected changes: Client constructor signature
-- **Tracking**: [Issue TBD](https://github.com/tenuo-ai/tenuo/labels/openai)
+**Tracking**: Open a new integration issue if regressions reappear.
 
 ### CrewAI
-**Current Status**: No known issues (1.1+)
+**Current Status**: Stable (minimum + latest passing)
 
 **Version Notes**:
 - **1.0.x**: Requires explicit `backstory` for Agent and `expected_output` for Task. Tenuo's wrapper code works, but you must provide these fields. Tenuo will warn at runtime.
-- **1.1+**: Fully compatible, no known issues.
+- Latest matrix verification: [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744).
 
 **Recent Changes**:
 - 1.9.0: Added hierarchical process support (Compatible)
 - 1.5.0: Tool signature changes (Backwards compatible)
 - 1.1.0: Made backstory/expected_output have defaults
 
-**Next Breaking Change**: CrewAI 2.0 (Q2 2026 estimated)
-- Expected changes: Async tool support
-- **Impact**: Medium - will require adapter pattern updates
-- **Tracking**: [Issue TBD](https://github.com/tenuo-ai/tenuo/labels/crewai)
+**Tracking**: Open a new integration issue if regressions reappear.
 
 ### AutoGen
-**Current Status**: No known issues
+**Current Status**: Stable (minimum + latest passing)
 
-**Recent Changes**:
-- 0.9.0: New AgentChat API (Compatible)
-- 0.7.0: Initial release (Compatible)
+**Version Notes**:
+- Minimum and latest tracks are monitored by automation.
+- Latest matrix verification: [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744).
 
-**Next Breaking Change**: AutoGen 1.0 (TBD)
-- Expected changes: API stabilization
-- **Impact**: Low - mostly additive changes expected
+**Tracking**: Open a new integration issue if regressions reappear.
 
 ### LangChain
-**Current Status**: No known issues
+**Current Status**: Stable (minimum + latest passing)
 
 **Version Notes**:
 - **0.2.0-0.2.26**: Works standalone, but incompatible with langgraph>=0.2. Tenuo will warn if you use langgraph.
-- **0.2.27+**: Fully compatible with all Tenuo integrations including langgraph.
+- **0.2.27+**: Required when paired with `langgraph>=0.2`.
+- Latest matrix verification: [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744).
 
 **Recent Changes**:
 - 0.3.0: Pydantic v2 migration (Compatible)
@@ -92,11 +86,12 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 - 0.2.0: Core extraction
 
 ### LangGraph
-**Current Status**: No known issues
+**Current Status**: Stable (minimum + latest passing)
 
 **Version Notes**:
 - **0.2.0+**: Requires `langchain-core>=0.2.27`. Tenuo's `[langgraph]` extra handles this automatically.
 - **0.0.x/0.1.x**: Not supported (requires langchain-core<0.2, which conflicts with our langchain integration).
+- Latest matrix verification: [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744).
 
 **Recent Changes**:
 - 0.2.0: Updated to support langchain-core>=0.2
@@ -106,15 +101,15 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 
 ## Version Testing Status
 
-Last tested: 2026-02-03
+Last tested: [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744)
 
 | Integration | Minimum Version | Latest Version | Nightly/Pre-release |
 |-------------|----------------|----------------|---------------------|
-| OpenAI | Pass | Pass | Warnings |
-| CrewAI | Pass | Pass | Not tested |
-| AutoGen | Pass | Pass | Pass |
-| LangChain | Pass | Pass | Pass |
-| LangGraph | Pass | Pass | Minor issues |
+| OpenAI | Pass (1.0.0) | Pass (2.30.0) | Not tested |
+| CrewAI | Pass (1.0.0) | Pass (1.12.2) | Not tested |
+| AutoGen | Pass (0.7.0) | Pass (0.7.5) | Not tested |
+| LangChain | Pass (0.2.0) | Pass (1.2.23) | Not tested |
+| LangGraph | Pass (0.2.0) | Pass (1.1.3) | Not tested |
 
 **Testing Cadence**:
 - Minimum versions: Weekly
@@ -129,8 +124,10 @@ Last tested: 2026-02-03
 None currently scheduled.
 
 ### Watching
-- **CrewAI 1.x**: Monitoring for 2.0 announcement
-- **OpenAI 1.x**: Monitoring for 2.0 announcement
+- **CrewAI 1.x**: monitor 2.0 migration path
+- **OpenAI 1.x**: monitor 2.0 migration path
+- **LangChain/LangGraph**: monitor joint compatibility surface
+- **AutoGen**: monitor AgentChat and extension package changes
 
 ---
 
@@ -190,4 +187,4 @@ Help us maintain compatibility:
 
 ---
 
-*This matrix is automatically updated weekly. Last automation run: 2026-02-03*
+*This matrix is updated from automated compatibility runs. Tracker issues are opened only for active regressions and closed once fixed or invalidated.*

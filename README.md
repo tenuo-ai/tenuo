@@ -21,9 +21,13 @@
 >
 > [Request access →](https://tenuo.ai/early-access.html)
 
-Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid debit card, as opposed to corporate Amex**: ephemeral, scoped capability tokens that expire when the task ends.
+Tenuo is cryptographic authorization infrastructure for AI agents. A useful mental model is a prepaid card instead of a corporate Amex: scoped capability tokens that expire with the task.
 
-A **warrant** is a signed token specifying which tools an agent can call, under what constraints, and for how long. Bound to a cryptographic key, verified offline in ~27μs, and monotonically scoped: delegation can only narrow authority, never expand it. If an agent is prompt-injected, the warrant's bounds still hold.
+A **warrant** is a signed token specifying which tools an agent can call, under what constraints, and for how long. It is bound to a cryptographic key, and the caller must prove possession of that key (PoP). Verification is offline (~27μs), and delegation attenuates monotonically: authority can narrow but not expand. If an agent is prompt-injected, execution is still limited by warrant constraints.
+
+Tenuo is designed for teams running tool-calling and multi-agent workflows where authorization must hold at runtime, not just at session start.
+
+It can be deployed in-process or at boundary enforcement points (sidecar/gateway), with the same warrant semantics and enforcement behavior.
 
 > **Status: v0.1 Beta** - Core semantics are stable. APIs may evolve. See [CHANGELOG](./CHANGELOG.md).
 
@@ -64,15 +68,22 @@ with mint_sync(Capability("send_email", to=Pattern("*@company.com"))):
         print("Blocked: attacker@evil.com")  # -> "Blocked: attacker@evil.com"
 ```
 
-The agent can be prompt-injected. The authorization layer doesn't care. The warrant says `*@company.com`. The request says `attacker@evil.com`. **Denied.**
+Even if the agent is prompt-injected, enforcement still happens at the tool boundary. The warrant allows `*@company.com`; `attacker@evil.com` is denied.
 
-When the `mint_sync` block exits, the warrant is gone. No cleanup, no revocation — it just expires.
+When the `mint_sync` block exits, the warrant expires naturally. No manual cleanup or revocation flow is required.
+
+30-second architecture:
+
+1. **Issuer** mints a root warrant for a task.
+2. **Delegator** attenuates scope for downstream agents/tools.
+3. **Authorizer** verifies warrant + PoP at the tool-call boundary.
+4. **Signed receipt** records the authorization decision and execution context.
 
 ---
 
 ## Why Tenuo?
 
-IAM answers "who are you?" Tenuo answers "what can you do right now?"
+IAM answers "who are you?" Tenuo adds "what can this workload do right now for this task?"
 
 | Problem | Tenuo's Answer |
 |---------|----------------|
@@ -107,8 +118,8 @@ Tenuo implements **Subtractive Delegation**: each step in the chain can only red
 ## What Tenuo Is Not
 
 - **Not a sandbox** — Tenuo authorizes actions, it doesn't isolate execution. Pair with containers/sandboxes/VMs for defense in depth.
-- **Not prompt engineering** — No "please don't do bad things" instructions. Cryptographic enforcement, not behavioral.
-- **Not an LLM filter** — We don't parse model outputs. We gate tool calls at execution time.
+- **Not prompt engineering** — Tenuo does not rely on model instructions for security decisions.
+- **Not an LLM filter** — Tenuo gates tool calls at execution time rather than filtering model text.
 - **Not a replacement for IAM** — Tenuo *complements* IAM by adding task-scoped, attenuating capabilities on top of identity.
 
 ---
@@ -127,7 +138,7 @@ Tenuo implements **Subtractive Delegation**: each step in the chain can only red
 
 ## Integrations
 
-**OpenAI** — Direct API protection with streaming TOCTOU defense
+**OpenAI** — Tool-call enforcement with streaming TOCTOU protection
 ```python
 from tenuo.openai import GuardBuilder, Subpath, UrlSafe, Shlex, Pattern
 
@@ -137,7 +148,7 @@ client = (GuardBuilder(openai.OpenAI())
     .allow("run_command", cmd=Shlex(allow=["ls"]))    # Shell injection protection
     .allow("send_email", to=Pattern("*@company.com"))
     .build())
-# Prompt injection -> send_email(to="attacker@evil.com") -> DENIED
+# Out-of-scope recipient is denied at execution time
 ```
 
 **LangChain / LangGraph**
@@ -149,16 +160,16 @@ protected = guard_tools([search_tool, email_tool])      # LangChain
 graph.add_node("tools", TenuoToolNode([search, email])) # LangGraph
 ```
 
-**MCP** — Model Context Protocol client and server verification
+**MCP** — Model Context Protocol client and server-side verification
 ```python
 from tenuo.mcp import SecureMCPClient, MCPVerifier
 
-# Client: Automatically injects warrant proofs into tool arguments
+# Client: injects warrant proofs into tool arguments
 async with SecureMCPClient("python", ["server.py"]) as client:
     async with mint(Capability("read_file", path=Subpath("/data"))):
         result = await client.tools["read_file"](path="/data/file.txt")
 
-# Server: Verifies tool constraints offline before execution
+# Server: verifies tool constraints offline before execution
 verifier = MCPVerifier(...)
 @mcp.tool()
 async def read_file(path: str, **kwargs) -> str:
@@ -182,7 +193,7 @@ guard = (GuardBuilder()
 agent = Agent(name="assistant", before_tool_callback=guard.before_tool)
 ```
 
-**CrewAI** — Multi-agent crews with capability-based authorization
+**CrewAI** — Multi-agent crews with warrant-based authorization
 ```python
 from tenuo.crewai import GuardBuilder
 
@@ -191,7 +202,7 @@ guard = (GuardBuilder()
     .allow("write_file", path=Subpath("/workspace"))
     .build())
 
-crew = guard.protect(my_crew)  # All agents get enforced constraints
+crew = guard.protect(my_crew)  # Enforces constraints across crew tools
 ```
 
 **A2A (Agent-to-Agent)** — Warrant-based inter-agent delegation
@@ -345,14 +356,28 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 
 ## Rust
 
-Building a sidecar or gateway? Use the core directly:
+Building an authorizer sidecar, gateway, or high-throughput service in
+Rust? Use the core crate directly.
+
+What you get in Rust:
+
+- Warrant minting, derivation, and verification
+- Monotonic attenuation enforcement across delegation hops
+- Typed constraint evaluation at execution time
+- Holder Proof of Possession (PoP) verification
+- Signed receipt generation for allow/deny decisions
 
 ```toml
 [dependencies]
-tenuo = "0.1.0-beta.14"
+tenuo = "0.1.0-beta.16"
 ```
 
-See [docs.rs/tenuo](https://docs.rs/tenuo) for Rust API.
+Use the Rust API when you need a language-native enforcement boundary
+without Python runtime dependencies.
+
+- API docs: [docs.rs/tenuo](https://docs.rs/tenuo)
+- Security model: [tenuo.ai/security](https://tenuo.ai/security)
+- Constraints reference: [tenuo.ai/constraints](https://tenuo.ai/constraints)
 
 ---
 
@@ -398,9 +423,9 @@ We're planning a TypeScript/Node SDK for v0.2. If you're interested in leading o
 
 ---
 
-## Deploying to Production?
+## Deploying to Production
 
-Self-hosted is free forever. For a managed control plane with observability and revocation management, [request early access](https://tenuo.ai/early-access.html) to Tenuo Cloud.
+Self-hosted is free forever. For a managed control plane with observability and revocation workflows, [request early access](https://tenuo.ai/early-access.html) to Tenuo Cloud.
 
 ---
 
