@@ -51,7 +51,7 @@ result = await execute_workflow_authorized(
 )
 ```
 
-Inside workflows, the TenuoInterceptor computes Proof-of-Possession signatures transparently - use standard Temporal APIs:
+Inside workflows, the TenuoPlugin computes Proof-of-Possession signatures transparently - use standard Temporal APIs:
 
 ```python
 @workflow.defn
@@ -71,6 +71,23 @@ The interceptor automatically:
 - Injects warrant and PoP into activity headers
 - Works with `asyncio.gather()` for parallel activities
 - Ensures replay safety
+
+### Activity registry (`activity_fns`) — when you **must** set it
+
+PoP signs a canonical **argument dictionary**. If your warrant uses **named field constraints** (for example `capability("read_file", path=Subpath("/data/..."))`), that dict must use **real parameter names** (`path`), not placeholders (`arg0`, `arg1`, …).
+
+The outbound interceptor learns parameter names from, in order:
+
+1. The Temporal SDK’s `input.fn` (when present)
+2. `tenuo_execute_activity()` (records the function for that call)
+3. **`TenuoPluginConfig.activity_fns`** — pass the **same** callables as `Worker(activities=[...])`
+4. Otherwise it falls back to `arg0`, `arg1`, …
+
+If (4) happens while your warrant has field constraints for that tool, verification will not match the warrant. The worker **logs a warning**; with **`strict_mode=True`** it **raises** instead so you fix config before production.
+
+**Rule of thumb:** warrants with `path=`, `message=`, etc. → set `activity_fns=activities` next to your `TenuoPlugin` config (see `demo.py`). Tool-only capabilities (no per-field constraints) do not require it.
+
+See also: the **Activity registry (`activity_fns`) and PoP argument names** section in [`docs/temporal.md`](../../../docs/temporal.md) (repository root).
 
 ### When to use Tenuo-specific functions
 
@@ -107,8 +124,8 @@ from temporalio.worker.workflow_sandbox import (
     SandboxedWorkflowRunner, SandboxRestrictions,
 )
 
-interceptor = TenuoInterceptor(
-    TenuoInterceptorConfig(
+interceptor = TenuoPlugin(
+    TenuoPluginConfig(
         key_resolver=EnvKeyResolver(),
         on_denial="raise",
         trusted_roots=[control_key.public_key],

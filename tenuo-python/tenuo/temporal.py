@@ -20,7 +20,7 @@ Setup (required):
             task_queue="my-queue",
             workflows=[MyWorkflow],
             activities=[my_activity],
-            interceptors=[TenuoInterceptor(config)],
+            interceptors=[TenuoPlugin(config)],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
                     "tenuo", "tenuo_core",
@@ -42,8 +42,25 @@ Overview:
 
 Key Concepts:
     - Warrants propagate via Temporal headers, no code changes to activities
-    - TenuoInterceptor enforces authorization at the activity boundary
+    - TenuoPlugin enforces authorization at the activity boundary
     - KeyResolver abstraction for secure key material management
+
+Activity registry (``activity_fns``) and PoP argument names:
+    Proof-of-Possession signs over a canonical **dict** of tool arguments. The
+    outbound workflow interceptor builds that dict from the activity's Python
+    parameter names when it can resolve the activity function; otherwise it
+    falls back to ``arg0``, ``arg1``, … (see ``TenuoPluginConfig.activity_fns``).
+
+    If your warrant uses **named field constraints** (e.g. ``path=Subpath(...)``)
+    for a tool, PoP and constraint checks expect keys like ``path``, not ``arg0``.
+    When the SDK does not supply ``input.fn`` and you did not pass
+    ``activity_fns``, signing may use the positional fallback and **verification
+    will not match** the warrant — or you will see a **warning** (or
+    **``TenuoContextError``** when ``strict_mode=True``) at signing time.
+
+    **Rule:** For warrants with named constraints, set ``activity_fns`` to the
+    same callables you pass to ``Worker(activities=...)``, or call activities
+    via ``tenuo_execute_activity`` (which records the function reference).
 
 Security Philosophy (Fail-Closed by Default):
     - Missing warrant headers: Denied (require_warrant=True by default)
@@ -124,13 +141,21 @@ Troubleshooting:
 
     ``TemporalConstraintViolation: ... Incorrect padding`` or ``signature must be 64 bytes``
         PoP/header encoding mismatch. Ensure the worker has
-        ``TenuoInterceptor(...)`` registered and that Tenuo headers are
+        ``TenuoPlugin(...)`` registered and that Tenuo headers are
         injected at workflow start. ``workflow.execute_activity()`` is
         supported when the interceptor is installed.
 
     ``WarrantExpired: Warrant '...' expired at ...``
         The warrant's TTL has elapsed.  Mint a new warrant with a longer
         ``ttl()`` or refresh the warrant before starting the workflow.
+
+    Log: ``PoP signing for activity ... positional argument keys (arg0, ...)``
+        The outbound interceptor could not resolve the activity callable, so PoP
+        was computed with ``arg0``/``arg1`` keys while the warrant has **named**
+        field constraints for that tool. Add ``activity_fns=[...]`` to
+        ``TenuoPluginConfig`` (same as ``Worker(activities=...)``), or use
+        ``tenuo_execute_activity``. With ``strict_mode=True``, this is a hard
+        error (``TenuoContextError``) instead of a warning.
 """
 
 from __future__ import annotations
@@ -168,6 +193,9 @@ TENUO_ARG_KEYS_HEADER = "x-tenuo-arg-keys"
 TENUO_WIRE_FORMAT_HEADER = "x-tenuo-wire-format"
 TENUO_APPROVALS_HEADER = "x-tenuo-approvals"
 
+# Stable plugin identifier for logs and Temporal Web activity summaries (matches import path).
+TENUO_TEMPORAL_PLUGIN_ID = "tenuo.temporal.TenuoPlugin"
+
 # Wire format versions:
 #   "1" (or absent): legacy base64(cbor) warrant encoding
 #   "2": raw CBOR bytes (no intermediate base64 layer)
@@ -191,7 +219,7 @@ POP_WINDOW_SECONDS = 300
 # _workflow_headers_store: workflow_id → {warrant, key_id}
 # _pending_child_headers:  child_wf_id → attenuated headers
 # _pop_dedup_cache:        dedup_key → timestamp (replay protection)
-# _workflow_config_store:  workflow_id → TenuoInterceptorConfig
+# _workflow_config_store:  workflow_id → TenuoPluginConfig
 #
 # Thread safety: _store_lock protects all mutations. Temporal workers
 # may execute activities from different workflows concurrently on
@@ -204,7 +232,7 @@ _pop_dedup_cache: Dict[str, float] = {}
 _pop_dedup_last_evict: float = 0.0
 _DEDUP_EVICT_INTERVAL: float = 60.0
 _DEDUP_MAX_SIZE: int = 10_000
-_workflow_config_store: Dict[str, "TenuoInterceptorConfig"] = {}
+_workflow_config_store: Dict[str, "TenuoPluginConfig"] = {}
 _pending_activity_fn: Dict[str, Any] = {}  # workflow_id → activity function ref
 _pending_activity_approvals: Dict[str, List[Any]] = {}  # workflow_id → SignedApproval list
 
@@ -406,7 +434,7 @@ class TenuoMetrics:
 
     Example:
         metrics = TenuoMetrics()
-        config = TenuoInterceptorConfig(
+        config = TenuoPluginConfig(
             key_resolver=resolver,
             metrics=metrics,
         )
@@ -1030,8 +1058,8 @@ class CompositeKeyResolver(KeyResolver):
 
 
 @dataclass
-class TenuoInterceptorConfig:
-    """Configuration for TenuoInterceptor."""
+class TenuoPluginConfig:
+    """Configuration for TenuoPlugin."""
 
     key_resolver: KeyResolver
     """Required. Resolves key IDs to signing keys.
@@ -1157,11 +1185,30 @@ class TenuoInterceptorConfig:
     for transparent PoP signing even when using plain
     ``workflow.execute_activity()``.
 
-    Without this, the outbound interceptor must fall back to
-    positional keys (``arg0``, ``arg1``, ...) which will fail
-    constraint checks if the warrant uses named parameters.
+    **Why this exists:** PoP signs ``(warrant_id, tool, sorted_args_dict, time)``.
+    Warrants with **named field constraints** (e.g. ``path=Subpath("/data")``)
+    require ``args_dict`` keys to match those field names.  Resolution order for
+    the callable used to build ``args_dict`` is:
 
-    Pass the same list you give to ``Worker(activities=...)``.
+    1. ``input.fn`` from the Temporal Python SDK (when present)
+    2. Function reference set by ``tenuo_execute_activity()``
+    3. This registry: activity type name → function (from ``activity_fns``)
+    4. Fallback: ``arg0``, ``arg1``, …
+
+    Without (1)–(3), step (4) is used.  That is valid for **tool-only**
+    capabilities (no per-field constraints) because signing and verification
+    both use the same ``argN`` keys.  It is **incorrect** for named
+    constraints: verification expects e.g. ``path``, not ``arg0``.
+
+    **Detection:** If (4) is used and the warrant has non-empty field
+    constraints for that activity type, the worker logs a **warning**; with
+    ``strict_mode=True``, it raises ``TenuoContextError`` instead (fail-fast).
+
+    **Required when:** Your warrant uses named constraints for tools you call
+    with transparent ``execute_activity``, unless the SDK always provides
+    ``input.fn`` in your environment (do not rely on that across versions).
+
+    Pass the **same** list you give to ``Worker(activities=...)``.
     """
 
     approval_handler: Optional[Callable] = None
@@ -1198,7 +1245,7 @@ class TenuoInterceptorConfig:
 
     Recommended for all production deployments::
 
-        config = TenuoInterceptorConfig(
+        config = TenuoPluginConfig(
             key_resolver=VaultKeyResolver(url="..."),
             trusted_roots=[root_key.public_key],
             strict_mode=True,
@@ -1208,13 +1255,13 @@ class TenuoInterceptorConfig:
     def __post_init__(self) -> None:
         if self.dry_run:
             logger.warning(
-                "TenuoInterceptorConfig: dry_run=True enables shadow mode and "
+                "TenuoPluginConfig: dry_run=True enables shadow mode and "
                 "does not enforce authorization denials. Do not use in production."
             )
             # Elevate to a Python-level warning so it appears in production logs regardless of
             # logger configuration. Use stacklevel=2 to point at the call site, not this frame.
             warnings.warn(
-                "TenuoInterceptorConfig: dry_run=True — authorization denials will NOT be "
+                "TenuoPluginConfig: dry_run=True — authorization denials will NOT be "
                 "enforced. This is a shadow/staging mode; remove dry_run=True before "
                 "deploying to production.",
                 stacklevel=2,
@@ -1230,7 +1277,7 @@ class TenuoInterceptorConfig:
             else:
                 from tenuo.exceptions import ConfigurationError
                 raise ConfigurationError(
-                    "TenuoInterceptorConfig: strict_mode=True requires trusted_roots to be set. "
+                    "TenuoPluginConfig: strict_mode=True requires trusted_roots to be set. "
                     "Without trusted_roots, PoP and chain-of-trust verification are skipped, "
                     "reducing security to lightweight constraint checks only. "
                     "Pass trusted_roots=[control_key.public_key], call "
@@ -1487,7 +1534,7 @@ def tenuo_headers(
         )
 
         # Worker side - resolves key from Vault
-        config = TenuoInterceptorConfig(
+        config = TenuoPluginConfig(
             key_resolver=VaultKeyResolver(url="https://vault.company.com"),
         )
     """
@@ -1541,6 +1588,7 @@ async def tenuo_execute_activity(
     retry_policy: Any = None,
     task_queue: Optional[str] = None,
     cancellation_type: Any = None,
+    summary: Optional[str] = None,
 ) -> Any:
     """Execute an activity with Tenuo authorization (legacy wrapper).
 
@@ -1609,6 +1657,8 @@ async def tenuo_execute_activity(
         activity_kwargs["task_queue"] = task_queue
     if cancellation_type is not None:
         activity_kwargs["cancellation_type"] = cancellation_type
+    if summary is not None:
+        activity_kwargs["summary"] = summary
 
     # Store function reference so outbound interceptor can inspect parameters
     wf_id = workflow.info().workflow_id
@@ -1727,13 +1777,13 @@ def attenuated_headers(
 
     if not raw_headers:
         raise TenuoContextError(
-            "No Tenuo headers in store. Ensure TenuoInterceptor is "
+            "No Tenuo headers in store. Ensure TenuoPlugin is "
             "registered and tenuo_headers() was passed at workflow start."
         )
 
     if not config_store_entry:
         raise TenuoContextError(
-            "No interceptor config found. Ensure TenuoInterceptor is registered."
+            "No interceptor config found. Ensure TenuoPlugin is registered."
         )
 
     parent_key_id = raw_headers.get(TENUO_KEY_ID_HEADER, b"").decode("utf-8")
@@ -1746,7 +1796,7 @@ def attenuated_headers(
     config = config_store_entry
     if not config.key_resolver:
         raise TenuoContextError(
-            "key_resolver not configured in TenuoInterceptorConfig. "
+            "key_resolver not configured in TenuoPluginConfig. "
             "Required for child workflow delegation."
         )
 
@@ -2012,13 +2062,13 @@ def workflow_grant(
 
     if not raw_headers:
         raise TenuoContextError(
-            "No Tenuo headers in store. Ensure TenuoInterceptor is "
+            "No Tenuo headers in store. Ensure TenuoPlugin is "
             "registered and tenuo_headers() was passed at workflow start."
         )
 
     if not config_store_entry:
         raise TenuoContextError(
-            "No interceptor config found. Ensure TenuoInterceptor is registered."
+            "No interceptor config found. Ensure TenuoPlugin is registered."
         )
 
     key_id = raw_headers.get(TENUO_KEY_ID_HEADER, b"").decode("utf-8")
@@ -2031,7 +2081,7 @@ def workflow_grant(
     config = config_store_entry
     if not config.key_resolver:
         raise TenuoContextError(
-            "key_resolver not configured in TenuoInterceptorConfig. "
+            "key_resolver not configured in TenuoPluginConfig. "
             "Required for attenuated grants."
         )
 
@@ -2401,6 +2451,55 @@ def _compute_pop_challenge(
 # =============================================================================
 
 
+def _args_dict_uses_only_positional_fallback_keys(args_dict: Dict[str, Any]) -> bool:
+    """True if every key is arg0, arg1, ... (PoP positional fallback)."""
+    if not args_dict:
+        return False
+    for k in args_dict:
+        if not (k.startswith("arg") and k[3:].isdigit()):
+            return False
+    return True
+
+
+def _warrant_tool_has_non_empty_field_constraints(warrant: Any, tool_name: str) -> bool:
+    """True if the warrant attaches at least one field-level constraint to this tool."""
+    try:
+        gc = getattr(warrant, "get_constraints", None)
+        if callable(gc):
+            c = gc(tool_name)
+            if isinstance(c, dict) and len(c) > 0:
+                return True
+    except Exception:
+        pass
+    try:
+        caps = getattr(warrant, "capabilities", None)
+        if isinstance(caps, dict):
+            fields = caps.get(tool_name)
+            if isinstance(fields, dict) and len(fields) > 0:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _positional_pop_mismatch_message(
+    tool_name: str,
+    *,
+    strict_mode: bool,
+) -> str:
+    action = "configured incorrectly" if not strict_mode else "blocked (strict_mode=True)"
+    return (
+        f"PoP signing for activity {tool_name!r} uses positional argument keys "
+        f"(arg0, arg1, ...) but this warrant has named field constraints for that "
+        f"tool. Constraint and PoP verification expect real parameter names "
+        f"(e.g. path=...), not argN. Worker {action}: pass "
+        f"activity_fns=<same list as Worker(activities=...)> in TenuoPluginConfig, "
+        f"or call the activity via tenuo_execute_activity() so the function "
+        f"reference is available. See tenuo.temporal module docstring: "
+        f"'Activity registry (activity_fns) and PoP argument names'."
+    )
+
+
 class _TenuoWorkflowOutboundInterceptor:
     """Outbound workflow interceptor — transparently computes and injects PoP.
 
@@ -2415,7 +2514,7 @@ class _TenuoWorkflowOutboundInterceptor:
     This follows the OpenTelemetry pattern: add interceptor, everything works.
     """
 
-    def __init__(self, next_outbound: Any, config: Optional["TenuoInterceptorConfig"] = None) -> None:
+    def __init__(self, next_outbound: Any, config: Optional["TenuoPluginConfig"] = None) -> None:
         self._next = next_outbound
         self.__dict__["_config"] = config
 
@@ -2457,7 +2556,7 @@ class _TenuoWorkflowOutboundInterceptor:
                     # Resolve signing key from secure storage via KeyResolver
                     if not self._config or not self._config.key_resolver:
                         raise TenuoContextError(
-                            "key_resolver not configured in TenuoInterceptorConfig. "
+                            "key_resolver not configured in TenuoPluginConfig. "
                             "Required for PoP signature generation."
                         )
 
@@ -2498,6 +2597,21 @@ class _TenuoWorkflowOutboundInterceptor:
                             for i, arg in enumerate(raw_args):
                                 args_dict[f"arg{i}"] = arg
 
+                    if raw_args and _args_dict_uses_only_positional_fallback_keys(
+                        args_dict
+                    ) and _warrant_tool_has_non_empty_field_constraints(
+                        warrant, tool_name
+                    ):
+                        msg = _positional_pop_mismatch_message(
+                            tool_name,
+                            strict_mode=bool(
+                                self._config and self._config.strict_mode
+                            ),
+                        )
+                        if self._config and self._config.strict_mode:
+                            raise TenuoContextError(msg)
+                        logger.warning(msg)
+
                     # ✨ TRANSPARENT POP COMPUTATION ✨
                     # Use workflow.now() for deterministic replay safety.
                     # CRITICAL: timestamp MUST be provided for Temporal workflows
@@ -2536,6 +2650,15 @@ class _TenuoWorkflowOutboundInterceptor:
                         )
 
                     input = _replace_field(input, "headers", activity_headers)
+
+                    # Temporal Web: activity summary (discoverability in UI)
+                    if hasattr(input, "__dataclass_fields__") and "summary" in input.__dataclass_fields__:
+                        current_summary = getattr(input, "summary", "") or ""
+                        prefix = f"[{TENUO_TEMPORAL_PLUGIN_ID}]"
+                        new_summary = (
+                            f"{prefix} {current_summary}" if current_summary else f"{prefix} {tool_name}"
+                        )
+                        input = _replace_field(input, "summary", new_summary)
 
         except TenuoContextError:
             raise
@@ -2638,7 +2761,7 @@ class _TenuoWorkflowInboundInterceptor:
     through Temporal's standard header propagation.
     """
 
-    _config: Optional["TenuoInterceptorConfig"] = None
+    _config: Optional["TenuoPluginConfig"] = None
 
     def __init__(self, next_interceptor: Any) -> None:
         self.next = next_interceptor
@@ -2678,7 +2801,7 @@ class _TenuoWorkflowInboundInterceptor:
                 _workflow_headers_store.pop(wf_id, None)
                 _workflow_config_store.pop(wf_id, None)
 
-    def _resolve_config(self) -> Optional["TenuoInterceptorConfig"]:
+    def _resolve_config(self) -> Optional["TenuoPluginConfig"]:
         from temporalio import workflow as _wf  # type: ignore[import-not-found]
 
         wf_id = _wf.info().workflow_id
@@ -2735,8 +2858,11 @@ class _TenuoWorkflowInboundInterceptor:
         return await self.next.handle_update_handler(input)
 
 
-class TenuoInterceptor:
-    """Temporal interceptor that enforces Tenuo warrant authorization.
+class TenuoPlugin:
+    """Temporal Python SDK Plugin: warrant authorization (middleware / security).
+
+    Stable identifier: :data:`TENUO_TEMPORAL_PLUGIN_ID` (``tenuo.temporal.TenuoPlugin``)
+    for worker logs and Temporal Web activity summaries.
 
     Intercepts activity execution and verifies the calling workflow
     has a valid warrant authorizing the activity.
@@ -2752,8 +2878,8 @@ class TenuoInterceptor:
         )
 
         activities = [read_file, write_file]
-        interceptor = TenuoInterceptor(
-            TenuoInterceptorConfig(
+        interceptor = TenuoPlugin(
+            TenuoPluginConfig(
                 key_resolver=EnvKeyResolver(),
                 on_denial="raise",
                 trusted_roots=[control_key.public_key],
@@ -2775,12 +2901,12 @@ class TenuoInterceptor:
         )
     """
 
-    def __init__(self, config: TenuoInterceptorConfig) -> None:
+    def __init__(self, config: TenuoPluginConfig) -> None:
         self._config = config
         self._version = self._get_version()
         if not config.trusted_roots:
             _msg = (
-                "TenuoInterceptor initialized WITHOUT trusted_roots. "
+                "TenuoPlugin initialized WITHOUT trusted_roots. "
                 "Running in lightweight mode: PoP signatures and chain-of-trust are NOT "
                 "verified — any structurally valid warrant is accepted. "
                 "Set trusted_roots=[control_key.public_key] for production security, "
@@ -2792,8 +2918,8 @@ class TenuoInterceptor:
                 # in case the config was built without __post_init__ running.
                 from tenuo.exceptions import ConfigurationError as _ConfigError
                 raise _ConfigError(
-                    "TenuoInterceptor strict_mode=True requires trusted_roots. "
-                    "Pass trusted_roots=[issuer_public_key] to TenuoInterceptorConfig or "
+                    "TenuoPlugin strict_mode=True requires trusted_roots. "
+                    "Pass trusted_roots=[issuer_public_key] to TenuoPluginConfig or "
                     "call tenuo.configure(trusted_roots=[...]) at application startup."
                 )
             import warnings as _warnings
@@ -2811,6 +2937,14 @@ class TenuoInterceptor:
                 "    SandboxRestrictions.default.with_passthrough_modules('tenuo', 'tenuo_core')\n\n"
                 "See the module docstring for a full Worker setup example."
             ) from _e
+
+        logger.info(
+            "Loaded %s (warrant authorization middleware for Temporal Python SDK)",
+            TENUO_TEMPORAL_PLUGIN_ID,
+        )
+
+    def __repr__(self) -> str:
+        return f"<{TENUO_TEMPORAL_PLUGIN_ID}>"
 
     def _get_version(self) -> str:
         """Get Tenuo version for audit events."""
@@ -2842,13 +2976,13 @@ class TenuoInterceptor:
         dict so the activity interceptor can read them. This sidesteps the
         fact that workflow.execute_activity() does not accept ``headers``.
 
-        A new subclass is created for every ``TenuoInterceptor`` instance so
+        A new subclass is created for every ``TenuoPlugin`` instance so
         that two interceptors with different configs (e.g. different
         ``trusted_roots`` for different task queues) cannot accidentally
         share or overwrite each other's configuration (F3).
         """
         # F3: create a per-instance subclass so the class-level _config
-        # is not shared across multiple TenuoInterceptor instances.
+        # is not shared across multiple TenuoPlugin instances.
         bound_config = self._config
         interceptor_cls = type(
             "_TenuoWorkflowInboundInterceptor",
@@ -2864,7 +2998,7 @@ class TenuoActivityInboundInterceptor:
     def __init__(
         self,
         next_interceptor: Any,
-        config: TenuoInterceptorConfig,
+        config: TenuoPluginConfig,
         version: str,
     ) -> None:
         self._next = next_interceptor
@@ -3136,15 +3270,15 @@ class TenuoActivityInboundInterceptor:
             # SECURITY: This path has no cryptographic issuer verification and no
             # Proof-of-Possession check.  It is suitable only for development or
             # internal environments where warrants are not received from untrusted
-            # callers.  Configure trusted_roots on TenuoInterceptorConfig for
+            # callers.  Configure trusted_roots on TenuoPluginConfig for
             # production deployments so the Rust Authorizer gates every call.
             import warnings as _warnings
             from tenuo.exceptions import TenuoSecurityWarning as _TSW
             _warnings.warn(
-                "TenuoInterceptor has no trusted_roots configured: activity "
+                "TenuoPlugin has no trusted_roots configured: activity "
                 f"'{tool_name}' is being authorized without issuer trust verification "
                 "or Proof-of-Possession. Set trusted_roots=... on "
-                "TenuoInterceptorConfig to enable full cryptographic enforcement.",
+                "TenuoPluginConfig to enable full cryptographic enforcement.",
                 _TSW,
                 stacklevel=4,
             )
@@ -3295,7 +3429,7 @@ class TenuoActivityInboundInterceptor:
         Resolution order:
           1. Pre-supplied approvals in ``x-tenuo-approvals`` header
              (base64-encoded JSON list of CBOR-serialized SignedApprovals).
-          2. ``approval_handler`` callback on TenuoInterceptorConfig.
+          2. ``approval_handler`` callback on TenuoPluginConfig.
           3. Raise ApprovalGateTriggered (gate fires, no approvals available).
 
         Returns ``None`` when no gate fires (ungated call).
@@ -3388,7 +3522,7 @@ class TenuoActivityInboundInterceptor:
         # 3. No approvals available — approval gate fired but cannot be satisfied.
         raise ApprovalGateTriggered(
             f"Approval gate triggered for '{tool_name}' but no approvals available "
-            "(set approval_handler on TenuoInterceptorConfig or supply x-tenuo-approvals header)"
+            "(set approval_handler on TenuoPluginConfig or supply x-tenuo-approvals header)"
         )
 
     def _extract_arguments(
@@ -3591,9 +3725,9 @@ __all__ = [
     # Metrics
     "TenuoMetrics",  # Phase 4
     # Config
-    "TenuoInterceptorConfig",
+    "TenuoPluginConfig",
     # Interceptors
-    "TenuoInterceptor",
+    "TenuoPlugin",
     "TenuoClientInterceptor",
     "TenuoActivityInboundInterceptor",
     # Header utilities
@@ -3623,4 +3757,5 @@ __all__ = [
     "TENUO_CHAIN_HEADER",
     "TENUO_WIRE_FORMAT_HEADER",
     "TENUO_APPROVALS_HEADER",
+    "TENUO_TEMPORAL_PLUGIN_ID",
 ]

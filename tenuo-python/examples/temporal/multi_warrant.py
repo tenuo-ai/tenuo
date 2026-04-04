@@ -12,7 +12,7 @@ Neither can access the other's directory.
 
 KEY POINT: The workflow code is identical for both tenants. Isolation comes
 entirely from the warrant assigned at workflow start, not from code changes.
-Both workflows use standard workflow.execute_activity() - the TenuoInterceptor
+Both workflows use standard workflow.execute_activity() - the TenuoPlugin
 handles authorization transparently.
 
 Requirements:
@@ -43,8 +43,8 @@ from tenuo.temporal import (
     EnvKeyResolver,
     TemporalAuditEvent,
     TenuoClientInterceptor,
-    TenuoInterceptor,
-    TenuoInterceptorConfig,
+    TenuoPlugin,
+    TenuoPluginConfig,
     tenuo_headers,
 )
 
@@ -74,7 +74,7 @@ async def read_file(path: str) -> str:
 class ScopedReadWorkflow:
     """Reads all .txt files within its warrant-scoped directory.
 
-    Uses standard workflow.execute_activity() - the TenuoInterceptor
+    Uses standard workflow.execute_activity() - the TenuoPlugin
     handles authorization transparently. This same workflow code works
     for all tenants; isolation comes from the warrant, not the code.
     """
@@ -160,8 +160,8 @@ async def main():
     key_resolver = EnvKeyResolver()
     key_resolver.preload_keys(["agentA", "agentB"])
 
-    worker_interceptor = TenuoInterceptor(
-        TenuoInterceptorConfig(
+    worker_interceptor = TenuoPlugin(
+        TenuoPluginConfig(
             key_resolver=key_resolver,
             on_denial="raise",
             audit_callback=on_audit,

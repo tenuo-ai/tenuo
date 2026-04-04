@@ -3,8 +3,11 @@ Shared pytest configuration for the test suite.
 """
 
 import os
+from pathlib import Path
 
 import pytest
+
+_TEMPORAL_E2E_FILES = frozenset({"test_temporal_live.py", "test_temporal_replay.py"})
 
 
 def pytest_collection_modifyitems(config, items):
@@ -15,15 +18,17 @@ def pytest_collection_modifyitems(config, items):
     They run in the dedicated ``temporal-integration`` CI job with
     ``TEMPORAL_LIVE_TESTS=1``, or locally via:
 
-        TEMPORAL_LIVE_TESTS=1 pytest tests/test_temporal_live.py -v
+        TEMPORAL_LIVE_TESTS=1 pytest tests/e2e/test_temporal_live.py -v
 
-    Running them directly (without the full suite) also works:
+    Running only Temporal e2e files (live or replay) also opts in:
 
-        pytest tests/test_temporal_live.py -v
+        pytest tests/e2e/test_temporal_live.py -v
+        pytest tests/e2e/test_temporal_replay.py -v
     """
-    # If only live test files were selected, don't skip
+    # If only Temporal e2e files were selected, don't skip
     all_files = {str(item.fspath) for item in items}
-    if all(f.endswith("test_temporal_live.py") for f in all_files):
+    basenames = {Path(f).name for f in all_files}
+    if basenames and basenames <= _TEMPORAL_E2E_FILES:
         return
 
     if os.environ.get("TEMPORAL_LIVE_TESTS"):
@@ -31,7 +36,8 @@ def pytest_collection_modifyitems(config, items):
 
     skip = pytest.mark.skip(
         reason="Skipped in full suite (process isolation required). "
-        "Run with: TEMPORAL_LIVE_TESTS=1 pytest tests/test_temporal_live.py"
+        "Run with: TEMPORAL_LIVE_TESTS=1 pytest tests/e2e/test_temporal_live.py "
+        "or run only tests/e2e/test_temporal_live.py / test_temporal_replay.py"
     )
     for item in items:
         if "temporal_live" in item.keywords:

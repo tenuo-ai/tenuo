@@ -6,7 +6,7 @@ Authorization is completely invisible - just use standard Temporal APIs!
 
 Key features:
   - ✨ NO special wrapper functions needed (workflow.execute_activity just works!)
-  - ✨ TenuoInterceptor handles PoP computation transparently
+  - ✨ TenuoPlugin handles PoP computation transparently
   - ✨ Works with standard Temporal code - zero changes to workflows
   - ✨ Parallel activities via asyncio.gather work perfectly
   - EnvKeyResolver resolves signing keys from environment variables
@@ -16,7 +16,7 @@ IMPORTANT - Do NOT call warrant.sign() directly in workflows:
   ❌ BAD:  pop = warrant.sign(key, tool, args)  # Non-deterministic!
   ✅ GOOD: await workflow.execute_activity(...)  # Interceptor handles it
 
-The TenuoInterceptor automatically computes PoP with deterministic timestamps
+The TenuoPlugin automatically computes PoP with deterministic timestamps
 (workflow.now()) to ensure replay safety. Manual sign() calls will use
 wall-clock time and cause replay failures.
 
@@ -53,8 +53,8 @@ from tenuo.temporal import (
     EnvKeyResolver,
     TemporalAuditEvent,
     TenuoClientInterceptor,
-    TenuoInterceptor,
-    TenuoInterceptorConfig,
+    TenuoPlugin,
+    TenuoPluginConfig,
     execute_workflow_authorized,
     tenuo_headers,
 )
@@ -102,7 +102,7 @@ class ResearchWorkflow:
     """Researches files within the scope authorized by its warrant.
 
     ✨ Notice: This is standard Temporal code! No Tenuo-specific functions.
-    The TenuoInterceptor transparently computes PoP for every activity.
+    The TenuoPlugin transparently computes PoP for every activity.
     """
 
     @workflow.run
@@ -221,13 +221,13 @@ async def main():
     (demo_dir / "paper2.txt").write_text("Content of paper 2")
     (demo_dir / "notes.txt").write_text("Research notes")
 
-    # --- Worker setup with production TenuoInterceptor ---
+    # --- Worker setup with production TenuoPlugin ---
     # Pre-load keys to avoid os.environ access inside Temporal's workflow sandbox
     key_resolver = EnvKeyResolver()
     key_resolver.preload_keys(["agent1"])  # Cache before workflow execution
 
-    worker_interceptor = TenuoInterceptor(
-        TenuoInterceptorConfig(
+    worker_interceptor = TenuoPlugin(
+        TenuoPluginConfig(
             key_resolver=key_resolver,
             on_denial="raise",
             audit_callback=on_audit,

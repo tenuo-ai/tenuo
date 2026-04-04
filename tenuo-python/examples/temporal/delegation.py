@@ -46,8 +46,8 @@ from tenuo.temporal import (
     EnvKeyResolver,
     TemporalAuditEvent,
     TenuoClientInterceptor,
-    TenuoInterceptor,
-    TenuoInterceptorConfig,
+    TenuoPlugin,
+    TenuoPluginConfig,
     tenuo_execute_child_workflow,
     tenuo_headers,
 )
@@ -297,8 +297,8 @@ async def main():
     key_resolver = EnvKeyResolver()
     key_resolver.preload_keys(["ingest", "transform"])
 
-    worker_interceptor = TenuoInterceptor(
-        TenuoInterceptorConfig(
+    worker_interceptor = TenuoPlugin(
+        TenuoPluginConfig(
             key_resolver=key_resolver,
             on_denial="raise",
             audit_callback=on_audit,

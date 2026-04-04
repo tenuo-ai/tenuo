@@ -45,8 +45,8 @@ from tenuo.temporal import (  # noqa: E402
     KeyResolver,
     TemporalAuditEvent,
     TenuoClientInterceptor,
-    TenuoInterceptor,
-    TenuoInterceptorConfig,
+    TenuoPlugin,
+    TenuoPluginConfig,
     tenuo_execute_activity,
     tenuo_execute_child_workflow,
     tenuo_headers,
@@ -273,8 +273,8 @@ async def _run_workflow(
 
     events: list[TemporalAuditEvent] = []
 
-    interceptor = TenuoInterceptor(
-        TenuoInterceptorConfig(
+    interceptor = TenuoPlugin(
+        TenuoPluginConfig(
             key_resolver=DictKeyResolver(key_dict),
             on_denial="raise",
             trusted_roots=[control.public_key],

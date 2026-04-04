@@ -241,7 +241,7 @@ class TestOnDenialBehaviouralContracts:
         from dataclasses import dataclass
 
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoInterceptor, TenuoInterceptorConfig, TENUO_WARRANT_HEADER
+        from tenuo.temporal import KeyResolver, TenuoPlugin, TenuoPluginConfig, TENUO_WARRANT_HEADER
 
         trusted_key = SigningKey.generate()
 
@@ -252,13 +252,13 @@ class TestOnDenialBehaviouralContracts:
         # Warrant grants 'read_file'; activity is 'delete_file'
         w = _signed_valid_warrant(trusted_key, tool="read_file")
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=_R(),
             trusted_roots=[trusted_key.public_key],
             require_warrant=True,
             on_denial="log",
         )
-        interceptor = TenuoInterceptor(cfg)
+        interceptor = TenuoPlugin(cfg)
 
         inp = MagicMock()
         inp.headers = {TENUO_WARRANT_HEADER: w.to_base64().encode()}
@@ -500,17 +500,17 @@ class TestDryRunIsOptIn:
     """
 
     def test_temporal_interceptor_default_is_not_dry_run(self):
-        """Temporal TenuoInterceptorConfig defaults to dry_run=False."""
+        """Temporal TenuoPluginConfig defaults to dry_run=False."""
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoInterceptorConfig
+        from tenuo.temporal import KeyResolver, TenuoPluginConfig
 
         class _R(KeyResolver):
             def resolve(self, _kid):
                 return SigningKey.generate()
 
-        cfg = TenuoInterceptorConfig(key_resolver=_R())
+        cfg = TenuoPluginConfig(key_resolver=_R())
         assert cfg.dry_run is False, (
-            "TenuoInterceptorConfig: dry_run must default to False"
+            "TenuoPluginConfig: dry_run must default to False"
         )
 
     @pytest.mark.asyncio
@@ -523,18 +523,18 @@ class TestDryRunIsOptIn:
         from dataclasses import dataclass
 
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoInterceptor, TenuoInterceptorConfig
+        from tenuo.temporal import KeyResolver, TenuoPlugin, TenuoPluginConfig
 
         class _R(KeyResolver):
             def resolve(self, _kid):
                 return SigningKey.generate()
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=_R(),
             require_warrant=True,
             dry_run=True,
         )
-        interceptor = TenuoInterceptor(cfg)
+        interceptor = TenuoPlugin(cfg)
 
         inp = MagicMock()
         inp.headers = {}  # no warrant
@@ -580,19 +580,19 @@ class TestDryRunIsOptIn:
         from dataclasses import dataclass
 
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoInterceptor, TenuoInterceptorConfig
+        from tenuo.temporal import KeyResolver, TenuoPlugin, TenuoPluginConfig
 
         class _R(KeyResolver):
             def resolve(self, _kid):
                 return SigningKey.generate()
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=_R(),
             require_warrant=True,
             dry_run=False,
             on_denial="raise",
         )
-        interceptor = TenuoInterceptor(cfg)
+        interceptor = TenuoPlugin(cfg)
 
         inp = MagicMock()
         inp.headers = {}  # no warrant

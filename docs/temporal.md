@@ -233,12 +233,79 @@ For distributed deployments (separate client and worker processes), the integrat
 | Component | Responsibility | Required |
 |-----------|----------------|----------|
 | Client | Start workflows with Tenuo headers (`execute_workflow_authorized` or `set_headers_for_workflow`) | Yes |
-| Workflow worker | Register `TenuoInterceptor` and passthrough modules (`tenuo`, `tenuo_core`) | Yes |
+| Workflow worker | Register `TenuoPlugin` (or legacy `TenuoInterceptor`) and passthrough modules (`tenuo`, `tenuo_core`) | Yes |
 | Activity worker | Receive propagated headers and enforce PoP/constraints | Yes |
 | Key management | Resolve `key_id` to signing key using `KeyResolver` | Yes |
 | Trusted roots | Provide `trusted_roots` and enable `strict_mode=True` in production | Yes |
+| `activity_fns` | Same callables as `Worker(activities=...)` when warrants use **named** field constraints and you use transparent `execute_activity` | When applicable (see below) |
 
 If any required part is missing, execution fails closed.
+
+---
+
+## Activity registry (`activity_fns`) and PoP argument names
+
+### Why this matters
+
+Each activity call gets a **Proof-of-Possession (PoP)** signature over a canonical payload that includes the **tool name** and a **sorted argument dictionary**. Warrant field constraints (for example `path=Subpath("/data")` on `read_file`) are checked against that same dictionary. The keys in the dict must therefore match the **Python parameter names** of the activity (e.g. `path`), not generic placeholders.
+
+When your workflow calls `workflow.execute_activity(...)`, the outbound interceptor must build `args_dict` from the activity’s positional `args` tuple. It does that by resolving the **activity function** and using `inspect.signature` to map positions to names.
+
+### Resolution order (function reference)
+
+The worker resolves the callable in this order:
+
+1. **`input.fn`** — supplied by the Temporal Python SDK on some versions/paths when using the real `execute_activity` pipeline.
+2. **`tenuo_execute_activity(...)`** — Tenuo records the function reference for that call.
+3. **`TenuoPluginConfig.activity_fns`** — explicit registry: activity type name (e.g. `read_file`) → the same function object you registered on the worker.
+4. **Fallback:** `arg0`, `arg1`, … — used only when (1)–(3) are all unavailable.
+
+Step (4) is **correct** when the warrant only allows the tool **without** per-field constraints (signing and verification both use `arg0`, …). Step (4) is **wrong** when the warrant has **named** constraints: verification expects `path`, but signing used `arg0`, so PoP/constraint checks **do not line up** with the warrant.
+
+### What Tenuo does at runtime
+
+If the interceptor would sign with **only** `arg0`/`arg1`/… **and** the warrant has **non-empty field constraints** for that activity type, the worker:
+
+- Logs a **warning** (default), telling you to set `activity_fns` or use `tenuo_execute_activity`.
+- Raises **`TenuoContextError`** (fail-fast) when **`strict_mode=True`** on `TenuoPluginConfig`, so misconfigured production workers fail immediately instead of issuing bad PoP material.
+
+### What you should configure
+
+| Warrant shape | Transparent `execute_activity` | Recommendation |
+|---------------|-------------------------------|----------------|
+| Tool-only (`capability("echo")` with no fields) | Yes | `activity_fns` optional; `arg0` fallback is consistent. |
+| Named fields (`capability("read_file", path=...)`) | Yes | Set **`activity_fns`** to the **same** list as `Worker(activities=...)`, unless you have verified `input.fn` is always set in your SDK version. |
+| Named fields | Using **`tenuo_execute_activity`** | Registry not required for that call path; function reference is recorded. |
+
+### Example (`activity_fns` aligned with the worker)
+
+```python
+from temporalio.worker import Worker
+from tenuo.temporal import TenuoPlugin, TenuoPluginConfig, EnvKeyResolver
+
+activities = [read_file, write_file]
+
+interceptor = TenuoPlugin(
+    TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[control_key.public_key],
+        strict_mode=True,
+        activity_fns=activities,  # same objects as Worker(activities=...)
+    )
+)
+
+async with Worker(
+    client,
+    task_queue="my-queue",
+    workflows=[MyWorkflow],
+    activities=activities,
+    interceptors=[interceptor],
+    workflow_runner=...,
+):
+    ...
+```
+
+For full narrative and troubleshooting text, see the module docstring in `tenuo.temporal` (**Activity registry (`activity_fns`) and PoP argument names** and **Troubleshooting**).
 
 ---
 

@@ -1299,7 +1299,7 @@ class _TemporalAdapter(_Adapter):
     def __init__(self) -> None:
         pytest.importorskip("temporalio")
         from tenuo.temporal import (
-            KeyResolver, TenuoInterceptor, TenuoInterceptorConfig, TENUO_WARRANT_HEADER,
+            KeyResolver, TenuoPlugin, TenuoPluginConfig, TENUO_WARRANT_HEADER,
         )
 
         self._root = SigningKey.generate()
@@ -1311,7 +1311,7 @@ class _TemporalAdapter(_Adapter):
             def resolve(self, key_id: str) -> SigningKey:
                 return self._k
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=_Resolver(self._root),
             # lightweight mode (trusted_roots=None): validates warrant structure
             # but skips PoP since Temporal PoP is tied to live workflow metadata.
@@ -1320,7 +1320,7 @@ class _TemporalAdapter(_Adapter):
             require_warrant=True,
             on_denial="raise",
         )
-        self._interceptor = TenuoInterceptor(cfg)
+        self._interceptor = TenuoPlugin(cfg)
         self._warrant = Warrant.issue(
             self._root, capabilities={"test_activity": {}}, ttl_seconds=3600,
             holder=self._root.public_key,
@@ -1389,7 +1389,7 @@ class _TemporalAdapter(_Adapter):
         # Temporal adapter uses trusted_roots=None (lightweight mode) in this matrix.
         # An attacker warrant passes structural checks but would fail PoP in strict mode.
         # The full I3/I4 check for Temporal is in TestTrustedRootsEnforcement via
-        # enforce_tool_call (the same code path TenuoInterceptor uses).
+        # enforce_tool_call (the same code path TenuoPlugin uses).
         return None
 
     async def check_wrong_holder(self) -> Optional[bool]:
@@ -2043,7 +2043,7 @@ class TestMCPInvariants:
 @pytest.mark.security
 class TestTemporalInvariants:
     """
-    Security invariants for the Temporal TenuoInterceptor integration.
+    Security invariants for the Temporal TenuoPlugin integration.
 
     The interceptor validates warrants arriving in Temporal activity headers.
     These tests exercise execute_activity() with synthetic headers so no
@@ -2054,8 +2054,8 @@ class TestTemporalInvariants:
         pytest.importorskip("temporalio")
         from tenuo.temporal import (
             KeyResolver,
-            TenuoInterceptor,
-            TenuoInterceptorConfig,
+            TenuoPlugin,
+            TenuoPluginConfig,
         )
 
         class _StaticResolver(KeyResolver):
@@ -2065,13 +2065,13 @@ class TestTemporalInvariants:
             def resolve(self, key_id: str) -> SigningKey:
                 return self._key
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=_StaticResolver(trusted_key),
             trusted_roots=[trusted_key.public_key],
             require_warrant=True,
             on_denial="raise",
         )
-        return TenuoInterceptor(cfg)
+        return TenuoPlugin(cfg)
 
     def _make_activity_input(self, headers: Dict[str, Any]):
         """Build a fake Temporal ExecuteActivityInput from a headers dict."""
@@ -2274,7 +2274,7 @@ class TestTemporalInvariantsExtended:
 
     def _make_interceptor(self, trusted_key: SigningKey):
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoInterceptor, TenuoInterceptorConfig
+        from tenuo.temporal import KeyResolver, TenuoPlugin, TenuoPluginConfig
 
         class _R(KeyResolver):
             def __init__(self, k):
@@ -2282,12 +2282,12 @@ class TestTemporalInvariantsExtended:
             def resolve(self, kid):
                 return self._k
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=_R(trusted_key),
             trusted_roots=[trusted_key.public_key],
             require_warrant=True, on_denial="raise",
         )
-        return TenuoInterceptor(cfg)
+        return TenuoPlugin(cfg)
 
     def _make_input(self, warrant: Warrant, activity_name: str = "test_activity"):
         from unittest.mock import MagicMock

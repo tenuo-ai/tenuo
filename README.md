@@ -83,14 +83,15 @@ When the `mint_sync` block exits, the warrant expires naturally. No manual clean
 
 ## Why Tenuo?
 
-IAM answers "who are you?" Tenuo adds "what can this workload do right now for this task?"
+IAM answers "who are you?" Tenuo adds "what can this workload do right now for this task?" That gives teams a deterministic authorization boundary at agent speed.
 
-| Problem | Tenuo's Answer |
-|---------|----------------|
-| Static IAM roles outlive tasks | Warrants expire with the task (TTL) |
-| Broad permissions, big blast radius | Constraints narrow on every delegation |
-| Tokens can be stolen and replayed | Proof-of-possession binds warrants to keys |
-| Central policy servers add latency | Offline verification, no network calls |
+| Failure mode in agent systems | Tenuo strength | Practical outcome |
+|------------------------------|----------------|-------------------|
+| Session roles outlive individual tasks | Task-scoped warrants with TTL | Authority disappears when the task ends |
+| Delegation chains increase blast radius | Monotonic attenuation at every hop | Scope only narrows, never expands |
+| Bearer credentials can be replayed | Holder-bound proofs (PoP) | Stolen warrants are unusable without the key |
+| Runtime policy calls add latency and dependency risk | Offline verification (~27μs) | Enforcement holds under load without network round-trips |
+| Teams need defensible audit evidence | Signed authorization receipts | Each decision is attributable and reviewable |
 
 ---
 

@@ -35,9 +35,9 @@ from tenuo.temporal import (  # noqa: E402 - must be after importorskip
     # Audit
     TemporalAuditEvent,
     # Interceptor
-    TenuoInterceptor,
+    TenuoPlugin,
     # Config
-    TenuoInterceptorConfig,
+    TenuoPluginConfig,
     WarrantExpired,
     _compute_pop_challenge,
     _extract_key_id_from_headers,
@@ -479,13 +479,13 @@ class TestResolveSyncUnderEventLoop:
 # =============================================================================
 
 
-class TestTenuoInterceptorConfig:
-    """Tests for TenuoInterceptorConfig."""
+class TestTenuoPluginConfig:
+    """Tests for TenuoPluginConfig."""
 
     def test_default_values(self):
         """Config has sensible defaults."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(key_resolver=resolver)
 
         assert config.on_denial == "raise"
         assert config.dry_run is False
@@ -500,7 +500,7 @@ class TestTenuoInterceptorConfig:
         resolver = MagicMock(spec=KeyResolver)
         callback = MagicMock()
 
-        config = TenuoInterceptorConfig(
+        config = TenuoPluginConfig(
             key_resolver=resolver,
             on_denial="log",
             dry_run=True,
@@ -646,14 +646,14 @@ class TestExceptions:
 # =============================================================================
 
 
-class TestTenuoInterceptor:
-    """Tests for TenuoInterceptor."""
+class TestTenuoPlugin:
+    """Tests for TenuoPlugin."""
 
     def test_creates_activity_interceptor(self):
         """Creates activity inbound interceptor."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
-        interceptor = TenuoInterceptor(config)
+        config = TenuoPluginConfig(key_resolver=resolver)
+        interceptor = TenuoPlugin(config)
 
         next_interceptor = MagicMock()
         activity_interceptor = interceptor.intercept_activity(next_interceptor)
@@ -817,14 +817,14 @@ class TestPhase2Config:
     def test_default_phase2_values(self):
         """Phase 2 config has sensible defaults."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(key_resolver=resolver)
 
         assert config.block_local_activities is True  # Secure by default
 
     def test_pop_is_always_mandatory(self):
         """PoP is always mandatory — no config toggle exists."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(key_resolver=resolver)
 
         # Verify require_pop is no longer a config option
         assert not hasattr(config, "require_pop")
@@ -1236,7 +1236,7 @@ class TestPhase4Config:
     def test_default_phase4_values(self):
         """Phase 4 config defaults are sensible."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(key_resolver=resolver)
 
         assert config.metrics is None
         assert config.enable_tracing is False
@@ -1247,14 +1247,14 @@ class TestPhase4Config:
 
         resolver = MagicMock(spec=KeyResolver)
         metrics = TenuoMetrics(prefix="test")
-        config = TenuoInterceptorConfig(key_resolver=resolver, metrics=metrics)
+        config = TenuoPluginConfig(key_resolver=resolver, metrics=metrics)
 
         assert config.metrics is metrics
 
     def test_can_enable_tracing(self):
         """Can enable tracing in config."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver, enable_tracing=True)
+        config = TenuoPluginConfig(key_resolver=resolver, enable_tracing=True)
 
         assert config.enable_tracing is True
 
@@ -1265,28 +1265,28 @@ class TestSecurityConfig:
     def test_require_warrant_defaults_to_true(self):
         """require_warrant defaults to True (fail-closed)."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(key_resolver=resolver)
 
         assert config.require_warrant is True
 
     def test_can_disable_require_warrant(self):
         """Can disable require_warrant for opt-in mode."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver, require_warrant=False)
+        config = TenuoPluginConfig(key_resolver=resolver, require_warrant=False)
 
         assert config.require_warrant is False
 
     def test_redact_args_defaults_to_true(self):
         """redact_args_in_logs defaults to True (secure by default)."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(key_resolver=resolver)
 
         assert config.redact_args_in_logs is True
 
     def test_can_disable_redact_args(self):
         """Can disable arg redaction for debugging."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver, redact_args_in_logs=False)
+        config = TenuoPluginConfig(key_resolver=resolver, redact_args_in_logs=False)
 
         assert config.redact_args_in_logs is False
 

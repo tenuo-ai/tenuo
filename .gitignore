@@ -76,6 +76,9 @@ docs/reference/
 docs/vendor/
 docs/explorer/
 
+# Local copy of Temporal partner reference material (not tracked in repo)
+docs/Temporal AI Partner Ecosystem Guide.pdf
+
 # Alloy model checker
 alloy.jar
 aat_constraints/
