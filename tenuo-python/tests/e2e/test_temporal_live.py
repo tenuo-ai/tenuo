@@ -71,6 +71,12 @@ async def list_directory(path: str) -> list[str]:
     return sorted(str(p) for p in Path(path).iterdir())
 
 
+@activity.defn
+async def fetch_document(path: str) -> str:
+    """Same behavior as read_file; activity type name differs from warrant tool ``read_file``."""
+    return Path(path).read_text()
+
+
 # ---------------------------------------------------------------------------
 # Workflows
 # ---------------------------------------------------------------------------
@@ -145,6 +151,35 @@ class UnauthorizedPathWorkflow:
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
+
+
+@workflow.defn
+class ReadViaAliasWorkflow(AuthorizedWorkflow):
+    """Uses activity type ``fetch_document`` mapped to warrant tool ``read_file``."""
+
+    @workflow.run
+    async def run(self, path: str) -> str:
+        return await self.execute_authorized_activity(
+            fetch_document,
+            args=[path],
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+
+
+@workflow.defn
+class DryRunOutOfScopeWorkflow:
+    """Returns str so the client can decode; activity still returns a list internally."""
+
+    @workflow.run
+    async def run(self, path: str) -> str:
+        files = await tenuo_execute_activity(
+            list_directory,
+            args=[path],
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+        return f"listed:{len(files)}"
 
 
 @workflow.defn
@@ -255,6 +290,8 @@ async def _run_workflow(
     send_headers: bool = True,
     workflow_args: Optional[List[Any]] = None,
     workflows: Optional[List[Any]] = None,
+    activities: Optional[List[Any]] = None,
+    plugin_config: Optional[dict[str, Any]] = None,
 ):
     """Start a worker + run a single workflow, return the result."""
     control, agent = keys
@@ -273,14 +310,15 @@ async def _run_workflow(
 
     events: list[TemporalAuditEvent] = []
 
-    interceptor = TenuoPlugin(
-        TenuoPluginConfig(
-            key_resolver=DictKeyResolver(key_dict),
-            on_denial="raise",
-            trusted_roots=[control.public_key],
-            audit_callback=events.append,
-        )
-    )
+    cfg_kwargs: dict[str, Any] = {
+        "key_resolver": DictKeyResolver(key_dict),
+        "on_denial": "raise",
+        "trusted_roots": [control.public_key],
+        "audit_callback": events.append,
+    }
+    if plugin_config:
+        cfg_kwargs.update(plugin_config)
+    interceptor = TenuoPlugin(TenuoPluginConfig(**cfg_kwargs))
 
     sandbox_runner = SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(
@@ -294,11 +332,13 @@ async def _run_workflow(
         interceptors=[client_interceptor],  # type: ignore[list-item]
     )
 
+    act_list = activities if activities is not None else [echo, read_file, list_directory]
+
     worker = Worker(
         raw_client,
         task_queue=task_queue,
         workflows=workflows or [wf_class],
-        activities=[echo, read_file, list_directory],
+        activities=act_list,
         interceptors=[interceptor],  # type: ignore[list-item]
         workflow_runner=sandbox_runner,
     )
@@ -374,6 +414,53 @@ class TestLiveDenial:
                 await _run_workflow(
                     env, keys, warrant, UnauthorizedPathWorkflow, "/etc",
                 )
+
+
+@pytest.mark.temporal_live
+class TestLiveDryRun:
+    @pytest.mark.asyncio
+    async def test_dry_run_executes_after_denial_audit(self, keys, warrant, demo_dir):
+        """dry_run=True: authorization would deny but activity still runs (shadow mode)."""
+        async with await WorkflowEnvironment.start_local() as env:
+            result, events = await _run_workflow(
+                env,
+                keys,
+                warrant,
+                DryRunOutOfScopeWorkflow,
+                "/etc",
+                workflows=[DryRunOutOfScopeWorkflow],
+                plugin_config={"dry_run": True},
+            )
+        assert result.startswith("listed:")
+        assert int(result.split(":")[1]) > 0
+        deny_events = [e for e in events if e.decision == "DENY"]
+        assert len(deny_events) >= 1
+
+
+@pytest.mark.temporal_live
+class TestLiveToolMappings:
+    @pytest.mark.asyncio
+    async def test_tool_mapping_pop_matches_inbound(self, keys, warrant, demo_dir):
+        """Activity type differs from warrant tool; PoP uses mapped name (read_file)."""
+        path = str(demo_dir / "a.txt")
+        extra = [fetch_document]
+        async with await WorkflowEnvironment.start_local() as env:
+            result, events = await _run_workflow(
+                env,
+                keys,
+                warrant,
+                ReadViaAliasWorkflow,
+                path,
+                workflows=[ReadViaAliasWorkflow],
+                activities=[echo, read_file, list_directory] + extra,
+                plugin_config={
+                    "tool_mappings": {"fetch_document": "read_file"},
+                    "activity_fns": [echo, read_file, list_directory] + extra,
+                },
+            )
+        assert result == "alpha"
+        allow_read = [e for e in events if e.decision == "ALLOW" and e.tool == "read_file"]
+        assert len(allow_read) >= 1
 
 
 @pytest.mark.temporal_live

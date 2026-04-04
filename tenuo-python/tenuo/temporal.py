@@ -1095,9 +1095,12 @@ class TenuoPluginConfig:
 
     tool_mappings: Dict[str, str] = field(default_factory=dict)
     """
-    Optional explicit activity-to-tool mappings.
-    Example: {"fetch_document": "read_file"}
-    If not specified, activity name = tool name.
+    Optional explicit activity-type → warrant tool name mappings.
+    Example: {"fetch_document": "read_file"} when the Temporal activity type
+    differs from the tool name used in the warrant and in PoP.
+
+    The outbound workflow interceptor applies the same mapping when signing
+    PoP so verification matches the activity inbound interceptor.
     """
 
     audit_callback: Optional[Callable[[TemporalAuditEvent], None]] = None
@@ -2415,6 +2418,20 @@ def get_tool_name(func: Any, default: str) -> str:
     return getattr(func, "_tenuo_tool_name", default)
 
 
+def _warrant_tool_name_for_activity_type(
+    config: Optional["TenuoPluginConfig"],
+    activity_type: str,
+    activity_fn: Optional[Any],
+) -> str:
+    """Map Temporal activity type to warrant / PoP tool name (inbound + outbound must agree)."""
+    default_tool = activity_type
+    if activity_fn is not None:
+        default_tool = get_tool_name(activity_fn, activity_type)
+    if config is None:
+        return default_tool
+    return config.tool_mappings.get(activity_type, default_tool)
+
+
 # =============================================================================
 # PoP Utilities (Phase 2)
 # =============================================================================
@@ -2539,7 +2556,7 @@ class _TenuoWorkflowOutboundInterceptor:
 
         try:
             wf_id = _wf.info().workflow_id
-            tool_name = input.activity
+            activity_type = input.activity
 
             # Read warrant and key_id from headers store
             with _store_lock:
@@ -2563,6 +2580,14 @@ class _TenuoWorkflowOutboundInterceptor:
                     # Use resolve_sync() to safely handle event loop (may be in Temporal workflow)
                     signer = self._config.key_resolver.resolve_sync(key_id)
 
+                    # Resolve activity callable (same registry key: Temporal activity type).
+                    activity_fn = getattr(input, "fn", None)
+                    if activity_fn is None:
+                        with _store_lock:
+                            activity_fn = _pending_activity_fn.get(wf_id)
+                    if activity_fn is None and self._config is not None:
+                        activity_fn = self._config._activity_registry.get(activity_type)
+
                     # Convert positional args to dict for PoP signature.
                     # Resolution order for the activity function reference:
                     #   1. input.fn (Temporal SDK, if available)
@@ -2572,14 +2597,6 @@ class _TenuoWorkflowOutboundInterceptor:
                     args_dict: Dict[str, Any] = {}
                     raw_args = getattr(input, "args", ())
                     if raw_args:
-                        activity_fn = getattr(input, "fn", None)
-                        if activity_fn is None:
-                            with _store_lock:
-                                activity_fn = _pending_activity_fn.get(wf_id)
-                        if activity_fn is None and self._config is not None:
-                            activity_fn = self._config._activity_registry.get(
-                                tool_name
-                            )
                         if activity_fn:
                             try:
                                 sig = inspect.signature(activity_fn)
@@ -2597,13 +2614,17 @@ class _TenuoWorkflowOutboundInterceptor:
                             for i, arg in enumerate(raw_args):
                                 args_dict[f"arg{i}"] = arg
 
+                    pop_tool_name = _warrant_tool_name_for_activity_type(
+                        self._config, activity_type, activity_fn
+                    )
+
                     if raw_args and _args_dict_uses_only_positional_fallback_keys(
                         args_dict
                     ) and _warrant_tool_has_non_empty_field_constraints(
-                        warrant, tool_name
+                        warrant, pop_tool_name
                     ):
                         msg = _positional_pop_mismatch_message(
-                            tool_name,
+                            pop_tool_name,
                             strict_mode=bool(
                                 self._config and self._config.strict_mode
                             ),
@@ -2617,7 +2638,7 @@ class _TenuoWorkflowOutboundInterceptor:
                     # CRITICAL: timestamp MUST be provided for Temporal workflows
                     # to ensure identical PoP signatures during replay.
                     timestamp = int(_wf.now().timestamp())
-                    pop_signature = warrant.sign(signer, tool_name, args_dict, timestamp)
+                    pop_signature = warrant.sign(signer, pop_tool_name, args_dict, timestamp)
                     pop_encoded = base64.b64encode(bytes(pop_signature))
 
 
@@ -2656,7 +2677,7 @@ class _TenuoWorkflowOutboundInterceptor:
                         current_summary = getattr(input, "summary", "") or ""
                         prefix = f"[{TENUO_TEMPORAL_PLUGIN_ID}]"
                         new_summary = (
-                            f"{prefix} {current_summary}" if current_summary else f"{prefix} {tool_name}"
+                            f"{prefix} {current_summary}" if current_summary else f"{prefix} {activity_type}"
                         )
                         input = _replace_field(input, "summary", new_summary)
 
@@ -3111,13 +3132,10 @@ class TenuoActivityInboundInterceptor:
                 )
                 return await self._next.execute_activity(input)
 
-        # Resolve tool name
+        # Resolve tool name (must match outbound PoP / tool_mappings)
         activity_fn = getattr(input, "fn", None)
-        default_tool = info.activity_type
-        if activity_fn:
-            default_tool = get_tool_name(activity_fn, info.activity_type)
-        tool_name = self._config.tool_mappings.get(
-            info.activity_type, default_tool,
+        tool_name = _warrant_tool_name_for_activity_type(
+            self._config, info.activity_type, activity_fn
         )
 
         # Get activity arguments, using outbound-supplied arg keys for
