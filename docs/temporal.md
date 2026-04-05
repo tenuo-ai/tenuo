@@ -75,7 +75,11 @@ Follow this order the first time you integrate Tenuo with Temporal. The **Quick 
 
 2. **Temporal server**: Run a dev server (e.g. `temporal server start-dev`). See [examples/temporal README](../tenuo-python/examples/temporal/README.md).
 
-3. **Keys for PoP**: Create issuer (`control_key`) and holder (`agent_key`) `SigningKey` values. Expose the holder key to the worker via a `KeyResolver` (development: `EnvKeyResolver` + `TENUO_KEY_<key_id>`: see [Development: Environment Variables](#development-environment-variables)).
+3. **Keys for PoP**: Proof-of-Possession (PoP) is how each activity dispatch proves it was authorised by the workflow that holds the warrant. It needs two Ed25519 key-pairs:
+   - **Issuer key (`control_key`)**: signs the warrant at issuance time — stays with whoever governs policy (Vault, KMS, CI). Never touches the worker.
+   - **Holder key (`agent_key`)**: signs a short-lived challenge on each `execute_activity()` call, binding the exact tool and arguments. Lives on the worker via a `KeyResolver`.
+
+   Create both with `SigningKey.generate()`. Expose the holder key to the worker via `KeyResolver` (development: `EnvKeyResolver` + `TENUO_KEY_<key_id>`: see [Development: Environment Variables](#development-environment-variables)).
 
 4. **Mint a warrant**: Use `Warrant.mint_builder()` (or `Warrant.issue`) so capabilities match your activity names and argument constraints (e.g. `path=Subpath(...)`). In production, warrants are typically minted by Tenuo Cloud on behalf of your workflows, separating authorization policy from application code and giving your security team control over what gets issued without touching workflow definitions.
 
