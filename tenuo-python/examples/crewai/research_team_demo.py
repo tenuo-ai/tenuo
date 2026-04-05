@@ -147,7 +147,7 @@ def check_dependencies() -> bool:
         # Check if it's a pydantic v1 / Python 3.14 issue
         if sys.version_info >= (3, 14) and "pydantic" in str(e).lower():
             print(f"{C.RED}❌ Pydantic v1 incompatibility with Python 3.14{C.RESET}")
-            print(f"{C.YELLOW}   Upgrade langchain: pip install --upgrade langchain langchain-core{C.RESET}")
+            print(f"{C.YELLOW}   Upgrade langchain: uv pip install --upgrade langchain langchain-core{C.RESET}")
             return False
         missing.append("tenuo")
 

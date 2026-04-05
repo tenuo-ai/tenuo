@@ -13,7 +13,7 @@ The server verifies every incoming tool call against a Tenuo warrant
 sent via ``params._meta.tenuo`` by the client (see mcp_client.py, inject_warrant=True).
 
 Prerequisites:
-  pip install "tenuo[mcp]" fastmcp
+  uv pip install "tenuo[mcp]" fastmcp
 
 Run:
   python mcp_server.py            # starts a stdio MCP server

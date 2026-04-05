@@ -7,7 +7,7 @@ A manager delegates narrowed authority to workers using WarrantDelegator.
 
 Run with: python hierarchical_delegation.py
 
-Requires: pip install tenuo crewai
+Requires: uv pip install tenuo crewai
 """
 
 from dataclasses import dataclass

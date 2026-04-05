@@ -1,5 +1,5 @@
 """
-Tenuo + Temporal: Constraining Cloud API Access
+Tenuo + Temporal: IAM layering (infrastructure vs application authorization)
 
 The worker process has broad IAM permissions to read any object in an S3
 bucket. Tenuo enforces at the activity dispatch layer that this specific
@@ -10,17 +10,18 @@ Key insight: infrastructure permissions (IAM role) and application-level
 authorization (Tenuo warrant) are independent layers. A valid IAM session
 does not automatically mean the workflow is allowed to access that resource.
 
-Scenario:
+Scenarios:
   - Worker IAM role: s3:GetObject on my-data-bucket/* (all objects)
   - Tenant A's warrant: read_s3_object on my-data-bucket/data/tenant-a/*
-  - Result: accessing data/tenant-b/ is denied by Tenuo before S3 is called
+  - Tenant B's warrant: read_s3_object on my-data-bucket/data/tenant-b/*
+  - Same IAM role for all runs; Tenuo isolates tenants at dispatch time
 
 Requirements:
-    pip install "tenuo[temporal]" boto3
+    uv pip install "tenuo[temporal]" boto3
 
 Usage:
     temporal server start-dev          # Terminal 1
-    AWS_PROFILE=your-profile python s3_example.py   # Terminal 2
+    AWS_PROFILE=your-profile python cloud_iam_layering.py   # Terminal 2
 
     To run without real AWS credentials, set TENUO_DEMO_DRY_RUN=1 and the
     S3 activity will be mocked.
@@ -39,18 +40,19 @@ try:
     from temporalio.common import RetryPolicy
     from temporalio.worker import Worker
 except ImportError:
-    raise SystemExit("Install temporalio: pip install temporalio")
+    raise SystemExit("Install temporalio: uv pip install temporalio")
 
 from tenuo_core import Exact, Subpath
 
 from tenuo import SigningKey, Warrant
 from tenuo.temporal import (
+    EnvKeyResolver,
     TenuoClientInterceptor,
     TenuoPlugin,
     TenuoPluginConfig,
     TemporalAuditEvent,
     execute_workflow_authorized,
-    EnvKeyResolver,
+    tenuo_headers,
 )
 
 logging.basicConfig(
@@ -93,7 +95,7 @@ async def read_s3_object(bucket: str, key: str) -> str:
 # =============================================================================
 
 @workflow.defn
-class S3ReaderWorkflow:
+class CloudIamLayeringWorkflow:
     """Reads an S3 object. Authorization is enforced transparently by Tenuo."""
 
     @workflow.run
@@ -114,9 +116,7 @@ def on_audit(event: TemporalAuditEvent) -> None:
     if event.decision == "ALLOW":
         logger.info("  ALLOW  bucket=%r key=%r", *list(event.arguments.values())[:2])
     else:
-        logger.warning(
-            "  DENY   %s — %s", event.tool, event.denial_reason
-        )
+        logger.warning("  DENY   %s: %s", event.tool, event.denial_reason)
 
 
 # =============================================================================
@@ -125,37 +125,60 @@ def on_audit(event: TemporalAuditEvent) -> None:
 
 async def main() -> None:
     BUCKET = "my-data-bucket"
-    ALLOWED_PREFIX = "data/tenant-a/"
+    TENANT_A_PREFIX = "data/tenant-a/"
+    TENANT_B_PREFIX = "data/tenant-b/"
+    # Object outside tenant A's warrant prefix (same worker IAM as allowed reads)
+    key_outside_tenant_a = f"{TENANT_B_PREFIX}confidential.csv"
 
     # --- Keys ---
     control_key = SigningKey.generate()   # Issuer: authorization team
-    agent_key = SigningKey.generate()     # Holder: this worker process
+    agent_key_a = SigningKey.generate()   # Holder: tenant A workflow
+    agent_key_b = SigningKey.generate()   # Holder: tenant B workflow
 
-    os.environ["TENUO_KEY_agent1"] = base64.b64encode(
-        agent_key.secret_key_bytes()
+    os.environ["TENUO_KEY_agent_a"] = base64.b64encode(
+        agent_key_a.secret_key_bytes()
+    ).decode()
+    os.environ["TENUO_KEY_agent_b"] = base64.b64encode(
+        agent_key_b.secret_key_bytes()
     ).decode()
 
-    # --- Warrant: tenant A can only read objects inside data/tenant-a/ ---
-    # The worker's IAM role covers the whole bucket; the warrant narrows that.
-    warrant = (
+    # --- Warrants: each tenant only reads objects under their prefix ---
+    warrant_tenant_a = (
         Warrant.mint_builder()
-        .holder(agent_key.public_key)
+        .holder(agent_key_a.public_key)
         .capability(
             "read_s3_object",
-            bucket=Exact(BUCKET),          # must be this exact bucket
-            key=Subpath(ALLOWED_PREFIX),   # key must start with this prefix
+            bucket=Exact(BUCKET),
+            key=Subpath(TENANT_A_PREFIX),
+        )
+        .ttl(3600)
+        .mint(control_key)
+    )
+    warrant_tenant_b = (
+        Warrant.mint_builder()
+        .holder(agent_key_b.public_key)
+        .capability(
+            "read_s3_object",
+            bucket=Exact(BUCKET),
+            key=Subpath(TENANT_B_PREFIX),
         )
         .ttl(3600)
         .mint(control_key)
     )
     logger.info(
-        "Warrant %s — bucket=%r key prefix=%r", warrant.id, BUCKET, ALLOWED_PREFIX
+        "Warrants %s (tenant A) and %s (tenant B) — bucket=%r",
+        warrant_tenant_a.id,
+        warrant_tenant_b.id,
+        BUCKET,
     )
 
-    task_queue = f"s3-demo-{uuid.uuid4().hex[:8]}"
+    task_queue = f"cloud-iam-demo-{uuid.uuid4().hex[:8]}"
 
     key_resolver = EnvKeyResolver()
-    key_resolver.preload_keys(["agent1"])
+    # EnvKeyResolver must cache holder keys before the worker starts: PoP signing
+    # in the workflow sandbox calls resolve_sync(), which cannot read os.environ
+    # there (non-deterministic). See EnvKeyResolver.preload_keys in tenuo.temporal.
+    key_resolver.preload_keys(["agent_a", "agent_b"])
 
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
@@ -165,7 +188,7 @@ async def main() -> None:
             on_denial="raise",
             trusted_roots=[control_key.public_key],
             strict_mode=True,
-            activity_fns=[read_s3_object],  # required: warrant uses named constraints
+            activity_fns=[read_s3_object],
             audit_callback=on_audit,
         )
     )
@@ -176,7 +199,7 @@ async def main() -> None:
     async with Worker(
         client,
         task_queue=task_queue,
-        workflows=[S3ReaderWorkflow],
+        workflows=[CloudIamLayeringWorkflow],
         activities=[read_s3_object],
         interceptors=[worker_interceptor],
         workflow_runner=SandboxedWorkflowRunner(
@@ -188,31 +211,30 @@ async def main() -> None:
         logger.info("Worker started (IAM role: s3:GetObject on %s/*)\n", BUCKET)
 
         # --- Authorized: key is within the allowed prefix ---
-        logger.info("=== Authorized access (key within warrant prefix) ===")
+        logger.info("=== Authorized access (tenant A, key within warrant prefix) ===")
         result = await execute_workflow_authorized(
             client=client,
             client_interceptor=client_interceptor,
-            workflow_run_fn=S3ReaderWorkflow.run,
-            workflow_id=f"s3-allowed-{uuid.uuid4().hex[:8]}",
-            warrant=warrant,
-            key_id="agent1",
-            args=[BUCKET, f"{ALLOWED_PREFIX}report.csv"],
+            workflow_run_fn=CloudIamLayeringWorkflow.run,
+            workflow_id=f"cloud-allowed-{uuid.uuid4().hex[:8]}",
+            warrant=warrant_tenant_a,
+            key_id="agent_a",
+            args=[BUCKET, f"{TENANT_A_PREFIX}report.csv"],
             task_queue=task_queue,
         )
         logger.info("Result: %s\n", result)
 
-        # --- Blocked: key is outside the allowed prefix ---
-        # The worker's IAM role WOULD allow this — Tenuo blocks it first.
-        logger.info("=== Denied access (key outside warrant prefix) ===")
+        # --- Blocked: tenant A warrant, key outside tenant A prefix ---
+        logger.info("=== Denied access (tenant A warrant, key outside its prefix) ===")
         logger.info("Worker IAM role permits this; Tenuo warrant does not.")
-        denied_id = f"s3-denied-{uuid.uuid4().hex[:8]}"
+        denied_id = f"cloud-denied-outside-{uuid.uuid4().hex[:8]}"
         client_interceptor.set_headers_for_workflow(
-            denied_id, __import__("tenuo.temporal", fromlist=["tenuo_headers"]).tenuo_headers(warrant, "agent1")
+            denied_id, tenuo_headers(warrant_tenant_a, "agent_a")
         )
         try:
             await client.execute_workflow(
-                S3ReaderWorkflow.run,
-                args=[BUCKET, "data/tenant-b/confidential.csv"],
+                CloudIamLayeringWorkflow.run,
+                args=[BUCKET, key_outside_tenant_a],
                 id=denied_id,
                 task_queue=task_queue,
             )
@@ -222,10 +244,30 @@ async def main() -> None:
         except Exception as e:
             logger.info("Correctly denied — %s", e)
 
+        # --- Cross-tenant: tenant B warrant cannot read tenant A's prefix ---
         logger.info(
-            "\nTenuo blocked access to data/tenant-b/ even though the worker's"
-            " IAM role would have allowed it."
+            "=== Cross-tenant isolation (tenant B warrant, tenant A object) ==="
         )
+        logger.info(
+            "Same worker IAM; tenant B is not authorized for %r.",
+            TENANT_A_PREFIX,
+        )
+        cross_id = f"cloud-denied-cross-{uuid.uuid4().hex[:8]}"
+        client_interceptor.set_headers_for_workflow(
+            cross_id, tenuo_headers(warrant_tenant_b, "agent_b")
+        )
+        try:
+            await client.execute_workflow(
+                CloudIamLayeringWorkflow.run,
+                args=[BUCKET, f"{TENANT_A_PREFIX}other.csv"],
+                id=cross_id,
+                task_queue=task_queue,
+            )
+            logger.error("BUG: should have been denied")
+        except WorkflowFailureError as e:
+            logger.info("Correctly denied — %s", e.cause)
+        except Exception as e:
+            logger.info("Correctly denied — %s", e)
 
 
 if __name__ == "__main__":

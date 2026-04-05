@@ -5,11 +5,14 @@ Compatibility:
     Temporal SDK: 1.4.0+
     Python: 3.9+
 
+Documentation:
+    User guide: ``docs/temporal.md`` (Path to production, security, child
+    workflows). Examples: ``examples/temporal/demo.py`` and siblings.
+
 Setup (required):
-    Tenuo's core library (``tenuo_core``) is a PyO3 native module that
-    cannot be re-initialised inside Temporal's workflow sandbox.  You
-    **must** declare ``tenuo`` and ``tenuo_core`` as passthrough modules
-    when creating the worker::
+    ``tenuo_core`` is a PyO3 module. It cannot be initialised again inside
+    Temporal's workflow sandbox. Declare ``tenuo`` and ``tenuo_core`` as
+    passthrough modules on the workflow worker::
 
         from temporalio.worker.workflow_sandbox import (
             SandboxedWorkflowRunner, SandboxRestrictions,
@@ -28,53 +31,52 @@ Setup (required):
             ),
         )
 
-    Without this, ``tenuo_execute_activity()`` and ``AuthorizedWorkflow``
-    will fail with ``ImportError: PyO3 modules may only be initialized
-    once per interpreter process``.  This is required because Tenuo signs
-    the Proof-of-Possession challenge inside the workflow sandbox using the
-    ``tenuo_core`` Rust extension — see the **Sandbox passthrough explained**
-    section in ``docs/temporal.md`` for the full rationale and failure sequence.
-
-    See ``examples/temporal/demo.py`` for a complete working example of
-    both transparent activity authorization and ``AuthorizedWorkflow``.
+    If passthrough is missing, workflow tasks fail with
+    ``ImportError: PyO3 modules may only be initialized once per interpreter process``.
+    PoP is signed in the sandbox at ``execute_activity()`` time so the dispatch
+    binds to the exact tool and arguments. See **Sandbox passthrough explained**
+    in ``docs/temporal.md`` for rationale and the full failure sequence.
 
 Overview:
-    This module provides seamless integration between Tenuo's warrant-based
-    authorization and Temporal's durable workflow orchestration. Activity
-    execution is transparently authorized against the workflow's warrant.
+    Warrants and PoP travel in Temporal headers. ``TenuoPlugin`` verifies each
+    activity before your ``@activity.defn`` runs. Activity implementations do
+    not need Tenuo imports. Workflows need headers on start (typically
+    ``execute_workflow_authorized`` or ``set_headers_for_workflow`` plus
+    ``execute_workflow``). Holder keys are resolved on the worker via
+    ``KeyResolver`` (use ``EnvKeyResolver.preload_keys`` before ``Worker`` when
+    keys come from the environment; the sandbox blocks ``os.environ``).
 
-Key Concepts:
-    - Warrants propagate via Temporal headers, no code changes to activities
-    - TenuoPlugin enforces authorization at the activity boundary
-    - KeyResolver abstraction for secure key material management
+Key concepts:
+    - Headers: warrant material and ``key_id`` only (not private keys).
+    - ``TenuoPlugin``: inbound/outbound interceptors on the worker.
+    - Child workflows: use ``tenuo_execute_child_workflow`` only. Plain
+      ``workflow.execute_child_workflow`` does not propagate Tenuo headers.
 
 Activity registry (``activity_fns``) and PoP argument names:
-    Proof-of-Possession signs over a canonical **dict** of tool arguments. The
-    outbound workflow interceptor builds that dict from the activity's Python
-    parameter names when it can resolve the activity function; otherwise it
-    falls back to ``arg0``, ``arg1``, … (see ``TenuoPluginConfig.activity_fns``).
+    PoP signs a canonical **dict** of tool arguments. The outbound interceptor
+    uses Python parameter names when it can resolve the activity function; else
+    it falls back to ``arg0``, ``arg1``, … (see ``TenuoPluginConfig.activity_fns``).
 
-    If your warrant uses **named field constraints** (e.g. ``path=Subpath(...)``)
-    for a tool, PoP and constraint checks expect keys like ``path``, not ``arg0``.
-    When the SDK does not supply ``input.fn`` and you did not pass
-    ``activity_fns``, signing may use the positional fallback and **verification
-    will not match** the warrant — or you will see a **warning** (or
-    **``TenuoContextError``** when ``strict_mode=True``) at signing time.
+    If the warrant uses **named field constraints** (e.g. ``path=Subpath(...)``),
+    PoP and verification expect keys like ``path``, not ``arg0``. Without
+    ``input.fn`` or ``activity_fns``, you get a warning or (with
+    ``strict_mode=True``) ``TenuoContextError``.
 
-    **Rule:** For warrants with named constraints, set ``activity_fns`` to the
-    same callables you pass to ``Worker(activities=...)``, or call activities
-    via ``tenuo_execute_activity`` (which records the function reference).
+    **Rule:** For named constraints, set ``activity_fns`` to the same callables
+    as ``Worker(activities=...)``, or call through ``tenuo_execute_activity``
+    (records the function reference).
 
-Security Philosophy (Fail-Closed by Default):
-    - Missing warrant headers: Denied (require_warrant=True by default)
-    - Invalid warrant: Raises ChainValidationError
-    - Expired warrant: Raises WarrantExpired
-    - Constraint violation: Raises TemporalConstraintViolation
-    - PoP failure: Raises PopVerificationError (PoP is always mandatory)
-    - Local activity without @unprotected: Raises LocalActivityError
+Security (fail-closed defaults):
+    - Missing warrant: denied if ``require_warrant=True`` (default).
+    - Invalid chain: ``ChainValidationError``.
+    - Expired warrant: ``WarrantExpired``.
+    - Args outside warrant: ``TemporalConstraintViolation`` / constraint errors.
+    - Bad or missing PoP: ``PopVerificationError`` (PoP is always verified when a
+      warrant is present).
+    - Local activity without ``@unprotected``: ``LocalActivityError``.
 
-Usage Patterns:
-    **AuthorizedWorkflow (recommended when you want fail-fast header validation)**::
+Usage patterns:
+    **AuthorizedWorkflow** (fail fast if warrant headers are missing at start)::
 
         @workflow.defn
         class MyWorkflow(AuthorizedWorkflow):
@@ -85,12 +87,13 @@ Usage Patterns:
                     start_to_close_timeout=timedelta(seconds=30),
                 )
 
-        AuthorizedWorkflow validates that Tenuo warrant headers are present
-        at workflow start — if they're missing the workflow fails immediately
-        instead of at first activity dispatch.  It is a convenience wrapper;
-        TenuoPlugin enforces authorization regardless of which base class you use.
+    **Plain** ``workflow.execute_activity()`` also works with ``TenuoPlugin``;
+    set ``activity_fns`` when warrants name arguments and the SDK does not
+    supply a reliable function reference. ``AuthorizedWorkflow`` is optional;
+    enforcement is always in ``TenuoPlugin``.
 
-    **tenuo_execute_activity (when you need accurate PoP signing with named constraints)**::
+    **tenuo_execute_activity** (same auth as ``execute_activity``, helps PoP
+    names when ``activity_fns`` is unset)::
 
         @workflow.defn
         class PipelineWorkflow:
@@ -101,18 +104,12 @@ Usage Patterns:
                     start_to_close_timeout=timedelta(seconds=30),
                 )
 
-        The sole functional difference from workflow.execute_activity(): it
-        stores the function reference so the outbound interceptor can resolve
-        real parameter names for PoP signing.  This matters when the warrant uses
-        named field constraints (e.g. path=Subpath(...)) and activity_fns is not
-        set.  It is not a separate authorization path.
+Proof-of-Possession (PoP) challenge (tenuo-core):
+    Only the holder of the key matching ``authorized_holder`` should be able
+    to produce a valid PoP for a dispatch. Each attempt uses a 64-byte Ed25519
+    signature over a deterministic preimage.
 
-Proof-of-Possession (PoP) Challenge Format:
-    PoP ensures that only the entity holding the private key matching the
-    warrant's ``authorized_holder`` can invoke a tool.  Each activity call
-    produces a fresh 64-byte Ed25519 signature over a deterministic challenge.
-
-    Challenge construction (implemented in tenuo-core)::
+    Construction::
 
         domain_context = b"tenuo-pop-v1"
         window_ts      = (unix_now // 30) * 30          # 30-second bucket
@@ -120,76 +117,51 @@ Proof-of-Possession (PoP) Challenge Format:
         preimage       = domain_context || challenge_data
         signature      = Ed25519.sign(signing_key, preimage)   # 64 bytes
 
-    Field details:
-        - ``warrant_id``:  Hex-encoded warrant ID (``warrant.id``).
-        - ``tool``:        Activity / tool name as a string.
-        - ``sorted_args``: Key-sorted ``[(name, ConstraintValue), ...]`` pairs.
-        - ``window_ts``:   Unix timestamp floored to 30-second windows for
-          replay tolerance.  With default settings (``pop_max_windows=5``),
-          signatures are accepted across 5 windows — approximately ±60 s
-          of clock skew tolerance (bidirectional).
-        - CBOR (RFC 8949) is the canonical serialisation format.
+    Fields:
+        - ``warrant_id``: hex warrant id (``warrant.id``).
+        - ``tool``: activity / tool name string.
+        - ``sorted_args``: key-sorted ``[(name, ConstraintValue), ...]``.
+        - ``window_ts``: floored to 30 s. Defaults (``pop_max_windows=5``)
+          give roughly ±60 s skew tolerance around the verifier clock.
+        - Encoding: CBOR (RFC 8949).
 
-    Wire encoding:
-        The outbound workflow interceptor computes the PoP signature
-        transparently for every ``workflow.execute_activity()`` call using
-        ``warrant.sign(signing_key, tool, args_dict, timestamp=workflow.now())``.
-        The deterministic timestamp ensures replay safety. The signature is
-        base64-encoded and injected into activity headers as
-        ``x-tenuo-pop``, which the activity interceptor decodes and passes
-        to ``Authorizer.check_chain()`` or ``Authorizer.authorize_one()``.
+    In this SDK the outbound interceptor signs using
+    ``warrant.sign(..., timestamp=workflow.now())`` for replay-safe workflows.
+    The activity interceptor verifies via ``Authorizer.authorize_one`` or
+    ``check_chain`` and passes the signature from header ``x-tenuo-pop``.
 
 Troubleshooting:
     ``ImportError: PyO3 modules may only be initialized once per interpreter process``
-        The worker started successfully but the first workflow task failed.  This
-        always means ``with_passthrough_modules("tenuo", "tenuo_core")`` is missing
-        from the ``SandboxedWorkflowRunner`` config.  The worker will keep running
-        and polling, but every workflow task will fail with this error — no
-        activities will ever be scheduled.  See **Setup** above.
+        Passthrough for ``tenuo`` and ``tenuo_core`` is missing on the workflow
+        worker. The process may still poll; workflow tasks fail and activities
+        from those workflows are never reached. Inspect workflow task errors in
+        Temporal Web, not only worker health.
 
-        Failure sequence:
-          1. Worker starts and connects (no error).
-          2. First workflow execution is attempted.
-          3. Temporal's sandbox re-imports the module graph; PyO3 raises on
-             the second initialisation of ``tenuo_core``.
-          4. The workflow task fails; Temporal may retry it or mark the
-             workflow as errored.
-          5. All subsequent workflow tasks on this worker fail identically.
-          6. Activities on non-Tenuo workflows are unaffected.
-
-        The worker appears healthy from outside (connected, polling) but
-        workflow executions are silently dead — check Temporal Web for
-        workflow task failures rather than worker connectivity.
+        Sequence: worker starts; first workflow task loads the sandbox; second
+        import of ``tenuo_core`` raises; task fails; later workflow tasks on the
+        same worker repeat the same error.
 
     ``TenuoContextError: No Tenuo headers in store``
-        The workflow was started without ``tenuo_headers()``.  Make sure the
-        client calls ``TenuoClientInterceptor.set_headers_for_workflow(
-        workflow_id, tenuo_headers(...))`` before ``client.execute_workflow()``.
+        Start path did not bind headers for this ``workflow_id``. Prefer
+        ``execute_workflow_authorized`` or call
+        ``set_headers_for_workflow(workflow_id, tenuo_headers(...))`` before
+        ``execute_workflow``.
 
     ``TemporalConstraintViolation: No warrant provided (require_warrant=True)``
-        The activity interceptor received no warrant.  Common causes:
-        (a) ``set_headers()`` / ``set_headers_for_workflow()`` was never
-        called, (b) headers were cleared before start, or (c) the
-        ``TenuoClientInterceptor`` is missing from the client's interceptor
-        list.
+        No warrant reached the activity worker. Check client interceptors,
+        header binding, and that headers were not cleared before start.
 
     ``TemporalConstraintViolation: ... Incorrect padding`` or ``signature must be 64 bytes``
-        PoP/header encoding mismatch. Ensure the worker has
-        ``TenuoPlugin(...)`` registered and that Tenuo headers are
-        injected at workflow start. ``workflow.execute_activity()`` is
-        supported when the interceptor is installed.
+        Header wire mismatch. Confirm ``TenuoClientInterceptor`` and
+        ``TenuoPlugin`` are both registered and versions match.
 
     ``WarrantExpired: Warrant '...' expired at ...``
-        The warrant's TTL has elapsed.  Mint a new warrant with a longer
-        ``ttl()`` or refresh the warrant before starting the workflow.
+        Mint a new warrant or extend TTL before the run exceeds it.
 
     Log: ``PoP signing for activity ... positional argument keys (arg0, ...)``
-        The outbound interceptor could not resolve the activity callable, so PoP
-        was computed with ``arg0``/``arg1`` keys while the warrant has **named**
-        field constraints for that tool. Add ``activity_fns=[...]`` to
-        ``TenuoPluginConfig`` (same as ``Worker(activities=...)``), or use
-        ``tenuo_execute_activity``. With ``strict_mode=True``, this is a hard
-        error (``TenuoContextError``) instead of a warning.
+        Named warrant fields but positional PoP keys. Add ``activity_fns`` or use
+        ``tenuo_execute_activity``. With ``strict_mode=True`` this becomes
+        ``TenuoContextError``.
 """
 
 from __future__ import annotations

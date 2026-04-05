@@ -47,7 +47,7 @@ def main():
 
     if not args.unprotected and not HOOKS_AVAILABLE:
         print(f"{R}❌ CrewAI hooks API not available. Requires crewai>=0.80.0{END}")
-        print(f"{Y}Install with: pip install 'crewai>=0.80.0'{END}")
+        print(f"{Y}Install with: uv pip install 'crewai>=0.80.0'{END}")
         sys.exit(1)
 
     # Setup temp files

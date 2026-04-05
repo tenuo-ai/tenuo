@@ -4,35 +4,70 @@ Warrant-based authorization for Temporal workflows and activities with **transpa
 
 ## Prerequisites
 
-1. **Temporal Server**
+1. **Temporal CLI and server**
+
+On macOS:
 
 ```bash
-brew install temporal            # macOS
-temporal server start-dev        # Start dev server
+brew install temporal
+temporal server start-dev
 ```
 
-2. **Python Dependencies**
+On Linux or CI, install the CLI from [Temporal downloads](https://docs.temporal.io/cli#install) or your package manager, then run `temporal server start-dev` (or point workers at your own cluster).
+
+2. **Python dependencies**
 
 ```bash
-pip install "tenuo[temporal]"
+uv pip install "tenuo[temporal]"
 ```
+
+For the **Temporal + MCP** example you also need the MCP extra and **Python 3.10+**:
+
+```bash
+uv pip install "tenuo[temporal,mcp]"
+```
+
+**Going to production:** see [Path to production](../../../docs/temporal.md#path-to-production) in `docs/temporal.md` (keys, passthrough, `activity_fns`, child workflows, dedup, root refresh). Enforcement is self-hosted on your workers; Tenuo Cloud is optional.
 
 ## Examples
 
-Three examples showing a clean progression from basic transparent authorization to advanced patterns:
+Five examples showing a clean progression from basic transparent authorization to advanced patterns:
 
 | Example | Concept | What it demonstrates |
 |---------|---------|---------------------|
 | [`demo.py`](demo.py) | **Transparent authorization** | Standard `workflow.execute_activity()`, zero workflow changes, sequential + parallel reads, unauthorized access denial |
-| [`s3_example.py`](s3_example.py) | **Cloud API scoping** | Worker has full IAM access to an S3 bucket; Tenuo warrant restricts which key prefix the workflow may read — IAM and Tenuo are independent layers |
+| [`cloud_iam_layering.py`](cloud_iam_layering.py) | **IAM layering** | Worker has full IAM access to an S3 bucket; per-tenant warrants restrict key prefixes, including cross-tenant isolation with the same IAM role |
 | [`multi_warrant.py`](multi_warrant.py) | **Multi-tenant isolation** | Identical workflow code for different tenants, isolation via warrant only, cross-access denial |
 | [`delegation.py`](delegation.py) | **Inline attenuation** | Per-stage pipeline authorization with attenuated child workflows via `tenuo_execute_child_workflow()` |
+| [`temporal_mcp_layering.py`](temporal_mcp_layering.py) | **Temporal + MCP** | Activity calls `SecureMCPClient` (stdio); `TenuoPlugin` gates the activity, `MCPVerifier` on [`temporal_mcp_server.py`](temporal_mcp_server.py) gates the MCP tool (`params._meta.tenuo`) |
 
 ### Quick start
 
 ```bash
 temporal server start-dev                          # Terminal 1
 cd tenuo-python/examples/temporal && python demo.py  # Terminal 2
+```
+
+Then try **`cloud_iam_layering.py`**: same setup, but it needs `uv pip install boto3` for real S3 reads. Use `TENUO_DEMO_DRY_RUN=1` to mock S3 and run without AWS credentials.
+
+```bash
+cd tenuo-python/examples/temporal
+TENUO_DEMO_DRY_RUN=1 python cloud_iam_layering.py
+```
+
+**`cloud_iam_layering.py`** uses standard `workflow.execute_activity()` with `activity_fns` set because the warrant constrains named fields (`bucket`, `key`). It mints two tenant warrants and runs three cases: allowed read inside a tenant prefix, denied read outside that prefix, and cross-tenant denial (tenant B’s warrant cannot read tenant A’s prefix) while the worker keeps the same broad IAM posture.
+
+### Temporal + MCP (advanced)
+
+[`temporal_mcp_layering.py`](temporal_mcp_layering.py) is optional and **requires Python 3.10+** and `uv pip install "tenuo[temporal,mcp]"`. It spawns [`temporal_mcp_server.py`](temporal_mcp_server.py) as an MCP stdio subprocess.
+
+- **Temporal boundary:** warrant must include `invoke_mcp_echo` (and PoP covers the `message` argument).
+- **MCP boundary:** the same holder key signs PoP for `safe_echo`; the server verifies `params._meta["tenuo"]`. The demo mints one warrant with both capabilities, then a second warrant with only the Temporal activity so the MCP layer denies while Temporal still allows the activity.
+- **Demo caveat:** the activity reads warrant material from a process-local dict set in `main()`. Production code should load warrants and keys via your normal `KeyResolver` / policy path instead of globals.
+
+```bash
+cd tenuo-python/examples/temporal
+python temporal_mcp_layering.py
 ```
 
 ## Transparent Authorization Pattern
@@ -52,14 +87,13 @@ result = await execute_workflow_authorized(
 )
 ```
 
-Inside workflows, the registered Tenuo interceptors (from `TenuoPlugin`) compute Proof-of-Possession signatures transparently — use standard Temporal APIs:
+With `TenuoPlugin` on the worker, you can call normal `workflow.execute_activity(...)`. No Tenuo imports are required inside the workflow for that path. If the warrant uses named field constraints (`path=`, `bucket=`, …), configure `activity_fns` (below).
 
 ```python
 @workflow.defn
 class MyWorkflow:
     @workflow.run
     async def run(self, path: str) -> str:
-        # Standard Temporal API - no Tenuo imports needed!
         return await workflow.execute_activity(
             read_file,
             args=[path],
@@ -67,13 +101,13 @@ class MyWorkflow:
         )
 ```
 
-The interceptor automatically:
+The outbound interceptor:
 - Computes PoP with deterministic timestamps (`workflow.now()`)
 - Injects warrant and PoP into activity headers
 - Works with `asyncio.gather()` for parallel activities
-- Ensures replay safety
+- Uses `workflow.now()` so replay stays deterministic
 
-### Activity registry (`activity_fns`) — when you **must** set it
+### Activity registry (`activity_fns`) when you **must** set it
 
 PoP signs a canonical **argument dictionary**. If your warrant uses **named field constraints** (for example `capability("read_file", path=Subpath("/data/..."))`), that dict must use **real parameter names** (`path`), not placeholders (`arg0`, `arg1`, …).
 
@@ -81,23 +115,26 @@ The outbound interceptor learns parameter names from, in order:
 
 1. The Temporal SDK’s `input.fn` (when present)
 2. `tenuo_execute_activity()` (records the function for that call)
-3. **`TenuoPluginConfig.activity_fns`** — pass the **same** callables as `Worker(activities=[...])`
+3. **`TenuoPluginConfig.activity_fns`**: pass the **same** callables as `Worker(activities=[...])`
 4. Otherwise it falls back to `arg0`, `arg1`, …
 
 If (4) happens while your warrant has field constraints for that tool, verification will not match the warrant. The worker **logs a warning**; with **`strict_mode=True`** it **raises** instead so you fix config before production.
 
-**Rule of thumb:** warrants with `path=`, `message=`, etc. → set `activity_fns=activities` next to your `TenuoPlugin` config (see `demo.py`). Tool-only capabilities (no per-field constraints) do not require it.
+**Rule of thumb:** if the warrant names arguments (`path=`, `message=`, …), set `activity_fns` next to `TenuoPlugin` (see `demo.py`). Tool-only capabilities without per-field constraints often do not need it.
 
 See also: the **Activity registry (`activity_fns`) and PoP argument names** section in [`docs/temporal.md`](../../../docs/temporal.md) (repository root).
 
 ### When to use Tenuo-specific functions
 
-Most workflows use standard `workflow.execute_activity()` via `AuthorizedWorkflow`. Use `tenuo_execute_activity()` when you need accurate PoP signing with named constraints and have not set `activity_fns` in your config (it records the function reference for real parameter name resolution):
+- **`AuthorizedWorkflow`** + **`execute_authorized_activity()`**: fail fast if warrant headers are missing at workflow start; same PoP mechanism as transparent `execute_activity()`.
+- **`workflow.execute_activity()`**: use with `activity_fns` when warrants name arguments (unless the SDK always provides `input.fn` for those calls).
+
+Use **`tenuo_execute_activity()`** if you need correct parameter names for PoP and you have not set `activity_fns` (it records the function reference for the outbound interceptor):
 - Multi-warrant workflows where different activities run under different warrants
 - Per-stage delegation where you narrow the warrant before each stage
 - Any workflow that does not extend `AuthorizedWorkflow` but needs transparent PoP
 
-For child workflows with attenuated scope, use `tenuo_execute_child_workflow()` instead (it handles the warrant narrowing and header injection together):
+**Child workflows:** never use raw `workflow.execute_child_workflow()` for Tenuo-backed children; headers are not propagated. Use **`tenuo_execute_child_workflow()`** for attenuation and header injection:
 
 ```python
 # Only needed for per-child authorization decisions
@@ -119,7 +156,7 @@ This is an authorization decision (choosing what scope and duration to delegate)
 4. Injects the attenuated child warrant via the outbound interceptor
 5. Child workflow receives ONLY the narrowed capabilities
 
-The child never sees the parent's full warrant - it's attenuated before injection.
+The child receives only the attenuated warrant, not the parent's full scope.
 
 ## Worker setup (required)
 
@@ -132,9 +169,12 @@ from temporalio.worker.workflow_sandbox import (
 
 from tenuo.temporal import EnvKeyResolver, TenuoPlugin, TenuoPluginConfig
 
+resolver = EnvKeyResolver()
+resolver.preload_keys(["agent1"])  # cache before Worker(...); sandbox PoP cannot read os.environ
+
 interceptor = TenuoPlugin(
     TenuoPluginConfig(
-        key_resolver=EnvKeyResolver(),
+        key_resolver=resolver,
         on_denial="raise",
         trusted_roots=[control_key.public_key],  # required (or tenuo.configure(trusted_roots=[...]) before building config)
         strict_mode=True,  # optional: fail-fast on ambiguous PoP with named constraints
@@ -155,7 +195,7 @@ worker = Worker(
 )
 ```
 
-Omitting this causes `ImportError: PyO3 modules may only be initialized once per interpreter process`. The worker starts and connects normally but all workflow tasks fail — see [docs/temporal.md — Sandbox passthrough explained](../../../docs/temporal.md#sandbox-passthrough-explained) for the failure sequence and diagnostic steps.
+Omitting this causes `ImportError: PyO3 modules may only be initialized once per interpreter process`. The worker may still look healthy while every workflow task fails. See [Sandbox passthrough explained](../../../docs/temporal.md#sandbox-passthrough-explained) in `docs/temporal.md`.
 
 ## Architecture
 
@@ -185,17 +225,15 @@ Client                    Workflow                    Activity
 Headers propagate through Temporal's native header mechanism,
 so this works in distributed deployments (separate client/worker processes).
 
-The key innovation: PoP computation happens **transparently** in the outbound
-interceptor using `workflow.now()` for deterministic replay. Workflow code uses
-standard Temporal APIs with zero Tenuo imports.
+PoP is computed in the outbound interceptor using `workflow.now()` for deterministic replay. Workflow code can stay free of Tenuo imports when you use transparent `execute_activity()` (and set `activity_fns` when warranted).
 
 ## Security defaults
 
 All security features are fail-closed:
 
-- `require_warrant=True` — activities without warrants are denied
-- `block_local_activities=True` — prevents bypass via local activities
-- `redact_args_in_logs=True` — prevents secret leaks in logs
+- `require_warrant=True`: activities without warrants are denied
+- `block_local_activities=True`: blocks unapproved local activity bypass
+- `redact_args_in_logs=True`: redacts argument values in logs
 - `trusted_roots` is required (or set via `tenuo.configure(trusted_roots=[...])`); PoP is always verified for warranted activities
 
 ## Testing
@@ -214,10 +252,11 @@ pytest tests/e2e/test_temporal_e2e.py -v   # mocked Temporal integration tests (
 | `TenuoContextError: No Tenuo headers in store` | Workflow started without headers | Use `execute_workflow_authorized(...)` or call `set_headers_for_workflow(workflow_id, tenuo_headers(...))` before `execute_workflow` |
 | `TemporalConstraintViolation: No warrant provided` | Headers not reaching worker | Ensure `TenuoClientInterceptor` is in the client's interceptor list |
 | `PopVerificationError: replay detected` | Same activity attempt reached two workers (fleet-wide dedup not configured) | Expected with in-memory dedup and multiple worker pods; configure `pop_dedup_store` with a shared backend for fleet-wide suppression |
-| `KeyResolutionError: Cannot resolve key: <id>` | Signing key not found by `KeyResolver` | For `EnvKeyResolver`: check `TENUO_KEY_<key_id>` is set and base64-encoded correctly. For cloud resolvers: verify secret name, permissions, and region |
+| `KeyResolutionError: Cannot resolve key: <id>` | Signing key not found by `KeyResolver` | For `EnvKeyResolver`: set `TENUO_KEY_<key_id>` and call `resolver.preload_keys([...])` before `Worker(...)` (workflows need cached keys; the sandbox blocks `os.environ`). For cloud resolvers: verify secret name, permissions, and region |
 | Warning: `PoP signing … uses positional argument keys (arg0, …)` | Warrant uses named field constraints but activity function reference not available | Add `activity_fns=[read_file, ...]` to `TenuoPluginConfig` (same list as `Worker(activities=...)`), or use `tenuo_execute_activity()` |
 | `TenuoContextError` (in `strict_mode`) | Same as above but fail-fast is on | See above; remove `strict_mode=True` temporarily to diagnose, then fix `activity_fns` |
 | Activity denied despite valid warrant | PoP computation failed silently | Check worker logs for WARNING/ERROR messages from outbound interceptor; verify `key_id` matches a key accessible to `KeyResolver` |
+| Child has no warrant / activities always denied | Child started with `workflow.execute_child_workflow()` | Use `tenuo_execute_child_workflow()` ([docs/temporal.md#child-workflow-delegation](../../../docs/temporal.md#child-workflow-delegation)) |
 
 ## Learn More
 
