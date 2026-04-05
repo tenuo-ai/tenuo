@@ -172,7 +172,7 @@ async def main():
     # EnvKeyResolver reads TENUO_KEY_<key_id> from environment.
     # Register the agent key before starting the worker:
     import os, base64
-    os.environ["TENUO_KEY_agent-key-1"] = base64.b64encode(bytes(agent_key.to_bytes())).decode()
+    os.environ["TENUO_KEY_agent-key-1"] = base64.b64encode(bytes(agent_key.secret_key_bytes())).decode()
 
     client_interceptor = TenuoClientInterceptor()
     client = await Client.connect("localhost:7233", interceptors=[client_interceptor])
@@ -357,9 +357,9 @@ config = TenuoPluginConfig(
 
 Store keys in Vault:
 ```bash
-# Store signing key in Vault
+# Store signing key in Vault (field name must match what VaultKeyResolver reads)
 vault kv put secret/production/tenuo/agent-2024 \
-  data=@signing_key.bin
+  key=@signing_key.b64  # base64-encode the 32-byte key file first
 ```
 
 #### Production: AWS Secrets Manager
@@ -885,7 +885,7 @@ When starting Nexus operations from a Tenuo-protected workflow, the outbound int
 
 The activity interceptor runs **dedup after** PoP verification. The default store is **`InMemoryPopDedupStore`**: a thread-safe, **process-local** map. Each dedup key includes the warrant’s logical facet (via **`dedup_key(tool, args)`**), **`workflow_id`**, **`workflow_run_id`**, and **`activity_id`**. Temporal retries with **`attempt > 1`** bypass dedup so legitimate redelivery is not blocked. The default store evicts periodically (every 60 seconds) and caps size at **10,000** entries.
 
-**Memory footprint:** Each entry is a string key (~100–180 bytes for typical Temporal IDs) mapped to a float timestamp. With Python dict overhead, the store uses roughly **3–4 MB at the 10,000-entry cap** — negligible for any production worker. Lower `_DEDUP_MAX_SIZE` in your `PopDedupStore` subclass if worker memory is genuinely constrained.
+**Memory footprint:** Each entry is a string key (~100–180 bytes for typical Temporal IDs) mapped to a float timestamp. With Python dict overhead, the store uses roughly **3–4 MB at the 10,000-entry cap** — negligible for any production worker. To lower the cap, implement a custom `PopDedupStore` with a smaller internal size limit.
 
 **Pluggable backend:** Set **`TenuoPluginConfig.pop_dedup_store`** to a shared implementation of **`PopDedupStore`** when you need **fleet-wide** replay suppression (see [Security considerations](#security-considerations)).
 
@@ -1020,10 +1020,11 @@ config = TenuoPluginConfig(
     metrics=metrics,
 )
 
-# Exposes metrics at /metrics:
+# Registers with prometheus_client (requires pip install prometheus-client):
 # - tenuo_temporal_activities_authorized_total{tool, workflow_type}
 # - tenuo_temporal_activities_denied_total{tool, reason, workflow_type}
 # - tenuo_temporal_authorization_latency_seconds_bucket{tool}
+# Expose via your app's existing /metrics endpoint or prometheus_client.start_http_server()
 ```
 
 ### Suggested Alerts
