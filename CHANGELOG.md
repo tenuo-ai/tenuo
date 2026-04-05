@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.0-beta.17] - Unreleased
+
+### Added
+- PyO3 0.28 support
+
 ## [0.1.0-beta.16] - 2026-03-31
 
 ### Added
