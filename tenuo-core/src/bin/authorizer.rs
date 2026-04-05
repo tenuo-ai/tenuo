@@ -1148,6 +1148,7 @@ async fn handle_request(
                             approved_at: va.approved_at,
                             expires_at: va.expires_at,
                             request_hash: hex::encode(va.request_hash),
+                            signed_approval_cbor_b64: va.signed_approval_cbor_b64.clone(),
                         })
                         .collect(),
                 )

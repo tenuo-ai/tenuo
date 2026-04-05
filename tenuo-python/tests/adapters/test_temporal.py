@@ -110,7 +110,7 @@ class TestTenuoHeaders:
 
         assert headers[TENUO_COMPRESSED_HEADER] == b"1"
 
-        # V2 format: raw gzip(cbor), no intermediate base64
+        # Payload is gzip-compressed raw bytes (no base64 wrapping).
         decompressed = gzip.decompress(headers[TENUO_WARRANT_HEADER])
         assert decompressed == b'{"test": "warrant"}'
 
@@ -119,7 +119,7 @@ class TestTenuoHeaders:
         headers = tenuo_headers(mock_warrant, "key-123", compress=False)
 
         assert headers[TENUO_COMPRESSED_HEADER] == b"0"
-        # V2 format: raw CBOR bytes (no base64 wrapping)
+        # Uncompressed: raw bytes in the warrant header (no base64 wrapping).
         assert headers[TENUO_WARRANT_HEADER] == b'{"test": "warrant"}'
 
     def test_signing_key_not_in_headers(self, mock_warrant, mock_signing_key):

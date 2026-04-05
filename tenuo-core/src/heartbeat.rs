@@ -58,6 +58,9 @@ pub struct ApprovalRecord {
     pub expires_at: u64,
     /// Hex-encoded hash binding the approval to (warrant_id, tool, args, holder)
     pub request_hash: String,
+    /// Standard base64-encoded CBOR [`crate::approval::SignedApproval`] for independent verification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signed_approval_cbor_b64: Option<String>,
 }
 
 /// An authorization event to be sent to the control plane for dashboard/analytics.
@@ -1645,6 +1648,7 @@ mod tests {
             approved_at: 1700000000,
             expires_at: 1700000300,
             request_hash: "deadbeef".to_string(),
+            signed_approval_cbor_b64: Some("Zm9vYmFy".to_string()),
         }];
         let event = AuthorizationEvent::allow(
             "auth-123".to_string(),
@@ -1663,9 +1667,14 @@ mod tests {
         assert_eq!(approvals.len(), 1);
         assert_eq!(approvals[0].external_id, "arn:aws:iam::123:user/admin");
         assert_eq!(approvals[0].approved_at, 1700000000);
+        assert_eq!(
+            approvals[0].signed_approval_cbor_b64.as_deref(),
+            Some("Zm9vYmFy")
+        );
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"approvals\""));
         assert!(json.contains("arn:aws:iam::123:user/admin"));
+        assert!(json.contains("signed_approval_cbor_b64"));
     }
 
     #[test]
@@ -1948,6 +1957,7 @@ mod tests {
                 approved_at: 1700000000,
                 expires_at: 1700000300,
                 request_hash: "ccdd".to_string(),
+                signed_approval_cbor_b64: Some("YWRtaW4=".to_string()),
             },
             ApprovalRecord {
                 approver_key: "eeff".to_string(),
@@ -1955,6 +1965,7 @@ mod tests {
                 approved_at: 1700000001,
                 expires_at: 1700000301,
                 request_hash: "ccdd".to_string(),
+                signed_approval_cbor_b64: Some("c2Vj".to_string()),
             },
         ];
 
@@ -2027,6 +2038,7 @@ mod tests {
                 approved_at: 1,
                 expires_at: 2,
                 request_hash: "hash".into(),
+                signed_approval_cbor_b64: None,
             }]),
         );
         let event_without = AuthorizationEvent::allow(
