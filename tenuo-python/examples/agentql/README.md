@@ -19,11 +19,11 @@ Tenuo provides **cryptographic authorization** for browser automation. This demo
 
 ```bash
 # Option 1: Install from PyPI (production use)
-uv pip install tenuo  # or: pip install tenuo
+uv pip install tenuo
 
 # Option 2: Install from source (development)
 cd tenuo-python
-uv pip install -e .   # or: pip install -e .
+uv pip install -e .
 ```
 
 ## Quick Start

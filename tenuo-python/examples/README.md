@@ -5,11 +5,7 @@ This directory contains working examples demonstrating how to use the Tenuo Pyth
 ## Prerequisites
 
 ```bash
-# Using uv (recommended)
 uv pip install tenuo
-
-# Or standard pip
-pip install tenuo
 ```
 
 ## Quick Start

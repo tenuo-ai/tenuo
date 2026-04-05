@@ -24,7 +24,7 @@ IMPORTANT — Do NOT call warrant.sign() directly in workflows:
   ✅ GOOD: await workflow.execute_activity(...)            # Interceptor handles it
 
 Requirements:
-    pip install "tenuo[temporal]"
+    uv pip install "tenuo[temporal]"
 
 Usage:
     temporal server start-dev   # Terminal 1
@@ -46,7 +46,7 @@ try:
     from temporalio.common import RetryPolicy
     from temporalio.worker import Worker
 except ImportError:
-    raise SystemExit("Install temporalio: pip install temporalio")
+    raise SystemExit("Install temporalio: uv pip install temporalio")
 
 # Tenuo imports
 from tenuo_core import Subpath

@@ -14,7 +14,7 @@ Each example shows:
   - Pre-supplying approval gate approvals
 
 Prerequisites:
-  pip install "tenuo[mcp]"
+  uv pip install "tenuo[mcp]"
 
 Run (with a local server):
   python mcp_client.py

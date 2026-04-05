@@ -47,7 +47,7 @@ def main():
         from tenuo import SigningKey, Subpath, Warrant
         from tenuo.crewai import CrewAIConstraintViolation, GuardBuilder
     except ImportError:
-        print(f'{R}pip install "tenuo[crewai]"{END}')
+        print(f'{R}uv pip install "tenuo[crewai]"{END}')
         sys.exit(1)
 
     # Simulated filesystem
