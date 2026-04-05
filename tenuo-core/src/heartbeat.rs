@@ -176,17 +176,31 @@ impl AuthorizationEvent {
 /// When the authorizer has a signing key configured, events are wrapped in this
 /// envelope with an Ed25519 signature. The control plane verifies the signature
 /// and stores the event as a non-repudiable receipt.
+///
+/// **Verification:** Decode [`SignedEvent::signing_payload`] from standard base64 and verify
+/// this [`SignedEvent::signature`] against those exact bytes using the authorizer's Ed25519
+/// public key. Do not re-encode CBOR from JSON fields; canonical CBOR (including map key
+/// ordering and optional field omission) must match what the authorizer signed.
 #[derive(Clone, Debug, Serialize)]
 pub struct SignedEvent {
     /// The authorization event data
     #[serde(flatten)]
     pub event: AuthorizationEvent,
-    /// Base64-encoded Ed25519 signature over the canonical signing payload.
-    /// Payload format: CBOR({1: authorizer_id, 2: warrant_chain, 3: action, 4: outcome, 5: timestamp})
+    /// Base64-encoded Ed25519 signature over the bytes in [`Self::signing_payload`]
+    /// (after base64 decode).
+    ///
+    /// Those bytes are a CBOR map with string keys `"1"` through `"5"` always present
+    /// (authorizer id, warrant chain as a byte string, action, outcome, Unix timestamp),
+    /// and optional key `"6"` (`root_principal`) when the event includes a root
+    /// principal. The authorizer encodes using `ReceiptSigningPayload` in this module
+    /// (same layout as the Go control plane's `AuthorizerReceiptPayload`).
+    ///
+    /// **Integrators should treat `signing_payload` as the source of truth** for
+    /// verification; do not hand-roll CBOR from the JSON event.
     pub signature: String,
     /// Base64-encoded CBOR bytes that were signed (envelope pattern).
-    /// When present, the control plane verifies these exact bytes instead of
-    /// reconstructing the payload, eliminating CBOR encoding mismatches.
+    /// Verifiers must decode this field and verify [`Self::signature`] over the decoded
+    /// bytes; reconstructing CBOR from the JSON event risks subtle mismatches.
     pub signing_payload: String,
     /// The action that was authorized (for receipt indexing)
     pub action: String,
