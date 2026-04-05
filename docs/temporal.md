@@ -41,6 +41,32 @@ Requires Temporal server running locally or in production.
 
 ---
 
+## Tenuo concepts for Temporal developers
+
+If you're coming from Temporal's RBAC or namespace-based access control, here's the mental model shift:
+
+| Temporal concept | Tenuo equivalent |
+|-----------------|------------------|
+| Namespace / RBAC ("this service can run activities in namespace X") | **Trusted roots** — the issuer public keys whose warrants workers will accept. Who is authorised to grant permissions. |
+| Activity type permission | **Warrant capability** — a named tool entry in a cryptographically signed token. The capability name must match the activity type (or a `@tool()` mapping). |
+| Activity input args | **Constraints** — optional cryptographic rules bound inside the warrant (e.g. `path=Subpath("/data/")` restricts what paths the activity may touch). Arguments outside those rules are denied before the activity runs. |
+| "I am in namespace X, so I can run activity Y" | **Warrant holder** — the specific key-pair authorised to hold this permission. Only the entity that can sign with the holder key can prove it is legitimately dispatching the activity. |
+
+**Two keys, two roles:**
+
+```
+Issuer (control_key)                Holder (agent_key)
+────────────────────                ─────────────────
+Owned by: authorization team        Owned by: worker / CI / agent process
+Lives in: Vault, KMS, CI secret     Lives in: worker's KeyResolver (Vault, etc.)
+Used to: mint warrants               Used to: sign PoP on each activity dispatch
+If compromised: rotate trusted root  If compromised: rotate key_id + re-issue warrant
+```
+
+The issuer key never touches the worker. The holder key never leaves the worker. Neither is transmitted in Temporal headers — only the holder's `key_id` and the warrant token travel over the wire.
+
+---
+
 ## Onboarding checklist
 
 Follow this order the first time you integrate Tenuo with Temporal. The **Quick Start** and **Configuration** sections below go deeper; the [`tenuo.temporal`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/tenuo/temporal.py) module docstring has a **Troubleshooting** table for common failures.
@@ -131,7 +157,10 @@ class DataProcessingWorkflow(AuthorizedWorkflow):
 
 # Setup
 async def main():
-    # Generate issuer (control) key and holder (agent) key
+    # Generate issuer (control) key and holder (agent) key.
+    # In production: control_key belongs to your authorization team (stored in Vault/KMS,
+    # used only to mint warrants). agent_key belongs to this worker process (stored in
+    # the worker's KeyResolver, used to sign PoP on each activity dispatch).
     control_key = SigningKey.generate()
     agent_key = SigningKey.generate()
 
