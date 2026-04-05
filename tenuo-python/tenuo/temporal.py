@@ -74,7 +74,7 @@ Security Philosophy (Fail-Closed by Default):
     - Local activity without @unprotected: Raises LocalActivityError
 
 Usage Patterns:
-    **AuthorizedWorkflow (recommended for most cases)**::
+    **AuthorizedWorkflow (recommended when you want fail-fast header validation)**::
 
         @workflow.defn
         class MyWorkflow(AuthorizedWorkflow):
@@ -85,7 +85,12 @@ Usage Patterns:
                     start_to_close_timeout=timedelta(seconds=30),
                 )
 
-    **tenuo_execute_activity (for delegation / multi-warrant)**::
+        AuthorizedWorkflow validates that Tenuo warrant headers are present
+        at workflow start — if they're missing the workflow fails immediately
+        instead of at first activity dispatch.  It is a convenience wrapper;
+        TenuoPlugin enforces authorization regardless of which base class you use.
+
+    **tenuo_execute_activity (when you need accurate PoP signing with named constraints)**::
 
         @workflow.defn
         class PipelineWorkflow:
@@ -95,6 +100,12 @@ Usage Patterns:
                     my_activity, args=[data_dir],
                     start_to_close_timeout=timedelta(seconds=30),
                 )
+
+        The sole functional difference from workflow.execute_activity(): it
+        stores the function reference so the outbound interceptor can resolve
+        real parameter names for PoP signing.  This matters when the warrant uses
+        named field constraints (e.g. path=Subpath(...)) and activity_fns is not
+        set.  It is not a separate authorization path.
 
 Proof-of-Possession (PoP) Challenge Format:
     PoP ensures that only the entity holding the private key matching the
@@ -227,6 +238,9 @@ _WIRE_FORMAT_V2 = b"2"
 
 # PoP timestamp validation window (seconds). The scheduled_time must be
 # within this window. This is not configurable — security is non-negotiable.
+# NOTE: this constant is currently unused; the actual PoP window is controlled
+# by the Rust Authorizer (pop_window_secs=30, pop_max_windows=5 → ±60s).
+# Kept for reference; do not use POP_WINDOW_SECONDS in new code.
 POP_WINDOW_SECONDS = 300
 
 # Hard cap on decompressed warrant bytes — must match tenuo_core.MAX_WARRANT_SIZE
@@ -670,6 +684,17 @@ class KeyResolver(ABC):
 
     Implementations should fetch keys from secure storage
     (Vault, KMS, HSM, etc.) and cache appropriately.
+
+    **Implementing a custom resolver for use inside Temporal workflows:**
+    The outbound workflow interceptor calls ``resolve_sync()``, not ``resolve()``,
+    because it runs inside the Temporal workflow sandbox where async I/O is
+    restricted.  The default ``resolve_sync()`` implementation spawns a thread
+    pool executor, which may behave unexpectedly inside the sandbox.
+
+    If you implement a custom resolver, override ``resolve_sync()`` directly
+    with a synchronous implementation (e.g. read from a pre-loaded in-memory
+    cache populated before the worker starts).  ``EnvKeyResolver`` does this
+    via ``preload_keys()``.
     """
 
     @abstractmethod
@@ -1306,9 +1331,15 @@ class TenuoPluginConfig:
     require_warrant: bool = True
     """
     Require a warrant for all activities (fail-closed).
-    When True, activities without a warrant are denied.
-    When False, activities without a warrant pass through (opt-in).
-    Default: True (secure by default).
+
+    ``True`` (default): activities without a warrant header are denied.
+    ``False``: activities without a warrant pass through without authorization.
+
+    Setting this to ``False`` is intended only for **incremental migration**
+    scenarios where some task queues or activity types have not yet been
+    warranted.  Unauthenticated executions are logged at WARNING level and
+    appear in audit events with ``warrant_id="none"``.  Never use in steady-state
+    production — the fail-closed guarantee is the core security property.
     """
 
     redact_args_in_logs: bool = True
@@ -2381,9 +2412,9 @@ def workflow_grant(
 def _extract_warrant_from_headers(headers: Dict[str, bytes]) -> Any:
     """Extract and deserialize warrant from headers.
 
-    Supports both wire formats:
-      - v2 (x-tenuo-wire-format: "2"): raw CBOR bytes (optionally gzipped)
-      - v1 (absent or "1"): base64-encoded CBOR (optionally base64(gzipped(base64)))
+    Only V2 wire format is supported (x-tenuo-wire-format: "2"): raw CBOR
+    bytes, optionally gzip-compressed.  V1 (base64-encoded CBOR) was removed
+    in beta; any header not parseable as raw CBOR raises ChainValidationError.
 
     Returns:
         Warrant object, or None if no warrant header present.
@@ -2521,11 +2552,17 @@ def current_key_id() -> str:
 
 
 class AuthorizedWorkflow:
-    """Base class for Tenuo-authorized workflows.
+    """Convenience base class for Tenuo-authorized workflows.
 
-    Provides convenient authorized activity execution with fail-fast
-    warrant validation. The workflow's warrant is validated at initialization
-    and automatically applied to all activity executions.
+    **What it provides:** validates that Tenuo warrant headers are present at
+    workflow *start* (fail-fast), then exposes ``execute_authorized_activity()``
+    as a named alias for ``workflow.execute_activity()``.
+
+    **What it does not change:** TenuoPlugin enforces authorization on *every*
+    activity regardless of which base class you use.  AuthorizedWorkflow adds no
+    security guarantee beyond what the interceptor already provides — it only
+    surfaces missing-header errors earlier (at workflow start vs at the first
+    activity dispatch).
 
     ⚠️ Important: You must use @workflow.defn on your subclass!
         Temporal Python SDK uses decorators, not inheritance, to define workflows.

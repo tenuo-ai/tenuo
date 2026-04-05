@@ -824,6 +824,8 @@ For the fastest response, use `trusted_roots_provider` with a short `trusted_roo
 
 ## Child Workflow Delegation
 
+> **Important:** The standard Temporal SDK `workflow.execute_child_workflow()` does **not** propagate Tenuo warrant headers to child workflows. You must use `tenuo_execute_child_workflow()` — it attenuates the parent warrant and injects the narrowed headers via the outbound interceptor. Using the plain SDK call produces a child workflow with no warrant context and no authorization.
+
 Attenuate warrants when spawning child workflows with `tenuo_execute_child_workflow()`:
 
 ```python
