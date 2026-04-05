@@ -41,15 +41,46 @@ Requires Temporal server running locally or in production.
 
 ---
 
+## Tenuo concepts for Temporal developers
+
+If you're coming from Temporal's RBAC or namespace-based access control, here's the mental model shift:
+
+| Temporal concept | Tenuo equivalent |
+|-----------------|------------------|
+| Namespace / RBAC ("this service can run activities in namespace X") | **Trusted roots** — the issuer public keys whose warrants workers will accept. Who is authorised to grant permissions. |
+| Activity type permission | **Warrant capability** — a named tool entry in a cryptographically signed token. The capability name must match the activity type (or a `@tool()` mapping). |
+| Activity input args | **Constraints** — optional cryptographic rules bound inside the warrant (e.g. `path=Subpath("/data/")` restricts what paths the activity may touch). Arguments outside those rules are denied before the activity runs. |
+| "I am in namespace X, so I can run activity Y" | **Warrant holder** — the specific key-pair authorised to hold this permission. Only the entity that can sign with the holder key can prove it is legitimately dispatching the activity. |
+
+**Two keys, two roles:**
+
+```
+Issuer (control_key)                Holder (agent_key)
+────────────────────                ─────────────────
+Owned by: authorization team        Owned by: worker / CI / agent process
+Lives in: Vault, KMS, CI secret,    Lives in: worker's KeyResolver (Vault, etc.)
+          or Tenuo Cloud
+Used to: mint warrants               Used to: sign PoP on each activity dispatch
+If compromised: rotate trusted root  If compromised: rotate key_id + re-issue warrant
+```
+
+The issuer key never touches the worker. The holder key never leaves the worker. Neither is transmitted in Temporal headers — only the holder's `key_id` and the warrant token travel over the wire.
+
+---
+
 ## Onboarding checklist
 
-Follow this order the first time you integrate Tenuo with Temporal. The **Quick Start** and **Configuration** sections below go deeper; the [`tenuo.temporal`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/tenuo/temporal.py) module docstring has a **Troubleshooting** table for common failures.
+Follow this order the first time you integrate Tenuo with Temporal. The **Quick Start** and **Configuration** sections below go deeper; the [`tenuo.temporal`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/tenuo/temporal.py) module docstring has a **Troubleshooting** section for common failures.
 
-1. **Install**: `uv pip install "tenuo[temporal]"` (see [Installation](#installation)). You need the **`tenuo_core` native extension** (PyO3). If prebuilt wheels are missing for your platform, build from the repo with `maturin develop` in `tenuo-python`.
+1. **Install**: `uv pip install "tenuo[temporal]"` (see [Installation](#installation)). This installs `tenuo_core`, a compiled Rust extension. Prebuilt wheels are available for common platforms; if yours isn't covered, build from source with `maturin develop` in `tenuo-python`.
 
 2. **Temporal server**: Run a dev server (e.g. `temporal server start-dev`). See [examples/temporal README](../tenuo-python/examples/temporal/README.md).
 
-3. **Keys for PoP**: Create issuer (`control_key`) and holder (`agent_key`) `SigningKey` values. Expose the holder key to the worker via a `KeyResolver` (development: `EnvKeyResolver` + `TENUO_KEY_<key_id>`: see [Development: Environment Variables](#development-environment-variables)).
+3. **Keys for PoP**: Proof-of-Possession (PoP) is how each activity dispatch proves it was authorised by the workflow that holds the warrant. It needs two Ed25519 key-pairs:
+   - **Issuer key (`control_key`)**: signs the warrant at issuance time — stays with whoever governs policy (Vault, KMS, CI, or Tenuo Cloud). Never touches the worker. In the managed path, Tenuo Cloud holds and rotates the issuer key for you.
+   - **Holder key (`agent_key`)**: signs a short-lived challenge on each `execute_activity()` call, binding the exact tool and arguments. Lives on the worker via a `KeyResolver`.
+
+   Create both with `SigningKey.generate()`. Expose the holder key to the worker via `KeyResolver` (development: `EnvKeyResolver` + `TENUO_KEY_<key_id>`: see [Development: Environment Variables](#development-environment-variables)).
 
 4. **Mint a warrant**: Use `Warrant.mint_builder()` (or `Warrant.issue`) so capabilities match your activity names and argument constraints (e.g. `path=Subpath(...)`). In production, warrants are typically minted by Tenuo Cloud on behalf of your workflows, separating authorization policy from application code and giving your security team control over what gets issued without touching workflow definitions.
 
@@ -131,14 +162,17 @@ class DataProcessingWorkflow(AuthorizedWorkflow):
 
 # Setup
 async def main():
-    # Generate issuer (control) key and holder (agent) key
+    # Generate issuer (control) key and holder (agent) key.
+    # In production: control_key belongs to your authorization team (stored in Vault/KMS,
+    # used only to mint warrants). agent_key belongs to this worker process (stored in
+    # the worker's KeyResolver, used to sign PoP on each activity dispatch).
     control_key = SigningKey.generate()
     agent_key = SigningKey.generate()
 
     # EnvKeyResolver reads TENUO_KEY_<key_id> from environment.
     # Register the agent key before starting the worker:
     import os, base64
-    os.environ["TENUO_KEY_agent-key-1"] = base64.b64encode(bytes(agent_key.to_bytes())).decode()
+    os.environ["TENUO_KEY_agent-key-1"] = base64.b64encode(bytes(agent_key.secret_key_bytes())).decode()
 
     client_interceptor = TenuoClientInterceptor()
     client = await Client.connect("localhost:7233", interceptors=[client_interceptor])
@@ -200,12 +234,27 @@ async def main():
 > **Security:** Private keys are **NEVER** transmitted in headers. Only the `key_id` is sent. Workers use `KeyResolver` to fetch the actual signing key from secure storage (Vault, AWS Secrets Manager, GCP Secret Manager, etc.).
 
 **What happens:**
-1. `TenuoClientInterceptor` injects warrant + key_id into workflow headers (NO private key)
-2. Workflow inbound interceptor extracts Tenuo headers and propagates them to activities
-3. Each activity call triggers `KeyResolver.resolve(key_id)` to fetch the signing key from secure storage
-4. PoP signature is computed locally on the worker using the resolved key
-5. Activity inbound interceptor verifies warrant, PoP, and constraints
-6. Activity executes only if all checks pass
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant T as Temporal
+    participant WW as Workflow Worker
+    participant KR as KeyResolver
+    participant AW as Activity Worker
+
+    C->>T: execute_workflow(headers: warrant + key_id)
+    T->>WW: workflow task
+    WW->>KR: resolve(key_id)
+    KR-->>WW: signing_key  ← never transmitted
+    Note over WW: PoP = sign(warrant, tool, args, workflow.now())
+    WW->>AW: activity headers (warrant + PoP)
+    Note over AW: verify warrant chain → trusted_roots
+    Note over AW: verify PoP signature + constraints
+    AW->>AW: execute activity (authorized)
+```
+
+The signing key is resolved on the **worker** and never leaves it. PoP is computed at **schedule time** (binding exact tool and args), then verified on the **activity worker** before execution.
 
 This works in both single-process demos and distributed deployments where client and worker run in separate processes.
 
@@ -280,74 +329,6 @@ For distributed deployments (separate client and worker processes), the integrat
 
 If any required part is missing, execution fails closed.
 
----
-
-## Activity registry (`activity_fns`) and PoP argument names
-
-### Why this matters
-
-Each activity call gets a **Proof-of-Possession (PoP)** signature over a canonical payload that includes the **tool name** and a **sorted argument dictionary**. Warrant field constraints (for example `path=Subpath("/data")` on `read_file`) are checked against that same dictionary. The keys in the dict must therefore match the **Python parameter names** of the activity (e.g. `path`), not generic placeholders.
-
-When your workflow calls `workflow.execute_activity(...)`, the outbound interceptor must build `args_dict` from the activity’s positional `args` tuple. It does that by resolving the **activity function** and using `inspect.signature` to map positions to names.
-
-### Resolution order (function reference)
-
-The worker resolves the callable in this order:
-
-1. **`input.fn`**: supplied by the Temporal Python SDK on some versions/paths when using the real `execute_activity` pipeline.
-2. **`tenuo_execute_activity(...)`**: Tenuo records the function reference for that call.
-3. **`TenuoPluginConfig.activity_fns`**: explicit registry: activity type name (e.g. `read_file`) → the same function object you registered on the worker.
-4. **Fallback:** `arg0`, `arg1`, …: used only when (1)–(3) are all unavailable.
-
-Step (4) is **correct** when the warrant only allows the tool **without** per-field constraints (signing and verification both use `arg0`, …). Step (4) is **wrong** when the warrant has **named** constraints: verification expects `path`, but signing used `arg0`, so PoP/constraint checks **do not line up** with the warrant.
-
-### What Tenuo does at runtime
-
-If the interceptor would sign with **only** `arg0`/`arg1`/… **and** the warrant has **non-empty field constraints** for that activity type, the worker:
-
-- Logs a **warning** (default), telling you to set `activity_fns` or use `tenuo_execute_activity`.
-- Raises **`TenuoContextError`** (fail-fast) when **`strict_mode=True`** on `TenuoPluginConfig`, so misconfigured production workers fail immediately instead of issuing bad PoP material.
-
-### What you should configure
-
-| Warrant shape | Transparent `execute_activity` | Recommendation |
-|---------------|-------------------------------|----------------|
-| Tool-only (`capability("echo")` with no fields) | Yes | `activity_fns` optional; `arg0` fallback is consistent. |
-| Named fields (`capability("read_file", path=...)`) | Yes | Set **`activity_fns`** to the **same** list as `Worker(activities=...)`, unless you have verified `input.fn` is always set in your SDK version. |
-| Named fields | Using **`tenuo_execute_activity`** | Registry not required for that call path; function reference is recorded. |
-
-### Example (`activity_fns` aligned with the worker)
-
-```python
-from temporalio.worker import Worker
-from tenuo.temporal import TenuoPlugin, TenuoPluginConfig, EnvKeyResolver
-
-activities = [read_file, write_file]
-
-interceptor = TenuoPlugin(
-    TenuoPluginConfig(
-        key_resolver=EnvKeyResolver(),
-        trusted_roots=[control_key.public_key],
-        strict_mode=True,
-        activity_fns=activities,  # same objects as Worker(activities=...)
-    )
-)
-
-async with Worker(
-    client,
-    task_queue="my-queue",
-    workflows=[MyWorkflow],
-    activities=activities,
-    interceptors=[interceptor],
-    workflow_runner=...,
-):
-    ...
-```
-
-For full narrative and troubleshooting text, see the module docstring in `tenuo.temporal` (**Activity registry (`activity_fns`) and PoP argument names** and **Troubleshooting**).
-
----
-
 ## Configuration
 
 ### Key Management (REQUIRED)
@@ -376,9 +357,9 @@ config = TenuoPluginConfig(
 
 Store keys in Vault:
 ```bash
-# Store signing key in Vault
+# Store signing key in Vault (field name must match what VaultKeyResolver reads)
 vault kv put secret/production/tenuo/agent-2024 \
-  data=@signing_key.bin
+  key=@signing_key.b64  # base64-encode the 32-byte key file first
 ```
 
 #### Production: AWS Secrets Manager
@@ -543,6 +524,76 @@ config = TenuoPluginConfig(
 
 ---
 
+
+---
+
+## Activity registry (`activity_fns`) and PoP argument names
+
+### Why this matters
+
+Each activity call gets a **Proof-of-Possession (PoP)** signature over a canonical payload that includes the **tool name** and a **sorted argument dictionary**. Warrant field constraints (for example `path=Subpath("/data")` on `read_file`) are checked against that same dictionary. The keys in the dict must therefore match the **Python parameter names** of the activity (e.g. `path`), not generic placeholders.
+
+When your workflow calls `workflow.execute_activity(...)`, the outbound interceptor must build `args_dict` from the activity’s positional `args` tuple. It does that by resolving the **activity function** and using `inspect.signature` to map positions to names.
+
+### Resolution order (function reference)
+
+The worker resolves the callable in this order:
+
+1. **`input.fn`**: supplied by the Temporal Python SDK on some versions/paths when using the real `execute_activity` pipeline.
+2. **`tenuo_execute_activity(...)`**: Tenuo records the function reference for that call.
+3. **`TenuoPluginConfig.activity_fns`**: explicit registry: activity type name (e.g. `read_file`) → the same function object you registered on the worker.
+4. **Fallback:** `arg0`, `arg1`, …: used only when (1)–(3) are all unavailable.
+
+Step (4) is **correct** when the warrant only allows the tool **without** per-field constraints (signing and verification both use `arg0`, …). Step (4) is **wrong** when the warrant has **named** constraints: verification expects `path`, but signing used `arg0`, so PoP/constraint checks **do not line up** with the warrant.
+
+### What Tenuo does at runtime
+
+If the interceptor would sign with **only** `arg0`/`arg1`/… **and** the warrant has **non-empty field constraints** for that activity type, the worker:
+
+- Logs a **warning** (default), telling you to set `activity_fns` or use `tenuo_execute_activity`.
+- Raises **`TenuoContextError`** (fail-fast) when **`strict_mode=True`** on `TenuoPluginConfig`, so misconfigured production workers fail immediately instead of issuing bad PoP material.
+
+### What you should configure
+
+| Warrant shape | Transparent `execute_activity` | Recommendation |
+|---------------|-------------------------------|----------------|
+| Tool-only (`capability("echo")` with no fields) | Yes | `activity_fns` optional; `arg0` fallback is consistent. |
+| Named fields (`capability("read_file", path=...)`) | Yes | Set **`activity_fns`** to the **same** list as `Worker(activities=...)`, unless you have verified `input.fn` is always set in your SDK version. |
+| Named fields | Using **`tenuo_execute_activity`** | Registry not required for that call path; function reference is recorded. |
+
+### Example (`activity_fns` aligned with the worker)
+
+```python
+from temporalio.worker import Worker
+from tenuo.temporal import TenuoPlugin, TenuoPluginConfig, EnvKeyResolver
+
+activities = [read_file, write_file]
+
+interceptor = TenuoPlugin(
+    TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[control_key.public_key],
+        strict_mode=True,
+        activity_fns=activities,  # same objects as Worker(activities=...)
+    )
+)
+
+async with Worker(
+    client,
+    task_queue="my-queue",
+    workflows=[MyWorkflow],
+    activities=activities,
+    interceptors=[interceptor],
+    workflow_runner=...,
+):
+    ...
+```
+
+For full narrative and troubleshooting text, see the module docstring in `tenuo.temporal` (**Activity registry (`activity_fns`) and PoP argument names** and **Troubleshooting**).
+
+---
+
+
 ## Sandbox passthrough explained
 
 Temporal's Python SDK re-imports all workflow code in an isolated sandbox on every worker task to enforce replay determinism. Modules declared as **passthrough** are shared from the host process instead of being re-imported.
@@ -553,8 +604,8 @@ Temporal's Python SDK re-imports all workflow code in an isolated sandbox on eve
 
 | Step | Result |
 |------|--------|
-| Worker starts and connects | ✅ No error |
-| First workflow task executes | ❌ `ImportError: PyO3 modules may only be initialized once per interpreter process` |
+| Worker starts and connects | No error |
+| First workflow task executes | **Fails:** `ImportError: PyO3 modules may only be initialized once per interpreter process` |
 | Subsequent workflow tasks | All fail identically |
 | Activities | Never scheduled: workflow tasks fail before `execute_activity()` is reached |
 
@@ -647,7 +698,7 @@ This section covers what the Temporal integration assumes, what it protects agai
 
 **Temporal's security vs. Tenuo's security.** Temporal Cloud provides infrastructure-level security: encrypted payloads, RBAC, namespace isolation, SOC 2. Tenuo operates at the authorization layer above that: each Activity is authorized against a cryptographically signed warrant before it executes, regardless of who has access to the Temporal cluster. The two are complementary: cluster access control and per-action authorization are different security properties. A Temporal namespace admin with full cluster access still cannot cause an activity to execute outside the warrant's constraints, because Tenuo's authorization check happens on the worker, not on the Temporal service.
 
-**In-process enforcement (no runtime service dependency).** Tenuo's authorization runs entirely within your worker process using `tenuo_core`, a compiled Rust library. There is no Tenuo SaaS call, no external auth service, no network round-trip at enforcement time. The warrant is verified cryptographically in-process using Ed25519 (FIPS 186-4 compatible). This means Tenuo adds no external dependency to your critical path. If Tenuo's distribution infrastructure is unreachable, workers already running with the compiled extension continue enforcing authorization normally.
+**In-process enforcement (no runtime service dependency).** Tenuo's authorization runs entirely within your worker process using `tenuo_core`, a compiled Rust library. There is no Tenuo SaaS call, no external auth service, no network round-trip at enforcement time. The warrant is verified cryptographically in-process using Ed25519. This means Tenuo adds no external dependency to your critical path. If Tenuo's distribution infrastructure is unreachable, workers already running with the compiled extension continue enforcing authorization normally.
 
 **Private key data residency.** Private signing keys never leave your infrastructure. `KeyResolver` fetches them from your Vault, AWS Secrets Manager, or GCP Secret Manager on your own network at signing time. No private key material is transmitted to the Temporal cluster or any Tenuo endpoint.
 
@@ -719,7 +770,7 @@ Intentional fail-closed behaviour: the PoP window ensures replayed signatures ca
 | Short retries (< 60s backoff) | Default config works: no action needed |
 | Long retries (minutes to hours) | Set `TenuoPluginConfig.retry_pop_max_windows` (e.g. `120` for up to 1 hour) |
 | Unbounded retries / very long backoffs | Structure as child workflows so each retry dispatch generates a fresh PoP |
-| **Durable workflows (hours/days)** | **Warrant TTL = workflow duration + `retry_pop_max_windows` = max backoff interval only + control plane auto-revocation on completion** |
+| **Durable workflows (hours/days)** | Set warrant TTL to the expected workflow duration; set `retry_pop_max_windows` to cover only the max Temporal backoff interval (not the total run). Use control plane auto-revocation on completion. |
 
 ```python
 config = TenuoPluginConfig(
@@ -772,6 +823,8 @@ For the fastest response, use `trusted_roots_provider` with a short `trusted_roo
 ---
 
 ## Child Workflow Delegation
+
+> **Important:** The standard Temporal SDK `workflow.execute_child_workflow()` does **not** propagate Tenuo warrant headers to child workflows. You must use `tenuo_execute_child_workflow()` — it attenuates the parent warrant and injects the narrowed headers via the outbound interceptor. Using the plain SDK call produces a child workflow with no warrant context and no authorization.
 
 Attenuate warrants when spawning child workflows with `tenuo_execute_child_workflow()`:
 
@@ -831,6 +884,8 @@ When starting Nexus operations from a Tenuo-protected workflow, the outbound int
 ## PoP Replay Protection
 
 The activity interceptor runs **dedup after** PoP verification. The default store is **`InMemoryPopDedupStore`**: a thread-safe, **process-local** map. Each dedup key includes the warrant’s logical facet (via **`dedup_key(tool, args)`**), **`workflow_id`**, **`workflow_run_id`**, and **`activity_id`**. Temporal retries with **`attempt > 1`** bypass dedup so legitimate redelivery is not blocked. The default store evicts periodically (every 60 seconds) and caps size at **10,000** entries.
+
+**Memory footprint:** Each entry is a string key (~100–180 bytes for typical Temporal IDs) mapped to a float timestamp. With Python dict overhead, the store uses roughly **3–4 MB at the 10,000-entry cap** — negligible for any production worker. To lower the cap, implement a custom `PopDedupStore` with a smaller internal size limit.
 
 **Pluggable backend:** Set **`TenuoPluginConfig.pop_dedup_store`** to a shared implementation of **`PopDedupStore`** when you need **fleet-wide** replay suppression (see [Security considerations](#security-considerations)).
 
@@ -965,10 +1020,11 @@ config = TenuoPluginConfig(
     metrics=metrics,
 )
 
-# Exposes metrics at /metrics:
+# Registers with prometheus_client (requires pip install prometheus-client):
 # - tenuo_temporal_activities_authorized_total{tool, workflow_type}
 # - tenuo_temporal_activities_denied_total{tool, reason, workflow_type}
 # - tenuo_temporal_authorization_latency_seconds_bucket{tool}
+# Expose via your app's existing /metrics endpoint or prometheus_client.start_http_server()
 ```
 
 ### Suggested Alerts
@@ -979,8 +1035,6 @@ For production integration monitoring, alert on:
 - spikes in `POP_VERIFICATION_FAILED` / replay-related denials
 - key resolver failures (`KEY_NOT_FOUND`, resolver exceptions)
 - sudden drop in authorized activity volume
-
----
 
 ## Security Model
 
@@ -1042,7 +1096,7 @@ For the full module-level troubleshooting entries, see the `tenuo.temporal` modu
 ## Best Practices
 
 1. **Use AuthorizedWorkflow** as your base class for fail-fast validation and automatic PoP
-2. **Use `tenuo_execute_activity()`** for cases where you need explicit per-call warrant or key control: multi-warrant workflows, per-stage delegation, or when `AuthorizedWorkflow` is not your base class
+2. **Use `tenuo_execute_activity()`** when you need accurate PoP signing with named constraints and have not set `activity_fns`: it records the function reference so the outbound interceptor resolves real parameter names. For named-constraint warrants, `activity_fns` on `TenuoPluginConfig` is the simpler alternative.
 3. **Always configure passthrough modules** (`tenuo`, `tenuo_core`) in the workflow sandbox
 4. **Set `strict_mode=True`** in production if you use named warrant constraints with transparent `execute_activity` (fail-fast on ambiguous PoP signing)
 5. **Set up VaultKeyResolver** (or AWS/GCP) for production key management; never use `EnvKeyResolver` in production. Tenuo Cloud provides managed key issuance and rotation as an alternative to operating your own KMS integration.
