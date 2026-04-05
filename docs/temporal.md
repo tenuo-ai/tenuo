@@ -58,7 +58,8 @@ If you're coming from Temporal's RBAC or namespace-based access control, here's 
 Issuer (control_key)                Holder (agent_key)
 ────────────────────                ─────────────────
 Owned by: authorization team        Owned by: worker / CI / agent process
-Lives in: Vault, KMS, CI secret     Lives in: worker's KeyResolver (Vault, etc.)
+Lives in: Vault, KMS, CI secret,    Lives in: worker's KeyResolver (Vault, etc.)
+          or Tenuo Cloud
 Used to: mint warrants               Used to: sign PoP on each activity dispatch
 If compromised: rotate trusted root  If compromised: rotate key_id + re-issue warrant
 ```
@@ -76,7 +77,7 @@ Follow this order the first time you integrate Tenuo with Temporal. The **Quick 
 2. **Temporal server**: Run a dev server (e.g. `temporal server start-dev`). See [examples/temporal README](../tenuo-python/examples/temporal/README.md).
 
 3. **Keys for PoP**: Proof-of-Possession (PoP) is how each activity dispatch proves it was authorised by the workflow that holds the warrant. It needs two Ed25519 key-pairs:
-   - **Issuer key (`control_key`)**: signs the warrant at issuance time — stays with whoever governs policy (Vault, KMS, CI). Never touches the worker.
+   - **Issuer key (`control_key`)**: signs the warrant at issuance time — stays with whoever governs policy (Vault, KMS, CI, or Tenuo Cloud). Never touches the worker. In the managed path, Tenuo Cloud holds and rotates the issuer key for you.
    - **Holder key (`agent_key`)**: signs a short-lived challenge on each `execute_activity()` call, binding the exact tool and arguments. Lives on the worker via a `KeyResolver`.
 
    Create both with `SigningKey.generate()`. Expose the holder key to the worker via `KeyResolver` (development: `EnvKeyResolver` + `TENUO_KEY_<key_id>`: see [Development: Environment Variables](#development-environment-variables)).
