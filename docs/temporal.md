@@ -94,7 +94,7 @@ Follow this order the first time you integrate Tenuo with Temporal. The **Quick 
 
 7. **Client**: Attach `TenuoClientInterceptor` to `Client.connect(..., interceptors=[...])`. Ensure headers are bound before start: **`execute_workflow_authorized(...)`** (recommended for concurrent clients) **or** `set_headers_for_workflow(workflow_id, tenuo_headers(warrant, key_id))` then `execute_workflow`.
 
-8. **Run the sample**: From the repo: `cd tenuo-python/examples/temporal && python demo.py` (Temporal in another terminal). Then try `multi_warrant.py` and `delegation.py`.
+8. **Run the sample**: From the repo: `cd tenuo-python/examples/temporal && python demo.py` (Temporal in another terminal). Then try `s3_example.py` (cloud API scoping), `multi_warrant.py`, and `delegation.py`.
 
 9. **Verify with tests**: Without a Temporal server: `cd tenuo-python && pytest tests/e2e/test_temporal_e2e.py`. With the in-process Temporal test server (CI-style): `pytest tests/e2e/test_temporal_live.py tests/e2e/test_temporal_replay.py -m temporal_live` (see the `temporal-integration` job in `.github/workflows/ci.yml`).
 
@@ -1138,6 +1138,7 @@ Together these cover protocol-level behavior and worker/client integration witho
 | Example | Description |
 |---------|-------------|
 | [`demo.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/demo.py) | **Recommended starting point.** Includes transparent `workflow.execute_activity()` and `AuthorizedWorkflow` patterns |
+| [`s3_example.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/s3_example.py) | **Cloud API scoping.** Worker has full IAM access to an S3 bucket; Tenuo warrant restricts which key prefix the workflow may read. Shows that infrastructure permissions (IAM) and application authorization (Tenuo) are independent layers |
 | [`multi_warrant.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/multi_warrant.py) | Multi-tenant isolation: separate warrants per workflow |
 | [`delegation.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/delegation.py) | Per-stage pipeline authorization with least-privilege warrants |
 

@@ -24,6 +24,7 @@ Three examples showing a clean progression from basic transparent authorization 
 | Example | Concept | What it demonstrates |
 |---------|---------|---------------------|
 | [`demo.py`](demo.py) | **Transparent authorization** | Standard `workflow.execute_activity()`, zero workflow changes, sequential + parallel reads, unauthorized access denial |
+| [`s3_example.py`](s3_example.py) | **Cloud API scoping** | Worker has full IAM access to an S3 bucket; Tenuo warrant restricts which key prefix the workflow may read — IAM and Tenuo are independent layers |
 | [`multi_warrant.py`](multi_warrant.py) | **Multi-tenant isolation** | Identical workflow code for different tenants, isolation via warrant only, cross-access denial |
 | [`delegation.py`](delegation.py) | **Inline attenuation** | Per-stage pipeline authorization with attenuated child workflows via `tenuo_execute_child_workflow()` |
 
