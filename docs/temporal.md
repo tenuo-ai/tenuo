@@ -45,7 +45,7 @@ Requires Temporal server running locally or in production.
 
 Follow this order the first time you integrate Tenuo with Temporal. The **Quick Start** and **Configuration** sections below go deeper; the [`tenuo.temporal`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/tenuo/temporal.py) module docstring has a **Troubleshooting** table for common failures.
 
-1. **Install**: `uv pip install "tenuo[temporal]"` (see [Installation](#installation)). You need the **`tenuo_core` native extension** (PyO3). If prebuilt wheels are missing for your platform, build from the repo with `maturin develop` in `tenuo-python`.
+1. **Install**: `uv pip install "tenuo[temporal]"` (see [Installation](#installation)). This installs `tenuo_core`, a compiled Rust extension. Prebuilt wheels are available for common platforms; if yours isn't covered, build from source with `maturin develop` in `tenuo-python`.
 
 2. **Temporal server**: Run a dev server (e.g. `temporal server start-dev`). See [examples/temporal README](../tenuo-python/examples/temporal/README.md).
 
