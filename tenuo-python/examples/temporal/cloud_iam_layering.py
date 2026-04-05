@@ -42,9 +42,7 @@ try:
 except ImportError:
     raise SystemExit("Install temporalio: uv pip install temporalio")
 
-from tenuo_core import Exact, Subpath
-
-from tenuo import SigningKey, Warrant
+from tenuo import Exact, SigningKey, Subpath, Warrant
 from tenuo.temporal import (
     EnvKeyResolver,
     TenuoClientInterceptor,
