@@ -192,7 +192,10 @@ jobs:
           # MCP SDK requires Python 3.10+
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system mcp || echo "Skipping MCP (requires Python 3.10+)"
           # Temporal SDK for live integration tests (Python 3.12+ to match dedicated job)
-          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" && uv pip install --system temporalio || echo "Skipping temporalio (testing on 3.12+)"
+          # Pin protobuf to avoid the protobuf>=4.x / Python 3.12 isinstance() incompatibility
+          # where google.protobuf.message.Message becomes a generic alias and isinstance() raises
+          # TypeError. The temporal-integration job uses a controlled install that avoids this.
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" && uv pip install --system "temporalio" "protobuf<4.0" || echo "Skipping temporalio (testing on 3.12+)"
 
       - name: Verify import
         run: |
