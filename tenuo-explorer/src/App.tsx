@@ -729,7 +729,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
               type: 'url_safe' as const,
               pythonCode: `UrlSafe(allow_domains=[${domains}])`,
               rustCode: `Constraint::UrlSafe(UrlSafe::with_domains(vec![${domains}]))`,
-              exampleValue: `https://${inner.allow_domains[0].replace('*.', 'api.')}/resource`
+              exampleValue: `https://${inner.allow_domains[0].replaceAll('*.', 'api.')}/resource`
             };
           }
         }
@@ -912,7 +912,7 @@ ${insertLines}`;
           : '    // Add args here';
 
         const rustWarnings = allWarnings.length > 0
-          ? `// ⚠️ WARNINGS - Review these constraints:\n${allWarnings.map(w => w.replace('# ', '// ')).join('\n')}\n\n`
+          ? `// ⚠️ WARNINGS - Review these constraints:\n${allWarnings.map(w => w.replaceAll('# ', '// ')).join('\n')}\n\n`
           : '';
 
         return `${rustWarnings}use tenuo::{SigningKey, Warrant, ConstraintSet, ConstraintValue, Pattern, Range, wire};

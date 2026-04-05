@@ -88,6 +88,23 @@ def strip_frontmatter(text):
     return text, "Tenuo"
 
 
+def _resolved_paths_under_docs(rel: str):
+    """Yield candidate .md paths that stay under DOCS_DIR (path traversal safe)."""
+    docs_root = os.path.realpath(DOCS_DIR)
+    root_prefix = docs_root if docs_root.endswith(os.sep) else docs_root + os.sep
+    for joined in (
+        os.path.normpath(os.path.join(DOCS_DIR, rel + ".md")),
+        os.path.normpath(os.path.join(DOCS_DIR, rel, "index.md")),
+    ):
+        try:
+            resolved = os.path.realpath(joined)
+        except OSError:
+            continue
+        if resolved != docs_root and not resolved.startswith(root_prefix):
+            continue
+        yield resolved
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=DOCS_DIR, **kwargs)
@@ -96,13 +113,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         path = self.path.split("?")[0].split("#")[0]
         if path.endswith("/"):
             path += "index"
-        candidates = [
-            os.path.join(DOCS_DIR, path.lstrip("/") + ".md"),
-            os.path.join(DOCS_DIR, path.lstrip("/"), "index.md"),
-        ]
-        for fpath in candidates:
+        rel = path.lstrip("/")
+        if not rel:
+            rel = "index"
+        for fpath in _resolved_paths_under_docs(rel):
             if os.path.isfile(fpath):
-                with open(fpath) as f:
+                with open(fpath, encoding="utf-8") as f:
                     raw = f.read()
                 body, title = strip_frontmatter(raw)
                 html = markdown.markdown(body, extensions=["tables", "fenced_code"])
