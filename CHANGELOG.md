@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-beta.17] - 2026-04-05
+
 ### Security
 
 - **CodeQL / supply-chain hygiene** — `docs/_preview.py` resolves markdown only under `docs/` (realpath containment). Explorer uses `replaceAll` where global replacement is intended. Blog layout loads GoatCounter over HTTPS with Subresource Integrity.
@@ -15,12 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Signed approval envelopes in audit payloads** — `VerifiedApproval` and `ApprovalRecord` include `signed_approval_cbor_b64` (standard base64 CBOR `SignedApproval`) so control planes can verify approver signatures independently. Python: `VerifiedApproval` type and `ChainVerificationResult.verified_approvals`.
 
----
+### Documentation
 
-## [0.1.0-beta.17] - Unreleased
+- **Heartbeat receipts** — clarify when to use `SignedEvent.signature` versus `signing_payload` for verification (#327).
 
-### Added
-- PyO3 0.28 support
+### Dependencies
+
+- **PyO3 0.28** — Python extension updated for PyO3 0.28; `pyo3` is pinned to `=0.28.3` in `tenuo-core` and `tenuo-python` for reproducible builds.
 
 ## [0.1.0-beta.16] - 2026-03-31
 
