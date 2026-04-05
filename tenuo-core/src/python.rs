@@ -2209,48 +2209,68 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<PyObjec
 }
 
 /// Convert a Python constraint object to a Rust Constraint.
+///
+/// Uses `downcast` + `borrow()` rather than `extract()` so constraint instances
+/// retrieved from dicts (e.g. approval gate `{"exempt": OneOf([...])}`) convert
+/// reliably under PyO3 0.24 with the abi3 extension module.
 fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
-    if let Ok(p) = obj.extract::<PyPattern>() {
-        Ok(Constraint::Pattern(p.inner))
-    } else if let Ok(e) = obj.extract::<PyExact>() {
-        Ok(Constraint::Exact(e.inner))
-    } else if let Ok(o) = obj.extract::<PyOneOf>() {
-        Ok(Constraint::OneOf(o.inner))
-    } else if let Ok(n) = obj.extract::<PyNotOneOf>() {
-        Ok(Constraint::NotOneOf(n.inner))
-    } else if let Ok(r) = obj.extract::<PyRange>() {
-        Ok(Constraint::Range(r.inner))
-    } else if let Ok(c) = obj.extract::<PyCidr>() {
-        Ok(Constraint::Cidr(c.inner))
-    } else if let Ok(u) = obj.extract::<PyUrlPattern>() {
-        Ok(Constraint::UrlPattern(u.inner))
-    } else if let Ok(c) = obj.extract::<PyContains>() {
-        Ok(Constraint::Contains(c.inner))
-    } else if let Ok(s) = obj.extract::<PySubset>() {
-        Ok(Constraint::Subset(s.inner))
-    } else if let Ok(a) = obj.extract::<PyAll>() {
-        Ok(Constraint::All(a.inner))
-    } else if let Ok(a) = obj.extract::<PyAnyOf>() {
-        Ok(Constraint::Any(a.inner))
-    } else if let Ok(n) = obj.extract::<PyNot>() {
-        Ok(Constraint::Not(n.inner))
-    } else if let Ok(c) = obj.extract::<PyCel>() {
-        Ok(Constraint::Cel(c.inner))
-    } else if let Ok(r) = obj.extract::<PyRegex>() {
-        Ok(Constraint::Regex(r.inner))
-    } else if let Ok(w) = obj.extract::<PyWildcard>() {
-        Ok(Constraint::Wildcard(w.inner))
-    } else if let Ok(s) = obj.extract::<PySubpath>() {
-        Ok(Constraint::Subpath(s.inner))
-    } else if let Ok(u) = obj.extract::<PyUrlSafe>() {
-        Ok(Constraint::UrlSafe(u.inner))
-    } else if let Ok(sh) = obj.extract::<PyShlex>() {
-        Ok(Constraint::Shlex(sh.inner))
-    } else {
-        Err(PyValueError::new_err(
-            "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard, Subpath, UrlSafe, or Shlex",
-        ))
+    if let Ok(b) = obj.downcast::<PyPattern>() {
+        return Ok(Constraint::Pattern(b.borrow().inner.clone()));
     }
+    if let Ok(b) = obj.downcast::<PyExact>() {
+        return Ok(Constraint::Exact(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyOneOf>() {
+        return Ok(Constraint::OneOf(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyNotOneOf>() {
+        return Ok(Constraint::NotOneOf(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyRange>() {
+        return Ok(Constraint::Range(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyCidr>() {
+        return Ok(Constraint::Cidr(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyUrlPattern>() {
+        return Ok(Constraint::UrlPattern(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyContains>() {
+        return Ok(Constraint::Contains(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PySubset>() {
+        return Ok(Constraint::Subset(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyAll>() {
+        return Ok(Constraint::All(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyAnyOf>() {
+        return Ok(Constraint::Any(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyNot>() {
+        return Ok(Constraint::Not(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyCel>() {
+        return Ok(Constraint::Cel(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyRegex>() {
+        return Ok(Constraint::Regex(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyWildcard>() {
+        return Ok(Constraint::Wildcard(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PySubpath>() {
+        return Ok(Constraint::Subpath(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyUrlSafe>() {
+        return Ok(Constraint::UrlSafe(b.borrow().inner.clone()));
+    }
+    if let Ok(b) = obj.downcast::<PyShlex>() {
+        return Ok(Constraint::Shlex(b.borrow().inner.clone()));
+    }
+    Err(PyValueError::new_err(
+        "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard, Subpath, UrlSafe, or Shlex",
+    ))
 }
 
 /// Reserved key for allow_unknown in constraint dicts.

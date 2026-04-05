@@ -21,6 +21,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tenuo import SigningKey as _TI_SigningKey
+
+_TI_TRUST_ROOTS = [_TI_SigningKey.generate().public_key]
+
 # Import the modules under test
 from tenuo.temporal import (
     ChainValidationError,
@@ -93,31 +97,41 @@ class TestConfigurationDefaults:
     def test_require_warrant_defaults_to_true(self):
         """require_warrant should default to True (fail-closed)."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoPluginConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(
+            key_resolver=resolver, trusted_roots=_TI_TRUST_ROOTS
+        )
         assert config.require_warrant is True
 
     def test_redact_args_defaults_to_true(self):
         """redact_args_in_logs should default to True (secure by default)."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoPluginConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(
+            key_resolver=resolver, trusted_roots=_TI_TRUST_ROOTS
+        )
         assert config.redact_args_in_logs is True
 
     def test_block_local_activities_defaults_to_true(self):
         """block_local_activities should default to True (fail-closed)."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoPluginConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(
+            key_resolver=resolver, trusted_roots=_TI_TRUST_ROOTS
+        )
         assert config.block_local_activities is True
 
     def test_max_chain_depth_defaults_to_10(self):
         """max_chain_depth should default to 10."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoPluginConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(
+            key_resolver=resolver, trusted_roots=_TI_TRUST_ROOTS
+        )
         assert config.max_chain_depth == 10
 
     def test_on_denial_defaults_to_raise(self):
         """on_denial should default to 'raise'."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoPluginConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(
+            key_resolver=resolver, trusted_roots=_TI_TRUST_ROOTS
+        )
         assert config.on_denial == "raise"
 
 
@@ -399,6 +413,7 @@ class TestConfigurationCustomization:
         resolver = MagicMock(spec=KeyResolver)
         config = TenuoPluginConfig(
             key_resolver=resolver,
+            trusted_roots=_TI_TRUST_ROOTS,
             require_warrant=False,
         )
         assert config.require_warrant is False
@@ -408,6 +423,7 @@ class TestConfigurationCustomization:
         resolver = MagicMock(spec=KeyResolver)
         config = TenuoPluginConfig(
             key_resolver=resolver,
+            trusted_roots=_TI_TRUST_ROOTS,
             max_chain_depth=3,
         )
         assert config.max_chain_depth == 3
@@ -417,6 +433,7 @@ class TestConfigurationCustomization:
         resolver = MagicMock(spec=KeyResolver)
         config = TenuoPluginConfig(
             key_resolver=resolver,
+            trusted_roots=_TI_TRUST_ROOTS,
             redact_args_in_logs=False,
         )
         assert config.redact_args_in_logs is False
@@ -426,6 +443,7 @@ class TestConfigurationCustomization:
         resolver = MagicMock(spec=KeyResolver)
         config = TenuoPluginConfig(
             key_resolver=resolver,
+            trusted_roots=_TI_TRUST_ROOTS,
             tool_mappings={"fetch_document": "read_file"},
         )
         assert config.tool_mappings["fetch_document"] == "read_file"

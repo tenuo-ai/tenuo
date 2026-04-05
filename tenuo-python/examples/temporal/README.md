@@ -51,7 +51,7 @@ result = await execute_workflow_authorized(
 )
 ```
 
-Inside workflows, the TenuoPlugin computes Proof-of-Possession signatures transparently - use standard Temporal APIs:
+Inside workflows, the registered Tenuo interceptors (from `TenuoPlugin`) compute Proof-of-Possession signatures transparently — use standard Temporal APIs:
 
 ```python
 @workflow.defn
@@ -91,7 +91,12 @@ See also: the **Activity registry (`activity_fns`) and PoP argument names** sect
 
 ### When to use Tenuo-specific functions
 
-Most workflows use standard `workflow.execute_activity()`. The only exception is **inline attenuation** for child workflows:
+Most workflows use standard `workflow.execute_activity()` via `AuthorizedWorkflow`. Use `tenuo_execute_activity()` when you need explicit per-call warrant control:
+- Multi-warrant workflows where different activities run under different warrants
+- Per-stage delegation where you narrow the warrant before each stage
+- Any workflow that does not extend `AuthorizedWorkflow` but needs transparent PoP
+
+For child workflows with attenuated scope, use `tenuo_execute_child_workflow()` instead (it handles the warrant narrowing and header injection together):
 
 ```python
 # Only needed for per-child authorization decisions
@@ -117,20 +122,21 @@ The child never sees the parent's full warrant - it's attenuated before injectio
 
 ## Worker setup (required)
 
-Tenuo's core is a PyO3 native module that must bypass Temporal's workflow sandbox:
+Tenuo's core is a PyO3 Rust extension. Unlike pure-Python integrations (e.g. OpenTelemetry's `TracingInterceptor`), Tenuo signs the Proof-of-Possession challenge *inside the workflow sandbox* at `execute_activity()` dispatch time, committing the exact tool and arguments the workflow is authorising. Because PyO3 extensions cannot be re-imported per sandbox task, both `tenuo` and `tenuo_core` must be declared as passthrough modules:
 
 ```python
 from temporalio.worker.workflow_sandbox import (
     SandboxedWorkflowRunner, SandboxRestrictions,
 )
 
+from tenuo.temporal import EnvKeyResolver, TenuoPlugin, TenuoPluginConfig
+
 interceptor = TenuoPlugin(
     TenuoPluginConfig(
         key_resolver=EnvKeyResolver(),
         on_denial="raise",
-        trusted_roots=[control_key.public_key],
-        strict_mode=True,  # Production: fail startup if trusted_roots missing
-        audit_callback=on_audit,
+        trusted_roots=[control_key.public_key],  # required (or tenuo.configure(trusted_roots=[...]) before building config)
+        strict_mode=True,  # optional: fail-fast on ambiguous PoP with named constraints
     )
 )
 
@@ -142,11 +148,13 @@ worker = Worker(
     interceptors=[interceptor],
     workflow_runner=SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(
-            "tenuo", "tenuo_core",  # Required for PoP
+            "tenuo", "tenuo_core",  # Required: PyO3 extension cannot be re-imported per sandbox task
         )
     ),
 )
 ```
+
+Omitting this causes `ImportError: PyO3 modules may only be initialized once per interpreter process`. The worker starts and connects normally but all workflow tasks fail — see [docs/temporal.md — Sandbox passthrough explained](../../../docs/temporal.md#sandbox-passthrough-explained) for the failure sequence and diagnostic steps.
 
 ## Architecture
 
@@ -187,23 +195,28 @@ All security features are fail-closed:
 - `require_warrant=True` — activities without warrants are denied
 - `block_local_activities=True` — prevents bypass via local activities
 - `redact_args_in_logs=True` — prevents secret leaks in logs
-- PoP verification is mandatory when `trusted_roots` is set
+- `trusted_roots` is required (or set via `tenuo.configure(trusted_roots=[...])`); PoP is always verified for warranted activities
 
 ## Testing
 
 ```bash
 cd tenuo-python
-pytest tests/test_temporal_e2e.py -v    # 31 integration tests
+pytest tests/e2e/test_temporal_e2e.py -v   # mocked Temporal integration tests (no server)
 ```
 
 ## Troubleshooting
 
 | Error | Cause | Fix |
 |-------|-------|-----|
+| `ConfigurationError` … `trusted_roots` | `TenuoPluginConfig` built without roots and no global `configure` | Pass `trusted_roots=[control_key.public_key]` or call `tenuo.configure(trusted_roots=[...])` before constructing the config |
 | `ImportError: PyO3 modules ... initialized once` | Missing passthrough modules | Add `with_passthrough_modules("tenuo", "tenuo_core")` to sandbox config |
 | `TenuoContextError: No Tenuo headers in store` | Workflow started without headers | Use `execute_workflow_authorized(...)` or call `set_headers_for_workflow(workflow_id, tenuo_headers(...))` before `execute_workflow` |
-| `ConstraintViolation: No warrant provided` | Headers not reaching worker | Ensure `TenuoClientInterceptor` is in the client's interceptor list |
-| Activity denied despite valid warrant | PoP computation failed | Check worker logs for WARNING messages from outbound interceptor |
+| `TemporalConstraintViolation: No warrant provided` | Headers not reaching worker | Ensure `TenuoClientInterceptor` is in the client's interceptor list |
+| `PopVerificationError: replay detected` | Same activity attempt reached two workers (fleet-wide dedup not configured) | Expected with in-memory dedup and multiple worker pods; configure `pop_dedup_store` with a shared backend for fleet-wide suppression |
+| `KeyResolutionError: Cannot resolve key: <id>` | Signing key not found by `KeyResolver` | For `EnvKeyResolver`: check `TENUO_KEY_<key_id>` is set and base64-encoded correctly. For cloud resolvers: verify secret name, permissions, and region |
+| Warning: `PoP signing … uses positional argument keys (arg0, …)` | Warrant uses named field constraints but activity function reference not available | Add `activity_fns=[read_file, ...]` to `TenuoPluginConfig` (same list as `Worker(activities=...)`), or use `tenuo_execute_activity()` |
+| `TenuoContextError` (in `strict_mode`) | Same as above but fail-fast is on | See above; remove `strict_mode=True` temporarily to diagnose, then fix `activity_fns` |
+| Activity denied despite valid warrant | PoP computation failed silently | Check worker logs for WARNING/ERROR messages from outbound interceptor; verify `key_id` matches a key accessible to `KeyResolver` |
 
 ## Learn More
 

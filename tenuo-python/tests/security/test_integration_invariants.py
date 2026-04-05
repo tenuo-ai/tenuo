@@ -1313,10 +1313,7 @@ class _TemporalAdapter(_Adapter):
 
         cfg = TenuoPluginConfig(
             key_resolver=_Resolver(self._root),
-            # lightweight mode (trusted_roots=None): validates warrant structure
-            # but skips PoP since Temporal PoP is tied to live workflow metadata.
-            # Full PoP enforcement is verified by TestTemporalInvariants.
-            trusted_roots=None,
+            trusted_roots=[self._root.public_key],
             require_warrant=True,
             on_denial="raise",
         )
@@ -1325,6 +1322,25 @@ class _TemporalAdapter(_Adapter):
             self._root, capabilities={"test_activity": {}}, ttl_seconds=3600,
             holder=self._root.public_key,
         )
+
+    def _activity_headers(
+        self,
+        w: Warrant,
+        tool: str = "test_activity",
+        args: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        import base64
+
+        from tenuo.temporal import TENUO_POP_HEADER, tenuo_headers
+
+        ad = dict(args) if args is not None else {}
+        h = tenuo_headers(w, "matrix-agent")
+        raw: Dict[str, bytes] = {}
+        for k, v in h.items():
+            raw[k] = v if isinstance(v, bytes) else str(v).encode("utf-8")
+        pop = w.sign(self._root, tool, ad, int(time.time()))
+        raw[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+        return raw
 
     def _input(self, headers: Dict[str, Any]) -> Any:
         from unittest.mock import MagicMock
@@ -1369,7 +1385,7 @@ class _TemporalAdapter(_Adapter):
         return await self._ok({})
 
     async def check_valid(self) -> Optional[bool]:
-        return await self._ok({self._HEADER: self._warrant.to_base64().encode()})
+        return await self._ok(self._activity_headers(self._warrant))
 
     async def check_wrong_tool(self) -> Optional[bool]:
         # Temporal tool name is the activity function name; we can't easily
@@ -1380,21 +1396,18 @@ class _TemporalAdapter(_Adapter):
         w = Warrant.issue(self._root, capabilities={"test_activity": {}}, ttl_seconds=1,
                           holder=self._root.public_key)
         time.sleep(2)
-        return await self._ok({self._HEADER: w.to_base64().encode()})
+        return await self._ok(self._activity_headers(w))
 
     async def check_constraint_violated(self) -> Optional[bool]:
         return None  # Temporal constraint enforcement requires activity-level config
 
     async def check_untrusted_issuer(self) -> Optional[bool]:
-        # Temporal adapter uses trusted_roots=None (lightweight mode) in this matrix.
-        # An attacker warrant passes structural checks but would fail PoP in strict mode.
-        # The full I3/I4 check for Temporal is in TestTrustedRootsEnforcement via
-        # enforce_tool_call (the same code path TenuoPlugin uses).
+        # Matrix uses synthetic headers; untrusted-issuer scenarios for Temporal
+        # are covered in TestTrustedRootsEnforcement / TestTemporalInvariants.
         return None
 
     async def check_wrong_holder(self) -> Optional[bool]:
-        # Temporal uses lightweight mode (no PoP); holder-binding not enforced here.
-        # Full PoP enforcement is tested by TestTemporalInvariants.
+        # Holder-binding via PoP is covered by TestTemporalInvariants.
         return None
 
 class _FastAPIAdapter(_Adapter):

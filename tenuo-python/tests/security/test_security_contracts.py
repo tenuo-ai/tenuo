@@ -504,11 +504,15 @@ class TestDryRunIsOptIn:
         pytest.importorskip("temporalio")
         from tenuo.temporal import KeyResolver, TenuoPluginConfig
 
+        root = SigningKey.generate()
+
         class _R(KeyResolver):
             def resolve(self, _kid):
                 return SigningKey.generate()
 
-        cfg = TenuoPluginConfig(key_resolver=_R())
+        cfg = TenuoPluginConfig(
+            key_resolver=_R(), trusted_roots=[root.public_key],
+        )
         assert cfg.dry_run is False, (
             "TenuoPluginConfig: dry_run must default to False"
         )
@@ -525,12 +529,15 @@ class TestDryRunIsOptIn:
         pytest.importorskip("temporalio")
         from tenuo.temporal import KeyResolver, TenuoPlugin, TenuoPluginConfig
 
+        root = SigningKey.generate()
+
         class _R(KeyResolver):
             def resolve(self, _kid):
                 return SigningKey.generate()
 
         cfg = TenuoPluginConfig(
             key_resolver=_R(),
+            trusted_roots=[root.public_key],
             require_warrant=True,
             dry_run=True,
         )
@@ -582,12 +589,15 @@ class TestDryRunIsOptIn:
         pytest.importorskip("temporalio")
         from tenuo.temporal import KeyResolver, TenuoPlugin, TenuoPluginConfig
 
+        root = SigningKey.generate()
+
         class _R(KeyResolver):
             def resolve(self, _kid):
                 return SigningKey.generate()
 
         cfg = TenuoPluginConfig(
             key_resolver=_R(),
+            trusted_roots=[root.public_key],
             require_warrant=True,
             dry_run=False,
             on_denial="raise",
