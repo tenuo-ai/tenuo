@@ -35,12 +35,13 @@ use crate::wire;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySequence, PyTuple};
+use pyo3::IntoPyObjectExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 fn to_py_err(e: crate::error::Error) -> PyErr {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let exceptions = match py.import("tenuo.exceptions") {
             Ok(m) => m,
             Err(e) => return e,
@@ -214,10 +215,10 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 ref detail,
             } => {
                 let detail_str = detail.as_deref().unwrap_or("");
-                let elements: [pyo3::PyObject; 3] = [
-                    required.into_py(py),
-                    received.into_py(py),
-                    detail_str.into_py(py),
+                let elements: [pyo3::Py<PyAny>; 3] = [
+                    required.into_py_any(py).unwrap(),
+                    received.into_py_any(py).unwrap(),
+                    detail_str.into_py_any(py).unwrap(),
                 ];
                 ("InsufficientApprovals", PyTuple::new(py, elements))
             }
@@ -456,7 +457,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
 
 /// Convert a ConfigError to a Python exception.
 fn config_err_to_py(e: crate::gateway_config::ConfigError) -> PyErr {
-    Python::with_gil(|py| match py.import("tenuo.exceptions") {
+    Python::attach(|py| match py.import("tenuo.exceptions") {
         Ok(m) => match m.getattr("ConfigurationError") {
             Ok(cls) => PyErr::from_value(cls.call1((e.to_string(),)).unwrap_or_else(|_| {
                 PyValueError::new_err(e.to_string())
@@ -593,8 +594,8 @@ impl PyExact {
     }
 
     #[getter]
-    fn value(&self) -> PyResult<PyObject> {
-        Python::with_gil(|py| constraint_value_to_py(py, &self.inner.value))
+    fn value(&self) -> PyResult<Py<PyAny>> {
+        Python::attach(|py| constraint_value_to_py(py, &self.inner.value))
     }
 }
 
@@ -655,8 +656,8 @@ impl PyOneOf {
     }
 
     #[getter]
-    fn values(&self) -> PyResult<PyObject> {
-        Python::with_gil(|py| {
+    fn values(&self) -> PyResult<Py<PyAny>> {
+        Python::attach(|py| {
             let list = pyo3::types::PyList::empty(py);
             for v in &self.inner.values {
                 list.append(constraint_value_to_py(py, v)?)?;
@@ -720,8 +721,8 @@ impl PyNotOneOf {
 
     /// Get the excluded values.
     #[getter]
-    fn excluded(&self) -> PyResult<Vec<PyObject>> {
-        Python::with_gil(|py| {
+    fn excluded(&self) -> PyResult<Vec<Py<PyAny>>> {
+        Python::attach(|py| {
             self.inner
                 .excluded
                 .iter()
@@ -745,8 +746,8 @@ pub struct PyContains {
 #[pymethods]
 impl PyContains {
     #[new]
-    fn new(values: Vec<PyObject>) -> PyResult<Self> {
-        let rust_values = Python::with_gil(|py| -> PyResult<Vec<ConstraintValue>> {
+    fn new(values: Vec<Py<PyAny>>) -> PyResult<Self> {
+        let rust_values = Python::attach(|py| -> PyResult<Vec<ConstraintValue>> {
             let mut vec = Vec::new();
             for obj in values {
                 let bound = obj.into_bound(py);
@@ -784,8 +785,8 @@ impl PyContains {
     ///     True
     ///     >>> c.matches(["user"])
     ///     False
-    fn matches(&self, value: Vec<PyObject>) -> PyResult<bool> {
-        let rust_values = Python::with_gil(|py| -> PyResult<Vec<ConstraintValue>> {
+    fn matches(&self, value: Vec<Py<PyAny>>) -> PyResult<bool> {
+        let rust_values = Python::attach(|py| -> PyResult<Vec<ConstraintValue>> {
             let mut vec = Vec::new();
             for obj in value {
                 let bound = obj.into_bound(py);
@@ -805,8 +806,8 @@ impl PyContains {
 
     /// Get the required values.
     #[getter]
-    fn required(&self) -> PyResult<Vec<PyObject>> {
-        Python::with_gil(|py| {
+    fn required(&self) -> PyResult<Vec<Py<PyAny>>> {
+        Python::attach(|py| {
             self.inner
                 .required
                 .iter()
@@ -830,8 +831,8 @@ pub struct PySubset {
 #[pymethods]
 impl PySubset {
     #[new]
-    fn new(values: Vec<PyObject>) -> PyResult<Self> {
-        let rust_values = Python::with_gil(|py| -> PyResult<Vec<ConstraintValue>> {
+    fn new(values: Vec<Py<PyAny>>) -> PyResult<Self> {
+        let rust_values = Python::attach(|py| -> PyResult<Vec<ConstraintValue>> {
             let mut vec = Vec::new();
             for obj in values {
                 let bound = obj.into_bound(py);
@@ -869,8 +870,8 @@ impl PySubset {
     ///     True
     ///     >>> s.matches(["read", "admin"])
     ///     False
-    fn matches(&self, value: Vec<PyObject>) -> PyResult<bool> {
-        let rust_values = Python::with_gil(|py| -> PyResult<Vec<ConstraintValue>> {
+    fn matches(&self, value: Vec<Py<PyAny>>) -> PyResult<bool> {
+        let rust_values = Python::attach(|py| -> PyResult<Vec<ConstraintValue>> {
             let mut vec = Vec::new();
             for obj in value {
                 let bound = obj.into_bound(py);
@@ -890,8 +891,8 @@ impl PySubset {
 
     /// Get the allowed values.
     #[getter]
-    fn allowed(&self) -> PyResult<Vec<PyObject>> {
-        Python::with_gil(|py| {
+    fn allowed(&self) -> PyResult<Vec<Py<PyAny>>> {
+        Python::attach(|py| {
             self.inner
                 .allowed
                 .iter()
@@ -915,8 +916,8 @@ pub struct PyAll {
 #[pymethods]
 impl PyAll {
     #[new]
-    fn new(constraints: Vec<PyObject>) -> PyResult<Self> {
-        let rust_constraints = Python::with_gil(|py| -> PyResult<Vec<Constraint>> {
+    fn new(constraints: Vec<Py<PyAny>>) -> PyResult<Self> {
+        let rust_constraints = Python::attach(|py| -> PyResult<Vec<Constraint>> {
             let mut vec = Vec::new();
             for obj in constraints {
                 let bound = obj.into_bound(py);
@@ -973,8 +974,8 @@ pub struct PyAnyOf {
 #[pymethods]
 impl PyAnyOf {
     #[new]
-    fn new(constraints: Vec<PyObject>) -> PyResult<Self> {
-        let rust_constraints = Python::with_gil(|py| -> PyResult<Vec<Constraint>> {
+    fn new(constraints: Vec<Py<PyAny>>) -> PyResult<Self> {
+        let rust_constraints = Python::attach(|py| -> PyResult<Vec<Constraint>> {
             let mut vec = Vec::new();
             for obj in constraints {
                 let bound = obj.into_bound(py);
@@ -1022,8 +1023,8 @@ pub struct PyNot {
 #[pymethods]
 impl PyNot {
     #[new]
-    fn new(constraint: PyObject) -> PyResult<Self> {
-        let rust_constraint = Python::with_gil(|py| -> PyResult<Constraint> {
+    fn new(constraint: Py<PyAny>) -> PyResult<Self> {
+        let rust_constraint = Python::attach(|py| -> PyResult<Constraint> {
             let bound = constraint.into_bound(py);
             py_to_constraint(&bound)
         })?;
@@ -2097,27 +2098,27 @@ impl PySigningKey {
 }
 
 /// Convert a Rust Constraint to a Python constraint object.
-fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<PyObject> {
+fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<Py<PyAny>> {
     match constraint {
         Constraint::Pattern(p) =>
         {
             #[allow(deprecated)]
-            Ok(PyPattern { inner: p.clone() }.into_py(py))
+            Ok(PyPattern { inner: p.clone() }.into_py_any(py).unwrap())
         }
         Constraint::Exact(e) =>
         {
             #[allow(deprecated)]
-            Ok(PyExact { inner: e.clone() }.into_py(py))
+            Ok(PyExact { inner: e.clone() }.into_py_any(py).unwrap())
         }
         Constraint::OneOf(o) =>
         {
             #[allow(deprecated)]
-            Ok(PyOneOf { inner: o.clone() }.into_py(py))
+            Ok(PyOneOf { inner: o.clone() }.into_py_any(py).unwrap())
         }
         Constraint::NotOneOf(n) =>
         {
             #[allow(deprecated)]
-            Ok(PyNotOneOf { inner: n.clone() }.into_py(py))
+            Ok(PyNotOneOf { inner: n.clone() }.into_py_any(py).unwrap())
         }
         Constraint::Unknown { .. } => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
             "Unknown constraint type encountered (not supported in Python bindings)",
@@ -2125,30 +2126,30 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<PyObjec
         Constraint::Range(r) =>
         {
             #[allow(deprecated)]
-            Ok(PyRange { inner: r.clone() }.into_py(py))
+            Ok(PyRange { inner: r.clone() }.into_py_any(py).unwrap())
         }
         Constraint::Cidr(c) =>
         {
             #[allow(deprecated)]
-            Ok(PyCidr { inner: c.clone() }.into_py(py))
+            Ok(PyCidr { inner: c.clone() }.into_py_any(py).unwrap())
         }
         Constraint::UrlPattern(u) =>
         {
             #[allow(deprecated)]
-            Ok(PyUrlPattern { inner: u.clone() }.into_py(py))
+            Ok(PyUrlPattern { inner: u.clone() }.into_py_any(py).unwrap())
         }
         Constraint::Contains(c) =>
         {
             #[allow(deprecated)]
-            Ok(PyContains { inner: c.clone() }.into_py(py))
+            Ok(PyContains { inner: c.clone() }.into_py_any(py).unwrap())
         }
         Constraint::Subset(s) =>
         {
             #[allow(deprecated)]
-            Ok(PySubset { inner: s.clone() }.into_py(py))
+            Ok(PySubset { inner: s.clone() }.into_py_any(py).unwrap())
         }
         Constraint::All(a) => {
-            let py_constraints = Python::with_gil(|py| -> PyResult<Vec<PyObject>> {
+            let py_constraints = Python::attach(|py| -> PyResult<Vec<Py<PyAny>>> {
                 let mut vec = Vec::new();
                 for c in &a.constraints {
                     vec.push(constraint_to_py(py, c)?);
@@ -2156,10 +2157,10 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<PyObjec
                 Ok(vec)
             })?;
             #[allow(deprecated)]
-            Ok(PyAll::new(py_constraints)?.into_py(py))
+            Ok(PyAll::new(py_constraints)?.into_py_any(py).unwrap())
         }
         Constraint::Any(a) => {
-            let py_constraints = Python::with_gil(|py| -> PyResult<Vec<PyObject>> {
+            let py_constraints = Python::attach(|py| -> PyResult<Vec<Py<PyAny>>> {
                 let mut vec = Vec::new();
                 for c in &a.constraints {
                     vec.push(constraint_to_py(py, c)?);
@@ -2167,44 +2168,44 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<PyObjec
                 Ok(vec)
             })?;
             #[allow(deprecated)]
-            Ok(PyAnyOf::new(py_constraints)?.into_py(py))
+            Ok(PyAnyOf::new(py_constraints)?.into_py_any(py).unwrap())
         }
         Constraint::Not(n) => {
-            let py_constraint = Python::with_gil(|py| -> PyResult<PyObject> {
+            let py_constraint = Python::attach(|py| -> PyResult<Py<PyAny>> {
                 constraint_to_py(py, &n.constraint)
             })?;
             #[allow(deprecated)]
-            Ok(PyNot::new(py_constraint)?.into_py(py))
+            Ok(PyNot::new(py_constraint)?.into_py_any(py).unwrap())
         }
         Constraint::Cel(c) =>
         {
             #[allow(deprecated)]
-            Ok(PyCel { inner: c.clone() }.into_py(py))
+            Ok(PyCel { inner: c.clone() }.into_py_any(py).unwrap())
         }
         Constraint::Wildcard(w) =>
         {
             #[allow(deprecated)]
-            Ok(PyWildcard { inner: w.clone() }.into_py(py))
+            Ok(PyWildcard { inner: w.clone() }.into_py_any(py).unwrap())
         }
         Constraint::Regex(r) =>
         {
             #[allow(deprecated)]
-            Ok(PyRegex { inner: r.clone() }.into_py(py))
+            Ok(PyRegex { inner: r.clone() }.into_py_any(py).unwrap())
         }
         Constraint::Subpath(s) =>
         {
             #[allow(deprecated)]
-            Ok(PySubpath { inner: s.clone() }.into_py(py))
+            Ok(PySubpath { inner: s.clone() }.into_py_any(py).unwrap())
         }
         Constraint::UrlSafe(u) =>
         {
             #[allow(deprecated)]
-            Ok(PyUrlSafe { inner: u.clone() }.into_py(py))
+            Ok(PyUrlSafe { inner: u.clone() }.into_py_any(py).unwrap())
         }
         Constraint::Shlex(sh) =>
         {
             #[allow(deprecated)]
-            Ok(PyShlex { inner: sh.clone() }.into_py(py))
+            Ok(PyShlex { inner: sh.clone() }.into_py_any(py).unwrap())
         }
     }
 }
@@ -2314,7 +2315,7 @@ fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
         Ok(ConstraintValue::Float(f))
     } else if let Ok(b) = obj.extract::<bool>() {
         Ok(ConstraintValue::Boolean(b))
-    } else if let Ok(l) = obj.extract::<Vec<PyObject>>() {
+    } else if let Ok(l) = obj.extract::<Vec<Py<PyAny>>>() {
         // Recursively convert list items
         let py = obj.py();
         let mut values = Vec::new();
@@ -2330,25 +2331,25 @@ fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
 }
 
 /// Convert a ConstraintValue back to a Python object.
-fn constraint_value_to_py(py: Python<'_>, value: &ConstraintValue) -> PyResult<PyObject> {
+fn constraint_value_to_py(py: Python<'_>, value: &ConstraintValue) -> PyResult<Py<PyAny>> {
     match value {
-        ConstraintValue::String(s) => Ok(s.to_object(py)),
-        ConstraintValue::Integer(i) => Ok(i.to_object(py)),
-        ConstraintValue::Float(f) => Ok(f.to_object(py)),
-        ConstraintValue::Boolean(b) => Ok(b.to_object(py)),
+        ConstraintValue::String(s) => Ok(s.into_py_any(py).unwrap()),
+        ConstraintValue::Integer(i) => Ok(i.into_py_any(py).unwrap()),
+        ConstraintValue::Float(f) => Ok(f.into_py_any(py).unwrap()),
+        ConstraintValue::Boolean(b) => Ok(b.into_py_any(py).unwrap()),
         ConstraintValue::List(l) => {
-            let py_list: Vec<PyObject> = l
+            let py_list: Vec<Py<PyAny>> = l
                 .iter()
                 .map(|v| constraint_value_to_py(py, v))
                 .collect::<PyResult<Vec<_>>>()?;
-            Ok(py_list.to_object(py))
+            Ok(py_list.into_py_any(py).unwrap())
         }
         ConstraintValue::Object(o) => {
             let dict = pyo3::types::PyDict::new(py);
             for (k, v) in o {
                 dict.set_item(k, constraint_value_to_py(py, v)?)?;
             }
-            Ok(dict.to_object(py))
+            Ok(dict.into_any().unbind())
         }
         ConstraintValue::Null => Ok(py.None()),
     }
@@ -2786,7 +2787,7 @@ impl PyConstraintDiff {
     }
 
     #[getter]
-    fn parent_constraint(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn parent_constraint(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         match &self.inner.parent_constraint {
             Some(c) => Ok(Some(constraint_to_py(py, c)?)),
             None => Ok(None),
@@ -2794,7 +2795,7 @@ impl PyConstraintDiff {
     }
 
     #[getter]
-    fn child_constraint(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn child_constraint(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         match &self.inner.child_constraint {
             Some(c) => Ok(Some(constraint_to_py(py, c)?)),
             None => Ok(None),
@@ -4315,7 +4316,7 @@ impl PyCompiledMcpConfig {
 #[pyclass(name = "ExtractionResult")]
 pub struct PyExtractionResult {
     #[pyo3(get)]
-    constraints: PyObject,
+    constraints: Py<PyAny>,
     #[pyo3(get)]
     tool: String,
     #[pyo3(get)]
