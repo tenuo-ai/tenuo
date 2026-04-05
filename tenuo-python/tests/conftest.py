@@ -2,11 +2,6 @@
 Shared pytest configuration for the test suite.
 """
 
-import os
-from pathlib import Path
-
-import pytest
-
 _TEMPORAL_E2E_FILES = frozenset({"test_temporal_live.py", "test_temporal_replay.py"})
 
 

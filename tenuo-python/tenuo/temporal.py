@@ -3473,7 +3473,7 @@ class TenuoActivityInboundInterceptor:
             )
 
         try:
-            from tenuo_core import Warrant as CoreWarrant  # type: ignore[import-not-found]
+            from tenuo_core import decode_warrant_stack_base64 as _decode_stack
 
             authorizer = self._authorizer
 
@@ -3493,7 +3493,6 @@ class TenuoActivityInboundInterceptor:
             if chain_header:
                 # WarrantStack format: CBOR array of warrants, base64url-encoded.
                 # V1 JSON-base64 chain format was removed in beta.
-                from tenuo_core import decode_warrant_stack_base64 as _decode_stack
                 chain = _decode_stack(chain_header.decode("utf-8"))
                 chain_result = authorizer.check_chain(
                     chain, tool_name, args,

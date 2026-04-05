@@ -22,10 +22,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from tenuo import SigningKey as _TI_SigningKey
-
-_TI_TRUST_ROOTS = [_TI_SigningKey.generate().public_key]
-
-# Import the modules under test
 from tenuo.temporal import (
     ChainValidationError,
     # Exceptions
@@ -44,6 +40,8 @@ from tenuo.temporal import (
     # Decorators
     unprotected,
 )
+
+_TI_TRUST_ROOTS = [_TI_SigningKey.generate().public_key]
 
 # =============================================================================
 # Test Fixtures
