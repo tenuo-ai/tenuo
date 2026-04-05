@@ -621,3 +621,39 @@ class TestEnforcementApprovalGates:
             trusted_roots=[root.public_key],
         )
         assert result.allowed
+
+
+def test_verified_approval_includes_signed_envelope_base64(keys):
+    """ChainVerificationResult exposes base64 CBOR SignedApproval for audit / CP verification."""
+    import base64
+    import time
+
+    from tenuo import Authorizer, SignedApproval, VerifiedApproval
+    from tenuo.approval import ApprovalRequest, sign_approval
+    from tenuo_core import py_compute_request_hash as compute_hash
+
+    root, holder, approver = keys
+    w = _mint_gated(root, holder, approver, approval_gates={"delete_file": None})
+    tool = "delete_file"
+    args = {"path": "/tmp/x"}
+    request_hash = compute_hash(w.id, tool, args, holder.public_key)
+    req = ApprovalRequest(
+        tool=tool, arguments=args, warrant_id=w.id, request_hash=request_hash
+    )
+    signed = sign_approval(req, approver)
+
+    auth = Authorizer(trusted_roots=[root.public_key])
+    sig = w.sign(holder, tool, args, int(time.time()))
+    result = auth.authorize_one(w, tool, args, bytes(sig), [signed])
+
+    assert len(result.verified_approvals) == 1
+    va = result.verified_approvals[0]
+    assert isinstance(va, VerifiedApproval)
+    b64 = va.signed_approval_cbor_b64
+    assert b64
+    expected_wire = base64.standard_b64encode(bytes(signed.to_bytes())).decode("ascii")
+    assert b64 == expected_wire
+
+    raw = base64.standard_b64decode(b64)
+    restored = SignedApproval.from_bytes(raw)
+    restored.verify()

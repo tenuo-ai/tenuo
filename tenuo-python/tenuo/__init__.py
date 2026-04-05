@@ -64,6 +64,7 @@ from tenuo_core import (  # type: ignore
     # Chain verification
     ChainStep,
     ChainVerificationResult,
+    VerifiedApproval,
     Cidr,
     CompiledMcpConfig,
     Contains,
@@ -230,6 +231,7 @@ __all__ = [
     # Chain verification (returned by Authorizer.authorize_one / check_chain)
     "ChainVerificationResult",
     "ChainStep",
+    "VerifiedApproval",
     # Approval cryptography
     "ApprovalPayload",
     "SignedApproval",

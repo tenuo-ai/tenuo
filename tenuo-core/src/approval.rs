@@ -156,6 +156,7 @@
 
 use crate::crypto::{PublicKey, Signature};
 use crate::error::{Error, Result};
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -319,6 +320,19 @@ impl SignedApproval {
         // verify() checks inherent structure and cryptographic integrity.
 
         Ok(payload)
+    }
+
+    /// CBOR-serialize this envelope as standard base64.
+    ///
+    /// Control planes and audit pipelines can decode with [`ciborium`] and call
+    /// [`SignedApproval::verify`] to confirm the approver signature independently
+    /// of the authorizer.
+    pub fn to_cbor_b64(&self) -> Result<String> {
+        let mut buf = Vec::new();
+        ciborium::into_writer(self, &mut buf).map_err(|e| {
+            Error::InvalidApproval(format!("SignedApproval CBOR encode failed: {e}"))
+        })?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
     }
 
     /// Check if this approval matches a given request.

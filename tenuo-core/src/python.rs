@@ -26,6 +26,7 @@ use crate::mcp::{CompiledMcpConfig, McpConfig};
 use crate::planes::{
     Authorizer as RustAuthorizer, ChainStep as RustChainStep,
     ChainVerificationResult as RustChainVerificationResult,
+    VerifiedApproval as RustVerifiedApproval,
 };
 use crate::warrant::{
     Clearance, OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant as RustWarrant, WarrantType,
@@ -4455,6 +4456,64 @@ impl PyChainStep {
     }
 }
 
+/// Python wrapper for [`RustVerifiedApproval`].
+#[pyclass(name = "VerifiedApproval")]
+#[derive(Clone)]
+pub struct PyVerifiedApproval {
+    inner: RustVerifiedApproval,
+}
+
+#[pymethods]
+impl PyVerifiedApproval {
+    /// Approver Ed25519 public key (32 bytes).
+    #[getter]
+    fn approver_key(&self) -> [u8; 32] {
+        self.inner.approver_key
+    }
+
+    /// External identity reference (e.g. IAM ARN).
+    #[getter]
+    fn external_id(&self) -> String {
+        self.inner.external_id.clone()
+    }
+
+    /// When the approval was granted (Unix seconds).
+    #[getter]
+    fn approved_at(&self) -> u64 {
+        self.inner.approved_at
+    }
+
+    /// When the approval expires (Unix seconds).
+    #[getter]
+    fn expires_at(&self) -> u64 {
+        self.inner.expires_at
+    }
+
+    /// Request hash binding (32 bytes).
+    #[getter]
+    fn request_hash(&self) -> [u8; 32] {
+        self.inner.request_hash
+    }
+
+    /// Standard base64-encoded CBOR SignedApproval envelope for independent verification.
+    #[getter]
+    fn signed_approval_cbor_b64(&self) -> Option<String> {
+        self.inner.signed_approval_cbor_b64.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "VerifiedApproval(external_id={:?}, signed_envelope={})",
+            self.inner.external_id,
+            if self.inner.signed_approval_cbor_b64.is_some() {
+                "present"
+            } else {
+                "absent"
+            }
+        )
+    }
+}
+
 /// Python wrapper for ChainVerificationResult.
 #[pyclass(name = "ChainVerificationResult")]
 #[derive(Clone)]
@@ -4500,12 +4559,24 @@ impl PyChainVerificationResult {
         self.inner.warrant_stack_b64.clone()
     }
 
+    /// Approvals that passed verification and counted toward the threshold (may be empty).
+    #[getter]
+    fn verified_approvals(&self) -> Vec<PyVerifiedApproval> {
+        self.inner
+            .verified_approvals
+            .iter()
+            .cloned()
+            .map(|inner| PyVerifiedApproval { inner })
+            .collect()
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "ChainVerificationResult(chain_length={}, leaf_depth={}, steps={})",
+            "ChainVerificationResult(chain_length={}, leaf_depth={}, steps={}, verified_approvals={})",
             self.inner.chain_length,
             self.inner.leaf_depth,
-            self.inner.verified_steps.len()
+            self.inner.verified_steps.len(),
+            self.inner.verified_approvals.len()
         )
     }
 }
@@ -5727,6 +5798,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCompiledMcpConfig>()?;
     m.add_class::<PyAuthorizer>()?;
     m.add_class::<PyChainStep>()?;
+    m.add_class::<PyVerifiedApproval>()?;
     m.add_class::<PyChainVerificationResult>()?;
     m.add_class::<PyExtractionResult>()?;
     // Multi-sig

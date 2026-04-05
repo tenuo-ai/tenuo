@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Signed approval envelopes in audit payloads** — `VerifiedApproval` and `ApprovalRecord` include `signed_approval_cbor_b64` (standard base64 CBOR `SignedApproval`) so control planes can verify approver signatures independently. Python: `VerifiedApproval` type and `ChainVerificationResult.verified_approvals`.
+
 ---
 
 ## [0.1.0-beta.16] - 2026-03-31

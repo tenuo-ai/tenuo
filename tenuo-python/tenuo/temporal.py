@@ -203,10 +203,9 @@ TENUO_APPROVALS_HEADER = "x-tenuo-approvals"
 # Stable plugin identifier for logs and Temporal Web activity summaries (matches import path).
 TENUO_TEMPORAL_PLUGIN_ID = "tenuo.temporal.TenuoPlugin"
 
-# Wire format version:
-#   "2": raw CBOR bytes (optionally gzip-compressed) — the only supported format.
-#   "1" (legacy base64(cbor)) was removed in beta; all senders emit "2".
-_WIRE_FORMAT_V2 = b"2"
+# Value for ``x-tenuo-wire-format`` on outgoing headers: identifies that
+# ``x-tenuo-warrant`` carries raw CBOR bytes (optionally gzip-compressed).
+_TEMPORAL_WARRANT_ENCODING_VERSION = b"2"
 
 # PoP timestamp validation window (seconds). The scheduled_time must be
 # within this window. This is not configurable — security is non-negotiable.
@@ -1809,12 +1808,12 @@ def tenuo_headers(
             "Private keys must never be transmitted in headers."
         )
 
-    # Serialize warrant to raw CBOR bytes (v2 wire format — the only supported format).
+    # Serialize warrant to raw CBOR bytes for ``x-tenuo-warrant``.
     warrant_bytes = bytes(warrant.to_bytes())
 
     headers: Dict[str, bytes] = {
         TENUO_KEY_ID_HEADER: key_id.encode("utf-8"),
-        TENUO_WIRE_FORMAT_HEADER: _WIRE_FORMAT_V2,
+        TENUO_WIRE_FORMAT_HEADER: _TEMPORAL_WARRANT_ENCODING_VERSION,
     }
 
     if compress:
@@ -2382,9 +2381,9 @@ def workflow_grant(
 def _extract_warrant_from_headers(headers: Dict[str, bytes]) -> Any:
     """Extract and deserialize warrant from headers.
 
-    Only V2 wire format is supported (x-tenuo-wire-format: "2"): raw CBOR
-    bytes, optionally gzip-compressed.  V1 (base64-encoded CBOR) was removed
-    in beta; any header not parseable as raw CBOR raises ChainValidationError.
+    ``x-tenuo-warrant`` must be raw CBOR (optionally gzip-compressed when
+    ``x-tenuo-compressed`` is ``1``). Payloads that are not valid warrant CBOR
+    raise ``ChainValidationError``.
 
     Returns:
         Warrant object, or None if no warrant header present.
@@ -2401,8 +2400,6 @@ def _extract_warrant_from_headers(headers: Dict[str, bytes]) -> Any:
     try:
         is_compressed = headers.get(TENUO_COMPRESSED_HEADER, b"0") == b"1"
 
-        # V2 wire format: raw CBOR bytes, optionally gzip-compressed.
-        # V1 (legacy base64-encoded CBOR) was removed in beta.
         if is_compressed:
             cbor_bytes = _gzip_decompress_limited(raw)
         else:
@@ -3556,8 +3553,7 @@ class TenuoActivityInboundInterceptor:
 
             chain_header = headers.get(TENUO_CHAIN_HEADER)
             if chain_header:
-                # WarrantStack format: CBOR array of warrants, base64url-encoded.
-                # V1 JSON-base64 chain format was removed in beta.
+                # WarrantStack: CBOR array of warrants, base64url-encoded.
                 chain = _decode_stack(chain_header.decode("utf-8"))
                 chain_result = authorizer.check_chain(
                     chain, tool_name, args,

@@ -139,6 +139,7 @@ fn verify_approvals_with_tolerance(
             approved_at: payload.approved_at,
             expires_at: payload.expires_at,
             request_hash: payload.request_hash,
+            signed_approval_cbor_b64: Some(approval.to_cbor_b64()?),
         });
         valid_count = valid_count.saturating_add(1);
         seen_approvers.insert(approval.approver_key.clone());
@@ -238,6 +239,12 @@ pub struct VerifiedApproval {
     pub expires_at: u64,
     /// Hash binding the approval to (warrant_id, tool, args, holder).
     pub request_hash: [u8; 32],
+    /// Standard base64-encoded CBOR [`crate::approval::SignedApproval`] envelope.
+    ///
+    /// Present for approvals produced by `verify_approvals_with_tolerance`.
+    /// Omitted when deserializing older payloads (`None`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_approval_cbor_b64: Option<String>,
 }
 
 /// Result of a successful chain verification.
@@ -4955,11 +4962,14 @@ mod tests {
 
     #[test]
     fn test_pin_verified_approvals_in_chain_result() {
+        use base64::Engine;
+
         let (warrant, authorizer, issuer, admin1, _, args) = approval_pin_test_setup();
         let sig = warrant.sign(&issuer, "action", &args).unwrap();
 
         let approval =
             make_pin_approval(&warrant, "action", &args, &admin1, "admin1@corp.com", 300);
+        let expected_b64 = approval.to_cbor_b64().expect("encode envelope");
 
         let result = authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[approval]);
         assert!(result.is_ok(), "should succeed: {:?}", result);
@@ -4975,6 +4985,22 @@ mod tests {
             cvr.verified_approvals[0].approver_key,
             admin1.public_key().to_bytes(),
         );
+        assert_eq!(
+            cvr.verified_approvals[0]
+                .signed_approval_cbor_b64
+                .as_deref(),
+            Some(expected_b64.as_str()),
+            "audit path must preserve the exact SignedApproval bytes"
+        );
+
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(expected_b64)
+            .expect("valid base64");
+        let round_trip: crate::approval::SignedApproval =
+            ciborium::from_reader(&raw[..]).expect("valid CBOR");
+        round_trip
+            .verify()
+            .expect("approver signature still verifies");
     }
 
     #[test]
