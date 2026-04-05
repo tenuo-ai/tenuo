@@ -184,6 +184,7 @@ Troubleshooting:
 from __future__ import annotations
 
 import base64
+import binascii
 import gzip
 import hashlib
 import json
@@ -234,7 +235,7 @@ POP_WINDOW_SECONDS = 300
 try:
     from tenuo_core import MAX_WARRANT_SIZE as _WARRANT_DECOMPRESS_MAX_BYTES  # type: ignore[import-not-found]
 except ImportError:
-    _WARRANT_DECOMPRESS_MAX_BYTES: int = 64 * 1024  # 64 KB fallback
+    _WARRANT_DECOMPRESS_MAX_BYTES = 64 * 1024  # 64 KB fallback
 
 
 def _gzip_decompress_limited(data: bytes, max_length: int = _WARRANT_DECOMPRESS_MAX_BYTES) -> bytes:
@@ -793,7 +794,7 @@ class EnvKeyResolver(KeyResolver):
 
             key_bytes = base64.b64decode(value)
             return SigningKey.from_bytes(key_bytes)
-        except (base64.binascii.Error, ValueError) as e:
+        except (binascii.Error, ValueError) as e:
             logger.error(f"Failed to decode key from {env_name}: {e}")
             raise KeyResolutionError(key_id=key_id)
         except Exception:
@@ -825,7 +826,7 @@ class EnvKeyResolver(KeyResolver):
 
                 key_bytes = base64.b64decode(value)
                 self._key_cache[key_id] = SigningKey.from_bytes(key_bytes)
-            except (base64.binascii.Error, ValueError) as e:
+            except (binascii.Error, ValueError) as e:
                 logger.error(f"Failed to decode key from {env_name}: {e}")
                 raise KeyResolutionError(key_id=key_id)
             except Exception:
@@ -860,7 +861,7 @@ class EnvKeyResolver(KeyResolver):
 
             key_bytes = base64.b64decode(value)
             return SigningKey.from_bytes(key_bytes)
-        except (base64.binascii.Error, ValueError) as e:
+        except (binascii.Error, ValueError) as e:
             logger.error(f"Failed to decode key from {env_name}: {e}")
             raise KeyResolutionError(key_id=key_id)
         except Exception:
@@ -946,7 +947,7 @@ class VaultKeyResolver(KeyResolver):
                 try:
                     key_bytes = base64.b64decode(key_b64)
                     key = SigningKey.from_bytes(key_bytes)
-                except (base64.binascii.Error, ValueError) as e:
+                except (binascii.Error, ValueError) as e:
                     logger.error(f"Vault returned undecodable key for {key_id}: {e}")
                     raise KeyResolutionError(key_id=key_id)
 
@@ -1037,7 +1038,7 @@ class AWSSecretsManagerKeyResolver(KeyResolver):
             elif "SecretString" in response:
                 try:
                     key_bytes = base64.b64decode(response["SecretString"])
-                except (base64.binascii.Error, ValueError) as e:
+                except (binascii.Error, ValueError) as e:
                     logger.error(f"AWS Secrets Manager returned undecodable key for {key_id}: {e}")
                     raise KeyResolutionError(key_id=key_id)
             else:
@@ -2383,14 +2384,14 @@ def _extract_warrant_from_headers(headers: Dict[str, bytes]) -> Any:
                 )
         return Warrant.from_bytes(cbor_bytes)
 
-    except (ValueError, EOFError, gzip.BadGzipFile, UnicodeDecodeError, base64.binascii.Error) as e:
+    except (ValueError, EOFError, gzip.BadGzipFile, UnicodeDecodeError, binascii.Error) as e:
         raise ChainValidationError(
             reason=f"Failed to deserialize warrant: {e}",
             depth=0,
         )
     except ChainValidationError:
         raise
-    except Exception as e:
+    except Exception:
         # Propagate unexpected errors (MemoryError, etc.) without re-labelling
         # them as chain validation failures — the caller handles unknown exceptions.
         raise
