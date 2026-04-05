@@ -192,10 +192,12 @@ jobs:
           # MCP SDK requires Python 3.10+
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system mcp || echo "Skipping MCP (requires Python 3.10+)"
           # Temporal SDK for live integration tests (Python 3.12+ to match dedicated job)
-          # Pin protobuf to avoid the protobuf>=4.x / Python 3.12 isinstance() incompatibility
-          # where google.protobuf.message.Message becomes a generic alias and isinstance() raises
-          # TypeError. The temporal-integration job uses a controlled install that avoids this.
-          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" && uv pip install --system "temporalio" "protobuf<4.0" || echo "Skipping temporalio (testing on 3.12+)"
+          # Pin protobuf>=6.0 to avoid the temporalio 1.24.0 / Python 3.12 isinstance() bug
+          # that appears with protobuf 5.x: _payload_converter.py:438 raises
+          # "TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union".
+          # protobuf 6.x ships a compatible Message class. The temporal-integration job
+          # confirms this combination works (it installs protobuf==6.33.6 and passes).
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" && uv pip install --system "temporalio" "protobuf>=6.0" || echo "Skipping temporalio (testing on 3.12+)"
 
       - name: Verify import
         run: |
