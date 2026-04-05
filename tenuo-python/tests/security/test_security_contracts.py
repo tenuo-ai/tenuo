@@ -261,7 +261,7 @@ class TestOnDenialBehaviouralContracts:
         interceptor = TenuoPlugin(cfg)
 
         inp = MagicMock()
-        inp.headers = {TENUO_WARRANT_HEADER: w.to_base64().encode()}
+        inp.headers = {TENUO_WARRANT_HEADER: bytes(w.to_bytes())}
         fn = MagicMock()
         fn.__name__ = "delete_file"
         fn._tenuo_tool_name = "delete_file"
