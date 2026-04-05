@@ -45,6 +45,7 @@ from tenuo.temporal import (
     TenuoClientInterceptor,
     TenuoPlugin,
     TenuoPluginConfig,
+    execute_workflow_authorized,
     tenuo_headers,
 )
 
@@ -184,17 +185,16 @@ async def main():
     ):
         logger.info("Worker started\n")
 
-        # --- Workflow A: reads project-a ---
+        # --- Workflow A: reads project-a (recommended API: execute_workflow_authorized) ---
         logger.info("=== Workflow A: reading project-a ===")
-        wf_a_id = f"wf-a-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
-            wf_a_id,
-            tenuo_headers(warrant_a, "agentA"),
-        )
-        result_a = await client.execute_workflow(
-            ScopedReadWorkflow.run,
+        result_a = await execute_workflow_authorized(
+            client=client,
+            client_interceptor=client_interceptor,
+            workflow_run_fn=ScopedReadWorkflow.run,
+            workflow_id=f"wf-a-{uuid.uuid4().hex[:8]}",
+            warrant=warrant_a,
+            key_id="agentA",
             args=["/tmp/tenuo-demo/project-a"],
-            id=wf_a_id,
             task_queue=task_queue,
         )
         logger.info(f"Result A: {result_a}\n")
@@ -230,8 +230,10 @@ async def main():
                 task_queue=task_queue,
             )
             logger.error("BUG: cross-access should have been denied")
-        except (WorkflowFailureError, Exception) as e:
-            logger.info(f"Correctly denied cross-access: {type(e).__name__}\n")
+        except WorkflowFailureError as e:
+            logger.info(f"Correctly denied cross-access: {e.cause}\n")
+        except Exception as e:
+            logger.info(f"Correctly denied cross-access: {e}\n")
 
     logger.info("Done. Multi-warrant isolation verified.")
 
