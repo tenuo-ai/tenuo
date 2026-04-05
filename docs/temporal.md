@@ -750,6 +750,8 @@ When a warrant or signing key is suspected compromised, the revocation path does
 
 For the fastest response, use `trusted_roots_provider` with a short `trusted_roots_refresh_interval_secs` (e.g. 30 seconds). A compromised issuer key can be removed from your key store and propagated to all workers within one refresh interval. No rolling restart needed.
 
+> **Tenuo Cloud** manages trusted root distribution and rotation as a first-class primitive, removing the need to operate your own provider service. When a workflow completes or a credential is revoked, the Cloud control plane pushes the updated root set to all workers automatically.
+
 ### Fail-closed defaults (summary)
 
 | Check | Missing / invalid | Default behavior |
