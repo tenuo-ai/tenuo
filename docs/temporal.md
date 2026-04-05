@@ -27,6 +27,8 @@ Tenuo integrates with [Temporal](https://temporal.io) to bring warrant-based aut
 
 Temporal ensures your workflows survive failures. Tenuo ensures every activity your workflow dispatches is authorized against the warrant the issuer approved. Together they give you durable execution with cryptographic least privilege.
 
+**Security posture in brief:** All activity executions are fail-closed — missing or invalid warrants are denied by default, with no code changes required in activity definitions. Every dispatch carries a cryptographic Proof-of-Possession signature that binds the exact tool and arguments to the warrant holder's key. Authorization runs entirely in-process (no Tenuo network call at enforcement time), and private keys never leave your infrastructure. See [Security considerations](#security-considerations) for the full threat model, PoP time windows, revocation patterns, and enterprise deployment guidance.
+
 ---
 
 ## Installation
@@ -636,6 +638,9 @@ pop_signature = warrant.sign(signing_key, "read_file", {"path": "/data/file.txt"
 
 ---
 
+<details>
+<summary><strong>Security considerations</strong> — threat model, trust boundaries, PoP time windows, dedup, root rotation, access revocation, retry drift</summary>
+
 ## Security considerations
 
 This section covers what the Temporal integration assumes, what it protects against, and what remains your operational responsibility. For the broader Tenuo security model, see [Security Model](./security.md).
@@ -761,6 +766,8 @@ For the fastest response, use `trusted_roots_provider` with a short `trusted_roo
 | Tool / constraints | Not allowed or args mismatch | **`TemporalConstraintViolation`** / core constraint errors |
 | PoP signature | Missing or invalid | **`PopVerificationError`** |
 | Protected activity as local activity | Not **`@unprotected`** | **`LocalActivityError`** |
+
+</details>
 
 ---
 
