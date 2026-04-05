@@ -1869,23 +1869,21 @@ async def tenuo_execute_activity(
     cancellation_type: Any = None,
     summary: Optional[str] = None,
 ) -> Any:
-    """Execute an activity with Tenuo authorization (legacy wrapper).
+    """Execute an activity with automatic function-reference registration.
 
-    **Note:** This function is now a thin wrapper around the standard
-    ``workflow.execute_activity()``. Authorization is handled transparently
-    by the outbound workflow interceptor, so you can use standard Temporal
-    APIs directly:
+    This is a wrapper around ``workflow.execute_activity()`` with one
+    additional behaviour: it stores the activity function reference in
+    ``_pending_activity_fn`` before dispatch, so the outbound interceptor
+    can resolve real Python parameter names for PoP signing.
 
-        # Recommended (transparent):
-        await workflow.execute_activity(read_file, args=[path], ...)
+    **When to use it:** if your warrant uses named field constraints
+    (e.g. ``path=Subpath(...)``) and you have not set ``activity_fns``
+    on ``TenuoPluginConfig``, call via ``tenuo_execute_activity()`` to
+    ensure the interceptor signs with ``{"path": ...}`` instead of
+    ``{"arg0": ...}``.  Setting ``activity_fns`` on the config is the
+    simpler alternative for the same effect.
 
-        # Legacy (still works):
-        await tenuo_execute_activity(read_file, args=[path], ...)
-
-    Both are equivalent. The interceptor computes PoP signatures automatically.
-
-    This function is kept for backward compatibility and advanced use cases
-    where explicit control is needed (future: custom warrants, multi-warrant).
+    For most workflows, ``workflow.execute_activity()`` works identically.
 
     Args:
         activity: The activity function to execute

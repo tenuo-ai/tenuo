@@ -70,7 +70,7 @@ The issuer key never touches the worker. The holder key never leaves the worker.
 
 ## Onboarding checklist
 
-Follow this order the first time you integrate Tenuo with Temporal. The **Quick Start** and **Configuration** sections below go deeper; the [`tenuo.temporal`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/tenuo/temporal.py) module docstring has a **Troubleshooting** table for common failures.
+Follow this order the first time you integrate Tenuo with Temporal. The **Quick Start** and **Configuration** sections below go deeper; the [`tenuo.temporal`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/tenuo/temporal.py) module docstring has a **Troubleshooting** section for common failures.
 
 1. **Install**: `uv pip install "tenuo[temporal]"` (see [Installation](#installation)). This installs `tenuo_core`, a compiled Rust extension. Prebuilt wheels are available for common platforms; if yours isn't covered, build from source with `maturin develop` in `tenuo-python`.
 
@@ -698,7 +698,7 @@ This section covers what the Temporal integration assumes, what it protects agai
 
 **Temporal's security vs. Tenuo's security.** Temporal Cloud provides infrastructure-level security: encrypted payloads, RBAC, namespace isolation, SOC 2. Tenuo operates at the authorization layer above that: each Activity is authorized against a cryptographically signed warrant before it executes, regardless of who has access to the Temporal cluster. The two are complementary: cluster access control and per-action authorization are different security properties. A Temporal namespace admin with full cluster access still cannot cause an activity to execute outside the warrant's constraints, because Tenuo's authorization check happens on the worker, not on the Temporal service.
 
-**In-process enforcement (no runtime service dependency).** Tenuo's authorization runs entirely within your worker process using `tenuo_core`, a compiled Rust library. There is no Tenuo SaaS call, no external auth service, no network round-trip at enforcement time. The warrant is verified cryptographically in-process using Ed25519 (FIPS 186-4 compatible). This means Tenuo adds no external dependency to your critical path. If Tenuo's distribution infrastructure is unreachable, workers already running with the compiled extension continue enforcing authorization normally.
+**In-process enforcement (no runtime service dependency).** Tenuo's authorization runs entirely within your worker process using `tenuo_core`, a compiled Rust library. There is no Tenuo SaaS call, no external auth service, no network round-trip at enforcement time. The warrant is verified cryptographically in-process using Ed25519. This means Tenuo adds no external dependency to your critical path. If Tenuo's distribution infrastructure is unreachable, workers already running with the compiled extension continue enforcing authorization normally.
 
 **Private key data residency.** Private signing keys never leave your infrastructure. `KeyResolver` fetches them from your Vault, AWS Secrets Manager, or GCP Secret Manager on your own network at signing time. No private key material is transmitted to the Temporal cluster or any Tenuo endpoint.
 
@@ -770,7 +770,7 @@ Intentional fail-closed behaviour: the PoP window ensures replayed signatures ca
 | Short retries (< 60s backoff) | Default config works: no action needed |
 | Long retries (minutes to hours) | Set `TenuoPluginConfig.retry_pop_max_windows` (e.g. `120` for up to 1 hour) |
 | Unbounded retries / very long backoffs | Structure as child workflows so each retry dispatch generates a fresh PoP |
-| **Durable workflows (hours/days)** | **Warrant TTL = workflow duration + `retry_pop_max_windows` = max backoff interval only + control plane auto-revocation on completion** |
+| **Durable workflows (hours/days)** | Set warrant TTL to the expected workflow duration; set `retry_pop_max_windows` to cover only the max Temporal backoff interval (not the total run). Use control plane auto-revocation on completion. |
 
 ```python
 config = TenuoPluginConfig(
@@ -1035,8 +1035,6 @@ For production integration monitoring, alert on:
 - key resolver failures (`KEY_NOT_FOUND`, resolver exceptions)
 - sudden drop in authorized activity volume
 
----
-
 ## Security Model
 
 See **[Security considerations](#security-considerations)** for the full threat model, trust boundaries, PoP time windows, dedup semantics, and root rotation. The [Failure Semantics](#failure-semantics-integrator-view) table maps exceptions to integration handling.
@@ -1097,7 +1095,7 @@ For the full module-level troubleshooting entries, see the `tenuo.temporal` modu
 ## Best Practices
 
 1. **Use AuthorizedWorkflow** as your base class for fail-fast validation and automatic PoP
-2. **Use `tenuo_execute_activity()`** for cases where you need explicit per-call warrant or key control: multi-warrant workflows, per-stage delegation, or when `AuthorizedWorkflow` is not your base class
+2. **Use `tenuo_execute_activity()`** when you need accurate PoP signing with named constraints and have not set `activity_fns`: it records the function reference so the outbound interceptor resolves real parameter names. For named-constraint warrants, `activity_fns` on `TenuoPluginConfig` is the simpler alternative.
 3. **Always configure passthrough modules** (`tenuo`, `tenuo_core`) in the workflow sandbox
 4. **Set `strict_mode=True`** in production if you use named warrant constraints with transparent `execute_activity` (fail-fast on ambiguous PoP signing)
 5. **Set up VaultKeyResolver** (or AWS/GCP) for production key management; never use `EnvKeyResolver` in production. Tenuo Cloud provides managed key issuance and rotation as an alternative to operating your own KMS integration.

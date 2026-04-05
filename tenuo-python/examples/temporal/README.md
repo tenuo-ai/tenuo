@@ -30,8 +30,8 @@ Three examples showing a clean progression from basic transparent authorization 
 ### Quick start
 
 ```bash
-temporal server start-dev        # Terminal 1
-python demo.py                   # Terminal 2
+temporal server start-dev                          # Terminal 1
+cd tenuo-python/examples/temporal && python demo.py  # Terminal 2
 ```
 
 ## Transparent Authorization Pattern
@@ -91,7 +91,7 @@ See also: the **Activity registry (`activity_fns`) and PoP argument names** sect
 
 ### When to use Tenuo-specific functions
 
-Most workflows use standard `workflow.execute_activity()` via `AuthorizedWorkflow`. Use `tenuo_execute_activity()` when you need explicit per-call warrant control:
+Most workflows use standard `workflow.execute_activity()` via `AuthorizedWorkflow`. Use `tenuo_execute_activity()` when you need accurate PoP signing with named constraints and have not set `activity_fns` in your config (it records the function reference for real parameter name resolution):
 - Multi-warrant workflows where different activities run under different warrants
 - Per-stage delegation where you narrow the warrant before each stage
 - Any workflow that does not extend `AuthorizedWorkflow` but needs transparent PoP
