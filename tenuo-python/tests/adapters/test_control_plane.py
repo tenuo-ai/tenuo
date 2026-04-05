@@ -566,14 +566,15 @@ class TestLangGraphControlPlane:
 
 class TestTemporalControlPlane:
     @pytest.fixture
-    def interceptor_config(self, mock_cp):
-        """Build a minimal TenuoInterceptorConfig with the mock control plane."""
-        from tenuo.temporal import TenuoInterceptorConfig
+    def interceptor_config(self, mock_cp, issuer_key):
+        """Build a minimal TenuoPluginConfig with the mock control plane."""
+        from tenuo.temporal import TenuoPluginConfig
         from tenuo.temporal import EnvKeyResolver
 
-        return TenuoInterceptorConfig(
+        return TenuoPluginConfig(
             key_resolver=EnvKeyResolver(),
             control_plane=mock_cp,
+            trusted_roots=[issuer_key.public_key],
         )
 
     @pytest.fixture
@@ -666,12 +667,15 @@ class TestTemporalControlPlane:
         assert entry["latency_us"] >= 4000  # at least 4ms
 
     def test_no_emit_when_control_plane_none(
-        self, fake_info, simple_warrant
+        self, fake_info, simple_warrant, issuer_key
     ):
         """No error when control_plane is not configured."""
-        from tenuo.temporal import TenuoActivityInboundInterceptor, TenuoInterceptorConfig, EnvKeyResolver
+        from tenuo.temporal import TenuoActivityInboundInterceptor, TenuoPluginConfig, EnvKeyResolver
 
-        config = TenuoInterceptorConfig(key_resolver=EnvKeyResolver())
+        config = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[issuer_key.public_key],
+        )
         interceptor = TenuoActivityInboundInterceptor(
             next_interceptor=MagicMock(), config=config, version="test"
         )

@@ -1299,7 +1299,7 @@ class _TemporalAdapter(_Adapter):
     def __init__(self) -> None:
         pytest.importorskip("temporalio")
         from tenuo.temporal import (
-            KeyResolver, TenuoInterceptor, TenuoInterceptorConfig, TENUO_WARRANT_HEADER,
+            KeyResolver, TenuoPlugin, TenuoPluginConfig, TENUO_WARRANT_HEADER,
         )
 
         self._root = SigningKey.generate()
@@ -1311,20 +1311,36 @@ class _TemporalAdapter(_Adapter):
             def resolve(self, key_id: str) -> SigningKey:
                 return self._k
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=_Resolver(self._root),
-            # lightweight mode (trusted_roots=None): validates warrant structure
-            # but skips PoP since Temporal PoP is tied to live workflow metadata.
-            # Full PoP enforcement is verified by TestTemporalInvariants.
-            trusted_roots=None,
+            trusted_roots=[self._root.public_key],
             require_warrant=True,
             on_denial="raise",
         )
-        self._interceptor = TenuoInterceptor(cfg)
+        self._interceptor = TenuoPlugin(cfg)
         self._warrant = Warrant.issue(
             self._root, capabilities={"test_activity": {}}, ttl_seconds=3600,
             holder=self._root.public_key,
         )
+
+    def _activity_headers(
+        self,
+        w: Warrant,
+        tool: str = "test_activity",
+        args: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        import base64
+
+        from tenuo.temporal import TENUO_POP_HEADER, tenuo_headers
+
+        ad = dict(args) if args is not None else {}
+        h = tenuo_headers(w, "matrix-agent")
+        raw: Dict[str, bytes] = {}
+        for k, v in h.items():
+            raw[k] = v if isinstance(v, bytes) else str(v).encode("utf-8")
+        pop = w.sign(self._root, tool, ad, int(time.time()))
+        raw[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+        return raw
 
     def _input(self, headers: Dict[str, Any]) -> Any:
         from unittest.mock import MagicMock
@@ -1369,7 +1385,7 @@ class _TemporalAdapter(_Adapter):
         return await self._ok({})
 
     async def check_valid(self) -> Optional[bool]:
-        return await self._ok({self._HEADER: self._warrant.to_base64().encode()})
+        return await self._ok(self._activity_headers(self._warrant))
 
     async def check_wrong_tool(self) -> Optional[bool]:
         # Temporal tool name is the activity function name; we can't easily
@@ -1380,21 +1396,18 @@ class _TemporalAdapter(_Adapter):
         w = Warrant.issue(self._root, capabilities={"test_activity": {}}, ttl_seconds=1,
                           holder=self._root.public_key)
         time.sleep(2)
-        return await self._ok({self._HEADER: w.to_base64().encode()})
+        return await self._ok(self._activity_headers(w))
 
     async def check_constraint_violated(self) -> Optional[bool]:
         return None  # Temporal constraint enforcement requires activity-level config
 
     async def check_untrusted_issuer(self) -> Optional[bool]:
-        # Temporal adapter uses trusted_roots=None (lightweight mode) in this matrix.
-        # An attacker warrant passes structural checks but would fail PoP in strict mode.
-        # The full I3/I4 check for Temporal is in TestTrustedRootsEnforcement via
-        # enforce_tool_call (the same code path TenuoInterceptor uses).
+        # Matrix uses synthetic headers; untrusted-issuer scenarios for Temporal
+        # are covered in TestTrustedRootsEnforcement / TestTemporalInvariants.
         return None
 
     async def check_wrong_holder(self) -> Optional[bool]:
-        # Temporal uses lightweight mode (no PoP); holder-binding not enforced here.
-        # Full PoP enforcement is tested by TestTemporalInvariants.
+        # Holder-binding via PoP is covered by TestTemporalInvariants.
         return None
 
 class _FastAPIAdapter(_Adapter):
@@ -2043,7 +2056,7 @@ class TestMCPInvariants:
 @pytest.mark.security
 class TestTemporalInvariants:
     """
-    Security invariants for the Temporal TenuoInterceptor integration.
+    Security invariants for the Temporal TenuoPlugin integration.
 
     The interceptor validates warrants arriving in Temporal activity headers.
     These tests exercise execute_activity() with synthetic headers so no
@@ -2054,8 +2067,8 @@ class TestTemporalInvariants:
         pytest.importorskip("temporalio")
         from tenuo.temporal import (
             KeyResolver,
-            TenuoInterceptor,
-            TenuoInterceptorConfig,
+            TenuoPlugin,
+            TenuoPluginConfig,
         )
 
         class _StaticResolver(KeyResolver):
@@ -2065,13 +2078,13 @@ class TestTemporalInvariants:
             def resolve(self, key_id: str) -> SigningKey:
                 return self._key
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=_StaticResolver(trusted_key),
             trusted_roots=[trusted_key.public_key],
             require_warrant=True,
             on_denial="raise",
         )
-        return TenuoInterceptor(cfg)
+        return TenuoPlugin(cfg)
 
     def _make_activity_input(self, headers: Dict[str, Any]):
         """Build a fake Temporal ExecuteActivityInput from a headers dict."""
@@ -2274,7 +2287,7 @@ class TestTemporalInvariantsExtended:
 
     def _make_interceptor(self, trusted_key: SigningKey):
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoInterceptor, TenuoInterceptorConfig
+        from tenuo.temporal import KeyResolver, TenuoPlugin, TenuoPluginConfig
 
         class _R(KeyResolver):
             def __init__(self, k):
@@ -2282,12 +2295,12 @@ class TestTemporalInvariantsExtended:
             def resolve(self, kid):
                 return self._k
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=_R(trusted_key),
             trusted_roots=[trusted_key.public_key],
             require_warrant=True, on_denial="raise",
         )
-        return TenuoInterceptor(cfg)
+        return TenuoPlugin(cfg)
 
     def _make_input(self, warrant: Warrant, activity_name: str = "test_activity"):
         from unittest.mock import MagicMock

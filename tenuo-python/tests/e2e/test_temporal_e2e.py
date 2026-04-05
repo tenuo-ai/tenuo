@@ -17,6 +17,7 @@ Covers:
 
 import asyncio
 import base64
+import logging
 import time
 import warnings
 from dataclasses import dataclass
@@ -36,10 +37,11 @@ from tenuo.temporal import (  # noqa: E402
     TENUO_POP_HEADER,
     TENUO_WARRANT_HEADER,
     TemporalConstraintViolation,
+    TenuoContextError,
     EnvKeyResolver,
     TenuoClientInterceptor,
-    TenuoInterceptor,
-    TenuoInterceptorConfig,
+    TenuoPlugin,
+    TenuoPluginConfig,
     execute_workflow_authorized,
     _extract_warrant_from_headers,
     _pop_dedup_cache,
@@ -303,12 +305,12 @@ class TestPopRoundTrip:
 
 class TestActivityInterceptorAuthorizer:
     def _make(self, ck, events=None):
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[ck.public_key],
             audit_callback=events.append if events is not None else None,
         )
-        return TenuoInterceptor(cfg)
+        return TenuoPlugin(cfg)
 
     def test_allows_authorized_activity(self, warrant, agent_key, control_key, headers_dict):
         events = []
@@ -330,16 +332,19 @@ class TestActivityInterceptorAuthorizer:
         assert any(e.decision == "ALLOW" for e in events)
 
     def test_exempt_gate_allowed_and_denied(self, agent_key, control_key):
-        from tenuo_core import Exact
+        """Exempt paths skip approval gates; others require approval (Temporal inbound)."""
+        from tenuo import OneOf
 
-        warrantWithExempt = (
-            Warrant.mint_builder()
-            .capability("read_file")
-            .approval_gates({"read_file": {"path": {"exempt": Exact("/tmp/demo/public.txt")}}})
-            .required_approvers([control_key.public_key])
-            .holder(agent_key.public_key)
-            .ttl(3600)
-            .mint(control_key)
+        warrantWithExempt = Warrant.issue(
+            keypair=control_key,
+            capabilities={"read_file": {"path": Subpath("/tmp/demo")}},
+            ttl_seconds=3600,
+            holder=agent_key.public_key,
+            required_approvers=[control_key.public_key],
+            min_approvals=1,
+            approval_gates={
+                "read_file": {"path": {"exempt": OneOf(["/tmp/demo/public.txt"])}},
+            },
         )
         headersWithExempt = tenuo_headers(warrantWithExempt, "agent1")
 
@@ -347,9 +352,9 @@ class TestActivityInterceptorAuthorizer:
         ti = self._make(control_key, events)
         wf = "wf-exempt"
 
-        # 1. Exempt parameter (should succeed without hitting ApprovalRequired loop)
         act_headers_exempt = _make_activity_headers(
-            headersWithExempt, warrantWithExempt, agent_key, "read_file", {"path": "/tmp/demo/public.txt"})
+            headersWithExempt, warrantWithExempt, agent_key, "read_file",
+            {"path": "/tmp/demo/public.txt"})
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="content")
         nxt.init = MagicMock()
@@ -365,9 +370,9 @@ class TestActivityInterceptorAuthorizer:
         assert r == "content"
         assert any(e.decision == "ALLOW" for e in events)
 
-        # 2. Non-exempt parameter (should require approval)
         act_headers_private = _make_activity_headers(
-            headersWithExempt, warrantWithExempt, agent_key, "read_file", {"path": "/tmp/demo/secret.txt"})
+            headersWithExempt, warrantWithExempt, agent_key, "read_file",
+            {"path": "/tmp/demo/secret.txt"})
         inp_private = FakeExecuteActivityInput(
             fn=lambda path: path, args=("/tmp/demo/secret.txt",), headers=act_headers_private)
 
@@ -445,12 +450,12 @@ class TestStoreLifecycle:
 class TestAuditEvents:
     def test_allow_event_fields(self, warrant, agent_key, control_key, headers_dict):
         events = []
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
             audit_callback=events.append, redact_args_in_logs=False,
         )
-        ti = TenuoInterceptor(cfg)
+        ti = TenuoPlugin(cfg)
         wf = "wf-ae"
         act_headers = _make_activity_headers(
             headers_dict, warrant, agent_key, "read_file", {"path": "/tmp/demo/a.txt"})
@@ -473,12 +478,12 @@ class TestAuditEvents:
 
     def test_deny_event_has_reason(self, warrant, agent_key, control_key, headers_dict):
         events = []
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
             audit_callback=events.append,
         )
-        ti = TenuoInterceptor(cfg)
+        ti = TenuoPlugin(cfg)
         wf = "wf-de"
         act_headers = _make_activity_headers(
             headers_dict, warrant, agent_key, "read_file", {"path": "/etc/shadow"})
@@ -505,14 +510,14 @@ class TestDryRunMode:
         self, warrant, agent_key, control_key, headers_dict
     ):
         events = []
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(),
             on_denial="raise",
             dry_run=True,
             trusted_roots=[control_key.public_key],
             audit_callback=events.append,
         )
-        ti = TenuoInterceptor(cfg)
+        ti = TenuoPlugin(cfg)
         wf = "wf-dry-deny"
         act_headers = _make_activity_headers(
             headers_dict, warrant, agent_key, "read_file", {"path": "/etc/shadow"}
@@ -533,14 +538,15 @@ class TestDryRunMode:
         assert nxt.execute_activity.call_count == 1
         assert any(e.decision == "DENY" for e in events)
 
-    def test_missing_warrant_executes_in_dry_run(self):
-        cfg = TenuoInterceptorConfig(
+    def test_missing_warrant_executes_in_dry_run(self, control_key):
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(),
             on_denial="raise",
+            trusted_roots=[control_key.public_key],
             dry_run=True,
             require_warrant=True,
         )
-        ti = TenuoInterceptor(cfg)
+        ti = TenuoPlugin(cfg)
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="executed")
         nxt.init = MagicMock()
@@ -561,11 +567,11 @@ class TestParallelActivities:
     """Verify that parallel activities each get independent PoP via headers."""
 
     def _make(self, ck):
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[ck.public_key],
         )
-        return TenuoInterceptor(cfg)
+        return TenuoPlugin(cfg)
 
     def test_two_different_activities_both_authorized(
         self, warrant, agent_key, control_key, headers_dict
@@ -680,11 +686,11 @@ class TestActivityRetries:
     """PoP is per-invocation via headers, so retries just need fresh headers."""
 
     def _make(self, ck):
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[ck.public_key],
         )
-        return TenuoInterceptor(cfg)
+        return TenuoPlugin(cfg)
 
     def test_retry_with_fresh_pop(
         self, warrant, agent_key, control_key, headers_dict
@@ -733,11 +739,11 @@ class TestConcurrentWorkflows:
     def test_two_workflows_independent_stores(
         self, warrant, agent_key, control_key, headers_dict
     ):
-        ti_cfg = TenuoInterceptorConfig(
+        ti_cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoInterceptor(ti_cfg)
+        ti = TenuoPlugin(ti_cfg)
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="data")
@@ -780,11 +786,11 @@ class TestWarrantExpiration:
         time.sleep(1.5)
         assert expired.is_expired()
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoInterceptor(cfg)
+        ti = TenuoPlugin(cfg)
         wf = "wf-exp-auth"
 
         act_headers = _make_activity_headers(
@@ -804,53 +810,6 @@ class TestWarrantExpiration:
                 _run(ai.execute_activity(inp))
         nxt.execute_activity.assert_not_called()
 
-    def test_expired_warrant_denied_lightweight_path(self, agent_key, control_key):
-        """Lightweight path (no trusted_roots): expired warrant raises WarrantExpired."""
-        import time
-
-        from tenuo.temporal import WarrantExpired
-
-        expired = (
-            Warrant.mint_builder()
-            .holder(agent_key.public_key)
-            .capability("read_file", path=Subpath("/tmp/demo"))
-            .ttl(1)
-            .mint(control_key)
-        )
-        h = tenuo_headers(expired, "agent1")
-
-        time.sleep(1.5)
-        assert expired.is_expired()
-
-        cfg = TenuoInterceptorConfig(
-            key_resolver=EnvKeyResolver(), on_denial="raise",
-            trusted_roots=None,  # lightweight path
-        )
-        ti = TenuoInterceptor(cfg)
-        wf = "wf-exp-light"
-
-        # Build headers without PoP (lightweight path doesn't need it)
-        raw = {}
-        for k, v in h.items():
-            raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
-            if k.startswith("x-tenuo-"):
-                raw[k] = raw_v
-        warrant_headers = {k: FakePayload(data=v) for k, v in raw.items()}
-
-        nxt = MagicMock()
-        nxt.execute_activity = AsyncMock()
-        nxt.init = MagicMock()
-        ai = ti.intercept_activity(nxt)
-
-        info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
-        inp = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/demo/f",), headers=warrant_headers)
-        with patch("temporalio.activity.info") as m:
-            m.return_value = info
-            with pytest.raises(WarrantExpired):
-                _run(ai.execute_activity(inp))
-        nxt.execute_activity.assert_not_called()
-
 
 # -- PoP validation edge cases -----------------------------------------------
 
@@ -858,7 +817,7 @@ class TestPopValidation:
     """PoP signature must match exactly — wrong key, wrong args, missing PoP."""
 
     def _make(self, ck):
-        return TenuoInterceptor(TenuoInterceptorConfig(
+        return TenuoPlugin(TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[ck.public_key],
         ))
@@ -965,11 +924,11 @@ class TestConcurrentWorkflowsFullRoundTrip:
             .mint(control_key)
         )
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoInterceptor(cfg)
+        ti = TenuoPlugin(cfg)
 
         h1 = tenuo_headers(warrant1, "a1")
         h2 = tenuo_headers(warrant2, "a2")
@@ -1015,11 +974,11 @@ class TestConcurrentWorkflowsFullRoundTrip:
             .mint(control_key)
         )
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoInterceptor(cfg)
+        ti = TenuoPlugin(cfg)
 
         h1 = tenuo_headers(warrant1, "a1")
         # PoP for an out-of-scope path
@@ -1124,11 +1083,11 @@ class TestDistributedHeaderPropagation:
         act_headers = _make_activity_headers(
             h, warrant, agent_key, "read_file", {"path": "/tmp/demo/f.txt"})
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoInterceptor(cfg)
+        ti = TenuoPlugin(cfg)
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="content")
@@ -1218,8 +1177,10 @@ class TestOutboundInterceptorHeaderInjection:
         mock_resolver = AsyncMock()
         mock_resolver.resolve = AsyncMock(return_value=agent_key)
         mock_resolver.resolve_sync = MagicMock(return_value=agent_key)
-        config = TenuoInterceptorConfig(
+        root_pk = SigningKey.generate().public_key
+        config = TenuoPluginConfig(
             key_resolver=mock_resolver,
+            trusted_roots=[root_pk],
         )
         outbound = _TenuoWorkflowOutboundInterceptor(FakeNextOutbound(), config=config)
 
@@ -1250,6 +1211,98 @@ class TestOutboundInterceptorHeaderInjection:
         assert extracted is not None
         assert extracted.id == warrant.id
 
+    def test_warning_when_positional_pop_with_named_constraints(
+        self, warrant, agent_key, headers_dict, control_key, caplog
+    ):
+        """No input.fn and no activity_fns → arg0 fallback; warrant has path → warn."""
+        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+
+        wf_id = "wf-positional-pop-warn"
+        _populate_store(wf_id, headers_dict)
+
+        class FakeNextOutbound:
+            def start_activity(self, input):
+                return MagicMock()
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve_sync = MagicMock(return_value=agent_key)
+        config = TenuoPluginConfig(
+            key_resolver=mock_resolver,
+            strict_mode=False,
+            trusted_roots=[control_key.public_key],
+        )
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNextOutbound(), config=config)
+
+        @dataclass
+        class FakeStartActivityInput:
+            activity: str = "read_file"
+            fn: Any = None
+            args: tuple = ("/tmp/demo/f.txt",)
+            headers: Optional[Dict[str, Any]] = None
+
+        inp = FakeStartActivityInput()
+
+        with caplog.at_level(logging.WARNING, logger="tenuo.temporal"):
+            with patch("temporalio.workflow.info") as mock_info:
+                mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+                with patch("temporalio.workflow.now") as mock_now:
+                    import datetime
+
+                    mock_now.return_value = datetime.datetime(
+                        2026, 1, 1, tzinfo=datetime.timezone.utc
+                    )
+                    outbound.start_activity(inp)
+
+        assert any(
+            "PoP signing for activity 'read_file'" in r.message
+            and "activity_fns" in r.message
+            for r in caplog.records
+        )
+
+    def test_strict_mode_raises_on_positional_pop_with_named_constraints(
+        self, warrant, agent_key, headers_dict, control_key
+    ):
+        """strict_mode=True: positional fallback + named constraints → TenuoContextError."""
+        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+
+        wf_id = "wf-positional-pop-strict"
+        _populate_store(wf_id, headers_dict)
+
+        class FakeNextOutbound:
+            def start_activity(self, input):
+                return MagicMock()
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve_sync = MagicMock(return_value=agent_key)
+        config = TenuoPluginConfig(
+            key_resolver=mock_resolver,
+            strict_mode=True,
+            trusted_roots=[control_key.public_key],
+        )
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNextOutbound(), config=config)
+
+        @dataclass
+        class FakeStartActivityInput:
+            activity: str = "read_file"
+            fn: Any = None
+            args: tuple = ("/tmp/demo/f.txt",)
+            headers: Optional[Dict[str, Any]] = None
+
+        inp = FakeStartActivityInput()
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            with patch("temporalio.workflow.now") as mock_now:
+                import datetime
+
+                mock_now.return_value = datetime.datetime(
+                    2026, 1, 1, tzinfo=datetime.timezone.utc
+                )
+                with pytest.raises(TenuoContextError) as exc:
+                    outbound.start_activity(inp)
+        assert "read_file" in str(exc.value)
+        assert "activity_fns" in str(exc.value)
+
     def test_activity_interceptor_reads_from_input_headers(
         self, warrant, agent_key, control_key, headers_dict
     ):
@@ -1273,11 +1326,11 @@ class TestOutboundInterceptorHeaderInjection:
 
         payload_headers = {k: Payload(data=v) for k, v in raw_h.items()}
 
-        cfg = TenuoInterceptorConfig(
+        cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoInterceptor(cfg)
+        ti = TenuoPlugin(cfg)
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="remote-result")
@@ -1476,10 +1529,7 @@ class TestOutboundFailClosed:
 
     def test_pop_failure_raises_context_error(self, warrant, headers_dict):
         """If key resolver fails, outbound interceptor raises TenuoContextError."""
-        from tenuo.temporal import (
-            TenuoContextError,
-            _TenuoWorkflowOutboundInterceptor,
-        )
+        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-fail-pop"
         _populate_store(wf_id, headers_dict)
@@ -1489,7 +1539,10 @@ class TestOutboundFailClosed:
         mock_resolver.resolve_sync = MagicMock(
             side_effect=RuntimeError("Vault unreachable")
         )
-        config = TenuoInterceptorConfig(key_resolver=mock_resolver)
+        config = TenuoPluginConfig(
+            key_resolver=mock_resolver,
+            trusted_roots=[SigningKey.generate().public_key],
+        )
 
         class FakeNext:
             def start_activity(self, input):
@@ -1515,16 +1568,16 @@ class TestOutboundFailClosed:
 
     def test_missing_key_resolver_raises_context_error(self, warrant, headers_dict):
         """If no key_resolver configured, outbound interceptor raises TenuoContextError."""
-        from tenuo.temporal import (
-            TenuoContextError,
-            _TenuoWorkflowOutboundInterceptor,
-        )
+        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-no-resolver"
         _populate_store(wf_id, headers_dict)
 
         # Config with no key_resolver
-        config = TenuoInterceptorConfig(key_resolver=None)
+        config = TenuoPluginConfig(
+            key_resolver=None,
+            trusted_roots=[SigningKey.generate().public_key],
+        )
 
         class FakeNext:
             def start_activity(self, input):
@@ -1557,7 +1610,10 @@ class TestOutboundFailClosed:
                 called["pass"] = True
                 return MagicMock()
 
-        config = TenuoInterceptorConfig(key_resolver=MagicMock())
+        config = TenuoPluginConfig(
+            key_resolver=MagicMock(),
+            trusted_roots=[SigningKey.generate().public_key],
+        )
         outbound = _TenuoWorkflowOutboundInterceptor(FakeNext(), config=config)
 
         @dataclass

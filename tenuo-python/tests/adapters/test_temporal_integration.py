@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Import the modules under test
+from tenuo import SigningKey as _TI_SigningKey
 from tenuo.temporal import (
     ChainValidationError,
     # Exceptions
@@ -32,7 +32,7 @@ from tenuo.temporal import (
     # Audit
     TemporalAuditEvent,
     # Config
-    TenuoInterceptorConfig,
+    TenuoPluginConfig,
     WarrantExpired,
     get_tool_name,
     is_unprotected,
@@ -40,6 +40,8 @@ from tenuo.temporal import (
     # Decorators
     unprotected,
 )
+
+_TI_TRUST_ROOTS = [_TI_SigningKey.generate().public_key]
 
 # =============================================================================
 # Test Fixtures
@@ -93,31 +95,41 @@ class TestConfigurationDefaults:
     def test_require_warrant_defaults_to_true(self):
         """require_warrant should default to True (fail-closed)."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(
+            key_resolver=resolver, trusted_roots=_TI_TRUST_ROOTS
+        )
         assert config.require_warrant is True
 
     def test_redact_args_defaults_to_true(self):
         """redact_args_in_logs should default to True (secure by default)."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(
+            key_resolver=resolver, trusted_roots=_TI_TRUST_ROOTS
+        )
         assert config.redact_args_in_logs is True
 
     def test_block_local_activities_defaults_to_true(self):
         """block_local_activities should default to True (fail-closed)."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(
+            key_resolver=resolver, trusted_roots=_TI_TRUST_ROOTS
+        )
         assert config.block_local_activities is True
 
     def test_max_chain_depth_defaults_to_10(self):
         """max_chain_depth should default to 10."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(
+            key_resolver=resolver, trusted_roots=_TI_TRUST_ROOTS
+        )
         assert config.max_chain_depth == 10
 
     def test_on_denial_defaults_to_raise(self):
         """on_denial should default to 'raise'."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(
+            key_resolver=resolver, trusted_roots=_TI_TRUST_ROOTS
+        )
         assert config.on_denial == "raise"
 
 
@@ -397,8 +409,9 @@ class TestConfigurationCustomization:
     def test_require_warrant_can_be_disabled(self):
         """require_warrant can be set to False for opt-in mode."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(
+        config = TenuoPluginConfig(
             key_resolver=resolver,
+            trusted_roots=_TI_TRUST_ROOTS,
             require_warrant=False,
         )
         assert config.require_warrant is False
@@ -406,8 +419,9 @@ class TestConfigurationCustomization:
     def test_max_chain_depth_can_be_customized(self):
         """max_chain_depth can be customized."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(
+        config = TenuoPluginConfig(
             key_resolver=resolver,
+            trusted_roots=_TI_TRUST_ROOTS,
             max_chain_depth=3,
         )
         assert config.max_chain_depth == 3
@@ -415,8 +429,9 @@ class TestConfigurationCustomization:
     def test_redact_args_can_be_disabled(self):
         """redact_args_in_logs can be disabled."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(
+        config = TenuoPluginConfig(
             key_resolver=resolver,
+            trusted_roots=_TI_TRUST_ROOTS,
             redact_args_in_logs=False,
         )
         assert config.redact_args_in_logs is False
@@ -424,8 +439,9 @@ class TestConfigurationCustomization:
     def test_tool_mappings_can_be_configured(self):
         """tool_mappings can map activity names to tool names."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(
+        config = TenuoPluginConfig(
             key_resolver=resolver,
+            trusted_roots=_TI_TRUST_ROOTS,
             tool_mappings={"fetch_document": "read_file"},
         )
         assert config.tool_mappings["fetch_document"] == "read_file"

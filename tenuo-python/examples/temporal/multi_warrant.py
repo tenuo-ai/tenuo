@@ -12,7 +12,7 @@ Neither can access the other's directory.
 
 KEY POINT: The workflow code is identical for both tenants. Isolation comes
 entirely from the warrant assigned at workflow start, not from code changes.
-Both workflows use standard workflow.execute_activity() - the TenuoInterceptor
+Both workflows use standard workflow.execute_activity() - the TenuoPlugin
 handles authorization transparently.
 
 Requirements:
@@ -43,8 +43,9 @@ from tenuo.temporal import (
     EnvKeyResolver,
     TemporalAuditEvent,
     TenuoClientInterceptor,
-    TenuoInterceptor,
-    TenuoInterceptorConfig,
+    TenuoPlugin,
+    TenuoPluginConfig,
+    execute_workflow_authorized,
     tenuo_headers,
 )
 
@@ -74,7 +75,7 @@ async def read_file(path: str) -> str:
 class ScopedReadWorkflow:
     """Reads all .txt files within its warrant-scoped directory.
 
-    Uses standard workflow.execute_activity() - the TenuoInterceptor
+    Uses standard workflow.execute_activity() - the TenuoPlugin
     handles authorization transparently. This same workflow code works
     for all tenants; isolation comes from the warrant, not the code.
     """
@@ -160,8 +161,8 @@ async def main():
     key_resolver = EnvKeyResolver()
     key_resolver.preload_keys(["agentA", "agentB"])
 
-    worker_interceptor = TenuoInterceptor(
-        TenuoInterceptorConfig(
+    worker_interceptor = TenuoPlugin(
+        TenuoPluginConfig(
             key_resolver=key_resolver,
             on_denial="raise",
             audit_callback=on_audit,
@@ -184,17 +185,16 @@ async def main():
     ):
         logger.info("Worker started\n")
 
-        # --- Workflow A: reads project-a ---
+        # --- Workflow A: reads project-a (recommended API: execute_workflow_authorized) ---
         logger.info("=== Workflow A: reading project-a ===")
-        wf_a_id = f"wf-a-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
-            wf_a_id,
-            tenuo_headers(warrant_a, "agentA"),
-        )
-        result_a = await client.execute_workflow(
-            ScopedReadWorkflow.run,
+        result_a = await execute_workflow_authorized(
+            client=client,
+            client_interceptor=client_interceptor,
+            workflow_run_fn=ScopedReadWorkflow.run,
+            workflow_id=f"wf-a-{uuid.uuid4().hex[:8]}",
+            warrant=warrant_a,
+            key_id="agentA",
             args=["/tmp/tenuo-demo/project-a"],
-            id=wf_a_id,
             task_queue=task_queue,
         )
         logger.info(f"Result A: {result_a}\n")
@@ -230,8 +230,10 @@ async def main():
                 task_queue=task_queue,
             )
             logger.error("BUG: cross-access should have been denied")
-        except (WorkflowFailureError, Exception) as e:
-            logger.info(f"Correctly denied cross-access: {type(e).__name__}\n")
+        except WorkflowFailureError as e:
+            logger.info(f"Correctly denied cross-access: {e.cause}\n")
+        except Exception as e:
+            logger.info(f"Correctly denied cross-access: {e}\n")
 
     logger.info("Done. Multi-warrant isolation verified.")
 

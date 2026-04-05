@@ -21,6 +21,7 @@ pytest.importorskip("temporalio")
 from tenuo.temporal import (  # noqa: E402 - must be after importorskip
     TENUO_COMPRESSED_HEADER,
     TENUO_KEY_ID_HEADER,
+    TENUO_POP_HEADER,
     TENUO_WARRANT_HEADER,
     ChainValidationError,
     # Exceptions
@@ -35,9 +36,9 @@ from tenuo.temporal import (  # noqa: E402 - must be after importorskip
     # Audit
     TemporalAuditEvent,
     # Interceptor
-    TenuoInterceptor,
+    TenuoPlugin,
     # Config
-    TenuoInterceptorConfig,
+    TenuoPluginConfig,
     WarrantExpired,
     _compute_pop_challenge,
     _extract_key_id_from_headers,
@@ -50,6 +51,10 @@ from tenuo.temporal import (  # noqa: E402 - must be after importorskip
     # Phase 2: Decorators
     unprotected,
 )
+
+from tenuo import SigningKey as _TenCfgSigningKey  # noqa: E402
+
+_TEMPORAL_TRUST_ROOTS = [_TenCfgSigningKey.generate().public_key]
 
 # =============================================================================
 # Test Fixtures
@@ -479,13 +484,15 @@ class TestResolveSyncUnderEventLoop:
 # =============================================================================
 
 
-class TestTenuoInterceptorConfig:
-    """Tests for TenuoInterceptorConfig."""
+class TestTenuoPluginConfig:
+    """Tests for TenuoPluginConfig."""
 
     def test_default_values(self):
         """Config has sensible defaults."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(
+            key_resolver=resolver, trusted_roots=_TEMPORAL_TRUST_ROOTS
+        )
 
         assert config.on_denial == "raise"
         assert config.dry_run is False
@@ -500,8 +507,9 @@ class TestTenuoInterceptorConfig:
         resolver = MagicMock(spec=KeyResolver)
         callback = MagicMock()
 
-        config = TenuoInterceptorConfig(
+        config = TenuoPluginConfig(
             key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
             on_denial="log",
             dry_run=True,
             tool_mappings={"fetch": "read_file"},
@@ -517,6 +525,18 @@ class TestTenuoInterceptorConfig:
         assert config.audit_callback is callback
         assert config.audit_allow is False
         assert config.max_chain_depth == 5
+
+    def test_trusted_roots_required_without_global(self):
+        from tenuo.config import reset_config
+        from tenuo.exceptions import ConfigurationError
+
+        reset_config()
+        try:
+            resolver = MagicMock(spec=KeyResolver)
+            with pytest.raises(ConfigurationError, match="trusted_roots"):
+                TenuoPluginConfig(key_resolver=resolver)
+        finally:
+            reset_config()
 
 
 # =============================================================================
@@ -646,14 +666,14 @@ class TestExceptions:
 # =============================================================================
 
 
-class TestTenuoInterceptor:
-    """Tests for TenuoInterceptor."""
+class TestTenuoPlugin:
+    """Tests for TenuoPlugin."""
 
     def test_creates_activity_interceptor(self):
         """Creates activity inbound interceptor."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
-        interceptor = TenuoInterceptor(config)
+        config = TenuoPluginConfig(key_resolver=resolver, trusted_roots=_TEMPORAL_TRUST_ROOTS)
+        interceptor = TenuoPlugin(config)
 
         next_interceptor = MagicMock()
         activity_interceptor = interceptor.intercept_activity(next_interceptor)
@@ -817,14 +837,14 @@ class TestPhase2Config:
     def test_default_phase2_values(self):
         """Phase 2 config has sensible defaults."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(key_resolver=resolver, trusted_roots=_TEMPORAL_TRUST_ROOTS)
 
         assert config.block_local_activities is True  # Secure by default
 
     def test_pop_is_always_mandatory(self):
         """PoP is always mandatory — no config toggle exists."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(key_resolver=resolver, trusted_roots=_TEMPORAL_TRUST_ROOTS)
 
         # Verify require_pop is no longer a config option
         assert not hasattr(config, "require_pop")
@@ -1236,7 +1256,7 @@ class TestPhase4Config:
     def test_default_phase4_values(self):
         """Phase 4 config defaults are sensible."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(key_resolver=resolver, trusted_roots=_TEMPORAL_TRUST_ROOTS)
 
         assert config.metrics is None
         assert config.enable_tracing is False
@@ -1247,14 +1267,22 @@ class TestPhase4Config:
 
         resolver = MagicMock(spec=KeyResolver)
         metrics = TenuoMetrics(prefix="test")
-        config = TenuoInterceptorConfig(key_resolver=resolver, metrics=metrics)
+        config = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            metrics=metrics,
+        )
 
         assert config.metrics is metrics
 
     def test_can_enable_tracing(self):
         """Can enable tracing in config."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver, enable_tracing=True)
+        config = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            enable_tracing=True,
+        )
 
         assert config.enable_tracing is True
 
@@ -1265,28 +1293,36 @@ class TestSecurityConfig:
     def test_require_warrant_defaults_to_true(self):
         """require_warrant defaults to True (fail-closed)."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(key_resolver=resolver, trusted_roots=_TEMPORAL_TRUST_ROOTS)
 
         assert config.require_warrant is True
 
     def test_can_disable_require_warrant(self):
         """Can disable require_warrant for opt-in mode."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver, require_warrant=False)
+        config = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            require_warrant=False,
+        )
 
         assert config.require_warrant is False
 
     def test_redact_args_defaults_to_true(self):
         """redact_args_in_logs defaults to True (secure by default)."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver)
+        config = TenuoPluginConfig(key_resolver=resolver, trusted_roots=_TEMPORAL_TRUST_ROOTS)
 
         assert config.redact_args_in_logs is True
 
     def test_can_disable_redact_args(self):
         """Can disable arg redaction for debugging."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(key_resolver=resolver, redact_args_in_logs=False)
+        config = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            redact_args_in_logs=False,
+        )
 
         assert config.redact_args_in_logs is False
 
@@ -1428,6 +1464,107 @@ class TestDedupCacheEviction:
         assert len(_pop_dedup_cache) == 100
         _pop_dedup_cache.clear()
         assert len(_pop_dedup_cache) == 0
+
+
+class TestPopDedupStoreHook:
+    """Optional PopDedupStore on TenuoPluginConfig."""
+
+    def test_config_rejects_trusted_roots_and_provider_together(self):
+        from tenuo import SigningKey
+        from tenuo.exceptions import ConfigurationError
+
+        ck = SigningKey.generate()
+        with pytest.raises(ConfigurationError, match="trusted_roots_provider"):
+            TenuoPluginConfig(
+                key_resolver=EnvKeyResolver(),
+                trusted_roots=[ck.public_key],
+                trusted_roots_provider=lambda: [ck.public_key],
+            )
+
+    def test_config_requires_interval_with_provider_for_refresh(self):
+        from tenuo.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="trusted_roots_provider"):
+            TenuoPluginConfig(
+                key_resolver=EnvKeyResolver(),
+                trusted_roots_refresh_interval_secs=30.0,
+            )
+
+    def test_custom_pop_dedup_store_used_by_interceptor(self):
+        import time
+
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import Subpath
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("read_file", path=Subpath("/tmp/demo"))
+            .ttl(3600)
+            .mint(control_key)
+        )
+        h = tenuo_headers(warrant, "agent1")
+
+        class RecordingDedup:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def check_pop_replay(self, dedup_key, now, ttl_seconds, *, activity_name):
+                self.calls.append((dedup_key, now, ttl_seconds))
+
+        dedup = RecordingDedup()
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            pop_dedup_store=dedup,
+        )
+        ti = TenuoPlugin(cfg)
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="ok")
+        nxt.init = MagicMock()
+        ai = ti.intercept_activity(nxt)
+
+        pop = warrant.sign(
+            agent_key, "read_file", {"path": "/tmp/demo"}, int(time.time())
+        )
+        act_headers = {}
+        for k, v in h.items():
+            raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+            if k.startswith("x-tenuo-"):
+                act_headers[k] = raw_v
+        act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+
+        class FakePayload:
+            def __init__(self, data):
+                self.data = data
+
+        payload_headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
+
+        info = MagicMock()
+        info.activity_type = "read_file"
+        info.activity_id = "1"
+        info.workflow_id = "wf-dedup-hook"
+        info.workflow_run_id = "run-1"
+        info.workflow_type = "W"
+        info.attempt = 1
+        info.is_local = False
+
+        inp = MagicMock()
+        inp.fn = lambda path: path
+        inp.args = ("/tmp/demo",)
+        inp.headers = payload_headers
+
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("temporalio.activity.info", return_value=info):
+                loop.run_until_complete(ai.execute_activity(inp))
+        finally:
+            loop.close()
+
+        assert len(dedup.calls) == 1
+        assert "wf-dedup-hook" in dedup.calls[0][0]
 
 
 # =============================================================================

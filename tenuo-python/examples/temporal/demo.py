@@ -2,23 +2,26 @@
 Tenuo-Temporal Integration Demo - Transparent Authorization
 
 Demonstrates TRANSPARENT warrant-based authorization for Temporal workflows.
-Authorization is completely invisible - just use standard Temporal APIs!
 
-Key features:
-  - ✨ NO special wrapper functions needed (workflow.execute_activity just works!)
-  - ✨ TenuoInterceptor handles PoP computation transparently
-  - ✨ Works with standard Temporal code - zero changes to workflows
-  - ✨ Parallel activities via asyncio.gather work perfectly
-  - EnvKeyResolver resolves signing keys from environment variables
-  - Full cryptographic chain-of-trust validation with PoP
+Two patterns are shown side-by-side:
 
-IMPORTANT - Do NOT call warrant.sign() directly in workflows:
-  ❌ BAD:  pop = warrant.sign(key, tool, args)  # Non-deterministic!
-  ✅ GOOD: await workflow.execute_activity(...)  # Interceptor handles it
+  Pattern A — Standard Temporal API (zero workflow changes):
+    workflow.execute_activity() works exactly as normal. The TenuoPlugin
+    intercepts each call, computes PoP inline with deterministic timing,
+    and injects warrant + signature into activity headers. No Tenuo imports
+    needed in the workflow.
 
-The TenuoInterceptor automatically computes PoP with deterministic timestamps
-(workflow.now()) to ensure replay safety. Manual sign() calls will use
-wall-clock time and cause replay failures.
+  Pattern B — AuthorizedWorkflow base class (recommended):
+    Extends AuthorizedWorkflow and uses self.execute_authorized_activity().
+    Validates warrant headers at workflow start (fail-fast), then signs
+    each activity via the same transparent PoP mechanism.
+
+Both patterns enforce the same warrant constraints — the choice is a matter
+of preference and how early you want a missing-warrant error to surface.
+
+IMPORTANT — Do NOT call warrant.sign() directly in workflows:
+  ❌ BAD:  pop = warrant.sign(key, tool, args, timestamp)  # Non-deterministic!
+  ✅ GOOD: await workflow.execute_activity(...)            # Interceptor handles it
 
 Requirements:
     pip install "tenuo[temporal]"
@@ -39,7 +42,7 @@ from pathlib import Path
 # Temporal imports
 try:
     from temporalio import activity, workflow
-    from temporalio.client import Client
+    from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
     from temporalio.worker import Worker
 except ImportError:
@@ -50,11 +53,12 @@ from tenuo_core import Subpath
 
 from tenuo import SigningKey, Warrant
 from tenuo.temporal import (
+    AuthorizedWorkflow,
     EnvKeyResolver,
     TemporalAuditEvent,
     TenuoClientInterceptor,
-    TenuoInterceptor,
-    TenuoInterceptorConfig,
+    TenuoPlugin,
+    TenuoPluginConfig,
     execute_workflow_authorized,
     tenuo_headers,
 )
@@ -76,40 +80,39 @@ logging.getLogger("temporalio.worker").setLevel(logging.ERROR)
 
 @activity.defn
 async def read_file(path: str) -> str:
-    """Read file — protected by Tenuo warrant."""
+    """Read file contents — protected by Tenuo warrant (read_file capability)."""
     return Path(path).read_text()
 
 
 @activity.defn
 async def write_file(path: str, content: str) -> str:
-    """Write file — protected by Tenuo warrant."""
+    """Write file — protected by Tenuo warrant (write_file capability)."""
     Path(path).write_text(content)
     return f"Wrote {len(content)} bytes to {path}"
 
 
 @activity.defn
 async def list_directory(path: str) -> list[str]:
-    """List directory — protected by Tenuo warrant."""
-    return [str(p) for p in Path(path).iterdir()]
+    """List directory — protected by Tenuo warrant (list_directory capability)."""
+    return sorted(str(p) for p in Path(path).iterdir() if p.is_file())
 
 
 # =============================================================================
-# Workflow — uses STANDARD Temporal API (authorization is transparent!)
+# Pattern A — Standard Temporal API (authorization is transparent)
 # =============================================================================
 
 @workflow.defn
 class ResearchWorkflow:
-    """Researches files within the scope authorized by its warrant.
+    """Lists and reads all .txt files in the warranted directory.
 
-    ✨ Notice: This is standard Temporal code! No Tenuo-specific functions.
-    The TenuoInterceptor transparently computes PoP for every activity.
+    Uses standard workflow.execute_activity() — no Tenuo imports needed.
+    The TenuoPlugin computes PoP transparently for every activity call.
     """
 
     @workflow.run
     async def run(self, data_dir: str) -> str:
         no_retry = RetryPolicy(maximum_attempts=1)
 
-        # ✨ Standard Temporal API - interceptor handles PoP transparently
         files = await workflow.execute_activity(
             list_directory,
             args=[data_dir],
@@ -120,7 +123,6 @@ class ResearchWorkflow:
         results = []
         for file_path in files:
             if file_path.endswith(".txt"):
-                # ✨ Again, standard API - no Tenuo imports needed!
                 content = await workflow.execute_activity(
                     read_file,
                     args=[file_path],
@@ -132,38 +134,52 @@ class ResearchWorkflow:
         return f"Processed {len(results)} files"
 
 
-@workflow.defn
-class ParallelResearchWorkflow:
-    """Reads multiple files in parallel — each gets its own PoP signature.
+# =============================================================================
+# Pattern B — AuthorizedWorkflow (recommended base class)
+# =============================================================================
 
-    ✨ Parallel activities just work! The interceptor computes PoP inline
-    for each activity call, so there's no queue races or signature collision.
+@workflow.defn
+class ProcessAndWriteWorkflow(AuthorizedWorkflow):
+    """Reads files and writes a summary — uses AuthorizedWorkflow base class.
+
+    AuthorizedWorkflow validates warrant headers at workflow start (fail-fast
+    if headers are missing) and provides self.execute_authorized_activity()
+    as a named alternative to workflow.execute_activity().
+
+    Both read_file and write_file capabilities must be in the warrant.
     """
 
     @workflow.run
-    async def run(self, data_dir: str) -> str:
+    async def run(self, data_dir: str, output_path: str) -> str:
         no_retry = RetryPolicy(maximum_attempts=1)
-        timeout = timedelta(seconds=30)
 
-        # ✨ Standard asyncio.gather with standard Temporal API
-        # Each interceptor call computes its own PoP - no shared state!
-        contents = await asyncio.gather(
-            workflow.execute_activity(
-                read_file, args=[f"{data_dir}/paper1.txt"],
-                start_to_close_timeout=timeout, retry_policy=no_retry,
-            ),
-            workflow.execute_activity(
-                read_file, args=[f"{data_dir}/paper2.txt"],
-                start_to_close_timeout=timeout, retry_policy=no_retry,
-            ),
-            workflow.execute_activity(
-                read_file, args=[f"{data_dir}/notes.txt"],
-                start_to_close_timeout=timeout, retry_policy=no_retry,
-            ),
+        files = await self.execute_authorized_activity(
+            list_directory,
+            args=[data_dir],
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=no_retry,
         )
 
-        total = sum(len(c) for c in contents)
-        return f"Parallel read {len(contents)} files ({total} chars)"
+        lines = []
+        for file_path in files:
+            if file_path.endswith(".txt"):
+                content = await self.execute_authorized_activity(
+                    read_file,
+                    args=[file_path],
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=no_retry,
+                )
+                lines.append(f"{Path(file_path).name}: {len(content)} chars")
+
+        summary = "\n".join(lines)
+        await self.execute_authorized_activity(
+            write_file,
+            args=[output_path, summary],
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=no_retry,
+        )
+
+        return f"Wrote summary of {len(lines)} files to {output_path}"
 
 
 # =============================================================================
@@ -182,7 +198,7 @@ def on_audit(event: TemporalAuditEvent):
 # =============================================================================
 
 async def main():
-    # --- Client setup (production TenuoClientInterceptor) ---
+    # --- Client setup ---
     client_interceptor = TenuoClientInterceptor()
     client = await Client.connect(
         "localhost:7233", interceptors=[client_interceptor],
@@ -198,11 +214,19 @@ async def main():
         agent_key.secret_key_bytes()
     ).decode()
 
-    # --- Mint warrant ---
+    # --- Demo data ---
+    demo_dir = Path("/tmp/tenuo-demo")
+    demo_dir.mkdir(exist_ok=True)
+    (demo_dir / "paper1.txt").write_text("Content of paper 1")
+    (demo_dir / "paper2.txt").write_text("Content of paper 2")
+    (demo_dir / "notes.txt").write_text("Research notes")
+
+    # --- Mint warrant: read + write + list scoped to demo_dir ---
     warrant = (
         Warrant.mint_builder()
         .holder(agent_key.public_key)
-        .capability("read_file", path=Subpath("/tmp/tenuo-demo"))
+        .capability("read_file",      path=Subpath("/tmp/tenuo-demo"))
+        .capability("write_file",     path=Subpath("/tmp/tenuo-demo"))
         .capability("list_directory", path=Subpath("/tmp/tenuo-demo"))
         .ttl(3600)
         .mint(control_key)
@@ -211,23 +235,15 @@ async def main():
     logger.info(f"  Tools:   {warrant.tools}")
     logger.info(f"  Expires: {warrant.expires_at()}")
 
-    # Unique task queue per run avoids interference from old Temporal tasks
     task_queue = f"tenuo-demo-{uuid.uuid4().hex[:8]}"
 
-    # --- Demo data ---
-    demo_dir = Path("/tmp/tenuo-demo")
-    demo_dir.mkdir(exist_ok=True)
-    (demo_dir / "paper1.txt").write_text("Content of paper 1")
-    (demo_dir / "paper2.txt").write_text("Content of paper 2")
-    (demo_dir / "notes.txt").write_text("Research notes")
-
-    # --- Worker setup with production TenuoInterceptor ---
+    # --- Worker setup ---
     # Pre-load keys to avoid os.environ access inside Temporal's workflow sandbox
     key_resolver = EnvKeyResolver()
-    key_resolver.preload_keys(["agent1"])  # Cache before workflow execution
+    key_resolver.preload_keys(["agent1"])
 
-    worker_interceptor = TenuoInterceptor(
-        TenuoInterceptorConfig(
+    worker_interceptor = TenuoPlugin(
+        TenuoPluginConfig(
             key_resolver=key_resolver,
             on_denial="raise",
             audit_callback=on_audit,
@@ -250,15 +266,15 @@ async def main():
     async with Worker(
         client,
         task_queue=task_queue,
-        workflows=[ResearchWorkflow, ParallelResearchWorkflow],
+        workflows=[ResearchWorkflow, ProcessAndWriteWorkflow],
         activities=[read_file, write_file, list_directory],
         interceptors=[worker_interceptor],
         workflow_runner=sandbox_runner,
     ):
         logger.info("Worker started\n")
 
-        # ── Authorized sequential access (recommended API) ────────
-        logger.info("=== Sequential access (path=/tmp/tenuo-demo) ===")
+        # ── Pattern A: Standard API, sequential read ─────────────────
+        logger.info("=== Pattern A: Standard API — sequential read ===")
         result = await execute_workflow_authorized(
             client=client,
             client_interceptor=client_interceptor,
@@ -271,33 +287,34 @@ async def main():
         )
         logger.info(f"Result: {result}\n")
 
-        # ── Parallel activity execution ──────────────────────────
-        logger.info("=== Parallel activities (asyncio.gather) ===")
-        parallel_id = f"parallel-{uuid.uuid4().hex[:8]}"
+        # ── Pattern B: AuthorizedWorkflow — read + write ──────────────
+        logger.info("=== Pattern B: AuthorizedWorkflow — read + write ===")
+        summary_path = str(demo_dir / "summary.txt")
+        process_id = f"process-{uuid.uuid4().hex[:8]}"
         client_interceptor.set_headers_for_workflow(
-            parallel_id,
+            process_id,
             tenuo_headers(warrant, "agent1"),
         )
         result = await client.execute_workflow(
-            ParallelResearchWorkflow.run,
-            args=[str(demo_dir)],
-            id=parallel_id,
+            ProcessAndWriteWorkflow.run,
+            args=[str(demo_dir), summary_path],
+            id=process_id,
             task_queue=task_queue,
         )
-        logger.info(f"Result: {result}\n")
+        logger.info(f"Result: {result}")
+        logger.info(f"Summary written: {Path(summary_path).read_text()!r}\n")
 
-        # ── Unauthorized access (path outside warrant scope) ─────
-        logger.info("=== Unauthorized access (path=/etc) ===")
+        # ── Unauthorized access: path outside warrant scope ───────────
+        logger.info("=== Unauthorized access (path=/etc — outside warrant scope) ===")
         unauth_id = f"unauth-{uuid.uuid4().hex[:8]}"
         client_interceptor.set_headers_for_workflow(
             unauth_id,
             tenuo_headers(warrant, "agent1"),
         )
         try:
-            from temporalio.client import WorkflowFailureError
             await client.execute_workflow(
                 ResearchWorkflow.run,
-                args=["/etc"],  # outside warrant scope
+                args=["/etc"],
                 id=unauth_id,
                 task_queue=task_queue,
             )

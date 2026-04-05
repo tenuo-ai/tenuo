@@ -46,8 +46,8 @@ from tenuo.temporal import (
     EnvKeyResolver,
     TemporalAuditEvent,
     TenuoClientInterceptor,
-    TenuoInterceptor,
-    TenuoInterceptorConfig,
+    TenuoPlugin,
+    TenuoPluginConfig,
     tenuo_execute_child_workflow,
     tenuo_headers,
 )
@@ -210,7 +210,8 @@ class OrchestratorWorkflow:
     async def run(self, source_dir: str, output_dir: str) -> str:
         # AUTHORIZATION DECISION: Grant reader child only read + list, 60-second TTL
         # tenuo_execute_child_workflow() reads the parent warrant from context,
-        # attenuates it to only these tools, and injects it into the child
+        # attenuates it to only these tools, and injects it into the child.
+        # task_queue is omitted — child inherits the parent's task queue.
         data = await tenuo_execute_child_workflow(
             ReaderChild.run,
             args=[source_dir],
@@ -297,8 +298,8 @@ async def main():
     key_resolver = EnvKeyResolver()
     key_resolver.preload_keys(["ingest", "transform"])
 
-    worker_interceptor = TenuoInterceptor(
-        TenuoInterceptorConfig(
+    worker_interceptor = TenuoPlugin(
+        TenuoPluginConfig(
             key_resolver=key_resolver,
             on_denial="raise",
             audit_callback=on_audit,
@@ -373,8 +374,10 @@ async def main():
                 task_queue=task_queue,
             )
             logger.error("  BUG: should have been denied")
-        except (WorkflowFailureError, Exception) as e:
-            logger.info(f"  Correctly denied: {type(e).__name__}")
+        except WorkflowFailureError as e:
+            logger.info(f"  Correctly denied: {e.cause}")
+        except Exception as e:
+            logger.info(f"  Correctly denied: {e}")
 
         logger.info("")
 
@@ -452,10 +455,10 @@ async def main():
                 task_queue=task_queue,
             )
             logger.error("  BUG: should have been denied")
-        except (WorkflowFailureError, Exception) as e:
-            logger.info(f"  Correctly denied: {type(e).__name__}")
-
-    # -- Verify output --
+        except WorkflowFailureError as e:
+            logger.info(f"  Correctly denied: {e.cause}")
+        except Exception as e:
+            logger.info(f"  Correctly denied: {e}")
     logger.info("\nOutput files (Pattern 1):")
     for p in sorted(output_dir.iterdir()):
         logger.info(f"  {p.name}: {p.read_text()!r}")
