@@ -191,12 +191,11 @@ jobs:
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system crewai || echo "Skipping crewai (requires Python 3.10+)"
           # MCP SDK requires Python 3.10+
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system mcp || echo "Skipping MCP (requires Python 3.10+)"
-          # Temporal SDK for live integration tests (Python 3.12+ to match dedicated job)
-          # Pin protobuf>=6.0 to avoid the temporalio 1.24.0 / Python 3.12 isinstance() bug
-          # that appears with protobuf 5.x: _payload_converter.py:438 raises
-          # "TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union".
-          # protobuf 6.x ships a compatible Message class. The temporal-integration job
-          # confirms this combination works (it installs protobuf==6.33.6 and passes).
+          # Temporal SDK for live integration tests (Python 3.12+ to match dedicated job).
+          # protobuf>=6.0 prevents a conflict with grpcio's bundled protobuf on Python 3.12+
+          # that causes _payload_converter.py:438 to raise TypeError on isinstance() checks.
+          # temporal_live tests are excluded from the matrix job (-m "not temporal_live")
+          # and run only in the dedicated temporal-integration job below.
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" && uv pip install --system "temporalio" "protobuf>=6.0" || echo "Skipping temporalio (testing on 3.12+)"
 
       - name: Verify import
@@ -216,7 +215,7 @@ jobs:
 
       - name: Test
         working-directory: tenuo-python
-        run: pytest -v
+        run: pytest -v -m "not temporal_live"
 
   # ============================================================================
   # TEMPORAL INTEGRATION (live Temporal server)
