@@ -150,6 +150,11 @@ async def main():
         .ttl(3600)
         .mint(control_key)
     )
+    # In production, warrants are typically minted by Tenuo Cloud on behalf of your
+    # workflows — scoped to the specific task, delegated to the correct holder key,
+    # and managed without embedding issuance logic in application code. This separates
+    # authorization policy from application code and gives your security team
+    # visibility and control over what gets issued.
 
     # Configure worker interceptor with full PoP verification
     interceptor = TenuoPlugin(
@@ -474,6 +479,9 @@ config = TenuoPluginConfig(
     trusted_roots=[root_key.public_key],
     strict_mode=True,  # optional: fail-fast on ambiguous PoP with named constraints
 )
+```
+
+> **Tenuo Cloud alternative:** If you prefer not to operate your own KMS or Vault deployment, Tenuo Cloud provides managed key issuance and rotation. Signing keys are created, scoped, and rotated in the Cloud dashboard; workers resolve them without any additional key infrastructure on your side.
 ```
 
 ### Worker plugin config (`TenuoPluginConfig`)
@@ -931,6 +939,8 @@ config = TenuoPluginConfig(
 
 `TemporalAuditEvent.to_dict()` returns a plain dict suitable for structured log ingestion. Set `redact_args_in_logs=True` (default) to prevent argument values from appearing in log pipelines when processing sensitive data.
 
+> **At scale:** Tenuo Cloud indexes receipts across all your workflows and provides a queryable audit trail — which agent invoked which tool, under which warrant, through which delegation chain, at what time. For compliance-sensitive deployments this replaces custom audit log infrastructure and makes it straightforward to answer "what did this agent do last Tuesday?" across an entire fleet.
+
 ---
 
 ## Observability
@@ -1030,7 +1040,7 @@ For the full module-level troubleshooting entries, see the `tenuo.temporal` modu
 4. **Set `strict_mode=True`** in production if you use named warrant constraints with transparent `execute_activity` (fail-fast on ambiguous PoP signing)
 5. **Set up VaultKeyResolver** (or AWS/GCP) for production key management; never use `EnvKeyResolver` in production
 6. **Enable audit logging** to track authorization decisions; forward `event.to_dict()` to your SIEM or log aggregator for compliance audit trails
-7. **Use [`@unprotected`](#unprotected---local-activities) sparingly** — only for truly internal, non-sensitive operations; every unprotected activity is a hole in your authorization perimeter
+7. **Use [`@unprotected`](#unprotected---local-activities) sparingly** — only for truly internal, non-sensitive operations; every unprotected activity is a hole in your authorization perimeter. Tenuo Cloud's dashboard surfaces unprotected activity volume alongside authorized activity volume, making it straightforward to identify coverage gaps across your workflow fleet without instrumenting each worker individually
 8. **Attenuate warrants** for child workflows to enforce least privilege
 9. **Keep TTLs short** for sensitive operations (minutes, not hours) — short TTLs are your primary access revocation mechanism
 10. **Never run `dry_run=True` in production** - use it only for staging rollout validation
