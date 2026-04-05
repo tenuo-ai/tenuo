@@ -25,6 +25,8 @@ Tenuo integrates with [Temporal](https://temporal.io) to bring warrant-based aut
 - **Secure key management**: Private keys NEVER transmitted in headers - resolved from Vault/KMS/Secret Manager
 - **Enterprise key resolvers**: `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, `GCPSecretManagerKeyResolver`, `CompositeKeyResolver`
 
+Temporal ensures your workflows survive failures. Tenuo ensures every activity your workflow dispatches is authorized against the warrant the issuer approved. Together they give you durable execution with cryptographic least privilege.
+
 ---
 
 ## Installation
@@ -632,6 +634,8 @@ pop_signature = warrant.sign(signing_key, "read_file", {"path": "/data/file.txt"
 
 This section states **what the Temporal integration assumes**, **what it protects against**, and **what remains your operational responsibility**. For the broader Tenuo security model, see [Security Model](./security.md).
 
+**Temporal's security vs. Tenuo's security.** Temporal Cloud provides infrastructure-level security: encrypted payloads, RBAC, namespace isolation, SOC 2. Tenuo operates at the authorization layer above that: each Activity is authorized against a cryptographically signed warrant before it executes, regardless of who has access to the Temporal cluster. The two are complementary — cluster access control and per-action authorization are different security properties. A Temporal namespace admin with full cluster access still cannot cause an activity to execute outside the warrant's constraints, because Tenuo's authorization check happens on the worker, not on the Temporal service.
+
 ### Trust boundaries
 
 | Component | Role in this integration |
@@ -1035,6 +1039,18 @@ await client.execute_workflow(TransformWorkflow.run, id="transform-run-001", ...
 
 ## Comparison with Other Integrations
 
+Temporal, Tenuo, and observability tools operate at different layers of an agentic system — none substitutes for the other.
+
+| Layer | What it solves | Provided by |
+|-------|----------------|-------------|
+| **Execution reliability** | Retries, state persistence, fault tolerance, replay | Temporal |
+| **Agent authorization** | What each agent may do, with what arguments, under whose delegation | Tenuo |
+| **Observability** | Tracing, evals, audit logs | OpenTelemetry / Braintrust |
+
+Temporal makes agentic workflows durable. Tenuo makes them authorized. This integration connects the two so that durability and authorization are enforced together, at every activity boundary, without changes to your workflow code.
+
+For reference, Tenuo's authorization model across integrations:
+
 | Integration | Use Case | Durable | PoP | Delegation |
 |-------------|----------|---------|-----|------------|
 | **OpenAI** | Streaming agents | No | Optional | No |
@@ -1042,7 +1058,7 @@ await client.execute_workflow(TransformWorkflow.run, id="transform-run-001", ...
 | **CrewAI** | Multi-agent crews | No | Yes (Tier 2) | Yes |
 | **Temporal** | Long-running workflows | Yes | Mandatory | Yes |
 
-Temporal integration is designed for workflows that may run for hours or days, with full replay support and durable state.
+The Temporal integration is the only path where PoP is mandatory — because durable workflows have the strongest threat model (history replay, distributed execution, long-lived warrant exposure).
 
 ---
 
