@@ -636,6 +636,10 @@ This section states **what the Temporal integration assumes**, **what it protect
 
 **Temporal's security vs. Tenuo's security.** Temporal Cloud provides infrastructure-level security: encrypted payloads, RBAC, namespace isolation, SOC 2. Tenuo operates at the authorization layer above that: each Activity is authorized against a cryptographically signed warrant before it executes, regardless of who has access to the Temporal cluster. The two are complementary — cluster access control and per-action authorization are different security properties. A Temporal namespace admin with full cluster access still cannot cause an activity to execute outside the warrant's constraints, because Tenuo's authorization check happens on the worker, not on the Temporal service.
 
+**In-process enforcement — no runtime service dependency.** Tenuo's authorization runs entirely within your worker process using `tenuo_core`, a compiled Rust library. There is no Tenuo SaaS call, no external auth service, no network round-trip at enforcement time. The warrant is verified cryptographically in-process using Ed25519 (FIPS 186-4 compatible). This means Tenuo adds no external dependency to your critical path — if Tenuo's distribution infrastructure were unreachable, workers already running with the compiled extension continue to enforce authorization normally.
+
+**Private key data residency.** Private signing keys never leave your infrastructure. `KeyResolver` fetches them from your Vault, AWS Secrets Manager, or GCP Secret Manager on your own network at signing time. No private key material is transmitted to the Temporal cluster or any Tenuo endpoint.
+
 ### Trust boundaries
 
 | Component | Role in this integration |
@@ -688,6 +692,18 @@ Static **`trusted_roots`** require a **rolling restart** (or redeploy) to pick u
 - **Malicious workflow code** in your repository — Tenuo constrains what **activities** run under a warrant; it does not sandbox arbitrary Python in your own workflow logic beyond Temporal’s sandbox rules.
 - **`dry_run=True`** — **Disables enforcement** for staging only; never use in production.
 - **Local activities** — Bypass the activity interceptor unless the function is marked **[`@unprotected`](#unprotected---local-activities)** (which declares explicitly that no warrant is required for that activity) and **`block_local_activities`** allows the path you intend.
+
+### Access revocation and incident response
+
+When a warrant or signing key is suspected compromised, the revocation path does not require a full redeployment:
+
+| Mechanism | Latency | How |
+|-----------|---------|-----|
+| **Warrant TTL expiry** | Passive — warrant stops being accepted at expiry | Mint short-lived warrants (minutes for sensitive operations, hours for low-risk) |
+| **Remove trusted root** | Next `trusted_roots_provider` refresh interval (e.g. 30–60s) | Remove the compromised issuer key from the provider's output; all warrants issued by that root are rejected on the next Authorizer rebuild — no worker restart |
+| **Revoke holder key** | Immediate on next warrant check | Remove the key from the `KeyResolver` backend; the next `resolve(key_id)` call fails, blocking PoP computation on the outbound interceptor |
+
+For the fastest response, use `trusted_roots_provider` with a short `trusted_roots_refresh_interval_secs` (e.g. 30 seconds). A compromised issuer key can be removed from your key store and propagated to all workers within one refresh interval — no rolling restart needed.
 
 ### Fail-closed defaults (summary)
 
@@ -835,12 +851,24 @@ class MyWorkflow(AuthorizedWorkflow):
 
 ## Audit Events
 
-Subscribe to authorization decisions:
+Every authorization decision emits a structured `TemporalAuditEvent` with full context. This provides the per-action audit trail required by SOC 2 CC6.8 (logging of logical access to systems), PCI DSS Requirement 10.2 (audit trail for privileged access), and HIPAA §164.312(b) (audit controls for PHI access).
+
+Each event captures:
+- **Who**: `warrant_id`, `workflow_id`, `workflow_run_id` — identifies the agent and the specific execution
+- **What**: `tool`, `arguments` (redacted by default), `warrant_capabilities` — the specific action and scope
+- **When**: `timestamp` (UTC)
+- **Decision**: `ALLOW` or `DENY`, with `denial_reason` and `constraint_violated` for denials
+- **Context**: `workflow_type`, `activity_id`, `task_queue`, `tenuo_version`
 
 ```python
 from tenuo.temporal import TemporalAuditEvent
 
 def on_audit(event: TemporalAuditEvent):
+    # Structured logging — forward to Splunk, Datadog, CloudWatch, etc.
+    record = event.to_dict()
+    audit_logger.info(record)
+
+    # Or handle allow/deny separately
     if event.decision == "ALLOW":
         logger.info(
             f"Allowed: {event.tool} in {event.workflow_type} "
@@ -856,10 +884,13 @@ config = TenuoPluginConfig(
     key_resolver=resolver,
     trusted_roots=[issuer_public_key],
     audit_callback=on_audit,
-    audit_allow=True,   # Log allowed actions
+    audit_allow=True,   # Log allowed actions (recommended for compliance)
     audit_deny=True,    # Log denied actions
+    redact_args_in_logs=True,  # Replace argument values with "[REDACTED]" in logs
 )
 ```
+
+`TemporalAuditEvent.to_dict()` returns a plain dict suitable for structured log ingestion. Set `redact_args_in_logs=True` (default) to prevent argument values from appearing in log pipelines when processing sensitive data.
 
 ---
 
@@ -958,11 +989,13 @@ For the full module-level troubleshooting entries, see the `tenuo.temporal` modu
 3. **Always configure passthrough modules** (`tenuo`, `tenuo_core`) in the workflow sandbox
 4. **Set `strict_mode=True`** in production if you use named warrant constraints with transparent `execute_activity` (fail-fast on ambiguous PoP signing)
 5. **Set up VaultKeyResolver** (or AWS/GCP) for production key management; never use `EnvKeyResolver` in production
-6. **Enable audit logging** to track authorization decisions
+6. **Enable audit logging** to track authorization decisions; forward `event.to_dict()` to your SIEM or log aggregator for compliance audit trails
 7. **Use [`@unprotected`](#unprotected---local-activities) sparingly** — only for truly internal, non-sensitive operations; every unprotected activity is a hole in your authorization perimeter
 8. **Attenuate warrants** for child workflows to enforce least privilege
-9. **Keep TTLs short** for sensitive operations (minutes, not hours)
+9. **Keep TTLs short** for sensitive operations (minutes, not hours) — short TTLs are your primary access revocation mechanism
 10. **Never run `dry_run=True` in production** - use it only for staging rollout validation
+11. **Multi-tenant worker fleets** — create one `TenuoPluginConfig` per tenant task queue with that tenant's `trusted_roots`. Each config produces a separate `Authorizer` instance; warrants from one tenant's issuer are cryptographically rejected by another tenant's worker even if both run on the same machine
+12. **Use `trusted_roots_provider` + short `trusted_roots_refresh_interval_secs`** (e.g. 30s) in production — enables sub-minute access revocation without rolling restarts when a key or issuer is compromised
 
 ---
 
