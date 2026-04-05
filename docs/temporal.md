@@ -217,7 +217,7 @@ sequenceDiagram
     WW->>AW: activity headers (warrant + PoP)
     Note over AW: verify warrant chain → trusted_roots
     Note over AW: verify PoP signature + constraints
-    AW->>AW: execute activity ✓
+    AW->>AW: execute activity (authorized)
 ```
 
 The signing key is resolved on the **worker** and never leaves it. PoP is computed at **schedule time** (binding exact tool and args), then verified on the **activity worker** before execution.
@@ -570,8 +570,8 @@ Temporal's Python SDK re-imports all workflow code in an isolated sandbox on eve
 
 | Step | Result |
 |------|--------|
-| Worker starts and connects | ✅ No error |
-| First workflow task executes | ❌ `ImportError: PyO3 modules may only be initialized once per interpreter process` |
+| Worker starts and connects | No error |
+| First workflow task executes | **Fails:** `ImportError: PyO3 modules may only be initialized once per interpreter process` |
 | Subsequent workflow tasks | All fail identically |
 | Activities | Never scheduled: workflow tasks fail before `execute_activity()` is reached |
 
