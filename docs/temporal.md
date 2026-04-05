@@ -708,6 +708,7 @@ This is intentional fail-closed behaviour: the PoP window ensures replayed signa
 | Short retries (< 60s backoff) | Default config works — no action needed |
 | Long retries (minutes to hours) | Set `TenuoPluginConfig.retry_pop_max_windows` (e.g. `120` for up to 1 hour) |
 | Unbounded retries / very long backoffs | Structure as child workflows so each retry dispatch generates a fresh PoP |
+| **Durable workflows (hours/days)** | **Warrant TTL = workflow duration + `retry_pop_max_windows` = max backoff interval only + control plane auto-revocation on completion** |
 
 ```python
 config = TenuoPluginConfig(
@@ -722,6 +723,14 @@ When `retry_pop_max_windows` is not set and a retry arrives, the interceptor log
 Activity '...' is a retry (attempt=2). If this fails with PopVerificationError,
 set TenuoPluginConfig.retry_pop_max_windows to accommodate Temporal's retry time offset.
 ```
+
+**For truly durable workflows (hours or days), use warrant TTL as the primary time boundary.** The PoP time-window is a short-term replay guard; for long-running pipelines the correct security scope is the warrant lifetime:
+
+1. Mint a warrant whose TTL matches the expected workflow duration (e.g. `.ttl(14400)` for a 4-hour pipeline).
+2. Set `retry_pop_max_windows` large enough to cover only the **maximum Temporal retry backoff interval** — not the total run duration. If max backoff is 10 minutes, `retry_pop_max_windows=20`. The PoP being hours old is fine because the warrant's expiry is the meaningful time boundary.
+3. **Auto-revoke on completion** via the control plane: when the workflow finishes (success or failure), remove the issuer key from the `trusted_roots_provider` output. Within one refresh interval (~30–60s), the Authorizer on every worker rejects all warrants from that issuer — even if the warrant's TTL hasn't technically elapsed. This closes the window where a captured credential could be replayed against a workflow that already completed.
+
+This pattern — long-lived warrant, interval-only retry window, control-plane-driven revocation — is the production-grade model for durable agentic workflows. It keeps the security guarantee on the warrant's authorization scope while removing the operational friction of managing PoP timing across multi-hour executions.
 
 ### Access revocation and incident response
 
