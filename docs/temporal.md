@@ -687,11 +687,41 @@ Static **`trusted_roots`** require a **rolling restart** (or redeploy) to pick u
 
 ### Threat model: out of scope or requires broader controls
 
-- **Compromised Temporal service or namespace admin** scheduling arbitrary tasks — address with Temporal security, not Tenuo alone.
+- **Compromised Temporal service or namespace admin** scheduling arbitrary tasks — address with Temporal security, not Tenuo alone. Note: the `activity_id` included in PoP dedup keys is *not* part of the signed PoP CBOR challenge (which only covers `warrant_id`, `tool`, `sorted_args`, and `window_ts`). An attacker with direct gRPC access to the Temporal server could randomize `activity_id` to bypass per-key dedup and replay a captured PoP within the time window. This requires bypassing Temporal’s own mTLS and RBAC — treat Temporal as a trusted boundary and enforce standard cluster access hardening. Dedup is defense-in-depth within that boundary, not a primary control against crafted tasks.
 - **Compromised worker host** with access to **`KeyResolver`** secrets — can sign valid PoP for those keys; use HSM/KMS, minimal identity, and hardening as for any secret-bearing workload.
 - **Malicious workflow code** in your repository — Tenuo constrains what **activities** run under a warrant; it does not sandbox arbitrary Python in your own workflow logic beyond Temporal’s sandbox rules.
 - **`dry_run=True`** — **Disables enforcement** for staging only; never use in production.
 - **Local activities** — Bypass the activity interceptor unless the function is marked **[`@unprotected`](#unprotected---local-activities)** (which declares explicitly that no warrant is required for that activity) and **`block_local_activities`** allows the path you intend.
+
+### Temporal activity retries and PoP time-drift
+
+**This is an important operational consideration for workflows with long retry windows.**
+
+PoP is signed at `workflow.now()` when the activity is first scheduled. When Temporal retries an activity, it reuses headers from the original `ACTIVITY_TASK_SCHEDULED` history event — the workflow outbound interceptor is **not** re-invoked. With the default `pop_max_windows=5` and `pop_window_secs=30`, the effective verification window is ±60 seconds. An activity retried more than ~90 seconds after its first scheduling will fail PoP verification.
+
+This is intentional fail-closed behaviour: the PoP window ensures replayed signatures cannot be accepted indefinitely. The trade-off: workflows with `RetryPolicy(maximum_attempts=10)` and multi-minute backoffs will hit this limit.
+
+**Solutions by use case:**
+
+| Retry pattern | Recommended approach |
+|---------------|---------------------|
+| Short retries (< 60s backoff) | Default config works — no action needed |
+| Long retries (minutes to hours) | Set `TenuoPluginConfig.retry_pop_max_windows` (e.g. `120` for up to 1 hour) |
+| Unbounded retries / very long backoffs | Structure as child workflows so each retry dispatch generates a fresh PoP |
+
+```python
+config = TenuoPluginConfig(
+    key_resolver=resolver,
+    trusted_roots=[issuer_public_key],
+    retry_pop_max_windows=120,   # 120 × 30s = 3600s — covers up to 1 hour of retries
+)
+```
+
+When `retry_pop_max_windows` is not set and a retry arrives, the interceptor logs a `DEBUG` advisory:
+```
+Activity '...' is a retry (attempt=2). If this fails with PopVerificationError,
+set TenuoPluginConfig.retry_pop_max_windows to accommodate Temporal's retry time offset.
+```
 
 ### Access revocation and incident response
 
@@ -975,6 +1005,7 @@ For the full module-level troubleshooting entries, see the `tenuo.temporal` modu
 | `KeyResolutionError: Cannot resolve key: <id>` | Signing key not found by `KeyResolver` | For `EnvKeyResolver`: check `TENUO_KEY_<key_id>` is set and is a valid base64-encoded key. For cloud resolvers: check secret name, permissions, and region |
 | `TemporalConstraintViolation: No warrant provided` | `TenuoClientInterceptor` not in the client's interceptor list, or headers cleared before workflow start | Verify `client_interceptor` is passed to `Client.connect(interceptors=[...])` and headers are set before the workflow starts |
 | `PopVerificationError: replay detected` | Same activity attempt reached multiple workers (in-memory dedup does not span pods) | Expected in multi-replica deployments without a shared `PopDedupStore`. Configure `pop_dedup_store=<redis-backed impl>` on `TenuoPluginConfig` for fleet-wide suppression |
+| `PopVerificationError` on a Temporal **retry** (attempt ≥ 2) | PoP timestamp stale — Temporal reuses original `ACTIVITY_TASK_SCHEDULED` headers; outbound interceptor not re-invoked on retry | Set `TenuoPluginConfig.retry_pop_max_windows` (e.g. `120` for 1-hour retry window). See [Temporal activity retries and PoP time-drift](#temporal-activity-retries-and-pop-time-drift) |
 | Warning: `PoP signing … positional argument keys (arg0, …)` | Warrant uses named field constraints but the activity function reference is unavailable to the outbound interceptor | Add `activity_fns=[my_activity, ...]` to `TenuoPluginConfig` (same list as `Worker(activities=...)`), or call the activity via `tenuo_execute_activity()` |
 | `TenuoContextError` raised instead of the above warning | `strict_mode=True` is set | Same fix as above; `strict_mode` converts the warning into a hard error for production correctness |
 | `WarrantExpired` | Warrant TTL elapsed before or during workflow execution | Mint a new warrant with a longer `ttl()`, or refresh the warrant at workflow start |

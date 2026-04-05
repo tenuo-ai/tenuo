@@ -1443,6 +1443,35 @@ class TenuoPluginConfig:
     for Temporal workers regardless of this flag; see ``trusted_roots``.
     """
 
+    retry_pop_max_windows: Optional[int] = None
+    """
+    PoP time-window count to use for Temporal activity **retries** (attempt > 1).
+
+    **Background:** PoP is signed at workflow schedule time using
+    ``workflow.now()`` (deterministic replay clock). When Temporal retries an
+    activity, it reuses the headers from the original scheduling event in
+    workflow history — it does **not** re-invoke the outbound interceptor.
+    With the default ``pop_max_windows=5`` (±60 s), an activity retried more
+    than ~90 s after its first scheduling will fail PoP verification.
+
+    Set this to accommodate your longest expected retry window:
+
+        # 120 × 30 s = 3600 s — covers up to 1 hour of Temporal retries
+        retry_pop_max_windows=120
+
+        # 480 × 30 s = 14400 s — covers up to 4 hours
+        retry_pop_max_windows=480
+
+    **Security trade-off:** A wider window means a captured PoP is valid for
+    longer on retried tasks (already a lesser concern since dedup is also
+    skipped for attempt > 1).  For most deployments the correct value is
+    ``ceil(max_retry_window_seconds / 30)``.
+
+    ``None`` (default) uses the same strict window for all attempts, which
+    preserves the tightest security guarantee but may cause retry failures for
+    long-running workflows.
+    """
+
     def __post_init__(self) -> None:
         if self.dry_run:
             logger.warning(
@@ -3279,9 +3308,15 @@ class TenuoActivityInboundInterceptor:
         self._last_trusted_roots_refresh = _time.monotonic()
         self._authorizer_lock = threading.Lock()
         self._authorizer: Optional[Any] = None
+        self._retry_authorizer: Optional[Any] = None
         try:
             from tenuo_core import Authorizer
             self._authorizer = Authorizer(trusted_roots=config.trusted_roots)
+            if config.retry_pop_max_windows is not None:
+                self._retry_authorizer = Authorizer(
+                    trusted_roots=config.trusted_roots,
+                    pop_max_windows=config.retry_pop_max_windows,
+                )
         except ImportError as e:
             from tenuo.exceptions import ConfigurationError
             raise ConfigurationError(
@@ -3320,6 +3355,11 @@ class TenuoActivityInboundInterceptor:
                 from tenuo_core import Authorizer
 
                 self._authorizer = Authorizer(trusted_roots=roots)
+                if self._config.retry_pop_max_windows is not None:
+                    self._retry_authorizer = Authorizer(
+                        trusted_roots=roots,
+                        pop_max_windows=self._config.retry_pop_max_windows,
+                    )
             except Exception as e:
                 logger.warning(
                     "Authorizer rebuild failed during trusted root refresh: %s", e
@@ -3476,7 +3516,24 @@ class TenuoActivityInboundInterceptor:
         try:
             from tenuo_core import decode_warrant_stack_base64 as _decode_stack
 
-            authorizer = self._authorizer
+            # On Temporal retries (attempt > 1), headers are reused from the
+            # original ACTIVITY_TASK_SCHEDULED history event — the outbound
+            # workflow interceptor is NOT re-invoked.  The PoP timestamp
+            # (workflow.now() at first scheduling) therefore becomes stale.
+            # With the default pop_max_windows=5 (±60s), any retry happening
+            # more than ~90s after first scheduling will fail PoP verification.
+            # Use a retry-specific Authorizer with a wider window if configured.
+            if info.attempt > 1 and self._retry_authorizer is not None:
+                authorizer = self._retry_authorizer
+            else:
+                if info.attempt > 1:
+                    logger.debug(
+                        "Activity '%s' is a retry (attempt=%d). If this fails with "
+                        "PopVerificationError, set TenuoPluginConfig.retry_pop_max_windows "
+                        "to accommodate Temporal's retry time offset (e.g. 120 for 1 hour).",
+                        tool_name, info.attempt,
+                    )
+                authorizer = self._authorizer
 
             # Extract PoP signature (base64-encoded in headers)
             pop_bytes = None
