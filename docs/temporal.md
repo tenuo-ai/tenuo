@@ -43,20 +43,17 @@ Requires a Temporal cluster (local `temporal server start-dev` or production).
 
 ---
 
-## Path to production
+## Runnable examples
 
-Use this as a checklist when leaving the dev examples behind:
+These scripts under [`tenuo-python/examples/temporal/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal) are the fastest path from “I get the model” to a working worker + client. Run `temporal server start-dev` in one terminal, then `cd tenuo-python/examples/temporal` and run the Python file in another (see the [examples README](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/temporal/README.md) for prerequisites such as `boto3` or `tenuo[temporal,mcp]`).
 
-1. **Issuer and holder keys**: issuer (`control_key`) only mints warrants; holder key lives behind a production [`KeyResolver`](#key-management-required) (Vault, AWS, or GCP), not `EnvKeyResolver`.
-2. **Preload for env-based dev**: if you still use `EnvKeyResolver` in a lower environment, call [`preload_keys`](#development-environment-variables) before `Worker(...)` so the workflow sandbox can resolve keys without reading `os.environ`.
-3. **Sandbox**: [`with_passthrough_modules("tenuo", "tenuo_core")`](#sandbox-passthrough-explained) on every workflow worker.
-4. **Named constraints**: set [`activity_fns`](#activity-registry-activity_fns-and-pop-argument-names) to the same callables as `Worker(activities=[...])`, or use `tenuo_execute_activity()`, whenever the warrant constrains fields like `path=` or `bucket=`.
-5. **Start workflows**: prefer [`execute_workflow_authorized(...)`](#recommended-default-execute_workflow_authorized) so headers are bound to `workflow_id` under concurrency.
-6. **Child workflows**: only [`tenuo_execute_child_workflow()`](#child-workflow-delegation); never raw `workflow.execute_child_workflow()` for authorized children.
-7. **Scale**: shared [`PopDedupStore`](#pop-replay-protection) if multiple replicas can see the same first activity attempt; set [`retry_pop_max_windows`](#temporal-activity-retries-and-pop-time-drift) if retries stretch beyond the default PoP window.
-8. **Roots**: [`trusted_roots_provider`](#threat-model-trusted-root-rotation) with a short refresh interval for fast issuer rotation without redeploying every pod.
-
-Then walk [Onboarding checklist](#onboarding-checklist) once for your repo.
+| Example | What it shows |
+|---------|----------------|
+| [`demo.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/demo.py) | **Start here.** Transparent `workflow.execute_activity()` and `AuthorizedWorkflow` / `execute_authorized_activity()` in one place |
+| [`cloud_iam_layering.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/cloud_iam_layering.py) | **IAM layering:** broad S3 IAM on the worker, per-tenant warrants on key prefixes, cross-tenant denial with the same role |
+| [`multi_warrant.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/multi_warrant.py) | **Multi-tenant isolation:** identical workflow code, different warrants per tenant |
+| [`delegation.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/delegation.py) | **Pipeline stages:** least-privilege warrants per stage |
+| [`temporal_mcp_layering.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/temporal_mcp_layering.py) | **Temporal + MCP:** activity uses `SecureMCPClient` (stdio); `MCPVerifier` on [`temporal_mcp_server.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/temporal/temporal_mcp_server.py). Requires Python 3.10+ and `uv pip install "tenuo[temporal,mcp]"` |
 
 ---
 
@@ -115,7 +112,7 @@ Follow this order the first time you integrate Tenuo with Temporal. The **Quick 
 
 8. **Client**: Attach `TenuoClientInterceptor` to `Client.connect(..., interceptors=[...])`. Bind headers before start with **`execute_workflow_authorized(...)`** (best under concurrency) or `set_headers_for_workflow(workflow_id, tenuo_headers(warrant, key_id))` then `execute_workflow`.
 
-9. **Run the sample**: From the repo: `cd tenuo-python/examples/temporal && python demo.py` (Temporal in another terminal). Then try `cloud_iam_layering.py`, `multi_warrant.py`, `delegation.py`, and optionally `temporal_mcp_layering.py` (Python 3.10+, `tenuo[temporal,mcp]`).
+9. **Run the samples**: See the [Runnable examples](#runnable-examples) table (`demo.py` first, then `cloud_iam_layering.py`, `multi_warrant.py`, `delegation.py`, and optionally `temporal_mcp_layering.py`).
 
 10. **Verify with tests**: Without a Temporal server: `cd tenuo-python && pytest tests/e2e/test_temporal_e2e.py`. With the in-process Temporal test server (CI-style): `pytest tests/e2e/test_temporal_live.py tests/e2e/test_temporal_replay.py -m temporal_live` (see the `temporal-integration` job in `.github/workflows/ci.yml`).
 
@@ -292,7 +289,24 @@ This works in both single-process demos and distributed deployments where client
 > ImportError: PyO3 modules may only be initialized once per interpreter process
 > ```
 >
-> **Why this is necessary:** Unlike OTel's `TracingInterceptor` (pure Python), Tenuo computes the Proof-of-Possession signature *inside the workflow sandbox* at `execute_activity()` dispatch time. This commits the exact tool name and arguments the workflow authorised; moving signing outside the sandbox would eliminate this guarantee. `tenuo_core` is a PyO3 Rust extension that cannot be re-imported in a sub-interpreter, so both modules must be declared passthrough. See [Sandbox passthrough explained](#sandbox-passthrough-explained) for the full failure sequence and diagnostic steps.
+> **Why this is necessary:** In Temporal’s Python SDK today, OpenTelemetry’s `TracingInterceptor` is **pure Python** and does **not** need workflow sandbox passthrough. Tenuo is different: it computes the Proof-of-Possession signature *inside the workflow sandbox* at `execute_activity()` dispatch time so the exact tool name and arguments are committed at dispatch. Moving signing outside the sandbox would break that guarantee. `tenuo_core` is a PyO3 Rust extension that cannot be re-imported in a sub-interpreter, so both `tenuo` and `tenuo_core` must be declared passthrough. (If OTel’s interceptor ever pulled native code into the sandbox, the same passthrough consideration would apply—today it does not.) See [Sandbox passthrough explained](#sandbox-passthrough-explained) for the full failure sequence and diagnostic steps.
+
+---
+
+## Path to production
+
+Checklist for moving past local demos (each item stands alone; links go deeper):
+
+1. **Issuer vs holder keys** — Issuer (`control_key`) only mints warrants; the holder key is resolved on the worker via a production [`KeyResolver`](#key-management-required) (Vault, AWS Secrets Manager, or GCP Secret Manager), not [`EnvKeyResolver`](#development-environment-variables).
+2. **Preload if you still use env keys in lower envs** — Call [`preload_keys`](#development-environment-variables) with every holder `key_id` **before** `Worker(...)`, because PoP signing runs in the workflow sandbox where `os.environ` is unavailable for non-determinism reasons.
+3. **Sandbox passthrough** — Every workflow worker must use `SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")` so PyO3 can load once; without it, workflow tasks fail with `ImportError: PyO3 modules may only be initialized once...` ([details](#sandbox-passthrough-explained)).
+4. **Named argument constraints** — If the warrant constrains fields like `path=` or `bucket=`, set [`activity_fns`](#activity-registry-activity_fns-and-pop-argument-names) to the **same** callables as `Worker(activities=[...])`, or use `tenuo_execute_activity()`, so PoP can name arguments correctly.
+5. **Starting workflows under concurrency** — Prefer [`execute_workflow_authorized(...)`](#recommended-default-execute_workflow_authorized) so Tenuo headers are bound to `workflow_id` and are not mixed across parallel starts.
+6. **Authorized child workflows** — Use only [`tenuo_execute_child_workflow()`](#child-workflow-delegation); the stock `workflow.execute_child_workflow()` does not propagate warrant headers.
+7. **Replicas and PoP replay** — If more than one worker replica can observe the same first activity attempt, use a shared [`PopDedupStore`](#pop-replay-protection); if Temporal retries span longer than your PoP time window, tune [`retry_pop_max_windows`](#temporal-activity-retries-and-pop-time-drift).
+8. **Issuer rotation without full redeploy** — Use a [`trusted_roots_provider`](#threat-model-trusted-root-rotation) with a short refresh interval so new issuer keys propagate quickly.
+
+Then walk the [Onboarding checklist](#onboarding-checklist) once for your repo.
 
 ---
 
@@ -448,7 +462,8 @@ gcloud secrets create tenuo-keys-agent-2024 \
 from tenuo.temporal import EnvKeyResolver
 
 # DEVELOPMENT ONLY - DO NOT USE IN PRODUCTION
-# A WARNING is emitted at first key resolution unless TENUO_ENV=development.
+# A one-time WARNING is emitted at first key resolution unless TENUO_ENV looks like a dev
+# environment (see below).
 resolver = EnvKeyResolver(
     prefix="TENUO_KEY_",
     warn_in_production=True,  # Default; set False to suppress explicitly
@@ -465,8 +480,14 @@ Set environment variable:
 ```bash
 # Export base64-encoded signing key
 export TENUO_KEY_agent1=$(cat signing_key.bin | base64)
-# Suppress the production warning in local dev:
+# Suppress the production warning in local dev (any of: development, dev, test, testing, local):
 export TENUO_ENV=development
+```
+
+**What the warning looks like:** On first `resolve()` when `warn_in_production=True` (default) and `TENUO_ENV` is not one of the dev values above, the worker logs (Python `WARNING`, logger name from `tenuo.temporal`):
+
+```text
+EnvKeyResolver is designed for development and testing only. In production, use VaultKeyResolver, AWSSecretsManagerKeyResolver, or GCPSecretManagerKeyResolver to fetch keys from secure storage. Set TENUO_ENV=development to suppress this warning in local environments.
 ```
 
 Before starting a worker that runs workflows with Tenuo, call `resolver.preload_keys([...])` with the same `key_id` values you pass to `tenuo_headers(...)` / `execute_workflow_authorized(..., key_id=...)`. That loads `TENUO_KEY_*` into an in-process cache so the sandbox can resolve holder keys without touching the environment.
@@ -1166,15 +1187,9 @@ Together these cover protocol-level behavior and worker/client integration witho
 
 ## Examples
 
-| Example | Description |
-|---------|-------------|
-| [`demo.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/demo.py) | **Recommended starting point.** Includes transparent `workflow.execute_activity()` and `AuthorizedWorkflow` patterns |
-| [`cloud_iam_layering.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/cloud_iam_layering.py) | **IAM layering.** Worker has full IAM access to an S3 bucket; per-tenant warrants restrict key prefixes. Includes cross-tenant denial (one tenant’s warrant cannot read another’s prefix) with the same IAM role |
-| [`multi_warrant.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/multi_warrant.py) | Multi-tenant isolation: separate warrants per workflow |
-| [`delegation.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/delegation.py) | Per-stage pipeline authorization with least-privilege warrants |
-| [`temporal_mcp_layering.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/temporal_mcp_layering.py) | **Temporal + MCP.** Activity uses `SecureMCPClient` (stdio); `TenuoPlugin` verifies Temporal headers, `MCPVerifier` on `temporal_mcp_server.py` verifies `params._meta.tenuo`. Requires Python 3.10+ and `tenuo[mcp]` |
+The runnable scripts are summarized in the [Runnable examples](#runnable-examples) table near the top of this page.
 
-### Per-Stage Pipeline (from delegation.py)
+### Per-stage pipeline (from `delegation.py`)
 
 Each pipeline stage gets its own tightly-scoped warrant:
 
