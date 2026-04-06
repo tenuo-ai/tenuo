@@ -202,9 +202,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("tenuo.temporal")
 
+_TemporalClientInterceptor: Any
+_TemporalWorkerInterceptor: Any
 try:
-    from temporalio.client import Interceptor as _TemporalClientInterceptor
-    from temporalio.worker import Interceptor as _TemporalWorkerInterceptor
+    from temporalio.client import Interceptor as _tc_interceptor
+    from temporalio.worker import Interceptor as _tw_interceptor
+
+    _TemporalClientInterceptor = _tc_interceptor
+    _TemporalWorkerInterceptor = _tw_interceptor
 except ImportError:  # pragma: no cover
     _TemporalClientInterceptor = object
     _TemporalWorkerInterceptor = object
@@ -1671,7 +1676,8 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
 
     # --- Temporal client interceptor interface ---
 
-    def intercept_client(self, next_interceptor: Any) -> "_TenuoClientOutbound":
+    def intercept_client(self, next_interceptor: Any) -> Any:
+        """Return outbound wrapper; duck-types as ``OutboundInterceptor`` via delegation."""
         return _TenuoClientOutbound(next_interceptor, self)
 
 
@@ -3282,8 +3288,8 @@ class TenuoPlugin(_TemporalWorkerInterceptor):
     def intercept_activity(
         self,
         next_interceptor: Any,  # ActivityInboundInterceptor
-    ) -> "TenuoActivityInboundInterceptor":
-        """Return activity interceptor that wraps the next one."""
+    ) -> Any:
+        """Return activity inbound wrapper; duck-types as ``ActivityInboundInterceptor``."""
         return TenuoActivityInboundInterceptor(
             next_interceptor,
             self._config,
