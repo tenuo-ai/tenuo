@@ -149,7 +149,7 @@ clap = { version = "4.6", features = ["derive", "env"] }
 hex = "0.4"
 pem = "3.0"
 pkcs8 = { version = "0.10", features = ["alloc", "pem"] }
-spki = { version = "0.7", features = ["alloc", "pem"] }
+spki = { version = "0.8", features = ["alloc", "pem"] }
 der = { version = "0.7", features = ["pem"] }
 humantime = "2.1"
 
