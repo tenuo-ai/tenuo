@@ -1,6 +1,10 @@
 """
 Tenuo + Temporal + MCP: two authorization boundaries
 
+**Cloud-shaped variant:** ``cloud_iam_layering.py`` uses the same Temporal→MCP
+pattern with ``SecureMCPClient`` + ``cloud_iam_mcp_server.py`` (``s3_get_object``)
+instead of the echo tool here.
+
 This example shows defense in depth when a Temporal activity calls an MCP tool
 over stdio:
 

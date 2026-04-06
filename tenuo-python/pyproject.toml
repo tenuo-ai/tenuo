@@ -72,7 +72,7 @@ google_adk = [
     "google-adk>=0.1",  # Google Agent Development Kit
 ]
 temporal = [
-    "temporalio>=1.4.0",  # Temporal workflow orchestration
+    "temporalio>=1.23.0",  # SimplePlugin (TenuoTemporalPlugin); workflow orchestration
     "boto3>=1.26.0",  # AWS Secrets Manager for key resolution
     "google-cloud-secret-manager>=2.16.0",  # GCP Secret Manager for key resolution
 ]

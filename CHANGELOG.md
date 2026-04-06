@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Temporal `SimplePlugin`** — `TenuoTemporalPlugin` (`tenuo.TenuoTemporalPlugin`) registers client + worker interceptors and sandbox passthrough; `ensure_tenuo_workflow_runner` for manual worker setup. `tenuo[temporal]` now requires `temporalio>=1.23.0`. Interceptor kwargs follow `inspect.signature(SimplePlugin.__init__)` (unified `interceptors=` vs split client/worker params). `TenuoClientInterceptor` / `TenuoPlugin` subclass Temporal’s interceptor types for plugin filtering.
+
 ## [0.1.0-beta.17] - 2026-04-05
 
 ### Security

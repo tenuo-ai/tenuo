@@ -1,0 +1,181 @@
+"""
+Temporal ``SimplePlugin`` integration.
+
+Registers Tenuo as a first-class plugin: client + worker interceptors and
+workflow sandbox passthrough for ``tenuo`` / ``tenuo_core`` (PyO3).
+
+Requires ``temporalio>=1.23`` (``SimplePlugin`` in ``temporalio.plugin``). SDKs
+differ: some expose a single ``interceptors=`` parameter, others
+``client_interceptors`` / ``worker_interceptors``. This module picks kwargs using
+``inspect.signature(SimplePlugin.__init__)`` so we always match the **installed**
+constructor (version numbers alone can mis-classify or go stale). Subclassing
+Temporal’s interceptor bases keeps plugin filtering working on newer SDKs.
+
+Example::
+
+    from temporalio.client import Client
+    from temporalio.worker import Worker
+
+    from tenuo import SigningKey, Warrant
+    from tenuo.temporal import TenuoPluginConfig, EnvKeyResolver, execute_workflow_authorized
+    from tenuo.temporal_plugin import TenuoTemporalPlugin
+
+    control = SigningKey.generate()
+    plugin = TenuoTemporalPlugin(
+        TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control.public_key],
+        )
+    )
+    client = await Client.connect("localhost:7233", plugins=[plugin])
+    worker = Worker(client, task_queue="tq", workflows=[...], activities=[...])
+    # Warrant headers still use ``execute_workflow_authorized`` or
+    # ``plugin.client_interceptor.set_headers_for_workflow`` — the plugin does
+    # not replace those APIs; it registers the same interceptor instance.
+
+Do **not** pass the same plugin again on ``Worker(plugins=[...])`` when the
+client already had ``plugins=[plugin]`` — see :class:`TenuoTemporalPlugin`.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import inspect
+from typing import TYPE_CHECKING, Any, Optional
+
+try:
+    from temporalio.plugin import SimplePlugin
+except ImportError as e:  # pragma: no cover - guarded by temporalio version
+    raise ImportError(
+        "TenuoTemporalPlugin requires temporalio>=1.23 "
+        "(temporalio.plugin.SimplePlugin). Upgrade: uv pip install 'temporalio>=1.23'"
+    ) from e
+
+from tenuo.temporal import (
+    TenuoClientInterceptor,
+    TenuoPlugin,
+    TenuoPluginConfig,
+)
+
+if TYPE_CHECKING:
+    from temporalio.worker import WorkflowRunner
+
+# Partner program naming: my_library.MyPlugin
+TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME = "tenuo.TenuoTemporalPlugin"
+
+
+def _simple_plugin_interceptor_kwargs(
+    client_interceptor: TenuoClientInterceptor,
+    worker_interceptor: TenuoPlugin,
+) -> dict[str, Any]:
+    """Build ``super().__init__(..., **kwargs)`` for the installed ``SimplePlugin`` shape."""
+    params = inspect.signature(SimplePlugin.__init__).parameters
+    has_unified = "interceptors" in params
+    has_split = (
+        "client_interceptors" in params and "worker_interceptors" in params
+    )
+    if has_unified and not has_split:
+        return {"interceptors": [client_interceptor, worker_interceptor]}
+    if has_split and not has_unified:
+        return {
+            "client_interceptors": [client_interceptor],
+            "worker_interceptors": [worker_interceptor],
+        }
+    if has_unified:
+        return {"interceptors": [client_interceptor, worker_interceptor]}
+    raise RuntimeError(
+        "Unsupported temporalio SimplePlugin: expected 'interceptors' or "
+        "('client_interceptors' and 'worker_interceptors') on SimplePlugin.__init__. "
+        "Upgrade temporalio or report this to Tenuo."
+    )
+
+
+def ensure_tenuo_workflow_runner(
+    existing: Optional["WorkflowRunner"],
+) -> "WorkflowRunner":
+    """Return a workflow runner with ``tenuo`` and ``tenuo_core`` sandbox passthrough.
+
+    Use when **not** adopting :class:`TenuoTemporalPlugin` — for example if you
+    register ``TenuoPlugin`` manually but still need PyO3 passthrough.
+
+    - If ``existing`` is ``None``, returns a :class:`SandboxedWorkflowRunner`
+      with default restrictions plus passthrough.
+    - If ``existing`` is already a :class:`SandboxedWorkflowRunner`, adds
+      passthrough modules (idempotent if already present).
+    - Otherwise returns ``existing`` unchanged (unsandboxed runners cannot load
+      PyO3 in sub-interpreters; prefer sandbox + passthrough for Tenuo).
+    """
+    from temporalio.worker.workflow_sandbox import (
+        SandboxedWorkflowRunner,
+        SandboxRestrictions,
+    )
+
+    passthrough = ("tenuo", "tenuo_core")
+    if existing is None:
+        return SandboxedWorkflowRunner(
+            restrictions=SandboxRestrictions.default.with_passthrough_modules(
+                *passthrough
+            )
+        )
+    if isinstance(existing, SandboxedWorkflowRunner):
+        return dataclasses.replace(
+            existing,
+            restrictions=existing.restrictions.with_passthrough_modules(*passthrough),
+        )
+    return existing
+
+
+class TenuoTemporalPlugin(SimplePlugin):
+    """Temporal AI Partner Program plugin for warrant + PoP enforcement.
+
+    **Plugin name:** :data:`TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME` (``tenuo.TenuoTemporalPlugin``).
+
+    Configures:
+
+    - **Client:** :class:`TenuoClientInterceptor` (warrant headers, workflow-ID binding).
+    - **Worker / Replayer:** :class:`TenuoPlugin` with your :class:`TenuoPluginConfig`.
+    - **Workflow runner:** sandbox passthrough for ``tenuo`` and ``tenuo_core``.
+
+    After construction, :attr:`client_interceptor` is the instance registered
+    on the client (use it with ``execute_workflow_authorized`` or
+    ``set_headers_for_workflow``). See ``__init__`` for the duplicate-plugin
+    warning.
+    """
+
+    #: The :class:`TenuoClientInterceptor` wired into this plugin (same instance
+    #: the client uses). Use with ``execute_workflow_authorized(..., client_interceptor=...)``
+    #: or ``set_headers_for_workflow``.
+    client_interceptor: TenuoClientInterceptor
+
+    def __init__(
+        self,
+        config: TenuoPluginConfig,
+        *,
+        client_interceptor: Optional[TenuoClientInterceptor] = None,
+    ) -> None:
+        """Create a plugin with the given worker config.
+
+        .. warning::
+
+            Register this plugin on ``Client.connect(..., plugins=[plugin])``
+            only. Workers built from that client inherit the plugin; passing the
+            same plugin again on ``Worker(..., plugins=[plugin])`` **double-registers**
+            interceptors and causes subtle, hard-to-diagnose failures. Only pass
+            ``plugins=`` on ``Worker`` when the client was created **without**
+            this plugin.
+        """
+        worker_interceptor = TenuoPlugin(config)
+        client_inter = client_interceptor or TenuoClientInterceptor()
+        self.client_interceptor = client_inter
+        super().__init__(
+            TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME,
+            workflow_runner=ensure_tenuo_workflow_runner,
+            **_simple_plugin_interceptor_kwargs(client_inter, worker_interceptor),
+        )
+
+
+__all__ = [
+    "TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME",
+    "TenuoTemporalPlugin",
+    "ensure_tenuo_workflow_runner",
+]

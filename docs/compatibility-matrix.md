@@ -15,6 +15,7 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 | **LangGraph** | 0.2.0 | 0.2+ latest | 1.1.3 | Stable | Validated in [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744) |
 | **MCP** | 1.0.0 | 1.1+ | 1.1.3 | Stable | Model Context Protocol |
 | **Google ADK** | 0.1.0 | 0.1+ | 0.1.2 | Beta | Early access |
+| **Temporal** | 1.23.0 | 1.x latest | — | Stable | `tenuo[temporal]` requires `temporalio>=1.23` for `TenuoTemporalPlugin` (`SimplePlugin`); worker interceptors work on older SDKs if configured manually |
 
 > **Version Philosophy**: Tenuo uses **permissive constraints** in `pyproject.toml` to maximize compatibility. We **warn at runtime** (not fail) if you have a version with known issues. This lets you try Tenuo without upgrading your entire stack.
 >
