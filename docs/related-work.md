@@ -214,5 +214,6 @@ If you reference Tenuo in academic work:
 ## See Also
 
 - [Concepts](./concepts) -- Why Tenuo? Problem/solution overview
+- [AAT draft summary](./aat-ietf-summary) -- IETF *Attenuating Authorization Tokens* (-00): OAuth-style task tokens, holder attenuation, and how it compares to warrant-style delegation
 - [Protocol Specification](./spec/protocol-spec-v1) -- How warrants work
 - [Security](./security) -- Detailed threat model

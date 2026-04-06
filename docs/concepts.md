@@ -252,6 +252,10 @@ CaMeL is the architecture; Tenuo is the authorization primitive.
 
 See [Related Work](./related-work) for comparisons with FIDES, Biscuit, Macaroons, UCAN, and delegation-focused work.
 
+## Relationship to IETF AATs
+
+The [Attenuating Authorization Tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens-00/) Internet-Draft standardizes OAuth-oriented **task-scoped tokens**, **holder-driven attenuation**, and **offline chain verification** for agent delegation—conceptually aligned with warrants (tool constraints, monotonic narrowing, PoP at enforcement). For a readable walkthrough and mapping to agent-security gaps, see the [AAT draft summary](./aat-ietf-summary).
+
 ## Scope Boundaries
 
 ### Tenuo Owns
@@ -288,3 +292,4 @@ Tenuo binds authority to tasks, verifies warrants locally, requires proof-of-pos
 - [API Reference](./api-reference): Python SDK, CLI, and performance benchmarks
 - [Protocol Specification](./spec/protocol-spec-v1): Wire format and verification semantics
 - [Related Work](./related-work): Research context and comparisons
+- [AAT draft summary](./aat-ietf-summary): IETF attenuating OAuth tokens for agents (vs. warrants)

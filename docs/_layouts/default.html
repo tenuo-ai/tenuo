@@ -227,6 +227,16 @@
       font-size: 0.85rem;
     }
 
+    .mermaid {
+      margin: 1.25rem 0;
+      text-align: center;
+    }
+
+    .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+
     blockquote {
       border-left: 4px solid var(--accent);
       padding-left: 1rem;
@@ -425,6 +435,41 @@
 
       window.addEventListener('scroll', updateActiveLink);
       updateActiveLink();
+    });
+  </script>
+
+  <script type="module">
+    document.addEventListener('DOMContentLoaded', async function () {
+      var nodes = document.querySelectorAll('pre code.language-mermaid');
+      if (!nodes.length) return;
+      var mermaidMod = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');
+      var mermaid = mermaidMod.default;
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        securityLevel: 'strict',
+        themeVariables: {
+          primaryColor: '#1a1a1a',
+          primaryTextColor: '#e8e8e8',
+          secondaryColor: '#111',
+          tertiaryColor: '#0a0a0a',
+          lineColor: '#00d4ff',
+          mainBkg: '#1a1a1a',
+          nodeBorder: '#2a2a2a',
+          clusterBkg: '#111',
+          titleColor: '#e8e8e8',
+          edgeLabelBackground: '#1a1a1a'
+        }
+      });
+      nodes.forEach(function (code) {
+        var pre = code.parentElement;
+        var graph = code.textContent;
+        var div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = graph;
+        pre.replaceWith(div);
+      });
+      await mermaid.run();
     });
   </script>
 
