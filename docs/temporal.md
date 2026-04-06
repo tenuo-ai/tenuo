@@ -45,7 +45,7 @@ Requires a Temporal cluster (local `temporal server start-dev` or production).
 
 ## Runnable examples
 
-These scripts under [`tenuo-python/examples/temporal/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal) are the fastest path from “I get the model” to a working worker + client. Run `temporal server start-dev` in one terminal, then `cd tenuo-python/examples/temporal` and run the Python file in another (see the [examples README](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/temporal/README.md) for prerequisites such as `boto3` or `tenuo[temporal,mcp]`).
+These scripts under [`tenuo-python/examples/temporal/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal) are the fastest path from “I get the model” to a working worker + client. Run `temporal server start-dev` in one terminal, then `cd tenuo-python/examples/temporal` and run the Python file in another. See the [examples README](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/temporal/README.md) for prerequisites such as `boto3` or `tenuo[temporal,mcp]`.
 
 | Example | What it shows |
 |---------|----------------|
