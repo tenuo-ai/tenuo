@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Documentation
-
-- **Site & preview** — Jekyll default `layout: default` for Markdown pages (styled output on Pages); `docs.html` redirect uses `layout: null`. Temporal guide: collapsible Security section (`<details markdown="block">` + layout CSS). `_preview.py`: `/temporal.html` and trailing-slash URLs, optional `md_in_html`, bind `127.0.0.1` (override with `TENUO_DOCS_PREVIEW_HOST`). Gitignore Jekyll `_site/` and `.jekyll-cache/`.
-
 ### Added
 
 - **Temporal `SimplePlugin`** — `TenuoTemporalPlugin` (`tenuo.TenuoTemporalPlugin`) registers client + worker interceptors and sandbox passthrough; `ensure_tenuo_workflow_runner` for manual worker setup. `tenuo[temporal]` now requires `temporalio>=1.23.0`. Interceptor kwargs follow `inspect.signature(SimplePlugin.__init__)` (unified `interceptors=` vs split client/worker params). `TenuoClientInterceptor` / `TenuoPlugin` subclass Temporal’s interceptor types for plugin filtering.
