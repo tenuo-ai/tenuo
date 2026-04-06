@@ -36,10 +36,10 @@ Five examples showing a clean progression from basic transparent authorization t
 | Example | Concept | What it demonstrates |
 |---------|---------|---------------------|
 | [`demo.py`](demo.py) | **Transparent authorization** | Standard `workflow.execute_activity()`, zero workflow changes, sequential + parallel reads, unauthorized access denial |
-| [`cloud_iam_layering.py`](cloud_iam_layering.py) | **IAM layering** | Worker has full IAM access to an S3 bucket; per-tenant warrants restrict key prefixes, including cross-tenant isolation with the same IAM role |
+| [`cloud_iam_layering.py`](cloud_iam_layering.py) | **IAM + MCP layering** | Same pattern as [`temporal_mcp_layering.py`](temporal_mcp_layering.py): activity uses `SecureMCPClient` to call [`cloud_iam_mcp_server.py`](cloud_iam_mcp_server.py) (`s3_get_object`). Two Tenuo boundaries (Temporal + MCP), then IAM at AWS. Per-tenant key prefixes; `TENUO_DEMO_DRY_RUN=1` mocks the MCP server (no boto3 in the activity) |
 | [`multi_warrant.py`](multi_warrant.py) | **Multi-tenant isolation** | Identical workflow code for different tenants, isolation via warrant only, cross-access denial |
 | [`delegation.py`](delegation.py) | **Inline attenuation** | Per-stage pipeline authorization with attenuated child workflows via `tenuo_execute_child_workflow()` |
-| [`temporal_mcp_layering.py`](temporal_mcp_layering.py) | **Temporal + MCP** | Activity calls `SecureMCPClient` (stdio); `TenuoPlugin` gates the activity, `MCPVerifier` on [`temporal_mcp_server.py`](temporal_mcp_server.py) gates the MCP tool (`params._meta.tenuo`) |
+| [`temporal_mcp_layering.py`](temporal_mcp_layering.py) | **Temporal + MCP** | Abstract pattern: `SecureMCPClient` + [`temporal_mcp_server.py`](temporal_mcp_server.py) (`safe_echo`). [`cloud_iam_layering.py`](cloud_iam_layering.py) is the same shape with S3 (`cloud_iam_mcp_server.py`) |
 
 ### Quick start
 
@@ -48,14 +48,14 @@ temporal server start-dev                          # Terminal 1
 cd tenuo-python/examples/temporal && python demo.py  # Terminal 2
 ```
 
-Then try **`cloud_iam_layering.py`**: same setup, but it needs `uv pip install boto3` for real S3 reads. Use `TENUO_DEMO_DRY_RUN=1` to mock S3 and run without AWS credentials.
+Then try **`cloud_iam_layering.py`**: **Python 3.10+** and `uv pip install "tenuo[temporal,mcp]"`. For real S3, install `boto3` in the environment (the **MCP server subprocess** uses it, not the activity). Use `TENUO_DEMO_DRY_RUN=1` so the MCP server returns synthetic bodies without AWS.
 
 ```bash
 cd tenuo-python/examples/temporal
 TENUO_DEMO_DRY_RUN=1 python cloud_iam_layering.py
 ```
 
-**`cloud_iam_layering.py`** uses standard `workflow.execute_activity()` with `activity_fns` set because the warrant constrains named fields (`bucket`, `key`). It mints two tenant warrants and runs three cases: allowed read inside a tenant prefix, denied read outside that prefix, and cross-tenant denial (tenant B’s warrant cannot read tenant A’s prefix) while the worker keeps the same broad IAM posture.
+**`cloud_iam_layering.py`** mints warrants with **two capabilities** each: `read_s3_via_mcp` (Temporal activity) and `s3_get_object` (MCP tool), both with the same `bucket` / `key` constraints. It runs: allowed read inside a prefix, Temporal denial outside the prefix, cross-tenant denial, and a fourth case where Temporal allows the activity but MCP denies `s3_get_object` (warrant without that capability).
 
 ### Temporal + MCP (advanced)
 

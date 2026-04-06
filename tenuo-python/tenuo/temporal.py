@@ -2,7 +2,8 @@
 Tenuo Temporal Integration - Warrant-based Authorization for Durable Workflows
 
 Compatibility:
-    Temporal SDK: 1.4.0+
+    Temporal SDK: 1.23+ recommended (``TenuoTemporalPlugin`` / ``SimplePlugin``);
+    ``temporalio>=1.23`` is required by the ``tenuo[temporal]`` extra.
     Python: 3.9+
 
 Documentation:
@@ -177,7 +178,18 @@ import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Literal, Optional, Protocol, Sequence, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Protocol,
+    Sequence,
+    TypeVar,
+)
 
 from .exceptions import ApprovalGateTriggered
 
@@ -185,7 +197,22 @@ import inspect as _inspect
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+if TYPE_CHECKING:
+    from tenuo.temporal_plugin import TenuoTemporalPlugin, ensure_tenuo_workflow_runner
+
 logger = logging.getLogger("tenuo.temporal")
+
+_TemporalClientInterceptor: Any
+_TemporalWorkerInterceptor: Any
+try:
+    from temporalio.client import Interceptor as _tc_interceptor
+    from temporalio.worker import Interceptor as _tw_interceptor
+
+    _TemporalClientInterceptor = _tc_interceptor
+    _TemporalWorkerInterceptor = _tw_interceptor
+except ImportError:  # pragma: no cover
+    _TemporalClientInterceptor = object
+    _TemporalWorkerInterceptor = object
 
 # =============================================================================
 # Header Constants
@@ -200,8 +227,8 @@ TENUO_ARG_KEYS_HEADER = "x-tenuo-arg-keys"
 TENUO_WIRE_FORMAT_HEADER = "x-tenuo-wire-format"
 TENUO_APPROVALS_HEADER = "x-tenuo-approvals"
 
-# Stable plugin identifier for logs and Temporal Web activity summaries (matches import path).
-TENUO_TEMPORAL_PLUGIN_ID = "tenuo.temporal.TenuoPlugin"
+# Stable integration id for logs and Temporal Web activity summaries (partner naming).
+TENUO_TEMPORAL_PLUGIN_ID = "tenuo.TenuoTemporalPlugin"
 
 # Value for ``x-tenuo-wire-format`` on outgoing headers: identifies that
 # ``x-tenuo-warrant`` carries raw CBOR bytes (optionally gzip-compressed).
@@ -1552,7 +1579,7 @@ class TenuoPluginConfig:
 # =============================================================================
 
 
-class TenuoClientInterceptor:
+class TenuoClientInterceptor(_TemporalClientInterceptor):
     """Temporal client interceptor for injecting Tenuo warrant headers.
 
     This interceptor:
@@ -1577,6 +1604,7 @@ class TenuoClientInterceptor:
     """
 
     def __init__(self) -> None:
+        super().__init__()
         # One-shot headers for the next workflow start (legacy API).
         self._next_headers: Dict[str, bytes] = {}
         # Preferred API: deterministic mapping by workflow ID.
@@ -1648,7 +1676,8 @@ class TenuoClientInterceptor:
 
     # --- Temporal client interceptor interface ---
 
-    def intercept_client(self, next_interceptor: Any) -> "_TenuoClientOutbound":
+    def intercept_client(self, next_interceptor: Any) -> Any:
+        """Return outbound wrapper; duck-types as ``OutboundInterceptor`` via delegation."""
         return _TenuoClientOutbound(next_interceptor, self)
 
 
@@ -3171,11 +3200,13 @@ class _TenuoWorkflowInboundInterceptor:
         return await self.next.handle_update_handler(input)
 
 
-class TenuoPlugin:
+class TenuoPlugin(_TemporalWorkerInterceptor):
     """Temporal Python SDK Plugin: warrant authorization (middleware / security).
 
-    Stable identifier: :data:`TENUO_TEMPORAL_PLUGIN_ID` (``tenuo.temporal.TenuoPlugin``)
-    for worker logs and Temporal Web activity summaries.
+    Stable identifier: :data:`TENUO_TEMPORAL_PLUGIN_ID` (``tenuo.TenuoTemporalPlugin``)
+    for worker logs and Temporal Web activity summaries. Prefer
+    :class:`tenuo.temporal_plugin.TenuoTemporalPlugin` for ``Client``/``Worker``
+    ``plugins=[...]`` registration (Temporal AI Partner Ecosystem).
 
     Intercepts activity execution and verifies the calling workflow
     has a valid warrant authorizing the activity.
@@ -3215,6 +3246,7 @@ class TenuoPlugin:
     """
 
     def __init__(self, config: TenuoPluginConfig) -> None:
+        super().__init__()
         self._config = config
         self._version = self._get_version()
         # Verify tenuo_core is importable in the current process.
@@ -3256,8 +3288,8 @@ class TenuoPlugin:
     def intercept_activity(
         self,
         next_interceptor: Any,  # ActivityInboundInterceptor
-    ) -> "TenuoActivityInboundInterceptor":
-        """Return activity interceptor that wraps the next one."""
+    ) -> Any:
+        """Return activity inbound wrapper; duck-types as ``ActivityInboundInterceptor``."""
         return TenuoActivityInboundInterceptor(
             next_interceptor,
             self._config,
@@ -3919,6 +3951,20 @@ class TenuoActivityInboundInterceptor:
 # Exports
 # =============================================================================
 
+
+def __getattr__(name: str) -> Any:
+    """Lazy exports that depend on ``temporalio.plugin`` (avoid import cycles)."""
+    if name == "TenuoTemporalPlugin":
+        from tenuo.temporal_plugin import TenuoTemporalPlugin
+
+        return TenuoTemporalPlugin
+    if name == "ensure_tenuo_workflow_runner":
+        from tenuo.temporal_plugin import ensure_tenuo_workflow_runner
+
+        return ensure_tenuo_workflow_runner
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     # Exceptions
     "TenuoTemporalError",
@@ -3979,4 +4025,6 @@ __all__ = [
     "TENUO_WIRE_FORMAT_HEADER",
     "TENUO_APPROVALS_HEADER",
     "TENUO_TEMPORAL_PLUGIN_ID",
+    "TenuoTemporalPlugin",
+    "ensure_tenuo_workflow_runner",
 ]

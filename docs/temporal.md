@@ -43,6 +43,36 @@ Requires a Temporal cluster (local `temporal server start-dev` or production).
 
 ---
 
+## Temporal plugin (`TenuoTemporalPlugin`)
+
+For [Temporal’s plugin model](https://docs.temporal.io/) (AI Partner Ecosystem–style registration), use **`tenuo.TenuoTemporalPlugin`**: a [`SimplePlugin`](https://python.temporal.io/temporalio.plugin.html) that wires **client interceptors**, **worker interceptors** (`TenuoPlugin`), and a **sandboxed workflow runner** with `tenuo` / `tenuo_core` passthrough (required for PyO3).
+
+```python
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+from tenuo import SigningKey
+from tenuo.temporal import TenuoPluginConfig, EnvKeyResolver
+from tenuo.temporal_plugin import TenuoTemporalPlugin
+
+control = SigningKey.generate()
+plugin = TenuoTemporalPlugin(
+    TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[control.public_key],
+    )
+)
+
+client = await Client.connect("localhost:7233", plugins=[plugin])
+worker = Worker(client, task_queue="my-queue", workflows=[...], activities=[...])
+```
+
+Pass the plugin on **`Client.connect(..., plugins=[plugin])`** only: workers created from that client **merge** client plugins, so you should **not** duplicate the same plugin on `Worker(..., plugins=[...])` unless the client was created without plugins.
+
+Manual setup (`interceptors=[...]` + `workflow_runner=SandboxedWorkflowRunner(...)`) remains supported; for passthrough without the plugin, use `ensure_tenuo_workflow_runner` from `tenuo.temporal_plugin` (or `from tenuo.temporal import ensure_tenuo_workflow_runner`).
+
+---
+
 ## Runnable examples
 
 These scripts under [`tenuo-python/examples/temporal/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal) are the fastest path from “I get the model” to a working worker + client. Run `temporal server start-dev` in one terminal, then `cd tenuo-python/examples/temporal` and run the Python file in another. See the [examples README](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/temporal/README.md) for prerequisites such as `boto3` or `tenuo[temporal,mcp]`.
@@ -50,7 +80,7 @@ These scripts under [`tenuo-python/examples/temporal/`](https://github.com/tenuo
 | Example | What it shows |
 |---------|----------------|
 | [`demo.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/demo.py) | **Start here.** Transparent `workflow.execute_activity()` and `AuthorizedWorkflow` / `execute_authorized_activity()` in one place |
-| [`cloud_iam_layering.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/cloud_iam_layering.py) | **IAM layering:** broad S3 IAM on the worker, per-tenant warrants on key prefixes, cross-tenant denial with the same role |
+| [`cloud_iam_layering.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/cloud_iam_layering.py) | **IAM + MCP layering:** Temporal + MCP Tenuo boundaries, then S3 via [`cloud_iam_mcp_server.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/temporal/cloud_iam_mcp_server.py) (`s3_get_object`); per-tenant prefixes; dry-run without AWS |
 | [`multi_warrant.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/multi_warrant.py) | **Multi-tenant isolation:** identical workflow code, different warrants per tenant |
 | [`delegation.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/delegation.py) | **Pipeline stages:** least-privilege warrants per stage |
 | [`temporal_mcp_layering.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/temporal_mcp_layering.py) | **Temporal + MCP:** activity uses `SecureMCPClient` (stdio); `MCPVerifier` on [`temporal_mcp_server.py`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/temporal/temporal_mcp_server.py). Requires Python 3.10+ and `uv pip install "tenuo[temporal,mcp]"` |
@@ -667,7 +697,7 @@ The worker **appears healthy** from monitoring while workflow executions are sil
 
 | Component | Supported | Notes |
 |-----------|-----------|-------|
-| Temporal Python SDK | `temporalio>=1.4.0` | Tested in CI with live Temporal integration job |
+| Temporal Python SDK | `temporalio>=1.23.0` (`tenuo[temporal]` extra) | `TenuoTemporalPlugin` needs `SimplePlugin` (1.23+); CI live Temporal job |
 | Python | 3.9 - 3.14 | Full matrix in CI; Temporal live tests run on Python 3.12 |
 | Runtime mode | Single-process and distributed client/worker | Both supported |
 
@@ -739,12 +769,9 @@ pop_signature = warrant.sign(signing_key, "read_file", {"path": "/data/file.txt"
 
 ---
 
-<details>
-<summary><strong>Security considerations</strong> (threat model, trust boundaries, PoP windows, dedup, root rotation, revocation, retry drift)</summary>
-
 ## Security considerations
 
-This section covers what the Temporal integration assumes, what it protects against, and what remains your operational responsibility. For the broader Tenuo security model, see [Security Model](./security.md).
+This section covers **threat model, trust boundaries, PoP windows, dedup, root rotation, revocation, and retry drift**: what the Temporal integration assumes, what it protects against, and what remains your operational responsibility. For the broader Tenuo security model, see [Security Model](./security.md).
 
 **Temporal's security vs. Tenuo's security.** Temporal Cloud provides infrastructure-level security: encrypted payloads, RBAC, namespace isolation, SOC 2. Tenuo operates at the authorization layer above that: each Activity is authorized against a cryptographically signed warrant before it executes, regardless of who has access to the Temporal cluster. The two are complementary: cluster access control and per-action authorization are different security properties. A Temporal namespace admin with full cluster access still cannot cause an activity to execute outside the warrant's constraints, because Tenuo's authorization check happens on the worker, not on the Temporal service.
 
@@ -867,8 +894,6 @@ For the fastest response, use `trusted_roots_provider` with a short `trusted_roo
 | Tool / constraints | Not allowed or args mismatch | **`TemporalConstraintViolation`** / core constraint errors |
 | PoP signature | Missing or invalid | **`PopVerificationError`** |
 | Protected activity as local activity | Not **`@unprotected`** | **`LocalActivityError`** |
-
-</details>
 
 ---
 
