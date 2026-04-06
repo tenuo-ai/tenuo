@@ -769,6 +769,9 @@ pop_signature = warrant.sign(signing_key, "read_file", {"path": "/data/file.txt"
 
 ---
 
+<details markdown="block">
+<summary><strong>Security considerations</strong> (threat model, trust boundaries, PoP windows, dedup, root rotation, revocation, retry drift)</summary>
+
 ## Security considerations
 
 This section covers **threat model, trust boundaries, PoP windows, dedup, root rotation, revocation, and retry drift**: what the Temporal integration assumes, what it protects against, and what remains your operational responsibility. For the broader Tenuo security model, see [Security Model](./security.md).
@@ -894,6 +897,8 @@ For the fastest response, use `trusted_roots_provider` with a short `trusted_roo
 | Tool / constraints | Not allowed or args mismatch | **`TemporalConstraintViolation`** / core constraint errors |
 | PoP signature | Missing or invalid | **`PopVerificationError`** |
 | Protected activity as local activity | Not **`@unprotected`** | **`LocalActivityError`** |
+
+</details>
 
 ---
 

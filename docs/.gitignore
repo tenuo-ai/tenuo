@@ -1,3 +1,7 @@
 
 # Ruby vendor (don't commit dependencies)
 vendor/
+
+# Jekyll output (local / Docker builds)
+_site/
+.jekyll-cache/

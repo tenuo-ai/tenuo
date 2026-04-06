@@ -55,6 +55,9 @@ th {{ background: var(--surface); }}
 ul, ol {{ margin: 1rem 0; padding-left: 2rem; }}
 li {{ margin: 0.4rem 0; }}
 hr {{ border: none; border-top: 1px solid var(--border); margin: 2rem 0; }}
+details {{ margin: 1.25rem 0; padding: 0.75rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }}
+details summary {{ cursor: pointer; font-weight: 600; color: var(--accent); list-style-position: outside; }}
+details[open] summary {{ margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }}
 footer {{ margin-top: 4rem; padding: 2rem 0; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 0.85rem; text-align: center; }}
 footer a {{ color: var(--text-muted); text-decoration: none; }}
 </style>
@@ -105,24 +108,49 @@ def _resolved_paths_under_docs(rel: str):
         yield resolved
 
 
+def _markdown_extensions():
+    ext = ["tables", "fenced_code"]
+    try:
+        markdown.markdown("x", extensions=["md_in_html"])
+    except Exception:
+        pass
+    else:
+        ext.append("md_in_html")
+    return ext
+
+
+_MARKDOWN_EXTENSIONS = _markdown_extensions()
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=DOCS_DIR, **kwargs)
 
     def do_GET(self):
         path = self.path.split("?")[0].split("#")[0]
-        if path.endswith("/"):
-            path += "index"
-        rel = path.lstrip("/")
+        # Strip leading/trailing slashes so /temporal/ and /temporal both map to temporal.md
+        # (the old "/"+ "index" trick turned /temporal/ into temporal/index, which 404s).
+        rel = path.strip("/")
         if not rel:
             rel = "index"
+        elif rel.endswith(".html"):
+            rel = rel[: -len(".html")]
+        elif rel.endswith(".md"):
+            rel = rel[: -len(".md")]
         for fpath in _resolved_paths_under_docs(rel):
             if os.path.isfile(fpath):
-                with open(fpath, encoding="utf-8") as f:
-                    raw = f.read()
-                body, title = strip_frontmatter(raw)
-                html = markdown.markdown(body, extensions=["tables", "fenced_code"])
-                page = TEMPLATE.format(title=title, content=html)
+                try:
+                    with open(fpath, encoding="utf-8") as f:
+                        raw = f.read()
+                    body, title = strip_frontmatter(raw)
+                    html = markdown.markdown(
+                        body,
+                        extensions=_MARKDOWN_EXTENSIONS,
+                    )
+                    page = TEMPLATE.format(title=title, content=html)
+                except Exception as e:
+                    self.send_error(500, f"Markdown render failed: {e}")
+                    return
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
@@ -131,5 +159,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
 
-print(f"Serving docs at http://localhost:{PORT}")
-http.server.HTTPServer(("", PORT), Handler).serve_forever()
+bind = os.environ.get("TENUO_DOCS_PREVIEW_HOST", "127.0.0.1")
+print(f"Serving docs at http://{bind}:{PORT}/")
+print(f"  Examples: http://{bind}:{PORT}/temporal  http://{bind}:{PORT}/quickstart")
+print("  (Use /temporal or /quickstart — not /temporal.html; .md is rendered on the fly.)")
+http.server.HTTPServer((bind, PORT), Handler).serve_forever()

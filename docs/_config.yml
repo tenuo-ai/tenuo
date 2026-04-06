@@ -3,6 +3,15 @@ description: Capability tokens for AI agents
 url: "https://tenuo.ai"
 baseurl: ""
 
+# Markdown pages get full site chrome (nav, typography). Without this, Jekyll
+# emits HTML fragments only — fine for embedding, wrong for published pages.
+defaults:
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: "default"
+
 # Build settings
 markdown: kramdown
 highlighter: rouge
