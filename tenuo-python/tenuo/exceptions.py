@@ -1263,6 +1263,7 @@ class ConfigurationError(TenuoError):
     rust_variant = ""  # ConfigError is separate in Rust
 
 
+@wire_code(ErrorCode.INVALID_PAYLOAD_STRUCTURE)
 class MCPToolCallError(TenuoError):
     """The MCP server returned a tool result with ``isError=True``."""
 

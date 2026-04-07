@@ -54,7 +54,16 @@ try:
 
     __all__.extend(["TenuoMiddleware", "resolve_tool_call_meta_for_verify"])
 except ImportError:
-    pass
+
+    class TenuoMiddleware:  # type: ignore[no-redef]
+        """Placeholder: real :class:`TenuoMiddleware` requires ``tenuo[fastmcp]``."""
+
+        def __init__(self, *_a: object, **_kw: object) -> None:
+            raise ImportError(
+                "TenuoMiddleware requires FastMCP. Install with: pip install \"tenuo[fastmcp]\""
+            ) from None
+
+    __all__.append("TenuoMiddleware")
 
 # Only export LangChain adapter if both MCP and LangChain are available
 try:
