@@ -193,11 +193,11 @@ Advanced client examples showing all three transports and approval gate flow.
 Server-side warrant verification using `MCPVerifier`.
 
 **What it shows:**
-- `MCPVerifier` with `fastmcp` and config-driven extraction
-- Raw mode (no config, direct constraint verification)
-- Approval-gate-triggered flow (JSON-RPC error `-32002`)
-- Mixed deployment (some tools protected, others public)
-- `verify_mcp_call` standalone convenience function
+- `TenuoMiddleware` on `FastMCP` so `params._meta.tenuo` is verified before tools run
+- `MCPVerifier` with config-driven extraction (`mcp-config.yaml`) and raw mode
+- Approval-gate flow (`-32002` on denials via middleware structured `tenuo` payload)
+- Mixed deployment (`require_warrant=False`) with the same middleware pattern
+- `verify_mcp_call` standalone convenience function (raw JSON-RPC handlers)
 
 ---
 

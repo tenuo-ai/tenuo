@@ -22,12 +22,17 @@ Server-side (verifying warrants inside an MCP server):
         )
     )
 
-    @mcp.tool()
-    async def read_file(path: str, **kwargs) -> str:
-        clean = verifier.verify_or_raise("read_file", {"path": path, **kwargs})
-        return open(clean["path"]).read()
+    # Optional FastMCP (``tenuo[fastmcp]``): wire ``_meta`` is not passed into
+    # ``@mcp.tool()`` — register middleware, then implement slim handlers.
+    # from fastmcp import FastMCP
+    # from tenuo.mcp import TenuoMiddleware
+    # mcp = FastMCP("app", middleware=[TenuoMiddleware(verifier)])
+    # @mcp.tool()
+    # async def read_file(path: str) -> str:
+    #     return open(path).read()
 """
 
+from ..exceptions import MCPToolCallError
 from .client import MCP_AVAILABLE, SecureMCPClient, discover_and_protect
 from .server import MCPAuthorizationError, MCPVerificationResult, MCPVerifier, verify_mcp_call
 
@@ -36,12 +41,29 @@ __all__ = [
     "SecureMCPClient",
     "discover_and_protect",
     "MCP_AVAILABLE",
+    "MCPToolCallError",
     # Server
     "MCPVerifier",
     "MCPVerificationResult",
     "MCPAuthorizationError",
     "verify_mcp_call",
 ]
+
+try:
+    from .fastmcp_middleware import TenuoMiddleware, resolve_tool_call_meta_for_verify  # noqa: F401
+
+    __all__.extend(["TenuoMiddleware", "resolve_tool_call_meta_for_verify"])
+except ImportError:
+
+    class TenuoMiddleware:  # type: ignore[no-redef]
+        """Placeholder: real :class:`TenuoMiddleware` requires ``tenuo[fastmcp]``."""
+
+        def __init__(self, *_a: object, **_kw: object) -> None:
+            raise ImportError(
+                "TenuoMiddleware requires FastMCP. Install with: pip install \"tenuo[fastmcp]\""
+            ) from None
+
+    __all__.append("TenuoMiddleware")
 
 # Only export LangChain adapter if both MCP and LangChain are available
 try:

@@ -19,7 +19,8 @@ uv pip install "tenuo[a2a]"           # + Agent-to-Agent (inter-agent delegation
 uv pip install "tenuo[langchain]"     # + LangChain / LangGraph
 uv pip install "tenuo[crewai]"        # + CrewAI
 uv pip install "tenuo[fastapi]"       # + FastAPI
-uv pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10)
+uv pip install "tenuo[mcp]"           # + official MCP SDK, client/server (Python ≥3.10)
+uv pip install "tenuo[fastmcp]"       # + FastMCP (``TenuoMiddleware``, FastMCP servers)
 ```
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)

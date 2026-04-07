@@ -503,3 +503,81 @@ class TestTransportValidation:
 
         # Callback should not have been invoked by the client
         assert session_id_called == []
+
+
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestCallToolIsErrorHandling:
+    """``isError`` results: safe messages and optional MCPToolCallError (cf. FastMCP #3778)."""
+
+    @pytest.mark.asyncio
+    async def test_empty_error_content_raises_safe_message(self):
+        from mcp.types import CallToolResult
+
+        from tenuo.exceptions import MCPToolCallError
+
+        client = _make_client()
+        client.session.call_tool = AsyncMock(return_value=CallToolResult(content=[], isError=True))
+        with pytest.raises(MCPToolCallError, match="returned an error"):
+            await client.call_tool("t", {}, warrant_context=False)
+
+    @pytest.mark.asyncio
+    async def test_non_text_first_block_uses_fallback_message(self):
+        from mcp.types import CallToolResult, ImageContent
+
+        from tenuo.exceptions import MCPToolCallError
+
+        client = _make_client()
+        client.session.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[ImageContent(type="image", data="eHl6", mimeType="image/png")],
+                isError=True,
+            )
+        )
+        with pytest.raises(MCPToolCallError, match="returned an error"):
+            await client.call_tool("t", {}, warrant_context=False)
+
+    @pytest.mark.asyncio
+    async def test_text_block_used_as_message(self):
+        from mcp.types import CallToolResult, TextContent
+
+        from tenuo.exceptions import MCPToolCallError
+
+        client = _make_client()
+        client.session.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="specific failure")],
+                isError=True,
+            )
+        )
+        with pytest.raises(MCPToolCallError, match="specific failure"):
+            await client.call_tool("t", {}, warrant_context=False)
+
+    @pytest.mark.asyncio
+    async def test_structured_content_exposed_on_exception(self):
+        from mcp.types import CallToolResult, TextContent
+
+        from tenuo.exceptions import MCPToolCallError
+
+        client = _make_client()
+        client.session.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="x")],
+                isError=True,
+                structuredContent={"tenuo": {"code": -32002}},
+            )
+        )
+        with pytest.raises(MCPToolCallError) as ri:
+            await client.call_tool("t", {}, warrant_context=False)
+        assert ri.value.tenuo == {"code": -32002}
+
+    @pytest.mark.asyncio
+    async def test_raise_on_tool_error_false_returns_content(self):
+        from mcp.types import CallToolResult, TextContent
+
+        blocks = [TextContent(type="text", text="err")]
+        client = _make_client()
+        client.session.call_tool = AsyncMock(
+            return_value=CallToolResult(content=blocks, isError=True)
+        )
+        out = await client.call_tool("t", {}, warrant_context=False, raise_on_tool_error=False)
+        assert out == blocks

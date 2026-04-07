@@ -9,7 +9,8 @@ Tenuo provides full Model Context Protocol (MCP) integration with cryptographic 
 ## Prerequisites
 
 ```bash
-uv pip install "tenuo[mcp]"       # MCP client + server (Python ≥3.10)
+uv pip install "tenuo[mcp]"       # Official MCP SDK + client/server helpers (Python ≥3.10)
+uv pip install "tenuo[fastmcp]"   # Adds FastMCP (for ``TenuoMiddleware`` and ``@mcp.tool()`` examples)
 ```
 
 For the full LangChain + MCP example:
@@ -124,6 +125,8 @@ async def read_file(path: str, **kwargs) -> str:
     clean = verifier.verify_or_raise("read_file", {"path": path, **kwargs})
     return open(clean["path"]).read()
 ```
+
+To verify once per tool call (without `verify_or_raise` in every handler), install `tenuo[fastmcp]` (MCP SDK + FastMCP) and register `TenuoMiddleware(verifier)` on `FastMCP(..., middleware=[...])`. Importing `tenuo.mcp.fastmcp_middleware` without FastMCP raises a clear `ImportError` with install instructions. The middleware calls the same `MCPVerifier.verify` path, reads `_meta` from the wire request context when FastMCP’s synthesized params omit it, strips `tenuo` from `meta` after success, and returns `isError` tool results on denial.
 
 The verifier extracts warrant metadata from `params._meta`, verifies the warrant + PoP signature, and checks constraints.
 

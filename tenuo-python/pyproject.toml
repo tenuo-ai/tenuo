@@ -61,6 +61,10 @@ crewai = [
 mcp = [
     "mcp>=1.0.0; python_version >= '3.10'",
 ]
+fastmcp = [
+    "mcp>=1.0.0; python_version >= '3.10'",
+    "fastmcp>=2.0; python_version >= '3.10'",
+]
 cli = [
     "rich>=10.0.0",
 ]
@@ -97,7 +101,7 @@ dev = [
     "uvicorn",
     "langchain-openai",
     # Include ALL optional groups for complete dev environment
-    "tenuo[openai,autogen,langchain,langgraph,crewai,a2a,google_adk,fastapi,mcp,temporal]",
+    "tenuo[openai,autogen,langchain,langgraph,crewai,a2a,google_adk,fastapi,mcp,fastmcp,temporal]",
 ]
 
 [project.scripts]
