@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from .server import MCPVerificationResult, MCPVerifier
+
 _MCP_INSTALL = 'pip install "tenuo[mcp]"'
 _FASTMCP_INSTALL = 'pip install "tenuo[fastmcp]"'
 
@@ -32,15 +34,12 @@ except ImportError as exc:
 
 try:
     from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
-    from fastmcp.tools.base import ToolResult
 except ImportError as exc:
     raise ImportError(
         "tenuo.mcp.fastmcp_middleware requires FastMCP (optional; not part of tenuo[mcp]). "
         f"Install with: {_FASTMCP_INSTALL} (or pip install fastmcp). "
         "The tenuo[mcp] extra installs only the official MCP SDK."
     ) from exc
-
-from .server import MCPVerificationResult, MCPVerifier
 
 __all__ = [
     "TenuoMiddleware",
