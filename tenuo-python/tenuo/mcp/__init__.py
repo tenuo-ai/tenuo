@@ -22,12 +22,17 @@ Server-side (verifying warrants inside an MCP server):
         )
     )
 
-    @mcp.tool()
-    async def read_file(path: str, **kwargs) -> str:
-        clean = verifier.verify_or_raise("read_file", {"path": path, **kwargs})
-        return open(clean["path"]).read()
+    # Optional FastMCP (``tenuo[fastmcp]``): wire ``_meta`` is not passed into
+    # ``@mcp.tool()`` — register middleware, then implement slim handlers.
+    # from fastmcp import FastMCP
+    # from tenuo.mcp import TenuoMiddleware
+    # mcp = FastMCP("app", middleware=[TenuoMiddleware(verifier)])
+    # @mcp.tool()
+    # async def read_file(path: str) -> str:
+    #     return open(path).read()
 """
 
+from ..exceptions import MCPToolCallError
 from .client import MCP_AVAILABLE, SecureMCPClient, discover_and_protect
 from .server import MCPAuthorizationError, MCPVerificationResult, MCPVerifier, verify_mcp_call
 
@@ -36,12 +41,20 @@ __all__ = [
     "SecureMCPClient",
     "discover_and_protect",
     "MCP_AVAILABLE",
+    "MCPToolCallError",
     # Server
     "MCPVerifier",
     "MCPVerificationResult",
     "MCPAuthorizationError",
     "verify_mcp_call",
 ]
+
+try:
+    from .fastmcp_middleware import TenuoMiddleware, resolve_tool_call_meta_for_verify  # noqa: F401
+
+    __all__.extend(["TenuoMiddleware", "resolve_tool_call_meta_for_verify"])
+except ImportError:
+    pass
 
 # Only export LangChain adapter if both MCP and LangChain are available
 try:

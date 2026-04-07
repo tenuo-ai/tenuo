@@ -66,7 +66,8 @@ Error Hierarchy:
     │   ├── InvalidApproval
     │   ├── ApprovalGateTriggered
     │   └── UnknownProvider
-    └── ConfigurationError (invalid configuration)
+    ├── ConfigurationError (invalid configuration)
+    └── MCPToolCallError (MCP tool returned isError)
 """
 
 from typing import Any, Optional
@@ -149,6 +150,7 @@ __all__ = [
     "UnknownProvider",
     # Configuration errors
     "ConfigurationError",
+    "MCPToolCallError",
     "FeatureNotEnabled",
     # Runtime errors
     "RuntimeError",
@@ -1259,6 +1261,38 @@ class ConfigurationError(TenuoError):
 
     error_code = "configuration_error"
     rust_variant = ""  # ConfigError is separate in Rust
+
+
+class MCPToolCallError(TenuoError):
+    """The MCP server returned a tool result with ``isError=True``."""
+
+    error_code = "mcp_tool_call_error"
+    rust_variant = ""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tool_name: str,
+        content: Optional[list[Any]] = None,
+        structured_content: Any = None,
+        hint: Optional[str] = None,
+    ):
+        details: dict[str, Any] = {"tool_name": tool_name}
+        if structured_content is not None:
+            details["structured_content"] = structured_content
+        super().__init__(message, details=details, hint=hint)
+        self.tool_name = tool_name
+        self.content = content or []
+        self.structured_content = structured_content
+
+    @property
+    def tenuo(self) -> Optional[dict[str, Any]]:
+        sc = self.structured_content
+        if isinstance(sc, dict):
+            t = sc.get("tenuo")
+            return t if isinstance(t, dict) else None
+        return None
 
 
 @wire_code(ErrorCode.UNKNOWN_CONSTRAINT_TYPE)

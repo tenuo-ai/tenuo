@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 from .._enforcement import EnforcementResult, enforce_tool_call
 from ..config import is_configured
 from ..decorators import guard, key_scope, warrant_scope
-from ..exceptions import ConfigurationError, ExpiredError
+from ..exceptions import ConfigurationError, ExpiredError, MCPToolCallError
 from ..validation import ValidationResult
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,21 @@ except ImportError:
 if sys.version_info < (3, 10) and MCP_AVAILABLE:
     # Should not happen if installed correctly, but guard anyway
     MCP_AVAILABLE = False
+
+
+def _safe_mcp_tool_error_message(content: Any, tool_name: str) -> str:
+    """Best-effort user-facing text when ``CallToolResult.isError`` is true.
+
+    Avoids assuming non-empty ``content`` or that the first block is text (MCP
+    allows empty error payloads and arbitrary content types).
+    """
+    blocks = content if isinstance(content, list) else []
+    for block in blocks:
+        if getattr(block, "type", None) == "text":
+            text = getattr(block, "text", None)
+            if isinstance(text, str) and text.strip():
+                return text
+    return f"Tool '{tool_name}' returned an error"
 
 
 class SecureMCPClient:
@@ -414,6 +429,7 @@ class SecureMCPClient:
         inject_warrant: Optional[bool] = None,
         approvals: Optional[List] = None,
         timeout: float = 30.0,
+        raise_on_tool_error: bool = True,
     ) -> Any:
         """
         Call an MCP tool with Tenuo authorization.
@@ -434,14 +450,21 @@ class SecureMCPClient:
                 and the server performs Tenuo verification (``inject_warrant=True``).
             timeout: Maximum seconds to wait for the server response (default: 30).
                 Raises ``asyncio.TimeoutError`` if exceeded.
+            raise_on_tool_error: If True (default), a server response with
+                ``isError=True`` raises :class:`~tenuo.exceptions.MCPToolCallError`
+                with a safe message and optional ``structuredContent`` (e.g.
+                Tenuo denial metadata). If False, returns ``content`` as for
+                success (legacy; callers must inspect the raw MCP session).
 
         Returns:
-            Tool result from MCP server
+            Tool result content blocks from the MCP server (success path).
 
         Raises:
             ConfigurationError: If Tenuo not configured and warrant_context=True
             ConstraintViolation: If arguments don't satisfy warrant constraints
             ExpiredError: If the active warrant has expired before the call
+            MCPToolCallError: If the server returns ``isError=True`` and
+                ``raise_on_tool_error`` is True
             asyncio.TimeoutError: If the server does not respond within timeout
         """
         if self.session is None:
@@ -496,6 +519,17 @@ class SecureMCPClient:
                         self.session.call_tool(tool_name, call_args, meta=meta_payload),
                         timeout=timeout,
                     )
+                    if getattr(response, "isError", False) is True:
+                        raw_content = getattr(response, "content", None)
+                        structured = getattr(response, "structuredContent", None)
+                        if raise_on_tool_error:
+                            raise MCPToolCallError(
+                                _safe_mcp_tool_error_message(raw_content, tool_name),
+                                tool_name=tool_name,
+                                content=list(raw_content) if raw_content is not None else [],
+                                structured_content=structured,
+                            )
+                        return raw_content
                     return response.content
                 except asyncio.TimeoutError:
                     raise

@@ -9,11 +9,13 @@ Three patterns are shown:
   2. MCPVerifier without config   — raw mode, field names = constraint names
   3. Approval-gate-triggered approval flow — re-submit protocol for gated tools
 
-The server verifies every incoming tool call against a Tenuo warrant
-sent via ``params._meta.tenuo`` by the client (see mcp_client.py, inject_warrant=True).
+FastMCP does not pass ``params._meta`` into ``@mcp.tool()`` handlers.  Each
+pattern below registers :class:`tenuo.mcp.TenuoMiddleware` so warrant + PoP
+from the wire (``params._meta.tenuo``) are verified before the tool runs.
+Clients should use ``inject_warrant=True`` (see ``mcp_client.py``).
 
 Prerequisites:
-  uv pip install "tenuo[mcp]" fastmcp
+  uv pip install "tenuo[fastmcp]"   # FastMCP + MCP SDK (use ``tenuo[mcp]`` for SDK-only servers)
 
 Run:
   python mcp_server.py            # starts a stdio MCP server
@@ -40,11 +42,15 @@ def create_server_with_config():
 
     The same config file should be shared with the client so both
     sides agree on the constraint view used for PoP signatures.
+
+    :class:`TenuoMiddleware` runs :meth:`MCPVerifier.verify` on every
+    ``tools/call`` and strips ``meta.tenuo`` before the handler runs, so
+    handlers only see normal tool arguments (already authorized).
     """
     from fastmcp import FastMCP
 
     from tenuo import Authorizer, CompiledMcpConfig, McpConfig, PublicKey
-    from tenuo.mcp import MCPVerifier
+    from tenuo.mcp import MCPVerifier, TenuoMiddleware
 
     # In production, load the issuer key from environment/secrets
     ISSUER_KEY_HEX = os.environ.get("TENUO_ISSUER_PUBLIC_KEY", "")
@@ -62,27 +68,20 @@ def create_server_with_config():
     config = CompiledMcpConfig.compile(McpConfig.from_file("mcp-config.yaml"))
     verifier = MCPVerifier(authorizer=authorizer, config=config)
 
-    mcp = FastMCP("tenuo-file-server")
+    mcp = FastMCP("tenuo-file-server", middleware=[TenuoMiddleware(verifier)])
 
     @mcp.tool()
-    async def read_file(path: str, maxSize: int = 4096, **kwargs) -> str:
+    async def read_file(path: str, maxSize: int = 4096) -> str:
         """Read a file from disk (Tenuo-protected)."""
-        clean = verifier.verify_or_raise(
-            "read_file", {"path": path, "maxSize": maxSize, **kwargs}
-        )
-        file_path = clean["path"]
-        log.info("Authorized read_file: %s", file_path)
-        return open(file_path).read(clean.get("max_size", 4096))
+        log.info("Authorized read_file: %s", path)
+        return open(path).read(maxSize)
 
     @mcp.tool()
-    async def write_file(path: str, content: str, **kwargs) -> str:
+    async def write_file(path: str, content: str) -> str:
         """Write a file to disk (Tenuo-protected)."""
-        clean = verifier.verify_or_raise(
-            "write_file", {"path": path, "content": content, **kwargs}
-        )
-        with open(clean["path"], "w") as f:
-            f.write(clean["content"])
-        return f"Wrote {len(clean['content'])} bytes to {clean['path']}"
+        with open(path, "w") as f:
+            f.write(content)
+        return f"Wrote {len(content)} bytes to {path}"
 
     return mcp
 
@@ -100,7 +99,7 @@ def create_server_raw():
     from fastmcp import FastMCP
     from tenuo import Authorizer, PublicKey
 
-    from tenuo.mcp import MCPVerifier
+    from tenuo.mcp import MCPVerifier, TenuoMiddleware
 
     ISSUER_KEY_HEX = os.environ.get("TENUO_ISSUER_PUBLIC_KEY", "")
     if not ISSUER_KEY_HEX:
@@ -114,13 +113,12 @@ def create_server_raw():
     )
     verifier = MCPVerifier(authorizer=authorizer)
 
-    mcp = FastMCP("tenuo-raw-server")
+    mcp = FastMCP("tenuo-raw-server", middleware=[TenuoMiddleware(verifier)])
 
     @mcp.tool()
-    async def search(query: str, **kwargs) -> str:
+    async def search(query: str) -> str:
         """Search (Tenuo-protected, no config)."""
-        clean = verifier.verify_or_raise("search", {"query": query, **kwargs})
-        return f"Results for: {clean['query']}"
+        return f"Results for: {query}"
 
     return mcp
 
@@ -135,19 +133,21 @@ def create_server_with_approval_gates():
     Some warrants attach approval gates to specific tools — e.g. ``transfer``
     above $10,000 requires human approval.  When a gate fires:
 
-      1. ``verifier.verify()`` returns ``result.is_approval_required == True``
-      2. The server returns JSON-RPC error ``-32002`` to the client
+      1. :class:`TenuoMiddleware` runs ``verifier.verify()`` before the tool
+      2. The client receives an ``isError`` tool result with JSON-RPC code
+         ``-32002`` in ``structuredContent.tenuo`` (the tool body does not run)
       3. The client obtains ``SignedApproval`` objects from authorized approvers
       4. The client re-submits the same call with approvals in ``_meta.tenuo.approvals``
-      5. ``verifier.verify()`` now passes — approvals satisfy the gate
+      5. Verification passes — the handler runs and completes the transfer
 
-    This example shows how to detect and handle the approval-gate-triggered case
-    with structured JSON-RPC errors.
+    For raw MCP handlers (no FastMCP), use :meth:`MCPVerifier.verify` and
+    :exc:`MCPAuthorizationError` / :meth:`MCPVerificationResult.raise_if_denied`
+    in your own ``call_tool`` handler instead of this middleware pattern.
     """
     from fastmcp import FastMCP
     from tenuo import Authorizer, PublicKey
 
-    from tenuo.mcp import MCPAuthorizationError, MCPVerifier
+    from tenuo.mcp import MCPVerifier, TenuoMiddleware
 
     ISSUER_KEY_HEX = os.environ.get("TENUO_ISSUER_PUBLIC_KEY", "")
     if not ISSUER_KEY_HEX:
@@ -161,35 +161,12 @@ def create_server_with_approval_gates():
     )
     verifier = MCPVerifier(authorizer=authorizer)
 
-    mcp = FastMCP("tenuo-gated-server")
+    mcp = FastMCP("tenuo-gated-server", middleware=[TenuoMiddleware(verifier)])
 
     @mcp.tool()
-    async def transfer(amount: float, destination: str, **kwargs) -> str:
-        """Transfer funds (may require human approval).
-
-        If the warrant has an approval gate on ``transfer`` and no approvals are
-        supplied, the verification result will indicate ``-32002``.
-        """
-        result = verifier.verify(
-            "transfer", {"amount": amount, "destination": destination, **kwargs}
-        )
-
-        if result.is_approval_required:
-            log.info(
-                "Approval gate triggered for transfer amount=%.2f — requesting approval",
-                amount,
-            )
-            raise MCPAuthorizationError(result)
-
-        # For other denials, raise a generic error
-        result.raise_if_denied()
-
-        log.info(
-            "Transfer authorized: %.2f → %s (warrant=%s)",
-            amount,
-            destination,
-            result.warrant_id,
-        )
+    async def transfer(amount: float, destination: str) -> str:
+        """Transfer funds (approval gate enforced in middleware before this runs)."""
+        log.info("Transfer authorized: %.2f → %s", amount, destination)
         return f"Transferred {amount} to {destination}"
 
     return mcp
@@ -206,11 +183,14 @@ def create_server_mixed():
     unwarranted calls.  Set ``require_warrant=False`` on the verifier.
     Calls without a warrant in ``_meta.tenuo`` are allowed through (you
     can add your own fallback AuthZ), while warranted calls are fully verified.
+
+    Middleware performs verification first; use a verifier ``control_plane``
+    hook if you need structured logging of warrant vs unwarranted calls.
     """
     from fastmcp import FastMCP
     from tenuo import Authorizer, PublicKey
 
-    from tenuo.mcp import MCPVerifier
+    from tenuo.mcp import MCPVerifier, TenuoMiddleware
 
     ISSUER_KEY_HEX = os.environ.get("TENUO_ISSUER_PUBLIC_KEY", "")
     if not ISSUER_KEY_HEX:
@@ -227,20 +207,12 @@ def create_server_mixed():
         require_warrant=False,  # allow unauthenticated calls during migration
     )
 
-    mcp = FastMCP("tenuo-mixed-server")
+    mcp = FastMCP("tenuo-mixed-server", middleware=[TenuoMiddleware(verifier)])
 
     @mcp.tool()
-    async def read_file(path: str, **kwargs) -> str:
-        """Read file — accepts both warranted and plain calls."""
-        result = verifier.verify("read_file", {"path": path, **kwargs})
-        if result.allowed:
-            if result.warrant_id:
-                log.info("Warranted call: %s (warrant=%s)", path, result.warrant_id)
-            else:
-                log.info("Unwarranted call: %s (fallback policy)", path)
-            return open(result.clean_arguments["path"]).read()
-
-        result.raise_if_denied()
+    async def read_file(path: str) -> str:
+        """Read file — warranted and plain calls (see verifier require_warrant)."""
+        return open(path).read()
 
     return mcp
 

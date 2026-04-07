@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **FastMCP `TenuoMiddleware`** — `tenuo.mcp.TenuoMiddleware` (optional `tenuo[fastmcp]`, separate from `tenuo[mcp]`) runs `MCPVerifier` on every `tools/call` via FastMCP’s middleware pipeline; resolves `_meta` from params or MCP request context, strips warrant material after success, and surfaces denials as `isError` tool results with structured `tenuo` diagnostics. `tenuo.mcp.fastmcp_middleware` raises an explicit `ImportError` when FastMCP (or the MCP SDK) is missing.
 - **Temporal `SimplePlugin`** — `TenuoTemporalPlugin` (`tenuo.TenuoTemporalPlugin`) registers client + worker interceptors and sandbox passthrough; `ensure_tenuo_workflow_runner` for manual worker setup. `tenuo[temporal]` now requires `temporalio>=1.23.0`. Interceptor kwargs follow `inspect.signature(SimplePlugin.__init__)` (unified `interceptors=` vs split client/worker params). `TenuoClientInterceptor` / `TenuoPlugin` subclass Temporal’s interceptor types for plugin filtering.
 
 ## [0.1.0-beta.17] - 2026-04-05
@@ -149,7 +150,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### MCP Server-Side Verification
 
 - `**MCPVerifier`**: Framework-agnostic server-side warrant verification for MCP tool handlers
-- `**verify_mcp_call()**`: Standalone convenience function for one-off verification
+- `**verify_mcp_call()`**: Standalone convenience function for one-off verification
 - **Multi-transport client**: `SecureMCPClient` now supports SSE and StreamableHTTP transports in addition to stdio
 - `**params._meta` transport**: Warrant + PoP are carried in the MCP spec's extension point (`params._meta["tenuo"]`), keeping tool arguments clean — no schema pollution
 - **MCP session reconnection**: `SecureMCPClient` auto-reconnects on transport failures (`EOFError`, `EPIPE`, `ECONNRESET`, `anyio.ClosedResourceError`) with a single retry
@@ -163,12 +164,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `**issue()` oracle**: Handler receives a bound callable — the signing key never leaves the server
 - `**RegistrationDisabledError` (-32017)** / `**RegistrationDeniedError` (-32018)**: Structured errors for the registration flow
 - `**A2AClient.request_warrant()`**: Client-side method to perform the full CSR handshake
-- `**A2AServerBuilder.registration_handler()**`: Server-side configuration for the handler
+- `**A2AServerBuilder.registration_handler()`**: Server-side configuration for the handler
 
 #### Approval Gates (renamed from Guards)
 
-- `**approval_gate.rs**`: Renamed guard module to approval gate for clarity — per-tool approval policy evaluation
-- `**ApprovalGate**`: Replaces `Guard` across core, Python bindings, and all integrations
+- `**approval_gate.rs`**: Renamed guard module to approval gate for clarity — per-tool approval policy evaluation
+- `**ApprovalGate`**: Replaces `Guard` across core, Python bindings, and all integrations
 - `**GuardTriggered` exception**: Exposed in Python SDK for approval gate evaluation results
 
 #### Core Hardening
@@ -244,7 +245,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Temporal distributed deployment**: Header propagation via outbound interceptor — works when client and worker are separate processes
 - `**AuthorizedWorkflow`**: Base class with fail-fast validation and automatic PoP
-- `**TenuoClientInterceptor**`: Client-side warrant header injection
+- `**TenuoClientInterceptor`**: Client-side warrant header injection
 - **Live integration tests**: 36 tests including 5 against an in-process Temporal server
 - **Examples**: `demo.py`, `multi_warrant.py`, `delegation.py`
 
@@ -262,7 +263,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Shared `enforce_tool_call()` function**: Single code path for all Python integrations (LangGraph, CrewAI, AutoGen, OpenAI, Google ADK)
 - `**_enforcement.py`**: 670+ lines of shared enforcement logic with consistent behavior across frameworks
-- `**BaseGuardBuilder**`: DRY builder pattern extracted to `_builder.py` for all integration guard builders
+- `**BaseGuardBuilder`**: DRY builder pattern extracted to `_builder.py` for all integration guard builders
 - **Defense-in-depth documentation**: Clear separation between Python-side policies (UX) and Rust core (security boundary)
 - **Tool risk schemas**: `ToolSchema` with risk levels (`critical`, `high`, `medium`, `low`) and recommended constraints
 

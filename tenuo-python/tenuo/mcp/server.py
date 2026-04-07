@@ -32,9 +32,11 @@ Usage pattern
         result.raise_if_denied()
         return execute_tool(result.clean_arguments)
 
-   Note: ``fastmcp`` strips ``_meta`` before calling user handlers, so Tenuo
-   authorization requires the raw MCP SDK or a framework that exposes
-   ``params._meta``.
+   Note: ``fastmcp`` does not pass ``_meta`` into Python tool parameters. Use
+   :class:`tenuo.mcp.fastmcp_middleware.TenuoMiddleware` (re-exported as
+   ``tenuo.mcp.TenuoMiddleware`` when the ``tenuo[fastmcp]`` extra is installed) to verify using
+   the same :class:`MCPVerifier` path while reading metadata from the wire
+   request context, or use the raw MCP SDK handler form above.
 
 3. For raw JSON-RPC servers, handle errors explicitly:
 
@@ -109,11 +111,32 @@ from ..exceptions import (
     ExpiredError,
     MissingSignature,
     SignatureInvalid,
+    SignatureMismatch,
     TenuoError,
     ToolNotAuthorized,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _access_denial_reason(exc: BaseException) -> str:
+    """Human-facing denial with hints for the most common integration mistakes."""
+    base = f"Access denied: {exc}"
+    if isinstance(exc, SignatureInvalid):
+        return (
+            f"{base} If you use CompiledMcpConfig, the client PoP must sign the "
+            "same extracted constraint dict as the server (identical mcp-config.yaml / "
+            "register_config path)."
+        )
+    if isinstance(exc, SignatureMismatch):
+        return (
+            f"{base} PoP was verified structurally but does not match this warrant/holder "
+            "or constraint view. With CompiledMcpConfig, use the same extraction on client "
+            "and server when signing."
+        )
+    if isinstance(exc, MissingSignature):
+        return f"{base} Ensure the client sends a PoP signature in _meta.tenuo.signature."
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -364,8 +387,11 @@ class MCPVerifier:
                     clean_arguments=clean_arguments,
                     constraints=constraints,
                     denial_reason=(
-                        "No warrant provided. Set inject_warrant=True on the "
-                        "SecureMCPClient, or pass params._meta with tenuo metadata."
+                        "No warrant provided. Use SecureMCPClient(inject_warrant=True), "
+                        "or pass params._meta with tenuo metadata into MCPVerifier.verify. "
+                        "On FastMCP, register TenuoMiddleware(verifier) so _meta from the "
+                        "wire request reaches the verifier (tool handlers alone do not "
+                        "receive _meta)."
                     ),
                     jsonrpc_error_code=-32001,
                 )
@@ -494,7 +520,7 @@ class MCPVerifier:
                 clean_arguments=clean_arguments,
                 constraints=constraints,
                 warrant_id=warrant_id,
-                denial_reason=f"Access denied: {exc}",
+                denial_reason=_access_denial_reason(exc),
                 jsonrpc_error_code=-32001,
             )
         except TenuoError as exc:
@@ -510,7 +536,7 @@ class MCPVerifier:
                 clean_arguments=clean_arguments,
                 constraints=constraints,
                 warrant_id=warrant_id,
-                denial_reason=f"Access denied: {exc}",
+                denial_reason=_access_denial_reason(exc),
                 jsonrpc_error_code=-32001,
             )
         except Exception as exc:

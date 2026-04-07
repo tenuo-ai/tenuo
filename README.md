@@ -307,7 +307,8 @@ uv pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
 uv pip install "tenuo[crewai]"        # + CrewAI
 uv pip install "tenuo[temporal]"      # + Temporal workflows
 uv pip install "tenuo[autogen]"       # + AutoGen AgentChat (Python ≥3.10)
-uv pip install "tenuo[mcp]"           # + MCP client & server verification (Python ≥3.10)
+uv pip install "tenuo[mcp]"           # + official MCP SDK, client & server verification (Python ≥3.10)
+uv pip install "tenuo[fastmcp]"       # + FastMCP (TenuoMiddleware / FastMCP servers)
 ```
 
 ---
@@ -347,7 +348,7 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 | A2A integration | Implemented (`tenuo[a2a]`) |
 | AutoGen integration | Implemented (`tenuo[autogen]`) |
 | Google ADK integration | Implemented (`tenuo[google_adk]`) |
-| MCP integration | Implemented (`tenuo[mcp]`) |
+| MCP integration | Implemented (`tenuo[mcp]` SDK; `tenuo[fastmcp]` for FastMCP) |
 | Warrant guards (human approval) | Implemented (experimental) |
 | Revocation (SRL) | Ongoing development |
 | TypeScript/Node SDK | Planned for v0.2 |

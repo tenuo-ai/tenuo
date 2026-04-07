@@ -204,7 +204,22 @@ class TestRequireWarrant:
         result = verifier.verify("read_file", {"path": "/data/f.txt"})
         assert not result.allowed
         assert result.jsonrpc_error_code == -32001
-        assert "No warrant" in (result.denial_reason or "")
+        dr = result.denial_reason or ""
+        assert "No warrant" in dr
+        assert "TenuoMiddleware" in dr
+        assert "SecureMCPClient" in dr and "inject_warrant" in dr
+
+    def test_missing_signature_includes_signature_hint(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+    ):
+        meta = {"tenuo": {"warrant": simple_warrant.to_base64()}}
+        result = MCPVerifier(authorizer=authorizer).verify(
+            "read_file", {"path": "/data/f.txt"}, meta=meta
+        )
+        assert not result.allowed
+        assert "_meta.tenuo.signature" in (result.denial_reason or "")
 
     def test_no_tenuo_allowed_when_require_warrant_false(self, authorizer: Authorizer):
         verifier = MCPVerifier(authorizer=authorizer, require_warrant=False)
@@ -589,6 +604,40 @@ tools:
 
         assert not result.allowed
         assert result.jsonrpc_error_code == -32602
+
+    def test_pop_signed_over_raw_body_not_extracted_hints_config_sync(
+        self,
+        authorizer: Authorizer,
+        issuer_key: SigningKey,
+        agent_key: SigningKey,
+        mcp_config,
+    ):
+        from tenuo import Pattern, Range
+
+        warrant = Warrant.issue(
+            issuer_key,
+            capabilities={
+                "read_file": {
+                    "path": Pattern("/data/*"),
+                    "max_size": Range(max=5000),
+                }
+            },
+            holder=agent_key.public_key,
+        )
+        # Correct server-side extraction uses max_size; PoP must sign that dict.
+        # Sign over wrong (camelCase) shape → denial with CompiledMcpConfig hint.
+        wrong_for_pop = {"path": "/data/log.txt", "maxSize": 2048}
+        pop_sig = _encode_pop(warrant, agent_key, "read_file", wrong_for_pop)
+        raw_body = {"path": "/data/log.txt", "maxSize": 2048}
+        meta = {"tenuo": {"warrant": warrant.to_base64(), "signature": pop_sig}}
+
+        result = MCPVerifier(authorizer=authorizer, config=mcp_config).verify(
+            "read_file", raw_body, meta=meta
+        )
+
+        assert not result.allowed
+        dr = result.denial_reason or ""
+        assert "CompiledMcpConfig" in dr
 
 
 # ---------------------------------------------------------------------------

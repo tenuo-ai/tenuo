@@ -4,7 +4,9 @@ Tests for the control plane event streaming integration.
 These tests verify:
   1. ControlPlaneClient / emit_for_enforcement Python-side logic (no real HTTP)
   2. MCPVerifier emits events on allow and deny
-  3. TenuoMiddleware and TenuoToolNode emit events (LangGraph)
+  3. FastMCP :class:`TenuoMiddleware` forwards verifier control-plane emits
+     (see ``test_mcp_fastmcp_middleware.py``); LangGraph ``TenuoMiddleware`` /
+     ``TenuoToolNode`` below
   4. Temporal _emit_allow_event / _emit_denial_event emit events and carry
      warrant_stack on both allow and deny paths
   5. TenuoGuard (Google ADK) emits events for Tier 2 (PoP) and Tier 1 paths
