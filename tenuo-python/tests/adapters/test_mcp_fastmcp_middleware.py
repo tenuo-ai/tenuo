@@ -1,7 +1,8 @@
 """
 Tests for :class:`tenuo.mcp.fastmcp_middleware.TenuoMiddleware`.
 
-Requires ``tenuo[fastmcp]`` (``pytest.importorskip("fastmcp")`` otherwise).
+Requires the MCP SDK and FastMCP (``importorskip("mcp")`` then ``importorskip("fastmcp")``);
+the whole module is skipped when MCP is unavailable (e.g. Python 3.9 matrix jobs).
 """
 
 from __future__ import annotations
@@ -10,18 +11,23 @@ import base64
 from typing import Any, Dict
 from unittest.mock import MagicMock
 
-import mcp.types as mt
 import pytest
 from tenuo_core import Authorizer, SigningKey, Warrant
 
 from tenuo import Pattern
 from tenuo.mcp.server import MCPVerifier
 
+pytest.importorskip("mcp")
 pytest.importorskip("fastmcp")
 
 from mcp.server.lowlevel.server import request_ctx  # noqa: E402
 from mcp.shared.context import RequestContext  # noqa: E402
-from mcp.types import CallToolRequestParams, RequestParams, TextContent  # noqa: E402
+from mcp.types import (  # noqa: E402
+    CallToolRequestParams,
+    CallToolResult,
+    RequestParams,
+    TextContent,
+)
 
 from fastmcp.server.context import Context  # noqa: E402
 from fastmcp.server.middleware.middleware import MiddlewareContext  # noqa: E402
@@ -136,7 +142,7 @@ async def test_middleware_denies_without_warrant(authorizer: Authorizer) -> None
 
     out = await mw.on_call_tool(ctx, boom)
     mcp_result = out.to_mcp_result()
-    assert isinstance(mcp_result, mt.CallToolResult)
+    assert isinstance(mcp_result, CallToolResult)
     assert mcp_result.isError is True
     assert mcp_result.structuredContent is not None
     tenuo = mcp_result.structuredContent.get("tenuo")
