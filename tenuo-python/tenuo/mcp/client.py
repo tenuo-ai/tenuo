@@ -102,6 +102,7 @@ class SecureMCPClient:
         timeout: float = 30.0,
         sse_read_timeout: float = 300.0,
         auth: Optional[Any] = None,
+        approval_handler: Optional[Any] = None,
     ):
         """
         Initialize MCP client.
@@ -128,6 +129,10 @@ class SecureMCPClient:
             inject_warrant: Inject warrants into tool calls for server-side
                 verification (default: False). Set True when the server runs
                 Tenuo verification.
+            approval_handler: Optional callable for warrant approval gates.
+                Receives an ``ApprovalRequest`` and returns ``SignedApproval``
+                (or raises ``ApprovalDenied``). Used during local enforcement
+                (``warrant_context=True``).
         """
         if not MCP_AVAILABLE:
             raise ImportError('MCP SDK not installed. Install with: uv pip install "tenuo[mcp]"')
@@ -154,6 +159,7 @@ class SecureMCPClient:
         self.timeout = timeout
         self.sse_read_timeout = sse_read_timeout
         self.auth = auth
+        self._approval_handler = approval_handler
 
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
@@ -264,10 +270,10 @@ class SecureMCPClient:
         )
 
         # Initialize protocol
-        await self.session.initialize()
+        await asyncio.wait_for(self.session.initialize(), timeout=self.timeout)
 
         # Discover tools
-        response = await self.session.list_tools()
+        response = await asyncio.wait_for(self.session.list_tools(), timeout=self.timeout)
         self._tools = response.tools
 
         # Pre-populate protected tools for the .tools property
@@ -309,7 +315,7 @@ class SecureMCPClient:
         try:
             await self.exit_stack.aclose()
         except Exception:
-            pass
+            logger.warning("Error closing MCP session during reconnect", exc_info=True)
         self.exit_stack = AsyncExitStack()
         self.session = None
         self._tools = None
@@ -495,8 +501,24 @@ class SecureMCPClient:
 
                 if warrant is not None and keypair is not None:
                     warrant_base64 = warrant.to_base64()
-                    # Create PoP signature for this specific call
-                    pop_sig = warrant.sign(keypair, tool_name, args, int(time.time()))
+                    # PoP must sign the same constraint view the server will
+                    # verify against. When a CompiledMcpConfig is loaded, that
+                    # means extracted (renamed/coerced) constraints — not raw args.
+                    sign_args = args
+                    if self.compiled_config:
+                        try:
+                            extraction = self.compiled_config.extract_constraints(
+                                tool_name, args
+                            )
+                            sign_args = dict(extraction.constraints)
+                        except Exception:
+                            logger.warning(
+                                "Config extraction failed for '%s'; PoP will sign raw "
+                                "arguments (server-side verification may reject)",
+                                tool_name,
+                                exc_info=True,
+                            )
+                    pop_sig = warrant.sign(keypair, tool_name, sign_args, int(time.time()))
                     signature_base64 = base64.b64encode(bytes(pop_sig)).decode("utf-8")
 
                     tenuo_meta: Dict[str, Any] = {
@@ -548,16 +570,35 @@ class SecureMCPClient:
             if not is_configured():
                 raise ConfigurationError("Tenuo not configured. Call configure() first or use warrant_context=False")
 
-            # Create protected wrapper for local authorization
-            @guard(tool=tool_name, extract_args=lambda **kwargs: kwargs)
-            async def wrapper(**kwargs):
-                _w = warrant_scope()
-                _wid = getattr(_w, "id", None) if _w else None
-                logger.info("MCP tool authorised: %s (warrant=%s)", tool_name, _wid)
-                return await _perform_call(kwargs)
+            from ..bound_warrant import BoundWarrant
+            from ..config import resolve_trusted_roots
 
-            # Call with local authorization
-            return await wrapper(**arguments)
+            w = warrant_scope()
+            k = key_scope()
+            if w is None or k is None:
+                raise ConfigurationError(
+                    "warrant_context=True requires an active warrant and key scope. "
+                    "Use `with warrant_scope(w), key_scope(k):` or set warrant_context=False."
+                )
+            bw = BoundWarrant(w, k)
+            result = enforce_tool_call(
+                tool_name=tool_name,
+                tool_args=arguments,
+                bound_warrant=bw,
+                trusted_roots=resolve_trusted_roots(),
+                approval_handler=self._approval_handler,
+                approvals=approvals,
+            )
+            if not result.allowed:
+                raise ConfigurationError(
+                    f"Authorization denied for '{tool_name}': {result.denial_reason}"
+                )
+            logger.info(
+                "MCP tool authorised: %s (warrant=%s)",
+                tool_name,
+                getattr(w, "id", None),
+            )
+            return await _perform_call(result.clean_arguments or arguments)
         else:
             # Call without local authorization (but still with optional injection)
             return await _perform_call(arguments)
@@ -574,11 +615,14 @@ class SecureMCPClient:
         """
         tool_name = mcp_tool.name
 
-        # Extract allowed keys from JSON Schema to prevent "Shadow Parameter" attacks
-        # We fail-closed: if it's not in the schema, it doesn't get sent to the server.
+        # Extract allowed keys from JSON Schema to prevent "Shadow Parameter" attacks.
+        # When the schema declares properties we fail-closed: if a key isn't in
+        # the schema it doesn't get sent to the server.  When the schema is
+        # absent or has no properties we forward all args — stripping everything
+        # would silently break tools that don't publish a schema.
         input_schema = getattr(mcp_tool, "inputSchema", {}) or {}
         properties = input_schema.get("properties", {})
-        allowed_keys = set(properties.keys())
+        allowed_keys: set[str] | None = set(properties.keys()) if properties else None
 
         def _extract_auth_args(**kwargs):
             # Strip _approvals — it is a Tenuo transport kwarg, not a tool argument.
@@ -597,15 +641,41 @@ class SecureMCPClient:
                 return combined
             return tool_kwargs
 
-        @guard(tool=tool_name, extract_args=_extract_auth_args)
         async def protected_tool(**kwargs):
             """Protected MCP tool wrapper."""
-            # Extract _approvals before schema filtering — it's a transport kwarg,
-            # not a tool schema argument and must not be forwarded to the server.
+            from ..bound_warrant import BoundWarrant
+            from ..config import resolve_trusted_roots
+
             _approvals = kwargs.pop("_approvals", None)
 
-            # Filter arguments against schema (Schema-Based Argument Stripping)
-            filtered_args = {k: v for k, v in kwargs.items() if k in allowed_keys}
+            auth_args = _extract_auth_args(**kwargs)
+
+            w = warrant_scope()
+            k = key_scope()
+            if w is not None and k is not None:
+                bw = BoundWarrant(w, k)
+                result = enforce_tool_call(
+                    tool_name=tool_name,
+                    tool_args=auth_args,
+                    bound_warrant=bw,
+                    trusted_roots=resolve_trusted_roots(),
+                    approval_handler=self._approval_handler,
+                    approvals=_approvals,
+                )
+                if not result.allowed:
+                    raise ConfigurationError(
+                        f"Authorization denied for '{tool_name}': {result.denial_reason}"
+                    )
+                logger.info(
+                    "MCP tool authorised: %s (warrant=%s)",
+                    tool_name,
+                    getattr(w, "id", None),
+                )
+
+            if allowed_keys is not None:
+                filtered_args = {k: v for k, v in kwargs.items() if k in allowed_keys}
+            else:
+                filtered_args = dict(kwargs)
 
             return await self.call_tool(
                 tool_name,

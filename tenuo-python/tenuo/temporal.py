@@ -1253,11 +1253,18 @@ class CompositeKeyResolver(KeyResolver):
 class TenuoPluginConfig:
     """Configuration for TenuoPlugin."""
 
-    key_resolver: KeyResolver
-    """Required. Resolves key IDs to signing keys.
+    key_resolver: Optional[KeyResolver] = None
+    """Resolves key IDs to signing keys for PoP generation.
 
-    Used by ``tenuo_execute_activity()`` and the outbound workflow
-    interceptor to reconstruct signing keys for PoP generation.
+    Provide this **or** :attr:`signing_key` (a static worker key). When both are
+    set, ``key_resolver`` takes precedence.
+    """
+
+    signing_key: Optional[Any] = None
+    """Optional static ``tenuo_core.SigningKey`` for single-key workers.
+
+    When set and :attr:`key_resolver` is ``None``, a trivial resolver is
+    synthesized so you do not need a custom ``KeyResolver`` subclass.
     """
 
     control_plane: Optional[Any] = None
@@ -1551,6 +1558,38 @@ class TenuoPluginConfig:
                 "or call tenuo.configure(trusted_roots=[...]) at application startup."
             )
         self.trusted_roots = roots  # type: ignore[assignment]
+
+        if self.signing_key is not None and self.key_resolver is None:
+
+            class _StaticSigningKeyResolver(KeyResolver):
+                def __init__(self, sk: Any) -> None:
+                    self._sk = sk
+
+                async def resolve(self, key_id: str) -> Any:  # noqa: ARG002
+                    return self._sk
+
+                def resolve_sync(self, key_id: str) -> Any:  # noqa: ARG002
+                    return self._sk
+
+            self.key_resolver = _StaticSigningKeyResolver(self.signing_key)
+
+        if self.key_resolver is None:
+            from tenuo.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "TenuoPluginConfig requires key_resolver= or signing_key= (worker signing material)."
+            )
+
+        if self.approval_handler is not None and (
+            self.retry_pop_max_windows is None or self.retry_pop_max_windows <= 5
+        ):
+            logger.info(
+                "TenuoPluginConfig: approval_handler set — retry_pop_max_windows=%s is tight for "
+                "human-in-the-loop; using 240 (~2 h PoP slack on activity retries). "
+                "Set retry_pop_max_windows explicitly to override.",
+                self.retry_pop_max_windows,
+            )
+            self.retry_pop_max_windows = 240
 
         if self.trusted_roots_refresh_interval_secs is not None:
             if self.trusted_roots_refresh_interval_secs <= 0:
@@ -3714,11 +3753,11 @@ class TenuoActivityInboundInterceptor:
                 holder_key = getattr(warrant, "holder_key", None)
                 warrant_id = getattr(warrant, "id", "") or ""
                 request_hash = _compute_hash(warrant_id, tool_name, args, holder_key)
-                request = ApprovalRequest(
-                    tool=tool_name,
-                    arguments=args,
-                    warrant_id=warrant_id,
-                    request_hash=request_hash,
+                request = ApprovalRequest.for_warrant_gate(
+                    tool_name,
+                    args,
+                    warrant,
+                    request_hash,
                 )
 
                 result = handler(request)

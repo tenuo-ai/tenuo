@@ -197,7 +197,6 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
             bound=bound,
             trusted_roots=self._trusted_roots,
             on_denial=self._on_denial,
-            approval_policy=self._approval_policy,
             approval_handler=self._approval_handler,
             approvals=self._approvals,
         )
@@ -218,7 +217,6 @@ class _Guard:
         bound: Any,
         trusted_roots: Any = None,
         on_denial: str,
-        approval_policy: Any = None,
         approval_handler: Any = None,
         approvals: Any = None,
     ) -> None:
@@ -226,7 +224,6 @@ class _Guard:
         self._bound = bound
         self._trusted_roots = trusted_roots
         self._on_denial = on_denial
-        self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
 
@@ -409,7 +406,6 @@ class _Guard:
             result = enforce_tool_call(
                 tool_name, auth_args, self._bound,
                 trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
             )

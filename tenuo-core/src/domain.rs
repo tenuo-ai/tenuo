@@ -39,6 +39,12 @@ pub const ROTATION_PROOF_CONTEXT: &[u8] = b"tenuo-key-rotation-v1";
 /// Used when signing warrant payloads during issuance.
 pub const WARRANT_CONTEXT: &[u8] = b"tenuo-warrant-v1";
 
+/// Sub-context for approval-context attestations (holder signs binding metadata).
+///
+/// Full preimage is: [`WARRANT_CONTEXT`] || this constant || version byte ||
+/// length-prefixed fields (see [`crate::approval::build_approval_context_preimage`]).
+pub const APPROVAL_CONTEXT_ATTESTATION: &[u8] = b"tenuo-approval-context-v1";
+
 /// Domain separation context for revocation request signatures.
 ///
 /// Used when a requestor signs a revocation request to prove they

@@ -137,7 +137,7 @@ from tenuo.constraints import Shlex, Subpath, UrlSafe
 from tenuo.core import check_constraint
 
 if TYPE_CHECKING:
-    from tenuo.approval import ApprovalHandler, ApprovalPolicy
+    from tenuo.approval import ApprovalHandler
 
 check_crewai_compat()
 
@@ -586,7 +586,6 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
             trusted_roots=self._trusted_roots,
             on_denial=self._on_denial,
             audit_callback=self._audit_callback,
-            approval_policy=self._approval_policy,
             approval_handler=self._approval_handler,
             approvals=self._approvals,
         )
@@ -616,7 +615,6 @@ class CrewAIGuard:
         trusted_roots: Optional[list],
         on_denial: str,
         audit_callback: Optional[AuditCallback],
-        approval_policy: Optional["ApprovalPolicy"] = None,
         approval_handler: Optional["ApprovalHandler"] = None,
         approvals: Optional[list] = None,
     ):
@@ -626,7 +624,6 @@ class CrewAIGuard:
         self._trusted_roots = trusted_roots
         self._on_denial = on_denial
         self._audit_callback = audit_callback
-        self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
         self._registered_hook: Optional[Callable] = None
@@ -874,7 +871,6 @@ class CrewAIGuard:
                 tool_args=args,
                 bound_warrant=bound,
                 trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
             )

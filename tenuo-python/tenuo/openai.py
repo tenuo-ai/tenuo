@@ -475,7 +475,6 @@ def verify_tool_call(
     warrant: Optional[Warrant] = None,
     signing_key: Optional[SigningKey] = None,
     trusted_roots: Optional[list] = None,
-    approval_policy: Optional[Any] = None,
     approval_handler: Optional[Any] = None,
     approvals: Optional[list] = None,
 ) -> None:
@@ -531,7 +530,6 @@ def verify_tool_call(
             tool_args=arguments,
             bound_warrant=bound_warrant,
             trusted_roots=resolve_trusted_roots(trusted_roots),
-            approval_policy=approval_policy,
             approval_handler=approval_handler,
             approvals=approvals,
         )
@@ -693,7 +691,6 @@ class GuardedCompletions:
         audit_callback: Optional[AuditCallback] = None,
         session_id: Optional[str] = None,
         constraint_hash: Optional[str] = None,
-        approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         trusted_roots: Optional[list] = None,
@@ -709,7 +706,6 @@ class GuardedCompletions:
         self._audit_callback = audit_callback
         self._session_id = session_id or str(uuid.uuid4())[:8]
         self._constraint_hash = constraint_hash
-        self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
         self._trusted_roots = trusted_roots
@@ -785,7 +781,6 @@ class GuardedCompletions:
                 self._warrant,
                 self._signing_key,
                 self._trusted_roots,
-                self._approval_policy,
                 self._approval_handler,
                 self._approvals,
             )
@@ -885,7 +880,6 @@ class GuardedCompletions:
                     self._warrant,
                     self._signing_key,
                     self._trusted_roots,
-                    self._approval_policy,
                     self._approval_handler,
                     self._approvals,
                 )
@@ -1056,7 +1050,6 @@ class GuardedCompletions:
                     self._warrant,
                     self._signing_key,
                     self._trusted_roots,
-                    self._approval_policy,
                     self._approval_handler,
                     self._approvals,
                 )
@@ -1104,7 +1097,6 @@ class GuardedResponses:
         audit_callback: Optional[AuditCallback] = None,
         session_id: Optional[str] = None,
         constraint_hash: Optional[str] = None,
-        approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         trusted_roots: Optional[list] = None,
@@ -1119,7 +1111,6 @@ class GuardedResponses:
         self._audit_callback = audit_callback
         self._session_id = session_id or str(uuid.uuid4())[:8]
         self._constraint_hash = constraint_hash
-        self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
         self._trusted_roots = trusted_roots
@@ -1187,7 +1178,6 @@ class GuardedResponses:
                 self._warrant,
                 self._signing_key,
                 self._trusted_roots,
-                self._approval_policy,
                 self._approval_handler,
                 self._approvals,
             )
@@ -1260,7 +1250,6 @@ class GuardedClient:
         warrant: Optional[Warrant] = None,
         signing_key: Optional[SigningKey] = None,
         audit_callback: Optional[AuditCallback] = None,
-        approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         trusted_roots: Optional[list] = None,
@@ -1274,7 +1263,6 @@ class GuardedClient:
         self._warrant = warrant
         self._signing_key = signing_key
         self._audit_callback = audit_callback
-        self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
         self._trusted_roots = trusted_roots
@@ -1298,9 +1286,8 @@ class GuardedClient:
                     audit_callback,
                     self.session_id,
                     self.constraint_hash,
-                    approval_policy,
                     approval_handler,
-                    None,
+                    approvals,
                     trusted_roots,
                 )
             )
@@ -1318,8 +1305,9 @@ class GuardedClient:
                 audit_callback,
                 self.session_id,
                 self.constraint_hash,
-                approval_policy,
                 approval_handler,
+                approvals,
+                trusted_roots,
             )
 
         # Pass through other attributes
@@ -1463,7 +1451,6 @@ class GuardBuilder:
         self._audit_callback: Optional[AuditCallback] = None
         self._warrant: Optional[Warrant] = None
         self._signing_key: Optional[SigningKey] = None
-        self._approval_policy: Optional[Any] = None
         self._approval_handler: Optional[Any] = None
         self._approvals: Optional[list] = None
         # Tool schema validation
@@ -1624,28 +1611,6 @@ class GuardBuilder:
         self._signing_key = signing_key
         return self
 
-    def approval_policy(self, policy: Any) -> "GuardBuilder":
-        """Set an approval policy for human-in-the-loop authorization.
-
-        When a tool call matches a policy rule, the approval handler is
-        invoked before execution proceeds. Requires Tier 2 (warrant).
-
-        Args:
-            policy: ApprovalPolicy with one or more rules.
-
-        Returns:
-            self for chaining
-
-        Example:
-            from tenuo.approval import ApprovalPolicy, require_approval
-
-            builder.approval_policy(ApprovalPolicy(
-                require_approval("send_email", when=lambda a: not a["to"].endswith("@company.com")),
-            ))
-        """
-        self._approval_policy = policy
-        return self
-
     def on_approval(self, handler: Any) -> "GuardBuilder":
         """Set the handler invoked when a tool call requires approval.
 
@@ -1665,10 +1630,10 @@ class GuardBuilder:
         return self
 
     def with_approvals(self, approvals: list) -> "GuardBuilder":
-        """Set pre-collected approvals for human-in-the-loop.
+        """Set pre-collected signed approvals for warrant approval gates.
 
-        When using an ApprovalPolicy, approvals can be gathered ahead of time
-        and passed here. These will be passed through to verify_tool_call.
+        When the warrant requires approval for a tool, these objects are
+        checked before invoking ``on_approval``.
 
         Args:
             approvals: List of pre-collected approval objects
@@ -1860,7 +1825,6 @@ class GuardBuilder:
             warrant=self._warrant,
             signing_key=self._signing_key,
             audit_callback=self._audit_callback,
-            approval_policy=self._approval_policy,
             approval_handler=self._approval_handler,
             approvals=self._approvals,
         )
@@ -2086,7 +2050,6 @@ class TenuoToolGuardrail:
         trusted_roots: Optional[list] = None,
         tripwire: bool = True,
         audit_callback: Optional[AuditCallback] = None,
-        approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
     ):
@@ -2101,8 +2064,8 @@ class TenuoToolGuardrail:
             trusted_roots: Trusted issuer public keys (required for Tier 2 warrant path)
             tripwire: If True, halt agent on violation. If False, log and continue.
             audit_callback: Optional callback for audit events
-            approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
-            approval_handler: Handler invoked when approval policy triggers
+            approval_handler: Handler invoked when the warrant requires human approval
+            approvals: Pre-collected signed approvals for warrant approval gates
         """
         self.allow_tools = allow_tools
         self.deny_tools = deny_tools
@@ -2112,7 +2075,6 @@ class TenuoToolGuardrail:
         self.trusted_roots = trusted_roots
         self.tripwire = tripwire
         self.audit_callback = audit_callback
-        self.approval_policy = approval_policy
         self.approval_handler = approval_handler
         self.approvals = approvals
         self.name = "tenuo_tool_guardrail"
@@ -2166,7 +2128,6 @@ class TenuoToolGuardrail:
                     self.warrant,
                     self.signing_key,
                     self.trusted_roots,
-                    self.approval_policy,
                     self.approval_handler,
                     self.approvals,
                 )

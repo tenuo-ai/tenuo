@@ -2095,6 +2095,15 @@ impl PySigningKey {
     fn to_pem(&self) -> String {
         self.inner.to_pem()
     }
+
+    /// Sign raw bytes with Ed25519 (no Tenuo warrant context prefix).
+    ///
+    /// Use when the byte string already includes domain separation
+    /// (e.g. :func:`build_approval_context_attestation`). For warrants and PoP,
+    /// use higher-level APIs.
+    fn sign_raw(&self, data: &[u8]) -> Vec<u8> {
+        self.inner.sign_raw(data).to_bytes().to_vec()
+    }
 }
 
 /// Convert a Rust Constraint to a Python constraint object.
@@ -3801,6 +3810,14 @@ impl PyWarrant {
         }
     }
 
+    /// Alias for ``authorized_holder`` (same public key).
+    #[getter]
+    fn holder_key(&self) -> PyPublicKey {
+        PyPublicKey {
+            inner: self.inner.authorized_holder().clone(),
+        }
+    }
+
     /// Get the raw payload bytes.
     #[getter]
     fn payload_bytes(&self) -> Vec<u8> {
@@ -4782,6 +4799,84 @@ impl PySignedApproval {
             hex::encode(&self.inner.approver_key.to_bytes()[..8])
         )
     }
+}
+
+/// Build a signed approval-context attestation for a tool call.
+///
+/// Returns ``(args_canonical_cbor_b64, metadata_dict)`` where ``metadata_dict`` includes
+/// ``request_hash``, ``signature`` (standard base64), and hex-encoded keys.
+/// The signature is Ed25519 over a domain-separated preimage (see Rust
+/// ``build_approval_context_preimage``).
+#[pyfunction]
+#[pyo3(signature = (signing_key, warrant_id, tool, args, holder))]
+fn py_build_approval_context_attestation(
+    py: Python<'_>,
+    signing_key: &PySigningKey,
+    warrant_id: &str,
+    tool: &str,
+    args: &Bound<'_, PyDict>,
+    holder: &PyPublicKey,
+) -> PyResult<(String, Py<PyDict>)> {
+    let mut rust_args = std::collections::HashMap::new();
+    for (key, value) in args.iter() {
+        let k: String = key.extract()?;
+        let v = py_to_constraint_value(&value)?;
+        rust_args.insert(k, v);
+    }
+    let (args_b64, meta) = crate::approval::build_approval_context_attestation(
+        &signing_key.inner,
+        warrant_id,
+        tool,
+        &rust_args,
+        &holder.inner,
+    )
+    .map_err(to_py_err)?;
+    let d = PyDict::new(py);
+    d.set_item("version", meta.version)?;
+    d.set_item("canonicalization", meta.canonicalization.as_str())?;
+    d.set_item("warrant_id", meta.warrant_id.as_str())?;
+    d.set_item("tool", meta.tool.as_str())?;
+    d.set_item("request_hash", meta.request_hash.as_str())?;
+    d.set_item("holder_key", meta.holder_key_hex.as_str())?;
+    d.set_item(
+        "args_canonical_cbor_b64",
+        meta.args_canonical_cbor_b64.as_str(),
+    )?;
+    d.set_item("signer_key", meta.signer_key_hex.as_str())?;
+    d.set_item("signature", meta.signature_b64.as_str())?;
+    Ok((args_b64, d.unbind()))
+}
+
+/// Verify an approval-context attestation (control plane / server side).
+///
+/// Uses the same preimage and hash rules as :func:`build_approval_context_attestation`.
+/// Pass the approver's :class:`PublicKey`, the tool ``args`` dict (same types as for
+/// signing), the warrant holder key, and the raw 64-byte :class:`Signature`.
+#[pyfunction]
+#[pyo3(signature = (approver, warrant_id, tool, args, holder, signature))]
+fn py_verify_approval_context_attestation(
+    approver: &PyPublicKey,
+    warrant_id: &str,
+    tool: &str,
+    args: &Bound<'_, PyDict>,
+    holder: &PyPublicKey,
+    signature: &PySignature,
+) -> PyResult<()> {
+    let mut rust_args = std::collections::HashMap::new();
+    for (key, value) in args.iter() {
+        let k: String = key.extract()?;
+        let v = py_to_constraint_value(&value)?;
+        rust_args.insert(k, v);
+    }
+    crate::approval::verify_approval_context_attestation(
+        &approver.inner,
+        warrant_id,
+        tool,
+        &rust_args,
+        &holder.inner,
+        &signature.inner,
+    )
+    .map_err(to_py_err)
 }
 
 /// Compute the request hash that binds an approval to a specific tool call.
@@ -5829,6 +5924,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_compute_diff, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_warrant_stack_base64, m)?)?;
     m.add_function(wrap_pyfunction!(py_encode_warrant_stack, m)?)?;
+    m.add_function(wrap_pyfunction!(py_build_approval_context_attestation, m)?)?;
+    m.add_function(wrap_pyfunction!(py_verify_approval_context_attestation, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approvals, m)?)?;
     m.add_function(wrap_pyfunction!(py_evaluate_approval_gates, m)?)?;

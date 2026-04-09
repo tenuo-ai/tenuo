@@ -1366,31 +1366,26 @@ class TestMiddlewareAsync:
 
 
 class TestLangGraphApproval:
-    """Tests for approval policy wiring through LangGraph components."""
+    """Tests for approval handler wiring through LangGraph components."""
 
     @pytest.mark.skipif(
         not _middleware_available(),
         reason="LangChain 1.0+ middleware not installed",
     )
     def test_middleware_stores_approval_params(self, registry):
-        """TenuoMiddleware accepts and stores approval_policy and approval_handler."""
-        from tenuo.approval import ApprovalPolicy, auto_approve, require_approval
+        """TenuoMiddleware accepts and stores approval_handler and approvals."""
+        from tenuo.approval import auto_approve
         from tenuo.langgraph import TenuoMiddleware
 
         approver_key = SigningKey.generate()
-
-        policy = ApprovalPolicy(
-            require_approval("search"),
-            trusted_approvers=[approver_key.public_key],
-        )
         handler = auto_approve(approver_key=approver_key)
 
         middleware = TenuoMiddleware(
-            approval_policy=policy,
             approval_handler=handler,
+            approvals=[],
         )
-        assert middleware._approval_policy is policy
         assert middleware._approval_handler is handler
+        assert middleware._approvals == []
 
     @pytest.mark.skipif(
         not _middleware_available(),
@@ -1401,12 +1396,12 @@ class TestLangGraphApproval:
         from tenuo.langgraph import TenuoMiddleware
 
         middleware = TenuoMiddleware()
-        assert middleware._approval_policy is None
         assert middleware._approval_handler is None
+        assert middleware._approvals is None
 
     @pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
     def test_toolnode_stores_approval_params(self, registry):
-        """TenuoToolNode accepts and stores approval_policy and approval_handler."""
+        """TenuoToolNode accepts and stores approval_handler."""
         try:
             from tenuo.langgraph import LANGGRAPH_AVAILABLE, TenuoToolNode
         except ImportError:
@@ -1415,13 +1410,9 @@ class TestLangGraphApproval:
         if not LANGGRAPH_AVAILABLE:
             pytest.skip("LangGraph not installed")
 
-        from tenuo.approval import ApprovalPolicy, auto_approve, require_approval
+        from tenuo.approval import auto_approve
 
         approver_key = SigningKey.generate()
-        policy = ApprovalPolicy(
-            require_approval("search"),
-            trusted_approvers=[approver_key.public_key],
-        )
         handler = auto_approve(approver_key=approver_key)
 
         # TenuoToolNode needs real LangChain tools — skip if not available
@@ -1435,10 +1426,8 @@ class TestLangGraphApproval:
 
             node = TenuoToolNode(
                 [search],
-                approval_policy=policy,
                 approval_handler=handler,
             )
-            assert node._approval_policy is policy
             assert node._approval_handler is handler
         except ImportError:
             pytest.skip("langchain_core not installed")

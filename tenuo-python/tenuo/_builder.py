@@ -19,7 +19,7 @@ from .bound_warrant import BoundWarrant
 from .exceptions import ConfigurationError, ExpiredError, MissingSigningKey
 
 if TYPE_CHECKING:
-    from .approval import ApprovalHandler, ApprovalPolicy
+    from .approval import ApprovalHandler
 
 logger = logging.getLogger("tenuo.builder")
 
@@ -153,7 +153,6 @@ class BaseGuardBuilder(Generic[T]):
         self._signing_key: Optional[Any] = None
         self._trusted_roots: Optional[list] = None
         self._on_denial: str = DenialPolicy.RAISE
-        self._approval_policy: Optional[ApprovalPolicy] = None
         self._approval_handler: Optional[ApprovalHandler] = None
         self._approvals: Optional[list] = None
 
@@ -238,29 +237,6 @@ class BaseGuardBuilder(Generic[T]):
         self._on_denial = mode
         return self
 
-    def approval_policy(self: T, policy: ApprovalPolicy) -> T:
-        """Set an approval policy for human-in-the-loop authorization.
-
-        When a tool call matches a policy rule, the approval handler is
-        invoked before execution proceeds. The warrant still governs what
-        is permitted; the policy governs when a human must confirm.
-
-        Args:
-            policy: ApprovalPolicy with one or more rules.
-
-        Returns:
-            self for method chaining
-
-        Example:
-            from tenuo.approval import ApprovalPolicy, require_approval
-
-            builder.approval_policy(ApprovalPolicy(
-                require_approval("transfer_funds", when=lambda a: a["amount"] > 10_000),
-            ))
-        """
-        self._approval_policy = policy
-        return self
-
     def on_approval(self: T, handler: ApprovalHandler) -> T:
         """Set the handler invoked when a tool call requires approval.
 
@@ -285,7 +261,8 @@ class BaseGuardBuilder(Generic[T]):
 
         Use this for out-of-band/async workflows where approvals were obtained
         externally (e.g., from an approval board or the control plane API).
-        These take precedence over the approval_handler when a policy rule matches.
+        When a warrant approval gate fires, these take precedence over the
+        approval_handler.
 
         Args:
             approvals: List of SignedApproval objects.

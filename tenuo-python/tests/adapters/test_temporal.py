@@ -538,6 +538,39 @@ class TestTenuoPluginConfig:
         finally:
             reset_config()
 
+    def test_signing_key_synthesizes_resolver(self):
+        from tenuo_core import SigningKey
+
+        sk = SigningKey.generate()
+        cfg = TenuoPluginConfig(signing_key=sk, trusted_roots=_TEMPORAL_TRUST_ROOTS)
+        assert cfg.key_resolver is not None
+        assert cfg.key_resolver.resolve_sync("any-id") is sk
+
+    def test_neither_resolver_nor_signing_key_raises(self):
+        from tenuo.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="key_resolver|signing_key"):
+            TenuoPluginConfig(trusted_roots=_TEMPORAL_TRUST_ROOTS)
+
+    def test_approval_handler_widens_retry_pop_when_unset(self):
+        resolver = MagicMock(spec=KeyResolver)
+        cfg = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            approval_handler=lambda _r: None,
+        )
+        assert cfg.retry_pop_max_windows == 240
+
+    def test_approval_handler_respects_explicit_retry_pop(self):
+        resolver = MagicMock(spec=KeyResolver)
+        cfg = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            approval_handler=lambda _r: None,
+            retry_pop_max_windows=120,
+        )
+        assert cfg.retry_pop_max_windows == 120
+
 
 # =============================================================================
 # Test Audit Events
