@@ -371,7 +371,7 @@ What you get in Rust:
 
 ```toml
 [dependencies]
-tenuo = "0.1.0-beta.17"
+tenuo = "0.1.0-beta.18"
 ```
 
 Use the Rust API when you need a language-native enforcement boundary

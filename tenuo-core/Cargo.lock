@@ -2477,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "tenuo"
-version = "0.1.0-beta.17"
+version = "0.1.0-beta.18"
 dependencies = [
  "axum",
  "base64",

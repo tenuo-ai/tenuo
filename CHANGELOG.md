@@ -7,14 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-beta.18] - 2026-04-09
+
 ### Added
 
-- **FastMCP `TenuoMiddleware`** — `tenuo.mcp.TenuoMiddleware` (optional `tenuo[fastmcp]`, separate from `tenuo[mcp]`) runs `MCPVerifier` on every `tools/call` via FastMCP’s middleware pipeline; resolves `_meta` from params or MCP request context, strips warrant material after success, and surfaces denials as `isError` tool results with structured `tenuo` diagnostics. `tenuo.mcp.fastmcp_middleware` raises an explicit `ImportError` when FastMCP (or the MCP SDK) is missing.
-- **Temporal `SimplePlugin`** — `TenuoTemporalPlugin` (`tenuo.TenuoTemporalPlugin`) registers client + worker interceptors and sandbox passthrough; `ensure_tenuo_workflow_runner` for manual worker setup. `tenuo[temporal]` now requires `temporalio>=1.23.0`. Interceptor kwargs follow `inspect.signature(SimplePlugin.__init__)` (unified `interceptors=` vs split client/worker params). `TenuoClientInterceptor` / `TenuoPlugin` subclass Temporal’s interceptor types for plugin filtering.
+- **FastMCP `TenuoMiddleware`** — `tenuo.mcp.TenuoMiddleware` runs `MCPVerifier` on every `tools/call` via FastMCP's middleware pipeline. Optional `tenuo[fastmcp]` extra.
+- **Temporal `TenuoTemporalPlugin`** — registers client + worker interceptors and sandbox passthrough. `TenuoPluginConfig.from_env()` for zero-config setup.
+- **Telemetry auto-discovery** — set `TENUO_CONNECT_TOKEN` and all adapters report events automatically.
+
+### Removed
+
+- Deprecated `ApprovalPolicy`, `ApprovalRule`, `require_approval`.
 
 ### Dependencies
 
-- **`tenuo[fastmcp]`** — requires `fastmcp>=3.2.1`, which includes upstream [client `call_tool` error handling](https://github.com/PrefectHQ/fastmcp/pull/3778) (empty or non-text error content, `structuredContent` on error results).
+- `tenuo[fastmcp]` requires `fastmcp>=3.2.1`.
 
 ## [0.1.0-beta.17] - 2026-04-05
 
