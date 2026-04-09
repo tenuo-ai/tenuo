@@ -60,6 +60,7 @@ uv pip install tenuo
 Use the **builder pattern** for semantic constraints that block attacks:
 
 ```python
+import openai
 from tenuo.openai import GuardBuilder, Pattern, Subpath
 
 client = (GuardBuilder(openai.OpenAI())
@@ -132,12 +133,12 @@ response = client.chat.completions.create(...)
 
 ### Human Approval
 
-Add human-in-the-loop approval with `.approval_policy()` and `.on_approval()`. See [Human Approvals](approvals.md) for the full guide.
+Add human-in-the-loop approval with `.with_approvals()` and `.on_approval()`. See [Human Approvals](approvals.md) for the full guide.
 
 ```python
 client = (GuardBuilder(openai.OpenAI())
     ...
-    .approval_policy(policy)
+    .with_approvals(policy)
     .on_approval(cli_prompt(approver_key=key))
     .build())
 ```
@@ -330,21 +331,21 @@ See [Constraints documentation](./constraints.md#urlsafe) for full options.
 
 ## Development vs Production
 
-### Development: Log violations, don't block
+### Development: Log violations, skip denied calls
 
-During development, use `on_denial="log"` to see what would be blocked without interrupting your workflow:
+During development, use `on_denial="log"` to see what would be blocked. Denied tool calls are removed from the response (same as `"skip"`) and a warning is logged:
 
 ```python
 client = guard(
     openai.OpenAI(),
     allow_tools=["search", "read_file"],
     constraints={"read_file": {"path": Subpath("/data")}},
-    on_denial="log"  # Log violations but allow calls through
+    on_denial="log"  # Remove denied tool calls + log warning
 )
 
-# Violations are logged to stderr but calls proceed
+# Denied tool calls are removed; warnings logged to stderr
 response = client.chat.completions.create(...)
-# WARNING: Tool 'delete_file' not in allowlist (would be blocked in production)
+# WARNING: Tool 'delete_file' not in allowlist - removed from response
 ```
 
 ### Production: Raise exceptions
@@ -369,41 +370,9 @@ except ToolDenied as e:
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | `"raise"` (default) | Raise `ToolDenied` exception | Production |
-| `"log"` | Log warning, allow the call | Development/testing |
-| `"skip"` | Silently skip the tool call | Legacy compatibility |
+| `"log"` | Remove denied tool call + log warning | Development/testing |
+| `"skip"` | Silently remove the denied tool call | Legacy compatibility |
 
-
----
-
-## Development vs Production
-
-Configure behavior per environment:
-
-```python
-from tenuo.openai import guard, Subpath
-
-client = guard(
-    openai.OpenAI(),
-    allow_tools=["read_file", "search"],
-    constraints={"read_file": {"path": Subpath("/data")}},
-    on_denial="raise",  # Production (default) - raises exception
-    # on_denial="log",  # Development - logs but allows through
-    # dry_run=True,     # Testing - logs denials, never blocks
-)
-
-try:
-    response = client.chat.completions.create(...)
-except ToolDenied as e:
-    logger.error(f"Tool blocked: {e.tool_name}")
-except ConstraintViolation as e:
-    logger.error(f"Constraint failed: {e}")
-```
-
-| Mode | Setting | Behavior |
-|------|---------|----------|
-| **Production** | `on_denial="raise"` (default) | Raise exception on violation |
-| **Development** | `on_denial="log"` | Log warning, allow call through |
-| **Testing** | `dry_run=True` | Log with "DRY RUN" prefix, never block |
 
 ---
 
@@ -412,7 +381,7 @@ except ConstraintViolation as e:
 Before making API calls, validate your setup:
 
 ```python
-from tenuo.openai import guard, ConfigurationError
+from tenuo.openai import guard, OpenAIConfigurationError
 
 client = guard(
     openai.OpenAI(),
@@ -424,7 +393,7 @@ client = guard(
 try:
     client.validate()
     print("Configuration valid")
-except ConfigurationError as e:
+except OpenAIConfigurationError as e:
     print(f"Config error: {e}")
 ```
 
@@ -448,9 +417,12 @@ Tenuo uses **buffer-verify-emit** to prevent TOCTOU attacks in streaming:
 
 ```python
 # Streaming just works - no code change needed
-async for chunk in client.chat.completions.create(..., stream=True):
+for chunk in client.chat.completions.create(..., stream=True):
     print(chunk)  # Tool calls only emitted after verification
 ```
+
+> [!NOTE]
+> Use a regular `for` loop with sync `OpenAI()` clients. If you need `async for`, use `AsyncOpenAI()` instead.
 
 ---
 
@@ -571,7 +543,7 @@ enable_debug()  # Verbose logging to stderr
 client = guard(openai.OpenAI(), warrant=warrant, signing_key=key)
 
 # Check configuration before making calls
-client.validate()  # Raises ConfigurationError if misconfigured
+client.validate()  # Raises OpenAIConfigurationError if misconfigured
 ```
 
 ---
@@ -584,8 +556,8 @@ The OpenAI integration uses custom exception types for API consistency:
 from tenuo.openai import (
     TenuoOpenAIError,
     ToolDenied,
-    ConstraintViolation,
-    ConfigurationError,
+    OpenAIConstraintViolation,
+    OpenAIConfigurationError,
 )
 
 try:
@@ -595,7 +567,7 @@ except ToolDenied as e:
     print(f"Error code: {e.code}")  # e.g., "T1_001"
     if e.quick_fix:
         print(f"Quick fix: {e.quick_fix}")
-except ConstraintViolation as e:
+except OpenAIConstraintViolation as e:
     print(f"Constraint failed: {e}")
     print(f"Param: {e.param}")
     print(f"Value: {e.value}")
@@ -609,12 +581,12 @@ except TenuoOpenAIError as e:
 | Error | Tier | Code | Meaning |
 |-------|------|------|---------|
 | `ToolDenied` | 1+ | T1_001 | Tool not in allowlist |
-| `ConstraintViolation` | 1+ | T1_002 | Argument fails constraint |
+| `OpenAIConstraintViolation` | 1+ | T1_002 | Argument fails constraint |
 | `WarrantDenied` | 2 | T2_001 | Warrant doesn't allow tool/args |
 | `MissingSigningKey` | 2 | T2_002 | Warrant provided without signing_key |
-| `ConfigurationError` | 1+ | CONFIG | Invalid guard() configuration |
-| `MalformedToolCall` | 1+ | MALFORMED | Invalid JSON in tool arguments |
-| `BufferOverflow` | 1+ | BUFFER | Streaming buffer limit exceeded |
+| `OpenAIConfigurationError` | 1+ | CFG_002, CFG_003, C1_003 | Invalid guard() configuration |
+| `MalformedToolCall` | 1+ | T1_003 | Invalid JSON in tool arguments |
+| `BufferOverflow` | 1+ | T1_004 | Streaming buffer limit exceeded |
 
 ### Wire Code Support
 
@@ -690,6 +662,33 @@ response = client_secure.chat.completions.create(
     messages=[{"role": "user", "content": "Read /data/report.txt"}],
     tools=[SEARCH_TOOL, READ_FILE_TOOL],
 )
+```
+
+---
+
+## Delegation
+
+Warrants can be attenuated (narrowed) and delegated to downstream agents. The child warrant can only contain a subset of the parent's capabilities:
+
+```python
+from tenuo import SigningKey, Warrant
+from tenuo.openai import guard
+
+issuer = SigningKey.generate()
+orchestrator = SigningKey.generate()
+worker = SigningKey.generate()
+
+root = (Warrant.mint_builder()
+    .capability("search").capability("read_file").capability("delete_file")
+    .holder(orchestrator.public_key).ttl(3600).mint(issuer))
+
+# Attenuate: worker can only search
+child = (root.grant_builder()
+    .capability("search")
+    .holder(worker.public_key).ttl(1800).grant(orchestrator))
+
+# Use child warrant with worker's key
+client = guard(openai.OpenAI(), warrant=child, signing_key=worker)
 ```
 
 ---

@@ -63,6 +63,11 @@ asyncio.run(main())
 Add human-in-the-loop approval with `.approval_policy()` and `.on_approval()` when using GuardBuilder. See [Human Approvals](approvals.md) for the full guide.
 
 ```python
+from tenuo import SigningKey, cli_prompt
+from tenuo.autogen import GuardBuilder
+
+key = SigningKey.generate()
+
 guard = (GuardBuilder()
     ...
     .approval_policy(policy)
@@ -74,6 +79,31 @@ guard = (GuardBuilder()
 
 - If the tool name is not in `warrant.tools`, Tenuo raises `ToolNotAuthorized`.
 - If arguments violate constraints (e.g. query not matching `Pattern("safe*")`), Tenuo raises `AuthorizationDenied` with a diff-style explanation and a debugging suggestion from `why_denied()`.
+
+## Delegation Chains
+
+For multi-agent delegation with attenuated warrants, see [Delegation Chains](./concepts#delegation).
+
+Use `Warrant.grant_builder()` to create child warrants with narrower scope:
+
+```python
+from tenuo import SigningKey, Warrant
+
+issuer = SigningKey.generate()
+agent = SigningKey.generate()
+worker = SigningKey.generate()
+
+root = (Warrant.mint_builder()
+    .capability("search").capability("code_exec")
+    .holder(agent.public_key).ttl(3600).mint(issuer))
+
+# Worker can only search, not execute code
+child = (root.grant_builder()
+    .capability("search")
+    .holder(worker.public_key).ttl(1800).grant(agent))
+```
+
+The child warrant cannot escalate beyond what the parent allows — Rust enforces monotonic attenuation at creation time.
 
 ## See also
 

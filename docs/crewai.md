@@ -21,7 +21,7 @@ Tenuo integrates with [CrewAI](https://crewai.com) using a **two-tier** protecti
 **Tier 2** adds cryptographic proof. Warrants are issued by a control plane and include Proof-of-Possession (PoP) for each tool call. Required for hierarchical crews and delegation.
 
 > [!IMPORTANT]
-> **Production Recommendation**: Use **Tier 2** with `.seal()` for production deployments where untrusted code may have access to tool references.
+> **Production Recommendation**: Use **Tier 2** with `guard.register()` for production deployments. The hooks API intercepts all tool calls at the framework level—no wrapping needed.
 
 ---
 
@@ -37,7 +37,7 @@ uv pip install tenuo crewai
 
 ### Tier 1: Guardrails (5 minutes)
 
-Use the **builder pattern** for semantic constraints:
+Use the **builder pattern** for semantic constraints, then register as a hook:
 
 ```python
 from crewai import Agent, Task, Crew, Tool
@@ -63,37 +63,42 @@ guard = (GuardBuilder()
     .on_denial("raise")
     .build())
 
-# Protect tools
-protected_search = guard.protect(search_tool)
-protected_read = guard.protect(read_tool)
+# Register as a global hook — ALL tool calls go through this guard
+guard.register()
 
-# Use protected tools in agent
+# Use tools in agent (no wrapping needed)
 agent = Agent(
     role="Researcher",
     goal="Find and read research data",
-    tools=[protected_search, protected_read],
+    tools=[search_tool, read_tool],
 )
 
 # Unauthorized calls are blocked
-# agent.execute("Read /etc/passwd") -- ConstraintViolation!
+# agent.execute("Read /etc/passwd") -- CrewAIConstraintViolation!
 ```
 
-### Zero-Config Entry Points
+### Crew-Scoped Hook
 
-For simpler cases, use the convenience functions:
+For crew-scoped authorization (instead of global), use `as_hook()` with CrewAI's `@before_tool_call_crew` decorator:
 
 ```python
-from tenuo.crewai import protect_tool, protect_agent, Subpath
+from crewai import CrewBase
+from crewai.hooks import before_tool_call_crew
+from tenuo import Pattern
+from tenuo.crewai import GuardBuilder, Subpath
 
-# Protect a single tool
-protected = protect_tool(my_tool, path=Subpath("/data"))
+@CrewBase
+class MyProjCrew:
+    def __init__(self):
+        self.guard = (GuardBuilder()
+            .allow("read_file", path=Subpath("/data"))
+            .allow("search", query=Pattern("*"))
+            .on_denial("raise")
+            .build())
 
-# Protect all tools on an agent
-agent = protect_agent(
-    my_agent,
-    read_file={"path": Subpath("/data")},
-    search={"query": Pattern("*")},
-)
+    @before_tool_call_crew
+    def authorize(self, context):
+        return self.guard.authorize_hook(context)
 ```
 
 ### Tier 2: Warrants
@@ -101,7 +106,7 @@ agent = protect_agent(
 For hierarchical crews with cryptographic authorization:
 
 ```python
-from tenuo import SigningKey, Warrant
+from tenuo import Pattern, SigningKey, Warrant
 from tenuo.crewai import GuardBuilder, Subpath
 
 # Agent holds warrant and signing key
@@ -120,8 +125,8 @@ guard = (GuardBuilder()
     .with_warrant(warrant, agent_key)
     .build())
 
-# Each tool call is now cryptographically authorized
-protected_tool = guard.protect(my_tool)
+# Register — each tool call is now cryptographically authorized
+guard.register()
 ```
 
 ### Human Approval
@@ -129,11 +134,16 @@ protected_tool = guard.protect(my_tool)
 Add human-in-the-loop approval with `.approval_policy()` and `.on_approval()`. See [Human Approvals](approvals.md) for the full guide.
 
 ```python
+from tenuo.approval import cli_prompt
+from tenuo.crewai import GuardBuilder
+
 guard = (GuardBuilder()
     ...
     .approval_policy(policy)
     .on_approval(cli_prompt(approver_key=key))
     .build())
+
+guard.register()
 ```
 
 ---
@@ -177,9 +187,12 @@ If you see `WarrantExpired` prematurely:
 
 CrewAI crews often have multiple agents with tools of the same name but different security requirements.
 
-**Solution:** Use namespaced constraints:
+**Solution:** Use namespaced constraints with `register()`:
 
 ```python
+from tenuo import Pattern
+from tenuo.crewai import GuardBuilder
+
 guard = (GuardBuilder()
     # Global constraint (fallback)
     .allow("search", query=Pattern("*"))
@@ -189,9 +202,9 @@ guard = (GuardBuilder()
     .allow("writer::search", query=Pattern("internal:*"))
     .build())
 
-# Protect with agent role
-researcher_search = guard.protect(search_tool, agent_role="researcher")
-writer_search = guard.protect(search_tool, agent_role="writer")
+# Register as global hook — agent role is resolved automatically
+# from the CrewAI hook context (context.agent.role)
+guard.register()
 
 # researcher can only search arxiv:*
 # writer can only search internal:*
@@ -239,8 +252,12 @@ guard = GuardBuilder().allow("api_call", url=UrlSafe(), timeout=Wildcard()).buil
 
 CrewAI's hierarchical process mode allows a manager to delegate tasks to workers. Tenuo's `WarrantDelegator` ensures delegation follows **attenuation-only** rules: child warrants can only narrow scope, never expand.
 
+> [!TIP]
+> Use `chain_scope` on the parent warrant to limit maximum delegation depth and prevent unbounded chains in complex multi-agent crews.
+
 ```python
-from tenuo.crewai import WarrantDelegator, Pattern
+from tenuo import Pattern
+from tenuo.crewai import WarrantDelegator
 
 delegator = WarrantDelegator()
 
@@ -280,30 +297,6 @@ delegator.delegate(
     attenuations={"delete_all": {"target": Wildcard()}},  # EscalationAttempt!
 )
 ```
-
----
-
-## Seal Mode (On-the-Wire Protection)
-
-By default, `protect()` returns a **new** tool, leaving the original unchanged. If untrusted code has a reference to the original, it can bypass the guard.
-
-**Solution:** Use `.seal()` to destructively replace the original:
-
-```python
-guard = (GuardBuilder()
-    .allow("read", path=Subpath("/data"))
-    .seal()  # Enable seal mode
-    .build())
-
-protected = guard.protect(original_tool)
-
-# Now:
-# protected.func()       -- goes through guard
-# original_tool.func()   -- raises RuntimeError
-```
-
-> [!WARNING]
-> Seal mode is destructive. The original tool will raise `RuntimeError` if called directly after being sealed.
 
 ---
 
@@ -407,10 +400,15 @@ result = crew.kickoff(inputs={"topic": "AI safety"})
 Configure how denials are handled based on your environment:
 
 ```python
+from tenuo import Pattern
+from tenuo.crewai import GuardBuilder
+
 guard = (GuardBuilder()
     .allow("search", query=Pattern("*"))
     .on_denial("raise")  # "raise", "log", or "skip"
     .build())
+
+guard.register()
 ```
 
 ### Use Case Analysis
@@ -449,6 +447,7 @@ else:
 Track all authorization decisions:
 
 ```python
+from tenuo import Pattern
 from tenuo.crewai import GuardBuilder, AuditEvent
 
 def audit_callback(event: AuditEvent):
@@ -460,6 +459,8 @@ guard = (GuardBuilder()
     .allow("search", query=Pattern("*"))
     .audit(audit_callback)
     .build())
+
+guard.register()
 ```
 
 ### AuditEvent Fields
@@ -519,7 +520,7 @@ Robust agents should handle authorization failures gracefully.
 
 ```python
 from tenuo.crewai import (
-    ToolDenied, ConstraintViolation, UnlistedArgument,
+    ToolDenied, CrewAIConstraintViolation, UnlistedArgument,
     WarrantExpired, InvalidPoP, EscalationAttempt
 )
 
@@ -530,7 +531,7 @@ except ToolDenied:
     agent.memory.add("Tool access denied. Trying alternative...")
     return execute_alternative()
 
-except ConstraintViolation as e:
+except CrewAIConstraintViolation as e:
     # Argument validation failed. Agent can correct the argument.
     agent.memory.add(f"Argument invalid: {e}. Retrying with valid constraints.")
     return retry_with_correction()
@@ -566,7 +567,7 @@ else:
 | Error | Tier | Recovery Strategy |
 |-------|------|-------------------|
 | `ToolDenied` | 1+ | Use different tool |
-| `ConstraintViolation` | 1+ | Retry with compliant arguments |
+| `CrewAIConstraintViolation` | 1+ | Retry with compliant arguments |
 | `UnlistedArgument` | 1+ | Remove extra arguments |
 | `EscalationAttempt` | 1+ | Do not escalate privileges |
 | `UnguardedToolError` | 1+ | (Strict Mode) Fix configuration |
@@ -660,38 +661,40 @@ writer_warrant = delegator.delegate(
 )
 
 # =============================================================================
-# 4. Create Protected Agents
+# 4. Build Guards and Register as Hooks
 # =============================================================================
 
 researcher_guard = (GuardBuilder()
     .allow("search", query=Pattern("arxiv:*"), max_results=Range(1, 20))
     .allow("read_file", path=Subpath("/research/papers"))
     .with_warrant(researcher_warrant, researcher_key)
-    .seal()
     .build())
-
-researcher = Agent(
-    role="Researcher",
-    goal="Find relevant papers on arxiv",
-    tools=researcher_guard.protect_all([search_tool, read_tool]),
-)
 
 writer_guard = (GuardBuilder()
     .allow("summarize", text=Pattern("*"), style=Pattern("*"))
     .allow("read_file", path=Subpath("/research/drafts"))
     .with_warrant(writer_warrant, writer_key)
-    .seal()
     .build())
+
+# Register guards — agent role is resolved from hook context automatically
+researcher_guard.register(agent_role="Researcher")
+writer_guard.register(agent_role="Writer")
+
+# =============================================================================
+# 5. Create Agents and Run Crew (tools are unmodified)
+# =============================================================================
+
+researcher = Agent(
+    role="Researcher",
+    goal="Find relevant papers on arxiv",
+    tools=[search_tool, read_tool],
+)
 
 writer = Agent(
     role="Writer",
     goal="Summarize research findings",
-    tools=writer_guard.protect_all([summarize_tool, read_tool]),
+    tools=[summarize_tool, read_tool],
 )
-
-# =============================================================================
-# 5. Create and Run Crew
-# =============================================================================
 
 research_task = Task(
     description="Find papers on 'language model safety'",
@@ -710,6 +713,8 @@ crew = Crew(
 )
 
 # result = crew.kickoff()
+# researcher_guard.unregister()
+# writer_guard.unregister()
 ```
 
 ---
@@ -737,9 +742,9 @@ Before deploying CrewAI agents with Tenuo protection:
 
 ### Security Review
 - [ ] **Tier 2 Enabled:** Application uses Warrants + Signing Keys for all production crews.
-- [ ] **Seal Mode:** All `.protect()` calls use `.seal()` or `seal=True` to prevent bypass.
+- [ ] **Hooks Registered:** All guards use `guard.register()` or crew-scoped `as_hook()` for framework-level enforcement.
 - [ ] **Least Privilege:** Each agent has specific allowed tools (no `*` patterns unless necessary).
-- [ ] **Delegation Depth:** Max delegation depth configured to prevent infinite chains.
+- [ ] **Delegation Depth:** Max delegation depth configured (via `chain_scope`) to prevent infinite chains.
 
 ### Decision Matrix
 
@@ -748,7 +753,7 @@ Before deploying CrewAI agents with Tenuo protection:
 | Tier | Tier 1 (Guardrails) | Tier 2 (Warrants) |
 | Denial Mode | "log" or "raise" | "raise" (Fail Closed) |
 | Constraints | Loose (Wildcards) | Strict (Specific Patterns) |
-| Seal Mode | Optional | **Mandatory** |
+| Hook Scope | Global (`register()`) | Crew-scoped (`as_hook()`) or Global |
 
 ### Monitoring & Operations
 - [ ] **Audit Logging:** `audit_callback` configured and shipping logs to SIEM/storage.

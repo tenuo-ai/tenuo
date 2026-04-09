@@ -74,7 +74,7 @@ configure_tenuo(app, trusted_issuers=[issuer_pubkey])
 # Drop-in replacement for APIRouter
 router = SecureAPIRouter(tool_prefix="api")
 
-@router.get("/users/{user_id}")  # Auto-protected as "api_users_read"
+@router.get("/users/{user_id}")  # Auto-protected as "api_users_user_id_read"
 async def get_user(user_id: str):
     return {"user_id": user_id}
 
@@ -82,7 +82,7 @@ async def get_user(user_id: str):
 async def create_user(name: str):
     return {"name": name}
 
-@router.delete("/users/{user_id}")  # Auto: "api_users_delete"
+@router.delete("/users/{user_id}")  # Auto: "api_users_user_id_delete"
 async def delete_user(user_id: str):
     return {"deleted": user_id}
 
@@ -95,10 +95,11 @@ The tool name is automatically inferred from the path and HTTP method:
 
 | Path | Method | Inferred Tool |
 |------|--------|---------------|
-| `/users/{id}` | GET | `api_users_read` |
+| `/users/{user_id}` | GET | `api_users_user_id_read` |
 | `/users` | POST | `api_users_create` |
-| `/users/{id}` | PUT | `api_users_update` |
-| `/users/{id}` | DELETE | `api_users_delete` |
+| `/users/{user_id}` | PUT | `api_users_user_id_update` |
+| `/users/{user_id}` | PATCH | `api_users_user_id_update` |
+| `/users/{user_id}` | DELETE | `api_users_user_id_delete` |
 
 ### Option 2: `TenuoGuard` Dependency (Fine Control)
 
@@ -142,6 +143,8 @@ from tenuo.fastapi import configure_tenuo
 configure_tenuo(
     app,
     trusted_issuers=[issuer_pubkey],  # Required in production
+    strict=False,                      # Reserved — not yet enforced
+    error_handler=None,                # Reserved — not yet enforced
     expose_error_details=False,        # Don't leak constraint info
 )
 ```
@@ -150,6 +153,8 @@ configure_tenuo(
 |-----------|------|---------|-------------|
 | `app` | `FastAPI` | *required* | FastAPI application instance |
 | `trusted_issuers` | `List[PublicKey]` | `None` | Trusted warrant issuers (**required in production**) |
+| `strict` | `bool` | `False` | Reserved — not yet enforced |
+| `error_handler` | `Callable` | `None` | Reserved — not yet enforced |
 | `expose_error_details` | `bool` | `False` | Include detailed errors in response |
 
 ### `TenuoGuard`
@@ -171,10 +176,11 @@ async def read_file(
     return {"content": "..."}
 ```
 
-**Argument extraction:**
+**Argument extraction (default):**
 - Path parameters: Extracted from URL
 - Query parameters: Extracted from query string
-- Body: Extracted from JSON body (POST/PUT/PATCH)
+
+> **Note:** JSON body fields are **not** extracted by default. To include body fields, provide a custom `extract_args` function to `TenuoGuard`.
 
 ### `SecurityContext`
 
@@ -182,12 +188,17 @@ Context object injected into route handlers:
 
 | Property | Type | Description |
 |----------|------|-------------|
+| `tool` | `str` | The tool name that was matched |
 | `warrant` | `Warrant` | The verified warrant |
 | `args` | `dict` | Extracted arguments used for authorization |
 
 ```python
+from fastapi import Depends
+from tenuo.fastapi import TenuoGuard, SecurityContext
+
 @app.get("/api/data")
 async def get_data(ctx: SecurityContext = Depends(TenuoGuard("get_data"))):
+    print(f"Tool: {ctx.tool}")
     print(f"Warrant ID: {ctx.warrant.id}")
     print(f"Tools: {ctx.warrant.tools}")
     print(f"Args: {ctx.args}")
@@ -233,15 +244,16 @@ Tenuo expects these HTTP headers:
 
 | Header | Description |
 |--------|-------------|
-| `Authorization` | `TenuoWarrant <base64-encoded-warrant>` |
-| `X-Tenuo-Pop` | Base64-encoded Proof-of-Possession signature |
+| `X-Tenuo-Warrant` | Base64-encoded warrant (or warrant stack) |
+| `X-Tenuo-PoP` | Base64-encoded Proof-of-Possession signature |
+| `X-Tenuo-Approvals` | Base64-encoded signed approvals (optional) |
 
 **Example request:**
 
 ```bash
 curl -X GET "https://api.example.com/search?query=test" \
-  -H "Authorization: TenuoWarrant eyJ3YXJyYW50IjoiLi4uIn0=" \
-  -H "X-Tenuo-Pop: SGVsbG8gV29ybGQ="
+  -H "X-Tenuo-Warrant: eyJ3YXJyYW50IjoiLi4uIn0=" \
+  -H "X-Tenuo-PoP: SGVsbG8gV29ybGQ="
 ```
 
 ---
@@ -277,7 +289,7 @@ Common error codes:
 | 1300 | `warrant-expired` | 401 | Warrant TTL exceeded |
 | 1500 | `tool-not-authorized` | 403 | Tool not in warrant's allowed list |
 | 1501 | `constraint-violation` | 403 | Argument violates constraint |
-| 1600 | `pop-signature-mismatch` | 401 | PoP verification failed |
+| 1600 | `pop-signature-mismatch` | 403 | PoP verification failed |
 | 1800 | `warrant-revoked` | 401 | Warrant revoked by issuer |
 
 See [wire format specification](/docs/spec/wire-format-v1#appendix-a-error-codes) for the complete list.
@@ -323,6 +335,9 @@ async def tenuo_error_handler(request: Request, exc: TenuoError):
 ### Multiple Tools per Route
 
 ```python
+from fastapi import Depends
+from tenuo.fastapi import TenuoGuard, SecurityContext
+
 @app.post("/files/{path:path}")
 async def file_operation(
     path: str,
@@ -335,38 +350,29 @@ async def file_operation(
 
 ### Body Parameter Extraction
 
+Since JSON body fields are not extracted by default, provide a custom `extract_args`:
+
 ```python
+from fastapi import Request
 from pydantic import BaseModel
+from tenuo.fastapi import TenuoGuard, SecurityContext
 
 class TransferRequest(BaseModel):
     from_account: str
     to_account: str
     amount: float
 
+async def extract_transfer_args(request: Request) -> dict:
+    body = await request.json()
+    return {**request.path_params, **dict(request.query_params), **body}
+
 @app.post("/transfer")
 async def transfer(
     body: TransferRequest,
-    ctx: SecurityContext = Depends(TenuoGuard("transfer"))
+    ctx: SecurityContext = Depends(TenuoGuard("transfer", extract_args=extract_transfer_args))
 ):
     # ctx.args = {"from_account": "...", "to_account": "...", "amount": ...}
     pass
-```
-
-### Optional Authorization
-
-```python
-from tenuo.fastapi import TenuoGuard
-
-@app.get("/public-or-private")
-async def flexible(
-    ctx: Optional[SecurityContext] = Depends(TenuoGuard("read", required=False))
-):
-    if ctx:
-        # Authorized access
-        return {"data": "private"}
-    else:
-        # Public access
-        return {"data": "public"}
 ```
 
 ---
@@ -375,7 +381,7 @@ async def flexible(
 
 ```python
 from fastapi import FastAPI, Depends
-from tenuo import SigningKey, Warrant, Pattern
+from tenuo import SigningKey, Warrant, Subpath
 from tenuo.fastapi import TenuoGuard, SecurityContext, configure_tenuo
 
 app = FastAPI()
@@ -480,6 +486,36 @@ async def get_users(ctx: SecurityContext = Depends(TenuoGuard("list_users"))):
 async def get_users(ctx: SecurityContext = Depends(TenuoGuard("admin_users"))):
     # Each endpoint should have one specific tool
 ```
+
+---
+
+## Delegation Chains (WarrantStack)
+
+When an orchestrator delegates a subset of its authority to a worker, the full chain of warrants must be sent together. `TenuoGuard` automatically detects a `WarrantStack` and validates the chain end-to-end.
+
+```python
+from tenuo import SigningKey, Warrant, encode_warrant_stack
+from tenuo.fastapi import configure_tenuo, TenuoGuard, SecurityContext
+
+issuer = SigningKey.generate()
+orchestrator = SigningKey.generate()
+worker = SigningKey.generate()
+
+root = (Warrant.mint_builder()
+    .capability("search").capability("delete_file")
+    .holder(orchestrator.public_key).ttl(3600).mint(issuer))
+
+child = (root.grant_builder()
+    .capability("search")
+    .holder(worker.public_key).ttl(1800).grant(orchestrator))
+
+# Client sends the full chain as a single X-Tenuo-Warrant header
+stack_b64 = encode_warrant_stack([root, child])
+# Server-side: configure_tenuo(app, trusted_issuers=[issuer.public_key])
+# TenuoGuard automatically detects WarrantStack and uses check_chain
+```
+
+> **Important:** Orphaned child warrants (sent without the parent chain) are rejected. Always send the complete chain from root to leaf.
 
 ---
 

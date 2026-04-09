@@ -130,7 +130,7 @@ To verify once per tool call (without `verify_or_raise` in every handler), insta
 
 The `tenuo[fastmcp]` extra pins FastMCP 3.2.1 or newer, which includes [hardened FastMCP client parsing of tool error results](https://github.com/PrefectHQ/fastmcp/pull/3778) (e.g. empty or non-text error content from third-party MCP servers).
 
-The verifier extracts warrant metadata from `params._meta`, verifies the warrant + PoP signature, and checks constraints. For delegation chains, use `Authorizer.check_chain` with a decoded WarrantStack (see Pattern 3 below).
+The verifier extracts warrant metadata from `params._meta`, verifies the warrant + PoP signature, and checks constraints. For delegation chains, `MCPVerifier` automatically detects a `WarrantStack` in the warrant field and uses `Authorizer.check_chain` to verify the full chain. See the Multi-Agent Delegation section below for details.
 
 ### Pattern 3: Securing LangChain Adapters
 
@@ -145,7 +145,7 @@ client = MultiServerMCPClient({...})
 mcp_tools = await client.get_tools()
 
 # 2. Wrap with Tenuo protection
-secure_tools = guard_tools(mcp_tools, bound)
+secure_tools = guard_tools(mcp_tools)
 
 # ... use secure_tools in your agent
 ```
@@ -182,7 +182,7 @@ tools:
 If you are not using `SecureMCPClient`, you must manually authorize extracted arguments.
 
 ```python
-from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Constraints, Pattern, Range
+from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Pattern, Range, Subpath
 
 # 1. Load MCP configuration
 config = McpConfig.from_file("mcp-config.yaml")
@@ -210,9 +210,11 @@ result = compiled.extract_constraints("filesystem_read", mcp_arguments)
 
 # 5. Authorize with PoP signature
 import time
+import time
+
 pop_sig = warrant.sign(control_key, "filesystem_read", dict(result.constraints), int(time.time()))
 authorizer = Authorizer(trusted_roots=[control_key.public_key])
-authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop_sig))
+authorizer.authorize_one(warrant, "filesystem_read", dict(result.constraints), signature=bytes(pop_sig))
 
 # Authorized - proceed to execute tool
 ```
@@ -246,7 +248,7 @@ async with MultiServerMCPClient({
     mcp_tools = await client.get_tools()
 
     # 2. Wrap with Tenuo authorization
-    secure_tools = guard_tools(mcp_tools, bound)
+    secure_tools = guard_tools(mcp_tools)
 
     # 3. Use secure_tools in your LangChain agent
     # ...
@@ -488,8 +490,11 @@ warrant = (Warrant.mint_builder()
 result = compiled.extract_constraints("filesystem_read", arguments)
 
 # Authorize
+import time
+
 pop_sig = warrant.sign(key, "filesystem_read", dict(result.constraints), int(time.time()))
-authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop_sig))
+authorizer = Authorizer(trusted_roots=[key.public_key])
+authorizer.authorize_one(warrant, "filesystem_read", dict(result.constraints), signature=bytes(pop_sig))
 ```
 
 ### Pattern 3: Multi-Agent Delegation
@@ -500,8 +505,10 @@ can only **narrow** the parent's scope (tools, constraints, TTL), never widen
 it; Rust enforces this at creation time.
 
 ```python
-from tenuo import SigningKey, Warrant, Subpath, Authorizer
-from tenuo_core import encode_warrant_stack, decode_warrant_stack_base64
+from tenuo import (
+    SigningKey, Warrant, Subpath, Authorizer,
+    encode_warrant_stack, decode_warrant_stack_base64,
+)
 
 control_key      = SigningKey.generate()  # issuer / control plane
 orchestrator_key = SigningKey.generate()  # orchestrator agent
@@ -550,6 +557,23 @@ On the wire, the worker sends `stack_b64` in `_meta.tenuo.warrant`.
 in one call — signatures, linkage, monotonic attenuation, TTLs, PoP,
 and tool capabilities.
 
+> **Important:** An orphaned child warrant (sent without its parent chain) will be
+> rejected — the server cannot verify the delegation path. Always send the full
+> `WarrantStack` containing every warrant from root to leaf.
+
+**Client-side with `chain_scope`:** When using `SecureMCPClient` with
+`inject_warrant=True`, set the parent chain via `chain_scope` so the client
+encodes the full `WarrantStack` automatically:
+
+```python
+from tenuo import chain_scope, warrant_scope, key_scope
+
+with chain_scope([root_warrant]):
+    with warrant_scope(worker_warrant):
+        with key_scope(worker_key):
+            result = await client.tools["filesystem_read"](path="/data/reports/q1.csv")
+```
+
 ---
 
 ## Security Best Practices
@@ -586,7 +610,7 @@ Always require PoP signatures for MCP tool calls:
 pop_sig = warrant.sign(signing_key, tool, args, int(time.time()))
 
 # Authorize with signature
-authorizer.check(warrant, tool, args, bytes(pop_sig))
+authorizer.authorize_one(warrant, tool, args, signature=bytes(pop_sig))
 ```
 
 Prevents warrant theft and replay attacks.
@@ -640,16 +664,15 @@ execute_tool(result.clean_arguments)
 
 ```python
 try:
-    result = await client.call_tool("transfer", amount=5000, recipient="acme")
+    result = await client.call_tool("transfer", {"amount": 5000, "recipient": "acme"})
 except Exception as e:
-    if is_approval_required(e):  # JSON-RPC code -32002
-        approval = collect_human_approval(e)  # app-specific UI flow
-        result = await client.call_tool(
-            "transfer",
-            amount=5000,
-            recipient="acme",
-            _approvals=[approval],  # re-submit with SignedApproval
-        )
+    # Check for JSON-RPC code -32002 (approval required)
+    approval = collect_human_approval(e)  # app-specific UI flow
+    result = await client.call_tool(
+        "transfer",
+        {"amount": 5000, "recipient": "acme"},
+        approvals=[approval],  # re-submit with SignedApproval
+    )
 ```
 
 ### JSON-RPC Error Codes
@@ -854,7 +877,7 @@ max_size:
 ### Tenuo Provides
 - **Secure Client** (`SecureMCPClient`): Wraps the MCP SDK with warrant injection and constraint enforcement. Supports stdio, SSE, and StreamableHTTP transports.
 - **Server Verification** (`MCPVerifier`): Framework-agnostic warrant verification for MCP server tool handlers. Works with `fastmcp`, the raw MCP SDK, or any custom server.
-- **Tool discovery**: Automatic wrapping of discovered tools with `@guard`.
+- **Tool discovery**: Automatic wrapping of discovered tools with enforcement wrappers.
 - **Warrant propagation**: Injecting warrants (+ approvals) into `params._meta` for end-to-end verification.
 - **Constraint extraction**: Config-driven extraction from MCP arguments.
 - **Approval gate flow**: Structured JSON-RPC errors (`-32002`) for approval-gate-protected tools with retry support.

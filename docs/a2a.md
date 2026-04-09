@@ -96,6 +96,7 @@ client = (A2AClientBuilder()
 
 # Send task (warrant already configured)
 result = await client.send_task(
+    "hello",
     skill="echo",
     arguments={"msg": "hello"},
 )
@@ -109,6 +110,7 @@ from tenuo.a2a import A2AClient
 
 client = A2AClient("http://localhost:8000")
 result = await client.send_task(
+    "hello",
     skill="echo",
     arguments={"msg": "hello"},
     warrant=task_warrant,
@@ -136,11 +138,11 @@ server = (A2AServerBuilder()
     .build())
 
 # Register skills with constraint bindings
-@server.skill("search_papers", constraints={"sources": UrlSafe})
+@server.skill("search_papers", constraints={"sources": UrlSafe()})
 async def search_papers(query: str, sources: list[str]) -> list[dict]:
     return await do_search(query, sources)
 
-@server.skill("read_file", constraints={"path": Subpath})
+@server.skill("read_file", constraints={"path": Subpath("/data")})
 async def read_file(path: str) -> str:
     with open(path) as f:
         return f.read()
@@ -196,10 +198,11 @@ warrant = await client.request_warrant(
 
 # You can now immediately use this warrant (and key) for tasks
 result = await client.send_task(
+    "Search for AI Agents papers",
     skill="search_papers",
     arguments={"query": "AI Agents"},
     warrant=warrant,
-    signing_key=worker_key
+    signing_key=worker_key,
 )
 ```
 
@@ -245,11 +248,11 @@ async for update in client.send_task_streaming(
     arguments={"paper_ids": ["arxiv:2401.12345"]},
 ):
     if update.type.value == "status":
-        print(f"Status: {update.status}")
+        print(f"Status: {update.data.get('status')}")
     elif update.type.value == "message":
-        print(f"Chunk: {update.content}")
+        print(f"Chunk: {update.data.get('content')}")
     elif update.type.value == "complete":
-        print(f"Done: {update.output}")
+        print(f"Done: {update.data.get('output')}")
 ```
 
 The server emits SSE events for status updates, intermediate messages, and final completion.
@@ -329,6 +332,7 @@ client = A2AClient("https://worker.example.com")
 
 # Without PoP (only warrant validation)
 result = await client.send_task(
+    "search for papers",
     warrant=my_warrant,
     skill="search",
     arguments={"query": "papers"},
@@ -336,6 +340,7 @@ result = await client.send_task(
 
 # With PoP (warrant + signature proof)
 result = await client.send_task(
+    "search for papers",
     warrant=my_warrant,
     skill="search",
     arguments={"query": "papers"},
@@ -355,6 +360,7 @@ client = (A2AClientBuilder()
 
 # All requests automatically include PoP
 result = await client.send_task(
+    "search for papers",
     skill="search",
     arguments={"query": "papers"},
 )
@@ -373,7 +379,6 @@ server = A2AServer(
 
     # PoP configuration
     require_pop=True,          # Reject requests without PoP (default: True)
-    trusted_roots=[...],       # Required for PoP verification
 )
 ```
 
@@ -405,7 +410,7 @@ With PoP:
 from tenuo.a2a import PopRequiredError, PopVerificationError
 
 try:
-    result = await client.send_task(warrant=warrant, skill="search", arguments={})
+    result = await client.send_task("search", warrant=warrant, skill="search", arguments={})
 except PopRequiredError:
     print("Server requires PoP signature - add signing_key parameter")
 except PopVerificationError as e:
@@ -428,7 +433,7 @@ except PopVerificationError as e:
 **Debug:**
 ```python
 # Verify signing key matches warrant holder
-assert warrant.sub == signing_key.public_key.to_did()
+assert warrant.sub == str(signing_key.public_key)
 
 # Log PoP computation
 import logging
@@ -491,7 +496,7 @@ The server trusts warrants based on `trusted_issuers`:
 Constraints bind warrant parameters to skill parameters:
 
 ```python
-@server.skill("read_file", constraints={"path": Subpath})
+@server.skill("read_file", constraints={"path": Subpath("/data")})
 async def read_file(path: str) -> str:
     # "path" constraint checked against warrant's path constraint
     # Blocked if: warrant allows Subpath("/data") but arg is "/etc/passwd"
@@ -502,7 +507,7 @@ async def read_file(path: str) -> str:
 
 ```python
 # This raises ConstraintBindingError at startup:
-@server.skill("read_file", constraints={"file_path": Subpath})  # "file_path" not a param
+@server.skill("read_file", constraints={"file_path": Subpath("/data")})  # "file_path" not a param
 async def read_file(path: str) -> str:  # param is "path"
     ...
 ```
@@ -541,12 +546,12 @@ A2A accepts public keys in multiple formats:
 
 ```python
 # All of these work:
-server = A2AServerBuilder()
+server = (A2AServerBuilder()
     .key(signing_key)  # PublicKey object
     .accept_warrants_from("a1b2c3...")  # Hex (64 chars)
     .accept_warrants_from("z6MkpT...")  # Multibase (base58btc)
     .accept_warrants_from("did:key:z6MkpT...")  # W3C DID
-    .build()
+    .build())
 ```
 
 All formats are automatically normalized for comparison. Multibase and DID support requires `uv pip install base58`.
@@ -582,20 +587,31 @@ Agents expose their capabilities via `/.well-known/agent.json`:
 
 ## Delegation Chains
 
-When delegating through multiple agents, include the warrant chain:
-
-```python
-# Orchestrator delegates to Worker A, who delegates to Worker B
-# Worker B receives:
-#   X-Tenuo-Warrant: <worker_b_warrant>
-#   X-Tenuo-Warrant-Chain: <root>;...;<worker_a_warrant>
-```
+When delegating through multiple agents, the full chain is transmitted as a single header.
 
 The server validates:
 1. Root warrant is from a trusted issuer
 2. Each link: child issuer = parent holder
 3. Skills narrow monotonically (no privilege escalation)
 4. Chain depth ≤ `max_chain_depth`
+
+### WarrantStack Transport
+
+The current implementation packs the entire delegation chain into a **single** `X-Tenuo-Warrant` header using WarrantStack encoding, rather than the legacy two-header approach (`X-Tenuo-Warrant` + `X-Tenuo-Warrant-Chain`).
+
+The client encodes the chain with `encode_warrant_stack` and the server decodes it with `decode_warrant_stack_base64`:
+
+```python
+from tenuo import encode_warrant_stack
+
+# Client sends delegation chain as a single header
+chain = [root_warrant, child_warrant]
+stack_b64 = encode_warrant_stack(chain)
+# stack_b64 goes in X-Tenuo-Warrant header
+# Server automatically detects and unpacks WarrantStack
+```
+
+This simplifies proxy and load-balancer configurations (one header to forward instead of two) and avoids ordering ambiguities in multi-hop chains.
 
 ---
 
@@ -758,7 +774,7 @@ server = A2AServer(
     trusted_issuers=[control_plane_public_key],
 )
 
-@server.skill("search_papers", constraints={"sources": UrlSafe})
+@server.skill("search_papers", constraints={"sources": UrlSafe()})
 async def search_papers(query: str, sources: list[str]) -> list[dict]:
     # Only allowed URLs pass through
     return await search_arxiv(query, sources)

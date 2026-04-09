@@ -43,6 +43,15 @@ from google.adk.agents import Agent
 from tenuo.google_adk import GuardBuilder
 from tenuo.constraints import Subpath, UrlSafe
 
+# Define your ADK tools (FunctionTool, or plain functions with docstrings)
+def read_file(path: str) -> str:
+    """Read a file at the given path."""
+    ...
+
+def web_search(url: str) -> str:
+    """Search the web at the given URL."""
+    ...
+
 # Build guard with inline constraints
 guard = (GuardBuilder()
     .allow("read_file", path=Subpath("/data"))
@@ -402,16 +411,15 @@ Control what happens when a tool call is denied:
 # Raise exception (stops execution)
 guard = GuardBuilder().allow("read_file", path=Subpath("/data")).on_denial("raise").build()
 
-# Return error dict (agent sees denial reason)
+# Return error dict (default - agent sees denial reason and can adapt)
 guard = GuardBuilder().allow("read_file", path=Subpath("/data")).on_denial("return").build()
-
-# Silent skip (not recommended - can confuse LLM)
-guard = GuardBuilder().allow("read_file", path=Subpath("/data")).on_denial("skip").build()
 ```
 
 ### Error Handling
 
-Google ADK integration uses custom exceptions (`ToolAuthorizationError`, `MissingSigningKeyError`) for API consistency. However, the underlying Tenuo authorization still uses canonical wire codes internally:
+Google ADK integration uses custom exceptions (`ToolAuthorizationError`, `MissingSigningKeyError`) for API consistency. Authorization goes through the `before_tool` callback registered on the ADK agent — there is no standalone `guard.check()` method.
+
+**With `on_denial("raise")`**, the `before_tool` callback raises `ToolAuthorizationError`:
 
 ```python
 from tenuo.google_adk import GuardBuilder, ToolAuthorizationError
@@ -421,29 +429,27 @@ guard = (GuardBuilder()
     .on_denial("raise")
     .build())
 
-try:
-    guard.check("transfer", {"amount": 5000})
-except ToolAuthorizationError as e:
-    print(f"Tool denied: {e}")
-    print(f"Tool: {e.tool_name}")
-    print(f"Args: {e.tool_args}")
-    # For programmatic handling, parse the error message
-    # or use on_denial("return") mode for structured responses
+agent = Agent(
+    name="banker",
+    tools=guard.filter_tools([transfer]),
+    before_tool_callback=guard.before_tool,
+)
+
+# When the LLM calls transfer(amount=5000), the before_tool callback raises:
+# ToolAuthorizationError with .tool_name, .tool_args attributes
 ```
 
-**Structured Error Mode:**
-
-Using `on_denial("return")` provides structured error responses:
+**With `on_denial("return")` (default)**, the callback returns a structured error dict that the LLM sees as the tool result:
 
 ```python
-guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
+guard = GuardBuilder().allow("read_file", path=Subpath("/data")).on_denial("return").build()
 
-result = guard.check("read_file", {"path": "/etc/passwd"})
+# When the LLM calls read_file(path="/etc/passwd"), before_tool returns:
 # {
-#   "authorized": False,
-#   "reason": "Constraint 'path' failed: not contained in /data",
-#   "tool": "read_file",
-#   "details": {...}
+#   "error": "authorization_denied",
+#   "message": "Authorization denied: Argument 'path' violates constraint",
+#   "details": "...",
+#   "hints": [...]
 # }
 ```
 
@@ -456,23 +462,18 @@ result = guard.check("read_file", {"path": "/etc/passwd"})
 Every tool call decision is logged with context:
 
 ```python
-def audit_callback(event):
-    print(f"[AUDIT] {event.decision} tool={event.tool_name} agent={event.agent_name}")
-    # Send to your logging system
-
 guard = (GuardBuilder()
     .allow("read_file", path=Subpath("/data"))
-    .audit_callback(audit_callback)
+    .audit_log("audit.jsonl")  # File path or file-like object
     .build())
 ```
 
-**Event fields**:
-- `decision`: "allowed" or "denied"
-- `tool_name`: Name of the tool
-- `agent_name`: From ToolContext (if available)
-- `arguments`: Tool arguments
-- `session_id`: Unique session identifier
-- `timestamp`: When the decision was made
+**Event fields** (JSON lines written to the audit log):
+- `event`: `"tool_allowed"`, `"tool_denied"`, or `"tool_dry_run_denied"`
+- `tool`: Name of the tool
+- `args`: Tool arguments (values truncated to 100 chars)
+- `warrant`: Warrant ID and issuer (if available)
+- `timestamp`: ISO 8601 timestamp
 
 ---
 
@@ -512,21 +513,18 @@ guard = (GuardBuilder()
 
 ### `.on_denial(mode)`
 
-Control denial behavior (`"raise"`, `"return"`, `"skip"`):
+Control denial behavior (`"raise"` or `"return"`):
 
 ```python
 guard = GuardBuilder().allow("read_file").on_denial("raise").build()
 ```
 
-### `.audit_callback(callback)`
+### `.audit_log(log)`
 
-Register audit logging callback:
+Set audit log destination (file path or file-like object):
 
 ```python
-def log_audit(event):
-    logger.info(f"{event.decision}: {event.tool_name}")
-
-guard = GuardBuilder().allow("read_file").audit_callback(log_audit).build()
+guard = GuardBuilder().allow("read_file").audit_log("audit.jsonl").build()
 ```
 
 ---
@@ -814,7 +812,10 @@ suggestions = suggest_skill_mapping(
 # Returns: {"read_file_tool": "read_file", "web_search_api": "web_search"}
 
 # Review then apply:
-guard = GuardBuilder().skill_map(suggestions).build()
+builder = GuardBuilder()
+for tool_name, skill_name in suggestions.items():
+    builder = builder.map_skill(tool_name, skill_name)
+guard = builder.build()
 ```
 
 > [!CAUTION]
@@ -823,13 +824,16 @@ guard = GuardBuilder().skill_map(suggestions).build()
 ### Development Modes
 
 ```python
-# Development: Log denials but don't block
-dev_guard = GuardBuilder().on_denial("log").build()
+# Development: Log denials but don't block (dry run via builder)
+dev_guard = GuardBuilder().dry_run().on_denial("return").build()
 
-# Production: Raise exceptions (default)
+# Production: Raise exceptions on denial
 prod_guard = GuardBuilder().on_denial("raise").build()
 
-# Testing: Dry run mode (requires direct constructor)
+# Production: Return structured error (default)
+default_guard = GuardBuilder().on_denial("return").build()
+
+# Testing: Dry run mode (via direct constructor)
 test_guard = TenuoGuard(
     warrant=warrant,
     signing_key=key,

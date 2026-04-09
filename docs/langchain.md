@@ -35,8 +35,7 @@ Copy-paste this to see Tenuo in action. No setup required beyond the install.
 ```python
 # mdpytest:skip
 import asyncio
-from tenuo import configure, mint, Capability, Pattern, SigningKey
-from tenuo.langchain import guard
+from tenuo import configure, mint, guard, Capability, Pattern, SigningKey
 from langchain_core.tools import tool
 
 # One-time setup
@@ -100,8 +99,14 @@ protected_tools = guard([DuckDuckGoSearchRun()], bound)
 # 3. Use in your agent
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
 
 llm = ChatOpenAI(model="gpt-4")
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
 agent = create_openai_tools_agent(llm, protected_tools, prompt)
 executor = AgentExecutor(agent=agent, tools=protected_tools)
 
@@ -127,6 +132,8 @@ with bound:
     content = read_file("/tmp/test.txt")  # Authorized
     content = read_file("/etc/passwd")    # Blocked
 ```
+
+> **Two `guard` symbols:** `from tenuo import guard` is the `@guard(tool="...")` decorator for individual functions. `from tenuo.langchain import guard` is a list wrapper equivalent to `guard_tools()`. When in doubt, use `guard_tools()`.
 
 ---
 
@@ -342,7 +349,7 @@ except TenuoError as e:
 | `SignatureInvalid` | 1100 | Bad PoP signature | Check signing key |
 | `RevokedError` | 1800 | Warrant revoked | Request new warrant |
 
-See [wire format specification](./spec/wire-format-v1#appendix-a-error-codes) for the complete list.
+See [wire format specification](./spec/wire-format-v1#appendix-a-error-code-reference) for the complete list.
 
 ---
 
@@ -368,8 +375,9 @@ Constraints restrict tool arguments:
 ```python
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import ChatOpenAI
-from tenuo import SigningKey, Warrant, Pattern
-from tenuo.langchain import guard
+from langchain_core.prompts import ChatPromptTemplate
+from tenuo import SigningKey, Warrant, Pattern, Subpath, guard
+from tenuo.langchain import guard_tools
 
 # 1. Create key and warrant
 key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
@@ -391,10 +399,15 @@ def read_file(path: str) -> str:
         return f.read()
 
 # 3. Protect tools
-protected_tools = guard([DuckDuckGoSearchRun(), read_file], bound)
+protected_tools = guard_tools([DuckDuckGoSearchRun(), read_file], bound)
 
 # 4. Create agent
 llm = ChatOpenAI(model="gpt-4")
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
 agent = create_openai_tools_agent(llm, protected_tools, prompt)
 executor = AgentExecutor(agent=agent, tools=protected_tools)
 
@@ -427,7 +440,6 @@ protected_executor = auto_protect(executor, mode="enforce")
 |-----------|------|---------|-------------|
 | `agent_or_tools` | `Any` | required | AgentExecutor, list of tools, or single tool |
 | `mode` | `str` | `"audit"` | `"audit"` (log only), `"enforce"` (block), `"permissive"` (warn) |
-| `infer_schemas` | `bool` | `True` | Infer tool schemas from type hints |
 
 ### `SecureAgentExecutor` (Drop-in Replacement)
 
@@ -523,24 +535,75 @@ result = protected.invoke({"input": "Read /data/report.txt"})
 
 ## Human Approval
 
-Add human-in-the-loop approval with `approval_policy` and `approval_handler` parameters on `guard()` or `TenuoTool`. See [Human Approvals](approvals.md) for the full guide.
+Add human-in-the-loop approval with `approval_handler` and `approvals` parameters on `guard_tools()` or `TenuoTool`. See [Human Approvals](approvals.md) for the full guide.
 
 ```python
-from tenuo.approval import ApprovalPolicy, require_approval, cli_prompt
-from tenuo.langchain import guard
+from tenuo.langchain import guard_tools, TenuoTool
+from tenuo.approval import cli_prompt
 
-policy = ApprovalPolicy(
-    require_approval("delete_database"),
-    trusted_approvers=[approver_key.public_key],
-)
+approver_key = SigningKey.generate()
 
-tools = guard(
+# Via guard_tools: specify which tools require approval and the handler
+protected = guard_tools(
     [search, delete_database],
     bound_warrant,
-    approval_policy=policy,
+    approvals=["delete_database"],
+    approval_handler=cli_prompt(approver_key=approver_key),
+)
+
+# Or per-tool via TenuoTool
+tool = TenuoTool(
+    inner=delete_database,
     approval_handler=cli_prompt(approver_key=approver_key),
 )
 ```
+
+---
+
+## Delegation Chains
+
+When an orchestrator delegates a subset of its authority to a worker, the worker's warrant is a *child* of the orchestrator's warrant. To verify the child, `Authorizer.check_chain` must see the full chain of parent warrants. Use `chain_scope` to provide this context.
+
+```python
+from tenuo import (
+    SigningKey, Warrant, configure, reset_config,
+    chain_scope, warrant_scope, key_scope,
+)
+from tenuo.langchain import guard_tools
+
+issuer = SigningKey.generate()
+orchestrator = SigningKey.generate()
+worker = SigningKey.generate()
+configure(issuer_key=issuer, dev_mode=True)
+
+# Root warrant: orchestrator can search, read_file, delete_file
+root = (Warrant.mint_builder()
+    .capability("search")
+    .capability("read_file")
+    .capability("delete_file")
+    .holder(orchestrator.public_key)
+    .ttl(3600)
+    .mint(issuer))
+
+# Attenuated child: worker can only search and read_file
+child = (root.grant_builder()
+    .capability("search")
+    .capability("read_file")
+    .holder(worker.public_key)
+    .ttl(1800)
+    .grant(orchestrator))
+
+tools = guard_tools([search_tool, read_file_tool, delete_file_tool])
+
+# Set up delegation context: chain + leaf warrant + signing key
+with chain_scope([root]):
+    with warrant_scope(child):
+        with key_scope(worker):
+            result = tools[0].invoke({"query": "test"})  # search: allowed
+            # tools[2].invoke({"path": "/x"})            # delete_file: DENIED
+```
+
+`chain_scope` provides parent warrants to `enforce_tool_call` so that `Authorizer.check_chain` can walk the delegation chain back to a trusted root. Without it, delegated warrants fail because the child's issuer (the orchestrator) isn't itself a trusted root — the chain is needed to prove that authority was properly delegated from the issuer.
 
 ---
 

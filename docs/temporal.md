@@ -45,14 +45,14 @@ Requires a Temporal cluster (local `temporal server start-dev` or production).
 
 ## Temporal plugin (`TenuoTemporalPlugin`)
 
-For [Temporal’s plugin model](https://docs.temporal.io/) (AI Partner Ecosystem–style registration), use **`tenuo.TenuoTemporalPlugin`**: a [`SimplePlugin`](https://python.temporal.io/temporalio.plugin.html) that wires **client interceptors**, **worker interceptors** (`TenuoPlugin`), and a **sandboxed workflow runner** with `tenuo` / `tenuo_core` passthrough (required for PyO3).
+For [Temporal’s plugin model](https://docs.temporal.io/) (AI Partner Ecosystem–style registration), use **`TenuoTemporalPlugin`** from `tenuo.temporal_plugin`: a [`SimplePlugin`](https://python.temporal.io/temporalio.plugin.html) that wires **client interceptors**, **worker interceptors** (`TenuoPlugin`), and a **sandboxed workflow runner** with `tenuo` / `tenuo_core` passthrough (required for PyO3). (The Temporal plugin name string is `"tenuo.TenuoTemporalPlugin"`, but the Python import is `from tenuo.temporal_plugin import TenuoTemporalPlugin`.)
 
 ```python
 from temporalio.client import Client
 from temporalio.worker import Worker
 
 from tenuo import SigningKey
-from tenuo.temporal import TenuoPluginConfig, EnvKeyResolver
+from tenuo.temporal import TenuoPluginConfig, EnvKeyResolver, execute_workflow_authorized
 from tenuo.temporal_plugin import TenuoTemporalPlugin
 
 control = SigningKey.generate()
@@ -65,9 +65,23 @@ plugin = TenuoTemporalPlugin(
 
 client = await Client.connect("localhost:7233", plugins=[plugin])
 worker = Worker(client, task_queue="my-queue", workflows=[...], activities=[...])
+
+# When starting workflows, use plugin.client_interceptor to inject warrant headers:
+result = await execute_workflow_authorized(
+    client=client,
+    client_interceptor=plugin.client_interceptor,
+    workflow_run_fn=MyWorkflow.run,
+    workflow_id="my-workflow-001",
+    warrant=warrant,
+    key_id="agent-key-1",
+    args=[...],
+    task_queue="my-queue",
+)
 ```
 
 Pass the plugin on **`Client.connect(..., plugins=[plugin])`** only: workers created from that client **merge** client plugins, so you should **not** duplicate the same plugin on `Worker(..., plugins=[...])` unless the client was created without plugins.
+
+> **Note:** If using `TenuoTemporalPlugin`, it provides both the worker interceptor and `client_interceptor` — you do not need to create separate `TenuoClientInterceptor` instances. Access the client interceptor via `plugin.client_interceptor`.
 
 Manual setup (`interceptors=[...]` + `workflow_runner=SandboxedWorkflowRunner(...)`) remains supported; for passthrough without the plugin, use `ensure_tenuo_workflow_runner` from `tenuo.temporal_plugin` (or `from tenuo.temporal import ensure_tenuo_workflow_runner`).
 
@@ -138,9 +152,9 @@ Follow this order the first time you integrate Tenuo with Temporal. The **Quick 
 
 6. **Workflow sandbox passthrough (required)**: Use `SandboxedWorkflowRunner` with `SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")`. Omitting this causes `ImportError: PyO3 modules may only be initialized once...`.
 
-7. **Child workflows**: For any child that must run under Tenuo, use [`tenuo_execute_child_workflow()`](#child-workflow-delegation) only. The SDK's `workflow.execute_child_workflow()` does not propagate warrant headers; children started that way have no authorization context.
+7. **Client**: Attach `TenuoClientInterceptor` to `Client.connect(..., interceptors=[...])` (or use `TenuoTemporalPlugin` which provides it via `plugin.client_interceptor`). Bind headers before start with **`execute_workflow_authorized(...)`** (best under concurrency) or `set_headers_for_workflow(workflow_id, tenuo_headers(warrant, key_id))` then `execute_workflow`. Without this, warrants are not injected into workflow headers.
 
-8. **Client**: Attach `TenuoClientInterceptor` to `Client.connect(..., interceptors=[...])`. Bind headers before start with **`execute_workflow_authorized(...)`** (best under concurrency) or `set_headers_for_workflow(workflow_id, tenuo_headers(warrant, key_id))` then `execute_workflow`.
+8. **Child workflows**: For any child that must run under Tenuo, use [`tenuo_execute_child_workflow()`](#child-workflow-delegation) only. The SDK's `workflow.execute_child_workflow()` does not propagate warrant headers; children started that way have no authorization context.
 
 9. **Run the samples**: See the [Runnable examples](#runnable-examples) table (`demo.py` first, then `cloud_iam_layering.py`, `multi_warrant.py`, `delegation.py`, and optionally `temporal_mcp_layering.py`).
 
