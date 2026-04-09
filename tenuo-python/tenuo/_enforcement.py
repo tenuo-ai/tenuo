@@ -81,6 +81,11 @@ class EnforcementResult:
         constraint_violated: Which constraint failed (if applicable)
         error_type: Structured error category (e.g. "expired", "tool_not_allowed")
         warrant_id: ID of the warrant for audit correlation
+        chain_result: Rust ``ChainVerificationResult`` from ``authorize_one`` /
+            ``check_chain``.  Present only on successful authorization.
+            Pass to ``emit_for_enforcement(chain_result=...)`` so receipts
+            are signed with Rust-attested fields (approvals, warrant stack,
+            root issuer) instead of Python-supplied metadata.
     """
 
     allowed: bool
@@ -90,6 +95,7 @@ class EnforcementResult:
     constraint_violated: Optional[str] = None
     error_type: Optional[str] = None
     warrant_id: Optional[str] = None
+    chain_result: Optional[Any] = None
 
     def raise_if_denied(self) -> None:
         """
@@ -664,7 +670,7 @@ def enforce_tool_call(
                 _key = bound_warrant._key
                 _pop = bytes(_warrant.sign(_key, tool_name, tool_args, int(_time.time())))
                 _auth = _Authorizer(trusted_roots=trusted_roots)
-                _auth.authorize_one(
+                _chain_result = _auth.authorize_one(
                     _warrant, tool_name, tool_args,
                     signature=_pop,
                     approvals=_gate_approvals or [],
@@ -722,7 +728,7 @@ def enforce_tool_call(
                 # Build the full chain: [root, ..., parents, leaf]
                 # warrant_chain contains parent warrants in root-first order.
                 full_chain = list(warrant_chain or []) + [bound_warrant.warrant]
-                authorizer.check_chain(
+                _chain_result = authorizer.check_chain(
                     full_chain,
                     tool_name,
                     tool_args,
@@ -755,19 +761,12 @@ def enforce_tool_call(
             }
         )
 
-        if _gate_approvals is not None:
-            return EnforcementResult(
-                allowed=True,
-                tool=tool_name,
-                arguments=tool_args,
-                warrant_id=warrant_id,
-            )
-
         return EnforcementResult(
             allowed=True,
             tool=tool_name,
             arguments=tool_args,
             warrant_id=warrant_id,
+            chain_result=_chain_result,
         )
 
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:

@@ -119,17 +119,21 @@ class TestEmitForEnforcement:
         return wrapper
 
     def _make_fake_inner(self):
-        """Minimal inner object that captures raw emit_allow / emit_deny calls."""
+        """Minimal inner object that captures raw emit_allow / emit_deny / emit_authorized calls."""
         @dataclass
         class FakeInner:
             allows: List = field(default_factory=list)
             denies: List = field(default_factory=list)
+            authorized: List = field(default_factory=list)
 
             def emit_allow(self, *args, **kwargs):
                 self.allows.append(args)
 
             def emit_deny(self, *args, **kwargs):
                 self.denies.append(args)
+
+            def emit_authorized(self, *args, **kwargs):
+                self.authorized.append(args)
 
         return FakeInner()
 
@@ -184,8 +188,8 @@ class TestEmitForEnforcement:
         assert "Tool not in warrant" in args[2]
         assert args[3] == "tool_not_allowed"
 
-    def test_chain_result_overrides_defaults(self):
-        """chain_result.leaf_depth and root_issuer are forwarded correctly."""
+    def test_chain_result_uses_emit_authorized(self):
+        """allowed=True + chain_result routes through emit_authorized (Rust trust path)."""
         from tenuo._enforcement import EnforcementResult
         from tenuo.control_plane import ControlPlaneClient
 
@@ -194,19 +198,19 @@ class TestEmitForEnforcement:
         cp._inner = inner
 
         chain_result = MagicMock()
-        chain_result.leaf_depth = 3
-        chain_result.root_issuer = b"\xab\xcd" + b"\x00" * 30
-        chain_result.warrant_stack_b64 = "base64encodedstack=="
-
         result = EnforcementResult(
-            allowed=True, tool="search", arguments={}, warrant_id="w1",
+            allowed=True, tool="search", arguments={"q": "x"}, warrant_id="w1",
         )
-        cp.emit_for_enforcement(result, chain_result=chain_result)
+        cp.emit_for_enforcement(result, chain_result=chain_result, latency_us=42, request_id="r1")
 
-        args = inner.allows[0]
-        assert args[2] == 3            # chain_depth == leaf_depth
-        assert args[3] is not None     # root_principal hex string
-        assert args[4] == "base64encodedstack=="  # warrant_stack
+        assert len(inner.authorized) == 1
+        assert len(inner.allows) == 0  # should NOT fall through to emit_allow
+        args = inner.authorized[0]
+        assert args[0] is chain_result  # chain_result passed directly
+        assert args[1] == "search"      # tool
+        assert json.loads(args[2]) == {"q": "x"}  # arguments JSON
+        assert args[3] == 42            # latency_us
+        assert args[4] == "r1"          # request_id
 
     def test_warrant_stack_override_used_when_no_chain_result(self):
         """warrant_stack_override is used when chain_result is None."""
@@ -228,7 +232,7 @@ class TestEmitForEnforcement:
         assert args[6] == "fallback-stack-b64"  # warrant_stack position in emit_deny
 
     def test_chain_result_takes_precedence_over_override(self):
-        """chain_result.warrant_stack_b64 wins over warrant_stack_override."""
+        """allowed + chain_result routes to emit_authorized, ignoring warrant_stack_override."""
         from tenuo._enforcement import EnforcementResult
         from tenuo.control_plane import ControlPlaneClient
 
@@ -237,10 +241,6 @@ class TestEmitForEnforcement:
         cp._inner = inner
 
         chain_result = MagicMock()
-        chain_result.leaf_depth = 1
-        chain_result.root_issuer = None
-        chain_result.warrant_stack_b64 = "from-chain-result"
-
         result = EnforcementResult(
             allowed=True, tool="op", arguments={}, warrant_id="w3",
         )
@@ -249,8 +249,9 @@ class TestEmitForEnforcement:
             warrant_stack_override="should-be-ignored",
         )
 
-        args = inner.allows[0]
-        assert args[4] == "from-chain-result"
+        assert len(inner.authorized) == 1
+        assert len(inner.allows) == 0  # warrant_stack_override irrelevant
+        assert inner.authorized[0][0] is chain_result
 
     def test_no_error_when_arguments_not_serializable(self):
         """Non-serializable arguments fall back to str() without raising."""

@@ -4536,7 +4536,7 @@ impl PyVerifiedApproval {
 #[pyclass(name = "ChainVerificationResult")]
 #[derive(Clone)]
 pub struct PyChainVerificationResult {
-    inner: RustChainVerificationResult,
+    pub(crate) inner: RustChainVerificationResult,
 }
 
 #[pymethods]

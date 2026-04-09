@@ -15,7 +15,14 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 from .._enforcement import EnforcementResult, enforce_tool_call
 from ..config import is_configured
 from ..decorators import guard, key_scope, warrant_scope
-from ..exceptions import ConfigurationError, ExpiredError, MCPToolCallError
+from ..exceptions import (
+    AuthorizationDenied,
+    ConfigurationError,
+    ConstraintViolation,
+    ExpiredError,
+    MCPToolCallError,
+    ToolNotAuthorized,
+)
 from ..validation import ValidationResult
 
 logger = logging.getLogger(__name__)
@@ -39,6 +46,19 @@ except ImportError:
 if sys.version_info < (3, 10) and MCP_AVAILABLE:
     # Should not happen if installed correctly, but guard anyway
     MCP_AVAILABLE = False
+
+
+def _raise_for_denial(result: "EnforcementResult", tool_name: str) -> None:
+    """Raise the appropriate exception for a denied EnforcementResult."""
+    reason = result.denial_reason or "Authorization denied"
+    etype = result.error_type or ""
+    if etype == "constraint_violation":
+        raise ConstraintViolation(reason)
+    if etype == "tool_not_allowed":
+        raise ToolNotAuthorized(reason)
+    if etype == "expired":
+        raise ExpiredError(reason)
+    raise AuthorizationDenied(reason)
 
 
 def _safe_mcp_tool_error_message(content: Any, tool_name: str) -> str:
@@ -590,15 +610,13 @@ class SecureMCPClient:
                 approvals=approvals,
             )
             if not result.allowed:
-                raise ConfigurationError(
-                    f"Authorization denied for '{tool_name}': {result.denial_reason}"
-                )
+                _raise_for_denial(result, tool_name)
             logger.info(
                 "MCP tool authorised: %s (warrant=%s)",
                 tool_name,
                 getattr(w, "id", None),
             )
-            return await _perform_call(result.clean_arguments or arguments)
+            return await _perform_call(arguments)
         else:
             # Call without local authorization (but still with optional injection)
             return await _perform_call(arguments)
@@ -663,9 +681,7 @@ class SecureMCPClient:
                     approvals=_approvals,
                 )
                 if not result.allowed:
-                    raise ConfigurationError(
-                        f"Authorization denied for '{tool_name}': {result.denial_reason}"
-                    )
+                    _raise_for_denial(result, tool_name)
                 logger.info(
                     "MCP tool authorised: %s (warrant=%s)",
                     tool_name,

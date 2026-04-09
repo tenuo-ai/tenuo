@@ -13,32 +13,6 @@ from typing import Optional, Any
 
 _global_client: Optional["ControlPlaneClient"] = None
 
-
-def _extract_approval_records(
-    chain_result: Optional[Any],
-) -> Optional[list]:
-    """Extract approval records from a ChainVerificationResult for CP emission.
-
-    Returns a list of tuples matching the Rust ApprovalRecord shape, or None.
-    """
-    if chain_result is None:
-        return None
-    verified = getattr(chain_result, "verified_approvals", None)
-    if not verified:
-        return None
-    records = []
-    for va in verified:
-        approver_key_bytes = getattr(va, "approver_key", b"")
-        records.append((
-            bytes(approver_key_bytes).hex() if approver_key_bytes else "",
-            getattr(va, "external_id", "") or "",
-            getattr(va, "approved_at", 0),
-            getattr(va, "expires_at", 0),
-            bytes(getattr(va, "request_hash", b"")).hex() if getattr(va, "request_hash", None) else "",
-            getattr(va, "signed_approval_cbor_b64", None),
-        ))
-    return records if records else None
-
 def connect(
     *,
     token: Optional[str] = None,
@@ -176,17 +150,14 @@ class ControlPlaneClient:
         Works with EnforcementResult (LangGraph), MCPVerificationResult (MCP),
         and TemporalAuditEvent (Temporal).
 
-        Approval records from ``chain_result.verified_approvals`` are forwarded
-        to the control plane so signed receipts carry full approval provenance.
+        When ``chain_result`` is a Rust ``ChainVerificationResult`` and the
+        call was authorized, uses ``emit_authorized`` so all trust-critical
+        fields (approvals, warrant stack, chain depth, root issuer) are
+        extracted in Rust — Python stays out of the signing trust path.
         """
         request_id = request_id or str(uuid.uuid4())
-        warrant_id = getattr(result, "warrant_id", None) or ""
-        tool = getattr(result, "tool", "") or ""
         allowed = getattr(result, "allowed", False)
-
-        chain_depth = 1
-        root_principal = None
-        warrant_stack = warrant_stack_override
+        tool = getattr(result, "tool", "") or ""
 
         # Resolve arguments — EnforcementResult uses .arguments,
         # MCPVerificationResult uses .clean_arguments / .constraints.
@@ -200,6 +171,23 @@ class ControlPlaneClient:
             except Exception:
                 arguments_json = str(arguments_dict)
 
+        # Trusted allow path: let Rust extract all fields from the
+        # ChainVerificationResult it produced.  Python only supplies
+        # tool name, serialized args, and timing metadata.
+        if allowed and chain_result is not None:
+            self._inner.emit_authorized(
+                chain_result, tool, arguments_json,
+                latency_us, request_id,
+            )
+            return
+
+        # Fallback path: no chain_result (e.g., require_warrant=False allows,
+        # all denials).  Python supplies the fields from the result object.
+        warrant_id = getattr(result, "warrant_id", None) or ""
+        chain_depth = 1
+        root_principal = None
+        warrant_stack = warrant_stack_override
+
         if chain_result is not None:
             chain_depth = chain_result.leaf_depth
             ri = getattr(chain_result, "root_issuer", None)
@@ -209,14 +197,10 @@ class ControlPlaneClient:
                 root_principal = ri
             warrant_stack = getattr(chain_result, "warrant_stack_b64", None) or warrant_stack
 
-        # Extract approval records from chain verification result.
-        approval_tuples = _extract_approval_records(chain_result)
-
         if allowed:
             self._inner.emit_allow(
                 warrant_id, tool, chain_depth, root_principal,
                 warrant_stack, latency_us, request_id, arguments_json,
-                approval_tuples,
             )
         else:
             deny_reason = getattr(result, "denial_reason", "") or ""
@@ -225,7 +209,6 @@ class ControlPlaneClient:
                 warrant_id, tool, deny_reason, failed,
                 chain_depth, root_principal, warrant_stack,
                 latency_us, request_id, arguments_json,
-                approval_tuples,
             )
 
     def shutdown(self, timeout_secs: float = 5.0) -> None:

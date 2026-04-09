@@ -422,7 +422,8 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             if self._control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
                 self._control_plane.emit_for_enforcement(
-                    result, latency_us=latency_us, request_id=request_id,
+                    result, chain_result=result.chain_result,
+                    latency_us=latency_us, request_id=request_id,
                     warrant_stack_override=_warrant_stack_from_bound(bw),
                 )
 
@@ -516,7 +517,8 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             if self._control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
                 self._control_plane.emit_for_enforcement(
-                    result, latency_us=latency_us, request_id=request_id,
+                    result, chain_result=result.chain_result,
+                    latency_us=latency_us, request_id=request_id,
                     warrant_stack_override=_warrant_stack_from_bound(bw),
                 )
 
@@ -929,7 +931,8 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             if _control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
                 _control_plane.emit_for_enforcement(
-                    result, latency_us=latency_us, request_id=request_id,
+                    result, chain_result=result.chain_result,
+                    latency_us=latency_us, request_id=request_id,
                     warrant_stack_override=_warrant_stack_from_bound(bw),
                 )
 
@@ -977,7 +980,8 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             if _control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
                 _control_plane.emit_for_enforcement(
-                    result, latency_us=latency_us, request_id=request_id,
+                    result, chain_result=result.chain_result,
+                    latency_us=latency_us, request_id=request_id,
                     warrant_stack_override=_warrant_stack_from_bound(bw),
                 )
 
