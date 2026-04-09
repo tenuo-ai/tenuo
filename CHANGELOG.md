@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Explorer** — Vite updated to 8.0.8+ (addresses GHSA-p9ff-h696-f583, GHSA-v2wj-q39q-566r, GHSA-4w7w-66w2-5vf9).
+
 ## [0.1.0-beta.18] - 2026-04-09
 
 ### Added
