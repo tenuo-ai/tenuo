@@ -530,7 +530,20 @@ class SecureMCPClient:
                 keypair = key_scope()
 
                 if warrant is not None and keypair is not None:
-                    warrant_base64 = warrant.to_base64()
+                    # Encode as WarrantStack when the parent chain is
+                    # available via chain_scope(), otherwise single warrant.
+                    from ..decorators import chain_scope as _chain_scope
+                    _parents = _chain_scope()
+                    if _parents:
+                        try:
+                            from tenuo_core import encode_warrant_stack
+                            warrant_base64 = encode_warrant_stack(
+                                list(_parents) + [warrant]
+                            )
+                        except Exception:
+                            warrant_base64 = warrant.to_base64()
+                    else:
+                        warrant_base64 = warrant.to_base64()
                     # PoP must sign the same constraint view the server will
                     # verify against. When a CompiledMcpConfig is loaded, that
                     # means extracted (renamed/coerced) constraints — not raw args.

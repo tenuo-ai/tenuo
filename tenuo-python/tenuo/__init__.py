@@ -159,6 +159,7 @@ from .bound_warrant import BoundWarrant
 
 # Protection decorator
 from .decorators import (
+    chain_scope,
     guard as _guard_decorator,  # Import with temp name to avoid module shadowing
     key_scope,
     warrant_scope,
@@ -284,6 +285,7 @@ __all__ = [
     # Context
     "warrant_scope",
     "key_scope",
+    "chain_scope",
     # Timestamp helper (use in warrant.sign() calls; in Temporal use workflow.now())
     "now",
     # Common constraints

@@ -444,12 +444,24 @@ class MCPVerifier:
             ))
 
         # ------------------------------------------------------------------
-        # Step 3: decode warrant
+        # Step 3: decode warrant (single warrant or WarrantStack)
         # ------------------------------------------------------------------
+        _chain_parents: Optional[List[Any]] = None
         try:
             from tenuo_core import Warrant
 
-            warrant = Warrant.from_base64(warrant_b64)
+            try:
+                from tenuo_core import decode_warrant_stack_base64
+                stack_warrants = decode_warrant_stack_base64(warrant_b64)
+                if len(stack_warrants) > 1:
+                    warrant = stack_warrants[-1]
+                    _chain_parents = stack_warrants[:-1]
+                elif len(stack_warrants) == 1:
+                    warrant = stack_warrants[0]
+                else:
+                    raise ValueError("Empty warrant stack")
+            except Exception:
+                warrant = Warrant.from_base64(warrant_b64)
         except Exception as exc:
             return _emit_and_return(MCPVerificationResult(
                 allowed=False,
@@ -509,9 +521,15 @@ class MCPVerifier:
         result: MCPVerificationResult
 
         try:
-            chain_result = self._authorizer.authorize_one(
-                warrant, tool_name, constraints, pop_sig, approvals
-            )
+            if _chain_parents:
+                full_chain = list(_chain_parents) + [warrant]
+                chain_result = self._authorizer.check_chain(
+                    full_chain, tool_name, constraints, pop_sig, approvals
+                )
+            else:
+                chain_result = self._authorizer.authorize_one(
+                    warrant, tool_name, constraints, pop_sig, approvals
+                )
 
             # ── Replay prevention ────────────────────────────────────────
             # Ed25519 PoP is deterministic, so an exact replay of the same

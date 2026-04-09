@@ -311,6 +311,11 @@ _warrant_context: ContextVar[Optional[Warrant]] = ContextVar("_warrant_context",
 # Context variable for keypair storage (for PoP signatures)
 _keypair_context: ContextVar[Optional[SigningKey]] = ContextVar("_keypair_context", default=None)
 
+# Context variable for parent warrant chain (root-first, excluding the leaf).
+# Set alongside warrant_scope when the active warrant is a delegated child.
+# SecureMCPClient reads this to encode a WarrantStack on the wire.
+_chain_context: ContextVar[Optional[List[Any]]] = ContextVar("_chain_context", default=None)
+
 # Context variable for allowed tools (narrower than warrant.tools)
 # Used by scoped_task to restrict tools beyond what the warrant allows
 _allowed_tools_context: ContextVar[Optional[List[str]]] = ContextVar("_allowed_tools_context", default=None)
@@ -440,6 +445,44 @@ def key_scope(keypair: Optional[SigningKey] = None) -> Union[Optional[SigningKey
     if keypair is None:
         return _keypair_context.get()
     return SigningKeyContext(keypair)
+
+
+def chain_scope(parents=None):
+    """Get or set the parent warrant chain context.
+
+    The chain is a list of parent warrants in root-first order,
+    **excluding** the leaf (which lives in ``warrant_scope``).
+    ``SecureMCPClient`` reads this to encode a WarrantStack on the wire
+    so the server can verify the full delegation path.
+
+    Usage as getter (no args):
+        parents = chain_scope()
+
+    Usage as setter (context manager):
+        with chain_scope([root_warrant]):
+            with warrant_scope(worker_warrant):
+                await client.call_tool(...)
+    """
+    if parents is None:
+        return _chain_context.get()
+    return ChainContext(parents)
+
+
+class ChainContext:
+    """Context manager for setting the parent warrant chain."""
+
+    def __init__(self, parents: list):
+        self.parents = parents
+        self.token = None
+
+    def __enter__(self):
+        self.token = _chain_context.set(self.parents)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.token is not None:
+            _chain_context.reset(self.token)
+        return False
 
 
 class WarrantContext:
