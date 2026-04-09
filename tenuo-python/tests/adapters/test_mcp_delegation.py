@@ -240,6 +240,42 @@ class TestMCPVerifierDeepChain:
         assert result.allowed is False
 
 
+class TestMCPVerifierCorruptedStack:
+    """Corrupted WarrantStack must not silently fall back to single-warrant decode."""
+
+    def test_truncated_cbor_stack_rejected(self, verifier, worker_key):
+        """A truncated CBOR array must not silently parse as a single warrant."""
+        import base64
+
+        valid_key = SigningKey.generate()
+        w = Warrant.mint_builder().capability("read_file").holder(worker_key.public_key).ttl(3600).mint(valid_key)
+        stack_b64 = encode_warrant_stack([w])
+        raw = base64.urlsafe_b64decode(stack_b64 + "==")
+        # Corrupt: chop off last 10 bytes of the CBOR to break structure
+        corrupted = base64.urlsafe_b64encode(raw[:-10]).decode().rstrip("=")
+
+        meta = {"tenuo": {
+            "warrant": corrupted,
+            "signature": base64.b64encode(b"\x00" * 64).decode(),
+        }}
+        result = verifier.verify("read_file", {"path": "/data/x.txt"}, meta=meta)
+        assert result.allowed is False
+        assert "malformed" in (result.denial_reason or "").lower()
+
+    def test_garbage_bytes_rejected(self, verifier):
+        """Random garbage that isn't CBOR or single warrant must be rejected."""
+        import base64
+
+        garbage = base64.urlsafe_b64encode(b"not-a-warrant-at-all").decode().rstrip("=")
+        meta = {"tenuo": {
+            "warrant": garbage,
+            "signature": base64.b64encode(b"\x00" * 64).decode(),
+        }}
+        result = verifier.verify("read_file", {"path": "/data/x.txt"}, meta=meta)
+        assert result.allowed is False
+        assert "malformed" in (result.denial_reason or "").lower()
+
+
 class TestMCPVerifierChainWithWrongSigner:
     """Chain where the child is signed by the wrong key must be rejected."""
 
