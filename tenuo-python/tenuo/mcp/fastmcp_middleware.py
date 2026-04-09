@@ -77,11 +77,28 @@ def resolve_tool_call_meta_for_verify(
 
 
 def _strip_tenuo_meta(
-    params: mt.CallToolRequestParams, clean_arguments: dict[str, Any]
+    params: mt.CallToolRequestParams,
+    clean_arguments: dict[str, Any],
+    resolved_meta: dict[str, Any] | None = None,
 ) -> mt.CallToolRequestParams:
-    """Replace arguments with verifier output and drop ``tenuo`` from ``meta``."""
+    """Replace arguments with verifier output and drop ``tenuo`` from ``meta``.
+
+    When ``params.meta`` was ``None`` but *resolved_meta* (obtained from the
+    request context) contained ``tenuo``, the non-tenuo remainder is stamped
+    onto the returned params so downstream middleware sees clean metadata.
+    """
     meta = params.meta
     if meta is None:
+        if resolved_meta and "tenuo" in resolved_meta:
+            trimmed = {k: v for k, v in resolved_meta.items() if k != "tenuo"}
+            new_meta: RequestParams.Meta | None
+            if trimmed:
+                new_meta = RequestParams.Meta.model_validate(trimmed)
+            else:
+                new_meta = None
+            return params.model_copy(
+                update={"arguments": clean_arguments, "meta": new_meta}
+            )
         return params.model_copy(update={"arguments": clean_arguments})
     trimmed = meta.model_dump(mode="python", exclude_none=True)
     trimmed.pop("tenuo", None)
@@ -163,5 +180,5 @@ class TenuoMiddleware(Middleware):
         result = self._verifier.verify(name, arguments, meta=meta)
         if not result.allowed:
             return _denial_tool_return(result)
-        new_message = _strip_tenuo_meta(params, result.clean_arguments)
+        new_message = _strip_tenuo_meta(params, result.clean_arguments, resolved_meta=meta)
         return await call_next(context.copy(message=new_message))

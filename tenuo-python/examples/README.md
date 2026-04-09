@@ -102,8 +102,7 @@ This demo shows Tenuo's key capabilities:
 - **[delegation_patterns.py](delegation_patterns.py)**: Advanced delegation patterns including multi-hop chains and constraint narrowing.
 - **[delegation_receipts.py](delegation_receipts.py)**: Cryptographic delegation receipts for audit trails.
 
-### Approval Policy (Human-in-the-Loop)
-- **[approval_policy_demo.py](approval_policy_demo.py)**: Demonstrates m-of-n multi-sig approval policies — single approver and multi-sig scenarios with configurable TTL.
+### Approval Gates (Human-in-the-Loop)
 - **[jit_warrant_demo/](jit_warrant_demo/)**: **JIT Warrant Demo** - Complete just-in-time warrant issuance with human multi-sig approval. Run with `python jit_warrant_demo/demo.py --simulate`.
   - `demo.py` — Main entry point (use `--simulate` for no-LLM mode)
   - `human_approval.py` — Multi-sig approval flow
@@ -226,8 +225,7 @@ python chain_demo.py
 python orchestrator_worker.py
 python delegation_patterns.py
 
-# Approval policy (human-in-the-loop)
-python approval_policy_demo.py
+# Approval gates (human-in-the-loop)
 python jit_warrant_demo/demo.py --simulate
 
 # Featured MCP demo (requires: uv pip install "tenuo[mcp,langchain]" langchain-openai langgraph)
@@ -287,7 +285,7 @@ python kubernetes_integration.py
 3. **Fail-Closed**: Missing warrants block execution. If no warrant is in context, authorization fails by default.
 4. **PoP Automation**: Proof-of-Possession signatures are generated automatically by the SDK when using `@guard` or `guard()`.
 5. **Closed-World Constraints (Trust Cliff)**: Once you add ANY constraint, unknown arguments are rejected. Use `_allow_unknown=True` to opt out, or `Wildcard()` to explicitly allow fields. See [trust_cliff_demo.py](trust_cliff_demo.py).
-6. **M-of-N Approvals**: Human-in-the-loop authorization with configurable multi-sig thresholds and TTL. See [approval_policy_demo.py](approval_policy_demo.py).
+6. **M-of-N Approvals**: Human-in-the-loop authorization via warrant approval gates with configurable multi-sig thresholds.
 
 ## Learning Path
 
@@ -318,7 +316,7 @@ python kubernetes_integration.py
 **Production Patterns:**
 - `orchestrator_worker.py` - **Multi-agent delegation (understand this first!)**
 - `langchain/langgraph_protected.py` - **State-aware agents with checkpointing (LangGraph)**
-- `approval_policy_demo.py` - Human-in-the-loop m-of-n approvals
+- `jit_warrant_demo/demo.py` - Human-in-the-loop m-of-n approvals via warrant gates
 - `fastapi_integration.py` - Complete web application with authorization
 - `error_handling_guide.py` - Production error handling strategies
 - `kubernetes_integration.py` - Real-world deployment patterns

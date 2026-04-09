@@ -82,12 +82,17 @@ from tenuo_core import (  # type: ignore
     RevocationRequest,
     SignedApproval,
     SignedRevocationList,
+    Signature,
     SigningKey,
     SrlBuilder,
     Subset,
     UrlPattern,
     Warrant,
     Wildcard,
+)
+from tenuo_core import (
+    py_build_approval_context_attestation as build_approval_context_attestation,
+    py_verify_approval_context_attestation as verify_approval_context_attestation,
 )
 from tenuo_core import (
     py_compute_request_hash as compute_request_hash,
@@ -202,17 +207,24 @@ del _guard_decorator  # Clean up temporary name
 
 from tenuo.approval import (  # noqa: E402
     ApprovalDenied,
-    ApprovalPolicy,
     ApprovalRequest,
     ApprovalRequired,
-    ApprovalRule,
     ApprovalTimeout,
     ApprovalVerificationError,
     auto_approve,
     auto_deny,
     cli_prompt,
-    require_approval,
     sign_approval,
+    warrant_expires_at_unix,
+)
+from tenuo.cp_approval import (  # noqa: E402
+    APPROVAL_FLOW_SCHEMA_VERSION,
+    ControlPlaneApprovalRequestV1,
+    ControlPlaneApprovalResponseV1,
+    build_control_plane_approval_request_v1,
+    signed_approvals_from_response,
+    submit_control_plane_approval_request_v1,
+    verify_control_plane_approval_request_v1,
 )
 
 # =============================================================================
@@ -236,7 +248,17 @@ __all__ = [
     "ApprovalPayload",
     "SignedApproval",
     "ApprovalMetadata",
+    "build_approval_context_attestation",
+    "verify_approval_context_attestation",
     "compute_request_hash",
+    "warrant_expires_at_unix",
+    "APPROVAL_FLOW_SCHEMA_VERSION",
+    "ControlPlaneApprovalRequestV1",
+    "ControlPlaneApprovalResponseV1",
+    "build_control_plane_approval_request_v1",
+    "verify_control_plane_approval_request_v1",
+    "signed_approvals_from_response",
+    "submit_control_plane_approval_request_v1",
     # Revocation
     "RevocationRequest",
     "SignedRevocationList",
@@ -251,6 +273,7 @@ __all__ = [
     "should_block_violation",
     "resolve_trusted_roots",
     "SigningKey",
+    "Signature",
     "PublicKey",
     # Protection
     "guard",
@@ -319,15 +342,12 @@ __all__ = [
     # Key management
     "KeyRegistry",
     "Keyring",
-    # Approval policy (cryptographically verified human-in-the-loop)
-    "ApprovalPolicy",
-    "ApprovalRule",
+    # Human-in-the-loop (SignedApproval; warrant approval gates)
     "ApprovalRequest",
     "ApprovalRequired",
     "ApprovalDenied",
     "ApprovalTimeout",
     "ApprovalVerificationError",
-    "require_approval",
     "sign_approval",
     "cli_prompt",
     "auto_approve",

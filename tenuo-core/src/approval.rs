@@ -389,6 +389,21 @@ impl ApprovalPayload {
     }
 }
 
+/// CBOR-encode tool arguments in the same canonical form used by [`compute_request_hash`].
+pub fn canonical_tool_args_cbor(
+    args: &std::collections::HashMap<String, crate::constraints::ConstraintValue>,
+) -> Option<Vec<u8>> {
+    use std::collections::BTreeMap;
+
+    let sorted: BTreeMap<_, _> = args.iter().collect();
+    let mut cbor_buf = Vec::new();
+    if ciborium::into_writer(&sorted, &mut cbor_buf).is_ok() {
+        Some(cbor_buf)
+    } else {
+        None
+    }
+}
+
 /// Compute a request hash for approval binding.
 ///
 /// This ensures an approval is bound to a specific (warrant, tool, args, holder) tuple.
@@ -401,7 +416,6 @@ pub fn compute_request_hash(
     authorized_holder: Option<&crate::crypto::PublicKey>,
 ) -> [u8; 32] {
     use sha2::{Digest, Sha256};
-    use std::collections::BTreeMap;
 
     let mut hasher = Sha256::new();
     hasher.update(warrant_id.as_bytes());
@@ -409,13 +423,8 @@ pub fn compute_request_hash(
     hasher.update(tool.as_bytes());
     hasher.update(b"|");
 
-    // Sort args for deterministic hashing
-    let sorted: BTreeMap<_, _> = args.iter().collect();
-
-    // Use CBOR for deterministic, canonical serialization
-    let mut cbor_buf = Vec::new();
-    if ciborium::into_writer(&sorted, &mut cbor_buf).is_ok() {
-        hasher.update(&cbor_buf);
+    if let Some(buf) = canonical_tool_args_cbor(args) {
+        hasher.update(&buf);
     }
 
     // Bind to authorized holder (prevents approval theft)
@@ -425,6 +434,114 @@ pub fn compute_request_hash(
     }
 
     hasher.finalize().into()
+}
+
+/// Build the signed preimage for an approval-context attestation (version 1).
+///
+/// Layout: `WARRANT_CONTEXT` || `APPROVAL_CONTEXT_ATTESTATION` || `0x01` ||
+/// `u32_be(len) || warrant_id` || `u32_be(len) || tool` ||
+/// `u32_be(len) || request_hash` (32) || `u32_be(len) || holder_pk` (32) ||
+/// `u32_be(len) || args_cbor`.
+pub fn build_approval_context_preimage(
+    warrant_id: &str,
+    tool: &str,
+    request_hash: &[u8; 32],
+    holder: &crate::crypto::PublicKey,
+    args_cbor: &[u8],
+) -> Vec<u8> {
+    use crate::domain::{APPROVAL_CONTEXT_ATTESTATION, WARRANT_CONTEXT};
+
+    fn push_lp(out: &mut Vec<u8>, data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(data);
+    }
+
+    let mut out = Vec::new();
+    out.extend_from_slice(WARRANT_CONTEXT);
+    out.extend_from_slice(APPROVAL_CONTEXT_ATTESTATION);
+    out.push(1u8);
+    push_lp(&mut out, warrant_id.as_bytes());
+    push_lp(&mut out, tool.as_bytes());
+    push_lp(&mut out, request_hash);
+    push_lp(&mut out, &holder.to_bytes());
+    push_lp(&mut out, args_cbor);
+    out
+}
+
+/// Sign an approval-context attestation; returns `(args_cbor_b64, metadata)`.
+///
+/// `metadata` is suitable for JSON sidecars / audit; it is not trusted without
+/// verifying `signature` over the preimage from [`build_approval_context_preimage`].
+pub fn build_approval_context_attestation(
+    signing_key: &crate::crypto::SigningKey,
+    warrant_id: &str,
+    tool: &str,
+    args: &std::collections::HashMap<String, crate::constraints::ConstraintValue>,
+    holder: &crate::crypto::PublicKey,
+) -> Result<(String, ApprovalContextAttestationMeta)> {
+    let args_cbor = canonical_tool_args_cbor(args).ok_or_else(|| {
+        crate::error::Error::InvalidApproval("canonical CBOR encode of tool args failed".into())
+    })?;
+    let request_hash = compute_request_hash(warrant_id, tool, args, Some(holder));
+    let preimage =
+        build_approval_context_preimage(warrant_id, tool, &request_hash, holder, &args_cbor);
+    let signature = signing_key.sign_raw(&preimage);
+    let signer_pk = signing_key.public_key();
+
+    use base64::Engine;
+    let args_b64 = base64::engine::general_purpose::STANDARD.encode(&args_cbor);
+    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+
+    let meta = ApprovalContextAttestationMeta {
+        version: 1,
+        canonicalization: "cbor-canonical-v1".to_string(),
+        warrant_id: warrant_id.to_string(),
+        tool: tool.to_string(),
+        request_hash: hex::encode(request_hash),
+        holder_key_hex: hex::encode(holder.to_bytes()),
+        args_canonical_cbor_b64: args_b64.clone(),
+        signer_key_hex: hex::encode(signer_pk.to_bytes()),
+        signature_b64: sig_b64,
+    };
+    Ok((args_b64, meta))
+}
+
+/// Verify an approval-context attestation from the same logical inputs as
+/// [`build_approval_context_attestation`].
+///
+/// Recomputes canonical args CBOR, the request hash, and the signed preimage, then
+/// checks `signature` with [`crate::crypto::PublicKey::verify_raw`]. Control plane
+/// and other verifiers should use this (or the language bindings) instead of
+/// reimplementing the preimage layout.
+pub fn verify_approval_context_attestation(
+    approver: &crate::crypto::PublicKey,
+    warrant_id: &str,
+    tool: &str,
+    args: &std::collections::HashMap<String, crate::constraints::ConstraintValue>,
+    holder: &crate::crypto::PublicKey,
+    signature: &crate::crypto::Signature,
+) -> Result<()> {
+    let args_cbor = canonical_tool_args_cbor(args).ok_or_else(|| {
+        crate::error::Error::InvalidApproval("canonical CBOR encode of tool args failed".into())
+    })?;
+    let request_hash = compute_request_hash(warrant_id, tool, args, Some(holder));
+    let preimage =
+        build_approval_context_preimage(warrant_id, tool, &request_hash, holder, &args_cbor);
+    approver.verify_raw(&preimage, signature)
+}
+
+/// Metadata for an approval-context attestation (not independently authenticated).
+#[derive(Debug, Clone)]
+pub struct ApprovalContextAttestationMeta {
+    pub version: u8,
+    pub canonicalization: String,
+    pub warrant_id: String,
+    pub tool: String,
+    pub request_hash: String,
+    pub holder_key_hex: String,
+    pub args_canonical_cbor_b64: String,
+    pub signer_key_hex: String,
+    pub signature_b64: String,
 }
 
 // ============================================================================
@@ -1420,6 +1537,101 @@ mod tests {
         assert_ne!(
             hash1, hash_with_holder,
             "Hash should differ when holder is included"
+        );
+    }
+
+    #[test]
+    fn approval_context_attestation_round_trip() {
+        let signer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let mut args = HashMap::new();
+        args.insert(
+            "path".to_string(),
+            crate::constraints::ConstraintValue::String("/tmp/x".to_string()),
+        );
+        let (args_b64, meta) = build_approval_context_attestation(
+            &signer,
+            "wrt_test",
+            "read_file",
+            &args,
+            &holder.public_key(),
+        )
+        .expect("attestation");
+
+        assert_eq!(meta.warrant_id, "wrt_test");
+        assert_eq!(meta.tool, "read_file");
+        assert_eq!(meta.args_canonical_cbor_b64, args_b64);
+
+        let rh = compute_request_hash("wrt_test", "read_file", &args, Some(&holder.public_key()));
+        assert_eq!(meta.request_hash, hex::encode(rh));
+
+        use base64::Engine;
+        let sig_bytes = base64::engine::general_purpose::STANDARD
+            .decode(meta.signature_b64.as_bytes())
+            .expect("sig b64");
+        let sig_arr: [u8; 64] = sig_bytes.as_slice().try_into().unwrap();
+        let sig = crate::crypto::Signature::from_bytes(&sig_arr).expect("sig");
+        verify_approval_context_attestation(
+            &signer.public_key(),
+            "wrt_test",
+            "read_file",
+            &args,
+            &holder.public_key(),
+            &sig,
+        )
+        .expect("verify_approval_context_attestation");
+    }
+
+    #[test]
+    fn approval_context_attestation_verify_rejects_wrong_args() {
+        let signer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let mut args = HashMap::new();
+        args.insert(
+            "path".to_string(),
+            crate::constraints::ConstraintValue::String("/tmp/x".to_string()),
+        );
+        let (_args_b64, _meta) = build_approval_context_attestation(
+            &signer,
+            "wrt_test",
+            "read_file",
+            &args,
+            &holder.public_key(),
+        )
+        .expect("attestation");
+
+        let mut wrong_args = HashMap::new();
+        wrong_args.insert(
+            "path".to_string(),
+            crate::constraints::ConstraintValue::String("/other".to_string()),
+        );
+        let args_cbor_wrong = canonical_tool_args_cbor(&wrong_args).expect("cbor");
+        let rh_wrong = compute_request_hash(
+            "wrt_test",
+            "read_file",
+            &wrong_args,
+            Some(&holder.public_key()),
+        );
+        let preimage_wrong = build_approval_context_preimage(
+            "wrt_test",
+            "read_file",
+            &rh_wrong,
+            &holder.public_key(),
+            &args_cbor_wrong,
+        );
+        let sig_wrong = signer.sign_raw(&preimage_wrong);
+
+        assert!(
+            verify_approval_context_attestation(
+                &signer.public_key(),
+                "wrt_test",
+                "read_file",
+                &args,
+                &holder.public_key(),
+                &sig_wrong,
+            )
+            .is_err(),
+            "signature over different preimage must not verify for original args"
         );
     }
 

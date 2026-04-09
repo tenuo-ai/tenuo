@@ -568,14 +568,11 @@ class TestEnforcementApprovalGates:
         with pytest.raises(ApprovalRequired):
             enforce_tool_call("exec", {}, bound)
 
-    def test_gate_takes_precedence_approval_policy_skipped(self, keys):
-        """When gate fires and is satisfied, approval_policy is not checked."""
+    def test_gate_satisfied_with_matching_signed_approval(self, keys):
+        """When a gate fires, a SignedApproval from the warrant's approver set allows the call."""
         root, holder, approver = keys
-        extra_approver = SigningKey.generate()
 
         from tenuo.approval import (
-            ApprovalPolicy,
-            require_approval,
             sign_approval,
             ApprovalRequest,
         )
@@ -593,7 +590,6 @@ class TestEnforcementApprovalGates:
         )
         bound = w.bind(holder)
 
-        # Compute request hash and pre-sign an approval
         warrant_id = w.id
         holder_key = holder.public_key
         request_hash = compute_hash(warrant_id, "exec", {}, holder_key)
@@ -605,19 +601,9 @@ class TestEnforcementApprovalGates:
         )
         signed = sign_approval(approval_request, approver)
 
-        # Policy requires a different approver (extra_approver), but gate uses
-        # warrant's required_approvers (approver). Gate fires first.
-        strict_policy = ApprovalPolicy(
-            require_approval("exec"),
-            trusted_approvers=[extra_approver.public_key],
-        )
-
-        # Since gate is satisfied (valid approval from warrant's approver),
-        # the strict policy is never reached → allowed
         result = enforce_tool_call(
             "exec", {}, bound,
             approvals=[signed],
-            approval_policy=strict_policy,
             trusted_roots=[root.public_key],
         )
         assert result.allowed
