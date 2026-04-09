@@ -63,7 +63,8 @@ mcp = [
 ]
 fastmcp = [
     "mcp>=1.0.0; python_version >= '3.10'",
-    "fastmcp>=2.0; python_version >= '3.10'",
+    # 3.2.1+ includes client call_tool error parsing fixes (PrefectHQ/fastmcp#3778).
+    "fastmcp>=3.2.1; python_version >= '3.10'",
 ]
 cli = [
     "rich>=10.0.0",
@@ -76,7 +77,7 @@ google_adk = [
     "google-adk>=0.1",  # Google Agent Development Kit
 ]
 temporal = [
-    "temporalio>=1.23.0",  # SimplePlugin (TenuoTemporalPlugin); workflow orchestration
+    "temporalio>=1.23.0; python_version >= '3.10'",  # SimplePlugin (TenuoTemporalPlugin); workflow orchestration
     "boto3>=1.26.0",  # AWS Secrets Manager for key resolution
     "google-cloud-secret-manager>=2.16.0",  # GCP Secret Manager for key resolution
 ]
