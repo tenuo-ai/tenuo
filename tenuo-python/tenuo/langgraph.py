@@ -444,7 +444,21 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
             return handler(request)
 
-        except ApprovalGateTriggered:
+        except ApprovalGateTriggered as gate:
+            if self._control_plane:
+                from ._enforcement import EnforcementResult
+                gate_result = EnforcementResult(
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason=str(gate),
+                    error_type="approval_required",
+                )
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                self._control_plane.emit_for_enforcement(
+                    gate_result, latency_us=latency_us, request_id=request_id,
+                    warrant_stack_override=_warrant_stack_from_bound(bw),
+                )
             raise
         except ConfigurationError as e:
             logger.warning(f"[{request_id}] Configuration error: {e}")
@@ -524,7 +538,21 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
             return await handler(request)
 
-        except ApprovalGateTriggered:
+        except ApprovalGateTriggered as gate:
+            if self._control_plane:
+                from ._enforcement import EnforcementResult
+                gate_result = EnforcementResult(
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason=str(gate),
+                    error_type="approval_required",
+                )
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                self._control_plane.emit_for_enforcement(
+                    gate_result, latency_us=latency_us, request_id=request_id,
+                    warrant_stack_override=_warrant_stack_from_bound(bw),
+                )
             raise
         except ConfigurationError as e:
             logger.warning(f"[{request_id}] Configuration error: {e}")

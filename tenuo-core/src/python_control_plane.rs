@@ -2,11 +2,16 @@
 use crate::connect_token::ConnectToken;
 #[cfg(feature = "python-server")]
 use crate::heartbeat::{
-    create_audit_channel, start_heartbeat_loop_with_audit_and_id, AuditEventSender,
+    create_audit_channel, start_heartbeat_loop_with_audit_and_id, ApprovalRecord, AuditEventSender,
     AuthorizationEvent, EnvironmentInfo, HeartbeatConfig,
 };
 #[cfg(feature = "python-server")]
 use crate::python::PySigningKey;
+
+/// Tuple shape for approval records from Python:
+/// (approver_key_hex, external_id, approved_at, expires_at, request_hash_hex, cbor_b64)
+#[cfg(feature = "python-server")]
+type PyApprovalTuple = (String, String, u64, u64, String, Option<String>);
 #[cfg(feature = "python-server")]
 use pyo3::exceptions::PyValueError;
 #[cfg(feature = "python-server")]
@@ -308,6 +313,7 @@ impl PyControlPlaneClient {
 
     /// Emit an allow event to the control plane.
     #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (warrant_id, tool, chain_depth, root_principal, warrant_stack, latency_us, request_id, arguments, approvals=None))]
     fn emit_allow(
         &self,
         warrant_id: String,
@@ -318,6 +324,7 @@ impl PyControlPlaneClient {
         latency_us: u64,
         request_id: String,
         arguments: Option<String>,
+        approvals: Option<Vec<PyApprovalTuple>>,
     ) -> PyResult<()> {
         let auth_id = self
             .authorizer_id_py
@@ -325,6 +332,30 @@ impl PyControlPlaneClient {
             .ok()
             .and_then(|g| g.clone())
             .unwrap_or_else(|| "pending".to_string());
+
+        let approval_records = approvals.map(|v| {
+            v.into_iter()
+                .map(
+                    |(
+                        approver_key,
+                        external_id,
+                        approved_at,
+                        expires_at,
+                        request_hash,
+                        cbor_b64,
+                    )| {
+                        ApprovalRecord {
+                            approver_key,
+                            external_id,
+                            approved_at,
+                            expires_at,
+                            request_hash,
+                            signed_approval_cbor_b64: cbor_b64,
+                        }
+                    },
+                )
+                .collect()
+        });
 
         let event = AuthorizationEvent::allow(
             auth_id,
@@ -336,7 +367,7 @@ impl PyControlPlaneClient {
             latency_us,
             request_id,
             arguments,
-            None,
+            approval_records,
         );
         let _ = self.sender.try_send(event);
         Ok(())
@@ -344,6 +375,7 @@ impl PyControlPlaneClient {
 
     /// Emit a deny event to the control plane.
     #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (warrant_id, tool, deny_reason, failed_constraint, chain_depth, root_principal, warrant_stack, latency_us, request_id, arguments, approvals=None))]
     fn emit_deny(
         &self,
         warrant_id: String,
@@ -356,6 +388,7 @@ impl PyControlPlaneClient {
         latency_us: u64,
         request_id: String,
         arguments: Option<String>,
+        approvals: Option<Vec<PyApprovalTuple>>,
     ) -> PyResult<()> {
         let auth_id = self
             .authorizer_id_py
@@ -363,6 +396,30 @@ impl PyControlPlaneClient {
             .ok()
             .and_then(|g| g.clone())
             .unwrap_or_else(|| "pending".to_string());
+
+        let approval_records = approvals.map(|v| {
+            v.into_iter()
+                .map(
+                    |(
+                        approver_key,
+                        external_id,
+                        approved_at,
+                        expires_at,
+                        request_hash,
+                        cbor_b64,
+                    )| {
+                        ApprovalRecord {
+                            approver_key,
+                            external_id,
+                            approved_at,
+                            expires_at,
+                            request_hash,
+                            signed_approval_cbor_b64: cbor_b64,
+                        }
+                    },
+                )
+                .collect()
+        });
 
         let event = AuthorizationEvent::deny(
             auth_id,
@@ -376,7 +433,7 @@ impl PyControlPlaneClient {
             latency_us,
             request_id,
             arguments,
-            None,
+            approval_records,
         );
         let _ = self.sender.try_send(event);
         Ok(())

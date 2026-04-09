@@ -263,10 +263,10 @@ async def test_middleware_forwards_control_plane_on_success(
 
 
 @pytest.mark.asyncio
-async def test_middleware_skips_control_plane_when_no_warrant(
+async def test_middleware_emits_control_plane_when_no_warrant(
     authorizer: Authorizer,
 ) -> None:
-    """Matches :class:`MCPVerifier` early deny (no warrant_id) — no audit emit."""
+    """Missing warrant now emits a deny event for audit completeness."""
     cp = _RecordingControlPlane()
     verifier = MCPVerifier(authorizer=authorizer, require_warrant=True, control_plane=cp)
     mw = TenuoMiddleware(verifier)
@@ -283,4 +283,5 @@ async def test_middleware_skips_control_plane_when_no_warrant(
         raise AssertionError("call_next should not run")
 
     await mw.on_call_tool(ctx, boom)
-    assert cp.results == []
+    assert len(cp.results) == 1
+    assert cp.results[0]["result"].allowed is False

@@ -13,6 +13,32 @@ from typing import Optional, Any
 
 _global_client: Optional["ControlPlaneClient"] = None
 
+
+def _extract_approval_records(
+    chain_result: Optional[Any],
+) -> Optional[list]:
+    """Extract approval records from a ChainVerificationResult for CP emission.
+
+    Returns a list of tuples matching the Rust ApprovalRecord shape, or None.
+    """
+    if chain_result is None:
+        return None
+    verified = getattr(chain_result, "verified_approvals", None)
+    if not verified:
+        return None
+    records = []
+    for va in verified:
+        approver_key_bytes = getattr(va, "approver_key", b"")
+        records.append((
+            bytes(approver_key_bytes).hex() if approver_key_bytes else "",
+            getattr(va, "external_id", "") or "",
+            getattr(va, "approved_at", 0),
+            getattr(va, "expires_at", 0),
+            bytes(getattr(va, "request_hash", b"")).hex() if getattr(va, "request_hash", None) else "",
+            getattr(va, "signed_approval_cbor_b64", None),
+        ))
+    return records if records else None
+
 def connect(
     *,
     token: Optional[str] = None,
@@ -149,6 +175,9 @@ class ControlPlaneClient:
         Emit an authorization event from any integration's result object.
         Works with EnforcementResult (LangGraph), MCPVerificationResult (MCP),
         and TemporalAuditEvent (Temporal).
+
+        Approval records from ``chain_result.verified_approvals`` are forwarded
+        to the control plane so signed receipts carry full approval provenance.
         """
         request_id = request_id or str(uuid.uuid4())
         warrant_id = getattr(result, "warrant_id", None) or ""
@@ -159,7 +188,11 @@ class ControlPlaneClient:
         root_principal = None
         warrant_stack = warrant_stack_override
 
+        # Resolve arguments — EnforcementResult uses .arguments,
+        # MCPVerificationResult uses .clean_arguments / .constraints.
         arguments_dict = getattr(result, "arguments", None)
+        if arguments_dict is None:
+            arguments_dict = getattr(result, "clean_arguments", None)
         arguments_json = None
         if arguments_dict is not None:
             try:
@@ -176,10 +209,14 @@ class ControlPlaneClient:
                 root_principal = ri
             warrant_stack = getattr(chain_result, "warrant_stack_b64", None) or warrant_stack
 
+        # Extract approval records from chain verification result.
+        approval_tuples = _extract_approval_records(chain_result)
+
         if allowed:
             self._inner.emit_allow(
                 warrant_id, tool, chain_depth, root_principal,
                 warrant_stack, latency_us, request_id, arguments_json,
+                approval_tuples,
             )
         else:
             deny_reason = getattr(result, "denial_reason", "") or ""
@@ -188,6 +225,7 @@ class ControlPlaneClient:
                 warrant_id, tool, deny_reason, failed,
                 chain_depth, root_principal, warrant_stack,
                 latency_us, request_id, arguments_json,
+                approval_tuples,
             )
 
     def shutdown(self, timeout_secs: float = 5.0) -> None:

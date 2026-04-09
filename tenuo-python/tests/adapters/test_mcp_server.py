@@ -863,3 +863,103 @@ class TestNonceReplayPrevention:
         result2 = verifier.verify("read_file", arguments, meta=meta)
         assert not result2.allowed
         assert "replay" in (result2.denial_reason or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Control plane emission coverage tests
+# ---------------------------------------------------------------------------
+
+
+class TestControlPlaneEmissions:
+    """Verify that MCPVerifier emits to the control plane on all paths."""
+
+    def test_extraction_error_emits(self, authorizer: Authorizer):
+        """Extraction failure (step 1) emits a deny event."""
+        from unittest.mock import MagicMock
+
+        mock_config = MagicMock()
+        mock_config.extract_constraints.side_effect = ValueError("missing field 'path'")
+        mock_cp = MagicMock()
+
+        verifier = MCPVerifier(authorizer=authorizer, config=mock_config, control_plane=mock_cp)
+        result = verifier.verify("read_file", {"path": "/x"}, meta={"tenuo": {}})
+
+        assert not result.allowed
+        mock_cp.emit_for_enforcement.assert_called_once()
+        emitted = mock_cp.emit_for_enforcement.call_args
+        assert emitted[0][0].allowed is False
+
+    def test_missing_warrant_strict_emits(self, authorizer: Authorizer):
+        """Missing warrant with require_warrant=True emits a deny event."""
+        from unittest.mock import MagicMock
+
+        mock_cp = MagicMock()
+        verifier = MCPVerifier(authorizer=authorizer, control_plane=mock_cp)
+        result = verifier.verify("read_file", {"path": "/x"})
+
+        assert not result.allowed
+        mock_cp.emit_for_enforcement.assert_called_once()
+
+    def test_malformed_warrant_emits(self, authorizer: Authorizer):
+        """Malformed warrant base64 emits a deny event."""
+        from unittest.mock import MagicMock
+
+        mock_cp = MagicMock()
+        verifier = MCPVerifier(authorizer=authorizer, control_plane=mock_cp)
+        result = verifier.verify(
+            "read_file", {"path": "/x"},
+            meta={"tenuo": {"warrant": "not-valid-base64!!!", "signature": "abc"}},
+        )
+
+        assert not result.allowed
+        mock_cp.emit_for_enforcement.assert_called_once()
+
+    def test_authorized_call_emits_allow(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+    ):
+        """Successful authorization emits an allow event with chain_result."""
+        from unittest.mock import MagicMock
+
+        mock_cp = MagicMock()
+        verifier = MCPVerifier(authorizer=authorizer, control_plane=mock_cp)
+
+        tool_args = {"path": "/data/f.txt"}
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+        result = verifier.verify("read_file", arguments, meta=meta)
+
+        assert result.allowed
+        mock_cp.emit_for_enforcement.assert_called_once()
+        emitted = mock_cp.emit_for_enforcement.call_args
+        assert emitted[0][0].allowed is True
+        assert emitted[1].get("chain_result") is not None
+
+    def test_mcp_result_clean_arguments_in_emission(
+        self,
+        authorizer: Authorizer,
+    ):
+        """emit_for_enforcement resolves clean_arguments for MCPVerificationResult."""
+        from unittest.mock import MagicMock
+
+        from tenuo.control_plane import ControlPlaneClient
+
+        mcp_result = MCPVerificationResult(
+            allowed=True,
+            tool="read_file",
+            clean_arguments={"path": "/data/f.txt"},
+            constraints={"path": "/data/f.txt"},
+        )
+
+        mock_inner = MagicMock()
+        client = ControlPlaneClient.__new__(ControlPlaneClient)
+        client._inner = mock_inner
+
+        client.emit_for_enforcement(mcp_result)
+
+        mock_inner.emit_allow.assert_called_once()
+        call_args = mock_inner.emit_allow.call_args
+        arguments_json = call_args[0][7]
+        assert arguments_json is not None
+        assert "/data/f.txt" in arguments_json
