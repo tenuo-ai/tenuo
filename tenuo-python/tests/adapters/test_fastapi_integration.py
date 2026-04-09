@@ -40,18 +40,18 @@ except ImportError:
 @pytest.mark.skipif(not FASTAPI_AVAILABLE, reason="FastAPI not installed")
 class TestFastAPIIntegration:
     @pytest.fixture
-    def app(self):
+    def key(self):
+        return SigningKey.generate()
+
+    @pytest.fixture
+    def app(self, key):
         app = FastAPI()
-        configure_tenuo(app)
+        configure_tenuo(app, trusted_issuers=[key.public_key])
         return app
 
     @pytest.fixture
     def client(self, app):
         return TestClient(app)
-
-    @pytest.fixture
-    def key(self):
-        return SigningKey.generate()
 
     def test_missing_headers_returns_401(self, app, client):
         @app.get("/search")
@@ -179,3 +179,53 @@ class TestFastAPIIntegration:
         resp = client.get("/search?query=test", headers=headers)
         assert resp.status_code == 401, f"Expected 401 for expired warrant, got {resp.status_code}: {resp.json()}"
         assert resp.json()["detail"]["error"] == "warrant_expired"
+
+    def test_self_signed_warrant_rejected_without_trusted_issuers(self):
+        """Attacker mints self-signed warrant; server has no trusted_issuers configured."""
+        app = FastAPI()
+        configure_tenuo(app)  # no trusted_issuers
+
+        @app.get("/admin")
+        def admin(ctx: SecurityContext = Depends(TenuoGuard("admin"))):
+            return {"status": "ok"}
+
+        client = TestClient(app)
+
+        attacker_key = SigningKey.generate()
+        forged = Warrant.mint_builder().tool("admin").holder(attacker_key.public_key).ttl(3600).mint(attacker_key)
+
+        args = {}
+        pop_sig = forged.sign(attacker_key, "admin", args, int(time.time()))
+        pop_b64 = base64.b64encode(pop_sig).decode("ascii")
+
+        headers = {X_TENUO_WARRANT: forged.to_base64(), X_TENUO_POP: pop_b64}
+        resp = client.get("/admin", headers=headers)
+        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.json()}"
+        assert "trusted_issuers" in resp.json()["detail"]["message"].lower() or \
+               "configuration" in resp.json()["detail"]["message"].lower()
+
+    def test_global_config_trusted_roots_bridged(self, key):
+        """tenuo.configure(trusted_roots=[...]) is respected by TenuoGuard."""
+        from tenuo import configure as tenuo_configure, reset_config
+
+        try:
+            tenuo_configure(trusted_roots=[key.public_key])
+            app = FastAPI()
+            configure_tenuo(app)  # no trusted_issuers — should fall back to global
+
+            @app.get("/search")
+            def search(ctx: SecurityContext = Depends(TenuoGuard("search"))):
+                return {"status": "ok"}
+
+            client = TestClient(app)
+
+            warrant = Warrant.mint_builder().tool("search").holder(key.public_key).ttl(3600).mint(key)
+            args = {"query": "test"}
+            pop_sig = warrant.sign(key, "search", args, int(time.time()))
+            pop_b64 = base64.b64encode(pop_sig).decode("ascii")
+
+            headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64}
+            resp = client.get("/search?query=test", headers=headers)
+            assert resp.status_code == 200
+        finally:
+            reset_config()

@@ -23,7 +23,7 @@ Usage:
 import base64
 import logging
 import uuid
-import warnings
+
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -375,28 +375,29 @@ class TenuoGuard:
 
         bound = warrant.bind(_VerificationOnlyKey())  # type: ignore[arg-type]
 
-        # Prefer the application-level trusted_issuers for the Authorizer so
-        # that multi-hop chains whose root differs from the leaf's direct issuer
-        # are verified correctly.  Fall back to the leaf's issuer for backward
-        # compatibility when trusted_issuers was not configured.
+        # Resolve trusted issuer keys with a two-level priority:
+        #   1. FastAPI-local config from configure_tenuo(app, trusted_issuers=[...])
+        #   2. Global config from tenuo.configure(trusted_roots=[...])
+        # If neither is set, fail-closed — reject the request.
         trusted_issuers = _config.get("trusted_issuers") or []
         if trusted_issuers:
             roots = list(trusted_issuers)
         else:
-            # SECURITY WARNING: No trusted_issuers configured.  We fall back to
-            # trusting whatever issuer key the incoming warrant claims, which means
-            # any attacker who mints their own key-pair can forge a valid warrant.
-            # Call configure_tenuo(app, trusted_issuers=[...]) at startup to lock
-            # down which keys may issue warrants to this service.
-            _msg = (
-                "TenuoGuard: no trusted_issuers configured — any self-signed warrant "
-                "is accepted.  Call configure_tenuo(app, trusted_issuers=[issuer_key]) "
-                "to restrict which keys may issue warrants."
-            )
-            logger.warning(_msg)
-            warnings.warn(_msg, stacklevel=3)
-            issuer_pub = getattr(warrant, "issuer_public_key", None) or getattr(warrant, "issuer", None)
-            roots = [issuer_pub] if issuer_pub is not None else []
+            from tenuo.config import resolve_trusted_roots as _resolve_roots
+            _global_roots = _resolve_roots(None)
+            if _global_roots:
+                roots = list(_global_roots)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "error": "configuration_error",
+                        "message": (
+                            "No trusted_issuers configured. "
+                            "Call configure_tenuo(app, trusted_issuers=[issuer_key.public_key]) at startup."
+                        ),
+                    },
+                )
 
         authorizer = _Authorizer(trusted_roots=roots)
 

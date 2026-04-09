@@ -371,17 +371,17 @@ class TestFastAPIInvariants:
     # I9 — no trusted_issuers emits a loud warning  (regression for Bug 1)
     # ------------------------------------------------------------------
 
-    def test_I9_no_trusted_issuers_emits_warning(self):
+    def test_I9_no_trusted_issuers_rejects_request(self):
         """
-        I9: TenuoGuard MUST warn when trusted_issuers is not configured.
+        I9: TenuoGuard MUST reject requests when no trusted_issuers are configured.
 
-        Regression test for Bug 1:
-            When configure_tenuo() is called without trusted_issuers, the
-            server fell back to trusting the warrant's own issuer, allowing
-            any self-signed warrant to pass authentication.  The fix emits
-            warnings.warn() so the misconfiguration is immediately visible.
+        When configure_tenuo() is called without trusted_issuers (and no global
+        tenuo.configure(trusted_roots=[...]) is set), _enforce_with_pop_signature
+        must raise HTTPException(403) — fail-closed, not warn-and-accept.
         """
         pytest.importorskip("fastapi")
+
+        from fastapi import HTTPException
 
         from tenuo.fastapi import TenuoGuard, _config
 
@@ -394,7 +394,6 @@ class TestFastAPIInvariants:
             holder=holder_key.public_key,
         )
 
-        # Ensure trusted_issuers is empty (misconfigured)
         _config["trusted_issuers"] = []
 
         guard = TenuoGuard("search")
@@ -402,22 +401,11 @@ class TestFastAPIInvariants:
         args: Dict[str, Any] = {}
         pop_raw = w.sign(holder_key, "search", args, int(time.time()))
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            try:
-                guard._enforce_with_pop_signature(w, "search", args, bytes(pop_raw))
-            except Exception:
-                pass  # result not what we're testing here
+        with pytest.raises(HTTPException) as exc_info:
+            guard._enforce_with_pop_signature(w, "search", args, bytes(pop_raw))
 
-        security_warnings = [
-            str(c.message) for c in caught
-            if "trusted_issuers" in str(c.message).lower()
-            or "self-signed" in str(c.message).lower()
-        ]
-        assert security_warnings, (
-            "TenuoGuard must emit a warnings.warn() when no trusted_issuers "
-            "are configured — currently it silently accepts any self-signed warrant."
-        )
+        assert exc_info.value.status_code == 403
+        assert "trusted_issuers" in exc_info.value.detail["message"].lower()
 
     # ------------------------------------------------------------------
     # I3 — self-signed warrant rejected when trusted_issuers IS configured
@@ -2719,10 +2707,12 @@ class TestRegressions:
         warrant's own issuer key as the trusted root, so any attacker who
         minted their own warrant was implicitly trusted.
 
-        Fix: emit warnings.warn() when trusted_issuers is empty.
-        Verified: warning is emitted; no silent acceptance.
+        Fix: fail-closed — raise HTTPException(403) when no trusted_issuers
+        are configured (neither FastAPI-local nor global).
         """
         pytest.importorskip("fastapi")
+
+        from fastapi import HTTPException
 
         from tenuo.fastapi import TenuoGuard, _config
 
@@ -2739,22 +2729,12 @@ class TestRegressions:
         args: Dict[str, Any] = {}
         pop_raw = w.sign(attacker_key, "admin", args, int(time.time()))
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            try:
-                guard._enforce_with_pop_signature(w, "admin", args, bytes(pop_raw))
-            except Exception:
-                pass
+        with pytest.raises(HTTPException) as exc_info:
+            guard._enforce_with_pop_signature(w, "admin", args, bytes(pop_raw))
 
-        found = any(
-            "trusted_issuers" in str(c.message).lower()
-            or "self-signed" in str(c.message).lower()
-            for c in caught
-        )
-        assert found, (
-            "Bug 1 regression: TenuoGuard must emit a security warning when "
-            "trusted_issuers is empty.  Without this warning, operators running "
-            "without configure_tenuo() silently accept any self-signed warrant."
+        assert exc_info.value.status_code == 403, (
+            "Bug 1 regression: TenuoGuard must reject requests when "
+            "trusted_issuers is empty — not silently accept self-signed warrants."
         )
 
     # ------------------------------------------------------------------ Bug 2

@@ -375,14 +375,17 @@ server = A2AServer(
     name="Worker",
     url="https://worker.example.com",
     public_key=worker_public_key,
-    trusted_issuers=[control_plane_key],
+    trusted_issuers=[control_plane_key],  # Required — warrants must be signed by these keys
 
     # PoP configuration
     require_pop=True,          # Reject requests without PoP (default: True)
 )
 ```
 
+> **Important:** Always configure `trusted_issuers`. Without it, the builder raises `ValueError`. This ensures only warrants signed by your control plane are accepted — self-signed warrants from attackers are rejected.
+
 **Security Defaults:**
+- `trusted_issuers` is **required** (fail-closed)
 - `require_pop=True` by default (fail-safe)
 - Can be disabled via `TENUO_A2A_REQUIRE_POP=false` environment variable
 - If `require_pop=True` but client doesn't provide PoP → `PopRequiredError`
