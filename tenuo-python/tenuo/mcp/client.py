@@ -181,6 +181,9 @@ class SecureMCPClient:
         self.auth = auth
         self._approval_handler = approval_handler
 
+        from ..control_plane import get_or_create
+        self._control_plane = get_or_create()
+
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
         self._tools: Optional[List[MCPTool]] = None
@@ -434,6 +437,12 @@ class SecureMCPClient:
             bound_warrant=bound_warrant,
         )
 
+        if self._control_plane is not None:
+            try:
+                self._control_plane.emit_for_enforcement(enforcement, chain_result=enforcement.chain_result)
+            except Exception:
+                pass
+
         if enforcement.allowed:
             return ValidationResult.ok()
         else:
@@ -609,6 +618,11 @@ class SecureMCPClient:
                 approval_handler=self._approval_handler,
                 approvals=approvals,
             )
+            if self._control_plane is not None:
+                try:
+                    self._control_plane.emit_for_enforcement(result, chain_result=result.chain_result)
+                except Exception:
+                    pass
             if not result.allowed:
                 _raise_for_denial(result, tool_name)
             logger.info(
@@ -680,6 +694,11 @@ class SecureMCPClient:
                     approval_handler=self._approval_handler,
                     approvals=_approvals,
                 )
+                if self._control_plane is not None:
+                    try:
+                        self._control_plane.emit_for_enforcement(result, chain_result=result.chain_result)
+                    except Exception:
+                        pass
                 if not result.allowed:
                     _raise_for_denial(result, tool_name)
                 logger.info(

@@ -163,6 +163,7 @@ def _make_client() -> "SecureMCPClient":
     client._tools = None
     client._wrapped_tools = {}
     client._approval_handler = None
+    client._control_plane = None
 
     mock_session = MagicMock()
     mock_session.call_tool = AsyncMock(return_value=MagicMock(content="result"))

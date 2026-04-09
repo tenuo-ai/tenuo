@@ -634,6 +634,7 @@ class A2AServer:
         revoked_issuers: Optional[List[Any]] = None,
         signing_key: Optional[Any] = None,
         registration_handler: Optional[Callable] = None,
+        control_plane: Optional[Any] = None,
     ) -> None:
         """
         Initialize A2A server.
@@ -660,6 +661,8 @@ class A2AServer:
                 (required when registration_handler is set)
             registration_handler: Optional async callable for automated agent
                 registration (CSR pattern). Called after key ownership is verified.
+            control_plane: Optional ControlPlaneClient for reporting authorization
+                events to Tenuo Cloud. Auto-discovered from env vars when None.
 
         Rate limiting:
             A2AServer does not throttle requests. In production, put a
@@ -726,6 +729,15 @@ class A2AServer:
         # Registration (CSR handshake)
         self._signing_key: Optional[Any] = signing_key
         self._registration_handler: Optional[Callable] = registration_handler
+
+        # Control plane telemetry
+        if control_plane is None:
+            try:
+                from tenuo.control_plane import get_or_create
+                control_plane = get_or_create()
+            except Exception:
+                pass
+        self._control_plane = control_plane
 
         # ASGI app (lazy init)
         self._app = None
@@ -1226,6 +1238,19 @@ class A2AServer:
                 latency_ms=latency_ms,
             )
         )
+
+        if self._control_plane is not None:
+            try:
+                from tenuo._enforcement import EnforcementResult
+                _res = EnforcementResult(
+                    allowed=True, tool=skill_id, arguments=arguments,
+                    warrant_id=jti or "",
+                )
+                self._control_plane.emit_for_enforcement(
+                    _res, latency_us=latency_ms * 1000,
+                )
+            except Exception:
+                pass
 
         return warrant
 
@@ -1891,6 +1916,18 @@ class A2AServer:
                 )
 
             except A2AError as e:
+                if self._control_plane is not None and method in ("task/send", "task/sendSubscribe"):
+                    try:
+                        from tenuo._enforcement import EnforcementResult
+                        _skill = params.get("task", {}).get("skill", "")
+                        _args = params.get("task", {}).get("arguments", {})
+                        _res = EnforcementResult(
+                            allowed=False, tool=_skill, arguments=_args,
+                            denial_reason=str(e),
+                        )
+                        self._control_plane.emit_for_enforcement(_res)
+                    except Exception:
+                        pass
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",

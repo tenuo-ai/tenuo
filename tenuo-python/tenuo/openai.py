@@ -536,7 +536,6 @@ def verify_tool_call(
 
         if not result.allowed:
             logger.debug(f"Tier 2: Authorization DENIED for '{tool_name}'")
-            # Map error types to OpenAI-specific exceptions
             if result.error_type == "expired":
                 raise WarrantDenied(tool_name, "warrant expired")
             else:
@@ -712,6 +711,9 @@ class GuardedCompletions:
         # Freeze warrant_id at init time for consistent audit trail
         self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
 
+        from .control_plane import get_or_create
+        self._control_plane = get_or_create()
+
     def create(self, *args, **kwargs) -> Any:
         """Wrapped create method with guardrails."""
         stream = kwargs.get("stream", False)
@@ -784,12 +786,12 @@ class GuardedCompletions:
                 self._approval_handler,
                 self._approvals,
             )
-            # Emit audit event for allowed call
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
+            self._emit_cp(tool_name, arguments, allowed=True)
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
-            # Emit audit event for denied call
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
+            self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(e))
             raise
 
     def _emit_audit(
@@ -821,6 +823,28 @@ class GuardedCompletions:
         except Exception as e:
             # Don't let audit failures break authorization
             logger.warning(f"Audit callback failed: {e}")
+
+    def _emit_cp(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        *,
+        allowed: bool,
+        denial_reason: str = "",
+    ) -> None:
+        """Emit to control plane if connected."""
+        if self._control_plane is None:
+            return
+        try:
+            from ._enforcement import EnforcementResult
+            res = EnforcementResult(
+                allowed=allowed, tool=tool_name, arguments=arguments,
+                warrant_id=self._warrant_id or "",
+                denial_reason=denial_reason if not allowed else "",
+            )
+            self._control_plane.emit_for_enforcement(res)
+        except Exception:
+            pass
 
     def _guard_stream(self, stream: Iterator) -> Iterator:
         """Buffer-verify-emit pattern for streaming responses.
@@ -1114,8 +1138,10 @@ class GuardedResponses:
         self._approval_handler = approval_handler
         self._approvals = approvals
         self._trusted_roots = trusted_roots
-        # Freeze warrant_id at init time for consistent audit trail
         self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
+
+        from .control_plane import get_or_create
+        self._control_plane = get_or_create()
 
     def create(self, *args, **kwargs) -> Any:
         """Wrapped create method with guardrails.
@@ -1182,10 +1208,34 @@ class GuardedResponses:
                 self._approvals,
             )
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
+            self._emit_cp(tool_name, arguments, allowed=True)
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
+            self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(e))
             raise
+
+    def _emit_cp(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        *,
+        allowed: bool,
+        denial_reason: str = "",
+    ) -> None:
+        """Emit to control plane if connected."""
+        if self._control_plane is None:
+            return
+        try:
+            from ._enforcement import EnforcementResult
+            res = EnforcementResult(
+                allowed=allowed, tool=tool_name, arguments=arguments,
+                warrant_id=self._warrant_id or "",
+                denial_reason=denial_reason if not allowed else "",
+            )
+            self._control_plane.emit_for_enforcement(res)
+        except Exception:
+            pass
 
     def _emit_audit(
         self,
@@ -2084,6 +2134,9 @@ class TenuoToolGuardrail:
         self._constraint_hash = _compute_constraint_hash(allow_tools, deny_tools, constraints)
         self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
 
+        from .control_plane import get_or_create
+        self._control_plane = get_or_create()
+
         # Validate configuration
         if warrant is not None and signing_key is None:
             raise MissingSigningKey()
@@ -2131,14 +2184,14 @@ class TenuoToolGuardrail:
                     self.approval_handler,
                     self.approvals,
                 )
-                # Emit audit event for allowed call
                 self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
+                self._emit_cp(tool_name, arguments, allowed=True)
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 violations.append(f"{tool_name}: {e}")
                 logger.warning(f"Tenuo guardrail blocked: {tool_name} - {e}")
-                # Emit audit event for denied call
                 tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
                 self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
+                self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(e))
 
         if violations:
             result = GuardrailResult(
@@ -2182,6 +2235,28 @@ class TenuoToolGuardrail:
         except Exception as e:
             # Don't let audit failures break authorization
             logger.warning(f"Audit callback failed: {e}")
+
+    def _emit_cp(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        *,
+        allowed: bool,
+        denial_reason: str = "",
+    ) -> None:
+        """Emit to control plane if connected."""
+        if self._control_plane is None:
+            return
+        try:
+            from ._enforcement import EnforcementResult
+            res = EnforcementResult(
+                allowed=allowed, tool=tool_name, arguments=arguments,
+                warrant_id=self._warrant_id or "",
+                denial_reason=denial_reason if not allowed else "",
+            )
+            self._control_plane.emit_for_enforcement(res)
+        except Exception:
+            pass
 
     def _extract_tool_calls(self, input_data: Any) -> List[tuple]:
         """Extract tool calls from Agents SDK input.

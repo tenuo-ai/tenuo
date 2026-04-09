@@ -132,6 +132,9 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         object.__setattr__(self, "_approval_handler", approval_handler)
         object.__setattr__(self, "_approvals", approvals)
 
+        from .control_plane import get_or_create
+        object.__setattr__(self, "_control_plane", get_or_create())
+
         # Copy args_schema if present
         if hasattr(wrapped, "args_schema"):
             object.__setattr__(self, "args_schema", wrapped.args_schema)
@@ -202,11 +205,15 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                     approval_handler=approval_handler,
                     approvals=getattr(self, "_approvals", None),
                 )
+                _cp = getattr(self, "_control_plane", None)
+                if _cp is not None:
+                    try:
+                        _cp.emit_for_enforcement(result, chain_result=result.chain_result)
+                    except Exception:
+                        pass
                 if not result.allowed:
                     raise ToolNotAuthorized(tool=self.name)
             else:
-                # Plain Warrant — bind to key then use enforce_tool_call with
-                # trusted_roots for proper issuer verification (not self-signed).
                 signing_key = key_scope()
                 if signing_key:
                     bw = warrant.bind(signing_key)
@@ -218,6 +225,12 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                         approval_handler=getattr(self, "_approval_handler", None),
                         approvals=getattr(self, "_approvals", None),
                     )
+                    _cp = getattr(self, "_control_plane", None)
+                    if _cp is not None:
+                        try:
+                            _cp.emit_for_enforcement(result, chain_result=result.chain_result)
+                        except Exception:
+                            pass
                     if not result.allowed:
                         raise ToolNotAuthorized(tool=self.name)
                 else:

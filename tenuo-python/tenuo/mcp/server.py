@@ -312,6 +312,9 @@ class MCPVerifier:
         self._authorizer = authorizer
         self._config = config
         self._require_warrant = require_warrant
+        if control_plane is None:
+            from ..control_plane import get_or_create
+            control_plane = get_or_create()
         self._control_plane = control_plane
         self._nonce_store = nonce_store
 

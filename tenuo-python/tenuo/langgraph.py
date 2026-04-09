@@ -294,6 +294,9 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         self._trusted_roots = trusted_roots
         self._approval_handler = approval_handler
         self._approvals = approvals
+        if control_plane is None:
+            from .control_plane import get_or_create
+            control_plane = get_or_create()
         self._control_plane = control_plane
 
     def _get_bound_warrant_from_request(
@@ -1014,6 +1017,9 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         self._require_constraints = require_constraints
         self._approval_handler = approval_handler
         self._approvals = approvals
+        if control_plane is None:
+            from .control_plane import get_or_create
+            control_plane = get_or_create()
         self._control_plane = control_plane
         self._key_id = key_id
 

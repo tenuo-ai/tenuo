@@ -227,6 +227,9 @@ class _Guard:
         self._approval_handler = approval_handler
         self._approvals = approvals
 
+        from .control_plane import get_or_create
+        self._control_plane = get_or_create()
+
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
@@ -409,6 +412,13 @@ class _Guard:
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
             )
+
+            if self._control_plane is not None:
+                try:
+                    self._control_plane.emit_for_enforcement(result, chain_result=result.chain_result)
+                except Exception:
+                    pass
+
             if not result.allowed:
                 # Raise appropriate exception based on error_type
                 from .exceptions import ConstraintResult, ExpiredError

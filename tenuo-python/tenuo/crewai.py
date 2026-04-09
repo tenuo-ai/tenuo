@@ -628,6 +628,9 @@ class CrewAIGuard:
         self._approvals = approvals
         self._registered_hook: Optional[Callable] = None
 
+        from .control_plane import get_or_create
+        self._control_plane = get_or_create()
+
     def register(self, *, agent_role: Optional[str] = None) -> "CrewAIGuard":
         """Register this guard as a global before_tool_call hook.
 
@@ -874,6 +877,12 @@ class CrewAIGuard:
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
             )
+
+            if self._control_plane is not None:
+                try:
+                    self._control_plane.emit_for_enforcement(enforcement, chain_result=enforcement.chain_result)
+                except Exception:
+                    pass
 
             if not enforcement.allowed:
                 reason = enforcement.denial_reason or "Authorization denied"

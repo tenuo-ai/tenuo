@@ -344,6 +344,9 @@ class TenuoGuard:
         self.extract_args = extract_args
         self._approval_handler = approval_handler
 
+        from .control_plane import get_or_create
+        self._control_plane = get_or_create()
+
     def _enforce_with_pop_signature(
         self,
         warrant: Warrant,
@@ -507,6 +510,12 @@ class TenuoGuard:
                     "min_approvals": gate.min_approvals,
                 },
             )
+
+        if self._control_plane is not None:
+            try:
+                self._control_plane.emit_for_enforcement(enforcement, chain_result=enforcement.chain_result)
+            except Exception:
+                pass
 
         if not enforcement.allowed:
             # Generate a request ID for log correlation

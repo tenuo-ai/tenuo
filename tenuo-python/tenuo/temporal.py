@@ -1308,6 +1308,34 @@ class TenuoPluginConfig:
     audit_deny: bool = True
     """Whether to emit audit events for denied actions."""
 
+    @classmethod
+    def from_env(cls, **overrides: Any) -> "TenuoPluginConfig":
+        """Create config from environment variables.
+
+        Resolves ``TENUO_SIGNING_KEY`` (base64 Ed25519) for PoP generation and
+        auto-connects to the control plane via ``TENUO_CONNECT_TOKEN`` (or
+        ``TENUO_CONTROL_PLANE_URL`` + ``TENUO_API_KEY`` + ``TENUO_AUTHORIZER_NAME``).
+
+        Any keyword argument overrides the env-derived value::
+
+            config = TenuoPluginConfig.from_env(on_denial="log", dry_run=True)
+        """
+        import os as _os
+
+        signing_key = overrides.pop("signing_key", None)
+        if signing_key is None:
+            raw = _os.environ.get("TENUO_SIGNING_KEY")
+            if raw:
+                from tenuo_core import SigningKey as _SK
+                signing_key = _SK.from_base64(raw)
+
+        cp = overrides.pop("control_plane", None)
+        if cp is None:
+            from .control_plane import get_or_create
+            cp = get_or_create()
+
+        return cls(signing_key=signing_key, control_plane=cp, **overrides)
+
     max_chain_depth: int = 10
     """Maximum warrant chain depth to accept."""
 
@@ -3286,6 +3314,9 @@ class TenuoPlugin(_TemporalWorkerInterceptor):
 
     def __init__(self, config: TenuoPluginConfig) -> None:
         super().__init__()
+        if config.control_plane is None:
+            from .control_plane import get_or_create
+            config.control_plane = get_or_create()
         self._config = config
         self._version = self._get_version()
         # Verify tenuo_core is importable in the current process.

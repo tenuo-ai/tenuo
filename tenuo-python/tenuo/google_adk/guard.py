@@ -184,6 +184,9 @@ class TenuoGuard:
         self._include_hints = include_hints
         self._approval_handler = approval_handler
         self._approvals = approvals
+        if control_plane is None:
+            from ..control_plane import get_or_create
+            control_plane = get_or_create()
         self._control_plane = control_plane
 
         # Handle audit log: string path or file-like object
