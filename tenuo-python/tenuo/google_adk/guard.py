@@ -395,7 +395,7 @@ class TenuoGuard:
                     except Exception:
                         pass
                     self._control_plane.emit_for_enforcement(
-                        result,
+                        result, chain_result=result.chain_result,
                         latency_us=latency_us,
                         warrant_stack_override=_warrant_stack,
                     )
