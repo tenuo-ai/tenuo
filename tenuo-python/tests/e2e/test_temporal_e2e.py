@@ -1567,36 +1567,14 @@ class TestOutboundFailClosed:
                 assert "fail-closed" in str(exc.value).lower()
 
     def test_missing_key_resolver_raises_context_error(self, warrant, headers_dict):
-        """If no key_resolver configured, outbound interceptor raises TenuoContextError."""
-        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+        """If no key_resolver configured, config construction raises ConfigurationError."""
+        from tenuo.exceptions import ConfigurationError
 
-        wf_id = "wf-no-resolver"
-        _populate_store(wf_id, headers_dict)
-
-        # Config with no key_resolver
-        config = TenuoPluginConfig(
-            key_resolver=None,
-            trusted_roots=[SigningKey.generate().public_key],
-        )
-
-        class FakeNext:
-            def start_activity(self, input):
-                return MagicMock()
-
-        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext(), config=config)
-
-        @dataclass
-        class FakeInput:
-            activity: str = "read_file"
-            fn: Any = lambda path: path
-            args: tuple = ("/tmp/demo/f.txt",)
-            headers: Optional[Dict[str, Any]] = None
-
-        with patch("temporalio.workflow.info") as mock_info:
-            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
-            with pytest.raises(TenuoContextError) as exc:
-                outbound.start_activity(FakeInput())
-            assert "key_resolver" in str(exc.value).lower()
+        with pytest.raises(ConfigurationError, match="key_resolver"):
+            TenuoPluginConfig(
+                key_resolver=None,
+                trusted_roots=[SigningKey.generate().public_key],
+            )
 
     def test_no_headers_passes_through_silently(self):
         """If no warrant in store, activity passes through without error (unprotected)."""
