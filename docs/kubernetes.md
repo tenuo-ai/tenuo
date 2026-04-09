@@ -184,18 +184,33 @@ env:
 containers:
 - name: tenuo-authorizer
   image: tenuo/authorizer:0.1
+  args: ["serve", "--config", "/etc/tenuo/gateway.yaml"]
   ports:
-  - name: metrics
+  - name: http
     containerPort: 9090
   env:
-  - name: TRUSTED_ISSUERS
+  - name: TENUO_TRUSTED_KEYS
     value: "<control-plane-public-key-hex>"
   resources:
     requests: { memory: "32Mi", cpu: "10m" }
     limits: { memory: "64Mi", cpu: "100m" }
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 9090
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 9090
+    initialDelaySeconds: 3
+    periodSeconds: 5
 - name: agent
   # Your agent container
 ```
+
+> The authorizer binary reads trusted keys from `TENUO_TRUSTED_KEYS` (comma-separated hex). When using the Helm chart, keys are set via `config.trustedRoots` in `values.yaml` instead.
 
 ### As Gateway
 
@@ -209,11 +224,17 @@ Rotate signing keys without downtime.
 
 ### Steps
 
-1. **Add new key to trusted issuers**
+1. **Add new key to trusted keys**
    ```yaml
    env:
-   - name: TRUSTED_ISSUERS
+   - name: TENUO_TRUSTED_KEYS
      value: "OLD_KEY_HEX,NEW_KEY_HEX"
+   ```
+   Or, if using the Helm chart:
+   ```bash
+   helm upgrade tenuo-authorizer ./charts/tenuo-authorizer \
+     --set config.trustedRoots[0]="OLD_KEY_HEX" \
+     --set config.trustedRoots[1]="NEW_KEY_HEX"
    ```
 
 2. **Roll out authorizer**
@@ -228,11 +249,85 @@ Rotate signing keys without downtime.
 5. **Remove old key**
    ```yaml
    env:
-   - name: TRUSTED_ISSUERS
+   - name: TENUO_TRUSTED_KEYS
      value: "NEW_KEY_HEX"
    ```
 
-**Rollback:** Re-add old key to `TRUSTED_ISSUERS`.
+**Rollback:** Re-add old key to `TENUO_TRUSTED_KEYS`.
+
+---
+
+## Delegation Chains (Multi-Hop)
+
+When agents delegate to sub-agents across pods, the full delegation chain must travel with the request so each hop can be independently verified.
+
+### How It Works
+
+```
+Control Plane                Agent A (Pod 1)              Agent B (Pod 2)
+     │                            │                            │
+     │  root warrant (depth=0)    │                            │
+     │ ──────────────────────────>│                            │
+     │                            │  grant child warrant       │
+     │                            │  (depth=1, parent_hash)    │
+     │                            │                            │
+     │                            │  X-Tenuo-Warrant: [root, child]  (WarrantStack)
+     │                            │  X-Tenuo-PoP: <sig>        │
+     │                            │ ──────────────────────────>│
+     │                            │                            │  authorizer verifies
+     │                            │                            │  full chain via check_chain
+```
+
+The `X-Tenuo-Warrant` header carries a **WarrantStack** — a base64-encoded CBOR array of warrants ordered root-first, leaf-last. The authorizer's `check_chain` verifies:
+
+1. The root warrant's issuer is in `TENUO_TRUSTED_KEYS`
+2. Each child's `parent_hash` matches its parent
+3. Capabilities are monotonically attenuated (child ⊆ parent)
+4. The leaf's PoP signature is valid
+
+### Client-Side (Python SDK)
+
+```python
+from tenuo import Warrant, SigningKey, encode_warrant_stack
+
+root = Warrant.mint_builder().tool("search").tool("summarize").mint(control_plane_key)
+
+child = (
+    Warrant.grant_builder(root)
+    .tool("search")           # attenuate: drop summarize
+    .holder(agent_b_key.public_key)
+    .ttl(60)
+    .grant(agent_a_key)
+)
+
+stack_b64 = encode_warrant_stack([root, child])
+
+headers = {
+    "X-Tenuo-Warrant": stack_b64,
+    "X-Tenuo-PoP": pop_signature_b64,
+}
+```
+
+### Authorizer Behavior
+
+The authorizer auto-detects whether `X-Tenuo-Warrant` contains a single warrant or a `WarrantStack`. No configuration change is needed — `check_chain` is always used.
+
+If a delegated warrant (depth > 0) arrives without its parent chain, the authorizer logs a warning:
+
+```
+WARN Received orphaned delegated warrant (depth > 0) without parent chain.
+     Zero-Trust best practice is to send full WarrantStack.
+```
+
+### Helm Chart: Trusted Roots for Chains
+
+Only the **root** issuer needs to be in `trustedRoots`. Intermediate agents don't need to be pre-registered — their authority is proven by the chain itself:
+
+```yaml
+config:
+  trustedRoots:
+    - "f32e74b5..."   # Control plane key only
+```
 
 ---
 
@@ -291,10 +386,12 @@ kubectl logs -l app=tenuo-authorizer --since=1h | \
 
 ### Debug Headers (Non-Production)
 
+Enable via the gateway config file (not an env var):
+
 ```yaml
-env:
-- name: DEBUG_MODE
-  value: "true"  # Non-production only
+# gateway.yaml (or Helm: config.debugMode: true)
+settings:
+  debug_mode: true   # Non-production only!
 ```
 
 Denied responses include `X-Tenuo-Deny-Reason`:
@@ -326,32 +423,67 @@ tenuo decode $WARRANT
 
 ---
 
-## Metrics
+## Monitoring
 
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: PodMonitor
-metadata:
-  name: tenuo-authorizer
-spec:
-  selector:
-    matchLabels:
-      app: tenuo-authorizer
-  podMetricsEndpoints:
-  - port: metrics
+### Structured Logs (Primary)
+
+The authorizer emits structured JSON logs for every authorization decision. Use these as your primary observability signal:
+
+```bash
+# Count allow/deny decisions per tool (last hour)
+kubectl logs -l app=tenuo-authorizer --since=1h | \
+  jq -r 'select(.event | test("authorization_")) | "\(.event) \(.tool)"' | \
+  sort | uniq -c | sort -rn
 ```
 
-| Metric | Description |
-|--------|-------------|
-| `tenuo_authz_total{result,tool}` | Decision counts |
-| `tenuo_authz_duration_seconds` | Latency histogram |
-| `tenuo_warrant_ttl_remaining_seconds` | Time until expiry |
+### `/status` Endpoint
+
+The authorizer exposes a `/status` endpoint (no auth required) for debugging:
+
+```bash
+# From the agent container in the same pod (distroless authorizer has no shell):
+kubectl exec deploy/your-agent -c agent -- curl -s localhost:9090/status | jq
+
+# Or port-forward and query from your machine:
+kubectl port-forward deploy/your-agent 9090:9090 &
+curl -s localhost:9090/status | jq
+```
+
+```json
+{
+  "version": "0.1.0-beta.16",
+  "uptime_secs": 42,
+  "cp": {
+    "enabled": true,
+    "status": "registered",
+    "authorizer_id": "tnu_auth_..."
+  }
+}
+```
+
+Use `cp.status` to verify control plane registration in readiness checks.
+
+### Helm ServiceMonitor (Optional)
+
+The Helm chart includes a `ServiceMonitor` template for the Prometheus Operator. Enable it in `values.yaml`:
+
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus   # match your Prometheus selector
+    interval: 30s
+```
+
+> **Note:** The authorizer currently reports metrics to the Tenuo control plane via heartbeat rather than exposing a Prometheus `/metrics` endpoint. The `ServiceMonitor` monitors the `/health` endpoint for up/down status. For detailed authorization metrics (allow/deny counts, latency percentiles), use structured logs or the control plane dashboard.
 
 ---
 
 ## See Also
 
 - [Proxy Configurations](./enforcement#proxy-configurations): Full Envoy, Istio, nginx configs
-- [Envoy Quickstart](https://github.com/tenuo-ai/tenuo/tree/main/quickstart/envoy)
-- [Istio Quickstart](https://github.com/tenuo-ai/tenuo/tree/main/quickstart/istio)
+- [Envoy Quickstart](./quickstart/envoy/): Get your first 403 in under 5 minutes
+- [Istio Quickstart](./quickstart/istio/): Service mesh integration
 - [Enforcement Architecture](./enforcement): In-process, sidecar, gateway, MCP patterns
+- [Helm Chart README](https://github.com/tenuo-ai/tenuo/tree/main/charts/tenuo-authorizer): Full configuration reference
