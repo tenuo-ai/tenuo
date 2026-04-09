@@ -655,7 +655,7 @@ class SecureMCPClient:
         # would silently break tools that don't publish a schema.
         input_schema = getattr(mcp_tool, "inputSchema", {}) or {}
         properties = input_schema.get("properties", {})
-        allowed_keys: set[str] | None = set(properties.keys()) if properties else None
+        allowed_keys: Optional[set] = set(properties.keys()) if properties else None
 
         def _extract_auth_args(**kwargs):
             # Strip _approvals — it is a Tenuo transport kwarg, not a tool argument.
