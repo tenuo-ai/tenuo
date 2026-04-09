@@ -53,7 +53,8 @@ def _raise_for_denial(result: "EnforcementResult", tool_name: str) -> None:
     reason = result.denial_reason or "Authorization denied"
     etype = result.error_type or ""
     if etype == "constraint_violation":
-        raise ConstraintViolation(reason)
+        field = result.constraint_violated or tool_name
+        raise ConstraintViolation(field, reason)
     if etype == "tool_not_allowed":
         raise ToolNotAuthorized(reason)
     if etype == "expired":
