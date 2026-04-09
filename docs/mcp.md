@@ -128,6 +128,8 @@ async def read_file(path: str, **kwargs) -> str:
 
 To verify once per tool call (without `verify_or_raise` in every handler), install `tenuo[fastmcp]` (MCP SDK + FastMCP) and register `TenuoMiddleware(verifier)` on `FastMCP(..., middleware=[...])`. Importing `tenuo.mcp.fastmcp_middleware` without FastMCP raises a clear `ImportError` with install instructions. The middleware calls the same `MCPVerifier.verify` path, reads `_meta` from the wire request context when FastMCP’s synthesized params omit it, strips `tenuo` from `meta` after success, and returns `isError` tool results on denial.
 
+The `tenuo[fastmcp]` extra pins FastMCP 3.2.1 or newer, which includes [hardened FastMCP client parsing of tool error results](https://github.com/PrefectHQ/fastmcp/pull/3778) (e.g. empty or non-text error content from third-party MCP servers).
+
 The verifier extracts warrant metadata from `params._meta`, verifies the warrant + PoP signature, and checks constraints.
 
 ### Pattern 3: Securing LangChain Adapters
@@ -207,7 +209,8 @@ mcp_arguments = {
 result = compiled.extract_constraints("filesystem_read", mcp_arguments)
 
 # 5. Authorize with PoP signature
-pop_sig = warrant.sign(control_key, "filesystem_read", dict(result.constraints))
+import time
+pop_sig = warrant.sign(control_key, "filesystem_read", dict(result.constraints), int(time.time()))
 authorizer = Authorizer(trusted_roots=[control_key.public_key])
 authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop_sig))
 
@@ -224,25 +227,34 @@ Tenuo integrates seamlessly with [`langchain-mcp-adapters`](https://github.com/l
 
 ### Secure Adapter Pattern
 
-The most robust way to use MCP with LangChain is to wrap the official client tools with Tenuo authorization:
+Wrap the tools returned by `MultiServerMCPClient` with `guard_tools()` so every
+invocation is checked against the active warrant:
 
 ```python
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from tenuo.mcp import SecureMCPClient # Wrapper for official client
+from tenuo.langchain import guard_tools
+from tenuo import mint, Capability, Subpath
 
-# 1. Connect via official client
-client = MultiServerMCPClient({
-    "math": {
+# 1. Connect via official LangChain MCP client
+async with MultiServerMCPClient({
+    "fs": {
         "transport": "stdio",
         "command": "python",
-        "args": ["math_server.py"]
+        "args": ["mcp_server.py"],
     }
-})
+}) as client:
+    mcp_tools = await client.get_tools()
 
-# 2. Get protected tools (Tenuo auto-wraps them)
-tools = await client.get_tools()
-# ... use tools in LangChain agent
+    # 2. Wrap with Tenuo authorization
+    secure_tools = guard_tools(mcp_tools, bound)
+
+    # 3. Use secure_tools in your LangChain agent
+    # ...
 ```
+
+> **Note**: `SecureMCPClient` is Tenuo's own MCP client (Pattern 1).
+> It is _not_ interchangeable with LangChain's `MultiServerMCPClient`.
+> Use `guard_tools()` to protect LangChain adapter tools.
 
 ### Python Example
 
@@ -408,7 +420,7 @@ result = compiled.extract_constraints("filesystem_read", arguments)
 
 # Result contains:
 # result.constraints: { "path": "/var/log/app.log", "max_size": 524288 }
-# result.warrant_base64: "..."
+# (warrant/signature are NOT part of extraction — they travel via _meta.tenuo)
 ```
 
 ### Nested Paths
@@ -472,7 +484,7 @@ warrant = (Warrant.mint_builder()
 result = compiled.extract_constraints("filesystem_read", arguments)
 
 # Authorize
-pop_sig = warrant.sign(key, "filesystem_read", dict(result.constraints))
+pop_sig = warrant.sign(key, "filesystem_read", dict(result.constraints), int(time.time()))
 authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop_sig))
 ```
 
@@ -529,8 +541,8 @@ Without trusted roots, chain verification only checks internal consistency.
 Always require PoP signatures for MCP tool calls:
 
 ```python
-# Create PoP signature
-pop_sig = warrant.sign(signing_key, tool, args)
+# Create PoP signature (4th arg = current Unix timestamp)
+pop_sig = warrant.sign(signing_key, tool, args, int(time.time()))
 
 # Authorize with signature
 authorizer.check(warrant, tool, args, bytes(pop_sig))
@@ -722,7 +734,7 @@ from tenuo.exceptions import (
 )
 
 try:
-    result = await client.call_protected_tool("read_file", {"path": "/etc/passwd"})
+    result = await client.call_tool("read_file", {"path": "/etc/passwd"})
 except ConstraintViolation as e:
     print(f"Constraint failed: {e}")
     print(f"Wire code: {e.get_wire_code()}")  # 1501
