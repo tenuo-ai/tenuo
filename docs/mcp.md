@@ -130,7 +130,7 @@ To verify once per tool call (without `verify_or_raise` in every handler), insta
 
 The `tenuo[fastmcp]` extra pins FastMCP 3.2.1 or newer, which includes [hardened FastMCP client parsing of tool error results](https://github.com/PrefectHQ/fastmcp/pull/3778) (e.g. empty or non-text error content from third-party MCP servers).
 
-The verifier extracts warrant metadata from `params._meta`, verifies the warrant + PoP signature, and checks constraints.
+The verifier extracts warrant metadata from `params._meta`, verifies the warrant + PoP signature, and checks constraints. For delegation chains, use `Authorizer.check_chain` with a decoded WarrantStack (see Pattern 3 below).
 
 ### Pattern 3: Securing LangChain Adapters
 
@@ -410,6 +410,10 @@ Tenuo sends warrant metadata via `params._meta.tenuo`, the MCP spec's designated
 }
 ```
 
+The `warrant` field accepts either a single base64-encoded warrant (for root
+warrants issued directly by a trusted root) or a **WarrantStack** — the full
+delegation chain encoded as a CBOR array. Use `encode_warrant_stack([root, ..., leaf])` to produce the WarrantStack blob. On the server, `decode_warrant_stack_base64()` recovers the ordered chain for `Authorizer.check_chain`.
+
 ### Manual Extraction
 
 If not using `SecureMCPClient`, you can extract constraints manually:
@@ -490,24 +494,61 @@ authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop
 
 ### Pattern 3: Multi-Agent Delegation
 
+Delegation produces a **chain** of warrants — each child is cryptographically
+linked to its parent via `parent_hash = SHA-256(parent.payload)`. The child
+can only **narrow** the parent's scope (tools, constraints, TTL), never widen
+it; Rust enforces this at creation time.
+
 ```python
-# Control plane issues root warrant
+from tenuo import SigningKey, Warrant, Subpath, Authorizer
+from tenuo_core import encode_warrant_stack, decode_warrant_stack_base64
+
+control_key      = SigningKey.generate()  # issuer / control plane
+orchestrator_key = SigningKey.generate()  # orchestrator agent
+worker_key       = SigningKey.generate()  # worker agent
+
+# 1. Control plane mints root warrant for orchestrator
 root_warrant = (Warrant.mint_builder()
     .capability("filesystem_read", path=Subpath("/data"))
-    .capability("database_query", path=Subpath("/data"))
+    .capability("database_query", table=Subpath("/data"))
     .holder(orchestrator_key.public_key)
     .ttl(3600)
     .mint(control_key))
 
-# Orchestrator attenuates for worker
+# 2. Orchestrator attenuates for worker (read-only, narrower path)
 worker_warrant = (root_warrant.grant_builder()
     .capability("filesystem_read", path=Subpath("/data/reports"))
     .holder(worker_key.public_key)
-    .grant(orchestrator_key))  # Orchestrator signs (they hold the parent)
+    .ttl(1800)
+    .grant(orchestrator_key))  # orchestrator signs (proves they hold parent)
 
-# Worker uses attenuated warrant
-# (narrower permissions, cryptographic proof of delegation)
+# 3. Worker sends the full chain as a WarrantStack
+#    WarrantStack = CBOR array of [root, worker], root-first.
+chain = [root_warrant, worker_warrant]
+stack_b64 = encode_warrant_stack(chain)  # single base64 blob
+
+# 4. Server verifies the full chain
+authorizer = Authorizer(trusted_roots=[control_key.public_key])
+decoded = decode_warrant_stack_base64(stack_b64)
+
+import time, base64
+pop = worker_warrant.sign(worker_key, "filesystem_read",
+                          {"path": "/data/reports/q1.csv"}, int(time.time()))
+authorizer.check_chain(
+    decoded, "filesystem_read", {"path": "/data/reports/q1.csv"},
+    signature=bytes(pop),
+)
+# ✓ root.issuer ∈ trusted_roots
+# ✓ worker.issuer == root.holder (delegation authority)
+# ✓ worker.parent_hash == SHA-256(root.payload)
+# ✓ worker capabilities ⊆ root capabilities
+# ✓ PoP valid for worker_key
 ```
+
+On the wire, the worker sends `stack_b64` in `_meta.tenuo.warrant`.
+`Authorizer.check_chain` verifies the entire path from root to leaf
+in one call — signatures, linkage, monotonic attenuation, TTLs, PoP,
+and tool capabilities.
 
 ---
 
