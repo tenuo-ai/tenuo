@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 
 from .._enforcement import EnforcementResult, enforce_tool_call
 from ..config import is_configured
-from ..decorators import guard, key_scope, warrant_scope
+from ..decorators import key_scope, warrant_scope
 from ..exceptions import (
     AuthorizationDenied,
     ConfigurationError,

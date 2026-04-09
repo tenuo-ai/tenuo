@@ -25,10 +25,10 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Dict, List, Optional, Protocol, Union
 
 if TYPE_CHECKING:
-    from tenuo_core import PublicKey, SignedApproval, SigningKey
+    from tenuo_core import SignedApproval, SigningKey
 
 logger = logging.getLogger("tenuo.approval")
 
