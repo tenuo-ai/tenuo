@@ -98,6 +98,15 @@ impl SigningKey {
         Signature { inner: sig }
     }
 
+    /// Sign raw bytes with Ed25519 (no Tenuo warrant prefix).
+    ///
+    /// Use only when `message` already includes protocol-specific domain separation.
+    /// For warrants and PoP, use [`Self::sign`].
+    pub fn sign_raw(&self, message: &[u8]) -> Signature {
+        let sig = self.signing_key.expose_secret().0.sign(message);
+        Signature { inner: sig }
+    }
+
     /// Get the secret key bytes.
     pub fn secret_key_bytes(&self) -> [u8; 32] {
         self.signing_key.expose_secret().0.to_bytes()
@@ -173,6 +182,13 @@ impl PublicKey {
         // closing the cofactor / signature-malleability gap that default verify leaves open.
         self.verifying_key
             .verify_strict(&prefixed, &signature.inner)
+            .map_err(|e| Error::SignatureInvalid(e.to_string()))
+    }
+
+    /// Verify a signature over raw bytes (no warrant context prefix).
+    pub fn verify_raw(&self, message: &[u8], signature: &Signature) -> Result<()> {
+        self.verifying_key
+            .verify_strict(message, &signature.inner)
             .map_err(|e| Error::SignatureInvalid(e.to_string()))
     }
 

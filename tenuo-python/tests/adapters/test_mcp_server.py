@@ -227,6 +227,29 @@ class TestRequireWarrant:
         assert result.allowed
         assert result.clean_arguments == {"path": "/data/f.txt"}
 
+    def test_require_warrant_false_emits_to_control_plane(self, authorizer: Authorizer):
+        """Unauthenticated calls with require_warrant=False must still emit
+        to the control plane for audit."""
+
+        class _Recorder:
+            def __init__(self):
+                self.calls: list = []
+
+            def emit_for_enforcement(self, result, chain_result=None, latency_us=0, **kw):
+                self.calls.append(
+                    {"result": result, "chain_result": chain_result, "latency_us": latency_us}
+                )
+
+        cp = _Recorder()
+        verifier = MCPVerifier(
+            authorizer=authorizer, require_warrant=False, control_plane=cp
+        )
+        result = verifier.verify("read_file", {"path": "/data/f.txt"})
+        assert result.allowed
+        assert len(cp.calls) == 1
+        assert cp.calls[0]["result"].allowed is True
+        assert cp.calls[0]["chain_result"] is None
+
     def test_none_arguments_treated_as_empty(self, authorizer: Authorizer):
         verifier = MCPVerifier(authorizer=authorizer)
         result = verifier.verify("read_file", None)
@@ -672,3 +695,271 @@ class TestVerifyMcpCall:
         result = verify_mcp_call("read_file", {"path": "/x"}, authorizer=authorizer)
         assert not result.allowed
         assert result.jsonrpc_error_code == -32001
+
+
+# ---------------------------------------------------------------------------
+# Unmapped-argument warning tests
+# ---------------------------------------------------------------------------
+
+
+class TestUnmappedArgumentWarning:
+    """Verify that MCPVerifier warns when tool args are not mapped to constraints."""
+
+    def test_warns_on_unmapped_args(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """Args not present in extraction.constraints trigger a warning."""
+        from unittest.mock import MagicMock
+
+        mock_config = MagicMock()
+        mock_extraction = MagicMock()
+        mock_extraction.constraints = {"path": "/data/f.txt"}
+        mock_config.extract_constraints.return_value = mock_extraction
+
+        verifier = MCPVerifier(authorizer=authorizer, config=mock_config)
+
+        constraint_args = {"path": "/data/f.txt"}
+        tool_args = {"path": "/data/f.txt", "dry_run": True, "format": "json"}
+        _, meta = _make_arguments(simple_warrant, agent_key, "read_file", constraint_args)
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="tenuo.mcp.server"):
+            verifier.verify("read_file", tool_args, meta=meta)
+
+        assert any("unauthenticated" in r.message.lower() for r in caplog.records)
+        assert any("dry_run" in r.message for r in caplog.records)
+        assert any("format" in r.message for r in caplog.records)
+
+    def test_no_warning_when_all_args_mapped(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """No warning when every arg has a corresponding constraint."""
+        from unittest.mock import MagicMock
+
+        mock_config = MagicMock()
+        mock_extraction = MagicMock()
+        mock_extraction.constraints = {"path": "/data/f.txt"}
+        mock_config.extract_constraints.return_value = mock_extraction
+
+        verifier = MCPVerifier(authorizer=authorizer, config=mock_config)
+
+        tool_args = {"path": "/data/f.txt"}
+        _, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="tenuo.mcp.server"):
+            verifier.verify("read_file", tool_args, meta=meta)
+
+        assert not any("unauthenticated" in r.message.lower() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Nonce / replay-prevention tests
+# ---------------------------------------------------------------------------
+
+
+class TestNonceReplayPrevention:
+    """Verify that MCPVerifier rejects replayed PoP signatures."""
+
+    def test_replay_rejected_with_explicit_nonce_store(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+    ):
+        """Second call with the exact same PoP bytes is rejected."""
+        from tenuo.nonce import NonceStore
+
+        ns = NonceStore(ttl_seconds=120)
+        verifier = MCPVerifier(authorizer=authorizer, nonce_store=ns)
+
+        tool_args = {"path": "/data/f.txt"}
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+
+        result1 = verifier.verify("read_file", arguments, meta=meta)
+        assert result1.allowed
+
+        result2 = verifier.verify("read_file", arguments, meta=meta)
+        assert not result2.allowed
+        assert "replay" in (result2.denial_reason or "").lower()
+        assert result2.jsonrpc_error_code == -32001
+
+    def test_no_replay_check_without_nonce_store(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Without a nonce store, duplicate PoPs are accepted (stateless mode)."""
+        from tenuo import nonce as nonce_mod
+        monkeypatch.setattr(nonce_mod, "_default_store", None)
+
+        verifier = MCPVerifier(authorizer=authorizer)
+
+        tool_args = {"path": "/data/f.txt"}
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+
+        result1 = verifier.verify("read_file", arguments, meta=meta)
+        assert result1.allowed
+
+        result2 = verifier.verify("read_file", arguments, meta=meta)
+        assert result2.allowed
+
+    def test_distinct_pops_both_admitted(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+    ):
+        """Two calls with different args produce distinct PoPs — both pass."""
+        from tenuo.nonce import NonceStore
+
+        ns = NonceStore(ttl_seconds=120)
+        verifier = MCPVerifier(authorizer=authorizer, nonce_store=ns)
+
+        args1 = {"path": "/data/a.txt"}
+        arguments1, meta1 = _make_arguments(simple_warrant, agent_key, "read_file", args1)
+
+        args2 = {"path": "/data/b.txt"}
+        arguments2, meta2 = _make_arguments(simple_warrant, agent_key, "read_file", args2)
+
+        result1 = verifier.verify("read_file", arguments1, meta=meta1)
+        assert result1.allowed
+
+        result2 = verifier.verify("read_file", arguments2, meta=meta2)
+        assert result2.allowed
+
+    def test_default_nonce_store_used_when_enabled(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """When enable_default_nonce_store() was called, MCPVerifier picks it up."""
+        from tenuo.nonce import NonceStore
+        from tenuo import nonce as nonce_mod
+
+        default_ns = NonceStore(ttl_seconds=120)
+        monkeypatch.setattr(nonce_mod, "_default_store", default_ns)
+
+        verifier = MCPVerifier(authorizer=authorizer)
+
+        tool_args = {"path": "/data/f.txt"}
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+
+        result1 = verifier.verify("read_file", arguments, meta=meta)
+        assert result1.allowed
+
+        result2 = verifier.verify("read_file", arguments, meta=meta)
+        assert not result2.allowed
+        assert "replay" in (result2.denial_reason or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Control plane emission coverage tests
+# ---------------------------------------------------------------------------
+
+
+class TestControlPlaneEmissions:
+    """Verify that MCPVerifier emits to the control plane on all paths."""
+
+    def test_extraction_error_emits(self, authorizer: Authorizer):
+        """Extraction failure (step 1) emits a deny event."""
+        from unittest.mock import MagicMock
+
+        mock_config = MagicMock()
+        mock_config.extract_constraints.side_effect = ValueError("missing field 'path'")
+        mock_cp = MagicMock()
+
+        verifier = MCPVerifier(authorizer=authorizer, config=mock_config, control_plane=mock_cp)
+        result = verifier.verify("read_file", {"path": "/x"}, meta={"tenuo": {}})
+
+        assert not result.allowed
+        mock_cp.emit_for_enforcement.assert_called_once()
+        emitted = mock_cp.emit_for_enforcement.call_args
+        assert emitted[0][0].allowed is False
+
+    def test_missing_warrant_strict_emits(self, authorizer: Authorizer):
+        """Missing warrant with require_warrant=True emits a deny event."""
+        from unittest.mock import MagicMock
+
+        mock_cp = MagicMock()
+        verifier = MCPVerifier(authorizer=authorizer, control_plane=mock_cp)
+        result = verifier.verify("read_file", {"path": "/x"})
+
+        assert not result.allowed
+        mock_cp.emit_for_enforcement.assert_called_once()
+
+    def test_malformed_warrant_emits(self, authorizer: Authorizer):
+        """Malformed warrant base64 emits a deny event."""
+        from unittest.mock import MagicMock
+
+        mock_cp = MagicMock()
+        verifier = MCPVerifier(authorizer=authorizer, control_plane=mock_cp)
+        result = verifier.verify(
+            "read_file", {"path": "/x"},
+            meta={"tenuo": {"warrant": "not-valid-base64!!!", "signature": "abc"}},
+        )
+
+        assert not result.allowed
+        mock_cp.emit_for_enforcement.assert_called_once()
+
+    def test_authorized_call_emits_allow(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+    ):
+        """Successful authorization emits an allow event with chain_result."""
+        from unittest.mock import MagicMock
+
+        mock_cp = MagicMock()
+        verifier = MCPVerifier(authorizer=authorizer, control_plane=mock_cp)
+
+        tool_args = {"path": "/data/f.txt"}
+        arguments, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
+        result = verifier.verify("read_file", arguments, meta=meta)
+
+        assert result.allowed
+        mock_cp.emit_for_enforcement.assert_called_once()
+        emitted = mock_cp.emit_for_enforcement.call_args
+        assert emitted[0][0].allowed is True
+        assert emitted[1].get("chain_result") is not None
+
+    def test_mcp_result_clean_arguments_in_emission(
+        self,
+        authorizer: Authorizer,
+    ):
+        """emit_for_enforcement resolves clean_arguments for MCPVerificationResult."""
+        from unittest.mock import MagicMock
+
+        from tenuo.control_plane import ControlPlaneClient
+
+        mcp_result = MCPVerificationResult(
+            allowed=True,
+            tool="read_file",
+            clean_arguments={"path": "/data/f.txt"},
+            constraints={"path": "/data/f.txt"},
+        )
+
+        mock_inner = MagicMock()
+        client = ControlPlaneClient.__new__(ControlPlaneClient)
+        client._inner = mock_inner
+
+        client.emit_for_enforcement(mcp_result)
+
+        mock_inner.emit_allow.assert_called_once()
+        call_args = mock_inner.emit_allow.call_args
+        arguments_json = call_args[0][7]
+        assert arguments_json is not None
+        assert "/data/f.txt" in arguments_json

@@ -283,6 +283,7 @@ class MCPVerifier:
         config: Optional[Any] = None,
         require_warrant: bool = True,
         control_plane: Optional[Any] = None,
+        nonce_store: Optional[Any] = None,
     ) -> None:
         """
         Args:
@@ -300,11 +301,22 @@ class MCPVerifier:
                 in ``_meta.tenuo`` are denied with ``-32001``.  Set ``False``
                 only in mixed deployments where some tool calls legitimately
                 arrive without a Tenuo warrant (e.g., during gradual rollout).
+            nonce_store: Optional ``tenuo.nonce.NonceStore`` for PoP replay
+                prevention.  When provided (recommended for mutating tools),
+                each PoP signature is checked against the store; exact replays
+                within the store's TTL window are rejected.  Use
+                ``enable_default_nonce_store()`` at startup or pass an explicit
+                ``NonceStore(backend=RedisNonceBackend(...))`` for distributed
+                deployments.
         """
         self._authorizer = authorizer
         self._config = config
         self._require_warrant = require_warrant
+        if control_plane is None:
+            from ..control_plane import get_or_create
+            control_plane = get_or_create()
         self._control_plane = control_plane
+        self._nonce_store = nonce_store
 
     def verify(
         self,
@@ -337,6 +349,17 @@ class MCPVerifier:
         """
         args: Dict[str, Any] = arguments or {}
 
+        def _emit_and_return(
+            result: MCPVerificationResult,
+            chain_result: Any = None,
+            latency_us: int = 0,
+        ) -> MCPVerificationResult:
+            if self._control_plane:
+                self._control_plane.emit_for_enforcement(
+                    result, chain_result=chain_result, latency_us=latency_us
+                )
+            return result
+
         # ------------------------------------------------------------------
         # Step 1: extract Tenuo envelope from params._meta
         # ------------------------------------------------------------------
@@ -357,16 +380,28 @@ class MCPVerifier:
                 extraction = self._config.extract_constraints(tool_name, args)
             except Exception as exc:
                 # ExtractionError — missing required field or unknown tool
-                return MCPVerificationResult(
+                return _emit_and_return(MCPVerificationResult(
                     allowed=False,
                     tool=tool_name,
                     clean_arguments=dict(args),
                     constraints={},
                     denial_reason=str(exc),
                     jsonrpc_error_code=-32602,
-                )
+                ))
             clean_arguments = dict(args)
             constraints = dict(extraction.constraints)
+
+            unauthenticated_keys = set(args.keys()) - set(constraints.keys())
+            if unauthenticated_keys:
+                logger.warning(
+                    "Tool '%s': arguments %s are not mapped to constraints in "
+                    "mcp-config and are therefore unauthenticated (not covered "
+                    "by PoP signature). If these are security-sensitive, add "
+                    "them to your mcp-config.yaml.",
+                    tool_name,
+                    sorted(unauthenticated_keys),
+                )
+
             warrant_b64 = tenuo_envelope.get("warrant")
             signature_b64 = tenuo_envelope.get("signature")
         else:
@@ -381,7 +416,7 @@ class MCPVerifier:
         # ------------------------------------------------------------------
         if not warrant_b64:
             if self._require_warrant:
-                return MCPVerificationResult(
+                return _emit_and_return(MCPVerificationResult(
                     allowed=False,
                     tool=tool_name,
                     clean_arguments=clean_arguments,
@@ -394,17 +429,19 @@ class MCPVerifier:
                         "receive _meta)."
                     ),
                     jsonrpc_error_code=-32001,
-                )
-            # require_warrant=False — unauthenticated call allowed by policy
-            logger.debug(
-                "Unauthenticated call allowed for '%s' (require_warrant=False)", tool_name
+                ))
+            # require_warrant=False — unauthenticated call allowed by policy.
+            logger.warning(
+                "Unauthenticated MCP call allowed for '%s' (require_warrant=False). "
+                "Set require_warrant=True once rollout is complete.",
+                tool_name,
             )
-            return MCPVerificationResult(
+            return _emit_and_return(MCPVerificationResult(
                 allowed=True,
                 tool=tool_name,
                 clean_arguments=clean_arguments,
                 constraints=constraints,
-            )
+            ))
 
         # ------------------------------------------------------------------
         # Step 3: decode warrant
@@ -414,14 +451,14 @@ class MCPVerifier:
 
             warrant = Warrant.from_base64(warrant_b64)
         except Exception as exc:
-            return MCPVerificationResult(
+            return _emit_and_return(MCPVerificationResult(
                 allowed=False,
                 tool=tool_name,
                 clean_arguments=clean_arguments,
                 constraints=constraints,
                 denial_reason=f"Malformed warrant: {exc}",
                 jsonrpc_error_code=-32001,
-            )
+            ))
 
         warrant_id: Optional[str] = getattr(warrant, "id", None)
 
@@ -433,7 +470,7 @@ class MCPVerifier:
             try:
                 pop_sig = base64.b64decode(signature_b64)
             except Exception as exc:
-                return MCPVerificationResult(
+                return _emit_and_return(MCPVerificationResult(
                     allowed=False,
                     tool=tool_name,
                     clean_arguments=clean_arguments,
@@ -441,7 +478,7 @@ class MCPVerifier:
                     warrant_id=warrant_id,
                     denial_reason=f"Malformed signature: {exc}",
                     jsonrpc_error_code=-32001,
-                )
+                ))
 
         # ------------------------------------------------------------------
         # Step 5: decode approvals
@@ -453,7 +490,7 @@ class MCPVerifier:
 
                 approvals.append(SignedApproval.from_bytes(base64.b64decode(a_b64)))
             except Exception as exc:
-                return MCPVerificationResult(
+                return _emit_and_return(MCPVerificationResult(
                     allowed=False,
                     tool=tool_name,
                     clean_arguments=clean_arguments,
@@ -461,7 +498,7 @@ class MCPVerifier:
                     warrant_id=warrant_id,
                     denial_reason=f"Malformed approval: {exc}",
                     jsonrpc_error_code=-32001,
-                )
+                ))
 
         # ------------------------------------------------------------------
         # Step 6: authorize
@@ -475,6 +512,38 @@ class MCPVerifier:
             chain_result = self._authorizer.authorize_one(
                 warrant, tool_name, constraints, pop_sig, approvals
             )
+
+            # ── Replay prevention ────────────────────────────────────────
+            # Ed25519 PoP is deterministic, so an exact replay of the same
+            # (key, tool, args, timestamp) triple produces the same bytes.
+            # Reject duplicates within the nonce store's TTL window.
+            _ns = self._nonce_store
+            if _ns is None:
+                from ..nonce import get_default_nonce_store as _get_ns
+                _ns = _get_ns()
+            if _ns is not None and pop_sig is not None and not _ns.check_and_record(pop_sig):
+                logger.warning(
+                    "PoP replay rejected for '%s' (warrant=%s)",
+                    tool_name,
+                    warrant_id,
+                )
+                return _emit_and_return(
+                    MCPVerificationResult(
+                        allowed=False,
+                        tool=tool_name,
+                        clean_arguments=clean_arguments,
+                        constraints=constraints,
+                        warrant_id=warrant_id,
+                        denial_reason=(
+                            "PoP replay detected — this exact authorization token "
+                            "was already consumed. Generate a new PoP with a fresh "
+                            "timestamp for each tool call."
+                        ),
+                        jsonrpc_error_code=-32001,
+                    ),
+                    latency_us=(time.perf_counter_ns() - start_ns) // 1000,
+                )
+
             logger.debug("MCP call authorized for '%s' (warrant=%s)", tool_name, warrant_id)
             result = MCPVerificationResult(
                 allowed=True,
@@ -556,13 +625,8 @@ class MCPVerifier:
                 jsonrpc_error_code=-32001,
             )
 
-        if self._control_plane:
-            latency_us = (time.perf_counter_ns() - start_ns) // 1000
-            self._control_plane.emit_for_enforcement(
-                result, chain_result=chain_result, latency_us=latency_us
-            )
-
-        return result
+        latency_us = (time.perf_counter_ns() - start_ns) // 1000
+        return _emit_and_return(result, chain_result=chain_result, latency_us=latency_us)
 
     def verify_or_raise(
         self,

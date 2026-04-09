@@ -26,7 +26,7 @@ except ImportError:
 @pytest.fixture
 def mcp_server_script():
     """Path to test MCP server."""
-    return Path(__file__).parent.parent / "examples" / "mcp_server_demo.py"
+    return Path(__file__).parent.parent.parent / "examples" / "mcp" / "mcp_server_demo.py"
 
 
 @pytest.mark.asyncio

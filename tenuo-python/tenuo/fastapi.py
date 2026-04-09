@@ -30,7 +30,7 @@ from typing import Any, Callable, Dict, List, Optional
 from tenuo_core import PublicKey, Warrant  # type: ignore[import-untyped]
 
 from tenuo._enforcement import EnforcementResult
-from tenuo.exceptions import DeserializationError, TenuoError
+from tenuo.exceptions import ApprovalGateTriggered, DeserializationError, TenuoError
 
 logger = logging.getLogger("tenuo.fastapi")
 
@@ -65,6 +65,7 @@ except ImportError:
 
 X_TENUO_WARRANT: str = _WARRANT_HEADER
 X_TENUO_POP = "X-Tenuo-PoP"
+X_TENUO_APPROVALS = "X-Tenuo-Approvals"
 
 # Reusable security scheme for Swagger UI (only if FastAPI available)
 if FASTAPI_AVAILABLE:
@@ -337,9 +338,14 @@ class TenuoGuard:
         tool: str,
         *,
         extract_args: Optional[Callable[[Request], Dict[str, Any]]] = None,
+        approval_handler: Optional[Any] = None,
     ) -> None:
         self.tool = tool
         self.extract_args = extract_args
+        self._approval_handler = approval_handler
+
+        from .control_plane import get_or_create
+        self._control_plane = get_or_create()
 
     def _enforce_with_pop_signature(
         self,
@@ -348,6 +354,7 @@ class TenuoGuard:
         args: Dict[str, Any],
         pop_signature: bytes,
         parents: Optional[List] = None,
+        approvals: Optional[List] = None,
     ) -> EnforcementResult:
         """
         Adapter for FastAPI's client-side PoP pattern.
@@ -401,6 +408,8 @@ class TenuoGuard:
             precomputed_signature=pop_signature,
             authorizer=authorizer,
             warrant_chain=parents or [],
+            approval_handler=self._approval_handler,
+            approvals=approvals,
         )
 
     def __call__(
@@ -408,6 +417,7 @@ class TenuoGuard:
         request: Request,
         warrant: Optional[Warrant] = Depends(get_warrant_header),
         x_tenuo_pop: Optional[str] = Header(None, alias=X_TENUO_POP),
+        x_tenuo_approvals: Optional[str] = Header(None, alias=X_TENUO_APPROVALS),
     ) -> SecurityContext:
         """
         Verify authorization and return SecurityContext.
@@ -464,15 +474,48 @@ class TenuoGuard:
                 },
             )
 
+        # 4b. Decode approvals header (JSON array of base64 CBOR-encoded SignedApprovals)
+        decoded_approvals: Optional[List] = None
+        if x_tenuo_approvals:
+            try:
+                import json
+
+                from tenuo_core import SignedApproval  # type: ignore[attr-defined]
+
+                raw_list = json.loads(base64.b64decode(x_tenuo_approvals))
+                decoded_approvals = [SignedApproval.from_base64(item) for item in raw_list]
+            except Exception:
+                logger.warning("Failed to decode X-Tenuo-Approvals header", exc_info=True)
+
         # 5. Authorize using Adapter (include delegation chain parents if present)
         parents = getattr(request.state, "tenuo_parents", [])
-        enforcement = self._enforce_with_pop_signature(
-            warrant=warrant,
-            tool=self.tool,
-            args=auth_args,
-            pop_signature=pop_sig_bytes,
-            parents=parents,
-        )
+        try:
+            enforcement = self._enforce_with_pop_signature(
+                warrant=warrant,
+                tool=self.tool,
+                args=auth_args,
+                pop_signature=pop_sig_bytes,
+                parents=parents,
+                approvals=decoded_approvals,
+            )
+        except ApprovalGateTriggered as gate:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "approval_required",
+                    "message": str(gate),
+                    "tool": gate.tool,
+                    "request_id": gate.request_id,
+                    "request_hash": gate.request_hash,
+                    "min_approvals": gate.min_approvals,
+                },
+            )
+
+        if self._control_plane is not None:
+            try:
+                self._control_plane.emit_for_enforcement(enforcement, chain_result=enforcement.chain_result)
+            except Exception:
+                pass
 
         if not enforcement.allowed:
             # Generate a request ID for log correlation
@@ -686,5 +729,6 @@ __all__ = [
     # Constants
     "X_TENUO_WARRANT",
     "X_TENUO_POP",
+    "X_TENUO_APPROVALS",
     "FASTAPI_AVAILABLE",
 ]

@@ -162,6 +162,8 @@ def _make_client() -> "SecureMCPClient":
     client.exit_stack = AsyncExitStack()
     client._tools = None
     client._wrapped_tools = {}
+    client._approval_handler = None
+    client._control_plane = None
 
     mock_session = MagicMock()
     mock_session.call_tool = AsyncMock(return_value=MagicMock(content="result"))
@@ -342,6 +344,192 @@ class TestCallToolApprovalsInjection:
         injected = client.session.call_tool.call_args[0][1]
         assert "_approvals" not in injected
         assert "_tenuo" not in injected
+
+
+# ---------------------------------------------------------------------------
+# PoP signing over extracted constraints (C1 fix verification)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestPopSignsExtractedConstraints:
+    """When a CompiledMcpConfig is loaded, the client must sign the PoP over
+    extracted (renamed/coerced) constraints — not raw tool arguments."""
+
+    @pytest.mark.asyncio
+    async def test_pop_signed_over_extracted_constraints_not_raw_args(self):
+        """With compiled_config, warrant.sign() receives extracted constraints."""
+        client = _make_client()
+        mock_warrant, mock_keypair = _mock_warrant_context()
+
+        mock_extraction = MagicMock()
+        mock_extraction.constraints = {"max_size": 2048, "path": "/data/log.txt"}
+        mock_config = MagicMock()
+        mock_config.extract_constraints.return_value = mock_extraction
+        client.compiled_config = mock_config
+
+        with (
+            patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
+            patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+        ):
+            await client.call_tool(
+                "read_file",
+                {"path": "/data/log.txt", "maxSize": 2048},
+                warrant_context=False,
+                inject_warrant=True,
+            )
+
+        mock_config.extract_constraints.assert_called_once_with(
+            "read_file", {"path": "/data/log.txt", "maxSize": 2048}
+        )
+        sign_call_args = mock_warrant.sign.call_args[0]
+        assert sign_call_args[0] is mock_keypair  # key
+        assert sign_call_args[1] == "read_file"  # tool_name
+        assert sign_call_args[2] == {"max_size": 2048, "path": "/data/log.txt"}  # extracted
+
+    @pytest.mark.asyncio
+    async def test_pop_signs_raw_args_without_config(self):
+        """Without compiled_config, warrant.sign() receives raw args."""
+        client = _make_client()
+        assert client.compiled_config is None
+        mock_warrant, mock_keypair = _mock_warrant_context()
+
+        raw_args = {"path": "/data/log.txt", "maxSize": 2048}
+
+        with (
+            patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
+            patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+        ):
+            await client.call_tool(
+                "read_file",
+                raw_args,
+                warrant_context=False,
+                inject_warrant=True,
+            )
+
+        sign_call_args = mock_warrant.sign.call_args[0]
+        assert sign_call_args[2] == raw_args
+
+    @pytest.mark.asyncio
+    async def test_extraction_failure_falls_back_to_raw_args(self):
+        """If extract_constraints raises, PoP signs over raw args (server catches error)."""
+        client = _make_client()
+        mock_warrant, mock_keypair = _mock_warrant_context()
+
+        mock_config = MagicMock()
+        mock_config.extract_constraints.side_effect = RuntimeError("missing field")
+        client.compiled_config = mock_config
+
+        raw_args = {"maxSize": 2048}
+
+        with (
+            patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
+            patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
+        ):
+            await client.call_tool(
+                "read_file",
+                raw_args,
+                warrant_context=False,
+                inject_warrant=True,
+            )
+
+        sign_call_args = mock_warrant.sign.call_args[0]
+        assert sign_call_args[2] == raw_args
+
+
+# ---------------------------------------------------------------------------
+# Schema stripping with empty properties (H3 fix verification)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestSchemaStrippingEmptyProperties:
+    """When a tool has no properties in its inputSchema, all args must be forwarded."""
+
+    @pytest.mark.asyncio
+    async def test_empty_properties_forwards_all_args(self):
+        """Tool with empty inputSchema.properties doesn't strip arguments."""
+        from tenuo import SigningKey, configure
+        from tenuo.decorators import key_scope, warrant_scope
+        from tenuo_core import Warrant
+
+        keypair = SigningKey.generate()
+        configure(issuer_key=keypair, dev_mode=True)
+        warrant = Warrant.issue(keypair, capabilities={"search": {}})
+
+        client = _make_client()
+        client.inject_warrant = False
+
+        fake_mcp_tool = MagicMock()
+        fake_mcp_tool.name = "search"
+        fake_mcp_tool.description = "Search"
+        fake_mcp_tool.inputSchema = {"type": "object", "properties": {}}
+
+        protected = client.create_protected_tool(fake_mcp_tool)
+
+        with warrant_scope(warrant), key_scope(keypair):
+            await protected(query="hello", limit=10)
+
+        forwarded = client.session.call_tool.call_args[0][1]
+        assert forwarded == {"query": "hello", "limit": 10}
+
+    @pytest.mark.asyncio
+    async def test_absent_properties_forwards_all_args(self):
+        """Tool with no inputSchema at all doesn't strip arguments."""
+        from tenuo import SigningKey, configure
+        from tenuo.decorators import key_scope, warrant_scope
+        from tenuo_core import Warrant
+
+        keypair = SigningKey.generate()
+        configure(issuer_key=keypair, dev_mode=True)
+        warrant = Warrant.issue(keypair, capabilities={"ping": {}})
+
+        client = _make_client()
+        client.inject_warrant = False
+
+        fake_mcp_tool = MagicMock()
+        fake_mcp_tool.name = "ping"
+        fake_mcp_tool.description = "Ping"
+        fake_mcp_tool.inputSchema = None
+
+        protected = client.create_protected_tool(fake_mcp_tool)
+
+        with warrant_scope(warrant), key_scope(keypair):
+            await protected(msg="hello")
+
+        forwarded = client.session.call_tool.call_args[0][1]
+        assert forwarded == {"msg": "hello"}
+
+    @pytest.mark.asyncio
+    async def test_populated_properties_still_strips(self):
+        """Tool with declared properties still strips unknown keys."""
+        from tenuo import SigningKey, configure
+        from tenuo.decorators import key_scope, warrant_scope
+        from tenuo_core import Warrant
+
+        keypair = SigningKey.generate()
+        configure(issuer_key=keypair, dev_mode=True)
+        warrant = Warrant.issue(keypair, capabilities={"read_file": {}})
+
+        client = _make_client()
+        client.inject_warrant = False
+
+        fake_mcp_tool = MagicMock()
+        fake_mcp_tool.name = "read_file"
+        fake_mcp_tool.description = "Read"
+        fake_mcp_tool.inputSchema = {
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        }
+
+        protected = client.create_protected_tool(fake_mcp_tool)
+
+        with warrant_scope(warrant), key_scope(keypair):
+            await protected(path="/data/f.txt", injected_evil="pwn")
+
+        forwarded = client.session.call_tool.call_args[0][1]
+        assert forwarded == {"path": "/data/f.txt"}
+        assert "injected_evil" not in forwarded
 
 
 # ---------------------------------------------------------------------------

@@ -89,7 +89,7 @@ from tenuo._version_compat import check_langgraph_compat  # noqa: E402
 from ._enforcement import enforce_tool_call, filter_tools_by_warrant
 from .bound_warrant import BoundWarrant
 from .config import resolve_trusted_roots
-from .exceptions import ConfigurationError
+from .exceptions import ApprovalGateTriggered, ConfigurationError
 from .keys import KeyRegistry, load_signing_key_from_env
 
 check_langgraph_compat()
@@ -263,7 +263,6 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         require_constraints: bool = False,
         debug: bool = False,
         trusted_roots: Optional[List[Any]] = None,
-        approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
         control_plane: Optional[Any] = None,
@@ -280,8 +279,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 Warrant issuers are verified against these roots via
                 Authorizer.authorize_one() — closes the self-signed trust gap.
                 Always supply in production. Emits SecurityWarning when omitted.
-            approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
-            approval_handler: Handler invoked when approval policy triggers
+            approval_handler: Handler for warrant approval gates (e.g. ``cli_prompt``)
         """
         if not MIDDLEWARE_AVAILABLE:
             raise ImportError(
@@ -294,9 +292,11 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         self._require_constraints = require_constraints
         self._debug = debug
         self._trusted_roots = trusted_roots
-        self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
+        if control_plane is None:
+            from .control_plane import get_or_create
+            control_plane = get_or_create()
         self._control_plane = control_plane
 
     def _get_bound_warrant_from_request(
@@ -418,7 +418,6 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 bound_warrant=bw,
                 require_constraints=self._require_constraints,
                 trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
             )
@@ -426,7 +425,8 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             if self._control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
                 self._control_plane.emit_for_enforcement(
-                    result, latency_us=latency_us, request_id=request_id,
+                    result, chain_result=result.chain_result,
+                    latency_us=latency_us, request_id=request_id,
                     warrant_stack_override=_warrant_stack_from_bound(bw),
                 )
 
@@ -448,6 +448,22 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
             return handler(request)
 
+        except ApprovalGateTriggered as gate:
+            if self._control_plane:
+                from ._enforcement import EnforcementResult
+                gate_result = EnforcementResult(
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason=str(gate),
+                    error_type="approval_required",
+                )
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                self._control_plane.emit_for_enforcement(
+                    gate_result, latency_us=latency_us, request_id=request_id,
+                    warrant_stack_override=_warrant_stack_from_bound(bw),
+                )
+            raise
         except ConfigurationError as e:
             logger.warning(f"[{request_id}] Configuration error: {e}")
             error_msg = (
@@ -497,7 +513,6 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 bound_warrant=bw,
                 require_constraints=self._require_constraints,
                 trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                approval_policy=self._approval_policy,
                 approval_handler=self._approval_handler,
                 approvals=self._approvals,
             )
@@ -505,7 +520,8 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             if self._control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
                 self._control_plane.emit_for_enforcement(
-                    result, latency_us=latency_us, request_id=request_id,
+                    result, chain_result=result.chain_result,
+                    latency_us=latency_us, request_id=request_id,
                     warrant_stack_override=_warrant_stack_from_bound(bw),
                 )
 
@@ -527,6 +543,22 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
             return await handler(request)
 
+        except ApprovalGateTriggered as gate:
+            if self._control_plane:
+                from ._enforcement import EnforcementResult
+                gate_result = EnforcementResult(
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason=str(gate),
+                    error_type="approval_required",
+                )
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                self._control_plane.emit_for_enforcement(
+                    gate_result, latency_us=latency_us, request_id=request_id,
+                    warrant_stack_override=_warrant_stack_from_bound(bw),
+                )
+            raise
         except ConfigurationError as e:
             logger.warning(f"[{request_id}] Configuration error: {e}")
             error_msg = (
@@ -842,7 +874,6 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         *,
         require_constraints: bool = False,
         trusted_roots: Optional[List[Any]] = None,
-        approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
         control_plane: Optional[Any] = None,
@@ -858,7 +889,6 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         # Capture auth config in closure so the wrappers are self-contained.
         _require_constraints = require_constraints
         _trusted_roots = trusted_roots
-        _approval_policy = approval_policy
         _approval_handler = approval_handler
         _approvals = approvals
         _control_plane = control_plane
@@ -897,7 +927,6 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 bound_warrant=bw,
                 require_constraints=_require_constraints,
                 trusted_roots=_trusted_roots,
-                approval_policy=_approval_policy,
                 approval_handler=_approval_handler,
                 approvals=_approvals,
             )
@@ -905,7 +934,8 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             if _control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
                 _control_plane.emit_for_enforcement(
-                    result, latency_us=latency_us, request_id=request_id,
+                    result, chain_result=result.chain_result,
+                    latency_us=latency_us, request_id=request_id,
                     warrant_stack_override=_warrant_stack_from_bound(bw),
                 )
 
@@ -946,7 +976,6 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 bound_warrant=bw,
                 require_constraints=_require_constraints,
                 trusted_roots=_trusted_roots,
-                approval_policy=_approval_policy,
                 approval_handler=_approval_handler,
                 approvals=_approvals,
             )
@@ -954,7 +983,8 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             if _control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
                 _control_plane.emit_for_enforcement(
-                    result, latency_us=latency_us, request_id=request_id,
+                    result, chain_result=result.chain_result,
+                    latency_us=latency_us, request_id=request_id,
                     warrant_stack_override=_warrant_stack_from_bound(bw),
                 )
 
@@ -985,9 +1015,11 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             ) from exc
         # Store for test introspection / approval param checks
         self._require_constraints = require_constraints
-        self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
+        if control_plane is None:
+            from .control_plane import get_or_create
+            control_plane = get_or_create()
         self._control_plane = control_plane
         self._key_id = key_id
 

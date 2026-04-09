@@ -52,6 +52,28 @@ def get_client() -> Optional["ControlPlaneClient"]:
     return _global_client
 
 
+def get_or_create() -> Optional["ControlPlaneClient"]:
+    """Return the singleton client, auto-creating from env vars if needed.
+
+    Resolution order:
+
+    1. Singleton from a previous ``connect()`` call.
+    2. New client from ``TENUO_CONNECT_TOKEN`` / ``TENUO_CONTROL_PLANE_URL`` +
+       ``TENUO_API_KEY`` + ``TENUO_AUTHORIZER_NAME`` env vars (via ``from_env``).
+
+    Returns ``None`` when no credentials are available. Adapters use this as
+    the fallback when ``control_plane=None`` so operators only need env vars
+    (or a single ``connect()`` call) to enable telemetry everywhere.
+    """
+    global _global_client
+    if _global_client is not None:
+        return _global_client
+    client = ControlPlaneClient.from_env()
+    if client is not None:
+        _global_client = client
+    return client
+
+
 class ControlPlaneClient:
     """
     Thin Python wrapper around tenuo_core.ControlPlaneClient.
@@ -98,10 +120,16 @@ class ControlPlaneClient:
 
         for mod_name, meta_key in [
             ("langgraph", "framework_langgraph"),
+            ("langchain", "framework_langchain"),
             ("temporalio", "framework_temporal"),
             ("mcp", "framework_mcp"),
+            ("fastmcp", "framework_fastmcp"),
             ("google.adk", "framework_adk"),
             ("crewai", "framework_crewai"),
+            ("openai", "framework_openai"),
+            ("autogen", "framework_autogen"),
+            ("fastapi", "framework_fastapi"),
+            ("starlette", "framework_starlette"),
         ]:
             try:
                 mod = __import__(mod_name)
@@ -149,23 +177,44 @@ class ControlPlaneClient:
         Emit an authorization event from any integration's result object.
         Works with EnforcementResult (LangGraph), MCPVerificationResult (MCP),
         and TemporalAuditEvent (Temporal).
+
+        When ``chain_result`` is a Rust ``ChainVerificationResult`` and the
+        call was authorized, uses ``emit_authorized`` so all trust-critical
+        fields (approvals, warrant stack, chain depth, root issuer) are
+        extracted in Rust — Python stays out of the signing trust path.
         """
         request_id = request_id or str(uuid.uuid4())
-        warrant_id = getattr(result, "warrant_id", None) or ""
-        tool = getattr(result, "tool", "") or ""
         allowed = getattr(result, "allowed", False)
+        tool = getattr(result, "tool", "") or ""
 
-        chain_depth = 1
-        root_principal = None
-        warrant_stack = warrant_stack_override
-
+        # Resolve arguments — EnforcementResult uses .arguments,
+        # MCPVerificationResult uses .clean_arguments / .constraints.
         arguments_dict = getattr(result, "arguments", None)
+        if arguments_dict is None:
+            arguments_dict = getattr(result, "clean_arguments", None)
         arguments_json = None
         if arguments_dict is not None:
             try:
                 arguments_json = json.dumps(arguments_dict)
             except Exception:
                 arguments_json = str(arguments_dict)
+
+        # Trusted allow path: let Rust extract all fields from the
+        # ChainVerificationResult it produced.  Python only supplies
+        # tool name, serialized args, and timing metadata.
+        if allowed and chain_result is not None:
+            self._inner.emit_authorized(
+                chain_result, tool, arguments_json,
+                latency_us, request_id,
+            )
+            return
+
+        # Fallback path: no chain_result (e.g., require_warrant=False allows,
+        # all denials).  Python supplies the fields from the result object.
+        warrant_id = getattr(result, "warrant_id", None) or ""
+        chain_depth = 1
+        root_principal = None
+        warrant_stack = warrant_stack_override
 
         if chain_result is not None:
             chain_depth = chain_result.leaf_depth
@@ -207,4 +256,4 @@ def _auto_shutdown():
 
 atexit.register(_auto_shutdown)
 
-__all__ = ["connect", "get_client", "ControlPlaneClient"]
+__all__ = ["connect", "get_client", "get_or_create", "ControlPlaneClient"]

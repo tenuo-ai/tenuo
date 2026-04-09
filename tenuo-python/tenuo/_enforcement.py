@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, cast
 
 if TYPE_CHECKING:
-    from .approval import ApprovalHandler, ApprovalPolicy
+    from .approval import ApprovalHandler
 
 from .bound_warrant import BoundWarrant
 from .exceptions import (
@@ -81,6 +81,11 @@ class EnforcementResult:
         constraint_violated: Which constraint failed (if applicable)
         error_type: Structured error category (e.g. "expired", "tool_not_allowed")
         warrant_id: ID of the warrant for audit correlation
+        chain_result: Rust ``ChainVerificationResult`` from ``authorize_one`` /
+            ``check_chain``.  Present only on successful authorization.
+            Pass to ``emit_for_enforcement(chain_result=...)`` so receipts
+            are signed with Rust-attested fields (approvals, warrant stack,
+            root issuer) instead of Python-supplied metadata.
     """
 
     allowed: bool
@@ -90,6 +95,7 @@ class EnforcementResult:
     constraint_violated: Optional[str] = None
     error_type: Optional[str] = None
     warrant_id: Optional[str] = None
+    chain_result: Optional[Any] = None
 
     def raise_if_denied(self) -> None:
         """
@@ -323,8 +329,7 @@ def _collect_approvals_for_approval_gate(
 ) -> List[Any]:
     """Collect and verify approvals for an approval-gate-triggered tool call.
 
-    Unlike ``_check_approval()`` (which applies policy rules and returns None on
-    success), this function always creates an ApprovalRequest — the gate always fires —
+    This function always creates an ApprovalRequest — the gate always fires —
     and **returns** the verified ``SignedApproval`` objects so the caller can forward
     them to ``validate(approvals=...)`` to satisfy the Rust approval gate check atomically
     with PoP verification.
@@ -347,14 +352,14 @@ def _collect_approvals_for_approval_gate(
         ApprovalVerificationError,
     )
 
-    warrant_id = getattr(bound_warrant, "id", None) or ""
     holder_key = getattr(bound_warrant, "holder_key", None)
+    warrant_id = getattr(bound_warrant, "id", None) or ""
     request_hash = _compute_hash(warrant_id, tool_name, tool_args, holder_key)
-    request = ApprovalRequest(
-        tool=tool_name,
-        arguments=tool_args,
-        warrant_id=warrant_id,
-        request_hash=request_hash,
+    request = ApprovalRequest.for_warrant_gate(
+        tool_name,
+        tool_args,
+        bound_warrant.warrant,
+        request_hash,
     )
 
     collected: List[Any] = []
@@ -393,141 +398,6 @@ def _collect_approvals_for_approval_gate(
     return collected
 
 
-def _check_approval(
-    tool_name: str,
-    tool_args: Dict[str, Any],
-    bound_warrant: BoundWarrant,
-    policy: ApprovalPolicy,
-    handler: Optional[ApprovalHandler],
-    approvals: Optional[List[Any]] = None,
-) -> Optional[EnforcementResult]:
-    """Run the approval policy check, obtain approvals, verify via Rust core.
-
-    Resolution order when a rule matches:
-      1. ``approvals`` — caller-provided SignedApprovals (spec §6 path)
-      2. ``handler``   — inline callback (cli_prompt / auto_approve)
-      3. raise ApprovalRequired
-
-    ALL cryptographic verification is delegated to the Rust core via
-    ``tenuo_core.verify_approvals()``:
-      - Signature validity (verify-before-deserialize)
-      - Approver membership in trusted set
-      - Request hash binding
-      - Expiration with 30-second clock tolerance
-      - Duplicate detection (one vote per approver key)
-      - DoS protection (max 2x trusted_approvers count)
-      - m-of-n threshold (policy.threshold, default 1)
-
-    Error diagnostics from the Rust core:
-      - 1-of-1: specific reason (e.g. "approver not in trusted set")
-      - m-of-n: rejection summary (e.g. "1 expired, 1 untrusted")
-
-    Returns None to proceed (no rule matched or approval verified).
-    Raises ApprovalRequired if no approvals and no handler.
-    Raises ApprovalDenied if handler denies.
-    Raises ApprovalVerificationError if Rust core rejects the approvals.
-    """
-    from tenuo_core import (
-        py_compute_request_hash as _compute_hash,
-    )
-    from tenuo_core import (
-        verify_approvals as _verify_approvals,
-    )
-
-    from .approval import (
-        ApprovalRequired,
-        ApprovalVerificationError,
-    )
-
-    warrant_id = getattr(bound_warrant, "id", None) or ""
-    holder_key = getattr(bound_warrant, "holder_key", None)
-
-    request_hash = _compute_hash(warrant_id, tool_name, tool_args, holder_key)
-
-    request = policy.check(tool_name, tool_args, warrant_id, request_hash)
-    if request is None:
-        return None
-
-    # --- Collect SignedApprovals ---
-
-    collected: List[Any] = []
-
-    # Path 1: caller-provided approvals (spec §6 — the out-of-band / async path)
-    if approvals:
-        collected = list(approvals)
-
-    # Path 2: handler callback (local / inline path)
-    elif handler is not None:
-        result = handler(request)
-
-        if inspect.isawaitable(result):
-            coro = cast("Any", result)
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop and loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    result = pool.submit(asyncio.run, coro).result()
-            else:
-                result = asyncio.run(coro)
-
-        # Handler may return a single SignedApproval or a list (for m-of-n)
-        if isinstance(result, list):
-            collected = result
-        else:
-            collected = [result]
-
-    # Path 3: nothing available
-    else:
-        raise ApprovalRequired(request)
-
-    if not collected:
-        raise ApprovalRequired(request)
-
-    # --- Cryptographic verification (ALL done in Rust core) ---
-
-    trusted = policy.trusted_approvers
-    if trusted is None:
-        # No trusted set specified — extract unique keys from the approvals.
-        # This is the permissive mode (any valid signature accepted).
-        seen_keys: set[bytes] = set()
-        trusted = []
-        for a in collected:
-            key_bytes = bytes(a.approver_key.to_bytes())
-            if key_bytes not in seen_keys:
-                seen_keys.add(key_bytes)
-                trusted.append(a.approver_key)
-
-    threshold = policy.threshold
-
-    try:
-        verified_payloads = _verify_approvals(
-            request_hash,
-            collected,
-            trusted,
-            threshold,
-        )
-    except Exception as e:
-        raise ApprovalVerificationError(
-            request, reason=str(e),
-        )
-
-    first_payload = verified_payloads[0] if verified_payloads else None
-    external_id = getattr(first_payload, "external_id", "unknown") if first_payload else "unknown"
-
-    logger.info(
-        f"Approval verified for '{tool_name}' "
-        f"({len(verified_payloads)}/{threshold} approvals, "
-        f"approver={external_id}, "
-        f"hash={request_hash.hex()[:16]}...)",
-        extra={"tool": tool_name, "warrant_id": warrant_id},
-    )
-    return None
-
-
 # =============================================================================
 # Main Enforcement Function
 # =============================================================================
@@ -551,7 +421,6 @@ def enforce_tool_call(
     authorizer: Optional[Any] = None,
     warrant_chain: Optional[List[Any]] = None,
     trusted_roots: Optional[List[Any]] = None,
-    approval_policy: Optional[ApprovalPolicy] = None,
     approval_handler: Optional[ApprovalHandler] = None,
     approvals: Optional[List[Any]] = None,
     nonce_store: Optional[Any] = None,
@@ -599,23 +468,18 @@ def enforce_tool_call(
             its own signature key.
             When NOT provided a SecurityWarning is emitted — callers should always
             supply trusted_roots in production deployments.
-        approval_policy: Optional ApprovalPolicy to check after warrant authorization.
-            If a rule matches, the approval_handler is invoked.
-        approval_handler: Callable that handles approval requests and returns a
-            SignedApproval. Used for inline/local approval (cli_prompt, auto_approve).
-        approvals: List of caller-provided SignedApproval objects (spec §6).
-            When a policy rule matches, these are checked first — the first
-            approval whose request_hash matches is verified. This is the
-            primary path for out-of-band/async workflows where the approval was
-            obtained externally (e.g. approval board, Slack bot, control plane API).
-            Takes precedence over approval_handler.
+        approval_handler: When a warrant **approval gate** fires, invoked to obtain
+            ``SignedApproval`` objects (e.g. ``cli_prompt``, ``auto_approve``), unless
+            ``approvals`` are provided.
+        approvals: Pre-obtained ``SignedApproval`` objects for gate-satisfied calls
+            (out-of-band / control plane). Checked before ``approval_handler``.
 
     Returns:
         EnforcementResult with allowed status and denial details.
 
     Raises:
         ConfigurationError: If bound_warrant is not a BoundWarrant instance.
-        ApprovalRequired: If approval_policy triggers but no approvals or handler.
+        ApprovalRequired: If an approval gate requires approval but none are provided.
         ApprovalDenied: If the handler denies the request.
         ApprovalVerificationError: If the SignedApproval fails cryptographic
             verification (invalid signature, hash mismatch, untrusted key, expired).
@@ -806,7 +670,7 @@ def enforce_tool_call(
                 _key = bound_warrant._key
                 _pop = bytes(_warrant.sign(_key, tool_name, tool_args, int(_time.time())))
                 _auth = _Authorizer(trusted_roots=trusted_roots)
-                _auth.authorize_one(
+                _chain_result = _auth.authorize_one(
                     _warrant, tool_name, tool_args,
                     signature=_pop,
                     approvals=_gate_approvals or [],
@@ -864,7 +728,7 @@ def enforce_tool_call(
                 # Build the full chain: [root, ..., parents, leaf]
                 # warrant_chain contains parent warrants in root-first order.
                 full_chain = list(warrant_chain or []) + [bound_warrant.warrant]
-                authorizer.check_chain(
+                _chain_result = authorizer.check_chain(
                     full_chain,
                     tool_name,
                     tool_args,
@@ -897,33 +761,12 @@ def enforce_tool_call(
             }
         )
 
-        # Approval gate was satisfied above — skip approval_policy (one flow per call).
-        if _gate_approvals is not None:
-            return EnforcementResult(
-                allowed=True,
-                tool=tool_name,
-                arguments=tool_args,
-                warrant_id=warrant_id,
-            )
-
-        # =================================================================
-        # APPROVAL POLICY CHECK (after warrant authorization)
-        # The warrant permits this call. The approval policy may still
-        # require a human to confirm before execution proceeds.
-        # =================================================================
-        if approval_policy is not None:
-            approval_result = _check_approval(
-                tool_name, tool_args, bound_warrant,
-                approval_policy, approval_handler, approvals,
-            )
-            if approval_result is not None:
-                return approval_result
-
         return EnforcementResult(
             allowed=True,
             tool=tool_name,
             arguments=tool_args,
             warrant_id=warrant_id,
+            chain_result=_chain_result,
         )
 
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:

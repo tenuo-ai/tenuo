@@ -98,7 +98,6 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         schemas: Optional[Dict[str, ToolSchema]] = None,
         bound_warrant: Optional[Any] = None,
         trusted_roots: Optional[list] = None,
-        approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[Any] = None,
         **kwargs: Any,
@@ -115,8 +114,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                 Warrant issuers are verified against these roots via
                 Authorizer.authorize_one() — closes the self-signed trust gap.
                 Always supply in production. Emits SecurityWarning when omitted.
-            approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
-            approval_handler: Handler invoked when approval policy triggers
+            approval_handler: Handler for warrant approval gates (e.g. ``cli_prompt``)
         """
         # Get tool name and description
         tool_name = _get_tool_name(wrapped)
@@ -131,9 +129,11 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         object.__setattr__(self, "_schemas", schemas or TOOL_SCHEMAS)
         object.__setattr__(self, "_bound_warrant", bound_warrant)
         object.__setattr__(self, "_trusted_roots", trusted_roots)
-        object.__setattr__(self, "_approval_policy", approval_policy)
         object.__setattr__(self, "_approval_handler", approval_handler)
         object.__setattr__(self, "_approvals", approvals)
+
+        from .control_plane import get_or_create
+        object.__setattr__(self, "_control_plane", get_or_create())
 
         # Copy args_schema if present
         if hasattr(wrapped, "args_schema"):
@@ -196,22 +196,24 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
 
             if is_bound:
                 # BoundWarrant — use shared enforcement (includes approval support)
-                approval_policy = getattr(self, "_approval_policy", None)
                 approval_handler = getattr(self, "_approval_handler", None)
                 result = enforce_tool_call(
                     tool_name=self.name,
                     tool_args=constraint_args,
                     bound_warrant=warrant,
                     trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
-                    approval_policy=approval_policy,
                     approval_handler=approval_handler,
                     approvals=getattr(self, "_approvals", None),
                 )
+                _cp = getattr(self, "_control_plane", None)
+                if _cp is not None:
+                    try:
+                        _cp.emit_for_enforcement(result, chain_result=result.chain_result)
+                    except Exception:
+                        pass
                 if not result.allowed:
                     raise ToolNotAuthorized(tool=self.name)
             else:
-                # Plain Warrant — bind to key then use enforce_tool_call with
-                # trusted_roots for proper issuer verification (not self-signed).
                 signing_key = key_scope()
                 if signing_key:
                     bw = warrant.bind(signing_key)
@@ -220,10 +222,15 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                         tool_args=constraint_args,
                         bound_warrant=bw,
                         trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
-                        approval_policy=getattr(self, "_approval_policy", None),
                         approval_handler=getattr(self, "_approval_handler", None),
                         approvals=getattr(self, "_approvals", None),
                     )
+                    _cp = getattr(self, "_control_plane", None)
+                    if _cp is not None:
+                        try:
+                            _cp.emit_for_enforcement(result, chain_result=result.chain_result)
+                        except Exception:
+                            pass
                     if not result.allowed:
                         raise ToolNotAuthorized(tool=self.name)
                 else:
@@ -417,7 +424,6 @@ def guard(
     bound: Optional[Any] = None,
     *,
     strict: bool = False,
-    approval_policy: Optional[Any] = None,
     approval_handler: Optional[Any] = None,
     approvals: Optional[Any] = None,
 ) -> List[Any]:
@@ -431,8 +437,7 @@ def guard(
         bound: Optional BoundWarrant for explicit auth.
                If None, uses context.
         strict: Require constraints for critical tools
-        approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
-        approval_handler: Handler invoked when approval policy triggers
+        approval_handler: Handler for warrant approval gates
 
     Returns:
         List of guarded TenuoTool wrappers
@@ -453,7 +458,7 @@ def guard(
     return [
         TenuoTool(
             t, strict=strict, bound_warrant=bound,
-            approval_policy=approval_policy, approval_handler=approval_handler,
+            approval_handler=approval_handler,
             approvals=approvals,
         )
         for t in tools

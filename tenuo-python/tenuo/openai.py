@@ -475,7 +475,6 @@ def verify_tool_call(
     warrant: Optional[Warrant] = None,
     signing_key: Optional[SigningKey] = None,
     trusted_roots: Optional[list] = None,
-    approval_policy: Optional[Any] = None,
     approval_handler: Optional[Any] = None,
     approvals: Optional[list] = None,
 ) -> None:
@@ -531,14 +530,12 @@ def verify_tool_call(
             tool_args=arguments,
             bound_warrant=bound_warrant,
             trusted_roots=resolve_trusted_roots(trusted_roots),
-            approval_policy=approval_policy,
             approval_handler=approval_handler,
             approvals=approvals,
         )
 
         if not result.allowed:
             logger.debug(f"Tier 2: Authorization DENIED for '{tool_name}'")
-            # Map error types to OpenAI-specific exceptions
             if result.error_type == "expired":
                 raise WarrantDenied(tool_name, "warrant expired")
             else:
@@ -693,7 +690,6 @@ class GuardedCompletions:
         audit_callback: Optional[AuditCallback] = None,
         session_id: Optional[str] = None,
         constraint_hash: Optional[str] = None,
-        approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         trusted_roots: Optional[list] = None,
@@ -709,12 +705,14 @@ class GuardedCompletions:
         self._audit_callback = audit_callback
         self._session_id = session_id or str(uuid.uuid4())[:8]
         self._constraint_hash = constraint_hash
-        self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
         self._trusted_roots = trusted_roots
         # Freeze warrant_id at init time for consistent audit trail
         self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
+
+        from .control_plane import get_or_create
+        self._control_plane = get_or_create()
 
     def create(self, *args, **kwargs) -> Any:
         """Wrapped create method with guardrails."""
@@ -785,16 +783,15 @@ class GuardedCompletions:
                 self._warrant,
                 self._signing_key,
                 self._trusted_roots,
-                self._approval_policy,
                 self._approval_handler,
                 self._approvals,
             )
-            # Emit audit event for allowed call
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
+            self._emit_cp(tool_name, arguments, allowed=True)
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
-            # Emit audit event for denied call
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
+            self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(e))
             raise
 
     def _emit_audit(
@@ -826,6 +823,28 @@ class GuardedCompletions:
         except Exception as e:
             # Don't let audit failures break authorization
             logger.warning(f"Audit callback failed: {e}")
+
+    def _emit_cp(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        *,
+        allowed: bool,
+        denial_reason: str = "",
+    ) -> None:
+        """Emit to control plane if connected."""
+        if self._control_plane is None:
+            return
+        try:
+            from ._enforcement import EnforcementResult
+            res = EnforcementResult(
+                allowed=allowed, tool=tool_name, arguments=arguments,
+                warrant_id=self._warrant_id or "",
+                denial_reason=denial_reason if not allowed else "",
+            )
+            self._control_plane.emit_for_enforcement(res)
+        except Exception:
+            pass
 
     def _guard_stream(self, stream: Iterator) -> Iterator:
         """Buffer-verify-emit pattern for streaming responses.
@@ -885,7 +904,6 @@ class GuardedCompletions:
                     self._warrant,
                     self._signing_key,
                     self._trusted_roots,
-                    self._approval_policy,
                     self._approval_handler,
                     self._approvals,
                 )
@@ -1056,7 +1074,6 @@ class GuardedCompletions:
                     self._warrant,
                     self._signing_key,
                     self._trusted_roots,
-                    self._approval_policy,
                     self._approval_handler,
                     self._approvals,
                 )
@@ -1104,7 +1121,6 @@ class GuardedResponses:
         audit_callback: Optional[AuditCallback] = None,
         session_id: Optional[str] = None,
         constraint_hash: Optional[str] = None,
-        approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         trusted_roots: Optional[list] = None,
@@ -1119,12 +1135,13 @@ class GuardedResponses:
         self._audit_callback = audit_callback
         self._session_id = session_id or str(uuid.uuid4())[:8]
         self._constraint_hash = constraint_hash
-        self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
         self._trusted_roots = trusted_roots
-        # Freeze warrant_id at init time for consistent audit trail
         self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
+
+        from .control_plane import get_or_create
+        self._control_plane = get_or_create()
 
     def create(self, *args, **kwargs) -> Any:
         """Wrapped create method with guardrails.
@@ -1187,15 +1204,38 @@ class GuardedResponses:
                 self._warrant,
                 self._signing_key,
                 self._trusted_roots,
-                self._approval_policy,
                 self._approval_handler,
                 self._approvals,
             )
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
+            self._emit_cp(tool_name, arguments, allowed=True)
         except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
+            self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(e))
             raise
+
+    def _emit_cp(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        *,
+        allowed: bool,
+        denial_reason: str = "",
+    ) -> None:
+        """Emit to control plane if connected."""
+        if self._control_plane is None:
+            return
+        try:
+            from ._enforcement import EnforcementResult
+            res = EnforcementResult(
+                allowed=allowed, tool=tool_name, arguments=arguments,
+                warrant_id=self._warrant_id or "",
+                denial_reason=denial_reason if not allowed else "",
+            )
+            self._control_plane.emit_for_enforcement(res)
+        except Exception:
+            pass
 
     def _emit_audit(
         self,
@@ -1260,7 +1300,6 @@ class GuardedClient:
         warrant: Optional[Warrant] = None,
         signing_key: Optional[SigningKey] = None,
         audit_callback: Optional[AuditCallback] = None,
-        approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         trusted_roots: Optional[list] = None,
@@ -1274,7 +1313,6 @@ class GuardedClient:
         self._warrant = warrant
         self._signing_key = signing_key
         self._audit_callback = audit_callback
-        self._approval_policy = approval_policy
         self._approval_handler = approval_handler
         self._approvals = approvals
         self._trusted_roots = trusted_roots
@@ -1298,9 +1336,8 @@ class GuardedClient:
                     audit_callback,
                     self.session_id,
                     self.constraint_hash,
-                    approval_policy,
                     approval_handler,
-                    None,
+                    approvals,
                     trusted_roots,
                 )
             )
@@ -1318,8 +1355,9 @@ class GuardedClient:
                 audit_callback,
                 self.session_id,
                 self.constraint_hash,
-                approval_policy,
                 approval_handler,
+                approvals,
+                trusted_roots,
             )
 
         # Pass through other attributes
@@ -1463,7 +1501,6 @@ class GuardBuilder:
         self._audit_callback: Optional[AuditCallback] = None
         self._warrant: Optional[Warrant] = None
         self._signing_key: Optional[SigningKey] = None
-        self._approval_policy: Optional[Any] = None
         self._approval_handler: Optional[Any] = None
         self._approvals: Optional[list] = None
         # Tool schema validation
@@ -1624,28 +1661,6 @@ class GuardBuilder:
         self._signing_key = signing_key
         return self
 
-    def approval_policy(self, policy: Any) -> "GuardBuilder":
-        """Set an approval policy for human-in-the-loop authorization.
-
-        When a tool call matches a policy rule, the approval handler is
-        invoked before execution proceeds. Requires Tier 2 (warrant).
-
-        Args:
-            policy: ApprovalPolicy with one or more rules.
-
-        Returns:
-            self for chaining
-
-        Example:
-            from tenuo.approval import ApprovalPolicy, require_approval
-
-            builder.approval_policy(ApprovalPolicy(
-                require_approval("send_email", when=lambda a: not a["to"].endswith("@company.com")),
-            ))
-        """
-        self._approval_policy = policy
-        return self
-
     def on_approval(self, handler: Any) -> "GuardBuilder":
         """Set the handler invoked when a tool call requires approval.
 
@@ -1665,10 +1680,10 @@ class GuardBuilder:
         return self
 
     def with_approvals(self, approvals: list) -> "GuardBuilder":
-        """Set pre-collected approvals for human-in-the-loop.
+        """Set pre-collected signed approvals for warrant approval gates.
 
-        When using an ApprovalPolicy, approvals can be gathered ahead of time
-        and passed here. These will be passed through to verify_tool_call.
+        When the warrant requires approval for a tool, these objects are
+        checked before invoking ``on_approval``.
 
         Args:
             approvals: List of pre-collected approval objects
@@ -1860,7 +1875,6 @@ class GuardBuilder:
             warrant=self._warrant,
             signing_key=self._signing_key,
             audit_callback=self._audit_callback,
-            approval_policy=self._approval_policy,
             approval_handler=self._approval_handler,
             approvals=self._approvals,
         )
@@ -2086,7 +2100,6 @@ class TenuoToolGuardrail:
         trusted_roots: Optional[list] = None,
         tripwire: bool = True,
         audit_callback: Optional[AuditCallback] = None,
-        approval_policy: Optional[Any] = None,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
     ):
@@ -2101,8 +2114,8 @@ class TenuoToolGuardrail:
             trusted_roots: Trusted issuer public keys (required for Tier 2 warrant path)
             tripwire: If True, halt agent on violation. If False, log and continue.
             audit_callback: Optional callback for audit events
-            approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
-            approval_handler: Handler invoked when approval policy triggers
+            approval_handler: Handler invoked when the warrant requires human approval
+            approvals: Pre-collected signed approvals for warrant approval gates
         """
         self.allow_tools = allow_tools
         self.deny_tools = deny_tools
@@ -2112,7 +2125,6 @@ class TenuoToolGuardrail:
         self.trusted_roots = trusted_roots
         self.tripwire = tripwire
         self.audit_callback = audit_callback
-        self.approval_policy = approval_policy
         self.approval_handler = approval_handler
         self.approvals = approvals
         self.name = "tenuo_tool_guardrail"
@@ -2121,6 +2133,9 @@ class TenuoToolGuardrail:
         self._session_id = str(uuid.uuid4())[:8]
         self._constraint_hash = _compute_constraint_hash(allow_tools, deny_tools, constraints)
         self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
+
+        from .control_plane import get_or_create
+        self._control_plane = get_or_create()
 
         # Validate configuration
         if warrant is not None and signing_key is None:
@@ -2166,18 +2181,17 @@ class TenuoToolGuardrail:
                     self.warrant,
                     self.signing_key,
                     self.trusted_roots,
-                    self.approval_policy,
                     self.approval_handler,
                     self.approvals,
                 )
-                # Emit audit event for allowed call
                 self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
+                self._emit_cp(tool_name, arguments, allowed=True)
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 violations.append(f"{tool_name}: {e}")
                 logger.warning(f"Tenuo guardrail blocked: {tool_name} - {e}")
-                # Emit audit event for denied call
                 tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
                 self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
+                self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(e))
 
         if violations:
             result = GuardrailResult(
@@ -2221,6 +2235,28 @@ class TenuoToolGuardrail:
         except Exception as e:
             # Don't let audit failures break authorization
             logger.warning(f"Audit callback failed: {e}")
+
+    def _emit_cp(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        *,
+        allowed: bool,
+        denial_reason: str = "",
+    ) -> None:
+        """Emit to control plane if connected."""
+        if self._control_plane is None:
+            return
+        try:
+            from ._enforcement import EnforcementResult
+            res = EnforcementResult(
+                allowed=allowed, tool=tool_name, arguments=arguments,
+                warrant_id=self._warrant_id or "",
+                denial_reason=denial_reason if not allowed else "",
+            )
+            self._control_plane.emit_for_enforcement(res)
+        except Exception:
+            pass
 
     def _extract_tool_calls(self, input_data: Any) -> List[tuple]:
         """Extract tool calls from Agents SDK input.

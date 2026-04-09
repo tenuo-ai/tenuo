@@ -2,11 +2,11 @@
 use crate::connect_token::ConnectToken;
 #[cfg(feature = "python-server")]
 use crate::heartbeat::{
-    create_audit_channel, start_heartbeat_loop_with_audit_and_id, AuditEventSender,
+    create_audit_channel, start_heartbeat_loop_with_audit_and_id, ApprovalRecord, AuditEventSender,
     AuthorizationEvent, EnvironmentInfo, HeartbeatConfig,
 };
 #[cfg(feature = "python-server")]
-use crate::python::PySigningKey;
+use crate::python::{PyChainVerificationResult, PySigningKey};
 #[cfg(feature = "python-server")]
 use pyo3::exceptions::PyValueError;
 #[cfg(feature = "python-server")]
@@ -307,6 +307,11 @@ impl PyControlPlaneClient {
     }
 
     /// Emit an allow event to the control plane.
+    ///
+    /// For authorized calls with a `ChainVerificationResult`, prefer
+    /// [`emit_authorized`] — it extracts all trust-critical fields (approvals,
+    /// warrant stack, chain depth) from the Rust-side verification result so
+    /// Python cannot fabricate receipt data.
     #[allow(clippy::too_many_arguments)]
     fn emit_allow(
         &self,
@@ -342,7 +347,77 @@ impl PyControlPlaneClient {
         Ok(())
     }
 
+    /// Emit an allow event whose trust-critical fields are extracted entirely
+    /// from a Rust [`ChainVerificationResult`].
+    ///
+    /// This is the preferred path for authorized calls — Python only supplies
+    /// the tool name, serialized arguments, and timing metadata.  Warrant ID,
+    /// chain depth, root issuer, warrant stack, and verified approvals all come
+    /// from the Rust verification result, keeping Python out of the trust path
+    /// for signed receipts.
+    fn emit_authorized(
+        &self,
+        chain_result: &PyChainVerificationResult,
+        tool: String,
+        arguments: Option<String>,
+        latency_us: u64,
+        request_id: String,
+    ) -> PyResult<()> {
+        let auth_id = self
+            .authorizer_id_py
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .unwrap_or_else(|| "pending".to_string());
+
+        let cr = &chain_result.inner;
+
+        let warrant_id = cr
+            .verified_steps
+            .last()
+            .map(|s| s.warrant_id.clone())
+            .unwrap_or_default();
+
+        let root_principal = cr.root_issuer.map(hex::encode);
+
+        let approval_records: Option<Vec<ApprovalRecord>> = if cr.verified_approvals.is_empty() {
+            None
+        } else {
+            Some(
+                cr.verified_approvals
+                    .iter()
+                    .map(|va| ApprovalRecord {
+                        approver_key: hex::encode(va.approver_key),
+                        external_id: va.external_id.clone(),
+                        approved_at: va.approved_at,
+                        expires_at: va.expires_at,
+                        request_hash: hex::encode(va.request_hash),
+                        signed_approval_cbor_b64: va.signed_approval_cbor_b64.clone(),
+                    })
+                    .collect(),
+            )
+        };
+
+        let event = AuthorizationEvent::allow(
+            auth_id,
+            warrant_id,
+            tool,
+            cr.leaf_depth as u8,
+            root_principal,
+            cr.warrant_stack_b64.clone(),
+            latency_us,
+            request_id,
+            arguments,
+            approval_records,
+        );
+        let _ = self.sender.try_send(event);
+        Ok(())
+    }
+
     /// Emit a deny event to the control plane.
+    ///
+    /// Denial events carry no approval records — if a gate was triggered but
+    /// not satisfied, the denial reason captures that context.
     #[allow(clippy::too_many_arguments)]
     fn emit_deny(
         &self,
