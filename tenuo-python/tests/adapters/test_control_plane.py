@@ -375,16 +375,16 @@ class TestMCPVerifierControlPlane:
         assert mock_cp.total_events == 1
         assert len(mock_cp.deny_events) == 1
 
-    def test_no_emit_on_missing_warrant(self, authorizer, mock_cp):
-        """No event is emitted when the warrant is absent — no warrant_id to report."""
+    def test_emit_on_missing_warrant(self, authorizer, mock_cp):
+        """A deny event is emitted when the warrant is absent for audit completeness."""
         from tenuo.mcp.server import MCPVerifier
 
         verifier = MCPVerifier(authorizer=authorizer, control_plane=mock_cp)
         result = verifier.verify("read_file", {}, meta=None)
 
         assert not result.allowed
-        # Early return before emit site — no event recorded (warrant_id is unknown)
-        assert mock_cp.total_events == 0
+        assert mock_cp.total_events == 1
+        assert len(mock_cp.deny_events) == 1
 
     @needs_encode_warrant_stack
     def test_chain_result_attached_on_allow(self, authorizer, simple_warrant, agent_key, mock_cp):
