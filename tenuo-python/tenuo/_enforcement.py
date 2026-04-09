@@ -670,11 +670,19 @@ def enforce_tool_call(
                 _key = bound_warrant._key
                 _pop = bytes(_warrant.sign(_key, tool_name, tool_args, int(_time.time())))
                 _auth = _Authorizer(trusted_roots=trusted_roots)
-                _chain_result = _auth.authorize_one(
-                    _warrant, tool_name, tool_args,
-                    signature=_pop,
-                    approvals=_gate_approvals or [],
-                )
+                if warrant_chain:
+                    full_chain = list(warrant_chain) + [_warrant]
+                    _chain_result = _auth.check_chain(
+                        full_chain, tool_name, tool_args,
+                        signature=_pop,
+                        approvals=_gate_approvals or [],
+                    )
+                else:
+                    _chain_result = _auth.authorize_one(
+                        _warrant, tool_name, tool_args,
+                        signature=_pop,
+                        approvals=_gate_approvals or [],
+                    )
                 # ── Replay prevention ────────────────────────────────────────
                 # Resolve nonce_store: explicit param > module-level default.
                 # Ed25519 PoP is deterministic, so an exact replay of the same

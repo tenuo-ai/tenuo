@@ -100,6 +100,10 @@ from tenuo_core import (
 from tenuo_core import (
     evaluate_approval_gates,
 )
+from tenuo_core import (
+    decode_warrant_stack_base64,
+    encode_warrant_stack,
+)
 
 # Semantic alias: Any() = Wildcard() for zero-trust constraint sets
 # Use Any() to explicitly allow any value for a field while in closed-world mode
@@ -245,6 +249,9 @@ __all__ = [
     "ChainVerificationResult",
     "ChainStep",
     "VerifiedApproval",
+    # WarrantStack transport
+    "encode_warrant_stack",
+    "decode_warrant_stack_base64",
     # Approval cryptography
     "ApprovalPayload",
     "SignedApproval",

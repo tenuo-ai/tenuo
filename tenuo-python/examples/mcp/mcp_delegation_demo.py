@@ -23,8 +23,7 @@ import sys
 import time
 
 try:
-    from tenuo import Authorizer, SigningKey, Warrant
-    from tenuo_core import decode_warrant_stack_base64, encode_warrant_stack
+    from tenuo import Authorizer, SigningKey, Warrant, decode_warrant_stack_base64, encode_warrant_stack
     from tenuo.mcp import MCPVerifier
 except ImportError as e:
     print(f"Missing dependency: {e}", file=sys.stderr)

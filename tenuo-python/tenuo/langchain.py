@@ -40,7 +40,7 @@ from tenuo._version_compat import check_langchain_compat  # noqa: E402
 from ._enforcement import enforce_tool_call
 from .audit import log_authorization_success
 from .config import allow_passthrough, resolve_trusted_roots
-from .decorators import get_allowed_tools_context, key_scope, warrant_scope
+from .decorators import chain_scope, get_allowed_tools_context, key_scope, warrant_scope
 from .exceptions import (
     ConfigurationError,
     ConstraintViolation,
@@ -204,6 +204,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                     trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
                     approval_handler=approval_handler,
                     approvals=getattr(self, "_approvals", None),
+                    warrant_chain=chain_scope(),
                 )
                 _cp = getattr(self, "_control_plane", None)
                 if _cp is not None:
@@ -224,6 +225,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                         trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
                         approval_handler=getattr(self, "_approval_handler", None),
                         approvals=getattr(self, "_approvals", None),
+                        warrant_chain=chain_scope(),
                     )
                     _cp = getattr(self, "_control_plane", None)
                     if _cp is not None:
