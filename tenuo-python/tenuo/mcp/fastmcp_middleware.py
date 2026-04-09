@@ -90,23 +90,19 @@ def _strip_tenuo_meta(
     meta = params.meta
     if meta is None:
         if resolved_meta and "tenuo" in resolved_meta:
-            trimmed = {k: v for k, v in resolved_meta.items() if k != "tenuo"}
-            new_meta: RequestParams.Meta | None
-            if trimmed:
-                new_meta = RequestParams.Meta.model_validate(trimmed)
-            else:
-                new_meta = None
+            ctx_trimmed = {k: v for k, v in resolved_meta.items() if k != "tenuo"}
+            ctx_meta = (
+                RequestParams.Meta.model_validate(ctx_trimmed) if ctx_trimmed else None
+            )
             return params.model_copy(
-                update={"arguments": clean_arguments, "meta": new_meta}
+                update={"arguments": clean_arguments, "meta": ctx_meta}
             )
         return params.model_copy(update={"arguments": clean_arguments})
     trimmed = meta.model_dump(mode="python", exclude_none=True)
     trimmed.pop("tenuo", None)
-    new_meta: RequestParams.Meta | None
-    if trimmed:
-        new_meta = RequestParams.Meta.model_validate(trimmed)
-    else:
-        new_meta = None
+    new_meta: RequestParams.Meta | None = (
+        RequestParams.Meta.model_validate(trimmed) if trimmed else None
+    )
     return params.model_copy(update={"arguments": clean_arguments, "meta": new_meta})
 
 
