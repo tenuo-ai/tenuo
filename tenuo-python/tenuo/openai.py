@@ -844,7 +844,7 @@ class GuardedCompletions:
             )
             self._control_plane.emit_for_enforcement(res)
         except Exception:
-            pass
+            logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
     def _guard_stream(self, stream: Iterator) -> Iterator:
         """Buffer-verify-emit pattern for streaming responses.
@@ -1235,7 +1235,7 @@ class GuardedResponses:
             )
             self._control_plane.emit_for_enforcement(res)
         except Exception:
-            pass
+            logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
     def _emit_audit(
         self,
@@ -2256,7 +2256,7 @@ class TenuoToolGuardrail:
             )
             self._control_plane.emit_for_enforcement(res)
         except Exception:
-            pass
+            logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
     def _extract_tool_calls(self, input_data: Any) -> List[tuple]:
         """Extract tool calls from Agents SDK input.

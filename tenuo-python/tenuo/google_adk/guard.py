@@ -128,6 +128,7 @@ class TenuoGuard:
         require_pop: bool = True,  # Default to secure mode
         dry_run: bool = False,  # Log denials but don't block
         include_hints: bool = True,  # Include recovery hints in denials
+        redact_args_in_logs: bool = True,
         approval_handler: Optional[Any] = None,
         approvals: Optional[list] = None,
         control_plane: Optional[Any] = None,
@@ -158,8 +159,8 @@ class TenuoGuard:
             dry_run: If True, log denials but don't block. Useful for testing.
             include_hints: If True (default), include recovery hints in denial messages.
             control_plane: Optional :class:`tenuo.control_plane.ControlPlaneClient` instance.
-                           When provided, every allow and deny decision is streamed to the
-                           Tenuo Cloud control plane for audit and observability.
+                           When provided, every allow and deny decision is emitted
+                           for audit and observability.
         """
         if on_deny is not None:
             import warnings
@@ -182,6 +183,7 @@ class TenuoGuard:
         self._require_pop = require_pop
         self._dry_run = dry_run
         self._include_hints = include_hints
+        self._redact_args_in_logs = redact_args_in_logs
         self._approval_handler = approval_handler
         self._approvals = approvals
         if control_plane is None:
@@ -406,11 +408,18 @@ class TenuoGuard:
                             skill_name,
                             exc_info=True,
                         )
-                    self._control_plane.emit_for_enforcement(
-                        result, chain_result=result.chain_result,
-                        latency_us=latency_us,
-                        warrant_stack_override=_warrant_stack,
-                    )
+                    try:
+                        self._control_plane.emit_for_enforcement(
+                            result, chain_result=result.chain_result,
+                            latency_us=latency_us,
+                            warrant_stack_override=_warrant_stack,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Control plane emission failed for '%s'; audit event lost",
+                            skill_name,
+                            exc_info=True,
+                        )
 
                 if not result.allowed:
                     # Map error types to appropriate denial messages
@@ -529,7 +538,10 @@ class TenuoGuard:
                 tool=tool.name,
                 arguments=args,
             )
-            self._control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
+            try:
+                self._control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
+            except Exception:
+                logger.warning("Control plane emission failed for '%s'; audit event lost", tool.name, exc_info=True)
         return None  # Proceed with tool execution
 
     async def async_before_tool(
@@ -719,7 +731,10 @@ class TenuoGuard:
                 constraint_violated=constraint_param,
                 arguments=args,
             )
-            self._control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
+            try:
+                self._control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
+            except Exception:
+                logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
         if self._on_denial == "raise":
             raise ToolAuthorizationError(reason, tool_name, args)
@@ -771,7 +786,11 @@ class TenuoGuard:
                 "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
                 "event": event,
                 "tool": tool_name,
-                "args": {k: str(v)[:100] for k, v in args.items()},
+                "args": (
+                    {k: "[REDACTED]" for k in args}
+                    if self._redact_args_in_logs
+                    else {k: str(v)[:100] for k, v in args.items()}
+                ),
                 **extra,
             }
 
@@ -912,9 +931,9 @@ class GuardBuilder:
 
     def with_control_plane(self, control_plane: Any) -> "GuardBuilder":
         """
-        Attach a Tenuo Cloud control plane client for audit event streaming.
+        Attach a control plane client for audit event streaming.
 
-        Every allow and deny decision will be streamed to the control plane
+        Every allow and deny decision will be emitted to the control plane
         for real-time observability and non-repudiation.
 
         Args:

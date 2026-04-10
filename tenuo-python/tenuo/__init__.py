@@ -228,8 +228,10 @@ from tenuo.cp_approval import (  # noqa: E402
     ControlPlaneApprovalResponseV1,
     build_control_plane_approval_request_v1,
     signed_approvals_from_response,
-    submit_control_plane_approval_request_v1,
     verify_control_plane_approval_request_v1,
+)
+from tenuo.cp_transport import (  # noqa: E402
+    submit_control_plane_approval_request_v1,
 )
 
 # =============================================================================

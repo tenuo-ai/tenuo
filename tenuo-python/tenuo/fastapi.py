@@ -516,7 +516,7 @@ class TenuoGuard:
             try:
                 self._control_plane.emit_for_enforcement(enforcement, chain_result=enforcement.chain_result)
             except Exception:
-                pass
+                logger.warning("Control plane emission failed for '%s'; audit event lost", self.tool, exc_info=True)
 
         if not enforcement.allowed:
             # Generate a request ID for log correlation

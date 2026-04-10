@@ -350,20 +350,18 @@ class SecureMCPClient:
     @staticmethod
     def _is_connection_error(exc: BaseException) -> bool:
         """Return True if exc is a recoverable transport/connection error."""
-        type_name = type(exc).__name__
-        module = getattr(type(exc), "__module__", "") or ""
-        # anyio transport errors (checked by name to avoid a hard anyio import)
-        if module.startswith("anyio") and type_name in (
-            "ClosedResourceError",
-            "BrokenResourceError",
-            "EndOfStream",
-        ):
-            return True
-        # Standard Python I/O errors
+        try:
+            from anyio import ClosedResourceError, BrokenResourceError, EndOfStream
+            if isinstance(exc, (ClosedResourceError, BrokenResourceError, EndOfStream)):
+                return True
+        except ImportError:
+            pass
         if isinstance(exc, EOFError):
             return True
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+            return True
         if isinstance(exc, OSError) and exc.errno in (
-            32,   # EPIPE  (broken pipe)
+            32,   # EPIPE
             54,   # ECONNRESET (macOS)
             104,  # ECONNRESET (Linux)
             110,  # ETIMEDOUT
@@ -432,22 +430,20 @@ class SecureMCPClient:
         """
         Get all MCP tools as protected Python functions.
 
-        Returns:
-            Dict mapping tool names to protected async functions
+        Returns a snapshot so callers always see a consistent dict even if
+        a concurrent ``_reconnect`` is rebuilding ``_wrapped_tools``.
         """
-        if not self._wrapped_tools and self.session is not None:
-            # Fallback for manual calls outside of context manager
-            # but usually initialized in connect()
+        wrapped = self._wrapped_tools
+        if not wrapped and self.session is not None:
             try:
-                # If we're already in a loop and session is active but tools aren't wrapped
-                # this is a safety fallback.
                 if self._tools:
                     for tool in self._tools:
-                        self._wrapped_tools[tool.name] = self.create_protected_tool(tool)
+                        wrapped[tool.name] = self.create_protected_tool(tool)
+                    self._wrapped_tools = wrapped
             except Exception as exc:
                 logger.warning("Failed to wrap tool '%s': %s", tool.name, exc, exc_info=True)
 
-        return self._wrapped_tools
+        return dict(wrapped)
 
     async def validate_tool(
         self,
@@ -720,7 +716,7 @@ class SecureMCPClient:
                 try:
                     self._control_plane.emit_for_enforcement(result, chain_result=result.chain_result)
                 except Exception:
-                    pass
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
             if not result.allowed:
                 _raise_for_denial(result, tool_name)
             logger.info(
@@ -796,7 +792,7 @@ class SecureMCPClient:
                     try:
                         self._control_plane.emit_for_enforcement(result, chain_result=result.chain_result)
                     except Exception:
-                        pass
+                        logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
                 if not result.allowed:
                     _raise_for_denial(result, tool_name)
                 logger.info(
