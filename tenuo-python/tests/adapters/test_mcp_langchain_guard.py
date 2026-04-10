@@ -85,12 +85,12 @@ class TestReconnectResetsState:
         client._tools = [MagicMock()]
         client._wrapped_tools = {"some_tool": MagicMock()}
 
-        async def _fake_connect():
+        async def _fake_connect_unlocked():
             client.session = MagicMock()
             client._tools = []
             client._wrapped_tools = {}
 
-        with patch.object(client, "connect", side_effect=_fake_connect):
+        with patch.object(client, "_connect_unlocked", side_effect=_fake_connect_unlocked):
             with patch.object(client, "exit_stack") as mock_stack:
                 mock_stack.aclose = AsyncMock()
                 await client._reconnect()

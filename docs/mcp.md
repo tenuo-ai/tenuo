@@ -589,7 +589,20 @@ for warning in warnings:
 
 Warns about incompatible extraction sources (path, query, header).
 
-### 2. Use Trusted Roots
+### 2. Payload Size Limits (DoS Prevention)
+
+`MCPVerifier` enforces size limits on incoming `_meta.tenuo` payloads before decoding to prevent memory/CPU exhaustion from adversarial inputs:
+
+| Field | Limit |
+|-------|-------|
+| `warrant` (base64) | 64 KB |
+| `signature` (base64) | 4 KB |
+| Each `approvals[]` entry | 8 KB |
+| `approvals` count | 64 |
+
+Oversized payloads are rejected with `-32602` (invalid params). These limits are generous for normal usage (a 10-hop delegation chain is well under 64 KB). If you need to adjust them, override the module-level constants in `tenuo.mcp.server`.
+
+### 3. Use Trusted Roots
 
 ```python
 # Load control plane public key
@@ -601,7 +614,7 @@ authorizer = Authorizer(trusted_roots=[control_plane_key])
 
 Without trusted roots, chain verification only checks internal consistency.
 
-### 3. Proof-of-Possession
+### 4. Proof-of-Possession
 
 Always require PoP signatures for MCP tool calls:
 
@@ -615,7 +628,7 @@ authorizer.authorize_one(warrant, tool, args, signature=bytes(pop_sig))
 
 Prevents warrant theft and replay attacks.
 
-### 4. Constraint Narrowing
+### 5. Constraint Narrowing
 
 Use specific constraints, not wildcards:
 
@@ -627,7 +640,7 @@ constraints = {"path": Wildcard()}
 constraints = {"path": Subpath("/var/log")}
 ```
 
-### 5. Short TTLs
+### 6. Short TTLs
 
 MCP tools are often high-risk (filesystem, database). Use short TTLs:
 
@@ -662,11 +675,15 @@ execute_tool(result.clean_arguments)
 
 ### Client-Side (Retry with Approvals)
 
+`SecureMCPClient` raises `MCPApprovalRequired` when the server returns `-32002`:
+
 ```python
+from tenuo.mcp import MCPApprovalRequired
+
 try:
     result = await client.call_tool("transfer", {"amount": 5000, "recipient": "acme"})
-except Exception as e:
-    # Check for JSON-RPC code -32002 (approval required)
+except MCPApprovalRequired as e:
+    # Typed exception: e.tool_name, e.result, e.raw_error
     approval = collect_human_approval(e)  # app-specific UI flow
     result = await client.call_tool(
         "transfer",
