@@ -141,12 +141,12 @@ Tenuo implements **Subtractive Delegation**: each step in the chain can only red
 
 **OpenAI** — Tool-call enforcement with streaming TOCTOU protection
 ```python
-from tenuo.openai import GuardBuilder, Subpath, UrlSafe, Shlex, Pattern
+from tenuo.openai import GuardBuilder, Subpath, UrlSafe, Range, Pattern
 
 client = (GuardBuilder(openai.OpenAI())
     .allow("read_file", path=Subpath("/data"))        # Path traversal protection
     .allow("fetch_url", url=UrlSafe())                # SSRF protection
-    .allow("run_command", cmd=Shlex(allow=["ls"]))    # Shell injection protection
+    .allow("transfer", amount=Range(max=1000))        # Value boundary enforcement
     .allow("send_email", to=Pattern("*@company.com"))
     .build())
 # Out-of-scope recipient is denied at execution time
