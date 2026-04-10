@@ -5,11 +5,14 @@ PyControlPlaneClient that handles env-var discovery and optional
 process-level singleton for integrations that don't manage lifecycle.
 """
 import json
+import logging
 import os
 import uuid
 import atexit
 import platform
 from typing import Optional, Any
+
+logger = logging.getLogger(__name__)
 
 _global_client: Optional["ControlPlaneClient"] = None
 
@@ -135,7 +138,7 @@ class ControlPlaneClient:
                 mod = __import__(mod_name)
                 meta.setdefault(meta_key, getattr(mod, "__version__", "unknown"))
             except Exception:
-                pass
+                logger.debug("Optional framework %r not installed, skipping metadata", mod_name)
 
         # Delegate everything to Rust core: token parsing, key generation,
         # agent claiming, and heartbeat loop startup.
@@ -252,7 +255,7 @@ def _auto_shutdown():
         try:
             client.shutdown(timeout_secs=2.0)
         except Exception:
-            pass
+            logger.debug("Control plane shutdown failed at exit", exc_info=True)
 
 atexit.register(_auto_shutdown)
 
