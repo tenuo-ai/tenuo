@@ -403,7 +403,7 @@ class TenuoGuard:
                         logger.warning(
                             "encode_warrant_stack failed; warrant stack will be missing "
                             "from control plane event for '%s'",
-                            tool_name,
+                            skill_name,
                             exc_info=True,
                         )
                     self._control_plane.emit_for_enforcement(
