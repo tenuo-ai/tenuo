@@ -195,8 +195,12 @@ class TenuoGuard:
         self._owns_audit_log = False
         self._audit_log: Any = None
         if isinstance(audit_log, str):
-            self._audit_log = open(audit_log, "a")  # noqa: SIM115
-            self._owns_audit_log = True
+            try:
+                self._audit_log = open(audit_log, "a")  # noqa: SIM115
+                self._owns_audit_log = True
+            except Exception:
+                logger.error("Failed to open audit log file %r", audit_log, exc_info=True)
+                raise
         else:
             self._audit_log = audit_log
 
@@ -398,7 +402,12 @@ class TenuoGuard:
                         from tenuo_core import encode_warrant_stack
                         _warrant_stack = encode_warrant_stack([bound_warrant.warrant])
                     except Exception:
-                        pass
+                        logger.warning(
+                            "encode_warrant_stack failed; warrant stack will be missing "
+                            "from control plane event for '%s'",
+                            skill_name,
+                            exc_info=True,
+                        )
                     try:
                         self._control_plane.emit_for_enforcement(
                             result, chain_result=result.chain_result,
@@ -406,7 +415,11 @@ class TenuoGuard:
                             warrant_stack_override=_warrant_stack,
                         )
                     except Exception:
-                        logger.warning("Control plane emission failed for '%s'; audit event lost", skill_name, exc_info=True)
+                        logger.warning(
+                            "Control plane emission failed for '%s'; audit event lost",
+                            skill_name,
+                            exc_info=True,
+                        )
 
                 if not result.allowed:
                     # Map error types to appropriate denial messages
@@ -797,13 +810,29 @@ class TenuoGuard:
                 self._audit_log.write(json.dumps(record) + "\n")
                 self._audit_log.flush()
         except Exception as e:
-            # Fallback to standard logging if audit fails
-            logger.error(f"Failed to write audit log: {e}", exc_info=True)
+            logger.error(
+                "Audit event lost for tool '%s': %s. "
+                "Authorization decision was %s but cannot be recorded.",
+                tool_name,
+                e,
+                event,
+                exc_info=True,
+            )
 
     def close(self):
         """Clean up resources (e.g., audit log file handle)."""
         if self._owns_audit_log and hasattr(self._audit_log, "close"):
             self._audit_log.close()
+
+    def __del__(self):
+        """Safety net: close audit file handle if caller forgot close()/context manager."""
+        if getattr(self, "_owns_audit_log", False) and hasattr(
+            getattr(self, "_audit_log", None), "close"
+        ):
+            try:
+                self._audit_log.close()
+            except Exception:
+                pass
 
     def __enter__(self):
         return self

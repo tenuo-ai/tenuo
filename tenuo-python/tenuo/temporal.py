@@ -742,7 +742,15 @@ class KeyResolver(ABC):
             # We're in a running loop (e.g., Temporal workflow)
             # Must use thread pool to avoid "loop already running" error
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(self._resolve_in_new_loop, key_id).result()
+                try:
+                    return pool.submit(self._resolve_in_new_loop, key_id).result(
+                        timeout=30,
+                    )
+                except concurrent.futures.TimeoutError:
+                    raise KeyResolutionError(
+                        f"Key resolution timed out after 30s for key_id={key_id!r}. "
+                        "Check network connectivity to the key store."
+                    )
         except RuntimeError:
             # No running loop - safe to create one
             return self._resolve_in_new_loop(key_id)

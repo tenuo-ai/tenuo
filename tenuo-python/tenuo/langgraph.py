@@ -403,7 +403,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         """Shared authorization logic for sync tool calls."""
         import time
 
-        request_id = str(uuid.uuid4())[:8]
+        request_id = str(uuid.uuid4())
         tool_call = request.tool_call
         tool_name = tool_call.get("name", "unknown")
         tool_args = tool_call.get("args", {})
@@ -507,7 +507,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         """Shared authorization logic for async tool calls."""
         import time
 
-        request_id = str(uuid.uuid4())[:8]
+        request_id = str(uuid.uuid4())
         tool_call = request.tool_call
         tool_name = tool_call.get("name", "unknown")
         tool_args = tool_call.get("args", {})
@@ -653,6 +653,12 @@ def _get_bound_warrant(
 
     # Auto-inflate from string (Base64) if needed (for serialization safety)
     if isinstance(warrant, str):
+        _MAX_WARRANT_B64 = 64 * 1024
+        if len(warrant) > _MAX_WARRANT_B64:
+            raise ConfigurationError(
+                f"Warrant string is {len(warrant)} bytes, exceeding the "
+                f"{_MAX_WARRANT_B64} byte safety limit. Possible corruption or attack."
+            )
         try:
             warrant = Warrant.from_base64(warrant)
         except Exception as e:
@@ -924,7 +930,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             """Sync authorization wrapper passed to ToolNode."""
             import time
 
-            request_id = str(uuid.uuid4())[:8]
+            request_id = str(uuid.uuid4())
             tool_call = request.tool_call
             tool_name = tool_call.get("name", "unknown")
             tool_args = tool_call.get("args", {})
@@ -979,7 +985,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             """Async authorization wrapper passed to ToolNode."""
             import time
 
-            request_id = str(uuid.uuid4())[:8]
+            request_id = str(uuid.uuid4())
             tool_call = request.tool_call
             tool_name = tool_call.get("name", "unknown")
             tool_args = tool_call.get("args", {})
