@@ -93,6 +93,7 @@ dev = [
     # Testing
     "pytest>=7.0",
     "pytest-asyncio",
+    "hypothesis>=6.0",
     # Linting & Type checking
     "ruff>=0.1.0",
     "mypy>=1.0",
@@ -133,6 +134,8 @@ markers = [
     "pop: Proof-of-Possession holder binding",
     "delegation: delegation depth and chain integrity",
     "implementation: implementation-level bypass prevention",
+    # Property-based testing
+    "hypothesis: property-based tests using Hypothesis",
 ]
 
 [tool.coverage.run]

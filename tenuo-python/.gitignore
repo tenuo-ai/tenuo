@@ -28,6 +28,9 @@ wheels/
 *.swp
 *.swo
 
+# Hypothesis
+.hypothesis/
+
 # OS
 .DS_Store
 Thumbs.db
