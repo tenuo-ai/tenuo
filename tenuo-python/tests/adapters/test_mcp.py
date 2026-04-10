@@ -762,6 +762,49 @@ class TestCallToolIsErrorHandling:
         assert ri.value.result.is_approval_required
 
     @pytest.mark.asyncio
+    async def test_approval_required_extracts_request_hash(self):
+        from mcp.types import CallToolResult, TextContent
+
+        from tenuo.mcp.server import MCPApprovalRequired
+
+        client = _make_client()
+        client.session.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="Approval required")],
+                isError=True,
+                structuredContent={
+                    "tenuo": {
+                        "code": -32002,
+                        "message": "Approval required",
+                        "request_hash": "deadbeef1234",
+                    }
+                },
+            )
+        )
+        with pytest.raises(MCPApprovalRequired) as ri:
+            await client.call_tool("t", {}, warrant_context=False)
+        assert ri.value.request_hash == "deadbeef1234"
+        assert ri.value.result.request_hash == "deadbeef1234"
+
+    @pytest.mark.asyncio
+    async def test_approval_required_no_hash_when_absent(self):
+        from mcp.types import CallToolResult, TextContent
+
+        from tenuo.mcp.server import MCPApprovalRequired
+
+        client = _make_client()
+        client.session.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="Approval required")],
+                isError=True,
+                structuredContent={"tenuo": {"code": -32002, "message": "Approval required"}},
+            )
+        )
+        with pytest.raises(MCPApprovalRequired) as ri:
+            await client.call_tool("t", {}, warrant_context=False)
+        assert ri.value.request_hash is None
+
+    @pytest.mark.asyncio
     async def test_raise_on_tool_error_false_returns_content(self):
         from mcp.types import CallToolResult, TextContent
 

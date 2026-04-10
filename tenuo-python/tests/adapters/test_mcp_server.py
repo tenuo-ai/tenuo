@@ -165,6 +165,39 @@ class TestMCPVerificationResult:
         )
         assert result.is_approval_required is False
 
+    def test_request_hash_field_defaults_to_none(self):
+        result = MCPVerificationResult(
+            allowed=False,
+            tool="read_file",
+            clean_arguments={},
+            constraints={},
+        )
+        assert result.request_hash is None
+
+    def test_request_hash_in_to_jsonrpc_error(self):
+        result = MCPVerificationResult(
+            allowed=False,
+            tool="transfer",
+            clean_arguments={},
+            constraints={},
+            jsonrpc_error_code=-32002,
+            request_hash="abcd1234",
+        )
+        err = result.to_jsonrpc_error()
+        assert err["code"] == -32002
+        assert err["data"]["request_hash"] == "abcd1234"
+
+    def test_to_jsonrpc_error_no_data_when_no_hash(self):
+        result = MCPVerificationResult(
+            allowed=False,
+            tool="read_file",
+            clean_arguments={},
+            constraints={},
+            jsonrpc_error_code=-32001,
+        )
+        err = result.to_jsonrpc_error()
+        assert "data" not in err
+
 
 class TestMCPAuthorizationError:
     def test_carries_result(self):
@@ -472,6 +505,32 @@ class TestApprovalGateTriggered:
         assert result.is_approval_required
         assert result.jsonrpc_error_code == -32002
         assert "approvals" in (result.denial_reason or "").lower()
+        assert result.request_hash is not None, "request_hash must be populated from Rust"
+        assert len(result.request_hash) > 0
+
+    def test_gate_request_hash_in_jsonrpc_error(
+        self,
+        issuer_key: SigningKey,
+        agent_key: SigningKey,
+    ):
+        approver_key = SigningKey.generate()
+        authorizer = Authorizer(trusted_roots=[issuer_key.public_key])
+
+        warrant = Warrant.issue(
+            issuer_key,
+            capabilities={"transfer": {}},
+            holder=agent_key.public_key,
+            approval_gates={"transfer": None},
+            required_approvers=[approver_key.public_key],
+            min_approvals=1,
+        )
+        arguments, meta = _make_arguments(warrant, agent_key, "transfer", {"amount": 100})
+
+        result = MCPVerifier(authorizer=authorizer).verify("transfer", arguments, meta=meta)
+        err = result.to_jsonrpc_error()
+        assert err["code"] == -32002
+        assert "data" in err
+        assert err["data"]["request_hash"] == result.request_hash
 
     def test_gate_satisfied_with_valid_approval(
         self,
