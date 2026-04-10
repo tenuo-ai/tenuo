@@ -186,6 +186,13 @@ class MCPVerificationResult:
     - ``-32002`` — Approval required (approval gate triggered)
     """
 
+    request_hash: Optional[str] = field(default=None)
+    """Rust-computed request hash (hex), populated when an approval gate fires (``-32002``).
+
+    Clients need this to submit the correct hash to the approval service without
+    re-deriving it from ``(warrant_id, tool, args, holder_key)``.
+    """
+
     @property
     def is_approval_required(self) -> bool:
         """``True`` when an approval gate fired and approvals must be supplied."""
@@ -208,11 +215,17 @@ class MCPVerificationResult:
         Only meaningful when ``allowed`` is ``False``::
 
             return {"jsonrpc": "2.0", "id": req_id, "error": result.to_jsonrpc_error()}
+
+        When ``request_hash`` is present (``-32002``), the hash is included in
+        ``error.data`` so clients can pass it to the approval service directly.
         """
-        return {
+        error: Dict[str, Any] = {
             "code": self.jsonrpc_error_code or -32001,
             "message": self.denial_reason or "Authorization denied",
         }
+        if self.request_hash:
+            error["data"] = {"request_hash": self.request_hash}
+        return error
 
 
 class MCPAuthorizationError(Exception):
@@ -257,10 +270,23 @@ class MCPApprovalRequired(MCPAuthorizationError):
         *,
         result: Optional[MCPVerificationResult] = None,
         raw_error: Optional[Any] = None,
+        request_hash: Optional[str] = None,
     ) -> None:
         self.tool_name = tool_name
         self.raw_error = raw_error
+        self.request_hash = request_hash
         if result is not None:
+            if request_hash and not result.request_hash:
+                result = MCPVerificationResult(
+                    allowed=result.allowed,
+                    tool=result.tool,
+                    clean_arguments=result.clean_arguments,
+                    constraints=result.constraints,
+                    warrant_id=result.warrant_id,
+                    denial_reason=result.denial_reason,
+                    jsonrpc_error_code=result.jsonrpc_error_code,
+                    request_hash=request_hash,
+                )
             super().__init__(result)
         else:
             _result = MCPVerificationResult(
@@ -270,6 +296,7 @@ class MCPApprovalRequired(MCPAuthorizationError):
                 constraints={},
                 denial_reason=message,
                 jsonrpc_error_code=-32002,
+                request_hash=request_hash,
             )
             super().__init__(_result)
 
@@ -677,7 +704,7 @@ class MCPVerifier:
                 constraints=constraints,
                 warrant_id=warrant_id,
             )
-        except ApprovalGateTriggered:
+        except ApprovalGateTriggered as gate_exc:
             logger.info(
                 "Approval required for '%s' (warrant=%s) — approvals required",
                 tool_name,
@@ -689,6 +716,7 @@ class MCPVerifier:
                 clean_arguments=clean_arguments,
                 constraints=constraints,
                 warrant_id=warrant_id,
+                request_hash=gate_exc.request_hash or None,
                 denial_reason=(
                     f"Approval required for '{tool_name}'. "
                     "Re-submit the call with approvals in _meta.tenuo.approvals."

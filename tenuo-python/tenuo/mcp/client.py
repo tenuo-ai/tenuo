@@ -632,10 +632,13 @@ class SecureMCPClient:
                         if _tenuo_code == -32002:
                             from .server import MCPApprovalRequired
                             _msg = _safe_mcp_tool_error_message(raw_content, tool_name)
+                            _tenuo_block = (structured or {}).get("tenuo") or {}
+                            _rh = _tenuo_block.get("request_hash") if isinstance(_tenuo_block, dict) else None
                             raise MCPApprovalRequired(
                                 tool_name=tool_name,
                                 message=_msg,
                                 raw_error=structured,
+                                request_hash=_rh,
                             )
                         if raise_on_tool_error:
                             raise MCPToolCallError(

@@ -123,15 +123,16 @@ class _VerifierDenialToolReturn:
 def _denial_tool_return(verification: MCPVerificationResult) -> _VerifierDenialToolReturn:
     code = verification.jsonrpc_error_code or -32001
     message = verification.denial_reason or "Authorization denied"
+    tenuo_block: dict[str, Any] = {
+        "code": code,
+        "message": message,
+    }
+    if verification.request_hash:
+        tenuo_block["request_hash"] = verification.request_hash
     call = mt.CallToolResult(
         content=[TextContent(type="text", text=message)],
         isError=True,
-        structuredContent={
-            "tenuo": {
-                "code": code,
-                "message": message,
-            }
-        },
+        structuredContent={"tenuo": tenuo_block},
     )
     return _VerifierDenialToolReturn(call)
 
