@@ -1608,16 +1608,31 @@ class TenuoPluginConfig:
                 "TenuoPluginConfig requires key_resolver= or signing_key= (worker signing material)."
             )
 
-        if self.approval_handler is not None and (
-            self.retry_pop_max_windows is None or self.retry_pop_max_windows <= 5
-        ):
-            logger.info(
-                "TenuoPluginConfig: approval_handler set — retry_pop_max_windows=%s is tight for "
-                "human-in-the-loop; using 240 (~2 h PoP slack on activity retries). "
-                "Set retry_pop_max_windows explicitly to override.",
-                self.retry_pop_max_windows,
-            )
-            self.retry_pop_max_windows = 240
+        if self.approval_handler is not None:
+            # Auto-consume trusted_approvers from the handler when the user
+            # did not set them explicitly.  This avoids the redundant:
+            #   handler = my_approval_handler(...)
+            #   config = TenuoPluginConfig(..., trusted_approvers=handler.trusted_approvers)
+            # The user can still override by passing trusted_approvers= explicitly.
+            if self.trusted_approvers is None:
+                _handler_approvers = getattr(self.approval_handler, "trusted_approvers", None)
+                if _handler_approvers is not None:
+                    resolved = list(_handler_approvers() if callable(_handler_approvers) else _handler_approvers)
+                    if resolved:
+                        self.trusted_approvers = resolved
+                        logger.debug(
+                            "TenuoPluginConfig: auto-resolved %d trusted_approvers from approval_handler",
+                            len(resolved),
+                        )
+
+            if self.retry_pop_max_windows is None or self.retry_pop_max_windows <= 5:
+                logger.info(
+                    "TenuoPluginConfig: approval_handler set — retry_pop_max_windows=%s is tight for "
+                    "human-in-the-loop; using 240 (~2 h PoP slack on activity retries). "
+                    "Set retry_pop_max_windows explicitly to override.",
+                    self.retry_pop_max_windows,
+                )
+                self.retry_pop_max_windows = 240
 
         if self.trusted_roots_refresh_interval_secs is not None:
             if self.trusted_roots_refresh_interval_secs <= 0:
