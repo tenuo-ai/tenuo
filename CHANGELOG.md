@@ -7,9 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-beta.19] - 2026-04-10
+
 ### Security
 
+- **Guarded telemetry emissions** — all `emit_for_enforcement` calls across every adapter are now wrapped in `try/except` with `logger.warning` so a control-plane outage cannot crash the authorization path.
+- **MCP client connection detection** — replaced fragile string-matching on exception class names with proper `isinstance` checks.
 - **Explorer** — Vite updated to 8.0.8+ (addresses GHSA-p9ff-h696-f583, GHSA-v2wj-q39q-566r, GHSA-4w7w-66w2-5vf9).
+
+### Added
+
+- **MCP `request_hash` threading** — Rust-computed approval request hash flows through `MCPVerificationResult`, the JSON-RPC error payload, and `MCPApprovalRequired` so clients can correlate approvals end-to-end.
+- **`tenuo.cp_transport`** — HTTP submission extracted from `tenuo.cp_approval`; core is now pure protocol/serialization.
+- **ADK `redact_args_in_logs`** — `TenuoGuard` can redact tool arguments in audit logs to prevent PII leakage.
+- **Property-based test suite** — 20+ Hypothesis test modules covering enforcement, FFI boundaries, MCP, Temporal, FastAPI, LangChain/LangGraph, A2A, and agent frameworks.
+
+### Changed
+
+- **MCP client reconnect** — exponential backoff with jitter instead of immediate retry; `.tools` returns a snapshot for thread safety.
+- **Temporal dedup cache** — `OrderedDict`-backed eviction (O(1) amortized); `resolve_sync` has a 30 s timeout.
+- **LangGraph** — warrant deserialization capped at 64 KB; request IDs use full UUIDs.
+- Removed stale "Tenuo Cloud" references from open-source docstrings.
 
 ## [0.1.0-beta.18] - 2026-04-09
 
