@@ -379,12 +379,17 @@ class PopDedupStore(Protocol):
 
 
 class InMemoryPopDedupStore:
-    """Default ``PopDedupStore``: thread-safe dict in this process only."""
+    """Default ``PopDedupStore``: thread-safe ordered dict in this process only.
+
+    Insertion order tracks age (timestamps are monotonically non-decreasing),
+    so size-cap eviction pops from the front in O(excess) instead of sorting.
+    """
 
     __slots__ = ("cache", "_last_evict", "_lock")
 
     def __init__(self) -> None:
-        self.cache: Dict[str, float] = {}
+        from collections import OrderedDict
+        self.cache: OrderedDict[str, float] = OrderedDict()
         self._last_evict: float = 0.0
         self._lock = threading.Lock()
 
@@ -405,11 +410,12 @@ class InMemoryPopDedupStore:
                     ),
                     activity_name=activity_name,
                 )
+            if dedup_key in self.cache:
+                del self.cache[dedup_key]
             self.cache[dedup_key] = now
 
-            # Time-based eviction runs independently of size: always evict
-            # expired entries when the interval elapses so the TTL guarantee
-            # is not defeated by a large number of distinct keys.
+            # Time-based eviction: always evict expired entries when the
+            # interval elapses so the TTL guarantee holds under heavy load.
             if (now - self._last_evict) >= _DEDUP_EVICT_INTERVAL:
                 self._last_evict = now
                 expired = [
@@ -419,13 +425,9 @@ class InMemoryPopDedupStore:
                 for k in expired:
                     del self.cache[k]
 
-            # Size cap is a separate, secondary guard: only trim when still
-            # over the hard limit after time-based eviction.
-            if len(self.cache) > _DEDUP_MAX_SIZE:
-                by_age = sorted(self.cache.items(), key=lambda x: x[1])
-                excess = len(self.cache) - _DEDUP_MAX_SIZE
-                for k, _ in by_age[:excess]:
-                    del self.cache[k]
+            # Size cap: pop oldest entries from the front — O(excess).
+            while len(self.cache) > _DEDUP_MAX_SIZE:
+                self.cache.popitem(last=False)
 
 
 _default_pop_dedup_store = InMemoryPopDedupStore()
@@ -3969,9 +3971,12 @@ class TenuoActivityInboundInterceptor:
                 arguments=args,
                 warrant_id=getattr(warrant, "id", None)
             )
-            self._config.control_plane.emit_for_enforcement(
-                res, chain_result=chain_result, latency_us=latency_us
-            )
+            try:
+                self._config.control_plane.emit_for_enforcement(
+                    res, chain_result=chain_result, latency_us=latency_us
+                )
+            except Exception:
+                logger.warning("Control plane emission failed for '%s'; audit event lost", tool, exc_info=True)
 
         if not self._config.audit_allow or not self._config.audit_callback:
             return
@@ -4030,10 +4035,13 @@ class TenuoActivityInboundInterceptor:
                 constraint_violated=constraint,
                 warrant_id=getattr(warrant, "id", None),
             )
-            self._config.control_plane.emit_for_enforcement(
-                res, chain_result=None, latency_us=latency_us,
-                warrant_stack_override=warrant_stack_b64,
-            )
+            try:
+                self._config.control_plane.emit_for_enforcement(
+                    res, chain_result=None, latency_us=latency_us,
+                    warrant_stack_override=warrant_stack_b64,
+                )
+            except Exception:
+                logger.warning("Control plane emission failed for '%s'; audit event lost", tool, exc_info=True)
 
         if not self._config.audit_deny or not self._config.audit_callback:
             return

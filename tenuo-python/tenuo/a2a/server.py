@@ -662,7 +662,7 @@ class A2AServer:
             registration_handler: Optional async callable for automated agent
                 registration (CSR pattern). Called after key ownership is verified.
             control_plane: Optional ControlPlaneClient for reporting authorization
-                events to Tenuo Cloud. Auto-discovered from env vars when None.
+                events. Auto-discovered from env vars when None.
 
         Rate limiting:
             A2AServer does not throttle requests. In production, put a
@@ -1250,7 +1250,7 @@ class A2AServer:
                     _res, latency_us=latency_ms * 1000,
                 )
             except Exception:
-                pass
+                logger.warning("Control plane emission failed for '%s'; audit event lost", skill_id, exc_info=True)
 
         return warrant
 
@@ -1927,7 +1927,7 @@ class A2AServer:
                         )
                         self._control_plane.emit_for_enforcement(_res)
                     except Exception:
-                        pass
+                        logger.warning("Control plane emission failed for '%s'; audit event lost", _skill, exc_info=True)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",

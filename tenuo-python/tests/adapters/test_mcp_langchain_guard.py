@@ -47,16 +47,15 @@ class TestIsConnectionError:
 
         assert SecureMCPClient._is_connection_error(RuntimeError("boom")) is False
 
-    def test_anyio_closed_resource_detected_by_name(self):
-        """anyio.ClosedResourceError is detected via module+type name inspection."""
+    def test_anyio_closed_resource_detected(self):
+        """anyio.ClosedResourceError is detected via isinstance."""
         from tenuo.mcp.client import SecureMCPClient
 
-        FakeClosedResourceError = type(
-            "ClosedResourceError",
-            (Exception,),
-            {"__module__": "anyio._backends._asyncio"},
-        )
-        exc = FakeClosedResourceError("connection closed")
+        try:
+            from anyio import ClosedResourceError
+        except ImportError:
+            pytest.skip("anyio not available")
+        exc = ClosedResourceError("connection closed")
         assert SecureMCPClient._is_connection_error(exc) is True
 
 

@@ -397,7 +397,7 @@ def webhook(
     """Create a webhook-based approval handler (placeholder).
 
     Posts the approval request to a URL and polls for a SignedApproval.
-    Full implementation requires Tenuo Cloud.
+    Full implementation requires a control plane service.
 
     Args:
         url: Webhook URL to POST the approval request to.

@@ -425,9 +425,12 @@ class MCPVerifier:
             latency_us: int = 0,
         ) -> MCPVerificationResult:
             if self._control_plane:
-                self._control_plane.emit_for_enforcement(
-                    result, chain_result=chain_result, latency_us=latency_us
-                )
+                try:
+                    self._control_plane.emit_for_enforcement(
+                        result, chain_result=chain_result, latency_us=latency_us
+                    )
+                except Exception:
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", result.tool, exc_info=True)
             return result
 
         # ------------------------------------------------------------------

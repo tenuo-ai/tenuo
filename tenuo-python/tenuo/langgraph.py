@@ -425,11 +425,14 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
 
             if self._control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                self._control_plane.emit_for_enforcement(
-                    result, chain_result=result.chain_result,
-                    latency_us=latency_us, request_id=request_id,
-                    warrant_stack_override=_warrant_stack_from_bound(bw),
-                )
+                try:
+                    self._control_plane.emit_for_enforcement(
+                        result, chain_result=result.chain_result,
+                        latency_us=latency_us, request_id=request_id,
+                        warrant_stack_override=_warrant_stack_from_bound(bw),
+                    )
+                except Exception:
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
             if not result.allowed:
                 logger.warning(
@@ -460,10 +463,13 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                     error_type="approval_required",
                 )
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                self._control_plane.emit_for_enforcement(
-                    gate_result, latency_us=latency_us, request_id=request_id,
-                    warrant_stack_override=_warrant_stack_from_bound(bw),
-                )
+                try:
+                    self._control_plane.emit_for_enforcement(
+                        gate_result, latency_us=latency_us, request_id=request_id,
+                        warrant_stack_override=_warrant_stack_from_bound(bw),
+                    )
+                except Exception:
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
             raise
         except (ApprovalDenied, ApprovalVerificationError) as e:
             logger.warning(f"[{request_id}] Approval verification failed for '{tool_name}': {e}")
@@ -523,11 +529,14 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
 
             if self._control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                self._control_plane.emit_for_enforcement(
-                    result, chain_result=result.chain_result,
-                    latency_us=latency_us, request_id=request_id,
-                    warrant_stack_override=_warrant_stack_from_bound(bw),
-                )
+                try:
+                    self._control_plane.emit_for_enforcement(
+                        result, chain_result=result.chain_result,
+                        latency_us=latency_us, request_id=request_id,
+                        warrant_stack_override=_warrant_stack_from_bound(bw),
+                    )
+                except Exception:
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
             if not result.allowed:
                 logger.warning(
@@ -558,10 +567,13 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                     error_type="approval_required",
                 )
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                self._control_plane.emit_for_enforcement(
-                    gate_result, latency_us=latency_us, request_id=request_id,
-                    warrant_stack_override=_warrant_stack_from_bound(bw),
-                )
+                try:
+                    self._control_plane.emit_for_enforcement(
+                        gate_result, latency_us=latency_us, request_id=request_id,
+                        warrant_stack_override=_warrant_stack_from_bound(bw),
+                    )
+                except Exception:
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
             raise
         except (ApprovalDenied, ApprovalVerificationError) as e:
             logger.warning(f"[{request_id}] Approval verification failed for '{tool_name}': {e}")
@@ -943,11 +955,14 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
 
             if _control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                _control_plane.emit_for_enforcement(
-                    result, chain_result=result.chain_result,
-                    latency_us=latency_us, request_id=request_id,
-                    warrant_stack_override=_warrant_stack_from_bound(bw),
-                )
+                try:
+                    _control_plane.emit_for_enforcement(
+                        result, chain_result=result.chain_result,
+                        latency_us=latency_us, request_id=request_id,
+                        warrant_stack_override=_warrant_stack_from_bound(bw),
+                    )
+                except Exception:
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
             if not result.allowed:
                 logger.warning(f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}")
@@ -995,11 +1010,14 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
 
             if _control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                _control_plane.emit_for_enforcement(
-                    result, chain_result=result.chain_result,
-                    latency_us=latency_us, request_id=request_id,
-                    warrant_stack_override=_warrant_stack_from_bound(bw),
-                )
+                try:
+                    _control_plane.emit_for_enforcement(
+                        result, chain_result=result.chain_result,
+                        latency_us=latency_us, request_id=request_id,
+                        warrant_stack_override=_warrant_stack_from_bound(bw),
+                    )
+                except Exception:
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
             if not result.allowed:
                 logger.warning(f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}")

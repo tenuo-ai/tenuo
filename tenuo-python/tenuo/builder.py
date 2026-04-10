@@ -263,7 +263,7 @@ class MintBuilder:
         """Add approval gates to the warrant.
 
         Keys are tool names. Values are ``None`` (whole-tool gate) or a dict of
-        per-argument gate specifications. See Tenuo Cloud documentation for details.
+        per-argument gate specifications.
         """
         self._approval_gates = approval_gate_map
         return self
@@ -625,7 +625,6 @@ class GrantBuilder:
 
         Keys are tool names. Values are ``None`` (whole-tool gate) or a dict of
         per-argument gate specifications. Gates merge with any inherited from the parent.
-        See Tenuo Cloud documentation for details.
         """
         self._rust_builder.with_approval_gates(approval_gate_map)
         return self
@@ -940,7 +939,6 @@ class IssuanceBuilder:
 
         Keys are tool names. Values are ``None`` (whole-tool gate) or a dict of
         per-argument gate specifications. Gates merge with any inherited from the issuer warrant.
-        See Tenuo Cloud documentation for details.
         """
         self._rust_builder.with_approval_gates(approval_gate_map)
         return self

@@ -211,7 +211,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                     try:
                         _cp.emit_for_enforcement(result, chain_result=result.chain_result)
                     except Exception:
-                        pass
+                        logger.warning("Control plane emission failed for '%s'; audit event lost", self.name, exc_info=True)
                 if not result.allowed:
                     raise ToolNotAuthorized(tool=self.name)
             else:
@@ -232,7 +232,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                         try:
                             _cp.emit_for_enforcement(result, chain_result=result.chain_result)
                         except Exception:
-                            pass
+                            logger.warning("Control plane emission failed for '%s'; audit event lost", self.name, exc_info=True)
                     if not result.allowed:
                         raise ToolNotAuthorized(tool=self.name)
                 else:

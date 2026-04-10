@@ -21,6 +21,9 @@ from tenuo import (
 )
 from tenuo.approval import ApprovalRequest, warrant_expires_at_unix
 from tenuo.cp_approval import ControlPlaneApprovalRequestV1, signed_approvals_from_response
+from tenuo.cp_transport import (
+    submit_control_plane_approval_request_v1 as submit_from_transport,
+)
 
 
 def _mint_warrant_with_gate(issuer: SigningKey, holder: SigningKey, approver: PublicKey) -> Warrant:
@@ -192,3 +195,15 @@ class TestControlPlaneApprovalFlow:
         finally:
             server.shutdown()
             thread.join(timeout=2.0)
+
+
+class TestCpTransportBoundary:
+    """Verify the cp_approval → cp_transport extraction."""
+
+    def test_top_level_import_uses_transport(self):
+        assert submit_control_plane_approval_request_v1 is submit_from_transport
+
+    def test_cp_approval_no_longer_exports_submit(self):
+        from tenuo import cp_approval
+
+        assert not hasattr(cp_approval, "submit_control_plane_approval_request_v1")

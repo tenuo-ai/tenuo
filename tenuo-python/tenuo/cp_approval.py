@@ -1,10 +1,12 @@
 """
 Control-plane approval flow — JSON wire schema and verification helpers.
 
-Transport (HTTP) stays thin: serialize :class:`ControlPlaneApprovalRequestV1`,
-POST to your service, parse :class:`ControlPlaneApprovalResponseV1`. All
-cryptographic checks use ``tenuo_core`` (request hash, optional context
-attestation, ``SignedApproval`` verification via existing APIs).
+Covers the **protocol layer only**: serialisation, deserialisation, hash
+recomputation, and optional context-attestation verification.  All
+cryptographic checks use ``tenuo_core`` (request hash, context attestation,
+``SignedApproval`` verification).
+
+HTTP transport lives in :mod:`tenuo.cp_transport`.
 
 The worker should build :class:`~tenuo.approval.ApprovalRequest` with
 :meth:`~tenuo.approval.ApprovalRequest.for_warrant_gate` so ``request_id``,
@@ -14,10 +16,7 @@ approvers, and expiry align with Rust ``approval::ApprovalRequest``.
 from __future__ import annotations
 
 import base64
-import json
 import time
-import urllib.error
-import urllib.request
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -220,41 +219,6 @@ def signed_approvals_from_response(
     return out
 
 
-def submit_control_plane_approval_request_v1(
-    url: str,
-    body: ControlPlaneApprovalRequestV1,
-    *,
-    api_key: Optional[str] = None,
-    timeout_sec: float = 120.0,
-    extra_headers: Optional[Dict[str, str]] = None,
-) -> ControlPlaneApprovalResponseV1:
-    """POST JSON using :mod:`urllib` (no extra dependency).
-
-    ``url`` should be the full resource URL (including path). Sends
-    ``Authorization: Bearer …`` when ``api_key`` is set.
-    """
-    payload = json.dumps(body.to_json_dict(), separators=(",", ":")).encode("utf-8")
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    if extra_headers:
-        headers.update(extra_headers)
-    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_sec) as r:
-            raw = r.read().decode("utf-8")
-            data = json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as e:
-        try:
-            data = json.loads(e.read().decode("utf-8"))
-        except Exception:
-            data = {"status": "error", "error": e.reason or str(e.code)}
-        return ControlPlaneApprovalResponseV1.from_json_dict(data)
-    except urllib.error.URLError as e:
-        return ControlPlaneApprovalResponseV1(status="error", error=str(e.reason))
-    return ControlPlaneApprovalResponseV1.from_json_dict(data)
-
-
 __all__ = [
     "APPROVAL_FLOW_SCHEMA_VERSION",
     "ControlPlaneApprovalRequestV1",
@@ -262,5 +226,4 @@ __all__ = [
     "build_control_plane_approval_request_v1",
     "verify_control_plane_approval_request_v1",
     "signed_approvals_from_response",
-    "submit_control_plane_approval_request_v1",
 ]

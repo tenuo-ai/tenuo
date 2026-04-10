@@ -417,7 +417,7 @@ class _Guard:
                 try:
                     self._control_plane.emit_for_enforcement(result, chain_result=result.chain_result)
                 except Exception:
-                    pass
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
             if not result.allowed:
                 # Raise appropriate exception based on error_type
