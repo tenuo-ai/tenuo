@@ -15,10 +15,9 @@ import pickle
 import pytest
 from hypothesis import given, settings
 
-from tenuo import SigningKey, Warrant
-from tenuo.bound_warrant import BoundWarrant
+from tenuo import Warrant
 
-from .strategies import st_args_dict, st_tool_name, st_warrant_bundle
+from .strategies import st_warrant_bundle
 
 
 class TestSerializationPrevention:
