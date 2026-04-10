@@ -85,6 +85,7 @@ class ApprovalRequest:
         arguments: Arguments the agent wants to pass.
         warrant_id: ID of the warrant authorizing this call.
         request_hash: SHA-256 hash binding approval to this specific call (32 bytes).
+        holder_key: Public key of the warrant holder (participates in request_hash).
         request_id: 16-byte opaque id for control-plane idempotency / audit (optional).
         required_approvers: Warrant-configured approver keys when known (optional).
         min_approvals: Effective m-of-n threshold when known (optional).
@@ -96,6 +97,7 @@ class ApprovalRequest:
     arguments: Dict[str, Any]
     warrant_id: str
     request_hash: bytes
+    holder_key: Optional[Any] = None
     request_id: Optional[bytes] = None
     required_approvers: Optional[List[Any]] = None
     min_approvals: Optional[int] = None
@@ -108,7 +110,8 @@ class ApprovalRequest:
         arguments: Dict[str, Any],
         warrant: Any,
         request_hash: bytes,
-    ) -> ApprovalRequest:
+        holder_key: Optional[Any] = None,
+    ) -> "ApprovalRequest":
         """Build a request aligned with Rust ``approval::ApprovalRequest`` context."""
         warrant_id = getattr(warrant, "id", None) or ""
         req_approvers = getattr(warrant, "required_approvers", None)
@@ -126,6 +129,7 @@ class ApprovalRequest:
             arguments=arguments,
             warrant_id=warrant_id,
             request_hash=request_hash,
+            holder_key=holder_key,
             request_id=_new_approval_request_id_bytes(),
             required_approvers=approvers_list,
             min_approvals=min_approvals,

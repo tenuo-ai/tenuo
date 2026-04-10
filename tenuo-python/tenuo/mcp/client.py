@@ -62,6 +62,17 @@ def _raise_for_denial(result: "EnforcementResult", tool_name: str) -> None:
     raise AuthorizationDenied(reason)
 
 
+def _extract_tenuo_error_code(structured: Any) -> Optional[int]:
+    """Extract the JSON-RPC error code from ``structuredContent.tenuo.code``."""
+    if isinstance(structured, dict):
+        tenuo_block = structured.get("tenuo")
+        if isinstance(tenuo_block, dict):
+            code = tenuo_block.get("code")
+            if isinstance(code, int):
+                return code
+    return None
+
+
 def _safe_mcp_tool_error_message(content: Any, tool_name: str) -> str:
     """Best-effort user-facing text when ``CallToolResult.isError`` is true.
 
@@ -587,6 +598,15 @@ class SecureMCPClient:
                     if getattr(response, "isError", False) is True:
                         raw_content = getattr(response, "content", None)
                         structured = getattr(response, "structuredContent", None)
+                        _tenuo_code = _extract_tenuo_error_code(structured)
+                        if _tenuo_code == -32002:
+                            from .server import MCPApprovalRequired
+                            _msg = _safe_mcp_tool_error_message(raw_content, tool_name)
+                            raise MCPApprovalRequired(
+                                tool_name=tool_name,
+                                message=_msg,
+                                raw_error=structured,
+                            )
                         if raise_on_tool_error:
                             raise MCPToolCallError(
                                 _safe_mcp_tool_error_message(raw_content, tool_name),

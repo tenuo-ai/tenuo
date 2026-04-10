@@ -34,7 +34,13 @@ Server-side (verifying warrants inside an MCP server):
 
 from ..exceptions import MCPToolCallError
 from .client import MCP_AVAILABLE, SecureMCPClient, discover_and_protect
-from .server import MCPAuthorizationError, MCPVerificationResult, MCPVerifier, verify_mcp_call
+from .server import (
+    MCPApprovalRequired,
+    MCPAuthorizationError,
+    MCPVerificationResult,
+    MCPVerifier,
+    verify_mcp_call,
+)
 
 __all__ = [
     # Client
@@ -46,6 +52,7 @@ __all__ = [
     "MCPVerifier",
     "MCPVerificationResult",
     "MCPAuthorizationError",
+    "MCPApprovalRequired",
     "verify_mcp_call",
 ]
 

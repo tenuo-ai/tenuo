@@ -231,6 +231,44 @@ class MCPAuthorizationError(Exception):
         return self.result.to_jsonrpc_error()
 
 
+class MCPApprovalRequired(MCPAuthorizationError):
+    """Server returned ``-32002``: an approval gate fired.
+
+    Raised by :class:`~tenuo.mcp.client.SecureMCPClient` when a ``call_tool``
+    response carries the ``-32002`` error code, allowing callers to handle
+    approval-required flows with a typed ``except`` instead of string-matching::
+
+        try:
+            result = await client.call_tool("transfer", {"amount": 500})
+        except MCPApprovalRequired as e:
+            approvals = await collect_approvals(e.tool_name)
+            result = await client.call_tool("transfer", {"amount": 500}, approvals=approvals)
+    """
+
+    def __init__(
+        self,
+        tool_name: str,
+        message: str,
+        *,
+        result: Optional[MCPVerificationResult] = None,
+        raw_error: Optional[Any] = None,
+    ) -> None:
+        self.tool_name = tool_name
+        self.raw_error = raw_error
+        if result is not None:
+            super().__init__(result)
+        else:
+            _result = MCPVerificationResult(
+                allowed=False,
+                tool=tool_name,
+                clean_arguments={},
+                constraints={},
+                denial_reason=message,
+                jsonrpc_error_code=-32002,
+            )
+            super().__init__(_result)
+
+
 # ---------------------------------------------------------------------------
 # MCPVerifier
 # ---------------------------------------------------------------------------

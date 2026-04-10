@@ -3804,6 +3804,7 @@ class TenuoActivityInboundInterceptor:
                     args,
                     warrant,
                     request_hash,
+                    holder_key=holder_key,
                 )
 
                 result = handler(request)
@@ -3856,8 +3857,11 @@ class TenuoActivityInboundInterceptor:
 
         # 3. No approvals available — approval gate fired but cannot be satisfied.
         raise ApprovalGateTriggered(
-            f"Approval gate triggered for '{tool_name}' but no approvals available "
-            "(set approval_handler on TenuoPluginConfig or supply x-tenuo-approvals header)"
+            tool=tool_name,
+            hint=(
+                "No approvals available — set approval_handler on "
+                "TenuoPluginConfig or supply x-tenuo-approvals header"
+            ),
         )
 
     def _extract_arguments(
