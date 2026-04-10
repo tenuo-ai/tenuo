@@ -28,6 +28,7 @@ import pytest
 
 pytest.importorskip("temporalio")
 
+from temporalio.exceptions import ApplicationError  # noqa: E402
 from tenuo_core import Subpath  # noqa: E402
 
 from tenuo import SigningKey, Warrant  # noqa: E402
@@ -36,7 +37,6 @@ from tenuo.temporal import (  # noqa: E402
     TENUO_KEY_ID_HEADER,
     TENUO_POP_HEADER,
     TENUO_WARRANT_HEADER,
-    TemporalConstraintViolation,
     TenuoContextError,
     EnvKeyResolver,
     TenuoClientInterceptor,
@@ -145,6 +145,15 @@ def _run(coro):
         return loop.run_until_complete(coro)
     finally:
         loop.close()
+
+
+def _assert_non_retryable(exc_info, *, match: str | None = None):
+    """Verify the interceptor raised a non-retryable ApplicationError."""
+    exc = exc_info.value
+    assert isinstance(exc, ApplicationError)
+    assert exc.non_retryable, "Expected non_retryable=True on ApplicationError"
+    if match:
+        assert match.lower() in str(exc).lower(), f"{match!r} not found in {str(exc)!r}"
 
 
 # -- TenuoClientInterceptor -------------------------------------------------
@@ -378,8 +387,9 @@ class TestActivityInterceptorAuthorizer:
 
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
-            with pytest.raises(TemporalConstraintViolation):
+            with pytest.raises(ApplicationError) as exc_info:
                 _run(ai.execute_activity(inp_private))
+            _assert_non_retryable(exc_info)
 
     def test_denies_unauthorized_path(self, warrant, agent_key, control_key, headers_dict):
         events = []
@@ -396,8 +406,9 @@ class TestActivityInterceptorAuthorizer:
             fn=lambda path: path, args=("/etc/passwd",), headers=act_headers)
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
-            with pytest.raises(TemporalConstraintViolation):
+            with pytest.raises(ApplicationError) as exc_info:
                 _run(ai.execute_activity(inp))
+            _assert_non_retryable(exc_info)
         assert any(e.decision == "DENY" for e in events)
         nxt.execute_activity.assert_not_called()
 
@@ -411,8 +422,9 @@ class TestActivityInterceptorAuthorizer:
         inp = FakeExecuteActivityInput(fn=lambda: None, args=())
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
-            with pytest.raises(TemporalConstraintViolation, match="No warrant"):
+            with pytest.raises(ApplicationError) as exc_info:
                 _run(ai.execute_activity(inp))
+            _assert_non_retryable(exc_info, match="No warrant")
 
     def test_denies_unknown_tool(self, warrant, agent_key, control_key, headers_dict):
         ti = self._make(control_key)
@@ -428,8 +440,9 @@ class TestActivityInterceptorAuthorizer:
             fn=lambda path: path, args=("/tmp/demo/f",), headers=act_headers)
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
-            with pytest.raises(TemporalConstraintViolation):
+            with pytest.raises(ApplicationError) as exc_info:
                 _run(ai.execute_activity(inp))
+            _assert_non_retryable(exc_info)
 
 
 # -- Store lifecycle ---------------------------------------------------------
@@ -496,8 +509,9 @@ class TestAuditEvents:
             fn=lambda path: path, args=("/etc/shadow",), headers=act_headers)
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
-            with pytest.raises(TemporalConstraintViolation):
+            with pytest.raises(ApplicationError) as exc_info:
                 _run(ai.execute_activity(inp))
+            _assert_non_retryable(exc_info)
         assert len(events) == 1
         assert events[0].decision == "DENY"
         assert events[0].denial_reason
@@ -676,8 +690,9 @@ class TestParallelActivities:
             fn=lambda path: path, args=("/tmp/demo/f.txt",))
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(TemporalConstraintViolation, match="No warrant"):
+            with pytest.raises(ApplicationError) as exc_info:
                 _run(ai.execute_activity(inp))
+            _assert_non_retryable(exc_info, match="No warrant")
 
 
 # -- Activity retries --------------------------------------------------------
@@ -806,8 +821,9 @@ class TestWarrantExpiration:
             fn=lambda path: path, args=("/tmp/demo/f",), headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(TemporalConstraintViolation, match="expired"):
+            with pytest.raises(ApplicationError) as exc_info:
                 _run(ai.execute_activity(inp))
+            _assert_non_retryable(exc_info, match="expired")
         nxt.execute_activity.assert_not_called()
 
 
@@ -843,8 +859,9 @@ class TestPopValidation:
             fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(TemporalConstraintViolation):
+            with pytest.raises(ApplicationError) as exc_info:
                 _run(ai.execute_activity(inp))
+            _assert_non_retryable(exc_info)
         nxt.execute_activity.assert_not_called()
 
     def test_pop_for_wrong_args_rejected(
@@ -868,8 +885,9 @@ class TestPopValidation:
             fn=lambda path: path, args=("/tmp/demo/b.txt",), headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(TemporalConstraintViolation):
+            with pytest.raises(ApplicationError) as exc_info:
                 _run(ai.execute_activity(inp))
+            _assert_non_retryable(exc_info)
 
     def test_missing_pop_with_trusted_roots_rejected(
         self, warrant, agent_key, control_key, headers_dict
@@ -895,8 +913,9 @@ class TestPopValidation:
             fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=no_pop_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(TemporalConstraintViolation):
+            with pytest.raises(ApplicationError) as exc_info:
                 _run(ai.execute_activity(inp))
+            _assert_non_retryable(exc_info)
 
 
 # -- Concurrent workflows (full round-trip) -----------------------------------
@@ -998,8 +1017,9 @@ class TestConcurrentWorkflowsFullRoundTrip:
             headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
-            with pytest.raises(TemporalConstraintViolation):
+            with pytest.raises(ApplicationError) as exc_info:
                 _run(ai.execute_activity(inp))
+            _assert_non_retryable(exc_info)
         nxt.execute_activity.assert_not_called()
 
 
