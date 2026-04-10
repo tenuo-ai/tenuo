@@ -1,16 +1,18 @@
 """Shared configuration for Hypothesis property-based tests."""
 
 import pytest
-from hypothesis import settings
 
-# CI profile: fast, reproducible
-settings.register_profile("ci", max_examples=200, derandomize=True)
-# Dev profile: quick feedback
-settings.register_profile("dev", max_examples=50)
-# Thorough profile: nightly / release
-settings.register_profile("thorough", max_examples=5000)
+collect_ignore_glob = []
 
-settings.load_profile("dev")
+try:
+    from hypothesis import settings
+
+    settings.register_profile("ci", max_examples=200, derandomize=True)
+    settings.register_profile("dev", max_examples=50)
+    settings.register_profile("thorough", max_examples=5000)
+    settings.load_profile("dev")
+except ModuleNotFoundError:
+    collect_ignore_glob = ["test_*.py"]
 
 
 def pytest_collection_modifyitems(items):
