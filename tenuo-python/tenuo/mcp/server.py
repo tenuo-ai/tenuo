@@ -118,6 +118,11 @@ from ..exceptions import (
 
 logger = logging.getLogger(__name__)
 
+MAX_WARRANT_B64_BYTES = 64 * 1024
+MAX_SIGNATURE_B64_BYTES = 4 * 1024
+MAX_APPROVAL_B64_BYTES = 8 * 1024
+MAX_APPROVALS_COUNT = 64
+
 
 def _access_denial_reason(exc: BaseException) -> str:
     """Human-facing denial with hints for the most common integration mistakes."""
@@ -480,6 +485,51 @@ class MCPVerifier:
                 clean_arguments=clean_arguments,
                 constraints=constraints,
             ))
+
+        # ------------------------------------------------------------------
+        # Step 2b: payload size limits (DoS prevention)
+        # ------------------------------------------------------------------
+        if warrant_b64 and len(warrant_b64) > MAX_WARRANT_B64_BYTES:
+            return _emit_and_return(MCPVerificationResult(
+                allowed=False, tool=tool_name,
+                clean_arguments=clean_arguments, constraints=constraints,
+                denial_reason=(
+                    f"Warrant payload too large ({len(warrant_b64)} bytes, "
+                    f"limit {MAX_WARRANT_B64_BYTES})"
+                ),
+                jsonrpc_error_code=-32602,
+            ))
+        if signature_b64 and len(signature_b64) > MAX_SIGNATURE_B64_BYTES:
+            return _emit_and_return(MCPVerificationResult(
+                allowed=False, tool=tool_name,
+                clean_arguments=clean_arguments, constraints=constraints,
+                denial_reason=(
+                    f"Signature payload too large ({len(signature_b64)} bytes, "
+                    f"limit {MAX_SIGNATURE_B64_BYTES})"
+                ),
+                jsonrpc_error_code=-32602,
+            ))
+        if len(approvals_b64) > MAX_APPROVALS_COUNT:
+            return _emit_and_return(MCPVerificationResult(
+                allowed=False, tool=tool_name,
+                clean_arguments=clean_arguments, constraints=constraints,
+                denial_reason=(
+                    f"Too many approvals ({len(approvals_b64)}, "
+                    f"limit {MAX_APPROVALS_COUNT})"
+                ),
+                jsonrpc_error_code=-32602,
+            ))
+        for _ab64 in approvals_b64:
+            if isinstance(_ab64, str) and len(_ab64) > MAX_APPROVAL_B64_BYTES:
+                return _emit_and_return(MCPVerificationResult(
+                    allowed=False, tool=tool_name,
+                    clean_arguments=clean_arguments, constraints=constraints,
+                    denial_reason=(
+                        f"Individual approval payload too large "
+                        f"({len(_ab64)} bytes, limit {MAX_APPROVAL_B64_BYTES})"
+                    ),
+                    jsonrpc_error_code=-32602,
+                ))
 
         # ------------------------------------------------------------------
         # Step 3: decode warrant (single warrant or WarrantStack)
