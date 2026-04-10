@@ -25,7 +25,7 @@ from tenuo import (
     encode_warrant_stack,
 )
 
-from tenuo.mcp.server import MCPVerifier, MCPVerificationResult
+from tenuo.mcp.server import MCPVerifier
 
 
 # ---------------------------------------------------------------------------

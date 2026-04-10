@@ -86,9 +86,10 @@ from tenuo_core import Warrant
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_langgraph_compat  # noqa: E402
 
-from ._enforcement import enforce_tool_call, filter_tools_by_warrant
+from ._enforcement import enforce_tool_call, enforce_tool_call_async, filter_tools_by_warrant
 from .bound_warrant import BoundWarrant
 from .config import resolve_trusted_roots
+from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
 from .exceptions import ApprovalGateTriggered, ConfigurationError
 from .keys import KeyRegistry, load_signing_key_from_env
 
@@ -448,7 +449,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
             return handler(request)
 
-        except ApprovalGateTriggered as gate:
+        except (ApprovalGateTriggered, ApprovalRequired) as gate:
             if self._control_plane:
                 from ._enforcement import EnforcementResult
                 gate_result = EnforcementResult(
@@ -463,6 +464,9 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                     gate_result, latency_us=latency_us, request_id=request_id,
                     warrant_stack_override=_warrant_stack_from_bound(bw),
                 )
+            raise
+        except (ApprovalDenied, ApprovalVerificationError) as e:
+            logger.warning(f"[{request_id}] Approval verification failed for '{tool_name}': {e}")
             raise
         except ConfigurationError as e:
             logger.warning(f"[{request_id}] Configuration error: {e}")
@@ -507,7 +511,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
 
             start_ns = time.perf_counter_ns()
 
-            result = enforce_tool_call(
+            result = await enforce_tool_call_async(
                 tool_name=tool_name,
                 tool_args=tool_args,
                 bound_warrant=bw,
@@ -543,7 +547,7 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
             return await handler(request)
 
-        except ApprovalGateTriggered as gate:
+        except (ApprovalGateTriggered, ApprovalRequired) as gate:
             if self._control_plane:
                 from ._enforcement import EnforcementResult
                 gate_result = EnforcementResult(
@@ -558,6 +562,9 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                     gate_result, latency_us=latency_us, request_id=request_id,
                     warrant_stack_override=_warrant_stack_from_bound(bw),
                 )
+            raise
+        except (ApprovalDenied, ApprovalVerificationError) as e:
+            logger.warning(f"[{request_id}] Approval verification failed for '{tool_name}': {e}")
             raise
         except ConfigurationError as e:
             logger.warning(f"[{request_id}] Configuration error: {e}")
@@ -921,15 +928,18 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 )
 
             start_ns = time.perf_counter_ns()
-            result = enforce_tool_call(
-                tool_name=tool_name,
-                tool_args=tool_args,
-                bound_warrant=bw,
-                require_constraints=_require_constraints,
-                trusted_roots=_trusted_roots,
-                approval_handler=_approval_handler,
-                approvals=_approvals,
-            )
+            try:
+                result = enforce_tool_call(
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    bound_warrant=bw,
+                    require_constraints=_require_constraints,
+                    trusted_roots=_trusted_roots,
+                    approval_handler=_approval_handler,
+                    approvals=_approvals,
+                )
+            except (ApprovalGateTriggered, ApprovalRequired, ApprovalDenied, ApprovalVerificationError):
+                raise
 
             if _control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000
@@ -970,15 +980,18 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 )
 
             start_ns = time.perf_counter_ns()
-            result = enforce_tool_call(
-                tool_name=tool_name,
-                tool_args=tool_args,
-                bound_warrant=bw,
-                require_constraints=_require_constraints,
-                trusted_roots=_trusted_roots,
-                approval_handler=_approval_handler,
-                approvals=_approvals,
-            )
+            try:
+                result = await enforce_tool_call_async(
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    bound_warrant=bw,
+                    require_constraints=_require_constraints,
+                    trusted_roots=_trusted_roots,
+                    approval_handler=_approval_handler,
+                    approvals=_approvals,
+                )
+            except (ApprovalGateTriggered, ApprovalRequired, ApprovalDenied, ApprovalVerificationError):
+                raise
 
             if _control_plane:
                 latency_us = (time.perf_counter_ns() - start_ns) // 1000

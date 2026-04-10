@@ -1608,16 +1608,31 @@ class TenuoPluginConfig:
                 "TenuoPluginConfig requires key_resolver= or signing_key= (worker signing material)."
             )
 
-        if self.approval_handler is not None and (
-            self.retry_pop_max_windows is None or self.retry_pop_max_windows <= 5
-        ):
-            logger.info(
-                "TenuoPluginConfig: approval_handler set — retry_pop_max_windows=%s is tight for "
-                "human-in-the-loop; using 240 (~2 h PoP slack on activity retries). "
-                "Set retry_pop_max_windows explicitly to override.",
-                self.retry_pop_max_windows,
-            )
-            self.retry_pop_max_windows = 240
+        if self.approval_handler is not None:
+            # Auto-consume trusted_approvers from the handler when the user
+            # did not set them explicitly.  This avoids the redundant:
+            #   handler = my_approval_handler(...)
+            #   config = TenuoPluginConfig(..., trusted_approvers=handler.trusted_approvers)
+            # The user can still override by passing trusted_approvers= explicitly.
+            if self.trusted_approvers is None:
+                _handler_approvers = getattr(self.approval_handler, "trusted_approvers", None)
+                if _handler_approvers is not None:
+                    resolved = list(_handler_approvers() if callable(_handler_approvers) else _handler_approvers)
+                    if resolved:
+                        self.trusted_approvers = resolved
+                        logger.debug(
+                            "TenuoPluginConfig: auto-resolved %d trusted_approvers from approval_handler",
+                            len(resolved),
+                        )
+
+            if self.retry_pop_max_windows is None or self.retry_pop_max_windows <= 5:
+                logger.info(
+                    "TenuoPluginConfig: approval_handler set — retry_pop_max_windows=%s is tight for "
+                    "human-in-the-loop; using 240 (~2 h PoP slack on activity retries). "
+                    "Set retry_pop_max_windows explicitly to override.",
+                    self.retry_pop_max_windows,
+                )
+                self.retry_pop_max_windows = 240
 
         if self.trusted_roots_refresh_interval_secs is not None:
             if self.trusted_roots_refresh_interval_secs <= 0:
@@ -3407,6 +3422,13 @@ class TenuoActivityInboundInterceptor:
         self._pop_dedup_store: PopDedupStore = (
             config.pop_dedup_store or _default_pop_dedup_store
         )
+        if config.pop_dedup_store is None:
+            logger.warning(
+                "TenuoPluginConfig: using in-memory PopDedupStore (single-process only). "
+                "In multi-worker deployments, PoP replays from other workers will not be "
+                "detected. Set pop_dedup_store= to a shared backend (Redis, Memcached, "
+                "etc.) for fleet-wide replay prevention."
+            )
         self._trusted_roots_provider = config.trusted_roots_provider
         self._trusted_roots_refresh_interval = config.trusted_roots_refresh_interval_secs
         import time as _time
@@ -3477,6 +3499,25 @@ class TenuoActivityInboundInterceptor:
         """Called by Temporal to initialize the interceptor with an outbound impl."""
         self._next.init(outbound)
 
+    @staticmethod
+    def _wrap_as_non_retryable(exc: Exception) -> Exception:
+        """Wrap authorization failures as non-retryable ApplicationError.
+
+        Temporal's default retry policy retries all non-ApplicationError
+        exceptions.  Authorization denials are permanent — retrying the
+        same activity with the same warrant will always fail — so we mark
+        them non-retryable to avoid wasting resources.
+        """
+        try:
+            from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
+        except ImportError:
+            return exc
+        return ApplicationError(
+            str(exc),
+            type=type(exc).__name__,
+            non_retryable=True,
+        )
+
     async def execute_activity(self, input: Any) -> Any:
         """Intercept activity execution for authorization."""
         try:
@@ -3504,11 +3545,11 @@ class TenuoActivityInboundInterceptor:
                 logger.warning(
                     f"Local activity {info.activity_type} denied: cannot determine protection status (fail-closed)"
                 )
-                raise LocalActivityError(info.activity_type)
+                raise self._wrap_as_non_retryable(LocalActivityError(info.activity_type))
 
             # Check if activity is marked @unprotected
             if not is_unprotected(activity_fn):
-                raise LocalActivityError(info.activity_type)
+                raise self._wrap_as_non_retryable(LocalActivityError(info.activity_type))
 
             # Unprotected local activities skip authorization
             return await self._next.execute_activity(input)
@@ -3531,8 +3572,8 @@ class TenuoActivityInboundInterceptor:
         # Extract warrant (if present)
         try:
             warrant = _extract_warrant_from_headers(headers)
-        except ChainValidationError:
-            raise  # Re-raise validation errors
+        except ChainValidationError as chain_exc:
+            raise self._wrap_as_non_retryable(chain_exc) from chain_exc
 
         async def _deny_or_continue(tool: str, reason: str) -> Optional[Any]:
             if self._config.dry_run:
@@ -3555,12 +3596,12 @@ class TenuoActivityInboundInterceptor:
                 # Fail-closed: deny activities without warrant
                 logger.warning(f"No warrant for activity {info.activity_type}, denying (require_warrant=True)")
                 if self._config.on_denial == "raise" and not self._config.dry_run:
-                    raise TemporalConstraintViolation(
+                    raise self._wrap_as_non_retryable(TemporalConstraintViolation(
                         tool=info.activity_type,
                         arguments={},
                         constraint="No warrant provided (require_warrant=True)",
                         warrant_id="none",
-                    )
+                    ))
                 return await _deny_or_continue(
                     tool=info.activity_type,
                     reason="No warrant provided (require_warrant=True)",
@@ -3601,10 +3642,10 @@ class TenuoActivityInboundInterceptor:
                 constraint="max_chain_depth_exceeded",
             )
             if self._config.on_denial == "raise" and not self._config.dry_run:
-                raise ChainValidationError(
+                raise self._wrap_as_non_retryable(ChainValidationError(
                     reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
                     depth=chain_depth,
-                )
+                ))
             return await _deny_or_continue(
                 tool=tool_name,
                 reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
@@ -3687,8 +3728,8 @@ class TenuoActivityInboundInterceptor:
                     dedup_key, now, ttl, activity_name=tool_name
                 )
 
-        except (TemporalConstraintViolation, PopVerificationError, ChainValidationError, WarrantExpired):
-            raise
+        except (TemporalConstraintViolation, PopVerificationError, ChainValidationError, WarrantExpired) as auth_exc:
+            raise self._wrap_as_non_retryable(auth_exc) from auth_exc
         except Exception as e:
             # Import the tenuo_core base once; if it is unavailable, fall back
             # to the Python-only TenuoTemporalError hierarchy.
@@ -3708,12 +3749,12 @@ class TenuoActivityInboundInterceptor:
                     reason=str(e),
                 )
                 if self._config.on_denial == "raise" and not self._config.dry_run:
-                    raise TemporalConstraintViolation(
+                    raise self._wrap_as_non_retryable(TemporalConstraintViolation(
                         tool=tool_name,
                         arguments=args,
                         constraint=str(e),
                         warrant_id=warrant.id,
-                    )
+                    ))
                 return await _deny_or_continue(tool=tool_name, reason=str(e))
             else:
                 # Internal / unexpected error (bug, MemoryError, etc.) —
@@ -3789,6 +3830,7 @@ class TenuoActivityInboundInterceptor:
                     args,
                     warrant,
                     request_hash,
+                    holder_key=holder_key,
                 )
 
                 result = handler(request)
@@ -3841,8 +3883,11 @@ class TenuoActivityInboundInterceptor:
 
         # 3. No approvals available — approval gate fired but cannot be satisfied.
         raise ApprovalGateTriggered(
-            f"Approval gate triggered for '{tool_name}' but no approvals available "
-            "(set approval_handler on TenuoPluginConfig or supply x-tenuo-approvals header)"
+            tool=tool_name,
+            hint=(
+                "No approvals available — set approval_handler on "
+                "TenuoPluginConfig or supply x-tenuo-approvals header"
+            ),
         )
 
     def _extract_arguments(

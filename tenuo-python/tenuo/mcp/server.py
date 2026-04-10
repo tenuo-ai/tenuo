@@ -118,6 +118,11 @@ from ..exceptions import (
 
 logger = logging.getLogger(__name__)
 
+MAX_WARRANT_B64_BYTES = 64 * 1024
+MAX_SIGNATURE_B64_BYTES = 4 * 1024
+MAX_APPROVAL_B64_BYTES = 8 * 1024
+MAX_APPROVALS_COUNT = 64
+
 
 def _access_denial_reason(exc: BaseException) -> str:
     """Human-facing denial with hints for the most common integration mistakes."""
@@ -229,6 +234,44 @@ class MCPAuthorizationError(Exception):
     def to_jsonrpc_error(self) -> Dict[str, Any]:
         """Return a JSON-RPC 2.0 ``error`` object for this denial."""
         return self.result.to_jsonrpc_error()
+
+
+class MCPApprovalRequired(MCPAuthorizationError):
+    """Server returned ``-32002``: an approval gate fired.
+
+    Raised by :class:`~tenuo.mcp.client.SecureMCPClient` when a ``call_tool``
+    response carries the ``-32002`` error code, allowing callers to handle
+    approval-required flows with a typed ``except`` instead of string-matching::
+
+        try:
+            result = await client.call_tool("transfer", {"amount": 500})
+        except MCPApprovalRequired as e:
+            approvals = await collect_approvals(e.tool_name)
+            result = await client.call_tool("transfer", {"amount": 500}, approvals=approvals)
+    """
+
+    def __init__(
+        self,
+        tool_name: str,
+        message: str,
+        *,
+        result: Optional[MCPVerificationResult] = None,
+        raw_error: Optional[Any] = None,
+    ) -> None:
+        self.tool_name = tool_name
+        self.raw_error = raw_error
+        if result is not None:
+            super().__init__(result)
+        else:
+            _result = MCPVerificationResult(
+                allowed=False,
+                tool=tool_name,
+                clean_arguments={},
+                constraints={},
+                denial_reason=message,
+                jsonrpc_error_code=-32002,
+            )
+            super().__init__(_result)
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +485,51 @@ class MCPVerifier:
                 clean_arguments=clean_arguments,
                 constraints=constraints,
             ))
+
+        # ------------------------------------------------------------------
+        # Step 2b: payload size limits (DoS prevention)
+        # ------------------------------------------------------------------
+        if warrant_b64 and len(warrant_b64) > MAX_WARRANT_B64_BYTES:
+            return _emit_and_return(MCPVerificationResult(
+                allowed=False, tool=tool_name,
+                clean_arguments=clean_arguments, constraints=constraints,
+                denial_reason=(
+                    f"Warrant payload too large ({len(warrant_b64)} bytes, "
+                    f"limit {MAX_WARRANT_B64_BYTES})"
+                ),
+                jsonrpc_error_code=-32602,
+            ))
+        if signature_b64 and len(signature_b64) > MAX_SIGNATURE_B64_BYTES:
+            return _emit_and_return(MCPVerificationResult(
+                allowed=False, tool=tool_name,
+                clean_arguments=clean_arguments, constraints=constraints,
+                denial_reason=(
+                    f"Signature payload too large ({len(signature_b64)} bytes, "
+                    f"limit {MAX_SIGNATURE_B64_BYTES})"
+                ),
+                jsonrpc_error_code=-32602,
+            ))
+        if len(approvals_b64) > MAX_APPROVALS_COUNT:
+            return _emit_and_return(MCPVerificationResult(
+                allowed=False, tool=tool_name,
+                clean_arguments=clean_arguments, constraints=constraints,
+                denial_reason=(
+                    f"Too many approvals ({len(approvals_b64)}, "
+                    f"limit {MAX_APPROVALS_COUNT})"
+                ),
+                jsonrpc_error_code=-32602,
+            ))
+        for _ab64 in approvals_b64:
+            if isinstance(_ab64, str) and len(_ab64) > MAX_APPROVAL_B64_BYTES:
+                return _emit_and_return(MCPVerificationResult(
+                    allowed=False, tool=tool_name,
+                    clean_arguments=clean_arguments, constraints=constraints,
+                    denial_reason=(
+                        f"Individual approval payload too large "
+                        f"({len(_ab64)} bytes, limit {MAX_APPROVAL_B64_BYTES})"
+                    ),
+                    jsonrpc_error_code=-32602,
+                ))
 
         # ------------------------------------------------------------------
         # Step 3: decode warrant (single warrant or WarrantStack)

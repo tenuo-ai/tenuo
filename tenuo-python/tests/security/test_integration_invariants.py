@@ -36,7 +36,6 @@ compiled extension is not installed.
 from __future__ import annotations
 
 import time
-import warnings
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -401,8 +400,12 @@ class TestFastAPIInvariants:
         args: Dict[str, Any] = {}
         pop_raw = w.sign(holder_key, "search", args, int(time.time()))
 
-        with pytest.raises(HTTPException) as exc_info:
-            guard._enforce_with_pop_signature(w, "search", args, bytes(pop_raw))
+        # Ensure global config also has no trusted_roots so the fail-closed
+        # path is exercised (other tests may have set global trusted_roots).
+        from unittest.mock import patch as _patch
+        with _patch("tenuo.config.resolve_trusted_roots", return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                guard._enforce_with_pop_signature(w, "search", args, bytes(pop_raw))
 
         assert exc_info.value.status_code == 403
         assert "trusted_issuers" in exc_info.value.detail["message"].lower()

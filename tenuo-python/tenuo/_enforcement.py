@@ -360,6 +360,7 @@ def _collect_approvals_for_approval_gate(
         tool_args,
         bound_warrant.warrant,
         request_hash,
+        holder_key=holder_key,
     )
 
     collected: List[Any] = []
@@ -393,7 +394,69 @@ def _collect_approvals_for_approval_gate(
     try:
         _verify_approvals(request_hash, collected, trusted_approvers, threshold)
     except Exception as e:
-        raise ApprovalVerificationError(request, reason=str(e))
+        raise ApprovalVerificationError(request, reason=str(e)) from e
+
+    return collected
+
+
+async def _collect_approvals_for_approval_gate_async(
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    bound_warrant: BoundWarrant,
+    trusted_approvers: List[Any],
+    threshold: int,
+    handler: "Optional[ApprovalHandler]",
+    approvals: Optional[List[Any]],
+) -> List[Any]:
+    """Async variant of :func:`_collect_approvals_for_approval_gate`.
+
+    Awaits async approval handlers natively instead of bridging through
+    ``ThreadPoolExecutor`` / ``asyncio.run``.  Use from any
+    ``async def`` enforcement path (e.g. ``enforce_tool_call_async``).
+    """
+    from tenuo_core import (
+        py_compute_request_hash as _compute_hash,
+    )
+    from tenuo_core import (
+        verify_approvals as _verify_approvals,
+    )
+
+    from .approval import (
+        ApprovalRequest,
+        ApprovalRequired,
+        ApprovalVerificationError,
+    )
+
+    holder_key = getattr(bound_warrant, "holder_key", None)
+    warrant_id = getattr(bound_warrant, "id", None) or ""
+    request_hash = _compute_hash(warrant_id, tool_name, tool_args, holder_key)
+    request = ApprovalRequest.for_warrant_gate(
+        tool_name,
+        tool_args,
+        bound_warrant.warrant,
+        request_hash,
+        holder_key=holder_key,
+    )
+
+    collected: List[Any] = []
+
+    if approvals:
+        collected = list(approvals)
+    elif handler is not None:
+        result = handler(request)
+        if inspect.isawaitable(result):
+            result = await result
+        collected = result if isinstance(result, list) else [result]
+    else:
+        raise ApprovalRequired(request)
+
+    if not collected:
+        raise ApprovalRequired(request)
+
+    try:
+        _verify_approvals(request_hash, collected, trusted_approvers, threshold)
+    except Exception as e:
+        raise ApprovalVerificationError(request, reason=str(e)) from e
 
     return collected
 
@@ -825,6 +888,244 @@ def enforce_tool_call(
             denial_reason=f"Internal enforcement error: {str(e)}",
             error_type="internal_error",
             warrant_id=warrant_id,
+        )
+
+
+async def enforce_tool_call_async(
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    bound_warrant: BoundWarrant,
+    *,
+    allowed_tools: Optional[List[str]] = None,
+    schemas: Optional[Dict[str, ToolSchema]] = None,
+    require_constraints: bool = False,
+    verify_mode: "Literal['sign', 'verify']" = "sign",
+    precomputed_signature: Optional[bytes] = None,
+    authorizer: Optional[Any] = None,
+    warrant_chain: Optional[List[Any]] = None,
+    trusted_roots: Optional[List[Any]] = None,
+    approval_handler: "Optional[ApprovalHandler]" = None,
+    approvals: Optional[List[Any]] = None,
+    nonce_store: Optional[Any] = None,
+) -> EnforcementResult:
+    """Async variant of :func:`enforce_tool_call`.
+
+    Identical semantics but awaits async approval handlers natively
+    instead of bridging through a thread pool.  Use from ``async def``
+    callers (LangGraph ``ainvoke``, MCP client, FastAPI endpoints, etc.)
+    to avoid blocking the event loop during approval collection.
+
+    All parameters are identical to :func:`enforce_tool_call` — see its
+    docstring for full documentation.
+    """
+    if not isinstance(bound_warrant, BoundWarrant):
+        raise ConfigurationError(
+            f"Expected BoundWarrant, got {type(bound_warrant).__name__}. "
+            "Use warrant.bind(signing_key) to create a BoundWarrant."
+        )
+
+    if verify_mode == "verify":
+        if precomputed_signature is None:
+            raise ConfigurationError("precomputed_signature is required when verify_mode='verify'")
+        if authorizer is None:
+            raise ConfigurationError("authorizer is required when verify_mode='verify'")
+
+    warrant_id = getattr(bound_warrant, "id", None)
+    schemas = schemas or TOOL_SCHEMAS
+    schema = schemas.get(tool_name)
+
+    # ── Python-level policy checks (same as sync) ──
+    if allowed_tools is not None and tool_name not in allowed_tools:
+        logger.debug(f"Tool '{tool_name}' not in application allowed_tools: {allowed_tools}")
+        return EnforcementResult(
+            allowed=False, tool=tool_name, arguments=tool_args,
+            denial_reason=f"Tool '{tool_name}' not in allowed list for this operation",
+            error_type="tool_not_allowed", warrant_id=warrant_id,
+        )
+
+    if schema and schema.risk_level == "critical":
+        constraints = _get_constraints_dict(bound_warrant)
+        has_relevant = any(c in constraints for c in schema.recommended_constraints)
+        if not has_relevant:
+            logger.warning(
+                f"Critical tool '{tool_name}' invoked without relevant constraints. "
+                f"Has: {list(constraints.keys())}, Needs one of: {schema.recommended_constraints}"
+            )
+            return EnforcementResult(
+                allowed=False, tool=tool_name, arguments=tool_args,
+                denial_reason=(
+                    f"Critical tool '{tool_name}' requires at least one of: "
+                    f"{schema.recommended_constraints}"
+                ),
+                constraint_violated="missing_constraints",
+                error_type="policy_violation", warrant_id=warrant_id,
+            )
+
+    if require_constraints and schema and schema.require_at_least_one:
+        constraints = _get_constraints_dict(bound_warrant)
+        if not constraints:
+            return EnforcementResult(
+                allowed=False, tool=tool_name, arguments=tool_args,
+                denial_reason=f"Tool '{tool_name}' requires at least one constraint",
+                constraint_violated="missing_constraints",
+                error_type="policy_violation", warrant_id=warrant_id,
+            )
+
+    # ── Rust core authorization (with async approval collection) ──
+    try:
+        from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
+
+        _warrant_obj = bound_warrant.warrant
+        _gate_approvals: Optional[List[Any]] = None
+
+        if _evaluate_approval_gates(_warrant_obj, tool_name, tool_args):
+            _gate_approvers = _warrant_obj.required_approvers()
+            _gate_threshold = _warrant_obj.approval_threshold()
+
+            if not _gate_approvers:
+                return EnforcementResult(
+                    allowed=False, tool=tool_name, arguments=tool_args,
+                    denial_reason=(
+                        f"Approval gate triggered for '{tool_name}' but warrant has "
+                        "no required_approvers configured"
+                    ),
+                    error_type="approval_gate_misconfigured", warrant_id=warrant_id,
+                )
+
+            _gate_approvals = await _collect_approvals_for_approval_gate_async(
+                tool_name, tool_args, bound_warrant,
+                _gate_approvers, _gate_threshold,
+                approval_handler, approvals,
+            )
+
+        _chain_result: Optional[Any] = None
+
+        if verify_mode == "sign":
+            if trusted_roots is None:
+                _bound_roots = getattr(bound_warrant, "_trusted_roots", None)
+                if _bound_roots is not None:
+                    trusted_roots = _bound_roots
+                else:
+                    from .config import resolve_trusted_roots as _resolve_roots
+                    trusted_roots = _resolve_roots(None)
+                    if trusted_roots is None:
+                        raise ConfigurationError(
+                            "enforce_tool_call requires trusted_roots in the sign path. "
+                            "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
+                            "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
+                            "or call tenuo.configure(trusted_roots=[...]) at application startup. "
+                            "Accepting self-signed warrants is not permitted (fail-closed). "
+                            "See tenuo_core.Authorizer for details."
+                        )
+
+            import time as _time
+            from tenuo_core import Authorizer as _Authorizer
+
+            try:
+                _warrant = bound_warrant.warrant
+                _key = bound_warrant._key
+                _pop = bytes(_warrant.sign(_key, tool_name, tool_args, int(_time.time())))
+                _auth = _Authorizer(trusted_roots=trusted_roots)
+                if warrant_chain:
+                    full_chain = list(warrant_chain) + [_warrant]
+                    _chain_result = _auth.check_chain(
+                        full_chain, tool_name, tool_args,
+                        signature=_pop, approvals=_gate_approvals or [],
+                    )
+                else:
+                    _chain_result = _auth.authorize_one(
+                        _warrant, tool_name, tool_args,
+                        signature=_pop, approvals=_gate_approvals or [],
+                    )
+                _ns = nonce_store
+                if _ns is None:
+                    from .nonce import get_default_nonce_store as _get_ns
+                    _ns = _get_ns()
+                if _ns is not None and not _ns.check_and_record(_pop):
+                    return EnforcementResult(
+                        allowed=False, tool=tool_name, arguments=tool_args,
+                        denial_reason="PoP replay detected — this exact authorization token was already consumed.",
+                        error_type="invalid_pop", warrant_id=warrant_id,
+                    )
+            except Exception as _exc:
+                from tenuo.exceptions import ExpiredError as _ExpiredError
+                from tenuo.exceptions import MissingSignature as _MissingSignature
+                from tenuo.exceptions import SignatureInvalid as _SignatureInvalid
+                if isinstance(_exc, (_ExpiredError, _SignatureInvalid, _MissingSignature)):
+                    raise
+                try:
+                    _why = _warrant.why_denied(tool_name, tool_args)
+                    violated_field = getattr(_why, "field", None)
+                except Exception:
+                    violated_field = None
+                logger.debug(f"Authorization denied for {tool_name}: {_exc}")
+                return EnforcementResult(
+                    allowed=False, tool=tool_name, arguments=tool_args,
+                    denial_reason=str(_exc) or "Authorization failed",
+                    constraint_violated=violated_field,
+                    error_type="authorization_failed", warrant_id=warrant_id,
+                )
+        else:
+            if authorizer is None:
+                raise ConfigurationError("authorizer required for verify_mode='verify'")
+            try:
+                full_chain = list(warrant_chain or []) + [bound_warrant.warrant]
+                _chain_result = authorizer.check_chain(
+                    full_chain, tool_name, tool_args,
+                    signature=precomputed_signature, approvals=_gate_approvals or [],
+                )
+            except Exception as chain_err:
+                denial_reason = str(chain_err)
+                error_type = "authorization_failed"
+                if bound_warrant.warrant.is_expired():
+                    denial_reason = "Warrant has expired"
+                    error_type = "expired"
+                return EnforcementResult(
+                    allowed=False, tool=tool_name, arguments=tool_args,
+                    denial_reason=denial_reason, constraint_violated=None,
+                    error_type=error_type, warrant_id=warrant_id,
+                )
+
+        logger.info(
+            f"Tool authorized: {tool_name}",
+            extra={"tool": tool_name, "warrant_id": bound_warrant.id, "args_keys": list(tool_args.keys())}
+        )
+        return EnforcementResult(
+            allowed=True, tool=tool_name, arguments=tool_args,
+            warrant_id=warrant_id, chain_result=_chain_result,
+        )
+
+    except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:
+        logger.debug(f"Authorization denied for {tool_name}: {e}")
+        if isinstance(e, ExpiredError):
+            err_type = "expired"
+        elif isinstance(e, ToolNotAuthorized):
+            err_type = "tool_not_allowed"
+        elif isinstance(e, ConstraintViolation):
+            err_type = "constraint_violation"
+        else:
+            err_type = "authorization_failed"
+        return EnforcementResult(
+            allowed=False, tool=tool_name, arguments=tool_args,
+            denial_reason=str(e),
+            constraint_violated=getattr(e, "field", None) or _extract_violated_field(str(e)),
+            error_type=err_type, warrant_id=warrant_id,
+        )
+    except TenuoError as e:
+        logger.warning(f"Tenuo error during authorization for {tool_name}: {e}")
+        return EnforcementResult(
+            allowed=False, tool=tool_name, arguments=tool_args,
+            denial_reason=str(e), error_type="tenuo_error", warrant_id=warrant_id,
+        )
+    except Exception as e:
+        from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
+        if isinstance(e, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
+            raise
+        logger.exception(f"Unexpected error during authorization for {tool_name}")
+        return EnforcementResult(
+            allowed=False, tool=tool_name, arguments=tool_args,
+            denial_reason=f"Internal enforcement error: {str(e)}",
+            error_type="internal_error", warrant_id=warrant_id,
         )
 
 

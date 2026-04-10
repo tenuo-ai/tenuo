@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import os
 import tempfile
@@ -164,6 +165,7 @@ def _make_client() -> "SecureMCPClient":
     client._wrapped_tools = {}
     client._approval_handler = None
     client._control_plane = None
+    client._connect_lock = asyncio.Lock()
 
     mock_session = MagicMock()
     mock_session.call_tool = AsyncMock(return_value=MagicMock(content="result"))
@@ -741,22 +743,23 @@ class TestCallToolIsErrorHandling:
             await client.call_tool("t", {}, warrant_context=False)
 
     @pytest.mark.asyncio
-    async def test_structured_content_exposed_on_exception(self):
+    async def test_structured_content_approval_required_raises_typed(self):
         from mcp.types import CallToolResult, TextContent
 
-        from tenuo.exceptions import MCPToolCallError
+        from tenuo.mcp.server import MCPApprovalRequired
 
         client = _make_client()
         client.session.call_tool = AsyncMock(
             return_value=CallToolResult(
-                content=[TextContent(type="text", text="x")],
+                content=[TextContent(type="text", text="Approval required")],
                 isError=True,
-                structuredContent={"tenuo": {"code": -32002}},
+                structuredContent={"tenuo": {"code": -32002, "message": "Approval required"}},
             )
         )
-        with pytest.raises(MCPToolCallError) as ri:
+        with pytest.raises(MCPApprovalRequired) as ri:
             await client.call_tool("t", {}, warrant_context=False)
-        assert ri.value.tenuo == {"code": -32002}
+        assert ri.value.tool_name == "t"
+        assert ri.value.result.is_approval_required
 
     @pytest.mark.asyncio
     async def test_raise_on_tool_error_false_returns_content(self):

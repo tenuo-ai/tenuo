@@ -62,6 +62,17 @@ def _raise_for_denial(result: "EnforcementResult", tool_name: str) -> None:
     raise AuthorizationDenied(reason)
 
 
+def _extract_tenuo_error_code(structured: Any) -> Optional[int]:
+    """Extract the JSON-RPC error code from ``structuredContent.tenuo.code``."""
+    if isinstance(structured, dict):
+        tenuo_block = structured.get("tenuo")
+        if isinstance(tenuo_block, dict):
+            code = tenuo_block.get("code")
+            if isinstance(code, int):
+                return code
+    return None
+
+
 def _safe_mcp_tool_error_message(content: Any, tool_name: str) -> str:
     """Best-effort user-facing text when ``CallToolResult.isError`` is true.
 
@@ -189,6 +200,7 @@ class SecureMCPClient:
         self.exit_stack = AsyncExitStack()
         self._tools: Optional[List[MCPTool]] = None
         self._wrapped_tools: Dict[str, Callable] = {}
+        self._connect_lock = asyncio.Lock()
 
         # Load MCP config if provided
         self.mcp_config = None
@@ -248,7 +260,27 @@ class SecureMCPClient:
         await self.close()
 
     async def connect(self):
-        """Connect to the MCP server using the configured transport."""
+        """Connect to the MCP server using the configured transport.
+
+        Safe to call multiple times; subsequent calls on an already-connected
+        client tear down the previous connection first.  Serialized by an
+        internal lock so concurrent callers don't race.
+        """
+        async with self._connect_lock:
+            await self._connect_unlocked()
+
+    async def _connect_unlocked(self):
+        if self.session is not None:
+            logger.debug("Tearing down existing MCP session before reconnecting")
+            try:
+                await self.exit_stack.aclose()
+            except Exception:
+                logger.warning("Error closing previous MCP session", exc_info=True)
+            self.exit_stack = AsyncExitStack()
+            self.session = None
+            self._tools = None
+            self._wrapped_tools = {}
+
         if self.transport == "stdio":
             server_params = StdioServerParameters(
                 command=self.command, args=self.args, env=self.env
@@ -306,8 +338,12 @@ class SecureMCPClient:
             self._wrapped_tools[tool.name] = self.create_protected_tool(tool)
 
     async def close(self):
-        """Close the MCP connection."""
-        await self.exit_stack.aclose()
+        """Close the MCP connection and clear all session state."""
+        async with self._connect_lock:
+            await self.exit_stack.aclose()
+            self.session = None
+            self._tools = None
+            self._wrapped_tools = {}
 
     @staticmethod
     def _is_connection_error(exc: BaseException) -> bool:
@@ -334,17 +370,22 @@ class SecureMCPClient:
         return False
 
     async def _reconnect(self) -> None:
-        """Close the current session and reconnect using the same configuration."""
-        logger.info("MCP session lost; reconnecting to %s...", self.url or self.command)
-        try:
-            await self.exit_stack.aclose()
-        except Exception:
-            logger.warning("Error closing MCP session during reconnect", exc_info=True)
-        self.exit_stack = AsyncExitStack()
-        self.session = None
-        self._tools = None
-        self._wrapped_tools = {}
-        await self.connect()
+        """Close the current session and reconnect using the same configuration.
+
+        Serialized by the connect lock so that concurrent callers that both
+        see a connection error don't race through teardown/setup.
+        """
+        async with self._connect_lock:
+            logger.info("MCP session lost; reconnecting to %s...", self.url or self.command)
+            try:
+                await self.exit_stack.aclose()
+            except Exception:
+                logger.warning("Error closing MCP session during reconnect", exc_info=True)
+            self.exit_stack = AsyncExitStack()
+            self.session = None
+            self._tools = None
+            self._wrapped_tools = {}
+            await self._connect_unlocked()
 
     async def get_tools(self) -> List[MCPTool]:
         """
@@ -587,6 +628,15 @@ class SecureMCPClient:
                     if getattr(response, "isError", False) is True:
                         raw_content = getattr(response, "content", None)
                         structured = getattr(response, "structuredContent", None)
+                        _tenuo_code = _extract_tenuo_error_code(structured)
+                        if _tenuo_code == -32002:
+                            from .server import MCPApprovalRequired
+                            _msg = _safe_mcp_tool_error_message(raw_content, tool_name)
+                            raise MCPApprovalRequired(
+                                tool_name=tool_name,
+                                message=_msg,
+                                raw_error=structured,
+                            )
                         if raise_on_tool_error:
                             raise MCPToolCallError(
                                 _safe_mcp_tool_error_message(raw_content, tool_name),

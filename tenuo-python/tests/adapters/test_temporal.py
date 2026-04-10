@@ -571,6 +571,81 @@ class TestTenuoPluginConfig:
         )
         assert cfg.retry_pop_max_windows == 120
 
+    def test_auto_consume_trusted_approvers_from_handler_attribute(self):
+        """trusted_approvers auto-resolved from handler.trusted_approvers attribute."""
+        from tenuo_core import SigningKey
+
+        approver_key = SigningKey.generate()
+        handler = MagicMock()
+        handler.trusted_approvers = [approver_key.public_key]
+
+        resolver = MagicMock(spec=KeyResolver)
+        cfg = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            approval_handler=handler,
+        )
+        assert cfg.trusted_approvers == [approver_key.public_key]
+
+    def test_auto_consume_trusted_approvers_from_handler_callable(self):
+        """trusted_approvers auto-resolved when handler.trusted_approvers is callable."""
+        from tenuo_core import SigningKey
+
+        approver_key = SigningKey.generate()
+        handler = MagicMock()
+        handler.trusted_approvers = lambda: [approver_key.public_key]
+
+        resolver = MagicMock(spec=KeyResolver)
+        cfg = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            approval_handler=handler,
+        )
+        assert cfg.trusted_approvers == [approver_key.public_key]
+
+    def test_explicit_trusted_approvers_not_overridden_by_handler(self):
+        """User-provided trusted_approvers takes precedence over handler attribute."""
+        from tenuo_core import SigningKey
+
+        user_key = SigningKey.generate()
+        handler_key = SigningKey.generate()
+        handler = MagicMock()
+        handler.trusted_approvers = [handler_key.public_key]
+
+        resolver = MagicMock(spec=KeyResolver)
+        cfg = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            approval_handler=handler,
+            trusted_approvers=[user_key.public_key],
+        )
+        assert cfg.trusted_approvers == [user_key.public_key]
+        assert handler_key.public_key not in cfg.trusted_approvers
+
+    def test_no_auto_consume_when_handler_lacks_attribute(self):
+        """Handler without trusted_approvers attribute leaves the field as None."""
+        resolver = MagicMock(spec=KeyResolver)
+        handler = lambda _r: None  # noqa: E731
+        cfg = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            approval_handler=handler,
+        )
+        assert cfg.trusted_approvers is None
+
+    def test_no_auto_consume_when_handler_returns_empty(self):
+        """Handler with empty trusted_approvers doesn't set the field."""
+        handler = MagicMock()
+        handler.trusted_approvers = []
+
+        resolver = MagicMock(spec=KeyResolver)
+        cfg = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            approval_handler=handler,
+        )
+        assert cfg.trusted_approvers is None
+
 
 # =============================================================================
 # Test Audit Events

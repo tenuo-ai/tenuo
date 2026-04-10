@@ -17,7 +17,6 @@ Prerequisites:
     pip install "tenuo[fastmcp]"
 """
 
-import asyncio
 import base64
 import sys
 import time
@@ -65,9 +64,9 @@ def main():
         .mint(issuer_key)
     )
 
-    print(f"\n[Step 1] Root warrant minted")
+    print("\n[Step 1] Root warrant minted")
     print(f"  id:     {root.id}")
-    print(f"  holder: orchestrator")
+    print("  holder: orchestrator")
     print(f"  tools:  {root.tools}")
     print(f"  depth:  {root.depth}")
 
@@ -83,12 +82,12 @@ def main():
         .grant(orchestrator_key)
     )
 
-    print(f"\n[Step 2] Worker warrant attenuated")
+    print("\n[Step 2] Worker warrant attenuated")
     print(f"  id:     {child.id}")
-    print(f"  holder: worker")
+    print("  holder: worker")
     print(f"  tools:  {child.tools}")
     print(f"  depth:  {child.depth}")
-    print(f"  issuer: orchestrator (NOT a trusted root)")
+    print("  issuer: orchestrator (NOT a trusted root)")
 
     # ------------------------------------------------------------------
     # Step 3: Encode as WarrantStack
@@ -96,7 +95,7 @@ def main():
     chain = [root, child]
     stack_b64 = encode_warrant_stack(chain)
 
-    print(f"\n[Step 3] WarrantStack encoded")
+    print("\n[Step 3] WarrantStack encoded")
     print(f"  chain length: {len(chain)}")
     print(f"  base64 size:  {len(stack_b64)} chars")
 
@@ -119,7 +118,7 @@ def main():
             }
         }
 
-    print(f"\n[Step 4] MCPVerifier.verify() — server trusts only issuer key")
+    print("\n[Step 4] MCPVerifier.verify() — server trusts only issuer key")
     print("-" * 60)
 
     tests = [
@@ -150,7 +149,7 @@ def main():
     # ------------------------------------------------------------------
     # Step 5: Single root warrant (backward compat)
     # ------------------------------------------------------------------
-    print(f"\n[Step 5] Single root warrant (no chain) — backward compat")
+    print("\n[Step 5] Single root warrant (no chain) — backward compat")
     print("-" * 60)
 
     pop_root = root.sign(orchestrator_key, "create_task",
@@ -170,7 +169,7 @@ def main():
     # ------------------------------------------------------------------
     # Step 6: Orphaned child (no chain) should be rejected
     # ------------------------------------------------------------------
-    print(f"\n[Step 6] Orphaned child warrant (no chain) — should be rejected")
+    print("\n[Step 6] Orphaned child warrant (no chain) — should be rejected")
     print("-" * 60)
 
     pop_orphan = child.sign(worker_key, "get_tasks", {"project": "demo"}, int(time.time()))

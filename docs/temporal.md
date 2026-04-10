@@ -983,6 +983,8 @@ The activity interceptor runs **dedup after** PoP verification. The default stor
 
 **Pluggable backend:** Set **`TenuoPluginConfig.pop_dedup_store`** to a shared implementation of **`PopDedupStore`** when you need **fleet-wide** replay suppression (see [Security considerations](#security-considerations)).
 
+> **Startup warning:** When no custom `pop_dedup_store` is configured, the interceptor logs a `WARNING` at startup reminding you that the default in-memory store is single-process only. This is intentional: it ensures operators are aware of the limitation before running multi-replica deployments. To suppress the warning, set `pop_dedup_store=` to a shared backend.
+
 > **Distributed deployments:** Without a shared **`PopDedupStore`**, dedup state is **not** replicated across worker pods. Treat that as an explicit trade-off: cryptographic PoP windows still bound signature age, but **duplicate first attempts** on different replicas within the dedup TTL are not suppressed by the default store.
 
 ---
@@ -1153,11 +1155,14 @@ from tenuo.temporal import (
 
 ## Failure Semantics (Integrator View)
 
-| Failure Type | Where It Surfaces | Typical Exception | Recommended Handling |
-|--------------|-------------------|-------------------|----------------------|
-| Missing/invalid warrant headers | Activity execution | `TemporalConstraintViolation` / `ChainValidationError` | Treat as non-retryable config/integration error |
-| Invalid PoP or replay | Activity execution | `PopVerificationError` | Non-retryable unless request context is regenerated |
-| Expired warrant | Activity execution | `WarrantExpired` | Refresh/mint new warrant, then retry |
+Authorization failures from the activity interceptor are automatically wrapped in Temporal's `ApplicationError(non_retryable=True)`. This prevents Temporal from retrying permanent denials (invalid warrants, constraint violations, bad PoP) which would always fail again and waste resources.
+
+| Failure Type | Where It Surfaces | Typical Exception | Retryable? |
+|--------------|-------------------|-------------------|------------|
+| Missing/invalid warrant headers | Activity execution | `TemporalConstraintViolation` / `ChainValidationError` | **No** (wrapped as `non_retryable`) |
+| Invalid PoP or replay | Activity execution | `PopVerificationError` | **No** (wrapped as `non_retryable`) |
+| Expired warrant | Activity execution | `WarrantExpired` | **No** (wrapped as `non_retryable`); mint a new warrant |
+| Local activity without `@unprotected` | Activity execution | `LocalActivityError` | **No** (wrapped as `non_retryable`) |
 | Key resolution failure | Activity execution | `KeyResolutionError` | Retry only for transient backend failures |
 | Missing `trusted_roots` | Config / worker startup | `ConfigurationError` | Pass `trusted_roots` or call `tenuo.configure(trusted_roots=[...])` |
 
