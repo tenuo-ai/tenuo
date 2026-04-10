@@ -7,6 +7,7 @@ Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 import asyncio
 import base64
 import logging
+import random
 import sys
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -201,6 +202,7 @@ class SecureMCPClient:
         self._tools: Optional[List[MCPTool]] = None
         self._wrapped_tools: Dict[str, Callable] = {}
         self._connect_lock = asyncio.Lock()
+        self._reconnect_delay: float = 0.0
 
         # Load MCP config if provided
         self.mcp_config = None
@@ -369,13 +371,26 @@ class SecureMCPClient:
             return True
         return False
 
+    _RECONNECT_BASE_DELAY = 0.5
+    _RECONNECT_MAX_DELAY = 30.0
+
     async def _reconnect(self) -> None:
         """Close the current session and reconnect using the same configuration.
 
         Serialized by the connect lock so that concurrent callers that both
-        see a connection error don't race through teardown/setup.
+        see a connection error don't race through teardown/setup.  Uses
+        exponential backoff with jitter to avoid hammering a down server.
         """
         async with self._connect_lock:
+            if self._reconnect_delay > 0:
+                jittered = self._reconnect_delay * (0.5 + random.random())
+                logger.info(
+                    "MCP reconnect backoff: %.1fs before retry to %s",
+                    jittered,
+                    self.url or self.command,
+                )
+                await asyncio.sleep(jittered)
+
             logger.info("MCP session lost; reconnecting to %s...", self.url or self.command)
             try:
                 await self.exit_stack.aclose()
@@ -385,7 +400,15 @@ class SecureMCPClient:
             self.session = None
             self._tools = None
             self._wrapped_tools = {}
-            await self._connect_unlocked()
+            try:
+                await self._connect_unlocked()
+                self._reconnect_delay = 0.0
+            except Exception:
+                self._reconnect_delay = min(
+                    max(self._reconnect_delay, self._RECONNECT_BASE_DELAY) * 2,
+                    self._RECONNECT_MAX_DELAY,
+                )
+                raise
 
     async def get_tools(self) -> List[MCPTool]:
         """
@@ -470,7 +493,11 @@ class SecureMCPClient:
                 result = self.compiled_config.extract_constraints(tool_name, arguments)
                 extraction_args = result.constraints
             except Exception:
-                pass
+                logger.warning(
+                    "Constraint extraction failed for '%s'; falling back to raw arguments",
+                    tool_name,
+                    exc_info=True,
+                )
 
         # Use unified enforcement logic
         enforcement: EnforcementResult = enforce_tool_call(
@@ -483,7 +510,11 @@ class SecureMCPClient:
             try:
                 self._control_plane.emit_for_enforcement(enforcement, chain_result=enforcement.chain_result)
             except Exception:
-                pass
+                logger.warning(
+                    "Control plane emission failed for '%s'; audit event lost",
+                    tool_name,
+                    exc_info=True,
+                )
 
         if enforcement.allowed:
             return ValidationResult.ok()
