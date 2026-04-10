@@ -147,13 +147,6 @@ input:focus, textarea:focus, button:focus {
   color: var(--muted);
 }
 
-/* Gradient text */
-.gradient-text {
-  background: linear-gradient(135deg, var(--accent), var(--accent2));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
 
 /* Tool tags */
 .tool-tag {

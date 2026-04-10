@@ -2382,7 +2382,7 @@ function App() {
         {/* Hero */}
         <header style={{ textAlign: 'center', padding: '40px 24px 24px' }}>
           <h1 style={{ fontSize: '32px', fontWeight: 700, letterSpacing: '-0.02em', marginBottom: '8px' }}>
-            Warrant <span className="gradient-text">Playground</span>
+            Warrant Playground
           </h1>
           <p style={{ fontSize: '15px', color: 'var(--muted)', maxWidth: '520px', margin: '0 auto 12px' }}>
             Decode, build, and test authorization in real-time
