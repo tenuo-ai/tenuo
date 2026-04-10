@@ -11,7 +11,6 @@ import pytest
 
 from tenuo import (
     LANGCHAIN_AVAILABLE,
-    Capability,
     SigningKey,
     Warrant,
     chain_scope,
@@ -35,7 +34,7 @@ def _reset():
 if LANGCHAIN_AVAILABLE:
     try:
         from langchain_core.tools import tool
-        from tenuo.langchain import TenuoTool, guard_tools
+        from tenuo.langchain import guard_tools
 
         @tool
         def search(query: str) -> str:

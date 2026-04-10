@@ -11,7 +11,6 @@ Covers:
 import pytest
 
 from tenuo import SigningKey, Warrant, chain_scope, key_scope, warrant_scope
-from tenuo.decorators import ChainContext
 
 
 @pytest.fixture

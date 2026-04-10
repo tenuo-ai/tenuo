@@ -36,7 +36,6 @@ compiled extension is not installed.
 from __future__ import annotations
 
 import time
-import warnings
 from typing import Any, Dict, List, Optional
 
 import pytest
