@@ -1217,7 +1217,7 @@ pub fn sign_receipt(payload_json: JsValue, authorizer_key_hex: &str) -> JsValue 
 
 /// Parse a `TENUO_CONNECT_TOKEN` string into its component fields.
 ///
-/// The token is a base64url-encoded JSON blob: `{ v, e, k, a?, r? }`.
+/// The token is a base64url-encoded JSON blob: `{ v, e, k, a?, t? }`.
 /// This WASM binding keeps the parsing canonical so TypeScript doesn't need
 /// to duplicate the decode logic.
 ///
@@ -1233,8 +1233,8 @@ pub fn parse_connect_token(token: &str) -> JsValue {
         k: String,
         #[serde(default)]
         a: Option<String>,
-        #[serde(default)]
-        r: Option<String>,
+        #[serde(default, alias = "r")]
+        t: Option<String>,
     }
 
     #[derive(Serialize)]
@@ -1283,7 +1283,7 @@ pub fn parse_connect_token(token: &str) -> JsValue {
         endpoint: Some(raw.e),
         api_key: Some(raw.k),
         agent_id: raw.a,
-        registration_token: raw.r,
+        registration_token: raw.t,
         error: None,
     }).unwrap()
 }
