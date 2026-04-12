@@ -1051,6 +1051,7 @@ async fn handle_request(
     let approvals: Vec<SignedApproval> = match headers
         .get(approval_header)
         .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
     {
         Some(encoded) => {
             let bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -1937,6 +1938,42 @@ routes:
 
         let body = parse_body(resp).await;
         assert_eq!(body["authorized"], true);
+    }
+
+    #[tokio::test]
+    async fn empty_approval_header_treated_as_absent() {
+        let root_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let app = build_test_app(authorizer);
+
+        let warrant = tenuo::Warrant::builder()
+            .capability("deploy", ConstraintSet::new())
+            .ttl(std::time::Duration::from_secs(300))
+            .holder(root_key.public_key())
+            .build(&root_key)
+            .unwrap();
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(&root_key, "deploy", &args).unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .header("X-Tenuo-Approvals", "")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "empty header should be treated as absent, not 400"
+        );
     }
 
     // ----------------------------------------------------------------
