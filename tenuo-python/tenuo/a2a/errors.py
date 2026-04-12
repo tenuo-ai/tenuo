@@ -38,6 +38,10 @@ __all__ = [
     # Client errors
     "KeyMismatchError",
     "MissingSigningKeyError",
+    # Approval errors
+    "ApprovalRequiredError",
+    "InsufficientApprovalsError",
+    "InvalidApprovalError",
     # Configuration errors
     "ConstraintBindingError",
     # Registration errors
@@ -84,6 +88,9 @@ class A2AErrorCode:
     UNKNOWN_CONSTRAINT = -32014  # -> 1504 (UnknownConstraintType)
     POP_REQUIRED = -32015  # -> 1600 (PopSignatureInvalid)
     POP_FAILED = -32016  # -> 1600 (PopSignatureInvalid)
+    APPROVAL_REQUIRED = -32019  # -> 1707 (ApprovalRequired)
+    INSUFFICIENT_APPROVALS = -32020  # -> 1702 (InsufficientApprovals)
+    INVALID_APPROVAL = -32021  # -> 1701 (ApprovalInvalid)
     REGISTRATION_DISABLED = -32017  # agent/register called but no handler configured
     REGISTRATION_DENIED = -32018  # handler explicitly denied the warrant request
 
@@ -105,6 +112,9 @@ class A2AErrorCode:
             cls.UNKNOWN_CONSTRAINT: 1504,
             cls.POP_REQUIRED: 1600,
             cls.POP_FAILED: 1600,
+            cls.APPROVAL_REQUIRED: 1707,
+            cls.INSUFFICIENT_APPROVALS: 1702,
+            cls.INVALID_APPROVAL: 1701,
         }
         return mapping.get(jsonrpc_code)
 
@@ -124,6 +134,9 @@ class A2AErrorCode:
             1501: cls.CONSTRAINT_VIOLATION,
             1504: cls.UNKNOWN_CONSTRAINT,
             1600: cls.POP_FAILED,
+            1701: cls.INVALID_APPROVAL,
+            1702: cls.INSUFFICIENT_APPROVALS,
+            1707: cls.APPROVAL_REQUIRED,
             1800: cls.REVOKED,
         }
         return mapping.get(wire_code, cls.INTERNAL_ERROR)
@@ -147,6 +160,9 @@ ERROR_MESSAGES = {
     A2AErrorCode.UNKNOWN_CONSTRAINT: "unknown_constraint",
     A2AErrorCode.POP_REQUIRED: "pop_required",
     A2AErrorCode.POP_FAILED: "pop_failed",
+    A2AErrorCode.APPROVAL_REQUIRED: "approval_required",
+    A2AErrorCode.INSUFFICIENT_APPROVALS: "insufficient_approvals",
+    A2AErrorCode.INVALID_APPROVAL: "invalid_approval",
     A2AErrorCode.REGISTRATION_DISABLED: "registration_disabled",
     A2AErrorCode.REGISTRATION_DENIED: "registration_denied",
 }
@@ -334,6 +350,62 @@ class RevokedError(A2AError):
     """
 
     code = A2AErrorCode.REVOKED
+
+
+# =============================================================================
+# Approval Errors
+# =============================================================================
+
+
+class ApprovalRequiredError(A2AError):
+    """Approval gate fired — human approval is required.
+
+    The ``data`` field carries all the information the caller needs to
+    obtain approvals and retry:
+
+    - ``request_hash``: hex-encoded hash the approval must cover
+    - ``required_approvers``: list of hex-encoded approver public keys
+    - ``min_approvals``: threshold count
+    - ``skill``: the gated skill
+    """
+
+    code = A2AErrorCode.APPROVAL_REQUIRED
+
+    def __init__(
+        self,
+        skill: str,
+        *,
+        request_hash: str = "",
+        required_approvers: Optional[list[str]] = None,
+        min_approvals: int = 1,
+    ) -> None:
+        super().__init__(
+            f"Approval required for skill '{skill}'",
+            {
+                "skill": skill,
+                "request_hash": request_hash,
+                "required_approvers": required_approvers or [],
+                "min_approvals": min_approvals,
+            },
+        )
+
+
+class InsufficientApprovalsError(A2AError):
+    """Some approvals were provided but not enough valid ones."""
+
+    code = A2AErrorCode.INSUFFICIENT_APPROVALS
+
+    def __init__(self, message: str, *, required: int = 0, received: int = 0) -> None:
+        super().__init__(message, {"required": required, "received": received})
+
+
+class InvalidApprovalError(A2AError):
+    """Approval payload is malformed or unverifiable."""
+
+    code = A2AErrorCode.INVALID_APPROVAL
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"Invalid approval: {reason}", {"reason": reason})
 
 
 # =============================================================================

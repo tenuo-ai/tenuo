@@ -62,10 +62,13 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, FrozenSet, List, Optional
 from .errors import (
     A2AError,
     A2AErrorCode,
+    ApprovalRequiredError,
     AudienceMismatchError,
     ChainValidationError,
     ConstraintBindingError,
     ConstraintViolationError,
+    InsufficientApprovalsError,
+    InvalidApprovalError,
     InvalidSignatureError,
     MissingWarrantError,
     PopRequiredError,
@@ -118,6 +121,9 @@ except ImportError:
 
 # Delegation chain header (legacy transport; WarrantStack is preferred).
 WARRANT_CHAIN_HEADER = "X-Tenuo-Warrant-Chain"
+
+# Approvals header — JSON array of base64 CBOR-encoded SignedApprovals.
+APPROVALS_HEADER = "X-Tenuo-Approvals"
 
 logger = logging.getLogger("tenuo.a2a.server")
 
@@ -1013,6 +1019,7 @@ class A2AServer:
         warrant_chain: Optional[str] = None,
         _preloaded_parents: Optional[List[Any]] = None,
         pop_signature: Optional[bytes] = None,
+        approvals: Optional[List[Any]] = None,
     ) -> "Warrant":
         """
         Validate a warrant for a skill invocation.
@@ -1025,6 +1032,7 @@ class A2AServer:
             _preloaded_parents: Already-decoded parent warrants from a WarrantStack
                 (takes precedence over ``warrant_chain`` when provided)
             pop_signature: Optional Proof-of-Possession signature bytes
+            approvals: Optional list of decoded SignedApproval objects for multi-sig
 
         Returns:
             Validated Warrant object
@@ -1148,15 +1156,36 @@ class A2AServer:
                 if _resolved_chain_parents:
                     all_chain = list(_resolved_chain_parents) + [warrant]
                     self._authorizer.check_chain(
-                        all_chain, skill_id, arguments, signature=pop_signature
+                        all_chain, skill_id, arguments,
+                        signature=pop_signature, approvals=approvals,
                     )
                 else:
                     self._authorizer.authorize_one(
-                        warrant, skill_id, arguments, signature=pop_signature
+                        warrant, skill_id, arguments,
+                        signature=pop_signature, approvals=approvals,
                     )
                 logger.debug(f"PoP verified for skill '{skill_id}'")
             except Exception as e:
-                # Map tenuo_core errors to A2A errors
+                from tenuo.exceptions import (
+                    ApprovalGateTriggered as _ApprovalGate,
+                    InsufficientApprovals as _InsufficientApprovals,
+                    InvalidApproval as _InvalidApproval,
+                )
+                if isinstance(e, _ApprovalGate):
+                    raise ApprovalRequiredError(
+                        skill_id,
+                        request_hash=getattr(e, "request_hash", ""),
+                        min_approvals=getattr(e, "min_approvals", 1),
+                    ) from e
+                if isinstance(e, _InsufficientApprovals):
+                    raise InsufficientApprovalsError(
+                        str(e),
+                        required=getattr(e, "required", 0),
+                        received=getattr(e, "received", 0),
+                    ) from e
+                if isinstance(e, _InvalidApproval):
+                    raise InvalidApprovalError(str(e)) from e
+                # Map PoP errors
                 error_msg = str(e)
                 if "Proof-of-Possession" in error_msg or "signature" in error_msg.lower():
                     raise PopVerificationError(error_msg)
@@ -1780,6 +1809,38 @@ class A2AServer:
             raise UnknownConstraintError(constraint_type=constraint_type, param=param)
 
     # -------------------------------------------------------------------------
+    # Approval Decoding
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _decode_approvals(request: "Request", params: Dict[str, Any]) -> Optional[List[Any]]:
+        """Decode signed approvals from header or params.
+
+        Accepts ``X-Tenuo-Approvals`` header or ``x-tenuo-approvals`` param.
+        The value is a JSON array of base64 CBOR-encoded ``SignedApproval``
+        objects — the same wire format used by the FastAPI and Temporal
+        adapters.
+
+        Returns ``None`` when no approvals are present.
+        """
+        import base64 as _b64
+
+        raw = request.headers.get(APPROVALS_HEADER)
+        if not raw:
+            raw = params.get("x-tenuo-approvals")
+        if not raw:
+            return None
+
+        try:
+            from tenuo_core import SignedApproval  # type: ignore[attr-defined]
+
+            raw_list = json.loads(_b64.b64decode(raw))
+            return [SignedApproval.from_bytes(_b64.b64decode(item)) for item in raw_list]
+        except Exception:
+            logger.warning("Failed to decode %s", APPROVALS_HEADER, exc_info=True)
+            return None
+
+    # -------------------------------------------------------------------------
     # Audit Logging
     # -------------------------------------------------------------------------
 
@@ -2159,10 +2220,13 @@ class A2AServer:
             except Exception as e:
                 logger.warning(f"Failed to decode PoP signature: {e}")
 
+        # Decode signed approvals for multi-sig warrants
+        decoded_approvals = self._decode_approvals(request, params)
+
         if self.require_warrant and not warrant_token:
             raise MissingWarrantError("Warrant required")
 
-        # Validate warrant (with optional chain and PoP)
+        # Validate warrant (with optional chain, PoP, and approvals)
         warrant = None
         if warrant_token:
             warrant = await self.validate_warrant(
@@ -2172,6 +2236,7 @@ class A2AServer:
                 warrant_chain=warrant_chain,
                 _preloaded_parents=_preloaded_parents,
                 pop_signature=pop_signature,
+                approvals=decoded_approvals,
             )
 
         # Set current warrant context
@@ -2181,9 +2246,6 @@ class A2AServer:
             # Get skill handler
             skill_def = self._skills.get(skill_id)
             if not skill_def:
-                # Note: This is different from SkillNotGrantedError
-                # - SkillNotFoundError: skill doesn't exist on this server
-                # - SkillNotGrantedError: skill exists but not granted in warrant
                 raise SkillNotFoundError(skill_id, list(self._skills.keys()))
 
             # Execute skill
@@ -2241,6 +2303,9 @@ class A2AServer:
             except Exception as e:
                 logger.warning(f"Failed to decode PoP signature: {e}")
 
+        # Decode signed approvals for multi-sig warrants
+        decoded_approvals = self._decode_approvals(request, params)
+
         # Validate warrant (same as task/send)
         warrant = None
         if self.require_warrant and not warrant_token:
@@ -2254,6 +2319,7 @@ class A2AServer:
                 warrant_chain=warrant_chain,
                 _preloaded_parents=_preloaded_parents,
                 pop_signature=pop_signature,
+                approvals=decoded_approvals,
             )
 
         # Get warrant expiry for mid-stream checks
