@@ -173,6 +173,7 @@ class AuditEvent:
             "details",
             "error_code",
             "related_ids",
+            "metadata",
         ]
         for field_name in optional_fields:
             value = getattr(self, field_name)
@@ -315,6 +316,3 @@ def log_authorization_success(warrant_id: str, tool: str, constraints: Dict[str,
     audit_logger.authorization_success(warrant_id, tool, constraints, **kwargs)
 
 
-def log_authorization_failure(warrant_id: Optional[str], tool: str, constraints: Dict[str, Any], reason: str, **kwargs):
-    """Log a failed authorization event."""
-    audit_logger.authorization_failure(warrant_id, tool, constraints, reason, **kwargs)

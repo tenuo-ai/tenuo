@@ -58,7 +58,6 @@ from .exceptions import (
     ToolNotAuthorized,
 )
 from .schemas import TOOL_SCHEMAS, ToolSchema
-from .validation import ValidationResult  # noqa: F401  # kept for API re-export via this module
 
 logger = logging.getLogger("tenuo.enforcement")
 

@@ -81,8 +81,6 @@ class AuthErrorCode:
     SCOPE_VIOLATION = "SCOPE_VIOLATION"  # Tool not in warrant.tools
     CONSTRAINT_VIOLATION = "CONSTRAINT_VIOLATION"  # Args don't satisfy constraints
     POP_MISSING = "POP_MISSING"  # SigningKey not available for PoP
-    POP_INVALID = "POP_INVALID"  # PoP signature invalid
-    HOLDER_MISMATCH = "HOLDER_MISMATCH"  # Wrong keypair for warrant holder
 
 
 # Custom warning category for integration issues
@@ -327,10 +325,6 @@ _allowed_tools_context: ContextVar[Optional[List[str]]] = ContextVar("_allowed_t
 # SECURITY: Only works when TENUO_ENV=test to prevent accidental production bypass
 _bypass_context: ContextVar[bool] = ContextVar("_bypass_context", default=False)
 
-# Track bypass call count for audit purposes
-_bypass_call_count: int = 0
-
-
 def is_bypass_enabled() -> bool:
     """
     Check if authorization bypass is enabled (for testing).
@@ -360,16 +354,7 @@ def is_bypass_enabled() -> bool:
         )
         return False
 
-    # Audit log bypass usage
-    global _bypass_call_count
-    _bypass_call_count += 1
-
     return True
-
-
-def get_bypass_call_count() -> int:
-    """Get the number of times bypass was used (for auditing)."""
-    return _bypass_call_count
 
 
 def get_warrant_context() -> Optional[Warrant]:

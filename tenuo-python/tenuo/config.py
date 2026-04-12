@@ -337,11 +337,6 @@ def is_configured() -> bool:
     return config.issuer_key is not None or config.dev_mode
 
 
-def is_dev_mode() -> bool:
-    """Check if running in development mode."""
-    return get_config().dev_mode
-
-
 def allow_passthrough() -> bool:
     """Check if pass-through is allowed."""
     config = get_config()
@@ -351,11 +346,6 @@ def allow_passthrough() -> bool:
 def is_audit_mode() -> bool:
     """Check if running in audit mode (log violations, don't block)."""
     return get_config().mode == EnforcementMode.AUDIT
-
-
-def is_permissive_mode() -> bool:
-    """Check if running in permissive mode (log violations, add warning, don't block)."""
-    return get_config().mode == EnforcementMode.PERMISSIVE
 
 
 def is_enforce_mode() -> bool:
@@ -517,9 +507,7 @@ __all__ = [
     "get_config",
     "reset_config",
     "is_configured",
-    "is_dev_mode",
     "is_audit_mode",
-    "is_permissive_mode",
     "is_enforce_mode",
     "should_block_violation",
     "allow_passthrough",
