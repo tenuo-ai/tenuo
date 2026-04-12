@@ -889,7 +889,6 @@ class GuardedCompletions:
                     pending_chunks.append(chunk)
 
         # Stream complete — now verify ALL buffered tool calls
-        verified_indices: set = set()
         denied_indices: set = set()
 
         for index, buffer in buffers.items():
@@ -907,7 +906,6 @@ class GuardedCompletions:
                     self._approval_handler,
                     self._approvals,
                 )
-                verified_indices.add(index)
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
                 if self._on_denial == "raise":
@@ -1059,7 +1057,6 @@ class GuardedCompletions:
                     pending_chunks.append(chunk)
 
         # Verify all buffered tool calls
-        verified_indices: set = set()
         denied_indices: set = set()
 
         for index, buffer in buffers.items():
@@ -1077,7 +1074,6 @@ class GuardedCompletions:
                     self._approval_handler,
                     self._approvals,
                 )
-                verified_indices.add(index)
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
                 if self._on_denial == "raise":
@@ -1359,12 +1355,6 @@ class GuardedClient:
                 approvals,
                 trusted_roots,
             )
-
-        # Pass through other attributes
-        self._passthrough_attrs = set()
-        for attr in dir(client):
-            if not attr.startswith("_") and attr not in ("chat", "responses"):
-                self._passthrough_attrs.add(attr)
 
     def __getattr__(self, name: str) -> Any:
         """Pass through non-wrapped attributes to underlying client."""

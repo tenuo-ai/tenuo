@@ -26,12 +26,6 @@ except ImportError:
 from .exceptions import AuthorizationDenied
 
 
-class SecurityError(Exception):
-    """Raised when a security-sensitive operation is attempted in production."""
-
-    pass
-
-
 def _is_test_environment() -> bool:
     """
     Check if running in a test environment.
@@ -519,10 +513,8 @@ def assert_cannot_grant(
 
 __all__ = [
     # Test environment controls
-    "SecurityError",
     "allow_all",
     "deterministic_headers",
-    "_is_test_environment",
     # Assertion helpers
     "AuthorizationAssertionError",
     "assert_authorized",

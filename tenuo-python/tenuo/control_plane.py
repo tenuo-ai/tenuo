@@ -254,8 +254,8 @@ def _auto_shutdown():
     if client:
         try:
             client.shutdown(timeout_secs=2.0)
-        except Exception:
-            logger.debug("Control plane shutdown failed at exit", exc_info=True)
+        except BaseException:
+            pass
 
 atexit.register(_auto_shutdown)
 

@@ -105,16 +105,6 @@ def guard(
             allowed_bins=allowed_bins,
             on_denial="log" if audit else on_denial,
         )
-    elif client_type == "anthropic":
-        return _guard_anthropic(
-            client,
-            infer_constraints=infer_constraints,
-            root=root,
-            allowed_domains=allowed_domains,
-            block_private=block_private,
-            allowed_bins=allowed_bins,
-            on_denial="log" if audit else on_denial,
-        )
     else:
         client_name = type(client).__name__
         detected = _detect_client_type(client)
@@ -185,19 +175,6 @@ def _guard_openai(
             )
 
     return builder.build()
-
-
-def _guard_anthropic(
-    client: Any,
-    **kwargs,
-) -> Any:
-    """Guard an Anthropic client (not yet supported)."""
-    raise NotImplementedError(
-        "guard() does not yet support Anthropic clients. "
-        "Returning an unguarded client would create a false sense of security. "
-        "Use enforce_tool_call() directly for Anthropic integrations, or see "
-        "https://docs.tenuo.ai/integrations for the Anthropic adapter roadmap."
-    )
 
 
 def _extract_openai_tools(client: Any) -> List[Dict[str, Any]]:

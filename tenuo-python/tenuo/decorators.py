@@ -61,6 +61,8 @@ from .exceptions import (
     ScopeViolation,
     ToolNotAuthorized,
 )
+from ._enforcement import EnforcementResult, enforce_tool_call
+from .bound_warrant import BoundWarrant
 
 logger = logging.getLogger("tenuo.decorators")
 
@@ -79,8 +81,6 @@ class AuthErrorCode:
     SCOPE_VIOLATION = "SCOPE_VIOLATION"  # Tool not in warrant.tools
     CONSTRAINT_VIOLATION = "CONSTRAINT_VIOLATION"  # Args don't satisfy constraints
     POP_MISSING = "POP_MISSING"  # SigningKey not available for PoP
-    POP_INVALID = "POP_INVALID"  # PoP signature invalid
-    HOLDER_MISMATCH = "HOLDER_MISMATCH"  # Wrong keypair for warrant holder
 
 
 # Custom warning category for integration issues
@@ -325,10 +325,6 @@ _allowed_tools_context: ContextVar[Optional[List[str]]] = ContextVar("_allowed_t
 # SECURITY: Only works when TENUO_ENV=test to prevent accidental production bypass
 _bypass_context: ContextVar[bool] = ContextVar("_bypass_context", default=False)
 
-# Track bypass call count for audit purposes
-_bypass_call_count: int = 0
-
-
 def is_bypass_enabled() -> bool:
     """
     Check if authorization bypass is enabled (for testing).
@@ -358,16 +354,7 @@ def is_bypass_enabled() -> bool:
         )
         return False
 
-    # Audit log bypass usage
-    global _bypass_call_count
-    _bypass_call_count += 1
-
     return True
-
-
-def get_bypass_call_count() -> int:
-    """Get the number of times bypass was used (for auditing)."""
-    return _bypass_call_count
 
 
 def get_warrant_context() -> Optional[Warrant]:
@@ -519,6 +506,167 @@ class SigningKeyContext:
         return False
 
 
+# =============================================================================
+# Bridge: EnforcementResult → @guard's exception & audit contract
+# =============================================================================
+
+
+def _reraise_if_crypto(
+    result: EnforcementResult,
+    warrant: Warrant,
+) -> None:
+    """Re-raise crypto exceptions that ``enforce_tool_call`` caught internally.
+
+    ``enforce_tool_call`` wraps all failures — including ``SignatureInvalid``,
+    ``ExpiredError``, and ``MissingSignature`` — into ``EnforcementResult``.
+    ``@guard`` historically propagated these directly, and callers (including
+    tests) may be catching them specifically.  Detect them from the result
+    metadata and re-raise to preserve backward compatibility.
+    """
+    from tenuo.exceptions import SignatureInvalid as _SigInvalid
+
+    et = result.error_type or ""
+
+    if et == "expired":
+        expires_at = warrant.expires_at() if hasattr(warrant, "expires_at") else "unknown"
+        raise ExpiredError(
+            warrant_id=warrant.id if hasattr(warrant, "id") else "unknown",
+            expired_at=str(expires_at),
+        )
+
+    # enforce_tool_call labels crypto failures "tenuo_error" (sign path)
+    # or "authorization_failed" (verify path).  Inspect the denial_reason
+    # to distinguish signature failures from policy denials.
+    dr = (result.denial_reason or "").lower()
+    _sig_keywords = ("signature", "pop", "proof-of-possession")
+    _sig_indicators = ("invalid", "failed", "verification", "mismatch", "missing")
+    if any(kw in dr for kw in _sig_keywords) and any(ind in dr for ind in _sig_indicators):
+        raise _SigInvalid(reason=result.denial_reason or "Signature verification failed")
+
+
+def _map_result_to_guard_error(
+    result: EnforcementResult,
+    warrant_to_use: Warrant,
+    tool_name: str,
+    auth_args: dict,
+    callsite: str,
+    func_name: str,
+) -> None:
+    """Translate a denied ``EnforcementResult`` into the same exceptions and
+    audit events that ``@guard``'s inline enforcement block historically
+    produced.
+
+    This preserves:
+    - ``ToolNotAuthorized`` with ``authorized_tools`` and a mint hint
+    - ``AuthorizationDenied`` with ``ConstraintResult`` list and explorer URL
+    - ``why_denied().suggestion`` passthrough
+    - Structured ``audit_logger`` events with callsite/function metadata
+
+    Raises ``ToolNotAuthorized`` or ``AuthorizationDenied``; never returns.
+    """
+    from .warrant_ext import DenyCode as _DenyCode
+
+    why = warrant_to_use.why_denied(tool_name, auth_args)
+
+    _is_tool_not_granted = why.deny_code == _DenyCode.TOOL_NOT_FOUND or (
+        why.deny_code == _DenyCode.CONSTRAINT_MISMATCH
+        and getattr(why, "field", None) == "tool"
+    )
+
+    if _is_tool_not_granted:
+        error_code = AuthErrorCode.SCOPE_VIOLATION
+
+        audit_logger.log(
+            AuditEvent(
+                event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else None,
+                tool=tool_name,
+                action="denied",
+                error_code=error_code,
+                details=f"Tool '{tool_name}' not in warrant grants",
+                metadata={
+                    "callsite": callsite,
+                    "function": func_name,
+                },
+            )
+        )
+
+        raise ToolNotAuthorized(
+            tool=tool_name,
+            authorized_tools=getattr(warrant_to_use, "tools", []) or [],
+            hint=f"Add Capability('{tool_name}', ...) to your mint() call",
+        )
+
+    # Constraint / policy violation
+    error_code = AuthErrorCode.CONSTRAINT_VIOLATION
+
+    constraint_results = []
+    if getattr(why, "field", None):
+        constraint_results.append(
+            ConstraintResult(
+                name=why.field,
+                passed=False,
+                constraint_repr="<see warrant>",
+                value=auth_args.get(why.field, "<not provided>"),
+                explanation=getattr(why, "suggestion", None) or "Constraint not satisfied",
+            )
+        )
+    else:
+        for arg_name, arg_value in auth_args.items():
+            constraint_results.append(
+                ConstraintResult(
+                    name=arg_name,
+                    passed=False,
+                    constraint_repr="<see warrant>",
+                    value=arg_value,
+                    explanation="Value does not satisfy constraint",
+                )
+            )
+
+    audit_logger.log(
+        AuditEvent(
+            event_type=AuditEventType.AUTHORIZATION_FAILURE,
+            warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else None,
+            tool=tool_name,
+            action="denied",
+            constraints=auth_args,
+            trace_id=warrant_to_use.session_id if hasattr(warrant_to_use, "session_id") else None,
+            error_code=error_code,
+            details=f"Constraint violation for '{tool_name}'",
+            metadata={
+                    "callsite": callsite,
+                    "function": func_name,
+                    "provided_args": {k: str(v)[:100] for k, v in auth_args.items()},
+                    "suggestion": why.suggestion if hasattr(why, "suggestion") else None,
+                },
+        )
+    )
+
+    # Build explorer URL for debugging
+    warrant_b64 = warrant_to_use.to_base64() if hasattr(warrant_to_use, "to_base64") else ""
+    if warrant_b64:
+        import base64 as b64_mod
+        import json as json_mod
+        import urllib.parse
+
+        state = {"warrant": warrant_b64, "tool": tool_name, "args": json_mod.dumps(auth_args)}
+        state_b64 = b64_mod.b64encode(json_mod.dumps(state).encode()).decode()
+        explorer_url = f"https://tenuo.ai/explorer/?s={urllib.parse.quote(state_b64)}"
+    else:
+        explorer_url = None
+
+    hint = why.suggestion if hasattr(why, "suggestion") else None
+    if explorer_url:
+        hint = f"{hint}\n\n🔗 Debug: {explorer_url}" if hint else f"🔗 Debug: {explorer_url}"
+
+    raise AuthorizationDenied(
+        tool=tool_name,
+        constraint_results=constraint_results,
+        reason="Arguments do not satisfy warrant constraints",
+        hint=hint,
+    )
+
+
 def guard(
     warrant_or_tool: Optional[Union[Warrant, str]] = None,
     tool: Optional[str] = None,
@@ -530,6 +678,7 @@ def guard(
     authorizer: Optional[Any] = None,
     extract_signature: Optional[Callable[..., bytes]] = None,
     extract_chain: Optional[Callable[..., list]] = None,
+    approval_handler: Optional[Any] = None,
 ):
     """
     Decorator that enforces warrant authorization before function execution.
@@ -575,6 +724,9 @@ def guard(
                        the Authorizer verifies the warrant issuer against these roots,
                        closing the self-signed trust gap.  Highly recommended in production.
                        Falls back to warrant.issuer when omitted (accepts self-signed warrants).
+        approval_handler: Optional callback invoked when a warrant approval gate fires.
+                         Receives an ``ApprovalRequest`` and returns ``SignedApproval``
+                         object(s).  See ``enforce_tool_call`` for details.
 
     Raises:
         AuthorizationError: If no warrant/keypair is available, or authorization fails.
@@ -597,7 +749,7 @@ def guard(
         func = warrant_or_tool
         inferred_tool = func.__name__
         # Apply decorator and return immediately
-        inner_decorator = guard(tool=inferred_tool, keypair=keypair, extract_args=extract_args, mapping=mapping, trusted_roots=trusted_roots, verify_mode=verify_mode, authorizer=authorizer, extract_signature=extract_signature, extract_chain=extract_chain)
+        inner_decorator = guard(tool=inferred_tool, keypair=keypair, extract_args=extract_args, mapping=mapping, trusted_roots=trusted_roots, verify_mode=verify_mode, authorizer=authorizer, extract_signature=extract_signature, extract_chain=extract_chain, approval_handler=approval_handler)
         return inner_decorator(func)
     else:
         # Pattern: @guard(tool="...") - tool passed as keyword arg
@@ -834,192 +986,64 @@ def guard(
                                 ],
                             )
 
-            # PoP: sign and verify via Authorizer (full check: issuer, PoP, constraints)
-            import time as _time
-
-            from tenuo_core import Authorizer as _Authorizer
-            from tenuo.exceptions import (
-                ExpiredError as _ExpiredError,
-                MissingSignature as _MissingSignature,
-                SignatureInvalid as _SignatureInvalid,
+            # ── Enforcement via enforce_tool_call ──────────────────────────
+            # Construct a BoundWarrant and delegate to the shared enforcement
+            # path. This gives @guard approval gates, nonce replay protection,
+            # chain verification, and chain_result for signed receipts — all
+            # for free.
+            _bw = BoundWarrant(
+                warrant_to_use,
+                keypair_to_use,
+                trusted_roots=list(trusted_roots) if trusted_roots else None,
             )
 
+            # For verify mode, extract the precomputed signature and chain
+            # from the request (e.g. HTTP headers) before calling enforce.
+            _precomputed_sig = None
+            _warrant_chain = None
+            _verify_authorizer = authorizer
             if verify_mode == "verify":
-                # ── Remote PoP / server-side verify path ─────────────────────
-                # The PoP signature was generated by the caller and arrives via
-                # extract_signature (e.g. from an HTTP header).
-                # Use the configured/global authorizer to verify the full chain.
-                _raw_sig = extract_signature(*args, **kwargs) if callable(extract_signature) else None
-                if _raw_sig is None:
+                _precomputed_sig = extract_signature(*args, **kwargs) if callable(extract_signature) else None
+                if _precomputed_sig is None:
                     raise MissingSignature("@guard(verify_mode='verify') requires extract_signature to return bytes")
-                _chain = extract_chain(*args, **kwargs) if callable(extract_chain) else None
-                _verify_auth = authorizer
-                if _verify_auth is None:
+                _precomputed_sig = bytes(_precomputed_sig)
+                _raw_chain = extract_chain(*args, **kwargs) if callable(extract_chain) else None
+                if _raw_chain:
+                    _warrant_chain = list(_raw_chain)
+                # Build authorizer from trusted_roots if not explicitly provided
+                if _verify_authorizer is None:
                     from .config import resolve_trusted_roots as _rtr
+                    from tenuo_core import Authorizer as _Authorizer
                     _vr = _rtr(trusted_roots)
                     if _vr:
-                        _verify_auth = _Authorizer(trusted_roots=_vr)
+                        _verify_authorizer = _Authorizer(trusted_roots=_vr)
                     else:
                         raise ConfigurationError(
                             "@guard(verify_mode='verify') requires either an explicit authorizer= "
                             "or trusted_roots configured via configure() at startup."
                         )
-                try:
-                    if _chain:
-                        _verify_auth.check_chain(list(_chain) + [warrant_to_use], tool_name, auth_args, signature=bytes(_raw_sig))
-                    else:
-                        _verify_auth.authorize_one(warrant_to_use, tool_name, auth_args, signature=bytes(_raw_sig))
-                    _pop_ok = True
-                except (_ExpiredError, _SignatureInvalid, _MissingSignature):
-                    raise
-                except Exception as _verify_exc:
-                    logger.debug("verify-mode authorization denied for '%s': %s", tool_name, _verify_exc)
-                    _pop_ok = False
-            else:
-                # ── Local sign path (default) ─────────────────────────────────
-                pop_signature = warrant_to_use.sign(keypair_to_use, tool_name, auth_args, int(_time.time()))
-                # Priority: explicit trusted_roots param → global configure() → ConfigurationError.
-                # Unlike the adapter integrations, @guard does NOT fall back to the warrant's own
-                # issuer as a self-signed root — that would silently accept unverified issuers.
-                # Use configure(trusted_roots=[...]) at startup, or pass trusted_roots= explicitly.
-                if trusted_roots:
-                    _roots = list(trusted_roots)
-                else:
-                    from .config import resolve_trusted_roots as _resolve_roots
-                    _resolved = _resolve_roots(None)
-                    if _resolved is None:
-                        raise ConfigurationError(
-                            "@guard requires trusted_roots. Pass trusted_roots=[issuer_public_key] "
-                            "to the decorator, or call tenuo.configure(trusted_roots=[...]) at "
-                            "application startup. Without an explicit trust anchor the Authorizer "
-                            "cannot verify the warrant's issuer (fail-closed)."
-                        )
-                    _roots = _resolved
-                try:
-                    _auth = _Authorizer(trusted_roots=_roots)
-                    _auth.authorize_one(warrant_to_use, tool_name, auth_args, signature=bytes(pop_signature))
-                    _pop_ok = True
-                except (_ExpiredError, _SignatureInvalid, _MissingSignature):
-                    raise  # crypto failures are not policy denials — propagate immediately
-                except Exception as _auth_exc:
-                    logger.debug(
-                        "authorize_one denied for tool '%s': %s",
-                        tool_name, _auth_exc,
-                    )
-                    _pop_ok = False
 
-            if not _pop_ok:
-                # Use core's why_denied() to classify the denial reason so grant
-                # semantics (wildcards, capability shapes) match the Authorizer,
-                # rather than re-implementing tool-grant logic in Python.
-                from .warrant_ext import DenyCode as _DenyCode
-                why = warrant_to_use.why_denied(tool_name, auth_args)
+            result = enforce_tool_call(
+                tool_name=tool_name,
+                tool_args=auth_args,
+                bound_warrant=_bw,
+                trusted_roots=list(trusted_roots) if trusted_roots else None,
+                verify_mode=verify_mode,
+                precomputed_signature=_precomputed_sig,
+                authorizer=_verify_authorizer,
+                warrant_chain=_warrant_chain,
+                approval_handler=approval_handler,
+            )
 
-                # Tool not in warrant (grant-level denial).
-                # Covers both TOOL_NOT_FOUND (capability-style warrants) and
-                # CONSTRAINT_MISMATCH on the "tool" field (.tools([]) style warrants
-                # where the Rust core represents tool grants as a "tool" constraint).
-                _is_tool_not_granted = why.deny_code == _DenyCode.TOOL_NOT_FOUND or (
-                    why.deny_code == _DenyCode.CONSTRAINT_MISMATCH
-                    and getattr(why, "field", None) == "tool"
-                )
-                if _is_tool_not_granted:
-                    error_code = AuthErrorCode.SCOPE_VIOLATION
+            if not result.allowed:
+                # Preserve crypto exception propagation for backward
+                # compatibility.  enforce_tool_call catches crypto exceptions
+                # and returns a denied EnforcementResult, but @guard callers
+                # may be catching SignatureInvalid / ExpiredError directly.
+                _reraise_if_crypto(result, warrant_to_use)
 
-                    audit_logger.log(
-                        AuditEvent(
-                            event_type=AuditEventType.AUTHORIZATION_FAILURE,
-                            warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else None,
-                            tool=tool_name,
-                            action="denied",
-                            error_code=error_code,
-                            details=f"Tool '{tool_name}' not in warrant grants",
-                            metadata={
-                                "callsite": callsite,
-                                "function": func_name,
-                            },
-                        )
-                    )
-
-                    raise ToolNotAuthorized(
-                        tool=tool_name,
-                        authorized_tools=getattr(warrant_to_use, "tools", []) or [],
-                        hint=f"Add Capability('{tool_name}', ...) to your mint() call",
-                    )
-
-                # Tool is in warrant but constraint/policy violation
-                error_code = AuthErrorCode.CONSTRAINT_VIOLATION
-
-                # Get structured denial reason (why already computed above)
-
-                # Build constraint results for rich error
-                constraint_results = []
-                # why.field identifies the violated parameter (if a single-field failure)
-                if getattr(why, "field", None):
-                    constraint_results.append(
-                        ConstraintResult(
-                            name=why.field,
-                            passed=False,
-                            constraint_repr="<see warrant>",
-                            value=auth_args.get(why.field, "<not provided>"),
-                            explanation=getattr(why, "suggestion", None) or "Constraint not satisfied",
-                        )
-                    )
-                else:
-                    # Fallback: build from args
-                    for arg_name, arg_value in auth_args.items():
-                        constraint_results.append(
-                            ConstraintResult(
-                                name=arg_name,
-                                passed=False,
-                                constraint_repr="<see warrant>",
-                                value=arg_value,
-                                explanation="Value does not satisfy constraint",
-                            )
-                        )
-
-                audit_logger.log(
-                    AuditEvent(
-                        event_type=AuditEventType.AUTHORIZATION_FAILURE,
-                        warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else None,
-                        tool=tool_name,
-                        action="denied",
-                        constraints=auth_args,
-                        trace_id=warrant_to_use.session_id if hasattr(warrant_to_use, "session_id") else None,
-                        error_code=error_code,
-                        details=f"Constraint violation for '{tool_name}'",
-                        metadata={
-                                "callsite": callsite,
-                                "function": func_name,
-                                "provided_args": {k: str(v)[:100] for k, v in auth_args.items()},
-                                "suggestion": why.suggestion if hasattr(why, "suggestion") else None,
-                            },
-                    )
-                )
-
-                # Build explorer URL for debugging
-                warrant_b64 = warrant_to_use.to_base64() if hasattr(warrant_to_use, "to_base64") else ""
-                if warrant_b64:
-                    import base64 as b64_mod
-                    import json as json_mod
-                    import urllib.parse
-
-                    # Explorer expects JSON state: {"warrant": "...", "tool": "", "args": "{}"}
-                    state = {"warrant": warrant_b64, "tool": tool_name, "args": json_mod.dumps(auth_args)}
-                    state_b64 = b64_mod.b64encode(json_mod.dumps(state).encode()).decode()
-                    explorer_url = f"https://tenuo.ai/explorer/?s={urllib.parse.quote(state_b64)}"
-                else:
-                    explorer_url = None
-
-                hint = why.suggestion if hasattr(why, "suggestion") else None
-                if explorer_url:
-                    hint = f"{hint}\n\n🔗 Debug: {explorer_url}" if hint else f"🔗 Debug: {explorer_url}"
-
-                raise AuthorizationDenied(
-                    tool=tool_name,
-                    constraint_results=constraint_results,
-                    reason="Arguments do not satisfy warrant constraints",
-                    hint=hint,
+                _map_result_to_guard_error(
+                    result, warrant_to_use, tool_name, auth_args, callsite, func_name,
                 )
 
             audit_logger.log(
