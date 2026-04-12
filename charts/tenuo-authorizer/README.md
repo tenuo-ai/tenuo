@@ -91,13 +91,9 @@ helm uninstall tenuo-authorizer
 
 ### Observability
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `metrics.path` | Metrics endpoint path | `/metrics` |
-| `metrics.serviceMonitor.enabled` | Enable Prometheus ServiceMonitor | `false` |
-| `metrics.serviceMonitor.labels` | Additional labels for ServiceMonitor | `{}` |
-| `metrics.serviceMonitor.interval` | Scrape interval | `30s` |
-| `metrics.serviceMonitor.scrapeTimeout` | Scrape timeout | `10s` |
+The authorizer reports metrics to the Tenuo Cloud control plane via heartbeat
+payloads (see `TENUO_CONTROL_PLANE_URL`). A Prometheus `/metrics` endpoint is
+not currently exposed, so no ServiceMonitor is included in this chart.
 
 ## Examples
 
@@ -184,13 +180,6 @@ autoscaling:
 podDisruptionBudget:
   enabled: true
   minAvailable: 2
-
-# Enable Prometheus metrics (requires prometheus-operator)
-metrics:
-  serviceMonitor:
-    enabled: true
-    labels:
-      release: prometheus  # Match your Prometheus selector
 
 affinity:
   podAntiAffinity:

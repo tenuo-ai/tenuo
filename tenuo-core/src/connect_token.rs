@@ -11,6 +11,10 @@
 //! tenuo_ct_<base64url({"v":1,"e":"<endpoint>","k":"<api_key>","a":"<agent_id>","t":"<reg_token>"})>
 //! ```
 //!
+//! The `e` field may or may not include a `/v1` suffix; [`ConnectToken::parse`]
+//! normalizes it to the bare origin so callers can uniformly build
+//! `{endpoint}/v1/…` paths.
+//!
 //! Fields `a` (agent ID) and `t` (registration token) are optional — when absent
 //! the token acts as a pure authorizer credential without agent binding.
 
@@ -25,7 +29,11 @@ pub struct ConnectToken {
     /// Token format version (currently 1).
     #[serde(rename = "v", default = "default_version")]
     pub version: u8,
-    /// Control plane API endpoint (e.g. `https://staging.tenuo.cloud/v1`).
+    /// Control plane API base endpoint (e.g. `https://staging.tenuo.cloud`).
+    ///
+    /// Callers append `/v1/…` paths to this value. If the token's `e` field
+    /// contains a trailing `/v1` it is stripped during [`ConnectToken::parse`]
+    /// so all URL construction is consistent.
     #[serde(rename = "e")]
     pub endpoint: String,
     /// API key with `authorizer` scope.
@@ -106,7 +114,18 @@ impl ConnectToken {
             return Err(ConnectTokenError::MissingField("api_key"));
         }
 
-        Ok(token)
+        // Normalize: strip trailing `/v1` (and trailing slashes) so all
+        // callers can uniformly prepend `/v1/…` paths without doubling.
+        let mut ep = token.endpoint;
+        ep = ep.trim_end_matches('/').to_string();
+        if ep.ends_with("/v1") {
+            ep.truncate(ep.len() - 3);
+        }
+
+        Ok(ConnectToken {
+            endpoint: ep,
+            ..token
+        })
     }
 
     /// Claim the pre-created agent using the embedded registration token.
@@ -124,7 +143,7 @@ impl ConnectToken {
         };
 
         let public_key_hex = hex::encode(signing_key.public_key().to_bytes());
-        let claim_url = format!("{}/agents/claim", self.endpoint.trim_end_matches('/'));
+        let claim_url = format!("{}/v1/agents/claim", self.endpoint.trim_end_matches('/'));
 
         let body = serde_json::json!({
             "agent_id": agent_id,
@@ -186,10 +205,26 @@ mod tests {
         );
         let ct = ConnectToken::parse(&raw).unwrap();
         assert_eq!(ct.version, 1);
-        assert_eq!(ct.endpoint, "https://api.tenuo.cloud/v1");
+        assert_eq!(ct.endpoint, "https://api.tenuo.cloud");
         assert_eq!(ct.api_key, "tc_abc");
         assert_eq!(ct.agent_id.as_deref(), Some("my-agent"));
         assert_eq!(ct.registration_token.as_deref(), Some("tok123"));
+    }
+
+    #[test]
+    fn parse_token_without_v1_suffix() {
+        let raw = make_token_str(
+            r#"{"v":1,"e":"https://api.tenuo.cloud","k":"tc_abc","a":"my-agent","t":"tok123"}"#,
+        );
+        let ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.endpoint, "https://api.tenuo.cloud");
+    }
+
+    #[test]
+    fn parse_token_with_trailing_slash() {
+        let raw = make_token_str(r#"{"v":1,"e":"https://api.tenuo.cloud/v1/","k":"tc_abc"}"#);
+        let ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.endpoint, "https://api.tenuo.cloud");
     }
 
     #[test]
@@ -197,6 +232,7 @@ mod tests {
         let raw = make_token_str(r#"{"v":1,"e":"https://api.tenuo.cloud/v1","k":"tc_xyz"}"#);
         let ct = ConnectToken::parse(&raw).unwrap();
         assert_eq!(ct.version, 1);
+        assert_eq!(ct.endpoint, "https://api.tenuo.cloud");
         assert!(ct.agent_id.is_none());
         assert!(ct.registration_token.is_none());
     }
