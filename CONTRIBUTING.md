@@ -63,6 +63,30 @@ If you're adding support for a new framework (e.g., LlamaIndex, AutoGPT):
 - Ensure all runtime authorization uses Rust core via wire format
 - Test against the 6 core invariants (monotonic attenuation, fail-closed, expiry, etc.)
 
+## Integration Maintenance
+
+We track upstream API changes in OpenAI, CrewAI, AutoGen, LangChain, and LangGraph via automated CI:
+
+- **Dependabot** (`.github/dependabot.yml`) — weekly dependency update PRs
+- **Compatibility matrix** (`.github/workflows/integration-compatibility-matrix.yml`) — tests min + latest versions weekly
+- **Release monitor** (`.github/workflows/monitor-upstream-releases.yml`) — daily checks for new upstream releases
+- **Smoke tests** (`tenuo-python/tests/integration/test_smoke.py`) — verifies API contracts
+
+### Responding to Breaking Changes
+
+1. Review upstream changelog
+2. Run smoke tests: `pytest tests/integration/test_smoke.py -k <integration>`
+3. Update integration code if needed
+4. Update `docs/compatibility-matrix.md`
+5. Test examples
+6. Update version constraints in `pyproject.toml` if needed
+
+| Priority | Definition | Response Time |
+|----------|------------|---------------|
+| **P0** | Blocks users, no workaround | 48 hours |
+| **P1** | Workaround exists | 1 week |
+| **P2** | Minor impact | Next release |
+
 ## Code Style
 
 - **Rust**: We use `rustfmt`. The check script will verify formatting.
