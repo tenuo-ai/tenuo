@@ -1048,30 +1048,66 @@ async fn handle_request(
     // 7b. Extract signed approvals from header (if present)
     // Format: base64-encoded CBOR — either a single SignedApproval or array of SignedApproval
     let approval_header = &state.config.settings.approval_header;
-    let approvals: Vec<SignedApproval> = headers
+    let approvals: Vec<SignedApproval> = match headers
         .get(approval_header)
         .and_then(|v| v.to_str().ok())
-        .and_then(|encoded| {
-            let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .filter(|s| !s.is_empty())
+    {
+        Some(encoded) => {
+            let bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(encoded)
                 .or_else(|_| base64::engine::general_purpose::STANDARD.decode(encoded))
-                .ok()?;
+            {
+                Ok(b) => b,
+                Err(_) => {
+                    warn!(request_id = %request_id, "Invalid base64 in {} header", approval_header);
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": "invalid_approvals_header",
+                            "message": format!("Could not base64-decode {} header", approval_header),
+                            "request_id": request_id
+                        })),
+                    ).into_response();
+                }
+            };
+
+            const MAX_APPROVAL_HEADER_BYTES: usize = 65_536;
+            if bytes.len() > MAX_APPROVAL_HEADER_BYTES {
+                warn!(
+                    request_id = %request_id,
+                    size = bytes.len(),
+                    "Approvals header exceeds size limit"
+                );
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "invalid_approvals_header",
+                        "message": format!("{} header too large ({} bytes, max {})", approval_header, bytes.len(), MAX_APPROVAL_HEADER_BYTES),
+                        "request_id": request_id
+                    })),
+                ).into_response();
+            }
 
             // Try array first, then single approval
             if let Ok(vec) = ciborium::de::from_reader::<Vec<SignedApproval>, _>(&bytes[..]) {
-                Some(vec)
+                vec
             } else if let Ok(single) = ciborium::de::from_reader::<SignedApproval, _>(&bytes[..]) {
-                Some(vec![single])
+                vec![single]
             } else {
-                warn!(
-                    request_id = %request_id,
-                    "Failed to deserialize approvals from {} header",
-                    approval_header
-                );
-                None
+                warn!(request_id = %request_id, "Failed to deserialize CBOR from {} header", approval_header);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "invalid_approvals_header",
+                        "message": format!("Could not deserialize CBOR from {} header", approval_header),
+                        "request_id": request_id
+                    })),
+                ).into_response();
             }
-        })
-        .unwrap_or_default();
+        }
+        None => Vec::new(),
+    };
 
     if !approvals.is_empty() {
         debug!(
@@ -1241,28 +1277,49 @@ async fn handle_request(
 
             // Enrich approval errors with actionable data so the client
             // (or a K8s controller) can obtain the required signatures.
-            if let tenuo::Error::InsufficientApprovals {
-                required, received, ..
-            } = &e
-            {
-                let request_hash = tenuo::approval::compute_request_hash(
-                    &warrant_id,
-                    &extraction_result.tool,
-                    &extraction_result.constraints,
-                    Some(leaf_warrant.authorized_holder()),
-                );
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("request_hash".to_string(), json!(hex::encode(request_hash)));
-                    obj.insert("required_approvals".to_string(), json!(required));
-                    obj.insert("received_approvals".to_string(), json!(received));
-                    if let Some(approvers) = leaf_warrant.required_approvers() {
-                        let keys: Vec<String> = approvers
+            match &e {
+                tenuo::Error::ApprovalRequired { request, .. } => {
+                    if let Some(obj) = body.as_object_mut() {
+                        obj.insert(
+                            "request_hash".to_string(),
+                            json!(hex::encode(request.request_hash)),
+                        );
+                        obj.insert(
+                            "required_approvals".to_string(),
+                            json!(request.min_approvals),
+                        );
+                        obj.insert("received_approvals".to_string(), json!(0));
+                        let keys: Vec<String> = request
+                            .required_approvers
                             .iter()
                             .map(|k| hex::encode(k.to_bytes()))
                             .collect();
                         obj.insert("required_approvers".to_string(), json!(keys));
                     }
                 }
+                tenuo::Error::InsufficientApprovals {
+                    required, received, ..
+                } => {
+                    let request_hash = tenuo::approval::compute_request_hash(
+                        &warrant_id,
+                        &extraction_result.tool,
+                        &extraction_result.constraints,
+                        Some(leaf_warrant.authorized_holder()),
+                    );
+                    if let Some(obj) = body.as_object_mut() {
+                        obj.insert("request_hash".to_string(), json!(hex::encode(request_hash)));
+                        obj.insert("required_approvals".to_string(), json!(required));
+                        obj.insert("received_approvals".to_string(), json!(received));
+                        if let Some(approvers) = leaf_warrant.required_approvers() {
+                            let keys: Vec<String> = approvers
+                                .iter()
+                                .map(|k| hex::encode(k.to_bytes()))
+                                .collect();
+                            obj.insert("required_approvers".to_string(), json!(keys));
+                        }
+                    }
+                }
+                _ => {}
             }
 
             if state.debug_mode {
@@ -1483,4 +1540,478 @@ fn sanitize_error(error: &tenuo::Error) -> (u16, &'static str, &'static str) {
 
     // Return canonical code, kebab-case name, and description
     (error_code.code(), name, description)
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use base64::Engine;
+    use tenuo::{
+        approval::{compute_request_hash, ApprovalPayload, SignedApproval},
+        approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate},
+        constraints::ConstraintSet,
+    };
+    use tower::ServiceExt;
+
+    const GATEWAY_YAML: &str = r#"
+version: "1"
+settings:
+  debug_mode: true
+tools:
+  deploy:
+    description: "Deploy service"
+    constraints:
+      service:
+        from: path
+        path: "service"
+        required: true
+routes:
+  - pattern: "/deploy/{service}"
+    method: ["POST"]
+    tool: "deploy"
+"#;
+
+    /// Build a minimal test app with the given authorizer and gateway YAML.
+    fn build_test_app(authorizer: Authorizer) -> Router {
+        let config = GatewayConfig::from_yaml(GATEWAY_YAML).unwrap();
+        let compiled = CompiledGatewayConfig::compile(config).unwrap();
+        let state = Arc::new(AppState {
+            authorizer: Arc::new(tokio::sync::RwLock::new(authorizer)),
+            config: compiled,
+            debug_mode: true,
+            audit_tx: None,
+            authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
+            metrics: None,
+            started_at: std::time::Instant::now(),
+        });
+        Router::new()
+            .route("/health", axum::routing::get(health_check))
+            .fallback(handle_request)
+            .with_state(state)
+    }
+
+    /// Create a warrant with an approval gate requiring 1-of-1 approvals.
+    fn create_gated_warrant(
+        root_key: &SigningKey,
+        approver_key: &tenuo::crypto::PublicKey,
+    ) -> tenuo::Warrant {
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("deploy".to_string(), ToolApprovalGate::whole_tool());
+
+        tenuo::Warrant::builder()
+            .capability("deploy", ConstraintSet::new())
+            .ttl(std::time::Duration::from_secs(300))
+            .required_approvers(vec![approver_key.clone()])
+            .min_approvals(1)
+            .holder(root_key.public_key())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .build(root_key)
+            .unwrap()
+    }
+
+    /// Encode a warrant for the X-Tenuo-Warrant header.
+    fn encode_warrant_header(warrant: &tenuo::Warrant) -> String {
+        wire::encode_base64(warrant).unwrap()
+    }
+
+    /// Encode a PoP signature for the X-Tenuo-PoP header.
+    fn encode_pop_header(sig: &tenuo::Signature) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sig.to_bytes())
+    }
+
+    /// Create a valid signed approval for the given warrant/tool/args.
+    fn create_approval(
+        warrant: &tenuo::Warrant,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        approver_key: &SigningKey,
+    ) -> SignedApproval {
+        let request_hash = compute_request_hash(
+            &warrant.id().to_string(),
+            tool,
+            args,
+            Some(warrant.authorized_holder()),
+        );
+        let now = chrono::Utc::now();
+        let payload = ApprovalPayload {
+            version: 1,
+            request_hash,
+            nonce: rand::random(),
+            external_id: "test-approver@test.com".to_string(),
+            approved_at: now.timestamp() as u64,
+            expires_at: (now + chrono::Duration::seconds(300)).timestamp() as u64,
+            extensions: None,
+        };
+        SignedApproval::create(payload, approver_key)
+    }
+
+    /// CBOR-encode approvals and base64 them for the header.
+    fn encode_approvals_header(approvals: &[SignedApproval]) -> String {
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(approvals, &mut buf).unwrap();
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&buf)
+    }
+
+    /// Parse a JSON response body.
+    async fn parse_body(response: Response) -> Value {
+        let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    // ----------------------------------------------------------------
+    // Fix #1: ApprovalRequired returns actionable data
+    // ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn approval_required_response_includes_actionable_data() {
+        let root_key = SigningKey::generate();
+        let approver_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let app = build_test_app(authorizer);
+
+        let warrant = create_gated_warrant(&root_key, &approver_key.public_key());
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(&root_key, "deploy", &args).unwrap();
+
+        // Send request WITHOUT approvals header → should get ApprovalRequired with enriched body
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        let body = parse_body(resp).await;
+        assert_eq!(body["error"], "approval-required");
+        assert_eq!(body["error_code"], 1707);
+        assert!(
+            body["request_hash"].is_string(),
+            "missing request_hash: {body}"
+        );
+        assert!(!body["request_hash"].as_str().unwrap().is_empty());
+        assert_eq!(body["required_approvals"], 1);
+        assert_eq!(body["received_approvals"], 0);
+        let approvers = body["required_approvers"]
+            .as_array()
+            .expect("missing required_approvers");
+        assert_eq!(approvers.len(), 1);
+        assert_eq!(
+            approvers[0].as_str().unwrap(),
+            hex::encode(approver_key.public_key().to_bytes())
+        );
+    }
+
+    #[tokio::test]
+    async fn insufficient_approvals_response_includes_actionable_data() {
+        let root_key = SigningKey::generate();
+        let approver1 = SigningKey::generate();
+        let approver2 = SigningKey::generate();
+        let wrong_approver = SigningKey::generate();
+
+        // Require 2-of-2 approvals
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("deploy".to_string(), ToolApprovalGate::whole_tool());
+        let warrant = tenuo::Warrant::builder()
+            .capability("deploy", ConstraintSet::new())
+            .ttl(std::time::Duration::from_secs(300))
+            .required_approvers(vec![approver1.public_key(), approver2.public_key()])
+            .min_approvals(2)
+            .holder(root_key.public_key())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .build(&root_key)
+            .unwrap();
+
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let app = build_test_app(authorizer);
+
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(&root_key, "deploy", &args).unwrap();
+
+        // Send an approval from a wrong approver (not in the trusted set)
+        let bad_approval = create_approval(&warrant, "deploy", &args, &wrong_approver);
+        let approvals_b64 = encode_approvals_header(&[bad_approval]);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .header("X-Tenuo-Approvals", &approvals_b64)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        let body = parse_body(resp).await;
+        assert!(
+            body["request_hash"].is_string(),
+            "missing request_hash: {body}"
+        );
+        assert_eq!(body["required_approvals"], 2);
+        let approvers = body["required_approvers"]
+            .as_array()
+            .expect("missing required_approvers");
+        assert_eq!(approvers.len(), 2);
+    }
+
+    // ----------------------------------------------------------------
+    // Fix #2: Malformed approval header → 400
+    // ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn malformed_base64_approval_header_returns_400() {
+        let root_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let app = build_test_app(authorizer);
+
+        let warrant = tenuo::Warrant::builder()
+            .capability("deploy", ConstraintSet::new())
+            .ttl(std::time::Duration::from_secs(300))
+            .holder(root_key.public_key())
+            .build(&root_key)
+            .unwrap();
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(&root_key, "deploy", &args).unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .header("X-Tenuo-Approvals", "!!!not-valid-base64!!!")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body = parse_body(resp).await;
+        assert_eq!(body["error"], "invalid_approvals_header");
+    }
+
+    #[tokio::test]
+    async fn malformed_cbor_approval_header_returns_400() {
+        let root_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let app = build_test_app(authorizer);
+
+        let warrant = tenuo::Warrant::builder()
+            .capability("deploy", ConstraintSet::new())
+            .ttl(std::time::Duration::from_secs(300))
+            .holder(root_key.public_key())
+            .build(&root_key)
+            .unwrap();
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(&root_key, "deploy", &args).unwrap();
+
+        // Valid base64 but not valid CBOR for SignedApproval
+        let garbage_cbor =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"this is not cbor");
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .header("X-Tenuo-Approvals", &garbage_cbor)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body = parse_body(resp).await;
+        assert_eq!(body["error"], "invalid_approvals_header");
+    }
+
+    // ----------------------------------------------------------------
+    // Fix #3: Oversized approval header → 400
+    // ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn oversized_approval_header_returns_400() {
+        let root_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let app = build_test_app(authorizer);
+
+        let warrant = tenuo::Warrant::builder()
+            .capability("deploy", ConstraintSet::new())
+            .ttl(std::time::Duration::from_secs(300))
+            .holder(root_key.public_key())
+            .build(&root_key)
+            .unwrap();
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(&root_key, "deploy", &args).unwrap();
+
+        // 128KB of base64 → decodes to ~96KB, well above the 64KB limit
+        let huge_payload = vec![0xA0u8; 128_000];
+        let huge_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&huge_payload);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .header("X-Tenuo-Approvals", &huge_b64)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body = parse_body(resp).await;
+        assert_eq!(body["error"], "invalid_approvals_header");
+        assert!(body["message"].as_str().unwrap().contains("too large"));
+    }
+
+    // ----------------------------------------------------------------
+    // Positive: valid approval flow works end-to-end
+    // ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn valid_approval_succeeds() {
+        let root_key = SigningKey::generate();
+        let approver_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let app = build_test_app(authorizer);
+
+        let warrant = create_gated_warrant(&root_key, &approver_key.public_key());
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(&root_key, "deploy", &args).unwrap();
+        let approval = create_approval(&warrant, "deploy", &args, &approver_key);
+        let approvals_b64 = encode_approvals_header(&[approval]);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .header("X-Tenuo-Approvals", &approvals_b64)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = parse_body(resp).await;
+        assert_eq!(body["authorized"], true);
+    }
+
+    #[tokio::test]
+    async fn empty_approval_header_treated_as_absent() {
+        let root_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let app = build_test_app(authorizer);
+
+        let warrant = tenuo::Warrant::builder()
+            .capability("deploy", ConstraintSet::new())
+            .ttl(std::time::Duration::from_secs(300))
+            .holder(root_key.public_key())
+            .build(&root_key)
+            .unwrap();
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(&root_key, "deploy", &args).unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .header("X-Tenuo-Approvals", "")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "empty header should be treated as absent, not 400"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // Absent approval header is fine when no gate is configured
+    // ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn no_approval_header_succeeds_without_gate() {
+        let root_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let app = build_test_app(authorizer);
+
+        // Warrant WITHOUT approval gates
+        let warrant = tenuo::Warrant::builder()
+            .capability("deploy", ConstraintSet::new())
+            .ttl(std::time::Duration::from_secs(300))
+            .holder(root_key.public_key())
+            .build(&root_key)
+            .unwrap();
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(&root_key, "deploy", &args).unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = parse_body(resp).await;
+        assert_eq!(body["authorized"], true);
+    }
 }
