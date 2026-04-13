@@ -707,25 +707,23 @@ graph.invoke({"warrant": str(warrant), "messages": [...]})
 
 ## Human Approval
 
-Add human-in-the-loop approval for sensitive tool calls. Both `TenuoMiddleware` and `TenuoToolNode` accept `approval_policy` and `approval_handler` parameters. See [Human Approvals](approvals.md) for the full guide.
+Add human-in-the-loop approval for sensitive tool calls. Approval gates are defined in the warrant, and `approval_handler` is passed to the adapter. See [Human Approvals](approvals.md) for the full guide.
 
 ```python
-from tenuo.approval import ApprovalPolicy, require_approval, cli_prompt
+from tenuo import cli_prompt
 
-policy = ApprovalPolicy(
-    require_approval("delete_database"),
-)
+# Approval gates are in the warrant:
+#   .approval_gates({"delete_database": None})
+#   .required_approvers([approver_key.public_key])
 
 # TenuoToolNode pattern (recommended)
 tool_node = TenuoToolNode(
     tools,
-    approval_policy=policy,
     approval_handler=cli_prompt(approver_key=approver_key),
 )
 
 # Or TenuoMiddleware pattern (experimental)
 middleware = TenuoMiddleware(
-    approval_policy=policy,
     approval_handler=cli_prompt(approver_key=approver_key),
 )
 ```
@@ -735,7 +733,7 @@ middleware = TenuoMiddleware(
 ## See Also
 
 - [LangChain Integration](./langchain)  -- Tool protection for LangChain
-- [Human Approvals](./approvals)  -- Approval policy guide
+- [Human Approvals](./approvals)  -- Approval gates and handlers guide
 - [FastAPI Integration](./fastapi)  -- Zero-boilerplate API protection
 - [Security](./security)  -- Threat model, best practices
 - [API Reference](./api-reference)  -- Full Python API documentation
