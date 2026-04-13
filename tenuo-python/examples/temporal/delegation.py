@@ -39,9 +39,7 @@ from temporalio.worker.workflow_sandbox import (
     SandboxedWorkflowRunner,
     SandboxRestrictions,
 )
-from tenuo_core import Subpath
-
-from tenuo import Pattern, SigningKey, Warrant
+from tenuo import Pattern, SigningKey, Subpath, Warrant
 from tenuo.temporal import (
     EnvKeyResolver,
     TemporalAuditEvent,

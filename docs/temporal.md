@@ -81,10 +81,32 @@ result = await execute_workflow_authorized(
 
 Pass the plugin on **`Client.connect(..., plugins=[plugin])`** only: workers created from that client **merge** client plugins, so you should **not** duplicate the same plugin on `Worker(..., plugins=[...])` unless the client was created without plugins.
 
-> **Note:** If using `TenuoTemporalPlugin`, it provides both the worker interceptor and `client_interceptor` — you do not need to create separate `TenuoClientInterceptor` instances. Access the client interceptor via `plugin.client_interceptor`.
+### `TenuoPlugin` (manual path)
 
-Manual setup (`interceptors=[...]` + `workflow_runner=SandboxedWorkflowRunner(...)`) remains supported; for passthrough without the plugin, use `ensure_tenuo_workflow_runner` from `tenuo.temporal_plugin` (or `from tenuo.temporal import ensure_tenuo_workflow_runner`).
+```python
+from temporalio.client import Client
+from temporalio.worker import Worker
+from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
+from tenuo import SigningKey
+from tenuo.temporal import TenuoPlugin, TenuoPluginConfig, TenuoClientInterceptor, EnvKeyResolver
 
+control = SigningKey.generate()
+
+client_interceptor = TenuoClientInterceptor()
+client = await Client.connect("localhost:7233", interceptors=[client_interceptor])
+
+worker_interceptor = TenuoPlugin(TenuoPluginConfig(
+    key_resolver=EnvKeyResolver(),
+    trusted_roots=[control.public_key],
+))
+sandbox_runner = SandboxedWorkflowRunner(
+    restrictions=SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")
+)
+worker = Worker(client, task_queue="q", workflows=[...], activities=[...],
+                interceptors=[worker_interceptor], workflow_runner=sandbox_runner)
+```
+
+Manual setup is used in `demo.py`, `delegation.py`, `multi_warrant.py`, and all PoC examples. `ensure_tenuo_workflow_runner` from `tenuo.temporal_plugin` provides the sandbox runner without the full plugin.
 ---
 
 ## Runnable examples
@@ -144,6 +166,10 @@ Follow this order the first time you integrate Tenuo with Temporal. The **Quick 
 
 4. **Mint a warrant**: Use `Warrant.mint_builder()` (or `Warrant.issue`) so capabilities match your activity names and argument constraints (e.g. `path=Subpath(...)`). In production, warrants are typically minted by Tenuo Cloud on behalf of your workflows, separating authorization policy from application code and giving your security team control over what gets issued without touching workflow definitions.
 
+   > **⚠️ Zero-trust mode (closed-world constraint):** When ANY field in a capability is constrained, ALL other activity arguments must also be declared — even if you don't want to restrict them. Use `Wildcard()` (preferred for root warrants) or `Pattern("*")` to explicitly allow any value. If you omit an argument, it will be rejected with `unknown field not allowed (zero-trust mode)`. Example: if your `write_file` activity takes `(path, content)` and you constrain `path=Subpath(...)`, you **must** also declare `content=Wildcard()`.
+
+   > **⚠️ Python default arguments are not in Temporal's wire format:** If your warrant constrains a parameter that has a Python default value (e.g. `model="claude-3-haiku"`), you **must** pass that parameter explicitly when calling `execute_activity()`. Temporal does not include default arguments in the serialized activity input — they will appear as missing from the PoP args dictionary, causing a `missing required argument` error. Always pass constrained parameters explicitly, even if they have defaults.
+
 5. **Worker config**: `Worker(..., interceptors=[TenuoPlugin(TenuoPluginConfig(...))])` with:
    - `key_resolver`: resolves `key_id` from headers to the holder signing key. If you use `EnvKeyResolver`, call `resolver.preload_keys(["<key_id>", ...])` for every holder `key_id` **before** you construct the worker. PoP signing runs inside the workflow sandbox and calls `resolve_sync()`; the sandbox blocks `os.environ` as non-deterministic, so keys must be cached first.
    - `trusted_roots`: **required** (e.g. `[control_key.public_key]`, or set `tenuo.configure(trusted_roots=[...])` before constructing the config)
@@ -153,7 +179,6 @@ Follow this order the first time you integrate Tenuo with Temporal. The **Quick 
 6. **Workflow sandbox passthrough (required)**: Use `SandboxedWorkflowRunner` with `SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")`. Omitting this causes `ImportError: PyO3 modules may only be initialized once...`.
 
 7. **Client**: Attach `TenuoClientInterceptor` to `Client.connect(..., interceptors=[...])` (or use `TenuoTemporalPlugin` which provides it via `plugin.client_interceptor`). Bind headers before start with **`execute_workflow_authorized(...)`** (best under concurrency) or `set_headers_for_workflow(workflow_id, tenuo_headers(warrant, key_id))` then `execute_workflow`. Without this, warrants are not injected into workflow headers.
-
 8. **Child workflows**: For any child that must run under Tenuo, use [`tenuo_execute_child_workflow()`](#child-workflow-delegation) only. The SDK's `workflow.execute_child_workflow()` does not propagate warrant headers; children started that way have no authorization context.
 
 9. **Run the samples**: See the [Runnable examples](#runnable-examples) table (`demo.py` first, then `cloud_iam_layering.py`, `multi_warrant.py`, `delegation.py`, and optionally `temporal_mcp_layering.py`).
@@ -210,6 +235,7 @@ class DataProcessingWorkflow(AuthorizedWorkflow):
             read_file,
             args=[input_path],
             start_to_close_timeout=timedelta(seconds=30),
+            # Always include non_retryable_error_types=["TemporalConstraintViolation", "PopVerificationError", "WarrantExpired", "TenuoArgNormalizationError", "TenuoPreValidationError"] in your RetryPolicy to prevent Temporal from retrying authorization failures.
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
 
@@ -783,9 +809,6 @@ pop_signature = warrant.sign(signing_key, "read_file", {"path": "/data/file.txt"
 
 ---
 
-<details markdown="block">
-<summary><strong>Security considerations</strong> (threat model, trust boundaries, PoP windows, dedup, root rotation, revocation, retry drift)</summary>
-
 ## Security considerations
 
 This section covers **threat model, trust boundaries, PoP windows, dedup, root rotation, revocation, and retry drift**: what the Temporal integration assumes, what it protects against, and what remains your operational responsibility. For the broader Tenuo security model, see [Security Model](./security.md).
@@ -912,8 +935,6 @@ For the fastest response, use `trusted_roots_provider` with a short `trusted_roo
 | PoP signature | Missing or invalid | **`PopVerificationError`** |
 | Protected activity as local activity | Not **`@unprotected`** | **`LocalActivityError`** |
 
-</details>
-
 ---
 
 ## Child Workflow Delegation
@@ -1026,6 +1047,51 @@ await workflow.execute_local_activity(
 ```
 
 > Activities not marked `@unprotected` that are called via `workflow.execute_local_activity()` will raise `LocalActivityError` at runtime. Intentional fail-closed behaviour: local activities bypass the inbound interceptor, so Tenuo cannot enforce warrant constraints without this explicit opt-out.
+
+### current_warrant() and current_key_id() - Inspect Active Authorization
+
+Read the active warrant and signing key ID from within workflow code. Useful for per-customer routing, logging, or conditional logic based on what the agent is authorized to do.
+
+```python
+from tenuo.temporal import current_warrant, current_key_id
+
+@workflow.defn
+class CustomerSupportWorkflow(AuthorizedWorkflow):
+    @workflow.run
+    async def run(self, customer_id: str) -> str:
+        # Inspect the active warrant at workflow start
+        warrant = current_warrant()    # Raises TenuoContextError if no warrant
+        key_id = current_key_id()      # Returns the key_id string, or "" if not set
+
+        workflow.logger.info(f"Agent tools: {warrant.tools}")
+        workflow.logger.info(f"Signing key: {key_id}")
+
+        # Example: route based on warrant scope
+        if "escalate_ticket" in warrant.tools:
+            return await self._handle_escalation(customer_id)
+        return await self._handle_standard(customer_id)
+```
+
+`current_warrant()` raises `TenuoContextError` when called outside a Tenuo-authorized workflow (or when no warrant header is present). `current_key_id()` returns `""` in the same case. Both are read-only — they do not modify authorization state.
+
+### tool_mappings - Config-Driven Activity Name Mapping
+
+`tool_mappings` is the config-level alternative to the `@tool()` decorator. Use it when you cannot modify the activity function (e.g. it is in a third-party library) or when you want to keep all mappings in one place.
+
+```python
+TenuoPluginConfig(
+    key_resolver=resolver,
+    trusted_roots=[issuer_public_key],
+    # Config-driven name mapping: Python activity type → warrant tool name
+    # Alternative to decorating each function with @tool("name")
+    tool_mappings={
+        "log_ticket_outcome": "audit_log",   # fn name → warrant name
+        "send_notification":  "notify",
+    },
+)
+```
+
+The warrant must then use the mapped names (`"audit_log"`, `"notify"`) as capability names. Both `tool_mappings` and `@tool()` can coexist; `tool_mappings` takes precedence for a given function if both apply.
 
 ### workflow_grant() - Scoped In-Workflow Grants
 
@@ -1190,6 +1256,43 @@ For the full module-level troubleshooting entries, see the `tenuo.temporal` modu
 | `WarrantExpired` | Warrant TTL elapsed before or during workflow execution | Mint a new warrant with a longer `ttl()`, or refresh the warrant at workflow start |
 | Activity denied despite a warrant that looks correct | PoP argument keys or tool name mismatch between signer and verifier | Check worker logs for the outbound interceptor warning about positional vs. named keys; also verify `tool_mappings` if activity type differs from warrant tool name |
 | Child workflow runs with no authorization | Started with `workflow.execute_child_workflow()` | Use `tenuo_execute_child_workflow()` so warrant headers propagate ([Child Workflow Delegation](#child-workflow-delegation)) |
+| `TenuoArgNormalizationError: Activity argument 'x' has type 'set' which cannot be normalized` | Activity argument is a type Tenuo cannot normalize for PoP signing (`set`, `datetime`, `Enum`, custom class, etc.) | Convert to a `@dataclass` or `dict`, or lift the field to a top-level primitive argument. See [Structured state in activity arguments](#structured-state-in-activity-arguments). |
+| `TenuoPreValidationError: unknown field not allowed (zero-trust mode): a, b, c` | Warrant capability declares fewer fields than the activity accepts | Declare all activity arguments in the warrant capability (use `Wildcard()` for fields that don't need structural constraints). The error lists ALL unknown/missing fields at once. |
+
+---
+
+## Constraint Types for AI Agent Workflows
+
+Warrant capabilities accept typed argument constraints. Use these to express exactly what argument values an agent is allowed to pass for each tool parameter. All constraint types are imported from `tenuo_core`.
+
+```python
+from tenuo_core import (
+    Subpath, UrlPattern, Exact, Range, OneOf, AnyOf,
+    CEL, Wildcard, Regex, NotOneOf, Pattern,
+)
+```
+
+| Constraint | Description | Example |
+|------------|-------------|---------|
+| `Wildcard()` | Allows any value; can be attenuated to any other constraint type. **Use this for unconstrained fields in root warrants.** | `path=Wildcard()` |
+| `Exact("value")` | Allows only a single literal value | `format=Exact("json")` |
+| `Subpath("/prefix/")` | Allows paths that start with the given prefix | `path=Subpath("/data/reports/")` |
+| `UrlPattern("https://*.example.com/*")` | Allows URLs matching a glob pattern | `url=UrlPattern("https://*.wikipedia.org/*")` |
+| `Pattern("glob*")` | Allows strings matching a glob pattern; attenuates to narrower globs only (not `Range`, `Exact`, etc.) | `query=Pattern("search:*")` |
+| `Range(min, max)` | Allows numeric values in `[min, max]` | `max_length=Range(100, 5000)` |
+| `OneOf(["a", "b"])` | Allows values in a fixed set | `format=OneOf(["markdown", "json"])` |
+| `NotOneOf(["a", "b"])` | Denies values in a fixed set; all others pass | `tone=NotOneOf(["aggressive", "dismissive"])` |
+| `AnyOf([constraint1, constraint2])` | Allows values matching any of the sub-constraints | `path=AnyOf([Subpath("/data/fin/"), Subpath("/data/legal/")])` |
+| `Regex(r"^CUST-[0-9]{6}$")` | Allows strings matching a regular expression | `customer_id=Regex(r"^CUST-[0-9]{6}$")` |
+| `CEL("expression")` | Allows values passing a CEL expression (requires `cel` feature) | `context=CEL('size(value) <= 2000 && !value.contains("CONFIDENTIAL")')` |
+
+> **⚠️ Zero-trust mode:** When ANY argument in a capability is constrained, ALL other arguments must also be declared. Use `Wildcard()` for unconstrained fields. Omitting a field causes `unknown field not allowed (zero-trust mode)`.
+
+> **⚠️ Attenuation note:** `Wildcard()` is the correct type for root warrant fields because it can be attenuated to ANY other constraint type (including `Range`, `Exact`, etc.). `Pattern("*")` can only be attenuated to narrower glob patterns — you cannot narrow `Pattern("*")` to `Range(100, 500)`.
+
+> **⚠️ `AnyOf` attenuation:** `AnyOf` cannot currently be attenuated to a subset `AnyOf` via `tenuo_execute_child_workflow`. If a parent warrant uses `AnyOf` for a capability field, the child will inherit the same `AnyOf`. To give a child a narrower single constraint (e.g. only one of the alternatives), use `Wildcard()` in the parent's warrant and constrain to `Subpath()` in the child.
+
+For full constraint reference including edge cases, see [`docs/constraints.md`](./constraints.md).
 
 ---
 

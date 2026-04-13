@@ -98,3 +98,7 @@ NOTES.md
 
 # Internal docs (never committed)
 internal/
+
+# PoC experiments and internal planning docs (never committed to public repo)
+poc/
+docs/plans/

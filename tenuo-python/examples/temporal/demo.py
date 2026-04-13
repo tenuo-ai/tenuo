@@ -49,7 +49,7 @@ except ImportError:
     raise SystemExit("Install temporalio: uv pip install temporalio")
 
 # Tenuo imports
-from tenuo_core import Subpath
+from tenuo import Pattern, Subpath
 
 from tenuo import SigningKey, Warrant
 from tenuo.temporal import (
@@ -226,7 +226,7 @@ async def main():
         Warrant.mint_builder()
         .holder(agent_key.public_key)
         .capability("read_file",      path=Subpath("/tmp/tenuo-demo"))
-        .capability("write_file",     path=Subpath("/tmp/tenuo-demo"))
+        .capability("write_file",     path=Subpath("/tmp/tenuo-demo"), content=Pattern("*"))
         .capability("list_directory", path=Subpath("/tmp/tenuo-demo"))
         .ttl(3600)
         .mint(control_key)

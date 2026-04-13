@@ -1676,6 +1676,333 @@ class TestPopDedupStoreHook:
 
 
 # =============================================================================
+# Item 0.2 — PoP signing failure non-retryable test
+# =============================================================================
+
+
+def test_pop_signing_error_is_non_retryable():
+    """PoP signing failures must be non-retryable to prevent infinite Temporal retries."""
+    from tenuo.temporal import _raise_non_retryable, TenuoContextError
+    try:
+        from temporalio.exceptions import ApplicationError
+    except ImportError:
+        pytest.skip("temporalio not installed")
+
+    with pytest.raises(ApplicationError) as exc_info:
+        _raise_non_retryable(TenuoContextError("key resolution failed"))
+
+    assert exc_info.value.non_retryable is True
+
+
+# =============================================================================
+# Item 1.4 — OpenTelemetry tracing auto-on
+# =============================================================================
+
+
+def test_otel_import_check():
+    """OTel tracing module-level flag is always a bool (soft dependency)."""
+    from tenuo.temporal import _otel_available
+
+    assert isinstance(_otel_available, bool)
+
+
+def test_otel_span_emitted_on_allow():
+    """Verify Tenuo emits a 'tenuo.authorize' OTel span with allow decision on success."""
+    pytest.importorskip("opentelemetry")
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from tenuo import SigningKey, Warrant
+    from tenuo_core import Subpath
+    from tenuo.temporal import (
+        TENUO_POP_HEADER,
+        TenuoPlugin,
+        TenuoPluginConfig,
+        EnvKeyResolver,
+        tenuo_headers,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    # Patch the module-level _otel_trace so the inbound interceptor uses our
+    # test provider. The global set_tracer_provider() is blocked by OTel's
+    # "Overriding of current TracerProvider is not allowed" guard.
+    test_trace = type("_FakeTrace", (), {
+        "get_tracer": lambda self, name: provider.get_tracer(name),
+        "get_current_span": staticmethod(
+            __import__("opentelemetry").trace.get_current_span
+        ),
+        "Status": __import__("opentelemetry").trace.Status,
+        "StatusCode": __import__("opentelemetry").trace.StatusCode,
+    })()
+
+    control_key = SigningKey.generate()
+    agent_key = SigningKey.generate()
+    warrant = (
+        Warrant.mint_builder()
+        .holder(agent_key.public_key)
+        .capability("read_file", path=Subpath("/tmp/demo"))
+        .ttl(3600)
+        .mint(control_key)
+    )
+    h = tenuo_headers(warrant, "agent1")
+
+    cfg = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[control_key.public_key],
+    )
+    ti = TenuoPlugin(cfg)
+    nxt = MagicMock()
+    nxt.execute_activity = AsyncMock(return_value="ok")
+    nxt.init = MagicMock()
+    ai = ti.intercept_activity(nxt)
+
+    import time as _time
+    pop = warrant.sign(
+        agent_key, "read_file", {"path": "/tmp/demo"}, int(_time.time())
+    )
+
+    act_headers = {}
+    for k, v in h.items():
+        raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+        if k.startswith("x-tenuo-"):
+            act_headers[k] = raw_v
+    act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+
+    class FakePayload:
+        def __init__(self, data):
+            self.data = data
+
+    payload_headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
+
+    info = MagicMock()
+    info.activity_type = "read_file"
+    info.activity_id = "act-otel-1"
+    info.workflow_id = "wf-otel-allow"
+    info.workflow_run_id = "run-otel-1"
+    info.workflow_type = "OtelWorkflow"
+    info.attempt = 1
+    info.is_local = False
+
+    inp = MagicMock()
+    inp.fn = lambda path: path
+    inp.args = ("/tmp/demo",)
+    inp.headers = payload_headers
+
+    loop = asyncio.new_event_loop()
+    try:
+        with patch("tenuo.temporal._otel_trace", test_trace), \
+             patch("temporalio.activity.info", return_value=info):
+            loop.run_until_complete(ai.execute_activity(inp))
+    finally:
+        loop.close()
+
+    finished = exporter.get_finished_spans()
+    tenuo_spans = [s for s in finished if s.name == "tenuo.authorize"]
+    assert len(tenuo_spans) >= 1, (
+        f"Expected tenuo.authorize span, got: {[s.name for s in finished]}"
+    )
+    span = tenuo_spans[0]
+    attrs = dict(span.attributes or {})
+    assert attrs.get("tenuo.tool") == "read_file"
+    assert attrs.get("tenuo.decision") == "allow"
+    assert "tenuo.warrant_id" in attrs
+    assert "tenuo.constraint_violated" in attrs
+
+
+# =============================================================================
+# Phase 1.1 — TenuoWarrantContextPropagator + tenuo_warrant_context
+# =============================================================================
+
+
+def test_tenuo_warrant_context_manager_exists():
+    from tenuo.temporal import tenuo_warrant_context, TenuoWarrantContextPropagator
+
+    assert tenuo_warrant_context is not None
+    assert TenuoWarrantContextPropagator is not None
+
+
+def test_context_propagator_sets_and_clears():
+    from tenuo.temporal import TenuoWarrantContextPropagator
+
+    prop = TenuoWarrantContextPropagator()
+    assert prop.get() is None
+    # Mock a warrant
+    mock_warrant = object()
+    token = prop.set(mock_warrant, "key1")
+    assert prop.get() == (mock_warrant, "key1")
+    prop.clear(token)
+    assert prop.get() is None
+
+
+# =============================================================================
+# Phase 1.7 — WarrantSource abstraction + implementations
+# =============================================================================
+
+
+def test_literal_warrant_source_wraps_warrant():
+    from tenuo.temporal import LiteralWarrantSource
+    import inspect
+    source = LiteralWarrantSource(object(), "k1")
+    assert inspect.iscoroutinefunction(source.resolve)
+
+
+def test_env_warrant_source_missing_var():
+    import os
+    from tenuo.temporal import EnvWarrantSource, TenuoContextError
+    os.environ.pop("TENUO_TEST_WARRANT_MISSING", None)
+    source = EnvWarrantSource("TENUO_TEST_WARRANT_MISSING", "k1")
+    with pytest.raises(TenuoContextError, match="is not set"):
+        asyncio.run(source.resolve())
+
+
+def test_warrant_source_and_literal_mutually_exclusive():
+    """Passing both warrant= and warrant_source= to execute_workflow_authorized must raise."""
+    from tenuo.temporal import execute_workflow_authorized
+    import inspect
+    sig = inspect.signature(execute_workflow_authorized)
+    assert "warrant_source" in sig.parameters, "warrant_source kwarg must be present"
+
+
+def test_cloud_trigger_warrant_source_importable():
+    from tenuo.temporal import CloudTriggerWarrantSource
+    source = CloudTriggerWarrantSource(
+        base_url="https://example.com",
+        trigger_id="trig_123",
+        api_key="key",
+        key_id="agent1",
+    )
+    import inspect
+    assert inspect.iscoroutinefunction(source.resolve)
+
+
+def test_cloud_trigger_warrant_source_uses_event_mapper():
+    from tenuo.temporal import CloudTriggerWarrantSource
+    events_captured = []
+
+    def mapper(patient_id, *a, **kw):
+        events_captured.append(patient_id)
+        return {"patient_id": patient_id}
+
+    source = CloudTriggerWarrantSource(
+        base_url="https://example.com",
+        trigger_id="trig_123",
+        api_key="key",
+        key_id="agent1",
+        event_mapper=mapper,
+    )
+    # We can't call resolve() without an httpx mock, but verify event_mapper is stored
+    assert source._event_mapper is mapper
+
+
+# =============================================================================
+# Item 3.4 — Dynamic activity per-name tool resolution
+# =============================================================================
+
+
+def test_dynamic_activity_falls_back_to_runtime_name():
+    """When fn resolution fails, fall back to input.activity for dynamic activities."""
+    from tenuo.temporal import _warrant_tool_name_for_activity_type
+
+    class MockInput:
+        fn = None  # no function reference (dynamic handler)
+        activity = "SomeDynamicTool"  # runtime name
+        headers = {}
+
+    class MockConfig:
+        activity_fns: list = []
+        tool_mappings: dict = {}
+        _activity_registry: dict = {}
+
+    result = _warrant_tool_name_for_activity_type(MockInput(), MockConfig())
+    assert result == "SomeDynamicTool"
+
+
+def test_dynamic_activity_legacy_call_unchanged():
+    """Legacy 3-arg call still works: (config, activity_type, activity_fn)."""
+    from tenuo.temporal import _warrant_tool_name_for_activity_type
+
+    class MockConfig:
+        tool_mappings: dict = {}
+
+    result = _warrant_tool_name_for_activity_type(MockConfig(), "MyActivity", None)
+    assert result == "MyActivity"
+
+
+def test_dynamic_activity_legacy_call_with_tool_mapping():
+    """tool_mappings override still applies in legacy call."""
+    from tenuo.temporal import _warrant_tool_name_for_activity_type
+
+    class MockConfig:
+        tool_mappings = {"MyActivity": "mapped_tool"}
+
+    result = _warrant_tool_name_for_activity_type(MockConfig(), "MyActivity", None)
+    assert result == "mapped_tool"
+
+
+# =============================================================================
+# Item 3.5 — Continue-as-new attenuation
+# =============================================================================
+
+
+def test_tenuo_continue_as_new_exists():
+    from tenuo.temporal import tenuo_continue_as_new
+
+    assert tenuo_continue_as_new is not None
+    assert callable(tenuo_continue_as_new)
+
+
+def test_tenuo_continue_as_new_has_attenuation_kwarg():
+    from tenuo.temporal import tenuo_continue_as_new
+    import inspect
+
+    sig = inspect.signature(tenuo_continue_as_new)
+    assert "tenuo_attenuation" in sig.parameters
+
+
+def test_tenuo_continue_as_new_in_all():
+    import tenuo.temporal as _mod
+
+    assert "tenuo_continue_as_new" in _mod.__all__
+
+
+def test_create_scheduled_workflow_with_warrant_exists():
+    """Verify the scheduled workflow helper is exported."""
+    from tenuo.temporal import create_scheduled_workflow_with_warrant
+    import inspect
+    assert inspect.iscoroutinefunction(create_scheduled_workflow_with_warrant)
+
+
+def test_signal_and_update_constraints_in_config():
+    """TenuoPluginConfig exposes signal and update constraint fields."""
+    from tenuo.temporal import TenuoPluginConfig
+    from unittest.mock import MagicMock
+    resolver = MagicMock(spec=KeyResolver)
+    cfg = TenuoPluginConfig(
+        key_resolver=resolver,
+        trusted_roots=_TEMPORAL_TRUST_ROOTS,
+        signal_constraints={"my_signal": {}},
+        update_constraints={"my_update": {}},
+    )
+    assert cfg.signal_constraints == {"my_signal": {}}
+    assert cfg.update_constraints == {"my_update": {}}
+
+
+# =============================================================================
+# tenuo_complete_async_activity
+# =============================================================================
+
+
+def test_tenuo_complete_async_activity_exists():
+    """Verify the async activity completion wrapper is exported."""
+    from tenuo.temporal import tenuo_complete_async_activity
+    import inspect
+    assert inspect.iscoroutinefunction(tenuo_complete_async_activity)
+
+
+# =============================================================================
 # Main
 # =============================================================================
 

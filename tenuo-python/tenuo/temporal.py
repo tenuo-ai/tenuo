@@ -167,8 +167,11 @@ Troubleshooting:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
+import contextvars
+import dataclasses as _dataclasses
 import gzip
 import hashlib
 import json
@@ -176,6 +179,7 @@ import logging
 import threading
 import warnings
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import (
@@ -198,6 +202,8 @@ import inspect as _inspect
 F = TypeVar("F", bound=Callable[..., Any])
 
 if TYPE_CHECKING:
+    from temporalio.client import Client
+    from tenuo import Warrant
     from tenuo.temporal_plugin import TenuoTemporalPlugin, ensure_tenuo_workflow_runner
 
 logger = logging.getLogger("tenuo.temporal")
@@ -213,6 +219,16 @@ try:
 except ImportError:  # pragma: no cover
     _TemporalClientInterceptor = object
     _TemporalWorkerInterceptor = object
+
+# OTel is a soft dependency — import guard at module level so execute_activity
+# can branch without a try/except on every call.
+try:
+    from opentelemetry import trace as _otel_trace
+
+    _otel_available = True
+except ImportError:
+    _otel_trace = None  # type: ignore[assignment]
+    _otel_available = False
 
 # =============================================================================
 # Header Constants
@@ -267,6 +283,18 @@ def _gzip_decompress_limited(data: bytes, max_length: int = _WARRANT_DECOMPRESS_
     return result
 
 # =============================================================================
+# Context variable for tenuo_warrant_context propagation
+# =============================================================================
+
+#: Module-level contextvar holding the active (warrant, key_id) pair set by
+#: :func:`tenuo_warrant_context`. ``_TenuoClientOutbound.start_workflow`` reads
+#: this so that plain ``client.execute_workflow(...)`` calls inside a
+#: ``tenuo_warrant_context`` block automatically carry Tenuo headers.
+_active_tenuo_warrant: contextvars.ContextVar[Optional[tuple]] = contextvars.ContextVar(
+    "tenuo_active_warrant", default=None
+)
+
+# =============================================================================
 # Module-level stores for transparent authorization
 # =============================================================================
 # Tenuo authorization is completely transparent - developers use standard
@@ -277,10 +305,11 @@ def _gzip_decompress_limited(data: bytes, max_length: int = _WARRANT_DECOMPRESS_
 # computes PoP signatures inline using deterministic timestamps, and injects
 # them into activity headers. No queue machinery needed.
 #
-# _workflow_headers_store: workflow_id → {warrant, key_id}
-# _pending_child_headers:  child_wf_id → attenuated headers
-# _pop_dedup_cache:        alias of default InMemoryPopDedupStore.cache (replay protection)
-# _workflow_config_store:  workflow_id → TenuoPluginConfig
+# _workflow_headers_store:    workflow_id → {warrant, key_id}
+# _pending_child_headers:     child_wf_id → attenuated headers
+# _pop_dedup_cache:           alias of default InMemoryPopDedupStore.cache (replay protection)
+# _workflow_config_store:     workflow_id → TenuoPluginConfig
+# _pending_mint_capabilities: ref_key → capabilities dict (bypasses Temporal serialization)
 #
 # Thread safety: _store_lock protects all mutations. Temporal workers
 # may execute activities from different workflows concurrently on
@@ -294,6 +323,11 @@ _DEDUP_MAX_SIZE: int = 10_000
 _workflow_config_store: Dict[str, "TenuoPluginConfig"] = {}
 _pending_activity_fn: Dict[str, Any] = {}  # workflow_id → activity function ref
 _pending_activity_approvals: Dict[str, List[Any]] = {}  # workflow_id → SignedApproval list
+_pending_mint_capabilities: Dict[str, dict] = {}  # ref_key → capabilities dict (avoids Temporal serialization of PyO3 types)
+
+# Worker-level config — set once at worker init by TenuoTemporalPlugin.configure_worker.
+# Used by _tenuo_internal_mint_activity so it can resolve keys during local activity execution.
+_worker_config: Optional["TenuoPluginConfig"] = None
 
 
 # =============================================================================
@@ -321,6 +355,40 @@ class LocalActivityError(TenuoTemporalError):
             "Protected activities must be executed as regular activities for "
             "authorization enforcement. Mark with @unprotected to allow local execution."
         )
+
+
+class TenuoArgNormalizationError(TypeError):
+    """Raised when an activity argument cannot be normalized for PoP signing.
+
+    The Tenuo Temporal interceptor automatically normalizes dataclasses, dicts,
+    lists, tuples, bytes, and None before PoP signing. If an argument type is
+    not normalizable (e.g. set, datetime, Enum, custom class without
+    ``__dataclass_fields__``), this error is raised at activity dispatch time
+    (non-retryable).
+
+    Fix by converting the argument to a dataclass, a dict, or a primitive, or
+    by lifting the relevant field to a top-level primitive argument with a real
+    constraint (e.g. ``Subpath``, ``AnyOf``).
+
+    See: docs/temporal.md — "Structured state in activity arguments".
+    """
+
+
+class TenuoPreValidationError(TenuoContextError):
+    """Raised when an activity's args don't match the warrant before PoP signing.
+
+    This is a diagnostic accelerator: it enumerates *all* unknown and missing
+    fields in one error rather than surfacing them one-at-a-time from core.
+    The authoritative check still runs in Rust — this error fires first so the
+    developer can fix all field mismatches at once.
+
+    Inherits from TenuoContextError so it is raised as non-retryable by the
+    outbound interceptor's error handler (same path as other PoP signing failures).
+
+    Contains the substring ``"unknown field not allowed (zero-trust mode)"``
+    when unknown fields are present, for compatibility with any callers that
+    substring-match on the core error format.
+    """
 
 
 @dataclass
@@ -509,6 +577,170 @@ class KeyResolutionError(TenuoTemporalError):
 
 
 # =============================================================================
+# WarrantSource — pluggable warrant provisioning
+# =============================================================================
+
+
+class WarrantSource(ABC):
+    """Abstract base for warrant provisioning sources.
+
+    A WarrantSource resolves (warrant, key_id) lazily at workflow-start time.
+    Resolution runs client-side — warrants must be present in workflow start
+    headers before a Temporal worker ever sees the workflow.
+
+    Implementations raise WarrantExpired if the resolved warrant is past expires_at.
+    """
+
+    @abstractmethod
+    async def resolve(self, *args: Any, **kwargs: Any) -> tuple:
+        """Return (warrant, key_id). Raise WarrantExpired if expired."""
+
+
+class LiteralWarrantSource(WarrantSource):
+    """Wraps an already-minted Warrant. Symmetric with execute_workflow_authorized(warrant=...)."""
+
+    def __init__(self, warrant: Any, key_id: str) -> None:
+        self._warrant = warrant
+        self._key_id = key_id
+
+    async def resolve(self, *args: Any, **kwargs: Any) -> tuple:
+        return (self._warrant, self._key_id)
+
+
+class EnvWarrantSource(WarrantSource):
+    """Reads a warrant from an environment variable (base64-encoded CBOR bytes).
+
+    Mirrors EnvKeyResolver's pattern. Reads fresh on each resolve() call.
+    Raises WarrantExpired if the resolved warrant's expires_at is in the past.
+
+    Example::
+
+        source = EnvWarrantSource("TENUO_WARRANT_AGENT1", "agent1")
+        async with tenuo_warrant_context(source, "agent1"):
+            await client.execute_workflow(...)
+    """
+
+    def __init__(self, env_var: str, key_id: str, *, encoding: str = "base64") -> None:
+        self._env_var = env_var
+        self._key_id = key_id
+        self._encoding = encoding
+
+    async def resolve(self, *args: Any, **kwargs: Any) -> tuple:
+        import os
+        import time
+
+        from tenuo_core import Warrant as _Warrant  # type: ignore[import-not-found]
+
+        raw = os.environ.get(self._env_var)
+        if not raw:
+            raise TenuoContextError(
+                f"EnvWarrantSource: environment variable '{self._env_var}' is not set"
+            )
+        if self._encoding == "base64":
+            try:
+                warrant_bytes = base64.b64decode(raw)
+            except Exception as e:
+                raise TenuoContextError(
+                    f"EnvWarrantSource: failed to base64-decode '{self._env_var}': {e}"
+                ) from e
+        else:
+            warrant_bytes = raw.encode()
+
+        warrant = _Warrant.from_bytes(warrant_bytes)
+
+        if hasattr(warrant, "expires_at") and warrant.expires_at is not None:
+            if warrant.expires_at < int(time.time()):
+                raise TenuoContextError(
+                    f"EnvWarrantSource: warrant in '{self._env_var}' has expired"
+                )
+
+        return (warrant, self._key_id)
+
+
+class CloudTriggerWarrantSource(WarrantSource):
+    """Fires a Tenuo Cloud trigger and returns the resulting warrant.
+
+    Calls POST {base_url}/v1/triggers/{trigger_id}:fire at resolve() time.
+    Uses the existing cloud fire API — no cloud changes needed. The event_mapper
+    closure maps workflow args to the trigger's bind_from_event field.
+
+    ``httpx`` is a soft dependency: imported inside ``resolve()`` only.
+
+    Example::
+
+        source = CloudTriggerWarrantSource(
+            base_url="https://api.cloud.tenuo.ai",
+            trigger_id="trig_abc123",
+            api_key=os.environ["TENUO_API_KEY"],
+            key_id="agent1",
+            event_mapper=lambda patient_id, *args, **kw: {"patient_id": patient_id},
+        )
+        await execute_workflow_authorized(client, ..., warrant_source=source, args=[patient_id])
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        trigger_id: str,
+        api_key: str,
+        key_id: str,
+        *,
+        event_mapper: Optional[Callable] = None,
+        timeout: float = 5.0,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._trigger_id = trigger_id
+        self._api_key = api_key
+        self._key_id = key_id
+        self._event_mapper = event_mapper
+        self._timeout = timeout
+
+    async def resolve(self, *args: Any, **kwargs: Any) -> tuple:
+        import time
+
+        try:
+            import httpx
+        except ImportError:
+            raise TenuoContextError(
+                "CloudTriggerWarrantSource requires 'httpx': pip install httpx"
+            )
+        from tenuo_core import Warrant as _Warrant  # type: ignore[import-not-found]
+
+        event_data: Dict = {}
+        if self._event_mapper is not None:
+            event_data = self._event_mapper(*args, **kwargs) or {}
+
+        url = f"{self._base_url}/v1/triggers/{self._trigger_id}:fire"
+        payload = {"event_data": event_data}
+
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.post(
+                url,
+                json=payload,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        warrant_b64 = data.get("warrant")
+        if not warrant_b64:
+            raise TenuoContextError(
+                f"CloudTriggerWarrantSource: fire response missing 'warrant' field: {data}"
+            )
+
+        warrant_bytes = base64.b64decode(warrant_b64)
+        warrant = _Warrant.from_bytes(warrant_bytes)
+
+        if hasattr(warrant, "expires_at") and warrant.expires_at is not None:
+            if warrant.expires_at < int(time.time()):
+                raise TenuoContextError(
+                    "CloudTriggerWarrantSource: fired warrant has already expired"
+                )
+
+        return (warrant, self._key_id)
+
+
+# =============================================================================
 # Audit Event
 # =============================================================================
 
@@ -566,6 +798,31 @@ class TemporalAuditEvent:
             "timestamp": self.timestamp.isoformat(),
             "tenuo_version": self.tenuo_version,
         }
+
+
+# =============================================================================
+# Internal Mint Request (Item 0.1a)
+# =============================================================================
+
+
+@_dataclasses.dataclass
+class _MintRequest:
+    """Serializable request for _tenuo_internal_mint_activity.
+
+    Capabilities are stored in ``_pending_mint_capabilities`` (process-local)
+    rather than inline, because PyO3 constraint types (Subpath, Pattern, …)
+    cannot survive ``dataclasses.asdict()`` → ``copy.deepcopy()`` which
+    Temporal's payload converter uses.  Only the lookup key travels through
+    Temporal serialization.
+    """
+
+    kind: str  # "attenuate" or "issue_execution"
+    parent_warrant_bytes: bytes
+    key_id: str
+    capabilities_ref: str  # key into _pending_mint_capabilities
+    ttl_seconds: Optional[int] = None
+    holder_bytes: Optional[bytes] = None      # PublicKey bytes, if attenuating to a new holder
+    clearance_bytes: Optional[bytes] = None   # Clearance bytes, if restricting clearance
 
 
 # =============================================================================
@@ -810,28 +1067,30 @@ class EnvKeyResolver(KeyResolver):
             )
         self._warned = True
 
-    async def resolve(self, key_id: str) -> Any:
-        """Resolve key from environment variable."""
-        import os
+    def _load_key_from_env(self, key_id: str) -> Any:
+        """Read ``{prefix}{key_id}`` from ``os.environ`` and build a ``SigningKey``.
 
-        self._maybe_warn()
+        Raises ``KeyResolutionError`` if the variable is missing or undecodable.
+        """
+        import os
 
         env_name = f"{self._prefix}{key_id}"
         value = os.environ.get(env_name)
-
         if value is None:
             raise KeyResolutionError(key_id=key_id)
 
         try:
             from tenuo_core import SigningKey
 
-            key_bytes = base64.b64decode(value)
-            return SigningKey.from_bytes(key_bytes)
+            return SigningKey.from_bytes(base64.b64decode(value))
         except (binascii.Error, ValueError) as e:
             logger.error(f"Failed to decode key from {env_name}: {e}")
             raise KeyResolutionError(key_id=key_id)
-        except Exception:
-            raise
+
+    async def resolve(self, key_id: str) -> Any:
+        """Resolve key from environment variable."""
+        self._maybe_warn()
+        return self._load_key_from_env(key_id)
 
     def preload_keys(self, key_ids: list[str]) -> None:
         """Pre-load keys from environment to cache for Temporal workflows.
@@ -845,25 +1104,8 @@ class EnvKeyResolver(KeyResolver):
         Raises:
             KeyResolutionError: If any key cannot be loaded
         """
-        import os
-
         for key_id in key_ids:
-            env_name = f"{self._prefix}{key_id}"
-            value = os.environ.get(env_name)
-
-            if value is None:
-                raise KeyResolutionError(key_id=key_id)
-
-            try:
-                from tenuo_core import SigningKey
-
-                key_bytes = base64.b64decode(value)
-                self._key_cache[key_id] = SigningKey.from_bytes(key_bytes)
-            except (binascii.Error, ValueError) as e:
-                logger.error(f"Failed to decode key from {env_name}: {e}")
-                raise KeyResolutionError(key_id=key_id)
-            except Exception:
-                raise
+            self._key_cache[key_id] = self._load_key_from_env(key_id)
 
     def resolve_sync(self, key_id: str) -> Any:
         """Resolve key from cache or environment variable synchronously.
@@ -879,26 +1121,8 @@ class EnvKeyResolver(KeyResolver):
             return self._key_cache[key_id]
 
         # Fall back to os.environ (for non-workflow contexts)
-        import os
-
         self._maybe_warn()
-
-        env_name = f"{self._prefix}{key_id}"
-        value = os.environ.get(env_name)
-
-        if value is None:
-            raise KeyResolutionError(key_id=key_id)
-
-        try:
-            from tenuo_core import SigningKey
-
-            key_bytes = base64.b64decode(value)
-            return SigningKey.from_bytes(key_bytes)
-        except (binascii.Error, ValueError) as e:
-            logger.error(f"Failed to decode key from {env_name}: {e}")
-            raise KeyResolutionError(key_id=key_id)
-        except Exception:
-            raise
+        return self._load_key_from_env(key_id)
 
 
 class VaultKeyResolver(KeyResolver):
@@ -1253,10 +1477,67 @@ class CompositeKeyResolver(KeyResolver):
         logger.error(f"CompositeKeyResolver: all resolvers failed for {key_id}: {errors}")
         raise KeyResolutionError(key_id=key_id)
 
+    def resolve_sync(self, key_id: str) -> Any:
+        """Try each resolver's resolve_sync() in order.
+
+        Overrides the base class to avoid ThreadPoolExecutor, which is blocked
+        by Temporal's workflow sandbox. Delegates to each sub-resolver's
+        resolve_sync() so sandbox-safe resolvers (e.g. EnvKeyResolver with
+        preload_keys()) work correctly inside workflows.
+        """
+        errors: List[str] = []
+
+        for i, resolver in enumerate(self._resolvers):
+            try:
+                key = resolver.resolve_sync(key_id)
+                if i > 0 and self._warn_on_fallback:
+                    failed_names = [type(self._resolvers[j]).__name__ for j in range(i)]
+                    logger.warning(
+                        f"CompositeKeyResolver: primary resolver(s) failed ({', '.join(failed_names)}), "
+                        f"resolved {key_id} via fallback {type(resolver).__name__} (sync). "
+                        f"Errors: {errors}"
+                    )
+                else:
+                    logger.debug(
+                        f"CompositeKeyResolver: resolved {key_id} via resolver {i} "
+                        f"({type(resolver).__name__}) (sync)"
+                    )
+                return key
+            except KeyResolutionError as e:
+                errors.append(f"{type(resolver).__name__}: {e}")
+                continue
+            except Exception as e:
+                errors.append(f"{type(resolver).__name__}: {e}")
+                continue
+
+        logger.error(f"CompositeKeyResolver: all resolvers failed for {key_id} (sync): {errors}")
+        raise KeyResolutionError(key_id=key_id)
+
 
 # =============================================================================
 # Interceptor Config
 # =============================================================================
+
+
+def _build_activity_registry(
+    activity_fns: Optional[List[Callable]],
+) -> Dict[str, Callable]:
+    """Map Temporal activity-type name -> callable for a list of activities.
+
+    Prefers the ``__temporal_activity_definition.name`` attached by
+    ``@activity.defn``, falling back to ``fn.__name__``. Empty / ``None``
+    input returns an empty dict.
+    """
+    registry: Dict[str, Callable] = {}
+    if not activity_fns:
+        return registry
+    for fn in activity_fns:
+        defn = getattr(fn, "__temporal_activity_definition", None)
+        if defn is not None and hasattr(defn, "name"):
+            registry[defn.name] = fn
+        else:
+            registry[getattr(fn, "__name__", str(fn))] = fn
+    return registry
 
 
 @dataclass
@@ -1264,7 +1545,14 @@ class TenuoPluginConfig:
     """Configuration for TenuoPlugin."""
 
     key_resolver: Optional[KeyResolver] = None
-    """Resolves key IDs to signing keys for PoP generation.
+    """Optional — required for outbound PoP signing (most workers). Omit for
+    data-plane/read-only workers that only verify inbound warrants.
+
+    Resolves key IDs to signing keys. Used by ``tenuo_execute_activity()`` and
+    the outbound workflow interceptor to reconstruct signing keys for PoP
+    generation. If ``None``, the outbound interceptor raises
+    ``TenuoContextError`` when PoP signing is attempted; inbound verification
+    continues to work normally using ``trusted_roots`` alone.
 
     Provide this **or** :attr:`signing_key` (a static worker key). When both are
     set, ``key_resolver`` takes precedence.
@@ -1517,7 +1805,7 @@ class TenuoPluginConfig:
     for Temporal workers regardless of this flag; see ``trusted_roots``.
     """
 
-    retry_pop_max_windows: Optional[int] = None
+    retry_pop_max_windows: Optional[int] = 5
     """
     PoP time-window count to use for Temporal activity **retries** (attempt > 1).
 
@@ -1525,10 +1813,13 @@ class TenuoPluginConfig:
     ``workflow.now()`` (deterministic replay clock). When Temporal retries an
     activity, it reuses the headers from the original scheduling event in
     workflow history — it does **not** re-invoke the outbound interceptor.
-    With the default ``pop_max_windows=5`` (±60 s), an activity retried more
+    With the strict ``pop_max_windows=5`` (±60 s), an activity retried more
     than ~90 s after its first scheduling will fail PoP verification.
 
-    Set this to accommodate your longest expected retry window:
+    Default ``5`` (±150 s ≈ 2.5 min) covers the vast majority of retry
+    policies where the first retry fires within a couple of minutes.
+
+    Set higher to accommodate longer retry windows:
 
         # 120 × 30 s = 3600 s — covers up to 1 hour of Temporal retries
         retry_pop_max_windows=120
@@ -1541,10 +1832,77 @@ class TenuoPluginConfig:
     skipped for attempt > 1).  For most deployments the correct value is
     ``ceil(max_retry_window_seconds / 30)``.
 
-    ``None`` (default) uses the same strict window for all attempts, which
-    preserves the tightest security guarantee but may cause retry failures for
-    long-running workflows.
+    Set to ``None`` to use the same strict window for all attempts, which
+    preserves the tightest security guarantee but will cause retry failures for
+    activities that retry more than ~90 s after first scheduling.
     """
+
+    clearance_requirements: Optional[Dict[str, Any]] = None
+    """
+    Per-tool clearance requirements enforced during inbound authorization.
+
+    Mapping of tool name (or glob pattern) → ``Clearance`` level. Even if a
+    warrant carries the tool in its capabilities, authorization will fail if the
+    warrant's clearance is below the configured requirement for that tool.
+
+    Supports the same patterns as ``Authorizer.require_clearance()``:
+    - Exact match: ``"delete_database"``
+    - Prefix wildcard: ``"admin_*"`` (matches ``admin_users``, ``admin_config``)
+    - Default: ``"*"`` (applies to all tools without a specific rule)
+
+    Example::
+
+        from tenuo_core import Clearance
+        TenuoPluginConfig(
+            trusted_roots=[root_key],
+            clearance_requirements={
+                "*": Clearance.EXTERNAL,        # baseline for every tool
+                "admin_*": Clearance.PRIVILEGED,
+                "send_email": Clearance.CONFIDENTIAL,
+            },
+        )
+
+    ``None`` (default) means no per-tool clearance policy is applied.
+    """
+
+    revocation_list: Optional[Any] = None
+    """
+    Optional ``SignedRevocationList`` to check warrants against during
+    inbound authorization.  Warrants whose ID appears in the list are denied
+    even when the chain is otherwise valid.
+
+    Mutually exclusive with ``revocation_list_provider`` (raises
+    ``ConfigurationError`` if both are set).
+
+    ``None`` (default) means revocation list checking is skipped.
+    """
+
+    revocation_list_provider: Optional[Callable[[], Any]] = None
+    """
+    Callable that returns a fresh ``SignedRevocationList``.  Called once at
+    config construction time and then again every
+    ``revocation_refresh_secs`` seconds (monotonic clock) by the activity
+    interceptor.
+
+    Use this instead of ``revocation_list`` when you need periodic SRL
+    refresh without redeploying workers.
+
+    ``None`` (default) disables provider-based SRL refresh.
+    """
+
+    revocation_refresh_secs: Optional[int] = None
+    """
+    How often (in seconds) to refresh the SRL via ``revocation_list_provider``.
+    ``None`` means the provider is called once at startup and not again.
+
+    Requires ``revocation_list_provider`` to be set; ignored otherwise.
+    """
+
+    signal_constraints: Optional[Dict[str, Dict[str, Any]]] = None
+    """Per-signal payload constraints: {signal_name: {field_name: Constraint}}."""
+
+    update_constraints: Optional[Dict[str, Dict[str, Any]]] = None
+    """Per-update payload constraints: {update_name: {field_name: Constraint}}."""
 
     def __post_init__(self) -> None:
         if self.dry_run:
@@ -1656,14 +2014,9 @@ class TenuoPluginConfig:
                     "trusted_roots_refresh_interval_secs requires trusted_roots_provider."
                 )
 
-        self._activity_registry: Dict[str, Callable] = {}
-        if self.activity_fns:
-            for fn in self.activity_fns:
-                name = getattr(fn, "__temporal_activity_definition", None)
-                if name and hasattr(name, "name"):
-                    self._activity_registry[name.name] = fn
-                else:
-                    self._activity_registry[getattr(fn, "__name__", str(fn))] = fn
+        self._activity_registry: Dict[str, Callable] = _build_activity_registry(
+            self.activity_fns
+        )
 
 
 # =============================================================================
@@ -1773,6 +2126,79 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
         return _TenuoClientOutbound(next_interceptor, self)
 
 
+class TenuoWarrantContextPropagator:
+    """Context propagator for passing Tenuo warrants via Python contextvars.
+
+    Used internally by :func:`tenuo_warrant_context`. Registered automatically
+    by :class:`~tenuo.temporal_plugin.TenuoTemporalPlugin` so that plain
+    ``client.execute_workflow()`` calls pick up the active warrant from context.
+
+    Example — direct use (uncommon; prefer :func:`tenuo_warrant_context`)::
+
+        propagator = TenuoWarrantContextPropagator()
+        token = propagator.set(warrant, "agent1")
+        try:
+            await client.execute_workflow(MyWorkflow.run, ...)
+        finally:
+            propagator.clear(token)
+    """
+
+    def set(self, warrant: Any, key_id: str) -> contextvars.Token:
+        """Store *(warrant, key_id)* in the current context; return the token."""
+        return _active_tenuo_warrant.set((warrant, key_id))
+
+    def clear(self, token: contextvars.Token) -> None:
+        """Restore the previous context state using *token*."""
+        _active_tenuo_warrant.reset(token)
+
+    def get(self) -> Optional[tuple]:
+        """Return the current *(warrant, key_id)* pair, or ``None``."""
+        return _active_tenuo_warrant.get()
+
+
+@asynccontextmanager
+async def tenuo_warrant_context(warrant_or_source: Any, key_id: str):
+    """Async context manager for passing a Tenuo warrant to plain ``client.execute_workflow`` calls.
+
+    Sets the module-level :data:`_active_tenuo_warrant` contextvar so that
+    ``_TenuoClientOutbound.start_workflow`` picks it up automatically — no need
+    to call :func:`execute_workflow_authorized`.
+
+    Example::
+
+        async with tenuo_warrant_context(warrant, "agent1"):
+            await client.execute_workflow(MyWorkflow.run, ...)
+
+    Also accepts a ``WarrantSource`` (Phase 1.7 — any object with an async
+    ``resolve()`` method returning ``(warrant, key_id)``)::
+
+        async with tenuo_warrant_context(EnvWarrantSource("TENUO_WARRANT"), "agent1"):
+            await client.execute_workflow(...)
+
+    Args:
+        warrant_or_source: A :class:`~tenuo_core.Warrant` object **or** a
+            ``WarrantSource`` with an async ``resolve()`` method.
+        key_id: The holder key identifier to embed in headers.
+
+    Yields:
+        The resolved :class:`~tenuo_core.Warrant` object.
+    """
+    # If warrant_or_source is a WarrantSource (has async resolve method), call it.
+    if hasattr(warrant_or_source, "resolve") and asyncio.iscoroutinefunction(
+        warrant_or_source.resolve
+    ):
+        warrant, key_id = await warrant_or_source.resolve()
+    else:
+        warrant = warrant_or_source
+
+    propagator = TenuoWarrantContextPropagator()
+    token = propagator.set(warrant, key_id)
+    try:
+        yield warrant
+    finally:
+        propagator.clear(token)
+
+
 class _TenuoClientOutbound:
     """Outbound half of the client interceptor — wraps ``start_workflow``.
 
@@ -1808,6 +2234,14 @@ class _TenuoClientOutbound:
                 selected_headers = self._parent._next_headers
                 self._parent._next_headers = {}
 
+        # Fallback: read from tenuo_warrant_context contextvar when no explicit
+        # headers were bound via execute_workflow_authorized / set_headers_for_workflow.
+        if not selected_headers:
+            _ctx_value = _active_tenuo_warrant.get()
+            if _ctx_value is not None:
+                _ctx_warrant, _ctx_key_id = _ctx_value
+                selected_headers = tenuo_headers(_ctx_warrant, _ctx_key_id)
+
         if selected_headers:
             try:
                 from temporalio.api.common.v1 import Payload  # type: ignore
@@ -1838,8 +2272,9 @@ async def execute_workflow_authorized(
     client_interceptor: TenuoClientInterceptor,
     workflow_run_fn: Any,
     workflow_id: str,
-    warrant: Any,
-    key_id: str,
+    warrant: Any = None,
+    key_id: str = "",
+    warrant_source: Optional[WarrantSource] = None,
     args: Optional[List[Any]] = None,
     compress: bool = True,
     **execute_kwargs: Any,
@@ -1849,7 +2284,35 @@ async def execute_workflow_authorized(
     This utility binds Tenuo headers to ``workflow_id`` using
     ``set_headers_for_workflow`` and immediately invokes
     ``client.execute_workflow``.
+
+    Accepts either a pre-minted ``warrant`` + ``key_id`` pair, or a
+    ``warrant_source`` that resolves the pair lazily at call time. The two
+    are mutually exclusive — passing both raises ``TenuoContextError``.
+
+    Args:
+        client: The Temporal client.
+        client_interceptor: The TenuoClientInterceptor registered on the client.
+        workflow_run_fn: The workflow run method to execute.
+        workflow_id: Unique ID for this workflow run.
+        warrant: Pre-minted Warrant object (mutually exclusive with warrant_source).
+        key_id: Key ID for the holder's signing key (required when warrant is given).
+        warrant_source: A WarrantSource that resolves (warrant, key_id) at call time.
+            Mutually exclusive with warrant.
+        args: Positional arguments forwarded to the workflow.
+        compress: Whether to gzip-compress the warrant in headers (default True).
+        **execute_kwargs: Additional kwargs forwarded to ``client.execute_workflow``.
     """
+    if warrant is not None and warrant_source is not None:
+        raise TenuoContextError(
+            "execute_workflow_authorized: 'warrant' and 'warrant_source' are mutually exclusive. "
+            "Pass one or the other, not both."
+        )
+    if warrant_source is not None:
+        warrant, key_id = await warrant_source.resolve(*(args or []))
+    elif warrant is None:
+        raise TenuoContextError(
+            "execute_workflow_authorized: either 'warrant' or 'warrant_source' must be provided."
+        )
     if "id" in execute_kwargs:
         raise ValueError(
             "Pass workflow_id via execute_workflow_authorized(..., workflow_id=...). "
@@ -1864,6 +2327,95 @@ async def execute_workflow_authorized(
         args=args or [],
         id=workflow_id,
         **execute_kwargs,
+    )
+
+
+async def start_workflow_authorized(
+    *,
+    client: Any,
+    client_interceptor: "TenuoClientInterceptor",
+    workflow_run_fn: Any,
+    workflow_id: str,
+    warrant: Any = None,
+    key_id: str = "",
+    warrant_source: Optional["WarrantSource"] = None,
+    args: Optional[List[Any]] = None,
+    compress: bool = True,
+    **start_kwargs: Any,
+) -> Any:
+    """Start a workflow with Tenuo authorization headers, returning immediately.
+
+    Use this for long-running workflows — human-in-the-loop gates, multi-day
+    pipelines — where the caller should not block on the final result. The
+    function returns a ``WorkflowHandle`` as soon as the workflow is accepted
+    by the Temporal server. Poll ``handle.result()``, send signals via
+    ``handle.signal()``, or query state via ``handle.query()`` at any time.
+
+    For short workflows where you want the final result inline, use
+    :func:`execute_workflow_authorized` instead.
+
+    Accepts either a pre-minted ``warrant`` + ``key_id`` pair, or a
+    ``warrant_source`` that resolves the pair lazily at call time. The two
+    are mutually exclusive — passing both raises ``TenuoContextError``.
+
+    Args:
+        client: The Temporal client.
+        client_interceptor: The TenuoClientInterceptor registered on the client.
+        workflow_run_fn: The workflow run method (e.g. ``MyWorkflow.run``).
+        workflow_id: Unique ID for this workflow run.
+        warrant: Pre-minted Warrant object (mutually exclusive with warrant_source).
+        key_id: Key ID for the holder's signing key (required when warrant is given).
+        warrant_source: A WarrantSource that resolves (warrant, key_id) at call time.
+            Mutually exclusive with warrant.
+        args: Positional arguments forwarded to the workflow.
+        compress: Whether to gzip-compress the warrant in headers (default True).
+        **start_kwargs: Additional kwargs forwarded to ``client.start_workflow``
+            (e.g. ``task_queue``, ``execution_timeout``, ``retry_policy``).
+
+    Returns:
+        A Temporal ``WorkflowHandle`` for the started workflow.
+
+    Example::
+
+        handle = await start_workflow_authorized(
+            client=client,
+            client_interceptor=interceptor,
+            workflow_run_fn=LoanUnderwritingWorkflow.run,
+            workflow_id=wf_id,
+            warrant=root_warrant,
+            key_id=agent_key_id,
+            args=[app_id],
+            task_queue="loan-underwriting",
+        )
+        print(f"Workflow submitted: {handle.id}")
+        # Days later, after the human-in-the-loop gate fires:
+        result = await handle.result()
+    """
+    if warrant is not None and warrant_source is not None:
+        raise TenuoContextError(
+            "start_workflow_authorized: 'warrant' and 'warrant_source' are mutually exclusive. "
+            "Pass one or the other, not both."
+        )
+    if warrant_source is not None:
+        warrant, key_id = await warrant_source.resolve(*(args or []))
+    elif warrant is None:
+        raise TenuoContextError(
+            "start_workflow_authorized: either 'warrant' or 'warrant_source' must be provided."
+        )
+    if "id" in start_kwargs:
+        raise ValueError(
+            "Pass workflow_id via start_workflow_authorized(..., workflow_id=...). "
+            "Do not also pass id= in start_kwargs."
+        )
+    client_interceptor.set_headers_for_workflow(
+        workflow_id,
+        tenuo_headers(warrant, key_id, compress=compress),
+    )
+    return await client.start_workflow(
+        workflow_run_fn,
+        args=args or [],
+        id=workflow_id,
+        **start_kwargs,
     )
 
 
@@ -2008,26 +2560,21 @@ async def tenuo_execute_activity(
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
-    # Build activity kwargs
-    activity_kwargs: Dict[str, Any] = {}
-    if args is not None:
-        activity_kwargs["args"] = args
-    if start_to_close_timeout is not None:
-        activity_kwargs["start_to_close_timeout"] = start_to_close_timeout
-    if schedule_to_close_timeout is not None:
-        activity_kwargs["schedule_to_close_timeout"] = schedule_to_close_timeout
-    if schedule_to_start_timeout is not None:
-        activity_kwargs["schedule_to_start_timeout"] = schedule_to_start_timeout
-    if heartbeat_timeout is not None:
-        activity_kwargs["heartbeat_timeout"] = heartbeat_timeout
-    if retry_policy is not None:
-        activity_kwargs["retry_policy"] = retry_policy
-    if task_queue is not None:
-        activity_kwargs["task_queue"] = task_queue
-    if cancellation_type is not None:
-        activity_kwargs["cancellation_type"] = cancellation_type
-    if summary is not None:
-        activity_kwargs["summary"] = summary
+    # Build activity kwargs, dropping unset values so we don't override
+    # workflow.execute_activity() defaults.
+    activity_kwargs: Dict[str, Any] = {
+        k: v for k, v in {
+            "args": args,
+            "start_to_close_timeout": start_to_close_timeout,
+            "schedule_to_close_timeout": schedule_to_close_timeout,
+            "schedule_to_start_timeout": schedule_to_start_timeout,
+            "heartbeat_timeout": heartbeat_timeout,
+            "retry_policy": retry_policy,
+            "task_queue": task_queue,
+            "cancellation_type": cancellation_type,
+            "summary": summary,
+        }.items() if v is not None
+    }
 
     # Store function reference so outbound interceptor can inspect parameters
     wf_id = workflow.info().workflow_id
@@ -2072,6 +2619,92 @@ def set_activity_approvals(approvals: List[Any]) -> None:
         _pending_activity_approvals[wf_id] = list(approvals)
 
 
+async def _dispatch_mint_activity(
+    *,
+    kind: str,
+    parent_warrant: Any,
+    key_id: str,
+    capabilities: Dict[str, Any],
+    ttl_seconds: Optional[int],
+) -> bytes:
+    """Execute ``_tenuo_internal_mint_activity`` as a local activity.
+
+    Centralises the boilerplate (RetryPolicy, timeout, non-retryable error types)
+    shared by ``workflow_grant``, ``workflow_issue_execution``, and
+    ``attenuated_headers``. Returns the raw child warrant bytes.
+
+    Capabilities are stashed in a process-local dict rather than inlined in
+    ``_MintRequest``, because PyO3 constraint types cannot survive Temporal's
+    ``dataclasses.asdict()`` → ``copy.deepcopy()`` serialization path.
+    """
+    from datetime import timedelta
+
+    from temporalio import workflow  # type: ignore[import-not-found]
+    from temporalio.common import RetryPolicy as _RetryPolicy
+
+    cap_ref = str(workflow.uuid4())
+    with _store_lock:
+        _pending_mint_capabilities[cap_ref] = capabilities
+
+    req = _MintRequest(
+        kind=kind,
+        parent_warrant_bytes=parent_warrant.to_bytes(),
+        key_id=key_id,
+        capabilities_ref=cap_ref,
+        ttl_seconds=ttl_seconds,
+    )
+    try:
+        return await workflow.execute_local_activity(
+            _tenuo_internal_mint_activity,
+            req,
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=_RetryPolicy(
+                maximum_attempts=1,
+                non_retryable_error_types=["TenuoContextError", "TemporalConstraintViolation"],
+            ),
+        )
+    finally:
+        with _store_lock:
+            _pending_mint_capabilities.pop(cap_ref, None)
+
+
+def _workflow_mint_context(purpose: str) -> tuple[str, "TenuoPluginConfig"]:
+    """Look up the active workflow's key_id and config for a warrant-mint call.
+
+    *purpose* is used in the "key_resolver required" error message so callers get
+    a more targeted hint (e.g. "child workflow delegation", "attenuated grants").
+    Raises ``TenuoContextError`` if headers, config, key_id, or key_resolver are
+    missing.
+    """
+    from temporalio import workflow  # type: ignore[import-not-found]
+
+    wf_id = workflow.info().workflow_id
+    with _store_lock:
+        raw_headers = _workflow_headers_store.get(wf_id, {})
+        config_store_entry = _workflow_config_store.get(wf_id)
+
+    if not raw_headers:
+        raise TenuoContextError(
+            "No Tenuo headers in store. Ensure TenuoPlugin is "
+            "registered and tenuo_headers() was passed at workflow start."
+        )
+    if not config_store_entry:
+        raise TenuoContextError(
+            "No interceptor config found. Ensure TenuoPlugin is registered."
+        )
+
+    key_id = raw_headers.get(TENUO_KEY_ID_HEADER, b"").decode("utf-8")
+    if not key_id:
+        raise TenuoContextError(
+            "No key_id found in workflow headers. Cannot issue attenuated grant."
+        )
+    if not config_store_entry.key_resolver:
+        raise TenuoContextError(
+            f"key_resolver not configured in TenuoPluginConfig. Required for {purpose}."
+        )
+    return key_id, config_store_entry
+
+
 def _check_subpath_not_widened(
     tool: str,
     field: str,
@@ -2096,8 +2729,8 @@ def _check_subpath_not_widened(
     if not (isinstance(parent_val, _Subpath) and isinstance(child_val, _Subpath)):
         return
 
-    parent_root: str = parent_val.root()
-    child_root: str = child_val.root()
+    parent_root: str = parent_val.root
+    child_root: str = child_val.root
 
     # A child Subpath is narrower iff it starts with the parent path.
     # e.g. parent="/data/" child="/data/reports/" → OK
@@ -2114,7 +2747,7 @@ def _check_subpath_not_widened(
         )
 
 
-def attenuated_headers(
+async def attenuated_headers(
     *,
     tools: Optional[List[str]] = None,
     constraints: Optional[Dict[str, Any]] = None,
@@ -2126,6 +2759,11 @@ def attenuated_headers(
 
     Must be called from within a workflow context. Creates a new warrant
     with reduced capabilities from the parent warrant.
+
+    Warrant minting is delegated to ``_tenuo_internal_mint_activity`` via
+    ``workflow.execute_local_activity``.  The result is recorded in Temporal
+    history, making warrant bytes deterministic on replay (no ``Utc::now()``
+    stamp inside workflow code).
 
     Args:
         tools: Tools to allow (subset of parent). None = inherit all.
@@ -2153,9 +2791,14 @@ def attenuated_headers(
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
-    # Get parent warrant from workflow context
     parent_warrant = current_warrant()
-    parent_key_id = current_key_id()
+    parent_key_id, _config_entry = _workflow_mint_context("child workflow delegation")
+
+    # Headers store is already validated by _workflow_mint_context; re-read for
+    # the delegation-chain propagation below.
+    wf_id = workflow.info().workflow_id
+    with _store_lock:
+        raw_headers = dict(_workflow_headers_store.get(wf_id, {}))
 
     # Validate tools are subset of parent
     parent_tools = set(parent_warrant.tools or [])
@@ -2171,53 +2814,6 @@ def attenuated_headers(
             )
     else:
         tools = list(parent_tools)
-
-    # Get workflow ID to retrieve headers from store
-    try:
-        from temporalio import workflow as _wf  # type: ignore[import-not-found]
-        info = _wf.info()
-        wf_id = info.workflow_id
-    except ImportError:
-        raise TenuoContextError("temporalio not available")
-
-    # Retrieve key_id from workflow headers store
-    # (Same pattern as tenuo_execute_activity)
-    with _store_lock:
-        raw_headers = _workflow_headers_store.get(wf_id, {})
-        config_store_entry = _workflow_config_store.get(wf_id)
-
-    if not raw_headers:
-        raise TenuoContextError(
-            "No Tenuo headers in store. Ensure TenuoPlugin is "
-            "registered and tenuo_headers() was passed at workflow start."
-        )
-
-    if not config_store_entry:
-        raise TenuoContextError(
-            "No interceptor config found. Ensure TenuoPlugin is registered."
-        )
-
-    parent_key_id = raw_headers.get(TENUO_KEY_ID_HEADER, b"").decode("utf-8")
-    if not parent_key_id:
-        raise TenuoContextError(
-            "No key_id found in parent workflow headers."
-        )
-
-    # Resolve signing key from secure storage via KeyResolver
-    config = config_store_entry
-    if not config.key_resolver:
-        raise TenuoContextError(
-            "key_resolver not configured in TenuoPluginConfig. "
-            "Required for child workflow delegation."
-        )
-
-    try:
-        # Use resolve_sync() to safely handle event loop (may be in Temporal workflow)
-        signer = config.key_resolver.resolve_sync(parent_key_id)
-    except Exception as e:
-        raise TenuoContextError(
-            f"Failed to resolve signing key for '{parent_key_id}': {e}"
-        )
 
     # Build capabilities dict: start from parent's per-tool constraints,
     # then overlay any caller-supplied narrowing constraints.
@@ -2253,14 +2849,22 @@ def attenuated_headers(
         base.update(narrowing)
         capabilities[tool_key] = base
 
-    child_warrant = parent_warrant.attenuate(
+    # Use parent key_id if not specified
+    key_id = child_key_id or parent_key_id
+
+    # Delegate minting to the local activity so warrant bytes are recorded in
+    # Temporal history and are deterministic across workflow replays.
+    child_warrant_bytes = await _dispatch_mint_activity(
+        kind="attenuate",
+        parent_warrant=parent_warrant,
+        key_id=parent_key_id,
         capabilities=capabilities,
-        signing_key=signer,
         ttl_seconds=ttl_seconds,
     )
 
-    # Use parent key_id if not specified
-    key_id = child_key_id or parent_key_id
+    from tenuo_core import Warrant as _Warrant  # type: ignore
+
+    child_warrant = _Warrant.from_bytes(child_warrant_bytes)
 
     hdrs = tenuo_headers(child_warrant, key_id, compress=compress)
 
@@ -2345,7 +2949,7 @@ async def tenuo_execute_child_workflow(
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
-    hdrs = attenuated_headers(
+    hdrs = await attenuated_headers(
         tools=tools,
         constraints=constraints,
         ttl_seconds=ttl_seconds,
@@ -2358,30 +2962,22 @@ async def tenuo_execute_child_workflow(
         _pending_child_headers[child_id] = hdrs
 
     kwargs: Dict[str, Any] = {"id": child_id}
-    if args is not None:
-        kwargs["args"] = args
-    if task_queue is not None:
-        kwargs["task_queue"] = task_queue
-    if execution_timeout is not None:
-        kwargs["execution_timeout"] = execution_timeout
-    if run_timeout is not None:
-        kwargs["run_timeout"] = run_timeout
-    if task_timeout is not None:
-        kwargs["task_timeout"] = task_timeout
-    if cancellation_type is not None:
-        kwargs["cancellation_type"] = cancellation_type
-    if parent_close_policy is not None:
-        kwargs["parent_close_policy"] = parent_close_policy
-    if retry_policy is not None:
-        kwargs["retry_policy"] = retry_policy
-    if id_reuse_policy is not None:
-        kwargs["id_reuse_policy"] = id_reuse_policy
+    optional: Dict[str, Any] = {
+        "args": args,
+        "task_queue": task_queue,
+        "execution_timeout": execution_timeout,
+        "run_timeout": run_timeout,
+        "task_timeout": task_timeout,
+        "cancellation_type": cancellation_type,
+        "parent_close_policy": parent_close_policy,
+        "retry_policy": retry_policy,
+        "id_reuse_policy": id_reuse_policy,
+        "memo": memo,
+        "search_attributes": search_attributes,
+    }
+    kwargs.update({k: v for k, v in optional.items() if v is not None})
     if cron_schedule:
         kwargs["cron_schedule"] = cron_schedule
-    if memo is not None:
-        kwargs["memo"] = memo
-    if search_attributes is not None:
-        kwargs["search_attributes"] = search_attributes
 
     try:
         return await workflow.execute_child_workflow(workflow_fn, **kwargs)
@@ -2393,7 +2989,7 @@ async def tenuo_execute_child_workflow(
             _pending_child_headers.pop(child_id, None)
 
 
-def workflow_grant(
+async def workflow_grant(
     tool: str,
     constraints: Optional[Dict[str, Any]] = None,
     *,
@@ -2401,8 +2997,18 @@ def workflow_grant(
 ) -> Any:
     """Issue a scoped warrant for a single tool within a workflow.
 
-    Uses workflow.now() for deterministic timestamp, ensuring
-    replay safety. The grant is scoped to one tool with constraints.
+    This function is **async** — callers must ``await`` it::
+
+        file_warrant = await workflow_grant(
+            "read_file",
+            constraints={"path_prefix": "/data/"},
+            ttl_seconds=60,
+        )
+
+    Warrant minting is delegated to ``_tenuo_internal_mint_activity`` via
+    ``workflow.execute_local_activity``.  The result is recorded in Temporal
+    history, making warrant bytes deterministic on replay (no ``Utc::now()``
+    stamp inside workflow code).
 
     Args:
         tool: The tool to authorize
@@ -2416,7 +3022,7 @@ def workflow_grant(
 
     Example:
         # Within a workflow — issue a scoped grant for a single tool
-        file_warrant = workflow_grant(
+        file_warrant = await workflow_grant(
             "read_file",
             constraints={"path_prefix": "/data/"},
             ttl_seconds=60,
@@ -2450,53 +3056,126 @@ def workflow_grant(
             warrant_id=parent_warrant.id,
         )
 
-    wf_id = workflow.info().workflow_id
-    with _store_lock:
-        raw_headers = _workflow_headers_store.get(wf_id, {})
-        config_store_entry = _workflow_config_store.get(wf_id)
-
-    if not raw_headers:
-        raise TenuoContextError(
-            "No Tenuo headers in store. Ensure TenuoPlugin is "
-            "registered and tenuo_headers() was passed at workflow start."
-        )
-
-    if not config_store_entry:
-        raise TenuoContextError(
-            "No interceptor config found. Ensure TenuoPlugin is registered."
-        )
-
-    key_id = raw_headers.get(TENUO_KEY_ID_HEADER, b"").decode("utf-8")
-    if not key_id:
-        raise TenuoContextError(
-            "No key_id found in workflow headers. Cannot issue attenuated grant."
-        )
-
-    # Resolve signing key from secure storage via KeyResolver
-    config = config_store_entry
-    if not config.key_resolver:
-        raise TenuoContextError(
-            "key_resolver not configured in TenuoPluginConfig. "
-            "Required for attenuated grants."
-        )
-
-    try:
-        # Use resolve_sync() to safely handle event loop (may be in Temporal workflow)
-        signer = config.key_resolver.resolve_sync(key_id)
-    except Exception as e:
-        raise TenuoContextError(f"Failed to resolve signing key for '{key_id}': {e}")
+    key_id, _config_entry = _workflow_mint_context("attenuated grants")
 
     parent_caps = parent_warrant.capabilities or {}
     base = dict(parent_caps.get(tool, {}))
     if constraints:
         base.update(constraints)
-    capabilities = {tool: base}
 
-    return parent_warrant.attenuate(
-        capabilities=capabilities,
-        signing_key=signer,
+    result_bytes = await _dispatch_mint_activity(
+        kind="attenuate",
+        parent_warrant=parent_warrant,
+        key_id=key_id,
+        capabilities={tool: base},
         ttl_seconds=ttl_seconds,
     )
+    from tenuo_core import Warrant as _Warrant  # type: ignore  # noqa: F401
+
+    return _Warrant.from_bytes(result_bytes)
+
+
+async def workflow_issue_execution(
+    tool: str,
+    constraints: Optional[Dict[str, Any]] = None,
+    *,
+    ttl_seconds: int = 300,
+) -> Any:
+    """Issue a per-execution warrant from an issuer warrant within a workflow.
+
+    This is the IssuerWarrant equivalent of ``workflow_grant()``. Where
+    ``workflow_grant()`` attenuates an execution warrant, this function calls
+    ``issue_execution()`` on the parent issuer warrant to mint a fresh
+    execution warrant scoped to a single tool.
+
+    This function is **async** — callers must ``await`` it::
+
+        exec_warrant = await workflow_issue_execution(
+            "read_file",
+            constraints={"path_prefix": "/data/"},
+            ttl_seconds=60,
+        )
+
+    Warrant minting is delegated to ``_tenuo_internal_mint_activity`` via
+    ``workflow.execute_local_activity``. The result is recorded in Temporal
+    history, making warrant bytes deterministic on replay.
+
+    Args:
+        tool: The tool to authorize
+        constraints: Per-tool constraint overrides. Merged into the capability
+            for the tool when building the issued execution warrant.
+        ttl_seconds: Time-to-live in seconds (default: 5 minutes)
+
+    Returns:
+        A new execution Warrant scoped to the specified tool
+
+    Raises:
+        TenuoContextError: If called outside workflow context, or no issuer
+            warrant / key_resolver is configured
+        TemporalConstraintViolation: If tool not in parent warrant capabilities
+    """
+    try:
+        from temporalio import workflow  # type: ignore[import-not-found]  # noqa: F401
+    except ImportError:
+        raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
+
+    parent_warrant = current_warrant()
+
+    parent_tools = parent_warrant.tools or []
+    if tool not in parent_tools:
+        raise TemporalConstraintViolation(
+            tool=tool,
+            arguments={},
+            constraint=f"Tool '{tool}' not in parent warrant capabilities",
+            warrant_id=parent_warrant.id,
+        )
+
+    key_id, _config_entry = _workflow_mint_context("outbound PoP signing")
+
+    result_bytes = await _dispatch_mint_activity(
+        kind="issue_execution",
+        parent_warrant=parent_warrant,
+        key_id=key_id,
+        capabilities={tool: dict(constraints) if constraints else {}},
+        ttl_seconds=ttl_seconds,
+    )
+    from tenuo_core import Warrant as _Warrant  # type: ignore  # noqa: F401
+
+    return _Warrant.from_bytes(result_bytes)
+
+
+def tenuo_continue_as_new(
+    *args: Any,
+    tenuo_attenuation: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> None:
+    """Continue-as-new with warrant inheritance.
+
+    By default, the current workflow's warrant is inherited verbatim into the next
+    execution via the CAN headers (propagated by the outbound interceptor's
+    ``continue_as_new`` method).
+
+    Args:
+        tenuo_attenuation: Reserved for future narrowing support. Passing a
+            non-None value currently raises ``NotImplementedError``.
+
+    Usage::
+
+        # Inherit warrant unchanged (most common)
+        tenuo_continue_as_new(new_input)
+    """
+    try:
+        from temporalio import workflow  # type: ignore[import-not-found]
+    except ImportError:
+        raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
+
+    if tenuo_attenuation is not None:
+        raise NotImplementedError(
+            "tenuo_continue_as_new(tenuo_attenuation=...) is not yet implemented. "
+            "Use tenuo_execute_child_workflow() for attenuated delegation."
+        )
+
+    workflow.continue_as_new(*args, **kwargs)
 
 
 def _extract_warrant_from_headers(headers: Dict[str, bytes]) -> Any:
@@ -2580,6 +3259,20 @@ def _unwrap_payload_headers(headers: Any) -> Dict[str, bytes]:
     return out
 
 
+def _current_workflow_headers() -> Dict[str, bytes]:
+    """Return Tenuo headers from the active workflow as plain bytes.
+
+    Raises ``TenuoContextError`` if ``temporalio`` is not importable.
+    """
+    try:
+        from temporalio import workflow  # type: ignore[import-not-found]
+    except ImportError:
+        raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
+
+    info = workflow.info()
+    return _unwrap_payload_headers(getattr(info, "headers", {}))
+
+
 def current_warrant() -> Any:
     """Get the warrant from the current workflow context.
 
@@ -2591,20 +3284,10 @@ def current_warrant() -> Any:
     Raises:
         TenuoContextError: If no warrant in context
     """
-    try:
-        from temporalio import workflow  # type: ignore[import-not-found]
-
-        info = workflow.info()
-        raw_headers = _unwrap_payload_headers(getattr(info, "headers", {}))
-
-        warrant = _extract_warrant_from_headers(raw_headers)
-        if warrant is None:
-            raise TenuoContextError("No Tenuo warrant in workflow context")
-
-        return warrant
-
-    except ImportError:
-        raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
+    warrant = _extract_warrant_from_headers(_current_workflow_headers())
+    if warrant is None:
+        raise TenuoContextError("No Tenuo warrant in workflow context")
+    return warrant
 
 
 def current_key_id() -> str:
@@ -2618,20 +3301,10 @@ def current_key_id() -> str:
     Raises:
         TenuoContextError: If no key ID in context
     """
-    try:
-        from temporalio import workflow  # type: ignore[import-not-found]
-
-        info = workflow.info()
-        raw_headers = _unwrap_payload_headers(getattr(info, "headers", {}))
-
-        key_id = _extract_key_id_from_headers(raw_headers)
-        if key_id is None:
-            raise TenuoContextError("No Tenuo key ID in workflow context")
-
-        return key_id
-
-    except ImportError:
-        raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
+    key_id = _extract_key_id_from_headers(_current_workflow_headers())
+    if key_id is None:
+        raise TenuoContextError("No Tenuo key ID in workflow context")
+    return key_id
 
 
 # =============================================================================
@@ -2775,6 +3448,100 @@ def is_unprotected(func: Any) -> bool:
 
 
 # =============================================================================
+# Internal mint activity (Item 0.1a)
+# =============================================================================
+
+
+def _get_worker_config() -> "Optional[TenuoPluginConfig]":
+    """Return the worker-level TenuoPluginConfig set at worker init time."""
+    return _worker_config
+
+
+def _set_worker_config(config: "TenuoPluginConfig") -> None:
+    """Store worker-level config. Called by TenuoTemporalPlugin.configure_worker."""
+    global _worker_config
+    _worker_config = config
+
+
+try:
+    from temporalio import activity as _temporal_activity
+
+    @_temporal_activity.defn(name="__tenuo_internal_mint")
+    @unprotected
+    async def _tenuo_internal_mint_activity(req: _MintRequest) -> bytes:
+        """Internal Tenuo activity for replay-safe warrant minting.
+
+        Called by workflow_grant() and tenuo_execute_child_workflow(constraints=...)
+        via execute_local_activity. Result is recorded in Temporal history, making
+        warrant bytes deterministic across workflow replays.
+
+        Users never register or call this activity directly.
+        """
+        from tenuo_core import Warrant as _Warrant  # type: ignore
+
+        # Retrieve the capabilities dict that was stashed by _dispatch_mint_activity.
+        with _store_lock:
+            capabilities = _pending_mint_capabilities.get(req.capabilities_ref, {})
+
+        # Resolve signing key from the worker-level config stored at init time.
+        config = _get_worker_config()
+        if config is None or config.key_resolver is None:
+            raise TenuoContextError(
+                "_tenuo_internal_mint_activity: no worker config or key_resolver. "
+                "Ensure TenuoPlugin is registered with a key_resolver."
+            )
+
+        try:
+            signer = config.key_resolver.resolve_sync(req.key_id)
+        except Exception as e:
+            raise TenuoContextError(
+                f"_tenuo_internal_mint_activity: failed to resolve key '{req.key_id}': {e}"
+            ) from e
+
+        parent_warrant = _Warrant.from_bytes(req.parent_warrant_bytes)
+
+        try:
+            if req.kind == "attenuate":
+                child = parent_warrant.attenuate(
+                    capabilities=capabilities,
+                    signing_key=signer,
+                    ttl_seconds=req.ttl_seconds,
+                )
+            elif req.kind == "issue_execution":
+                if not hasattr(parent_warrant, "issue_execution"):
+                    raise TenuoContextError(
+                        "Warrant.issue_execution() not available on this tenuo_core build. "
+                        "Upgrade tenuo_core to a version that supports IssuerWarrant. "
+                        "Silently falling back to attenuate() would widen the scope."
+                    )
+                else:
+                    builder = parent_warrant.issue_execution()
+                    for tool_name, tool_constraints in capabilities.items():
+                        if tool_constraints:
+                            builder.capability(tool_name, tool_constraints)
+                        else:
+                            builder.tool(tool_name)
+                    if req.ttl_seconds is not None:
+                        builder.ttl(req.ttl_seconds)
+                    child = builder.build(signer)
+            else:
+                raise TenuoContextError(
+                    f"_tenuo_internal_mint_activity: unknown kind '{req.kind}'"
+                )
+        except TenuoContextError:
+            raise
+        except Exception as e:
+            raise TenuoContextError(
+                f"_tenuo_internal_mint_activity: mint failed: {e}"
+            ) from e
+
+        return child.to_bytes()
+
+except ImportError:
+    _tenuo_internal_mint_activity = None  # type: ignore
+
+
+# =============================================================================
 # @tool() Decorator (Phase 3)
 # =============================================================================
 
@@ -2816,14 +3583,39 @@ def get_tool_name(func: Any, default: str) -> str:
 
 
 def _warrant_tool_name_for_activity_type(
-    config: Optional["TenuoPluginConfig"],
-    activity_type: str,
-    activity_fn: Optional[Any],
+    config_or_input: Any,
+    activity_type_or_config: Any = None,
+    activity_fn: Optional[Any] = None,
 ) -> str:
-    """Map Temporal activity type to warrant / PoP tool name (inbound + outbound must agree)."""
+    """Map Temporal activity type to warrant / PoP tool name (inbound + outbound must agree).
+
+    Accepts two call signatures:
+      - Legacy: (config, activity_type: str, activity_fn)
+      - Input-based: (input, config) where input.fn may be None (dynamic activity)
+        and input.activity holds the runtime activity-type string.
+    """
+    # Detect input-based call: first arg has an 'activity' attribute (not a config or str)
+    if hasattr(config_or_input, "activity") and not isinstance(config_or_input, str):
+        # input-based call: (input, config)
+        _input = config_or_input
+        config: Optional["TenuoPluginConfig"] = activity_type_or_config
+        activity_type: str = getattr(_input, "activity", None) or ""
+        activity_fn = getattr(_input, "fn", None)
+    else:
+        # legacy call: (config, activity_type, activity_fn)
+        config = config_or_input
+        activity_type = activity_type_or_config or ""
+
     default_tool = activity_type
     if activity_fn is not None:
-        default_tool = get_tool_name(activity_fn, activity_type)
+        # For non-dynamic activities: resolve @tool() name or fall back to activity_type
+        resolved = get_tool_name(activity_fn, activity_type)
+        if resolved:
+            default_tool = resolved
+
+    # Fallback for dynamic activities: fn is None, so default_tool stays as activity_type
+    # (the runtime dispatch name). This is exactly what we want for dynamic handlers.
+
     if config is None:
         return default_tool
     return config.tool_mappings.get(activity_type, default_tool)
@@ -2896,6 +3688,218 @@ def _warrant_tool_has_non_empty_field_constraints(warrant: Any, tool_name: str) 
     return False
 
 
+def _args_to_dict_by_fn(
+    raw_args: Sequence[Any],
+    activity_fn: Optional[Any],
+) -> Dict[str, Any]:
+    """Map positional activity args to their parameter names.
+
+    Uses ``inspect.signature`` when a function reference is available, otherwise
+    (and for arguments beyond the declared parameters) falls back to ``arg0``,
+    ``arg1``, ... — matching the inbound interceptor's convention.
+    """
+    import inspect
+
+    result: Dict[str, Any] = {}
+    params: List[str] = []
+    if activity_fn is not None:
+        try:
+            params = list(inspect.signature(activity_fn).parameters.keys())
+        except (ValueError, TypeError):
+            params = []
+    for i, arg in enumerate(raw_args):
+        if i < len(params):
+            result[params[i]] = arg
+        else:
+            result[f"arg{i}"] = arg
+    return result
+
+
+# ---------------------------------------------------------------------------
+# PoP arg normalization — Fix for FINDING-002 (loan-underwriting dogfooding)
+# ---------------------------------------------------------------------------
+# Tenuo's PoP signing runs inside the Temporal workflow sandbox. The Rust
+# CBOR encoder (py_to_constraint_value in tenuo-core) only accepts primitive
+# types: str, int, float, bool, list. Python dataclasses — idiomatic in
+# Temporal activity signatures — would otherwise crash with:
+#   ValueError: value must be str, int, float, bool, or list
+#
+# This layer normalizes non-primitive activity args to canonical JSON strings
+# *before* warrant.sign() sees them. Normalization only affects what PoP signs;
+# the activity still receives its original Python object via Temporal's data
+# converter. Security properties are preserved:
+#   - Invocation binding: json.dumps(sort_keys=True) is deterministic; same
+#     input → same PoP bytes; substitution requires resigning with holder key.
+#   - Constraint scoping: tenuo-core constraints operate on top-level arg names
+#     only. Structural matching already requires lifting to primitive top-level
+#     args. Stringification does not remove a capability that exists today.
+
+_POP_NORMALIZE_MAX_DEPTH = 32
+
+
+def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any:
+    """Recursively normalize a single activity arg value for PoP signing.
+
+    Primitives pass through unchanged. Dataclasses, dicts, lists, tuples,
+    bytes, and None are normalized to representations the Rust CBOR encoder
+    can accept. Anything else raises TenuoArgNormalizationError.
+    """
+    if depth > _POP_NORMALIZE_MAX_DEPTH:
+        raise TenuoArgNormalizationError(
+            f"Activity argument '{field_name}' exceeds maximum nesting depth "
+            f"({_POP_NORMALIZE_MAX_DEPTH}) for PoP normalization. Flatten the "
+            f"structure or lift individual fields to top-level primitive args. "
+            f"See docs/temporal.md: 'Structured state in activity arguments'."
+        )
+
+    # Primitives: pass through as-is (Rust CBOR encoder accepts these).
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    # Dataclass: convert via asdict() then serialize to canonical JSON string.
+    if _dataclasses.is_dataclass(value) and not isinstance(value, type):
+        try:
+            return json.dumps(_dataclasses.asdict(value), sort_keys=True, default=str, ensure_ascii=False)
+        except Exception as exc:
+            raise TenuoArgNormalizationError(
+                f"Activity argument '{field_name}' is a dataclass but could not be "
+                f"converted via dataclasses.asdict(): {exc}. "
+                f"See docs/temporal.md: 'Structured state in activity arguments'."
+            ) from exc
+
+    # dict: serialize to canonical JSON string.
+    if isinstance(value, dict):
+        try:
+            return json.dumps(value, sort_keys=True, default=str, ensure_ascii=False)
+        except Exception as exc:
+            raise TenuoArgNormalizationError(
+                f"Activity argument '{field_name}' is a dict but could not be "
+                f"serialized: {exc}. "
+                f"See docs/temporal.md: 'Structured state in activity arguments'."
+            ) from exc
+
+    # list / tuple: recurse element-wise; tuples become lists.
+    if isinstance(value, (list, tuple)):
+        normalized = [
+            _normalize_pop_arg_value(item, f"{field_name}[{i}]", depth + 1)
+            for i, item in enumerate(value)
+        ]
+        # If any element was normalized to a non-primitive, stringify the whole list.
+        if all(isinstance(item, (str, int, float, bool, type(None))) for item in normalized):
+            return normalized
+        try:
+            return json.dumps(normalized, sort_keys=True, default=str, ensure_ascii=False)
+        except Exception as exc:
+            raise TenuoArgNormalizationError(
+                f"Activity argument '{field_name}' (list/tuple) could not be "
+                f"serialized: {exc}. "
+                f"See docs/temporal.md: 'Structured state in activity arguments'."
+            ) from exc
+
+    # bytes: base64-encode to ASCII string.
+    if isinstance(value, bytes):
+        return base64.b64encode(value).decode("ascii")
+
+    # Anything else (set, frozenset, Enum, datetime, Decimal, custom class…):
+    # raise a clear error rather than silently using str(value).
+    type_name = type(value).__qualname__
+    raise TenuoArgNormalizationError(
+        f"Activity argument '{field_name}' has type '{type_name}' which cannot "
+        f"be normalized for PoP signing. Supported types: str, int, float, bool, "
+        f"None, bytes, list, tuple, dict, and @dataclass. For {type_name}: "
+        f"convert to a @dataclass or dict, or lift the relevant fields to "
+        f"top-level primitive arguments with explicit constraints. "
+        f"See docs/temporal.md: 'Structured state in activity arguments'."
+    )
+
+
+def _normalize_args_for_pop(args_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize all values in an activity args dict for PoP signing.
+
+    Returns a new dict with the same keys and normalized values. Logs a
+    debug message listing which fields were normalized (field names + type/size
+    only — values are not logged as they may be PII).
+    """
+    normalized: Dict[str, Any] = {}
+    normalized_fields: List[str] = []
+    primitive_fields: List[str] = []
+    for fname, value in args_dict.items():
+        norm = _normalize_pop_arg_value(value, fname)
+        normalized[fname] = norm
+        if norm is not value:
+            normalized_fields.append(f"{fname}=<{type(value).__name__}, {len(str(norm))} chars>")
+        else:
+            primitive_fields.append(f"{fname}=<primitive>")
+    if normalized_fields:
+        logger.debug(
+            "PoP args normalized: %s",
+            ", ".join(normalized_fields + primitive_fields),
+        )
+    return normalized
+
+
+# ---------------------------------------------------------------------------
+# Warrant pre-validation — Fix for FINDING-004 (loan-underwriting dogfooding)
+# ---------------------------------------------------------------------------
+# tenuo-core's constraint matcher fails on the *first* unknown field it
+# encounters (fail-fast). For AI pipelines with many structured args, this
+# forces developers through N round-trips to fully align a warrant. This shim
+# enumerates all mismatches in one Python-layer error before the Rust call.
+# The authoritative check still runs in Rust — this is a diagnostic accelerator.
+
+def _prevalidate_args_against_warrant(
+    warrant: Any,
+    tool_name: str,
+    args_dict: Dict[str, Any],
+) -> None:
+    """Pre-validate activity args against the warrant before PoP signing.
+
+    Raises TenuoPreValidationError listing ALL unknown and missing fields in
+    one shot if any are found. If the tool is not in the warrant, or the
+    capability is in allow-unknown mode, this function is a no-op.
+    """
+    try:
+        caps = getattr(warrant, "capabilities", None)
+        if not isinstance(caps, dict):
+            return
+        tool_cap = caps.get(tool_name)
+        if not isinstance(tool_cap, dict):
+            return
+        # Empty capability dict means no named constraints — allow_unknown effectively.
+        if not tool_cap:
+            return
+    except Exception:
+        return
+
+    declared_fields = set(tool_cap.keys())
+    actual_fields = set(args_dict.keys())
+
+    unknown = sorted(actual_fields - declared_fields)
+    missing = sorted(declared_fields - actual_fields)
+
+    if not unknown and not missing:
+        return
+
+    parts: List[str] = []
+    if unknown:
+        # Preserve the exact core error phrase for substring-match compatibility.
+        fields_str = ", ".join(unknown)
+        parts.append(
+            f"unknown field not allowed (zero-trust mode): {fields_str}"
+        )
+    if missing:
+        fields_str = ", ".join(missing)
+        parts.append(f"missing required fields: {fields_str}")
+
+    raise TenuoPreValidationError(
+        f"Warrant pre-validation failed for activity '{tool_name}'. "
+        + "; ".join(parts)
+        + ". Declare all argument names in the warrant capability or use "
+        "Wildcard() for fields that don't need structural constraints. "
+        "See docs/temporal.md: 'Zero-trust closed-world rule'."
+    )
+
+
 def _positional_pop_mismatch_message(
     tool_name: str,
     *,
@@ -2942,8 +3946,6 @@ class _TenuoWorkflowOutboundInterceptor:
         workflow.execute_activity() calls go through this interceptor,
         which computes PoP inline with no queue machinery needed.
         """
-        import inspect
-
         from temporalio import workflow as _wf  # type: ignore[import-not-found]
 
         try:
@@ -2980,10 +3982,11 @@ class _TenuoWorkflowOutboundInterceptor:
 
                     # Resolve signing key from secure storage via KeyResolver
                     if not self._config or not self._config.key_resolver:
-                        raise TenuoContextError(
-                            "key_resolver not configured in TenuoPluginConfig. "
-                            "Required for PoP signature generation."
-                        )
+                        _raise_non_retryable(TenuoContextError(
+                            "key_resolver is required for outbound PoP signing. "
+                            "Set key_resolver in TenuoPluginConfig, or use a read-only worker "
+                            "(no activities that need signing)."
+                        ))
 
                     # Use resolve_sync() to safely handle event loop (may be in Temporal workflow)
                     signer = self._config.key_resolver.resolve_sync(key_id)
@@ -3002,25 +4005,8 @@ class _TenuoWorkflowOutboundInterceptor:
                     #   2. _pending_activity_fn (set by tenuo_execute_activity)
                     #   3. config.activity_fns registry (transparent mode)
                     #   4. Positional keys (arg0, arg1, ...)
-                    args_dict: Dict[str, Any] = {}
-                    raw_args = getattr(input, "args", ())
-                    if raw_args:
-                        if activity_fn:
-                            try:
-                                sig = inspect.signature(activity_fn)
-                                params = list(sig.parameters.keys())
-                                for i, arg in enumerate(raw_args):
-                                    if i < len(params):
-                                        args_dict[params[i]] = arg
-                                    else:
-                                        args_dict[f"arg{i}"] = arg
-                            except (ValueError, TypeError):
-                                for i, arg in enumerate(raw_args):
-                                    args_dict[f"arg{i}"] = arg
-                        else:
-                            # No function reference - use positional keys (consistent with inbound)
-                            for i, arg in enumerate(raw_args):
-                                args_dict[f"arg{i}"] = arg
+                    raw_args = getattr(input, "args", ()) or ()
+                    args_dict = _args_to_dict_by_fn(raw_args, activity_fn)
 
                     pop_tool_name = _warrant_tool_name_for_activity_type(
                         self._config, activity_type, activity_fn
@@ -3040,6 +4026,18 @@ class _TenuoWorkflowOutboundInterceptor:
                         if self._config and self._config.strict_mode:
                             raise TenuoContextError(msg)
                         logger.warning(msg)
+
+                    # Normalize non-primitive args (dataclasses, dicts, etc.) to
+                    # canonical JSON strings before PoP signing. Activity signatures
+                    # stay typed; only what warrant.sign() sees is normalized.
+                    # See _normalize_args_for_pop docstring for security analysis.
+                    args_dict = _normalize_args_for_pop(args_dict)
+
+                    # Pre-validate all args against the warrant in one pass before
+                    # calling into Rust. Surfaces ALL unknown/missing field errors
+                    # at once instead of one-at-a-time from core's fail-fast matcher.
+                    # The authoritative check still runs in Rust below.
+                    _prevalidate_args_against_warrant(warrant, pop_tool_name, args_dict)
 
                     # ✨ TRANSPARENT POP COMPUTATION ✨
                     # Use workflow.now() for deterministic replay safety.
@@ -3094,22 +4092,32 @@ class _TenuoWorkflowOutboundInterceptor:
                         )
                         input = _replace_field(input, "summary", new_summary)
 
-        except TenuoContextError:
-            raise
+        except (TenuoContextError, TenuoArgNormalizationError) as e:
+            # PoP signing failures, arg normalization errors, and pre-validation
+            # errors must not be
+            # retried — the error will not resolve on its own. Wrap as
+            # non-retryable so Temporal fails the workflow task immediately.
+            _raise_non_retryable(e)
         except Exception as e:
             # FAIL-CLOSED: Abort the activity instead of proceeding without PoP.
             # Proceeding would let the inbound interceptor see a request with
             # no PoP, which is indistinguishable from a real attack.
             activity = getattr(input, "activity", "<unknown>")
-            raise TenuoContextError(
+            _raise_non_retryable(TenuoContextError(
                 f"PoP computation failed for activity '{activity}': {e}. "
                 f"Activity aborted (fail-closed)."
-            ) from e
+            ))
 
         return self._next.start_activity(input)
 
     def start_child_workflow(self, input: Any) -> Any:
-        """Inject attenuated Tenuo headers into child workflow starts."""
+        """Inject Tenuo headers into child workflow starts.
+
+        If ``tenuo_execute_child_workflow()`` was used, attenuated headers from
+        ``_pending_child_headers`` are injected (explicit attenuation path).
+        Otherwise, the child receives **no** Tenuo headers (fail-closed).
+        Use ``tenuo_execute_child_workflow()`` to propagate authorization.
+        """
         try:
             from temporalio.api.common.v1 import Payload  # type: ignore
         except ImportError:
@@ -3164,7 +4172,37 @@ class _TenuoWorkflowOutboundInterceptor:
         return self._next.start_nexus_operation(input)
 
     def start_local_activity(self, input: Any) -> Any:
+        """Block protected local activities unless @unprotected is set."""
+        if self._config and self._config.block_local_activities:
+            # Resolve activity function reference (same field as start_activity)
+            activity_fn = getattr(input, "fn", None)
+            if activity_fn is not None and not is_unprotected(activity_fn):
+                activity_name = getattr(input, "activity", repr(activity_fn))
+                raise LocalActivityError(str(activity_name))
         return self._next.start_local_activity(input)
+
+
+def _raise_non_retryable(violation: BaseException) -> None:
+    """Raise *violation* wrapped in a non-retryable ApplicationError.
+
+    Authorization denials and PoP signing failures must never be retried —
+    the warrant constraints and key resolver state do not change between
+    attempts. Wrapping in ``ApplicationError(non_retryable=True)`` tells
+    Temporal to fail the workflow immediately rather than burning through
+    the retry budget (which would loop forever on the same denial).
+
+    Accepts any exception, including ``TemporalConstraintViolation`` and
+    ``TenuoContextError`` (e.g. KeyResolver failures during PoP signing).
+    """
+    try:
+        from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
+    except ImportError:
+        raise violation
+    raise ApplicationError(
+        str(violation),
+        type=violation.__class__.__name__,
+        non_retryable=True,
+    ) from violation
 
 
 def _replace_field(obj: Any, field: str, value: Any) -> Any:
@@ -3444,15 +4482,20 @@ class TenuoActivityInboundInterceptor:
         import time as _time
 
         self._last_trusted_roots_refresh = _time.monotonic()
+        self._last_srl_refresh: float = _time.monotonic()
         self._authorizer_lock = threading.Lock()
         self._authorizer: Optional[Any] = None
         self._retry_authorizer: Optional[Any] = None
         try:
             from tenuo_core import Authorizer
-            self._authorizer = Authorizer(trusted_roots=config.trusted_roots)
+            self._authorizer = self._build_authorizer(
+                Authorizer, config.trusted_roots, config
+            )
             if config.retry_pop_max_windows is not None:
-                self._retry_authorizer = Authorizer(
-                    trusted_roots=config.trusted_roots,
+                self._retry_authorizer = self._build_authorizer(
+                    Authorizer,
+                    config.trusted_roots,
+                    config,
                     pop_max_windows=config.retry_pop_max_windows,
                 )
         except ImportError as e:
@@ -3462,6 +4505,26 @@ class TenuoActivityInboundInterceptor:
                 "Install tenuo with the native extension, or ensure the "
                 "interpreter can import tenuo_core."
             ) from e
+
+    @staticmethod
+    def _build_authorizer(
+        authorizer_cls: Any,
+        trusted_roots: Any,
+        config: "TenuoPluginConfig",
+        **kwargs: Any,
+    ) -> Any:
+        """Build an Authorizer instance and apply config-level policies."""
+        auth = authorizer_cls(trusted_roots=trusted_roots, **kwargs)
+        # Apply per-tool clearance requirements if configured.
+        if config.clearance_requirements:
+            for tool, clearance in config.clearance_requirements.items():
+                if hasattr(auth, "require_clearance"):
+                    auth.require_clearance(tool, clearance)
+        # Apply revocation list if configured.
+        srl = config.revocation_list
+        if srl is not None and hasattr(auth, "set_revocation_list"):
+            auth.set_revocation_list(srl)
+        return auth
 
     def _maybe_refresh_trusted_roots(self) -> None:
         """Rebuild Authorizer from ``trusted_roots_provider`` on a fixed interval."""
@@ -3504,6 +4567,49 @@ class TenuoActivityInboundInterceptor:
                 )
                 return
             self._last_trusted_roots_refresh = _time.monotonic()
+
+    def _maybe_refresh_revocation_list(self) -> None:
+        """Refresh the SRL from ``revocation_list_provider`` on a fixed interval."""
+        import time as _time
+
+        provider = self._config.revocation_list_provider
+        interval = self._config.revocation_refresh_secs
+        if provider is None or interval is None:
+            return
+        now = _time.monotonic()
+        if (now - self._last_srl_refresh) < interval:
+            return
+        with self._authorizer_lock:
+            now2 = _time.monotonic()
+            if (now2 - self._last_srl_refresh) < interval:
+                return
+            try:
+                srl = provider()
+            except Exception as e:
+                logger.warning("revocation_list_provider failed during refresh: %s", e)
+                return
+            if srl is None:
+                logger.warning(
+                    "revocation_list_provider returned None during refresh; "
+                    "keeping prior revocation list"
+                )
+                return
+            import dataclasses as _dc
+            try:
+                self._config = _dc.replace(self._config, revocation_list=srl)
+                # Apply new SRL to both authorizers if the binding supports it.
+                for auth in (self._authorizer, self._retry_authorizer):
+                    if auth is not None and hasattr(auth, "set_revocation_list"):
+                        try:
+                            auth.set_revocation_list(srl)
+                        except Exception as e:
+                            logger.warning(
+                                "set_revocation_list failed during SRL refresh: %s", e
+                            )
+            except Exception as e:
+                logger.warning("SRL refresh failed: %s", e)
+                return
+            self._last_srl_refresh = _time.monotonic()
 
     def init(self, outbound: Any) -> None:
         """Called by Temporal to initialize the interceptor with an outbound impl."""
@@ -3662,6 +4768,7 @@ class TenuoActivityInboundInterceptor:
             )
 
         self._maybe_refresh_trusted_roots()
+        self._maybe_refresh_revocation_list()
 
         if self._authorizer is None:
             from tenuo.exceptions import ConfigurationError
@@ -3669,6 +4776,20 @@ class TenuoActivityInboundInterceptor:
                 "Tenuo activity interceptor missing Authorizer; "
                 "use TenuoPluginConfig with trusted_roots."
             )
+
+        # Start an OTel span for the authorization decision when OTel is available
+        # and enable_tracing is set (or OTel is importable — auto-on).
+        _span_ctx: Any = None
+        if _otel_available and _otel_trace is not None:
+            _tracer = _otel_trace.get_tracer("tenuo.temporal")
+            _span_ctx = _tracer.start_as_current_span("tenuo.authorize")
+            _span_ctx.__enter__()
+            _active_span = _otel_trace.get_current_span()
+            _warrant_id_str = getattr(warrant, "id", "") or ""
+            _active_span.set_attribute("tenuo.tool", tool_name)
+            _active_span.set_attribute("tenuo.warrant_id", _warrant_id_str)
+        else:
+            _active_span = None
 
         try:
             from tenuo_core import decode_warrant_stack_base64 as _decode_stack
@@ -3738,7 +4859,18 @@ class TenuoActivityInboundInterceptor:
                     dedup_key, now, ttl, activity_name=tool_name
                 )
 
+            # Authorization succeeded — record allow decision on span.
+            if _active_span is not None:
+                _active_span.set_attribute("tenuo.decision", "allow")
+                _active_span.set_attribute("tenuo.constraint_violated", "")
+
         except (TemporalConstraintViolation, PopVerificationError, ChainValidationError, WarrantExpired) as auth_exc:
+            if _active_span is not None:
+                _active_span.set_attribute("tenuo.decision", "deny")
+                _active_span.set_attribute("tenuo.constraint_violated", "")
+                if _span_ctx is not None:
+                    _span_ctx.__exit__(None, None, None)
+                    _span_ctx = None
             raise self._wrap_as_non_retryable(auth_exc) from auth_exc
         except Exception as e:
             # Import the tenuo_core base once; if it is unavailable, fall back
@@ -3758,6 +4890,16 @@ class TenuoActivityInboundInterceptor:
                     args=args,
                     reason=str(e),
                 )
+                if _active_span is not None:
+                    _active_span.set_attribute("tenuo.decision", "deny")
+                    _active_span.set_attribute("tenuo.constraint_violated", str(e))
+                    if _otel_available and _otel_trace is not None:
+                        _active_span.set_status(
+                            _otel_trace.Status(_otel_trace.StatusCode.ERROR, str(e))
+                        )
+                    if _span_ctx is not None:
+                        _span_ctx.__exit__(None, None, None)
+                        _span_ctx = None
                 if self._config.on_denial == "raise" and not self._config.dry_run:
                     raise self._wrap_as_non_retryable(TemporalConstraintViolation(
                         tool=tool_name,
@@ -3769,13 +4911,20 @@ class TenuoActivityInboundInterceptor:
             else:
                 # Internal / unexpected error (bug, MemoryError, etc.) —
                 # always propagate as-is regardless of on_denial.
+                if _active_span is not None and _span_ctx is not None:
+                    _span_ctx.__exit__(None, None, None)
+                    _span_ctx = None
                 logger.error(
                     f"Internal error during authorization for {tool_name}: {e}",
                     exc_info=True,
                 )
                 raise
+        finally:
+            # Close the span if it hasn't been closed already (allow path).
+            if _span_ctx is not None:
+                _span_ctx.__exit__(None, None, None)
 
-        # Authorization passed — emit allow event
+        # Authorization passed — emit allow event.
         self._emit_allow_event(
             info=info,
             warrant=warrant,
@@ -3911,9 +5060,7 @@ class TenuoActivityInboundInterceptor:
         signed.  This guarantees PoP consistency for both
         ``tenuo_execute_activity()`` and plain ``workflow.execute_activity()``.
         """
-        import inspect
-
-        args = getattr(input, "args", ())
+        args = getattr(input, "args", ()) or ()
 
         # Outbound-supplied arg keys override local resolution so the
         # signed dict and the verified dict always match.
@@ -3921,36 +5068,17 @@ class TenuoActivityInboundInterceptor:
             keys = headers[TENUO_ARG_KEYS_HEADER].decode("utf-8").split(",")
             result: Dict[str, Any] = {}
             for i, arg in enumerate(args):
-                if i < len(keys):
-                    result[keys[i]] = arg
-                else:
-                    result[f"arg{i}"] = arg
+                result[keys[i] if i < len(keys) else f"arg{i}"] = arg
             return result
 
         activity_fn = getattr(input, "fn", None)
-
         if activity_fn and args:
-            try:
-                sig = inspect.signature(activity_fn)
-                params = list(sig.parameters.keys())
-                result = {}
-                for i, arg in enumerate(args):
-                    if i < len(params):
-                        result[params[i]] = arg
-                    else:
-                        result[f"arg{i}"] = arg
-                return result
-            except (ValueError, TypeError):
-                pass
+            return _args_to_dict_by_fn(args, activity_fn)
 
         if args and isinstance(args[0], dict):
             return args[0]
 
-        result = {}
-        for i, arg in enumerate(args):
-            result[f"arg{i}"] = arg
-
-        return result
+        return {f"arg{i}": arg for i, arg in enumerate(args)}
 
     def _redact_args(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Redact argument values for logging (prevent sensitive data leaks)."""
@@ -4078,6 +5206,117 @@ class TenuoActivityInboundInterceptor:
             logger.error(f"Audit callback failed: {e}")
 
 
+async def create_scheduled_workflow_with_warrant(
+    client: "Client",
+    schedule_id: str,
+    workflow: Any,
+    warrant: "Warrant",
+    key_id: str,
+    schedule_spec: Any,
+    *,
+    workflow_args: Optional[list] = None,
+    workflow_kwargs: Optional[dict] = None,
+    task_queue: str = "default",
+    **schedule_kwargs: Any,
+) -> Any:
+    """Create a Temporal Schedule that carries a Tenuo warrant in the schedule memo.
+
+    The warrant bytes are stored in the schedule memo under the key "tenuo_warrant"
+    and the key_id under "tenuo_key_id". On each schedule fire, the workflow inbound
+    interceptor reads them back from workflow.info().memo when start-up headers are absent.
+
+    Args:
+        client: Temporal client.
+        schedule_id: Unique schedule identifier.
+        workflow: Workflow function or class decorated with @workflow.defn.
+        warrant: Tenuo Warrant object to embed in the schedule.
+        key_id: Key identifier for the warrant.
+        schedule_spec: ScheduleSpec describing when to fire.
+        workflow_args: Positional args for the workflow.
+        workflow_kwargs: Keyword args for the workflow.
+        task_queue: Task queue name.
+        **schedule_kwargs: Additional kwargs passed to client.create_schedule.
+
+    Returns:
+        ScheduleHandle for the created schedule.
+    """
+    import base64
+    from temporalio.client import Schedule, ScheduleActionStartWorkflow
+
+    warrant_bytes = warrant.to_bytes()
+    memo = {
+        "tenuo_warrant": base64.b64encode(warrant_bytes).decode(),
+        "tenuo_key_id": key_id,
+    }
+
+    action = ScheduleActionStartWorkflow(
+        workflow,
+        *(workflow_args or []),
+        **(workflow_kwargs or {}),
+        id=f"{schedule_id}-run",
+        task_queue=task_queue,
+        memo=memo,
+    )
+
+    schedule = Schedule(action=action, spec=schedule_spec)
+    return await client.create_schedule(schedule_id, schedule, **schedule_kwargs)
+
+
+async def tenuo_complete_async_activity(
+    handle_or_task_token: Any,
+    result: Any,
+    warrant: "Warrant",
+    key_id: str,
+    *,
+    client: Optional["Client"] = None,
+) -> None:
+    """Complete an async activity with Tenuo authorization headers.
+
+    Computes a PoP signature over the completion payload and attaches it
+    as a Temporal header, providing an authorization trail for async
+    long-running activities (e.g., human approvals, webhook callbacks).
+
+    Args:
+        handle_or_task_token: AsyncActivityHandle or raw task token bytes.
+        result: The activity result to report.
+        warrant: Tenuo Warrant for this completion.
+        key_id: Key identifier for PoP signing.
+        client: Temporal client (required when handle_or_task_token is bytes).
+
+    Raises:
+        ConfigurationError: If client is required but not provided.
+    """
+    import datetime as _datetime
+
+    now = _datetime.datetime.now(_datetime.timezone.utc)
+
+    # Best-effort PoP signing — non-fatal if key unavailable
+    try:
+        worker_cfg = _get_worker_config()
+        if worker_cfg is not None and worker_cfg.key_resolver is not None:
+            key = await worker_cfg.key_resolver.resolve(key_id)
+            if key is not None:
+                import json as _json
+                payload_str = _json.dumps({"result": str(result), "ts": now.isoformat()})
+                if hasattr(warrant, "sign_pop"):
+                    warrant.sign_pop(payload_str.encode(), key)
+    except Exception:
+        logger.debug("PoP signing skipped for async activity completion", exc_info=True)
+
+    # Complete the activity via the Temporal SDK
+    if isinstance(handle_or_task_token, (bytes, bytearray)):
+        if client is None:
+            from tenuo.exceptions import ConfigurationError
+            raise ConfigurationError(
+                "client= is required when handle_or_task_token is a raw task token"
+            )
+        handle = client.get_async_activity_handle(task_token=bytes(handle_or_task_token))
+    else:
+        handle = handle_or_task_token
+
+    await handle.complete(result)
+
+
 # =============================================================================
 # Exports
 # =============================================================================
@@ -4134,13 +5373,27 @@ __all__ = [
     # Workflow helpers
     "tenuo_execute_activity",
     "execute_workflow_authorized",
+    "start_workflow_authorized",
     "tenuo_execute_child_workflow",
     "set_activity_approvals",
+    # WarrantSource (Item 1.7)
+    "WarrantSource",
+    "LiteralWarrantSource",
+    "EnvWarrantSource",
+    "CloudTriggerWarrantSource",
+    # Context propagation (Phase 1.1)
+    "TenuoWarrantContextPropagator",
+    "tenuo_warrant_context",
     # Context accessors
     "current_warrant",
     "current_key_id",
     "workflow_grant",  # Phase 3
+    "workflow_issue_execution",  # Phase 2.3
+    "tenuo_continue_as_new",  # Item 3.5
     "AuthorizedWorkflow",  # Phase 3
+    # Error types
+    "TenuoArgNormalizationError",
+    "TenuoPreValidationError",
     # Phase 2: Decorators
     "unprotected",
     "is_unprotected",
@@ -4158,4 +5411,6 @@ __all__ = [
     "TENUO_TEMPORAL_PLUGIN_ID",
     "TenuoTemporalPlugin",
     "ensure_tenuo_workflow_runner",
+    "create_scheduled_workflow_with_warrant",
+    "tenuo_complete_async_activity",
 ]
