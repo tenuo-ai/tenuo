@@ -2637,13 +2637,12 @@ async def _dispatch_mint_activity(
     ``_MintRequest``, because PyO3 constraint types cannot survive Temporal's
     ``dataclasses.asdict()`` → ``copy.deepcopy()`` serialization path.
     """
-    import uuid
     from datetime import timedelta
 
     from temporalio import workflow  # type: ignore[import-not-found]
     from temporalio.common import RetryPolicy as _RetryPolicy
 
-    cap_ref = uuid.uuid4().hex
+    cap_ref = str(workflow.uuid4())
     with _store_lock:
         _pending_mint_capabilities[cap_ref] = capabilities
 
