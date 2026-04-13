@@ -42,6 +42,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import logging
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Optional
 
 try:
@@ -185,8 +186,8 @@ class TenuoTemporalPlugin(SimplePlugin):
         self._tenuo_worker_configured = False
 
         def _add_activities(
-            activities: "list[Any] | None",
-        ) -> "list[Any]":
+            activities: "Sequence[Callable[..., Any]] | None",
+        ) -> "Sequence[Callable[..., Any]]":
             """Append _tenuo_internal_mint_activity and store worker config.
 
             Also handles:

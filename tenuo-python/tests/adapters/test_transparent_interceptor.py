@@ -366,7 +366,6 @@ def test_parameter_name_resolution_consistency():
 
     from tenuo.temporal import (
         TenuoActivityInboundInterceptor,
-        _TenuoWorkflowOutboundInterceptor,
         _args_to_dict_by_fn,
     )
 
@@ -376,7 +375,7 @@ def test_parameter_name_resolution_consistency():
     inbound_source = inspect.getsource(TenuoActivityInboundInterceptor._extract_arguments)
 
     assert "inspect.signature" in outbound_helper_source, "Outbound helper should use inspect.signature"
-    assert "inspect.signature" in inbound_source, "Inbound should use inspect.signature"
+    assert "_args_to_dict_by_fn" in inbound_source, "Inbound should delegate to shared helper"
 
     assert "arg{i}" in outbound_helper_source or 'f"arg{i}"' in outbound_helper_source
     assert "arg{i}" in inbound_source or 'f"arg{i}"' in inbound_source
