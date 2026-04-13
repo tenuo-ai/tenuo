@@ -76,15 +76,21 @@ result = await execute_workflow_authorized(
     key_id="agent-key-1",
     args=[...],
     task_queue="my-queue",
-)```
+)
+```
 
 Pass the plugin on **`Client.connect(..., plugins=[plugin])`** only: workers created from that client **merge** client plugins, so you should **not** duplicate the same plugin on `Worker(..., plugins=[...])` unless the client was created without plugins.
 
 ### `TenuoPlugin` (manual path)
 
 ```python
+from temporalio.client import Client
+from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
+from tenuo import SigningKey
 from tenuo.temporal import TenuoPlugin, TenuoPluginConfig, TenuoClientInterceptor, EnvKeyResolver
+
+control = SigningKey.generate()
 
 client_interceptor = TenuoClientInterceptor()
 client = await Client.connect("localhost:7233", interceptors=[client_interceptor])
@@ -803,7 +809,7 @@ pop_signature = warrant.sign(signing_key, "read_file", {"path": "/data/file.txt"
 
 ---
 
-HEAD## Security considerations
+## Security considerations
 
 This section covers **threat model, trust boundaries, PoP windows, dedup, root rotation, revocation, and retry drift**: what the Temporal integration assumes, what it protects against, and what remains your operational responsibility. For the broader Tenuo security model, see [Security Model](./security.md).
 
@@ -1054,20 +1060,19 @@ class CustomerSupportWorkflow(AuthorizedWorkflow):
     @workflow.run
     async def run(self, customer_id: str) -> str:
         # Inspect the active warrant at workflow start
-        warrant = current_warrant()    # Returns the Warrant object, or None if not set
+        warrant = current_warrant()    # Raises TenuoContextError if no warrant
         key_id = current_key_id()      # Returns the key_id string, or "" if not set
 
-        if warrant:
-            workflow.logger.info(f"Agent tools: {warrant.tools}")
+        workflow.logger.info(f"Agent tools: {warrant.tools}")
         workflow.logger.info(f"Signing key: {key_id}")
 
         # Example: route based on warrant scope
-        if warrant and "escalate_ticket" in warrant.tools:
+        if "escalate_ticket" in warrant.tools:
             return await self._handle_escalation(customer_id)
         return await self._handle_standard(customer_id)
 ```
 
-`current_warrant()` returns `None` when called outside a Tenuo-authorized workflow. `current_key_id()` returns `""` in the same case. Both are read-only — they do not modify authorization state.
+`current_warrant()` raises `TenuoContextError` when called outside a Tenuo-authorized workflow (or when no warrant header is present). `current_key_id()` returns `""` in the same case. Both are read-only — they do not modify authorization state.
 
 ### tool_mappings - Config-Driven Activity Name Mapping
 
@@ -1086,7 +1091,7 @@ TenuoPluginConfig(
 )
 ```
 
-The warrant must then use the mapped names (`"audit_log"`, `"notify"`) as capability names. Both `tool_mappings` and `@tool()` can coexist; `@tool()` takes precedence for a given function if both apply.
+The warrant must then use the mapped names (`"audit_log"`, `"notify"`) as capability names. Both `tool_mappings` and `@tool()` can coexist; `tool_mappings` takes precedence for a given function if both apply.
 
 ### workflow_grant() - Scoped In-Workflow Grants
 

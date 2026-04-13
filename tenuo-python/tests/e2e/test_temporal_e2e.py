@@ -1418,7 +1418,7 @@ class TestChildWorkflowDelegation:
             assert child_id not in _pending_child_headers
 
     def test_child_workflow_no_headers_passes_through(self):
-        """When no pending headers exist, child workflow passes through unchanged."""
+        """When no pending headers exist, child receives no Tenuo headers (fail-closed)."""
         from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
 
         captured = {}
@@ -1434,10 +1434,50 @@ class TestChildWorkflowDelegation:
             id: str = "wf-unknown-child"
             headers: Optional[Dict[str, Any]] = None
 
-        with patch("temporalio.workflow.info") as mock_info:
-            mock_info.return_value = FakeWorkflowInfo(workflow_id="wf-no-headers-parent")
-            outbound.start_child_workflow(FakeChildInput())
+        outbound.start_child_workflow(FakeChildInput())
         assert captured["headers"] is None
+
+    def test_child_workflow_does_not_inherit_parent_headers(
+        self, warrant, agent_key, control_key, headers_dict
+    ):
+        """Even if the parent has stored headers, a plain child workflow call
+        must NOT inherit them — fail-closed requires explicit attenuation."""
+        from tenuo.temporal import (
+            _TenuoWorkflowOutboundInterceptor,
+            _workflow_headers_store,
+        )
+
+        parent_wf_id = "wf-parent-with-headers"
+        raw_parent_headers: Dict[str, bytes] = {}
+        for k, v in headers_dict.items():
+            raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+            if k.startswith("x-tenuo-"):
+                raw_parent_headers[k] = raw_v
+
+        with _store_lock:
+            _workflow_headers_store[parent_wf_id] = raw_parent_headers
+
+        try:
+            captured: Dict[str, Any] = {}
+            class FakeNext:
+                def start_child_workflow(self, input):
+                    captured["headers"] = input.headers
+                    return MagicMock()
+
+            outbound = _TenuoWorkflowOutboundInterceptor(FakeNext())
+
+            @dataclass
+            class FakeChildInput:
+                id: str = "wf-child-no-attenuation"
+                headers: Optional[Dict[str, Any]] = None
+
+            outbound.start_child_workflow(FakeChildInput())
+            assert captured["headers"] is None, (
+                "Child must not inherit parent headers; use tenuo_execute_child_workflow()"
+            )
+        finally:
+            with _store_lock:
+                _workflow_headers_store.pop(parent_wf_id, None)
 
 
 # -- Continue-as-new header propagation --------------------------------------
@@ -1496,6 +1536,14 @@ class TestContinueAsNew:
 
         assert captured["headers"] is None
 
+    def test_continue_as_new_attenuation_raises_not_implemented(self):
+        """tenuo_continue_as_new with tenuo_attenuation must raise NotImplementedError."""
+        from tenuo.temporal import tenuo_continue_as_new
+
+        with patch("temporalio.workflow.continue_as_new"):
+            with pytest.raises(NotImplementedError, match="not yet implemented"):
+                tenuo_continue_as_new("some_input", tenuo_attenuation={"path": "/data/"})
+
 
 # -- Nexus operation header propagation --------------------------------------
 
@@ -1534,6 +1582,65 @@ class TestNexusHeaderPropagation:
         val = captured["headers"][TENUO_WARRANT_HEADER]
         assert isinstance(val, str)
         base64.b64decode(val)  # should not raise
+
+
+# -- Mint activity: issue_execution absence must be hard error ----------------
+
+class TestMintActivityIssueExecution:
+    """_tenuo_internal_mint_activity must raise when issue_execution() is missing."""
+
+    def test_issue_execution_missing_raises_context_error(
+        self, warrant, agent_key, control_key
+    ):
+        """If the Warrant type lacks issue_execution(), mint must raise, not fallback."""
+        from tenuo.temporal import (
+            _tenuo_internal_mint_activity,
+            _MintRequest,
+            _pending_mint_capabilities,
+            _set_worker_config,
+        )
+
+        cap_ref = "test-ref-issue-exec"
+        with _store_lock:
+            _pending_mint_capabilities[cap_ref] = {"read_file": {}}
+
+        class _FakeWarrantInstance:
+            """Warrant-like object deliberately missing issue_execution()."""
+            pass
+
+        class _FakeWarrantClass:
+            @staticmethod
+            def from_bytes(data):
+                return _FakeWarrantInstance()
+
+        fake_resolver = MagicMock()
+        fake_resolver.resolve_sync = MagicMock(return_value=agent_key)
+        cfg = TenuoPluginConfig(
+            key_resolver=fake_resolver,
+            trusted_roots=[control_key.public_key],
+        )
+        _set_worker_config(cfg)
+
+        req = _MintRequest(
+            parent_warrant_bytes=warrant.to_bytes(),
+            kind="issue_execution",
+            capabilities_ref=cap_ref,
+            ttl_seconds=300,
+            key_id="agent1",
+        )
+
+        loop = asyncio.new_event_loop()
+        try:
+            with patch(
+                "tenuo.temporal._tenuo_internal_mint_activity.__wrapped__.__globals__"
+                if False else "tenuo_core.Warrant", _FakeWarrantClass
+            ):
+                with pytest.raises(Exception, match="issue_execution.*not available"):
+                    loop.run_until_complete(_tenuo_internal_mint_activity(req))
+        finally:
+            loop.close()
+            with _store_lock:
+                _pending_mint_capabilities.pop(cap_ref, None)
 
 
 # -- Fail-closed outbound interceptor behavior -------------------------------

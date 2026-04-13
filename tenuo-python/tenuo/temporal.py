@@ -3153,27 +3153,28 @@ def tenuo_continue_as_new(
 
     By default, the current workflow's warrant is inherited verbatim into the next
     execution via the CAN headers (propagated by the outbound interceptor's
-    ``continue_as_new`` method).  Pass ``tenuo_attenuation=`` to record a narrowed
-    warrant for the next run — note that actual attenuation requires an async caller;
-    for complex delegation patterns use ``tenuo_execute_child_workflow`` instead.
+    ``continue_as_new`` method).
+
+    Args:
+        tenuo_attenuation: Reserved for future narrowing support. Passing a
+            non-None value currently raises ``NotImplementedError``.
 
     Usage::
 
         # Inherit warrant unchanged (most common)
         tenuo_continue_as_new(new_input)
-
-        # With attenuation (caller must be in an async context)
-        tenuo_continue_as_new(new_input, tenuo_attenuation={"path_prefix": "/data/"})
     """
     try:
         from temporalio import workflow  # type: ignore[import-not-found]
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
-    # The outbound interceptor (_TenuoContinueAsNewOutbound.continue_as_new) will
-    # re-inject the stored Tenuo headers so the next run keeps its warrant verbatim.
-    # tenuo_attenuation is accepted as an extension point for future narrowing logic;
-    # for now we propagate the kwarg as a no-op (thin wrapper).
+    if tenuo_attenuation is not None:
+        raise NotImplementedError(
+            "tenuo_continue_as_new(tenuo_attenuation=...) is not yet implemented. "
+            "Use tenuo_execute_child_workflow() for attenuated delegation."
+        )
+
     workflow.continue_as_new(*args, **kwargs)
 
 
@@ -3508,18 +3509,10 @@ try:
                 )
             elif req.kind == "issue_execution":
                 if not hasattr(parent_warrant, "issue_execution"):
-                    import warnings
-                    warnings.warn(
-                        "_tenuo_internal_mint_activity: issue_execution() not available "
-                        "on this Warrant type; falling back to attenuate(). "
-                        "Upgrade tenuo_core to enable IssuerWarrant mode.",
-                        RuntimeWarning,
-                        stacklevel=2,
-                    )
-                    child = parent_warrant.attenuate(
-                        capabilities=capabilities,
-                        signing_key=signer,
-                        ttl_seconds=req.ttl_seconds,
+                    raise TenuoContextError(
+                        "Warrant.issue_execution() not available on this tenuo_core build. "
+                        "Upgrade tenuo_core to a version that supports IssuerWarrant. "
+                        "Silently falling back to attenuate() would widen the scope."
                     )
                 else:
                     builder = parent_warrant.issue_execution()
@@ -4122,12 +4115,10 @@ class _TenuoWorkflowOutboundInterceptor:
 
         If ``tenuo_execute_child_workflow()`` was used, attenuated headers from
         ``_pending_child_headers`` are injected (explicit attenuation path).
-        Otherwise, the parent workflow's headers are inherited unchanged — so
-        plain ``workflow.execute_child_workflow()`` is still fail-closed.
-        Use ``tenuo_execute_child_workflow()`` only when you need to narrow scope.
+        Otherwise, the child receives **no** Tenuo headers (fail-closed).
+        Use ``tenuo_execute_child_workflow()`` to propagate authorization.
         """
         try:
-            from temporalio import workflow as _wf  # type: ignore[import-not-found]
             from temporalio.api.common.v1 import Payload  # type: ignore
         except ImportError:
             return self._next.start_child_workflow(input)
@@ -4135,12 +4126,6 @@ class _TenuoWorkflowOutboundInterceptor:
         child_id = input.id
         with _store_lock:
             raw_headers = _pending_child_headers.pop(child_id, None)
-
-        if raw_headers is None:
-            # No explicit attenuation — inherit parent warrant unchanged.
-            wf_id = _wf.info().workflow_id
-            with _store_lock:
-                raw_headers = dict(_workflow_headers_store.get(wf_id, {})) or None
 
         if raw_headers:
             child_headers = dict(input.headers or {})
