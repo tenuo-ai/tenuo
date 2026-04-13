@@ -2,19 +2,17 @@
 
 > **Cryptographically verified human-in-the-loop authorization for AI agent tool calls.**
 
-Warrants define *what* an agent can do. Approval policies define *when* a human must confirm before execution. Every approval is cryptographically signed - there is no unsigned path.
+Warrants define *what* an agent can do — including *which* tool calls require human approval, *who* can approve, and *how many* must agree. Every approval is cryptographically signed; there is no unsigned path.
 
 ---
 
 ## Architecture
 
 ```
-                   Warrant Authorization           Approval Policy
-                   ──────────────────             ────────────────
-Tool Call ──► Rust Core verifies warrant ──► Python checks policy rules
+Tool Call ──► Rust Core verifies warrant ──► Approval gate fires?
               (PoP, expiration, constraints)        |
-                                              no rule matches → proceed
-                                              rule matches → invoke handler
+                                              no gate → proceed
+                                              gate fires → invoke handler
                                                     |
                                               handler(s) sign → collect approvals
                                                     |
@@ -29,11 +27,12 @@ Tool Call ──► Rust Core verifies warrant ──► Python checks policy ru
 
 | Concern | Mechanism | Where |
 |---------|-----------|-------|
-| *What* an agent can do | Warrant (cryptographic) | Rust core |
-| *When* a human must confirm | ApprovalPolicy (runtime) | Python |
+| *What* an agent can do | Warrant capabilities + constraints | Rust core |
+| *When* a human must confirm | Approval gates (in warrant) | Rust core |
+| *Who* can confirm | `required_approvers` (in warrant) | Rust core |
+| *How many* must confirm | `approval_threshold` (in warrant) | Rust core |
 | *Proof* of confirmation | SignedApproval (Ed25519) | Rust core |
-| *Who* can confirm | required_approvers (in warrant) | Rust core |
-| *How many* must confirm | approval_threshold (in warrant) | Rust core |
+| *How* confirmation happens | `approval_handler` callback | Python adapter |
 
 ---
 
@@ -85,12 +84,12 @@ The `ApprovalPayload` contains:
 
 When `enforce_tool_call()` receives `SignedApproval`(s) from a handler, the Rust core verifies each one:
 
-1. **Signature** - Ed25519 signature check
-2. **Hash match** - `payload.request_hash == expected_hash` (prevents reuse across calls)
-3. **Expiry** - `payload.expires_at > now` (with 30-second clock tolerance for distributed systems)
-4. **Key trust** - `signed.approver_key in warrant.required_approvers()` (prevents rogue approvers)
-5. **Deduplication** - one vote per approver key (prevents double-counting)
-6. **Threshold** - valid approval count >= `warrant.approval_threshold()` (m-of-n satisfaction)
+1. **Signature** — Ed25519 signature check
+2. **Hash match** — `payload.request_hash == expected_hash` (prevents reuse across calls)
+3. **Expiry** — `payload.expires_at > now` (with 30-second clock tolerance for distributed systems)
+4. **Key trust** — `signed.approver_key in warrant.required_approvers()` (prevents rogue approvers)
+5. **Deduplication** — one vote per approver key (prevents double-counting)
+6. **Threshold** — valid approval count >= `warrant.approval_threshold()` (m-of-n satisfaction)
 
 For **1-of-1** failures, the Rust core returns the specific rejection reason (e.g., "request hash mismatch", "approval expired"). For **m-of-n** failures, it returns a summary of all rejection reasons (e.g., "required 2, received 1 [rejected: 1 expired, 1 not trusted]").
 
@@ -99,47 +98,63 @@ For **1-of-1** failures, the Rust core returns the specific rejection reason (e.
 ## Quick Start
 
 ```python
-from tenuo import (
-    SigningKey, Warrant, ApprovalPolicy,
-    require_approval, auto_approve, sign_approval, cli_prompt,
-    guard, warrant_scope, key_scope,
-)
+from tenuo import SigningKey, Warrant, sign_approval, cli_prompt
 
 # 1. Keys
+control_key = SigningKey.generate()    # control plane
 agent_key = SigningKey.generate()      # the AI agent
 approver_key = SigningKey.generate()   # the human approver
 
-# 2. Warrant (what the agent can do — including who can approve)
+# 2. Warrant — defines capabilities, approval gates, and who can approve
 warrant = (Warrant.mint_builder()
     .capability("transfer")
     .capability("search")
+    .approval_gates({"transfer": None})  # all transfer calls need approval
     .required_approvers([approver_key.public_key])
     .approval_threshold(1)
     .holder(agent_key.public_key)
     .ttl(3600)
-    .mint(agent_key)
+    .mint(control_key)
 )
 
-# 3. Approval policy (when a human must confirm)
-policy = ApprovalPolicy(
-    require_approval("transfer", when=lambda args: args["amount"] > 10_000),
-)
+# 3. Enforce with an approval handler
+from tenuo import enforce_tool_call, BoundWarrant
 
-# 4. Protect a function with @guard
-@guard(
-    tool="transfer",
-    approval_policy=policy,
+result = enforce_tool_call(
+    tool_name="transfer",
+    tool_args={"amount": 50_000, "to": "alice"},
+    bound_warrant=BoundWarrant(warrant, agent_key),
+    trusted_roots=[control_key.public_key],
     approval_handler=cli_prompt(approver_key=approver_key),
 )
-def transfer(amount: int, to: str):
-    print(f"Transferring {amount} to {to}")
-
-# 5. Call it within a warrant context
-with warrant_scope(warrant), key_scope(agent_key):
-    transfer(amount=50_000, to="alice")
-    # The CLI prompts the human. If they type 'y', a SignedApproval is
-    # created, verified, and the call proceeds. If 'n', ApprovalDenied is raised.
+# The CLI prompts the human. If they type 'y', a SignedApproval is
+# created, verified, and the call proceeds. If 'n', ApprovalDenied is raised.
 ```
+
+---
+
+## Approval Gates
+
+Approval gates are defined in the warrant and evaluated by the Rust core. They determine *which* tool calls require human confirmation:
+
+```python
+warrant = (Warrant.mint_builder()
+    .capability("search")
+    .capability("transfer")
+    .capability("delete_user")
+    .approval_gates({
+        "transfer": None,           # all transfer calls need approval
+        "delete_user": None,        # all delete_user calls need approval
+        # "search" has no gate — proceeds without approval
+    })
+    .required_approvers([approver_key.public_key])
+    .holder(agent_key.public_key)
+    .ttl(3600)
+    .mint(control_key)
+)
+```
+
+When `enforce_tool_call()` or a framework adapter processes a tool call, the Rust core runs `evaluate_approval_gates(warrant, tool_name, tool_args)`. If a gate fires, the enforcement layer invokes the `approval_handler` to collect signatures.
 
 ---
 
@@ -152,20 +167,17 @@ Approvers and threshold are set **in the warrant** — the single source of trut
 warrant = (Warrant.mint_builder()
     .capability("deploy_prod")
     .capability("transfer_funds")
+    .approval_gates({
+        "deploy_prod": None,
+        "transfer_funds": None,
+    })
     .required_approvers([alice.public_key, bob.public_key, carol.public_key])
     .approval_threshold(2)  # any 2-of-3 must approve
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(control_key)
 )
-
-policy = ApprovalPolicy(
-    require_approval("deploy_prod"),
-    require_approval("transfer_funds", when=lambda a: a["amount"] > 100_000),
-)
 ```
-
-The `approval_threshold` on the warrant (default: 1) specifies the minimum number of valid approvals required. The Rust core verifies each approval independently and checks that the count of valid, unique approvals meets the threshold.
 
 | `approval_threshold` | `required_approvers` | Meaning |
 |----------------------|----------------------|---------|
@@ -186,47 +198,32 @@ Approval TTL (how long a signed approval remains valid) is resolved in priority 
 
 ```
 1. Handler-level ttl_seconds argument         (highest priority)
-2. Policy-level default_ttl                   (org-wide default)
-3. 300 seconds (5 minutes)                    (fallback)
+2. 300 seconds (5 minutes)                    (fallback)
 ```
 
 Examples:
 
 ```python
-# Policy sets a 1-hour default for async workflows
-policy = ApprovalPolicy(
-    require_approval("deploy"),
-    default_ttl=3600,
-)
-
-# Handler overrides with a shorter window
+# Handler with a short window
 handler = cli_prompt(approver_key=ops_key, ttl_seconds=60)
 
-# Or let the policy default flow through
-handler = cli_prompt(approver_key=ops_key)  # uses policy's 3600s
+# Handler with the default 5-minute window
+handler = cli_prompt(approver_key=ops_key)
 ```
 
-For long-running approval flows (e.g., Slack-based, email-based), set `default_ttl` on the policy:
-
-```python
-# Approvers + threshold are in the warrant; the policy only controls TTL
-policy = ApprovalPolicy(
-    require_approval("deploy_prod"),
-    default_ttl=86400,  # 24 hours for async multi-sig collection
-)
-```
+For long-running approval flows (e.g., Slack-based, email-based), pass a longer `ttl_seconds` to `sign_approval()` in your custom handler.
 
 ---
 
 ## Framework Integration
 
-Approval policies plug into all framework `GuardBuilder`s via `.approval_policy()` and `.on_approval()`:
+All framework adapters accept `approval_handler` directly — the callback invoked when an approval gate fires.
 
 ### CrewAI
 
 ```python
 from tenuo.crewai import GuardBuilder
-from tenuo import SigningKey, ApprovalPolicy, require_approval, cli_prompt
+from tenuo import SigningKey, cli_prompt
 
 approver_key = SigningKey.generate()
 
@@ -234,9 +231,6 @@ guard = (GuardBuilder()
     .allow("search", query=Wildcard())
     .allow("transfer_funds", amount=Range(0, 100_000))
     .with_warrant(warrant, agent_key)
-    .approval_policy(ApprovalPolicy(
-        require_approval("transfer_funds", when=lambda a: a["amount"] > 10_000),
-    ))
     .on_approval(cli_prompt(approver_key=approver_key))
     .build())
 
@@ -252,7 +246,6 @@ from tenuo.autogen import GuardBuilder
 guard = (GuardBuilder()
     .allow("transfer_funds")
     .with_warrant(warrant, agent_key)
-    .approval_policy(policy)
     .on_approval(cli_prompt(approver_key=approver_key))
     .build())
 
@@ -267,7 +260,6 @@ from tenuo.openai import GuardBuilder
 client = (GuardBuilder(openai.OpenAI())
     .allow("transfer_funds")
     .with_warrant(warrant, agent_key)
-    .approval_policy(policy)
     .on_approval(cli_prompt(approver_key=approver_key))
     .build())
 ```
@@ -279,7 +271,6 @@ from tenuo.google_adk import GuardBuilder
 
 guard = (GuardBuilder()
     .with_warrant(warrant, agent_key)
-    .approval_policy(policy)
     .on_approval(cli_prompt(approver_key=approver_key))
     .build())
 
@@ -291,13 +282,10 @@ agent = Agent(
 
 ### LangGraph
 
-Both `TenuoMiddleware` (recommended) and `TenuoToolNode` accept approval parameters directly:
-
 ```python
 from tenuo.langgraph import TenuoMiddleware
 
 middleware = TenuoMiddleware(
-    approval_policy=policy,
     approval_handler=cli_prompt(approver_key=approver_key),
 )
 
@@ -310,68 +298,28 @@ agent = create_agent(
 
 ### LangChain
 
-Pass approval parameters through `guard()`:
-
 ```python
 from tenuo.langchain import guard
 
 tools = guard(
     [search, transfer_funds],
     bound_warrant,
-    approval_policy=policy,
     approval_handler=cli_prompt(approver_key=approver_key),
 )
 ```
 
----
-
-## Approval Rules
-
-Rules define which tool calls require approval:
+### Temporal
 
 ```python
-from tenuo import require_approval
+from tenuo.temporal import TenuoPluginConfig, TenuoPlugin
 
-# Always requires approval
-require_approval("delete_user")
-
-# Conditional - only when amount > 10K
-require_approval("transfer", when=lambda args: args["amount"] > 10_000)
-
-# With description (shown to the approver)
-require_approval("send_email",
-    when=lambda args: not args["to"].endswith("@company.com"),
-    description="External emails require approval")
-```
-
-If the `when` predicate raises an exception, the rule **triggers** (fail-closed).
-
----
-
-## Approval Policy
-
-The policy collects rules and configures TTL. Trusted approvers and threshold are
-always embedded in the warrant — the single source of truth:
-
-```python
-from tenuo import ApprovalPolicy
-
-policy = ApprovalPolicy(
-    require_approval("transfer", when=lambda a: a["amount"] > 10_000),
-    require_approval("delete_user"),
-    require_approval("send_email"),
-    default_ttl=3600,  # optional: 1-hour approval window
+config = TenuoPluginConfig(
+    key_resolver=resolver,
+    trusted_roots=[control_key.public_key],
+    approval_handler=cli_prompt(approver_key=approver_key),
 )
+plugin = TenuoPlugin(config)
 ```
-
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `*rules` | (required) | One or more `ApprovalRule` instances |
-| `default_ttl` | `None` | Default TTL in seconds for signed approvals. `None` means handlers use their own default (typically 300s) |
-
-> **Note:** `required_approvers` and `approval_threshold` are set on the
-> warrant at mint time, not on the policy. This ensures the cryptographic
-> authority chain cannot be bypassed by runtime configuration.
 
 ---
 
@@ -379,10 +327,9 @@ policy = ApprovalPolicy(
 
 | Handler | Signs? | Use Case |
 |---------|--------|----------|
-| `cli_prompt(approver_key=key)` | Yes | Local development - prompts in terminal |
-| `auto_approve(approver_key=key)` | Yes | Testing - signs everything automatically |
+| `cli_prompt(approver_key=key)` | Yes | Local development — prompts in terminal |
+| `auto_approve(approver_key=key)` | Yes | Testing — signs everything automatically |
 | `auto_deny(reason=...)` | No (raises) | Dry-run / audit mode |
-| `tenuo.approval.webhook(url=...)` | Placeholder | Tenuo Cloud integration (not yet in public API) |
 
 All signing handlers require the approver's `SigningKey`. This is the key that produces the `SignedApproval`. It should be held by the human (or approval service), not the agent.
 
@@ -460,17 +407,17 @@ from tenuo.approval import (
 
 | Exception | When | Contains |
 |-----------|------|----------|
-| `ApprovalRequired` | Rule triggered but no handler configured | `request` |
+| `ApprovalRequired` | Gate triggered but no handler configured | `request` |
 | `ApprovalDenied` | Handler explicitly denied | `request`, `reason` |
 | `ApprovalTimeout` | Handler timed out (subclass of `ApprovalDenied`) | `request`, `timeout_seconds` |
 | `ApprovalVerificationError` | Crypto verification failed | `request`, `reason` |
 
 `ApprovalVerificationError` reasons include:
-- `"invalid signature: ..."` - Ed25519 signature check failed
-- `"request hash mismatch (approval was signed for a different request)"` - replay attempt
-- `"approval expired (beyond clock tolerance)"` - `expires_at` in the past (with 30s tolerance)
-- `"approver not in trusted set"` - untrusted key
-- `"duplicate approval from same approver"` - same key signed twice
+- `"invalid signature: ..."` — Ed25519 signature check failed
+- `"request hash mismatch (approval was signed for a different request)"` — replay attempt
+- `"approval expired (beyond clock tolerance)"` — `expires_at` in the past (with 30s tolerance)
+- `"approver not in trusted set"` — untrusted key
+- `"duplicate approval from same approver"` — same key signed twice
 
 For m-of-n failures, `InsufficientApprovals` is raised with a diagnostic summary:
 ```
@@ -514,6 +461,6 @@ Warrants are the security boundary. Approvals are defense in depth. Even if the 
 
 ## See Also
 
-- [Enforcement Architecture](enforcement.md) - Where approvals fit in the enforcement pipeline
-- [AI Agents Security](ai-agents.md) - The 4-layer defense strategy
-- [Concepts](concepts.md) - Warrants, PoP, attenuation
+- [Enforcement Architecture](enforcement.md) — Where approvals fit in the enforcement pipeline
+- [AI Agents Security](ai-agents.md) — The 4-layer defense strategy
+- [Concepts](concepts.md) — Warrants, PoP, attenuation
