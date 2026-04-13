@@ -120,21 +120,9 @@ autoscaling:
   targetCPUUtilizationPercentage: 80
   # targetMemoryUtilizationPercentage: 80
 
-# Metrics and observability
-metrics:
-  # Path where metrics are exposed
-  path: /metrics
-  # ServiceMonitor for Prometheus Operator
-  serviceMonitor:
-    enabled: false
-    # Additional labels for ServiceMonitor (for Prometheus selector)
-    labels: {}
-    # Annotations for ServiceMonitor
-    annotations: {}
-    # Scrape interval
-    interval: 30s
-    # Scrape timeout
-    scrapeTimeout: 10s
+# Metrics: the authorizer sends metrics to the control plane via heartbeat
+# payloads, not via a /metrics Prometheus endpoint.  A ServiceMonitor is
+# therefore not included in this chart.
 
 # Pod Disruption Budget
 podDisruptionBudget:

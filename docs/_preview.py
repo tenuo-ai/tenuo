@@ -138,6 +138,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif rel.endswith(".md"):
             rel = rel[: -len(".md")]
         for fpath in _resolved_paths_under_docs(rel):
+            # Defense-in-depth: re-verify the resolved path is under DOCS_DIR
+            # (_resolved_paths_under_docs already checks, but this makes the
+            # constraint visible to static analysis tools like CodeQL).
+            _docs_real = os.path.realpath(DOCS_DIR) + os.sep
+            if not os.path.realpath(fpath).startswith(_docs_real):
+                continue
             if os.path.isfile(fpath):
                 try:
                     with open(fpath, encoding="utf-8") as f:
