@@ -92,13 +92,21 @@ We track upstream API changes in OpenAI, CrewAI, AutoGen, LangChain, and LangGra
 - **Rust**: We use `rustfmt`. The check script will verify formatting.
 - **Python**: We use `black` and `isort`.
 
+## Before You Start
+
+**Open an issue first.** Before writing code, create a GitHub issue describing what you want to change and why. This lets us align on approach, avoid duplicate work, and save you time if the change doesn't fit the project direction. Bug reports, feature proposals, and doc improvements all benefit from a quick discussion before a PR.
+
+Small typo fixes and obvious doc corrections can skip this step.
+
 ## Pull Request Process
 
-1.  Fork the repository and create your branch from `main`.
-2.  If you've added code that should be tested, add tests.
-3.  Ensure the test suite passes (`./scripts/check.sh`).
-4.  Make sure your code lints.
-5.  Issue that pull request!
+1.  Open an issue describing the change (see above).
+2.  Fork the repository and create your branch from `main`.
+3.  If you've added code that should be tested, add tests.
+4.  Ensure the test suite passes (`./scripts/check.sh`).
+5.  Make sure your code lints.
+6.  Reference the issue in your PR description (e.g., "Closes #123").
+7.  Issue that pull request!
 
 ## License
 
