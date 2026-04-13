@@ -12,7 +12,7 @@ Covers:
 import base64
 import json
 import time as _time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
