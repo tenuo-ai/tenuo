@@ -22,7 +22,7 @@ The integration runs entirely in your workers (Rust `tenuo_core` in-process). Va
 - **Signal & update guards**: Restrict which signals and updates a workflow accepts
 - **Nexus header propagation**: Warrant context flows through Nexus operations
 - **PoP replay protection**: Default in-process dedup plus PoP time-window verification (clock skew); optional **`PopDedupStore`** for fleet-wide dedup ([Security considerations](#security-considerations))
-- **Continue-as-new support**: Warrant headers survive workflow continuation
+- **Continue-as-new support**: Warrant headers survive workflow continuation (attenuation during continue-as-new is not yet supported)
 - **Fail-closed**: Missing or invalid warrants block execution by default
 - **Secure key management**: Private keys NEVER transmitted in headers - resolved from Vault/KMS/Secret Manager
 - **Enterprise key resolvers**: `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, `GCPSecretManagerKeyResolver`, `CompositeKeyResolver`
@@ -107,6 +107,7 @@ worker = Worker(client, task_queue="q", workflows=[...], activities=[...],
 ```
 
 Manual setup is used in `demo.py`, `delegation.py`, `multi_warrant.py`, and all PoC examples. `ensure_tenuo_workflow_runner` from `tenuo.temporal_plugin` provides the sandbox runner without the full plugin.
+
 ---
 
 ## Runnable examples
@@ -340,7 +341,7 @@ sequenceDiagram
     T->>WW: workflow task
     WW->>KR: resolve(key_id)
     KR-->>WW: signing_key  ← never transmitted
-    Note over WW: PoP = sign(warrant, tool, args, workflow.now())
+    Note over WW: PoP = sign(warrant_id, tool, sorted_args, window_ts)
     WW->>AW: activity headers (warrant + PoP)
     Note over AW: verify warrant chain → trusted_roots
     Note over AW: verify PoP signature + constraints
@@ -641,10 +642,6 @@ config = TenuoPluginConfig(
 
 > **Warning:** `dry_run=True` disables enforcement for authorization denials. Use only in non-production environments.
 
-
----
-
-
 ---
 
 ## Activity registry (`activity_fns`) and PoP argument names
@@ -897,7 +894,7 @@ config = TenuoPluginConfig(
 )
 ```
 
-When `retry_pop_max_windows` is not set and a retry arrives, the interceptor logs a `DEBUG` advisory:
+The default `retry_pop_max_windows` is `5` (same as the standard PoP window). When a retry arrives, the interceptor logs a `DEBUG` advisory:
 ```
 Activity '...' is a retry (attempt=2). If this fails with PopVerificationError,
 set TenuoPluginConfig.retry_pop_max_windows to accommodate Temporal's retry time offset.
@@ -1061,7 +1058,7 @@ class CustomerSupportWorkflow(AuthorizedWorkflow):
     async def run(self, customer_id: str) -> str:
         # Inspect the active warrant at workflow start
         warrant = current_warrant()    # Raises TenuoContextError if no warrant
-        key_id = current_key_id()      # Returns the key_id string, or "" if not set
+        key_id = current_key_id()      # Raises TenuoContextError if no key ID
 
         workflow.logger.info(f"Agent tools: {warrant.tools}")
         workflow.logger.info(f"Signing key: {key_id}")
@@ -1072,7 +1069,7 @@ class CustomerSupportWorkflow(AuthorizedWorkflow):
         return await self._handle_standard(customer_id)
 ```
 
-`current_warrant()` raises `TenuoContextError` when called outside a Tenuo-authorized workflow (or when no warrant header is present). `current_key_id()` returns `""` in the same case. Both are read-only — they do not modify authorization state.
+`current_warrant()` and `current_key_id()` both raise `TenuoContextError` when called outside a Tenuo-authorized workflow (or when no warrant header is present). Both are read-only — they do not modify authorization state.
 
 ### tool_mappings - Config-Driven Activity Name Mapping
 
@@ -1106,7 +1103,7 @@ class MyWorkflow(AuthorizedWorkflow):
     async def run(self, path: str) -> str:
         # Issue a 60-second, read-only grant for exactly one tool,
         # narrower than the workflow's own warrant.
-        file_warrant = workflow_grant(
+        file_warrant = await workflow_grant(
             "read_file",
             constraints={"path": path},  # Must be keys the parent already has
             ttl_seconds=60,
@@ -1206,7 +1203,7 @@ See **[Security considerations](#security-considerations)** for the full threat 
 
 ## Exceptions
 
-All exceptions include `error_code` for wire format compatibility:
+The main authorization exceptions include `error_code` for wire format compatibility:
 
 ```python
 from tenuo.temporal import (
@@ -1256,7 +1253,7 @@ For the full module-level troubleshooting entries, see the `tenuo.temporal` modu
 | `WarrantExpired` | Warrant TTL elapsed before or during workflow execution | Mint a new warrant with a longer `ttl()`, or refresh the warrant at workflow start |
 | Activity denied despite a warrant that looks correct | PoP argument keys or tool name mismatch between signer and verifier | Check worker logs for the outbound interceptor warning about positional vs. named keys; also verify `tool_mappings` if activity type differs from warrant tool name |
 | Child workflow runs with no authorization | Started with `workflow.execute_child_workflow()` | Use `tenuo_execute_child_workflow()` so warrant headers propagate ([Child Workflow Delegation](#child-workflow-delegation)) |
-| `TenuoArgNormalizationError: Activity argument 'x' has type 'set' which cannot be normalized` | Activity argument is a type Tenuo cannot normalize for PoP signing (`set`, `datetime`, `Enum`, custom class, etc.) | Convert to a `@dataclass` or `dict`, or lift the field to a top-level primitive argument. See [Structured state in activity arguments](#structured-state-in-activity-arguments). |
+| `TenuoArgNormalizationError: Activity argument 'x' has type 'set' which cannot be normalized` | Activity argument is a type Tenuo cannot normalize for PoP signing (`set`, `datetime`, `Enum`, custom class, etc.) | Convert to a `@dataclass` or `dict`, or lift the field to a top-level primitive argument. |
 | `TenuoPreValidationError: unknown field not allowed (zero-trust mode): a, b, c` | Warrant capability declares fewer fields than the activity accepts | Declare all activity arguments in the warrant capability (use `Wildcard()` for fields that don't need structural constraints). The error lists ALL unknown/missing fields at once. |
 
 ---
