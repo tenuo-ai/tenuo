@@ -5279,26 +5279,24 @@ async def tenuo_complete_async_activity(
         client: Temporal client (required when handle_or_task_token is bytes).
 
     Raises:
-        TenuoContextError: If PoP signing fails.
         ConfigurationError: If client is required but not provided.
     """
     import datetime as _datetime
 
     now = _datetime.datetime.now(_datetime.timezone.utc)
 
-    # Attempt PoP signing — non-fatal if key unavailable (best-effort for async path)
+    # Best-effort PoP signing — non-fatal if key unavailable
     try:
         worker_cfg = _get_worker_config()
         if worker_cfg is not None and worker_cfg.key_resolver is not None:
-            key = worker_cfg.key_resolver.resolve_key(key_id)
+            key = await worker_cfg.key_resolver.resolve(key_id)
             if key is not None:
                 import json as _json
                 payload_str = _json.dumps({"result": str(result), "ts": now.isoformat()})
-                # PoP signature via warrant (best-effort)
                 if hasattr(warrant, "sign_pop"):
                     warrant.sign_pop(payload_str.encode(), key)
     except Exception:
-        pass  # PoP signing is best-effort in async completion path
+        logger.debug("PoP signing skipped for async activity completion", exc_info=True)
 
     # Complete the activity via the Temporal SDK
     if isinstance(handle_or_task_token, (bytes, bytearray)):
@@ -5370,6 +5368,7 @@ __all__ = [
     # Workflow helpers
     "tenuo_execute_activity",
     "execute_workflow_authorized",
+    "start_workflow_authorized",
     "tenuo_execute_child_workflow",
     "set_activity_approvals",
     # WarrantSource (Item 1.7)
@@ -5387,6 +5386,9 @@ __all__ = [
     "workflow_issue_execution",  # Phase 2.3
     "tenuo_continue_as_new",  # Item 3.5
     "AuthorizedWorkflow",  # Phase 3
+    # Error types
+    "TenuoArgNormalizationError",
+    "TenuoPreValidationError",
     # Phase 2: Decorators
     "unprotected",
     "is_unprotected",

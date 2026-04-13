@@ -1974,7 +1974,10 @@ def test_create_scheduled_workflow_with_warrant_exists():
 def test_signal_and_update_constraints_in_config():
     """TenuoPluginConfig exposes signal and update constraint fields."""
     from tenuo.temporal import TenuoPluginConfig
+    from unittest.mock import MagicMock
+    resolver = MagicMock(spec=KeyResolver)
     cfg = TenuoPluginConfig(
+        key_resolver=resolver,
         trusted_roots=_TEMPORAL_TRUST_ROOTS,
         signal_constraints={"my_signal": {}},
         update_constraints={"my_update": {}},

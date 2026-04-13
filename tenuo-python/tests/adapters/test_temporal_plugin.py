@@ -231,26 +231,29 @@ def test_preload_keys_not_called_if_unsupported() -> None:
 # Item 2.4 — Data-plane-only (read-only) workers
 # ---------------------------------------------------------------------------
 
-def test_optional_key_resolver() -> None:
-    """TenuoPluginConfig should accept None key_resolver for read-only workers."""
+def test_none_key_resolver_raises() -> None:
+    """TenuoPluginConfig rejects key_resolver=None (signing material required)."""
+    from tenuo.exceptions import ConfigurationError
+
     sk = SigningKey.generate()
-    config = TenuoPluginConfig(key_resolver=None, trusted_roots=[sk.public_key])
-    assert config.key_resolver is None
+    with pytest.raises(ConfigurationError, match="key_resolver|signing_key"):
+        TenuoPluginConfig(key_resolver=None, trusted_roots=[sk.public_key])
 
 
-def test_read_only_config_accepted() -> None:
-    """A worker with no key_resolver should construct without error."""
+def test_no_signing_material_raises() -> None:
+    """TenuoPluginConfig rejects construction without any signing material."""
+    from tenuo.exceptions import ConfigurationError
+
     sk = SigningKey.generate()
-    config = TenuoPluginConfig(key_resolver=None, trusted_roots=[sk.public_key])
-    plugin = TenuoPlugin(config)  # should not raise
-    assert plugin is not None
+    with pytest.raises(ConfigurationError, match="key_resolver|signing_key"):
+        TenuoPluginConfig(trusted_roots=[sk.public_key])
 
 
-def test_key_resolver_none_is_default() -> None:
-    """key_resolver defaults to None when not supplied."""
+def test_signing_key_synthesizes_resolver() -> None:
+    """Passing signing_key= synthesizes a key_resolver automatically."""
     sk = SigningKey.generate()
-    config = TenuoPluginConfig(trusted_roots=[sk.public_key])
-    assert config.key_resolver is None
+    config = TenuoPluginConfig(signing_key=sk, trusted_roots=[sk.public_key])
+    assert config.key_resolver is not None
 
 
 def test_key_resolver_with_value_still_works() -> None:
@@ -271,7 +274,7 @@ def test_key_resolver_with_value_still_works() -> None:
 def test_clearance_requirements_none_by_default() -> None:
     """clearance_requirements defaults to None (no behavioral change when unset)."""
     sk = SigningKey.generate()
-    config = TenuoPluginConfig(trusted_roots=[sk.public_key])
+    config = TenuoPluginConfig(signing_key=sk, trusted_roots=[sk.public_key])
     assert config.clearance_requirements is None
 
 
@@ -280,6 +283,7 @@ def test_clearance_requirements_field_accepted() -> None:
     Clearance = pytest.importorskip("tenuo_core", reason="tenuo_core not available").Clearance
     sk = SigningKey.generate()
     config = TenuoPluginConfig(
+        signing_key=sk,
         trusted_roots=[sk.public_key],
         clearance_requirements={"send_email": Clearance.INTERNAL},
     )
@@ -292,6 +296,7 @@ def test_clearance_requirements_multiple_tools() -> None:
     Clearance = pytest.importorskip("tenuo_core", reason="tenuo_core not available").Clearance
     sk = SigningKey.generate()
     config = TenuoPluginConfig(
+        signing_key=sk,
         trusted_roots=[sk.public_key],
         clearance_requirements={
             "*": Clearance.EXTERNAL,
@@ -309,14 +314,14 @@ def test_clearance_requirements_multiple_tools() -> None:
 def test_revocation_list_none_by_default() -> None:
     """revocation_list defaults to None (no behavioral change when unset)."""
     sk = SigningKey.generate()
-    config = TenuoPluginConfig(trusted_roots=[sk.public_key])
+    config = TenuoPluginConfig(signing_key=sk, trusted_roots=[sk.public_key])
     assert config.revocation_list is None
 
 
 def test_revocation_list_field_accepted() -> None:
     """revocation_list=None is accepted without error."""
     sk = SigningKey.generate()
-    config = TenuoPluginConfig(trusted_roots=[sk.public_key], revocation_list=None)
+    config = TenuoPluginConfig(signing_key=sk, trusted_roots=[sk.public_key], revocation_list=None)
     assert config.revocation_list is None
 
 
@@ -325,6 +330,7 @@ def test_revocation_list_provider_accepted() -> None:
     sk = SigningKey.generate()
     provider = lambda: None  # noqa: E731
     config = TenuoPluginConfig(
+        signing_key=sk,
         trusted_roots=[sk.public_key],
         revocation_list_provider=provider,
         revocation_refresh_secs=60,
@@ -336,12 +342,12 @@ def test_revocation_list_provider_accepted() -> None:
 def test_revocation_refresh_secs_none_by_default() -> None:
     """revocation_refresh_secs defaults to None."""
     sk = SigningKey.generate()
-    config = TenuoPluginConfig(trusted_roots=[sk.public_key])
+    config = TenuoPluginConfig(signing_key=sk, trusted_roots=[sk.public_key])
     assert config.revocation_refresh_secs is None
 
 
 def test_revocation_list_provider_none_by_default() -> None:
     """revocation_list_provider defaults to None."""
     sk = SigningKey.generate()
-    config = TenuoPluginConfig(trusted_roots=[sk.public_key])
+    config = TenuoPluginConfig(signing_key=sk, trusted_roots=[sk.public_key])
     assert config.revocation_list_provider is None
