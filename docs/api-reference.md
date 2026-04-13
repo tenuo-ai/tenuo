@@ -200,7 +200,6 @@ if should_block_violation():
 |----------|---------|
 | `is_enforce_mode()` | `True` if mode is ENFORCE |
 | `is_audit_mode()` | `True` if mode is AUDIT |
-| `is_permissive_mode()` | `True` if mode is PERMISSIVE |
 | `should_block_violation()` | `True` if violations should be blocked |
 
 ---
@@ -1899,7 +1898,7 @@ TenuoError (base)
 Authorization denied with detailed diff-style error messages showing exactly what failed.
 
 ```python
-from tenuo import AuthorizationDenied, ConstraintResult, Pattern
+from tenuo import AuthorizationDenied
 
 # Example error output:
 # Access denied for tool 'read_file'
@@ -1909,17 +1908,6 @@ from tenuo import AuthorizationDenied, ConstraintResult, Pattern
 #      Received: '/etc/passwd'
 #      Reason: Pattern does not match
 #   size: OK
-
-# Create from constraint check
-error = AuthorizationDenied.from_constraint_check(
-    tool="read_file",
-    constraints={"path": Pattern("/data/*"), "size": Range(max=1000)},
-    args={"path": "/etc/passwd", "size": 500},
-    failed_field="path",
-    failed_reason="Pattern does not match",
-)
-
-print(error)  # Shows detailed diff
 ```
 
 ---
@@ -1935,15 +1923,16 @@ from tenuo import audit_logger, AuditEventType
 | Method | Description |
 |--------|-------------|
 | `audit_logger.configure(service_name, output_file=None)` | Configure the logger |
-| `audit_logger.log_authorization_success(...)` | Log success event |
-| `audit_logger.log_authorization_failure(...)` | Log failure event |
+| `audit_logger.log(event)` | Log an `AuditEvent` directly |
+| `audit_logger.authorization_success(...)` | Log success event |
+| `audit_logger.authorization_failure(...)` | Log failure event |
 
 ### Example
 
 ```python
 audit_logger.configure(service_name="payment-service")
 
-audit_logger.log_authorization_success(
+audit_logger.authorization_success(
     warrant_id="wrt_123",
     tool="process_payment",
     constraints={"amount": 100.0}
