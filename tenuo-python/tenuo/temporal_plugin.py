@@ -9,7 +9,7 @@ differ: some expose a single ``interceptors=`` parameter, others
 ``client_interceptors`` / ``worker_interceptors``. This module picks kwargs using
 ``inspect.signature(SimplePlugin.__init__)`` so we always match the **installed**
 constructor (version numbers alone can mis-classify or go stale). Subclassing
-Temporal’s interceptor bases keeps plugin filtering working on newer SDKs.
+Temporal's interceptor bases keeps plugin filtering working on newer SDKs.
 
 Example::
 
@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import logging
 from typing import TYPE_CHECKING, Any, Optional
 
 try:
@@ -51,11 +52,18 @@ except ImportError as e:  # pragma: no cover - guarded by temporalio version
         "(temporalio.plugin.SimplePlugin). Upgrade: uv pip install 'temporalio>=1.23'"
     ) from e
 
+from tenuo.exceptions import ConfigurationError
 from tenuo.temporal import (
     TenuoClientInterceptor,
     TenuoPlugin,
     TenuoPluginConfig,
+    TenuoWarrantContextPropagator,
+    _build_activity_registry,
+    _set_worker_config,
+    _tenuo_internal_mint_activity,
 )
+
+_logger = logging.getLogger("tenuo.temporal")
 
 if TYPE_CHECKING:
     from temporalio.worker import WorkflowRunner
@@ -147,6 +155,11 @@ class TenuoTemporalPlugin(SimplePlugin):
     #: or ``set_headers_for_workflow``.
     client_interceptor: TenuoClientInterceptor
 
+    #: Context propagator instance for direct access. Behaviour is automatic when
+    #: using :func:`~tenuo.temporal.tenuo_warrant_context`; expose here for users
+    #: who want to set/clear the contextvar manually.
+    context_propagator: TenuoWarrantContextPropagator
+
     def __init__(
         self,
         config: TenuoPluginConfig,
@@ -165,12 +178,76 @@ class TenuoTemporalPlugin(SimplePlugin):
             this plugin.
         """
         worker_interceptor = TenuoPlugin(config)
-        client_inter = client_interceptor or TenuoClientInterceptor()
-        self.client_interceptor = client_inter
+        self.client_interceptor = client_interceptor or TenuoClientInterceptor()
+        self.context_propagator = TenuoWarrantContextPropagator()
+        self._tenuo_config = config
+        # Item 1.5: guard against duplicate configure_worker calls on same instance
+        self._tenuo_worker_configured = False
+
+        def _add_activities(
+            activities: "list[Any] | None",
+        ) -> "list[Any]":
+            """Append _tenuo_internal_mint_activity and store worker config.
+
+            Also handles:
+            - Item 1.2: auto-discovers activity_fns from existing activities if unset.
+            - Item 1.5: raises ConfigurationError on duplicate configure_worker calls.
+            - Item 1.6: auto-calls preload_keys() if the resolver supports it.
+            """
+            # Item 1.5: detect duplicate registration
+            if self._tenuo_worker_configured:
+                raise ConfigurationError(
+                    "duplicate Tenuo plugin registered: the same TenuoTemporalPlugin "
+                    "instance was used to configure_worker more than once. Create "
+                    "separate TenuoTemporalPlugin instances for each worker."
+                )
+            self._tenuo_worker_configured = True
+
+            _set_worker_config(config)
+            existing = list(activities or [])
+
+            # Item 1.2: auto-populate activity_fns if not already set
+            if not config.activity_fns and existing:
+                config.activity_fns = list(existing)
+                # Rebuild the activity registry without re-running full __post_init__
+                config._activity_registry = _build_activity_registry(config.activity_fns)
+                _logger.info(
+                    "Tenuo: auto-discovered %d activity function(s) from worker config",
+                    len(config.activity_fns),
+                )
+
+            # Item 1.6: auto-call preload_keys() if the resolver supports it
+            # Only auto-call if preload_keys() can be invoked with no arguments
+            # (EnvKeyResolver.preload_keys requires key_ids; resolvers designed for
+            # auto-preload declare preload_keys() with no required positional args).
+            _preload = getattr(config.key_resolver, "preload_keys", None)
+            if _preload is not None:
+                try:
+                    _sig = inspect.signature(_preload)
+                    _required = [
+                        p for p in _sig.parameters.values()
+                        if p.default is inspect.Parameter.empty
+                        and p.kind not in (
+                            inspect.Parameter.VAR_POSITIONAL,
+                            inspect.Parameter.VAR_KEYWORD,
+                        )
+                    ]
+                    if not _required:
+                        _preload()
+                except (ValueError, TypeError):
+                    pass
+
+            if _tenuo_internal_mint_activity is not None:
+                existing.append(_tenuo_internal_mint_activity)
+            return existing
+
         super().__init__(
             TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME,
             workflow_runner=ensure_tenuo_workflow_runner,
-            **_simple_plugin_interceptor_kwargs(client_inter, worker_interceptor),
+            activities=_add_activities,
+            **_simple_plugin_interceptor_kwargs(
+                self.client_interceptor, worker_interceptor
+            ),
         )
 
 

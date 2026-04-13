@@ -364,18 +364,24 @@ def test_parameter_name_resolution_consistency():
     """Verify outbound and inbound interceptors use same arg resolution strategy."""
     import inspect
 
-    from tenuo.temporal import TenuoActivityInboundInterceptor, _TenuoWorkflowOutboundInterceptor
+    from tenuo.temporal import (
+        TenuoActivityInboundInterceptor,
+        _TenuoWorkflowOutboundInterceptor,
+        _args_to_dict_by_fn,
+    )
 
-    outbound_source = inspect.getsource(_TenuoWorkflowOutboundInterceptor.start_activity)
+    # start_activity delegates to _args_to_dict_by_fn for signature inspection;
+    # check the helper where the logic lives.
+    outbound_helper_source = inspect.getsource(_args_to_dict_by_fn)
     inbound_source = inspect.getsource(TenuoActivityInboundInterceptor._extract_arguments)
 
-    assert "inspect.signature" in outbound_source, "Outbound should use inspect.signature"
+    assert "inspect.signature" in outbound_helper_source, "Outbound helper should use inspect.signature"
     assert "inspect.signature" in inbound_source, "Inbound should use inspect.signature"
 
-    assert "arg{i}" in outbound_source or 'f"arg{i}"' in outbound_source
+    assert "arg{i}" in outbound_helper_source or 'f"arg{i}"' in outbound_helper_source
     assert "arg{i}" in inbound_source or 'f"arg{i}"' in inbound_source
 
-    assert "activity_fn" in outbound_source
+    assert "activity_fn" in outbound_helper_source
     assert "activity_fn" in inbound_source
 
 

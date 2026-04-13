@@ -37,9 +37,7 @@ from temporalio.worker.workflow_sandbox import (  # noqa: E402
     SandboxedWorkflowRunner,
     SandboxRestrictions,
 )
-from tenuo_core import Pattern, Subpath  # noqa: E402
-
-from tenuo import SigningKey, Warrant  # noqa: E402
+from tenuo import Pattern, SigningKey, Subpath, Warrant  # noqa: E402
 from tenuo.temporal import (  # noqa: E402
     AuthorizedWorkflow,
     KeyResolver,
@@ -47,6 +45,7 @@ from tenuo.temporal import (  # noqa: E402
     TenuoClientInterceptor,
     TenuoPlugin,
     TenuoPluginConfig,
+    _tenuo_internal_mint_activity,
     tenuo_execute_activity,
     tenuo_execute_child_workflow,
     tenuo_headers,
@@ -332,7 +331,9 @@ async def _run_workflow(
         interceptors=[client_interceptor],  # type: ignore[list-item]
     )
 
-    act_list = activities if activities is not None else [echo, read_file, list_directory]
+    act_list = activities if activities is not None else [
+        echo, read_file, list_directory, _tenuo_internal_mint_activity,
+    ]
 
     worker = Worker(
         raw_client,

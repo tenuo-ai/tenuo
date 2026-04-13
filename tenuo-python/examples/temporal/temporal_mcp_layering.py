@@ -59,9 +59,8 @@ except ImportError:
     MCP_AVAILABLE = False
     SecureMCPClient = None  # type: ignore[misc, assignment]
 
-from tenuo import SigningKey, Warrant
+from tenuo import SigningKey, Subpath, Warrant
 from tenuo.decorators import key_scope, warrant_scope
-from tenuo_core import Subpath
 
 from tenuo.temporal import (
     EnvKeyResolver,
