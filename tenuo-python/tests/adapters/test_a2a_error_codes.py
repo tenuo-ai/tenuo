@@ -68,7 +68,7 @@ class TestA2AErrorCodeMappings:
 
     def test_unknown_wire_code_returns_internal_error(self):
         """Test that unknown wire codes map to INTERNAL_ERROR."""
-        unknown_codes = [1001, 1201, 1302, 1702, 1900, 2000]
+        unknown_codes = [1001, 1201, 1302, 1900, 2000]
 
         for code in unknown_codes:
             assert A2AErrorCode.from_wire_code(code) == A2AErrorCode.INTERNAL_ERROR

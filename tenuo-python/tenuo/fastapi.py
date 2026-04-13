@@ -484,7 +484,7 @@ class TenuoGuard:
                 from tenuo_core import SignedApproval  # type: ignore[attr-defined]
 
                 raw_list = json.loads(base64.b64decode(x_tenuo_approvals))
-                decoded_approvals = [SignedApproval.from_base64(item) for item in raw_list]
+                decoded_approvals = [SignedApproval.from_bytes(base64.b64decode(item)) for item in raw_list]
             except Exception:
                 logger.warning("Failed to decode X-Tenuo-Approvals header", exc_info=True)
 
