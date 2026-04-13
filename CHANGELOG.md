@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **Removed `trusted_approvers` and `approval_threshold` from `TenuoPluginConfig`.**
+  The warrant is now the single source of truth for who can approve and how many
+  approvals are required. Passing these options to `TenuoPluginConfig()` will raise
+  `TypeError`. Set `required_approvers` and `approval_threshold` on the warrant at
+  mint time instead.
+
 ## [0.1.0-beta.19] - 2026-04-10
 
 ### Security

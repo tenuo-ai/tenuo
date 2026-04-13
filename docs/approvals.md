@@ -32,8 +32,8 @@ Tool Call ──► Rust Core verifies warrant ──► Python checks policy ru
 | *What* an agent can do | Warrant (cryptographic) | Rust core |
 | *When* a human must confirm | ApprovalPolicy (runtime) | Python |
 | *Proof* of confirmation | SignedApproval (Ed25519) | Rust core |
-| *Who* can confirm | trusted_approvers (PublicKey list) | Python policy |
-| *How many* must confirm | threshold (m-of-n) | Python policy, verified by Rust core |
+| *Who* can confirm | required_approvers (in warrant) | Rust core |
+| *How many* must confirm | approval_threshold (in warrant) | Rust core |
 
 ---
 
@@ -88,9 +88,9 @@ When `enforce_tool_call()` receives `SignedApproval`(s) from a handler, the Rust
 1. **Signature** - Ed25519 signature check
 2. **Hash match** - `payload.request_hash == expected_hash` (prevents reuse across calls)
 3. **Expiry** - `payload.expires_at > now` (with 30-second clock tolerance for distributed systems)
-4. **Key trust** - `signed.approver_key in policy.trusted_approvers` (prevents rogue approvers)
+4. **Key trust** - `signed.approver_key in warrant.required_approvers()` (prevents rogue approvers)
 5. **Deduplication** - one vote per approver key (prevents double-counting)
-6. **Threshold** - valid approval count >= `policy.threshold` (m-of-n satisfaction)
+6. **Threshold** - valid approval count >= `warrant.approval_threshold()` (m-of-n satisfaction)
 
 For **1-of-1** failures, the Rust core returns the specific rejection reason (e.g., "request hash mismatch", "approval expired"). For **m-of-n** failures, it returns a summary of all rejection reasons (e.g., "required 2, received 1 [rejected: 1 expired, 1 not trusted]").
 
@@ -109,10 +109,12 @@ from tenuo import (
 agent_key = SigningKey.generate()      # the AI agent
 approver_key = SigningKey.generate()   # the human approver
 
-# 2. Warrant (what the agent can do)
+# 2. Warrant (what the agent can do — including who can approve)
 warrant = (Warrant.mint_builder()
     .capability("transfer")
     .capability("search")
+    .required_approvers([approver_key.public_key])
+    .approval_threshold(1)
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(agent_key)
@@ -121,7 +123,6 @@ warrant = (Warrant.mint_builder()
 # 3. Approval policy (when a human must confirm)
 policy = ApprovalPolicy(
     require_approval("transfer", when=lambda args: args["amount"] > 10_000),
-    trusted_approvers=[approver_key.public_key],
 )
 
 # 4. Protect a function with @guard
@@ -144,28 +145,37 @@ with warrant_scope(warrant), key_scope(agent_key):
 
 ## M-of-N Multi-Sig
 
-Require multiple approvers to sign before a tool call proceeds:
+Require multiple approvers to sign before a tool call proceeds.
+Approvers and threshold are set **in the warrant** — the single source of truth:
 
 ```python
+warrant = (Warrant.mint_builder()
+    .capability("deploy_prod")
+    .capability("transfer_funds")
+    .required_approvers([alice.public_key, bob.public_key, carol.public_key])
+    .approval_threshold(2)  # any 2-of-3 must approve
+    .holder(agent_key.public_key)
+    .ttl(3600)
+    .mint(control_key)
+)
+
 policy = ApprovalPolicy(
     require_approval("deploy_prod"),
     require_approval("transfer_funds", when=lambda a: a["amount"] > 100_000),
-    trusted_approvers=[alice.public_key, bob.public_key, carol.public_key],
-    threshold=2,  # any 2-of-3 must approve
 )
 ```
 
-The `threshold` parameter (default: 1) specifies the minimum number of valid approvals required. The Rust core verifies each approval independently and checks that the count of valid, unique approvals meets the threshold.
+The `approval_threshold` on the warrant (default: 1) specifies the minimum number of valid approvals required. The Rust core verifies each approval independently and checks that the count of valid, unique approvals meets the threshold.
 
-| `threshold` | `trusted_approvers` | Meaning |
-|-------------|---------------------|---------|
+| `approval_threshold` | `required_approvers` | Meaning |
+|----------------------|----------------------|---------|
 | 1 | `[alice]` | Single approver (default) |
 | 2 | `[alice, bob, carol]` | Any 2 of 3 must approve |
 | 3 | `[alice, bob, carol]` | All 3 must approve |
 
 Validation rules:
-- `threshold` must be >= 1
-- `threshold` must be <= `len(trusted_approvers)` when `trusted_approvers` is set
+- `approval_threshold` must be >= 1
+- `approval_threshold` must be <= `len(required_approvers)` in the warrant
 - Each approver can only contribute one vote (duplicates are rejected)
 
 ---
@@ -186,7 +196,6 @@ Examples:
 # Policy sets a 1-hour default for async workflows
 policy = ApprovalPolicy(
     require_approval("deploy"),
-    trusted_approvers=[ops.public_key],
     default_ttl=3600,
 )
 
@@ -200,10 +209,9 @@ handler = cli_prompt(approver_key=ops_key)  # uses policy's 3600s
 For long-running approval flows (e.g., Slack-based, email-based), set `default_ttl` on the policy:
 
 ```python
+# Approvers + threshold are in the warrant; the policy only controls TTL
 policy = ApprovalPolicy(
     require_approval("deploy_prod"),
-    trusted_approvers=[...],
-    threshold=2,
     default_ttl=86400,  # 24 hours for async multi-sig collection
 )
 ```
@@ -228,7 +236,6 @@ guard = (GuardBuilder()
     .with_warrant(warrant, agent_key)
     .approval_policy(ApprovalPolicy(
         require_approval("transfer_funds", when=lambda a: a["amount"] > 10_000),
-        trusted_approvers=[approver_key.public_key],
     ))
     .on_approval(cli_prompt(approver_key=approver_key))
     .build())
@@ -343,7 +350,8 @@ If the `when` predicate raises an exception, the rule **triggers** (fail-closed)
 
 ## Approval Policy
 
-The policy collects rules and configures trust and threshold:
+The policy collects rules and configures TTL. Trusted approvers and threshold are
+always embedded in the warrant — the single source of truth:
 
 ```python
 from tenuo import ApprovalPolicy
@@ -352,8 +360,6 @@ policy = ApprovalPolicy(
     require_approval("transfer", when=lambda a: a["amount"] > 10_000),
     require_approval("delete_user"),
     require_approval("send_email"),
-    trusted_approvers=[admin_key.public_key, ops_key.public_key],
-    threshold=1,       # default: single approval required
     default_ttl=3600,  # optional: 1-hour approval window
 )
 ```
@@ -361,9 +367,11 @@ policy = ApprovalPolicy(
 | Parameter | Default | Effect |
 |-----------|---------|--------|
 | `*rules` | (required) | One or more `ApprovalRule` instances |
-| `trusted_approvers` | `None` | If set, only these `PublicKey`s are accepted. If `None`, any valid signature passes |
-| `threshold` | `1` | Minimum valid approvals required (m-of-n multi-sig) |
 | `default_ttl` | `None` | Default TTL in seconds for signed approvals. `None` means handlers use their own default (typically 300s) |
+
+> **Note:** `required_approvers` and `approval_threshold` are set on the
+> warrant at mint time, not on the policy. This ensures the cryptographic
+> authority chain cannot be bypassed by runtime configuration.
 
 ---
 
@@ -479,7 +487,7 @@ Insufficient approvals: required 2, received 1 [rejected: 1 expired, 1 not trust
 | **Call binding** | SHA-256 request hash over `(warrant, tool, args, holder)` | `TestRequestHashBinding` |
 | **Replay prevention** | Different warrant/tool/args/holder = different hash; random nonce | `test_approval_reuse_across_warrants_fails` |
 | **Forgery resistance** | Ed25519 signature verification in Rust core | `test_tampered_bytes_fail_verify` |
-| **Key trust** | `trusted_approvers` list on policy | `TestMultiApprover`, `test_untrusted_key_rejected` |
+| **Key trust** | `required_approvers` in warrant | `TestMultiApprover`, `test_untrusted_key_rejected` |
 | **Time-bound** | `expires_at` checked with 30s clock tolerance | `test_expired_approval_rejected` |
 | **Fail-closed** | Buggy handler = `internal_error` denial | `test_handler_exception_is_fail_closed` |
 | **Warrant priority** | Warrant denial short-circuits before approval check | `test_warrant_denial_takes_priority` |
