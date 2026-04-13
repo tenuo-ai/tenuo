@@ -714,7 +714,6 @@ from tenuo.approval import ApprovalPolicy, require_approval, cli_prompt
 
 policy = ApprovalPolicy(
     require_approval("delete_database"),
-    trusted_approvers=[approver_key.public_key],
 )
 
 # TenuoToolNode pattern (recommended)

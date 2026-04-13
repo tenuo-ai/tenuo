@@ -1497,19 +1497,6 @@ class TenuoPluginConfig:
     approvals are denied with ``ApprovalGateTriggered``.
     """
 
-    trusted_approvers: Optional[List[Any]] = None
-    """
-    Public keys of trusted approvers for approval gate satisfaction.
-    Required when using warrant approval gates with ``required_approvers``.
-    If ``None``, the warrant's own ``required_approvers()`` list is used.
-    """
-
-    approval_threshold: Optional[int] = None
-    """
-    Minimum number of valid approvals required to satisfy a guard.
-    If ``None``, uses the warrant's ``approval_threshold()``.
-    """
-
     strict_mode: bool = False
     """
     Fail-fast on ambiguous PoP signing (e.g. positional args when the warrant
@@ -1619,22 +1606,6 @@ class TenuoPluginConfig:
             )
 
         if self.approval_handler is not None:
-            # Auto-consume trusted_approvers from the handler when the user
-            # did not set them explicitly.  This avoids the redundant:
-            #   handler = my_approval_handler(...)
-            #   config = TenuoPluginConfig(..., trusted_approvers=handler.trusted_approvers)
-            # The user can still override by passing trusted_approvers= explicitly.
-            if self.trusted_approvers is None:
-                _handler_approvers = getattr(self.approval_handler, "trusted_approvers", None)
-                if _handler_approvers is not None:
-                    resolved = list(_handler_approvers() if callable(_handler_approvers) else _handler_approvers)
-                    if resolved:
-                        self.trusted_approvers = resolved
-                        logger.debug(
-                            "TenuoPluginConfig: auto-resolved %d trusted_approvers from approval_handler",
-                            len(resolved),
-                        )
-
             if self.retry_pop_max_windows is None or self.retry_pop_max_windows <= 5:
                 logger.info(
                     "TenuoPluginConfig: approval_handler set — retry_pop_max_windows=%s is tight for "
@@ -3861,29 +3832,8 @@ class TenuoActivityInboundInterceptor:
                 collected = result if isinstance(result, list) else [result]
 
                 # Verify the approvals locally before forwarding to Rust
-                approvers = (
-                    self._config.trusted_approvers
-                    if self._config and self._config.trusted_approvers
-                    else warrant.required_approvers()
-                )
-                threshold = (
-                    self._config.approval_threshold
-                    if self._config and self._config.approval_threshold is not None
-                    else warrant.approval_threshold()
-                )
-                # Threshold safety: config must not be weaker than the warrant's own minimum.
-                if self._config and self._config.approval_threshold is not None:
-                    warrant_min = warrant.approval_threshold()
-                    if warrant_min is not None and threshold < warrant_min:
-                        raise TemporalConstraintViolation(
-                            tool=tool_name,
-                            arguments=args,
-                            constraint=(
-                                f"Config approval_threshold ({threshold}) is less than "
-                                f"warrant minimum ({warrant_min})"
-                            ),
-                            warrant_id=getattr(warrant, "id", ""),
-                        )
+                approvers = warrant.required_approvers()
+                threshold = warrant.approval_threshold()
                 from tenuo_core import verify_approvals as _verify
                 _verify(request_hash, collected, approvers, threshold)
 
