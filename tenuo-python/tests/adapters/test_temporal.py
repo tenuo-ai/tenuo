@@ -1709,7 +1709,6 @@ def test_otel_import_check():
 def test_otel_span_emitted_on_allow():
     """Verify Tenuo emits a 'tenuo.authorize' OTel span with allow decision on success."""
     pytest.importorskip("opentelemetry")
-    from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -1724,88 +1723,93 @@ def test_otel_span_emitted_on_allow():
         tenuo_headers,
     )
 
-    # Set up an in-memory OTel tracer provider.
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    original_provider = trace.get_tracer_provider()
-    trace.set_tracer_provider(provider)
+    # Patch the module-level _otel_trace so the inbound interceptor uses our
+    # test provider. The global set_tracer_provider() is blocked by OTel's
+    # "Overriding of current TracerProvider is not allowed" guard.
+    test_trace = type("_FakeTrace", (), {
+        "get_tracer": lambda self, name: provider.get_tracer(name),
+        "get_current_span": staticmethod(
+            __import__("opentelemetry").trace.get_current_span
+        ),
+        "Status": __import__("opentelemetry").trace.Status,
+        "StatusCode": __import__("opentelemetry").trace.StatusCode,
+    })()
 
+    control_key = SigningKey.generate()
+    agent_key = SigningKey.generate()
+    warrant = (
+        Warrant.mint_builder()
+        .holder(agent_key.public_key)
+        .capability("read_file", path=Subpath("/tmp/demo"))
+        .ttl(3600)
+        .mint(control_key)
+    )
+    h = tenuo_headers(warrant, "agent1")
+
+    cfg = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[control_key.public_key],
+    )
+    ti = TenuoPlugin(cfg)
+    nxt = MagicMock()
+    nxt.execute_activity = AsyncMock(return_value="ok")
+    nxt.init = MagicMock()
+    ai = ti.intercept_activity(nxt)
+
+    import time as _time
+    pop = warrant.sign(
+        agent_key, "read_file", {"path": "/tmp/demo"}, int(_time.time())
+    )
+
+    act_headers = {}
+    for k, v in h.items():
+        raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+        if k.startswith("x-tenuo-"):
+            act_headers[k] = raw_v
+    act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+
+    class FakePayload:
+        def __init__(self, data):
+            self.data = data
+
+    payload_headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
+
+    info = MagicMock()
+    info.activity_type = "read_file"
+    info.activity_id = "act-otel-1"
+    info.workflow_id = "wf-otel-allow"
+    info.workflow_run_id = "run-otel-1"
+    info.workflow_type = "OtelWorkflow"
+    info.attempt = 1
+    info.is_local = False
+
+    inp = MagicMock()
+    inp.fn = lambda path: path
+    inp.args = ("/tmp/demo",)
+    inp.headers = payload_headers
+
+    loop = asyncio.new_event_loop()
     try:
-        control_key = SigningKey.generate()
-        agent_key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .holder(agent_key.public_key)
-            .capability("read_file", path=Subpath("/tmp/demo"))
-            .ttl(3600)
-            .mint(control_key)
-        )
-        h = tenuo_headers(warrant, "agent1")
-
-        cfg = TenuoPluginConfig(
-            key_resolver=EnvKeyResolver(),
-            trusted_roots=[control_key.public_key],
-        )
-        ti = TenuoPlugin(cfg)
-        nxt = MagicMock()
-        nxt.execute_activity = AsyncMock(return_value="ok")
-        nxt.init = MagicMock()
-        ai = ti.intercept_activity(nxt)
-
-        import time as _time
-        pop = warrant.sign(
-            agent_key, "read_file", {"path": "/tmp/demo"}, int(_time.time())
-        )
-
-        act_headers = {}
-        for k, v in h.items():
-            raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
-            if k.startswith("x-tenuo-"):
-                act_headers[k] = raw_v
-        act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
-
-        class FakePayload:
-            def __init__(self, data):
-                self.data = data
-
-        payload_headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
-
-        info = MagicMock()
-        info.activity_type = "read_file"
-        info.activity_id = "act-otel-1"
-        info.workflow_id = "wf-otel-allow"
-        info.workflow_run_id = "run-otel-1"
-        info.workflow_type = "OtelWorkflow"
-        info.attempt = 1
-        info.is_local = False
-
-        inp = MagicMock()
-        inp.fn = lambda path: path
-        inp.args = ("/tmp/demo",)
-        inp.headers = payload_headers
-
-        loop = asyncio.new_event_loop()
-        try:
-            with patch("temporalio.activity.info", return_value=info):
-                loop.run_until_complete(ai.execute_activity(inp))
-        finally:
-            loop.close()
-
-        finished = exporter.get_finished_spans()
-        tenuo_spans = [s for s in finished if s.name == "tenuo.authorize"]
-        assert len(tenuo_spans) >= 1, (
-            f"Expected tenuo.authorize span, got: {[s.name for s in finished]}"
-        )
-        span = tenuo_spans[0]
-        attrs = dict(span.attributes or {})
-        assert attrs.get("tenuo.tool") == "read_file"
-        assert attrs.get("tenuo.decision") == "allow"
-        assert "tenuo.warrant_id" in attrs
-        assert "tenuo.constraint_violated" in attrs
-
+        with patch("tenuo.temporal._otel_trace", test_trace), \
+             patch("temporalio.activity.info", return_value=info):
+            loop.run_until_complete(ai.execute_activity(inp))
     finally:
-        trace.set_tracer_provider(original_provider)
+        loop.close()
+
+    finished = exporter.get_finished_spans()
+    tenuo_spans = [s for s in finished if s.name == "tenuo.authorize"]
+    assert len(tenuo_spans) >= 1, (
+        f"Expected tenuo.authorize span, got: {[s.name for s in finished]}"
+    )
+    span = tenuo_spans[0]
+    attrs = dict(span.attributes or {})
+    assert attrs.get("tenuo.tool") == "read_file"
+    assert attrs.get("tenuo.decision") == "allow"
+    assert "tenuo.warrant_id" in attrs
+    assert "tenuo.constraint_violated" in attrs
 
 
 # =============================================================================

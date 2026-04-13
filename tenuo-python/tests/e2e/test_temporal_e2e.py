@@ -17,7 +17,6 @@ Covers:
 
 import asyncio
 import base64
-import logging
 import time
 import warnings
 from dataclasses import dataclass
@@ -37,7 +36,6 @@ from tenuo.temporal import (  # noqa: E402
     TENUO_KEY_ID_HEADER,
     TENUO_POP_HEADER,
     TENUO_WARRANT_HEADER,
-    TenuoContextError,
     EnvKeyResolver,
     TenuoClientInterceptor,
     TenuoPlugin,
@@ -1234,7 +1232,9 @@ class TestOutboundInterceptorHeaderInjection:
     def test_warning_when_positional_pop_with_named_constraints(
         self, warrant, agent_key, headers_dict, control_key, caplog
     ):
-        """No input.fn and no activity_fns → arg0 fallback; warrant has path → warn."""
+        """No input.fn and no activity_fns → arg0 fallback; warrant has path →
+        _prevalidate_args_against_warrant fires (arg0 vs path mismatch) and
+        the error is wrapped in a non-retryable ApplicationError."""
         from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-positional-pop-warn"
@@ -1262,27 +1262,24 @@ class TestOutboundInterceptorHeaderInjection:
 
         inp = FakeStartActivityInput()
 
-        with caplog.at_level(logging.WARNING, logger="tenuo.temporal"):
-            with patch("temporalio.workflow.info") as mock_info:
-                mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
-                with patch("temporalio.workflow.now") as mock_now:
-                    import datetime
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            with patch("temporalio.workflow.now") as mock_now:
+                import datetime
 
-                    mock_now.return_value = datetime.datetime(
-                        2026, 1, 1, tzinfo=datetime.timezone.utc
-                    )
+                mock_now.return_value = datetime.datetime(
+                    2026, 1, 1, tzinfo=datetime.timezone.utc
+                )
+                with pytest.raises(ApplicationError) as exc:
                     outbound.start_activity(inp)
-
-        assert any(
-            "PoP signing for activity 'read_file'" in r.message
-            and "activity_fns" in r.message
-            for r in caplog.records
-        )
+        assert "read_file" in str(exc.value)
+        assert "arg0" in str(exc.value) or "unknown field" in str(exc.value)
 
     def test_strict_mode_raises_on_positional_pop_with_named_constraints(
         self, warrant, agent_key, headers_dict, control_key
     ):
-        """strict_mode=True: positional fallback + named constraints → TenuoContextError."""
+        """strict_mode=True: positional fallback + named constraints →
+        _prevalidate_args_against_warrant fires first, wrapped in ApplicationError."""
         from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-positional-pop-strict"
@@ -1318,10 +1315,9 @@ class TestOutboundInterceptorHeaderInjection:
                 mock_now.return_value = datetime.datetime(
                     2026, 1, 1, tzinfo=datetime.timezone.utc
                 )
-                with pytest.raises(TenuoContextError) as exc:
+                with pytest.raises(ApplicationError) as exc:
                     outbound.start_activity(inp)
         assert "read_file" in str(exc.value)
-        assert "activity_fns" in str(exc.value)
 
     def test_activity_interceptor_reads_from_input_headers(
         self, warrant, agent_key, control_key, headers_dict
@@ -1438,7 +1434,9 @@ class TestChildWorkflowDelegation:
             id: str = "wf-unknown-child"
             headers: Optional[Dict[str, Any]] = None
 
-        outbound.start_child_workflow(FakeChildInput())
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id="wf-no-headers-parent")
+            outbound.start_child_workflow(FakeChildInput())
         assert captured["headers"] is None
 
 
@@ -1582,7 +1580,7 @@ class TestOutboundFailClosed:
             with patch("temporalio.workflow.now") as mock_now:
                 import datetime
                 mock_now.return_value = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
-                with pytest.raises(TenuoContextError) as exc:
+                with pytest.raises(ApplicationError) as exc:
                     outbound.start_activity(FakeInput())
                 assert "fail-closed" in str(exc.value).lower()
 

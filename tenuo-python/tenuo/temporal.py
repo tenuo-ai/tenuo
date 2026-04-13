@@ -305,10 +305,11 @@ _active_tenuo_warrant: contextvars.ContextVar[Optional[tuple]] = contextvars.Con
 # computes PoP signatures inline using deterministic timestamps, and injects
 # them into activity headers. No queue machinery needed.
 #
-# _workflow_headers_store: workflow_id → {warrant, key_id}
-# _pending_child_headers:  child_wf_id → attenuated headers
-# _pop_dedup_cache:        alias of default InMemoryPopDedupStore.cache (replay protection)
-# _workflow_config_store:  workflow_id → TenuoPluginConfig
+# _workflow_headers_store:    workflow_id → {warrant, key_id}
+# _pending_child_headers:     child_wf_id → attenuated headers
+# _pop_dedup_cache:           alias of default InMemoryPopDedupStore.cache (replay protection)
+# _workflow_config_store:     workflow_id → TenuoPluginConfig
+# _pending_mint_capabilities: ref_key → capabilities dict (bypasses Temporal serialization)
 #
 # Thread safety: _store_lock protects all mutations. Temporal workers
 # may execute activities from different workflows concurrently on
@@ -322,6 +323,7 @@ _DEDUP_MAX_SIZE: int = 10_000
 _workflow_config_store: Dict[str, "TenuoPluginConfig"] = {}
 _pending_activity_fn: Dict[str, Any] = {}  # workflow_id → activity function ref
 _pending_activity_approvals: Dict[str, List[Any]] = {}  # workflow_id → SignedApproval list
+_pending_mint_capabilities: Dict[str, dict] = {}  # ref_key → capabilities dict (avoids Temporal serialization of PyO3 types)
 
 # Worker-level config — set once at worker init by TenuoTemporalPlugin.configure_worker.
 # Used by _tenuo_internal_mint_activity so it can resolve keys during local activity execution.
@@ -805,12 +807,19 @@ class TemporalAuditEvent:
 
 @_dataclasses.dataclass
 class _MintRequest:
-    """Serializable request for _tenuo_internal_mint_activity."""
+    """Serializable request for _tenuo_internal_mint_activity.
+
+    Capabilities are stored in ``_pending_mint_capabilities`` (process-local)
+    rather than inline, because PyO3 constraint types (Subpath, Pattern, …)
+    cannot survive ``dataclasses.asdict()`` → ``copy.deepcopy()`` which
+    Temporal's payload converter uses.  Only the lookup key travels through
+    Temporal serialization.
+    """
 
     kind: str  # "attenuate" or "issue_execution"
     parent_warrant_bytes: bytes
     key_id: str
-    capabilities: dict  # tool -> {field -> constraint_bytes or None}
+    capabilities_ref: str  # key into _pending_mint_capabilities
     ttl_seconds: Optional[int] = None
     holder_bytes: Optional[bytes] = None      # PublicKey bytes, if attenuating to a new holder
     clearance_bytes: Optional[bytes] = None   # Clearance bytes, if restricting clearance
@@ -2623,28 +2632,41 @@ async def _dispatch_mint_activity(
     Centralises the boilerplate (RetryPolicy, timeout, non-retryable error types)
     shared by ``workflow_grant``, ``workflow_issue_execution``, and
     ``attenuated_headers``. Returns the raw child warrant bytes.
+
+    Capabilities are stashed in a process-local dict rather than inlined in
+    ``_MintRequest``, because PyO3 constraint types cannot survive Temporal's
+    ``dataclasses.asdict()`` → ``copy.deepcopy()`` serialization path.
     """
+    import uuid
     from datetime import timedelta
 
     from temporalio import workflow  # type: ignore[import-not-found]
     from temporalio.common import RetryPolicy as _RetryPolicy
 
+    cap_ref = uuid.uuid4().hex
+    with _store_lock:
+        _pending_mint_capabilities[cap_ref] = capabilities
+
     req = _MintRequest(
         kind=kind,
         parent_warrant_bytes=parent_warrant.to_bytes(),
         key_id=key_id,
-        capabilities=capabilities,
+        capabilities_ref=cap_ref,
         ttl_seconds=ttl_seconds,
     )
-    return await workflow.execute_local_activity(
-        _tenuo_internal_mint_activity,
-        req,
-        start_to_close_timeout=timedelta(seconds=10),
-        retry_policy=_RetryPolicy(
-            maximum_attempts=1,
-            non_retryable_error_types=["TenuoContextError", "TemporalConstraintViolation"],
-        ),
-    )
+    try:
+        return await workflow.execute_local_activity(
+            _tenuo_internal_mint_activity,
+            req,
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=_RetryPolicy(
+                maximum_attempts=1,
+                non_retryable_error_types=["TenuoContextError", "TemporalConstraintViolation"],
+            ),
+        )
+    finally:
+        with _store_lock:
+            _pending_mint_capabilities.pop(cap_ref, None)
 
 
 def _workflow_mint_context(purpose: str) -> tuple[str, "TenuoPluginConfig"]:
@@ -3457,6 +3479,10 @@ try:
         """
         from tenuo_core import Warrant as _Warrant  # type: ignore
 
+        # Retrieve the capabilities dict that was stashed by _dispatch_mint_activity.
+        with _store_lock:
+            capabilities = _pending_mint_capabilities.get(req.capabilities_ref, {})
+
         # Resolve signing key from the worker-level config stored at init time.
         config = _get_worker_config()
         if config is None or config.key_resolver is None:
@@ -3477,17 +3503,12 @@ try:
         try:
             if req.kind == "attenuate":
                 child = parent_warrant.attenuate(
-                    capabilities=req.capabilities,
+                    capabilities=capabilities,
                     signing_key=signer,
                     ttl_seconds=req.ttl_seconds,
                 )
             elif req.kind == "issue_execution":
-                # IssuerWarrant mode: call issue_execution() on the parent issuer
-                # warrant to produce a fresh execution warrant.
                 if not hasattr(parent_warrant, "issue_execution"):
-                    # TODO: remove this fallback once issue_execution() is available
-                    # on all Warrant types. For now, fall back to attenuate() with
-                    # a warning so read-path workers are not broken.
                     import warnings
                     warnings.warn(
                         "_tenuo_internal_mint_activity: issue_execution() not available "
@@ -3497,13 +3518,13 @@ try:
                         stacklevel=2,
                     )
                     child = parent_warrant.attenuate(
-                        capabilities=req.capabilities,
+                        capabilities=capabilities,
                         signing_key=signer,
                         ttl_seconds=req.ttl_seconds,
                     )
                 else:
                     builder = parent_warrant.issue_execution()
-                    for tool_name, tool_constraints in req.capabilities.items():
+                    for tool_name, tool_constraints in capabilities.items():
                         if tool_constraints:
                             builder.capability(tool_name, tool_constraints)
                         else:

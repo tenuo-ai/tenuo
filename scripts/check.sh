@@ -164,13 +164,8 @@ if [ -d ".venv" ]; then
     echo "  → Running doctests..."
     python -m pytest --doctest-modules tenuo/ --ignore=tenuo/venv || echo "  → Some doctests failed (non-blocking)"
     
-    echo "  → Running tests with pytest (isolated)..."
-    # Run tests in isolation to avoid pollution on Python 3.9
-    for test_file in tests/test_*.py tests/security/test_*.py; do
-        [ -e "$test_file" ] || continue
-        echo "Testing $test_file..."
-        python -m pytest "$test_file"
-    done
+    echo "  → Running tests with pytest..."
+    python -m pytest -v -m "not temporal_live"
     
     cd ..
 else
