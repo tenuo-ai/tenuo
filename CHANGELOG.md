@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-beta.20] - 2026-04-13
+
 ### Breaking
 
 - **Removed `trusted_approvers` and `approval_threshold` from `TenuoPluginConfig`.**
@@ -14,6 +16,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   approvals are required. Passing these options to `TenuoPluginConfig()` will raise
   `TypeError`. Set `required_approvers` and `approval_threshold` on the warrant at
   mint time instead.
+
+### Security
+
+- **Temporal child workflow header isolation** — child workflows started via `workflow.execute_child_workflow()` no longer inherit parent Tenuo headers. Use `tenuo_execute_child_workflow()` for explicit attenuation. (#349)
+- **Temporal mint activity fail-closed** — `_tenuo_internal_mint_activity` raises `TenuoContextError` if the parent warrant lacks `issue_execution()` instead of silently falling back to `attenuate()`. (#349)
+- **CodeQL path injection fix** — resolved path injection alert in docs preview server. (#361)
+- **Authorizer approval response blind spots** — fixed cases where the authorizer could miss approval verification errors. (#362)
+
+### Added
+
+- **A2A approval transport** — threaded approval transport through the A2A adapter for human-in-the-loop flows. (#363)
+- **`tenuo_continue_as_new()` attenuation guard** — raises `NotImplementedError` if the `tenuo_attenuation` argument is provided (not yet implemented). (#349)
+
+### Fixed
+
+- **WASM connect token field key** — corrected the field key used for registration tokens in WASM builds. (#357)
+- **Connect token URL normalization** — fixed URL normalization and removed phantom Helm ServiceMonitor. (#360)
+- **Stale doc references** — removed `llms.txt`, `INTEGRATION_MAINTENANCE.md`, IETF stub, and fixed dead API references. (#358, #359)
+- **Docs merge artifact** — removed `HEAD` merge artifact from `temporal.md` security heading, corrected `current_warrant()` docs, fixed code fences and missing imports. (#349)
+
+### Changed
+
+- **`@guard` enforcement delegation** — refactored `@guard` to delegate enforcement to `enforce_tool_call`. (#356)
 
 ## [0.1.0-beta.19] - 2026-04-10
 
