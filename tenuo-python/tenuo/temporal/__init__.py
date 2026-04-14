@@ -102,6 +102,12 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TENUO_KEY_ID_HEADER": ("tenuo.temporal._constants", "TENUO_KEY_ID_HEADER"),
     "TENUO_POP_HEADER": ("tenuo.temporal._constants", "TENUO_POP_HEADER"),
     "TENUO_COMPRESSED_HEADER": ("tenuo.temporal._constants", "TENUO_COMPRESSED_HEADER"),
+    # _config — contrib plugin wiring
+    "build_activity_registry": ("tenuo.temporal._config", "_build_activity_registry"),
+    # _state — contrib plugin wiring
+    "set_worker_config": ("tenuo.temporal._state", "_set_worker_config"),
+    # _workflow — contrib plugin wiring
+    "tenuo_internal_mint_activity": ("tenuo.temporal._workflow", "_tenuo_internal_mint_activity"),
 }
 
 
