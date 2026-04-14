@@ -5,9 +5,9 @@ description: Warrant-based authorization for Temporal AI agent workflows
 
 # Tenuo integration
 
-AI agents that run as Temporal workflows can call any Activity the worker registers — there is no built-in mechanism to restrict *which* tools an agent invokes or *what arguments* it passes. Tenuo fills that gap. Before every Activity executes, the worker verifies a cryptographically signed **warrant** that defines exactly which tools the agent may call, with which argument constraints, under whose delegation. If the warrant doesn't allow the call, execution is blocked before your code runs. Activity definitions stay unchanged — authorization is enforced transparently by the interceptor.
+Tenuo provides cryptographic authorization for AI agent workflows. Each Activity execution is verified against a signed **warrant** that specifies which tools the agent may call, with what arguments, and under whose delegation. Authorization is enforced transparently by the worker interceptor — activity definitions require no changes.
 
-The integration requires no external service at runtime. Warrant verification and Proof-of-Possession (PoP) signing happen in-process using `tenuo_core` (a compiled Rust library). Private keys never leave your infrastructure.
+If you're building agentic systems on Temporal, Tenuo lets you ship agents that are constrained by design: an agent can only do what its warrant allows, and every action is cryptographically attributable to the entity that authorized it. Verification and Proof-of-Possession signing run in-process with no external service dependency at runtime.
 
 ## Prerequisites
 
