@@ -8,7 +8,7 @@ assignees: ''
 
 ## Environment
 
-- **Tenuo version**: <!-- e.g. 0.1.0-beta.20 -->
+- **Tenuo version**: <!-- e.g. 0.1.0-beta.21 -->
 - **Python version**: <!-- e.g. 3.11.5 -->
 - **OS**: <!-- e.g. macOS 15.2, Ubuntu 24.04 -->
 - **Install method**: <!-- e.g. pip, uv, from source -->
