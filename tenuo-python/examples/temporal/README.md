@@ -27,7 +27,7 @@ For the **Temporal + MCP** example you also need the MCP extra and **Python 3.10
 uv pip install "tenuo[temporal,mcp]"
 ```
 
-**Going to production:** see [Path to production](../../../docs/temporal.md#path-to-production) in `docs/temporal.md` (keys, passthrough, `activity_fns`, child workflows, dedup, root refresh). Enforcement is self-hosted on your workers; Tenuo Cloud is optional.
+**Going to production:** see [Path to production](../../../docs/temporal-reference.md#path-to-production) in `docs/temporal-reference.md` (keys, passthrough, `activity_fns`, child workflows, dedup, root refresh). Enforcement is self-hosted on your workers; Tenuo Cloud is optional.
 
 ## Examples
 
@@ -122,7 +122,7 @@ If (4) happens while your warrant has field constraints for that tool, verificat
 
 **Rule of thumb:** if the warrant names arguments (`path=`, `message=`, …), set `activity_fns` next to `TenuoPlugin` (see `demo.py`). Tool-only capabilities without per-field constraints often do not need it.
 
-See also: the **Activity registry (`activity_fns`) and PoP argument names** section in [`docs/temporal.md`](../../../docs/temporal.md) (repository root).
+See also: the **Activity registry (`activity_fns`) and PoP argument names** section in [`docs/temporal-reference.md`](../../../docs/temporal-reference.md) (repository root).
 
 ### When to use Tenuo-specific functions
 
@@ -195,7 +195,7 @@ worker = Worker(
 )
 ```
 
-Omitting this causes `ImportError: PyO3 modules may only be initialized once per interpreter process`. The worker may still look healthy while every workflow task fails. See [Sandbox passthrough explained](../../../docs/temporal.md#sandbox-passthrough-explained) in `docs/temporal.md`.
+Omitting this causes `ImportError: PyO3 modules may only be initialized once per interpreter process`. The worker may still look healthy while every workflow task fails. See [Sandbox passthrough explained](../../../docs/temporal-reference.md#sandbox-passthrough-explained) in `docs/temporal-reference.md`.
 
 ## Architecture
 
@@ -256,7 +256,7 @@ pytest tests/e2e/test_temporal_e2e.py -v   # mocked Temporal integration tests (
 | Warning: `PoP signing … uses positional argument keys (arg0, …)` | Warrant uses named field constraints but activity function reference not available | Add `activity_fns=[read_file, ...]` to `TenuoPluginConfig` (same list as `Worker(activities=...)`), or use `tenuo_execute_activity()` |
 | `TenuoContextError` (in `strict_mode`) | Same as above but fail-fast is on | See above; remove `strict_mode=True` temporarily to diagnose, then fix `activity_fns` |
 | Activity denied despite valid warrant | PoP computation failed silently | Check worker logs for WARNING/ERROR messages from outbound interceptor; verify `key_id` matches a key accessible to `KeyResolver` |
-| Child has no warrant / activities always denied | Child started with `workflow.execute_child_workflow()` | Use `tenuo_execute_child_workflow()` ([docs/temporal.md#child-workflow-delegation](../../../docs/temporal.md#child-workflow-delegation)) |
+| Child has no warrant / activities always denied | Child started with `workflow.execute_child_workflow()` | Use `tenuo_execute_child_workflow()` ([docs/temporal-reference.md#child-workflow-delegation](../../../docs/temporal-reference.md#child-workflow-delegation)) |
 
 ## Learn More
 
