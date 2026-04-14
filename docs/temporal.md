@@ -50,7 +50,7 @@ worker = Worker(
 )
 ```
 
-Set `TENUO_KEY_<key_id>` environment variables with your base64-encoded holder signing keys. For production, use `VaultKeyResolver` or `AWSSecretsManagerKeyResolver` instead. See the [reference](./temporal-reference.md#key-management-required) for key management details.
+Set `TENUO_KEY_<key_id>` environment variables with your base64-encoded holder signing keys. For production, use `VaultKeyResolver` or `AWSSecretsManagerKeyResolver` instead. **[Tenuo Cloud](https://tenuo.dev)** handles key issuance, warrant minting, rotation, and audit for teams that prefer a managed control plane. See the [reference](./temporal-reference.md#key-management-required) for key management details.
 
 > **Important:** Pass the plugin on `Client.connect(plugins=[plugin])` only. Workers created from that client automatically merge client plugins — do not duplicate.
 
