@@ -448,6 +448,14 @@ class TenuoPlugin(_TemporalWorkerInterceptor):
                 "See the module docstring for a full Worker setup example."
             ) from _e
 
+        if config.pop_dedup_store is None:
+            logger.warning(
+                "TenuoPluginConfig: using in-memory PopDedupStore (single-process only). "
+                "In multi-worker deployments, PoP replays from other workers will not be "
+                "detected. Set pop_dedup_store= to a shared backend (Redis, Memcached, "
+                "etc.) for fleet-wide replay prevention."
+            )
+
         logger.info(
             "Loaded %s (warrant authorization middleware for Temporal Python SDK)",
             TENUO_TEMPORAL_PLUGIN_ID,
@@ -507,13 +515,6 @@ class TenuoActivityInboundInterceptor:
         self._pop_dedup_store: PopDedupStore = (
             config.pop_dedup_store or _default_pop_dedup_store
         )
-        if config.pop_dedup_store is None:
-            logger.warning(
-                "TenuoPluginConfig: using in-memory PopDedupStore (single-process only). "
-                "In multi-worker deployments, PoP replays from other workers will not be "
-                "detected. Set pop_dedup_store= to a shared backend (Redis, Memcached, "
-                "etc.) for fleet-wide replay prevention."
-            )
         self._trusted_roots_provider = config.trusted_roots_provider
         self._trusted_roots_refresh_interval = config.trusted_roots_refresh_interval_secs
         import time as _time

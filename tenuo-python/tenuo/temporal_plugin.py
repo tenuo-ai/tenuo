@@ -218,26 +218,14 @@ class TenuoTemporalPlugin(SimplePlugin):
                     len(config.activity_fns),
                 )
 
-            # Item 1.6: auto-call preload_keys() if the resolver supports it
-            # Only auto-call if preload_keys() can be invoked with no arguments
-            # (EnvKeyResolver.preload_keys requires key_ids; resolvers designed for
-            # auto-preload declare preload_keys() with no required positional args).
-            _preload = getattr(config.key_resolver, "preload_keys", None)
-            if _preload is not None:
+            # Auto-preload signing keys so resolve_sync() never touches
+            # os.environ (or external storage) inside the workflow sandbox.
+            _preload_all = getattr(config.key_resolver, "preload_all", None)
+            if _preload_all is not None:
                 try:
-                    _sig = inspect.signature(_preload)
-                    _required = [
-                        p for p in _sig.parameters.values()
-                        if p.default is inspect.Parameter.empty
-                        and p.kind not in (
-                            inspect.Parameter.VAR_POSITIONAL,
-                            inspect.Parameter.VAR_KEYWORD,
-                        )
-                    ]
-                    if not _required:
-                        _preload()
-                except (ValueError, TypeError):
-                    pass
+                    _preload_all()
+                except Exception as _exc:
+                    _logger.warning("key preload failed: %s", _exc)
 
             if _tenuo_internal_mint_activity is not None:
                 existing.append(_tenuo_internal_mint_activity)

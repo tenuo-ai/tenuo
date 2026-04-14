@@ -49,7 +49,12 @@ worker = Worker(
 )
 ```
 
-Set `TENUO_KEY_<key_id>` environment variables with your base64-encoded holder signing keys. For production, use `VaultKeyResolver` or `AWSSecretsManagerKeyResolver` instead. **[Tenuo Cloud](https://cloud.tenuo.ai)** handles key issuance, warrant minting, rotation, and audit for teams that prefer a managed control plane. See the [reference](./temporal-reference.md#key-management-required) for key management details.
+`TenuoPluginConfig` requires two things:
+
+- **`trusted_roots`** — public keys of warrant issuers (for verification on the activity worker)
+- **`key_resolver`** — how the workflow worker fetches holder signing keys for PoP (e.g. `EnvKeyResolver`, `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`)
+
+Set `TENUO_KEY_<key_id>` environment variables with your base64-encoded holder signing keys. `TenuoTemporalPlugin` automatically preloads all matching keys into an in-memory cache so that `resolve_sync()` never touches `os.environ` inside the workflow sandbox. For production, use `VaultKeyResolver` or `AWSSecretsManagerKeyResolver` instead. **[Tenuo Cloud](https://cloud.tenuo.ai)** handles key issuance, warrant minting, rotation, and audit for teams that prefer a managed control plane. See the [reference](./temporal-reference.md#key-management-required) for key management details.
 
 > **Important:** Pass the plugin on `Client.connect(plugins=[plugin])` only. Workers created from that client automatically merge client plugins — do not duplicate.
 
@@ -107,6 +112,36 @@ class MyWorkflow(AuthorizedWorkflow):
         )
         return data.upper()
 ```
+
+## Capability constraints
+
+Warrants use a **closed-world (zero-trust) model**: every argument the activity receives must be declared in the capability, even if unconstrained. Use `Wildcard()` for arguments that can take any value:
+
+```python
+from tenuo import Warrant, SigningKey
+from tenuo_core import Subpath, Wildcard
+
+warrant = (
+    Warrant.mint_builder()
+    .holder(agent_key.public_key)
+    .capability("read_file", path=Subpath("/data"))       # path must be under /data
+    .capability("search", query=Wildcard())               # query can be anything
+    .capability("fetch_url",
+        url=UrlSafe(allow_schemes=["https"],
+                    allow_domains=["api.example.com"],
+                    block_private=True),
+        timeout=Wildcard(),                               # unconstrained but declared
+    )
+    .ttl(3600)
+    .mint(control_key)
+)
+```
+
+If an activity argument is not listed in the capability, the interceptor rejects the call with `TemporalConstraintViolation` — even if the value would otherwise be valid. This prevents accidental exposure of undeclared parameters.
+
+> **Common mistake:** listing only the constrained fields. If your activity has parameters `path` and `encoding`, the capability needs both — e.g. `.capability("read_file", path=Subpath("/data"), encoding=Wildcard())`.
+
+See [Temporal Integration Reference — Constraint types](./temporal-reference.md#constraint-types) for the full list of constraint types (`Subpath`, `UrlSafe`, `Exact`, `Pattern`, `Range`, `AnyOf`, etc.).
 
 ## How it works
 

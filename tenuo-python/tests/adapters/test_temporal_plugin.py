@@ -188,19 +188,20 @@ def test_duplicate_plugin_registration_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Item 1.6 — preload_keys() auto-called
+# Item 1.6 — preload_all() auto-called
 # ---------------------------------------------------------------------------
 
-def test_preload_keys_auto_called() -> None:
-    """TenuoTemporalPlugin.configure_worker auto-calls preload_keys() if available."""
+def test_preload_all_auto_called() -> None:
+    """TenuoTemporalPlugin.configure_worker auto-calls preload_all() if available."""
     preload_called: list[bool] = []
 
     class MockResolver:
         def resolve_sync(self, key_id: str) -> None:
             return None
 
-        def preload_keys(self) -> None:
+        def preload_all(self) -> int:
             preload_called.append(True)
+            return 0
 
     config = _minimal_config()
     config.key_resolver = MockResolver()  # type: ignore[assignment]
@@ -208,11 +209,11 @@ def test_preload_keys_auto_called() -> None:
     plugin = TenuoTemporalPlugin(config)
     plugin.activities([])  # type: ignore[operator]
 
-    assert preload_called, "preload_keys() should have been called automatically"
+    assert preload_called, "preload_all() should have been called automatically"
 
 
-def test_preload_keys_not_called_if_unsupported() -> None:
-    """If key_resolver has no preload_keys(), configure_worker does not error."""
+def test_preload_all_not_called_if_unsupported() -> None:
+    """If key_resolver has no preload_all(), configure_worker does not error."""
     class NoPreloadResolver:
         def resolve_sync(self, key_id: str) -> None:
             return None
