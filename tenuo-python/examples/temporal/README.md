@@ -160,7 +160,34 @@ The child receives only the attenuated warrant, not the parent's full scope.
 
 ## Worker setup (required)
 
-Tenuo's core is a PyO3 Rust extension. Unlike pure-Python integrations (e.g. OpenTelemetry's `TracingInterceptor`), Tenuo signs the Proof-of-Possession challenge *inside the workflow sandbox* at `execute_activity()` dispatch time, committing the exact tool and arguments the workflow is authorising. Because PyO3 extensions cannot be re-imported per sandbox task, both `tenuo` and `tenuo_core` must be declared as passthrough modules:
+### Recommended: `TenuoTemporalPlugin` (one-line setup)
+
+`TenuoTemporalPlugin` registers client interceptors, worker interceptors, sandbox passthrough, and key preloading in one step:
+
+```python
+from tenuo.temporal import TenuoTemporalPlugin, TenuoPluginConfig, EnvKeyResolver
+
+plugin = TenuoTemporalPlugin(
+    TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[control_key.public_key],
+    )
+)
+
+client = await Client.connect("localhost:7233", plugins=[plugin])
+worker = Worker(
+    client,
+    task_queue="my-queue",
+    workflows=[MyWorkflow],
+    activities=[read_file],
+)
+```
+
+> **Important:** Pass the plugin on `Client.connect(plugins=[plugin])` only. Workers created from that client inherit it automatically — do not pass it again on `Worker(plugins=[...])`.
+
+### Advanced: manual `TenuoPlugin` + sandbox runner
+
+Use this when you need full control over the sandbox runner or interceptor composition (e.g. combining with other interceptors):
 
 ```python
 from temporalio.worker.workflow_sandbox import (
@@ -170,14 +197,13 @@ from temporalio.worker.workflow_sandbox import (
 from tenuo.temporal import EnvKeyResolver, TenuoPlugin, TenuoPluginConfig
 
 resolver = EnvKeyResolver()
-resolver.preload_keys(["agent1"])  # cache before Worker(...); sandbox PoP cannot read os.environ
+resolver.preload_all()  # cache all TENUO_KEY_* env vars before Worker starts
 
 interceptor = TenuoPlugin(
     TenuoPluginConfig(
         key_resolver=resolver,
         on_denial="raise",
-        trusted_roots=[control_key.public_key],  # required (or tenuo.configure(trusted_roots=[...]) before building config)
-        strict_mode=True,  # optional: fail-fast on ambiguous PoP with named constraints
+        trusted_roots=[control_key.public_key],
     )
 )
 
@@ -189,13 +215,15 @@ worker = Worker(
     interceptors=[interceptor],
     workflow_runner=SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(
-            "tenuo", "tenuo_core",  # Required: PyO3 extension cannot be re-imported per sandbox task
+            "tenuo", "tenuo_core",
         )
     ),
 )
 ```
 
-Omitting this causes `ImportError: PyO3 modules may only be initialized once per interpreter process`. The worker may still look healthy while every workflow task fails. See [Sandbox passthrough explained](../../../docs/temporal-reference.md#sandbox-passthrough-explained) in `docs/temporal-reference.md`.
+The manual pattern requires you to handle sandbox passthrough and key preloading yourself. `TenuoTemporalPlugin` does both automatically.
+
+> **Why passthrough?** Tenuo's core is a PyO3 Rust extension. PyO3 modules cannot be re-imported per sandbox task, so `tenuo` and `tenuo_core` must be declared as passthrough modules. Omitting this causes `ImportError: PyO3 modules may only be initialized once per interpreter process`.
 
 ## Architecture
 

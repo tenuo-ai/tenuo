@@ -169,10 +169,10 @@ class EnvKeyResolver(KeyResolver):
         return self._load_key_from_env(key_id)
 
     def preload_keys(self, key_ids: list[str]) -> None:
-        """Pre-load keys from environment to cache for Temporal workflows.
+        """Pre-load specific keys from environment into the cache.
 
-        Call this before creating the Temporal worker to avoid os.environ access
-        inside the workflow sandbox, which is blocked as non-deterministic.
+        Call this before creating the Temporal worker to avoid ``os.environ``
+        access inside the workflow sandbox.
 
         Args:
             key_ids: List of key IDs to pre-load (e.g., ["agent1", "agent2"])
@@ -183,8 +183,42 @@ class EnvKeyResolver(KeyResolver):
         for key_id in key_ids:
             self._key_cache[key_id] = self._load_key_from_env(key_id)
 
+    def preload_all(self) -> int:
+        """Scan ``os.environ`` for all ``{prefix}*`` keys and cache them.
+
+        Called automatically by :class:`~tenuo.temporal_plugin.TenuoTemporalPlugin`
+        at worker init so that ``resolve_sync()`` never touches ``os.environ``
+        inside the Temporal workflow sandbox.
+
+        Returns:
+            Number of keys loaded.
+        """
+        import os
+
+        loaded = 0
+        for name, _value in os.environ.items():
+            if name.startswith(self._prefix):
+                key_id = name[len(self._prefix):]
+                if key_id and key_id not in self._key_cache:
+                    try:
+                        self._key_cache[key_id] = self._load_key_from_env(key_id)
+                        loaded += 1
+                    except KeyResolutionError:
+                        logger.warning("EnvKeyResolver: skipping malformed key %s", name)
+        if loaded:
+            logger.info("EnvKeyResolver: preloaded %d key(s) from environment", loaded)
+        return loaded
+
     def resolve_sync(self, key_id: str) -> Any:
-        """Resolve key from cache or environment variable synchronously."""
+        """Resolve key from cache or environment variable synchronously.
+
+        .. warning::
+            Falls back to ``os.environ`` if the key isn't cached.  Inside the
+            Temporal workflow sandbox this will raise.  Use :meth:`preload_all`
+            or :meth:`preload_keys` before worker startup, or use
+            :class:`~tenuo.temporal_plugin.TenuoTemporalPlugin` which calls
+            ``preload_all()`` automatically.
+        """
         if key_id in self._key_cache:
             return self._key_cache[key_id]
         self._maybe_warn()

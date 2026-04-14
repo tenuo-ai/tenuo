@@ -5,8 +5,6 @@ description: Get started with Tenuo in 5 minutes
 
 # Quick Start
 
-Get Tenuo running in 5 minutes. For a visual walkthrough, see the [Demo](./demo.html).
-
 ## What is Tenuo?
 
 Tenuo is a warrant-based authorization library for AI agent workflows. A **warrant** is a signed token specifying which tools an agent can call, under what constraints, and for how long.
@@ -41,15 +39,21 @@ uv pip install tenuo
 
 **With framework support:**
 ```bash
-uv pip install "tenuo[autogen]"     # AutoGen (AgentChat) integration (Python >= 3.10)
-uv pip install "tenuo[langchain]"   # LangChain integration
-uv pip install "tenuo[langgraph]"   # LangGraph integration (includes LangChain)
-uv pip install "tenuo[fastapi]"     # FastAPI integration
+uv pip install "tenuo[openai]"      # OpenAI Agents SDK
+uv pip install "tenuo[google_adk]"  # Google ADK
+uv pip install "tenuo[langchain]"   # LangChain (langchain-core ≥0.2)
+uv pip install "tenuo[langgraph]"   # LangGraph (includes LangChain)
+uv pip install "tenuo[crewai]"      # CrewAI
+uv pip install "tenuo[temporal]"    # Temporal workflows
+uv pip install "tenuo[autogen]"     # AutoGen AgentChat (Python ≥3.10)
+uv pip install "tenuo[a2a]"         # A2A inter-agent delegation
+uv pip install "tenuo[mcp]"         # MCP client & server verification (Python ≥3.10)
+uv pip install "tenuo[fastapi]"     # FastAPI
 ```
 
 > **Note:** Quotes are required in zsh (default macOS shell) since `[]` are glob characters.
 
-> **Rust SDK**: If you're using Rust directly, add `tenuo = "0.1.0-beta.15"` to your `Cargo.toml`. See the [crates.io documentation](https://crates.io/crates/tenuo) for Rust-specific examples. This guide focuses on Python.
+> **Rust SDK**: If you're using Rust directly, add `tenuo = "0.1.0-beta.21"` to your `Cargo.toml`. See the [crates.io documentation](https://crates.io/crates/tenuo) for Rust-specific examples. This guide focuses on Python.
 
 ---
 
@@ -270,6 +274,8 @@ Now violations are blocked. Roll out to a subset of traffic first if needed.
 - **OpenAI SDK** (`openai.OpenAI`, `openai.AsyncOpenAI`) --> Use [`tenuo.openai`](./openai)
 - **CrewAI** (`crewai.Crew`, `crewai.Agent`) --> Use [`tenuo.crewai`](./crewai)
 - **Google ADK** (`google.adk.agents.Agent`) --> Use [`tenuo.google_adk`](./google-adk)
+- **Temporal** (durable workflows) --> Use [`tenuo.temporal`](./temporal)
+- **MCP** (Model Context Protocol) --> Use [`tenuo.mcp`](./mcp)
 - **LangChain / LangGraph / AutoGen** --> See [Framework Integrations](#framework-integrations) below
 - **Custom/other** --> Use [API Reference](./api-reference) directly
 
@@ -287,15 +293,15 @@ Now violations are blocked. Roll out to a subset of traffic first if needed.
 
 ### Comparison
 
-| Feature | OpenAI | CrewAI | ADK | A2A |
-|---------|--------|--------|-----|-----|
-| **Runtime** | OpenAI SDK | CrewAI | Google ADK | Any (HTTP) |
-| **Deployment** | Single/multi process | Single/multi process | Single/multi process | Distributed |
-| **Tier 1 (Guardrails)** | Yes | Yes | Yes | N/A (Tier 2 required) |
-| **Tier 2 (Warrant + PoP)** | Yes | Yes | Yes | Yes |
-| **Delegation** | No | Yes `WarrantDelegator` | No | Yes (discovery) |
-| **Streaming** | Yes | No | Yes | No |
-| **Learning Curve** | Easy | Easy | Medium | Steep |
+| Feature | OpenAI | CrewAI | ADK | Temporal | MCP | A2A |
+|---------|--------|--------|-----|---------|-----|-----|
+| **Runtime** | OpenAI SDK | CrewAI | Google ADK | Temporal SDK | MCP protocol | Any (HTTP) |
+| **Deployment** | Single/multi process | Single/multi process | Single/multi process | Distributed workers | Client/server | Distributed |
+| **Tier 1 (Guardrails)** | Yes | Yes | Yes | N/A | N/A | N/A |
+| **Tier 2 (Warrant + PoP)** | Yes | Yes | Yes | Yes | Yes | Yes |
+| **Delegation** | No | Yes `WarrantDelegator` | No | Yes (child workflows) | No | Yes (discovery) |
+| **Streaming** | Yes | No | Yes | N/A | No | No |
+| **Learning Curve** | Easy | Easy | Medium | Medium | Easy | Steep |
 
 ### Migration Paths
 
@@ -326,6 +332,7 @@ result = await client.send_task("search_papers", {...}, warrant=task_warrant)
 |-------------|----------|
 | **OpenAI + A2A** | Workers are separate OpenAI services |
 | **ADK + A2A** | ADK orchestrator --> various worker services |
+| **Temporal + MCP** | Durable workflows calling MCP tool servers |
 | **OpenAI + ADK + A2A** | Mixed runtimes in distributed system |
 
 **Rule of thumb**: Same language + same process --> runtime integration only. Cross-service --> add A2A.
@@ -606,11 +613,7 @@ pop_sig = worker_warrant.sign(
 )
 
 # Verify authorization
-authorized = worker_warrant.authorize(
-    tool="manage_infrastructure",
-    args=args,
-    signature=bytes(pop_sig)
-)
+authorized = worker_warrant.allows("manage_infrastructure", args)
 print(f"Authorized: {authorized}")  # True
 ```
 
@@ -641,10 +644,16 @@ diagnose(warrant)  # Prints warrant details, TTL, constraints, etc.
 
 ## Next Steps
 
-- **[AI Agent Patterns](./ai-agents)** - P-LLM/Q-LLM, prompt injection defense
-- **[Concepts](./concepts)** - Why Tenuo? Threat model, core invariants
-- **[AutoGen](./autogen)** - Protect AutoGen AgentChat tools
-- **[LangChain](./langchain)** - Protect LangChain tools
-- **[LangGraph](./langgraph)** - Scope LangGraph nodes
-- **[FastAPI](./fastapi)** - Zero-boilerplate API protection
-- **[Security](./security)** - Threat model, best practices
+- **[AI Agent Patterns](./ai-agents)** — P-LLM/Q-LLM, prompt injection defense
+- **[Concepts](./concepts)** — Why Tenuo? Threat model, core invariants
+- **[OpenAI](./openai)** — Direct API protection with streaming
+- **[Google ADK](./google-adk)** — ADK agent tool protection
+- **[CrewAI](./crewai)** — Multi-agent crew protection
+- **[LangChain](./langchain)** — Protect LangChain tools
+- **[LangGraph](./langgraph)** — Scope LangGraph nodes
+- **[AutoGen](./autogen)** — Protect AutoGen AgentChat tools
+- **[Temporal](./temporal)** — Durable workflow authorization
+- **[MCP](./mcp)** — Model Context Protocol client & server verification
+- **[A2A](./a2a)** — Inter-agent delegation
+- **[FastAPI](./fastapi)** — Zero-boilerplate API protection
+- **[Security](./security)** — Threat model, best practices

@@ -220,13 +220,17 @@ warrant = await client.request_warrant(signing_key=worker_key, capabilities={"se
 result = await client.send_task(skill="search", warrant=warrant, signing_key=worker_key)
 ```
 
-**Temporal** -- Durable workflows with warrant-based activity authorization
+**Temporal** — Durable workflows with warrant-based activity authorization
 ```python
 from tenuo.temporal import (
-    AuthorizedWorkflow,
-    TenuoClientInterceptor,
-    execute_workflow_authorized,
+    TenuoTemporalPlugin, TenuoPluginConfig, EnvKeyResolver,
+    AuthorizedWorkflow, execute_workflow_authorized,
 )
+
+plugin = TenuoTemporalPlugin(
+    TenuoPluginConfig(key_resolver=EnvKeyResolver(), trusted_roots=[issuer_public_key])
+)
+client = await Client.connect("localhost:7233", plugins=[plugin])
 
 @workflow.defn
 class MyWorkflow(AuthorizedWorkflow):
@@ -236,10 +240,9 @@ class MyWorkflow(AuthorizedWorkflow):
             read_file, args=[path], start_to_close_timeout=timedelta(seconds=30),
         )
 
-client_interceptor = TenuoClientInterceptor()
 result = await execute_workflow_authorized(
     client=client,
-    client_interceptor=client_interceptor,
+    client_interceptor=plugin.client_interceptor,
     workflow_run_fn=MyWorkflow.run,
     workflow_id="wf-123",
     warrant=warrant,
@@ -341,18 +344,20 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 
 ---
 
-## Roadmap
+## Deploying to Production
 
-| Feature | Status |
-|---------|--------|
-| A2A integration | Implemented (`tenuo[a2a]`) |
-| AutoGen integration | Implemented (`tenuo[autogen]`) |
-| Google ADK integration | Implemented (`tenuo[google_adk]`) |
-| MCP integration | Implemented (`tenuo[mcp]` SDK; `tenuo[fastmcp]` for FastMCP) |
-| Warrant guards (human approval) | Implemented (experimental) |
-| Revocation (SRL) | Ongoing development |
-| TypeScript/Node SDK | Planned for v0.2 |
-| Context-aware constraints | Spec under development |
+Self-hosted Tenuo is free forever. The core library and sidecar run entirely in your infrastructure — no external calls at verification time.
+
+**Self-hosted checklist:**
+
+- Store signing keys in a secrets manager (Vault, AWS Secrets Manager, GCP Secret Manager) — not environment variables
+- Configure `trusted_roots` with your control plane's public keys
+- Ensure `dry_run` is disabled and warrants are required in all enforcement points
+- Enable audit callbacks and metrics for observability
+
+See [Security Model](https://tenuo.ai/security) for the full threat model and production hardening guidance.
+
+**[Tenuo Cloud](https://tenuo.ai/early-access.html)** adds managed warrant issuance, key rotation, revocation (SRL), observability dashboards, and multi-tenant isolation for teams that prefer a hosted control plane.
 
 ---
 
@@ -387,7 +392,7 @@ without Python runtime dependencies.
 
 Tenuo builds on capability token ideas described in [CaMeL](https://arxiv.org/abs/2503.18813) (Debenedetti et al., 2025). Inspired by [Macaroons](https://research.google/pubs/pub41892/), [Biscuit](https://www.biscuitsec.org/), and [UCAN](https://ucan.xyz/).
 
-The token format and delegation protocol are being standardized as [draft-niyikiza-oauth-attenuating-agent-tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/) in the IETF OAuth Working Group.
+The token format and delegation protocol are being standardized as [draft-niyikiza-oauth-attenuating-agent-tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/) in the IETF OAuth Working Group. The core attenuation rules are formally verified with [Alloy](docs/formal_verification/aat_constraints.als) (capability and argument-key monotonicity) and [Z3](docs/formal_verification/z3_bounds.py) (constraint-type subsumption bounds).
 
 See [Related Work](https://tenuo.ai/related-work) for detailed comparison.
 
@@ -422,12 +427,6 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 We're planning a TypeScript/Node SDK for v0.2. If you're interested in leading or contributing to this effort, open an issue or email us at [dev@tenuo.ai](mailto:dev@tenuo.ai).
 
 **Security issues**: Email security@tenuo.ai with PGP ([key](./SECURITY_PUBKEY.asc), not public issues).
-
----
-
-## Deploying to Production
-
-Self-hosted is free forever. For a managed control plane with observability and revocation workflows, [request early access](https://tenuo.ai/early-access.html) to Tenuo Cloud.
 
 ---
 
