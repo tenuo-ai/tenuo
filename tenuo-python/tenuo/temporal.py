@@ -2510,6 +2510,9 @@ async def tenuo_execute_activity(
         retry_policy: Retry policy for the activity
         task_queue: Optional task queue override
         cancellation_type: Cancellation behavior
+        summary: Human-readable summary displayed in the Temporal Web UI.
+            The outbound interceptor prefixes it with
+            ``[tenuo.TenuoTemporalPlugin] <tool>``.  Keep under 200 bytes.
 
     Returns:
         The activity's return value
@@ -2519,11 +2522,11 @@ async def tenuo_execute_activity(
         class MyWorkflow:
             @workflow.run
             async def run(self) -> str:
-                # Both work - use standard Temporal API:
-                return await workflow.execute_activity(
+                return await tenuo_execute_activity(
                     read_file,
                     args=["/data/report.txt"],
                     start_to_close_timeout=timedelta(seconds=30),
+                    summary="read monthly report",
                 )
     """
     try:
@@ -2624,6 +2627,9 @@ async def _dispatch_mint_activity(
         capabilities_ref=cap_ref,
         ttl_seconds=ttl_seconds,
     )
+    tools_label = ", ".join(sorted(capabilities.keys())[:3]) or "all"
+    summary = f"[{TENUO_TEMPORAL_PLUGIN_ID}] {kind}({tools_label})"
+
     try:
         return await workflow.execute_local_activity(
             _tenuo_internal_mint_activity,
@@ -2633,6 +2639,7 @@ async def _dispatch_mint_activity(
                 maximum_attempts=1,
                 non_retryable_error_types=["TenuoContextError", "TemporalConstraintViolation"],
             ),
+            summary=summary,
         )
     finally:
         with _store_lock:
@@ -4054,13 +4061,17 @@ class _TenuoWorkflowOutboundInterceptor:
 
                     input = _replace_field(input, "headers", activity_headers)
 
-                    # Temporal Web: activity summary (discoverability in UI)
+                    # Temporal Web: activity summary for debuggability in the UI.
+                    # Shows the Tenuo-authorized tool name alongside the Temporal
+                    # activity type so operators can correlate UI events with warrants.
                     if hasattr(input, "__dataclass_fields__") and "summary" in input.__dataclass_fields__:
                         current_summary = getattr(input, "summary", "") or ""
+                        tool_label = pop_tool_name if pop_tool_name != activity_type else activity_type
                         prefix = f"[{TENUO_TEMPORAL_PLUGIN_ID}]"
-                        new_summary = (
-                            f"{prefix} {current_summary}" if current_summary else f"{prefix} {activity_type}"
-                        )
+                        if current_summary:
+                            new_summary = f"{prefix} {tool_label}: {current_summary}"
+                        else:
+                            new_summary = f"{prefix} {tool_label}"
                         input = _replace_field(input, "summary", new_summary)
 
         except (TenuoContextError, TenuoArgNormalizationError) as e:

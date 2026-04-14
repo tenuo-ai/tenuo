@@ -1195,6 +1195,38 @@ For production integration monitoring, alert on:
 - key resolver failures (`KEY_NOT_FOUND`, resolver exceptions)
 - sudden drop in authorized activity volume
 
+### Activity Summaries (Temporal Web UI)
+
+`TenuoTemporalPlugin` enriches every Tenuo-authorized activity with a
+human-readable summary that shows up in the Temporal Web UI's Event History.
+This lets operators correlate UI events with warrant-authorized tool names
+without opening payloads.
+
+**Automatic behaviour** — no code required:
+
+| Activity kind | Summary rendered in UI |
+|---|---|
+| User activity (`read_file`) | `[tenuo.TenuoTemporalPlugin] read_file` |
+| User activity with `tool_mappings` (`fetch_doc` → `read_file`) | `[tenuo.TenuoTemporalPlugin] read_file` |
+| Internal warrant mint (local activity) | `[tenuo.TenuoTemporalPlugin] attenuate(read_file, list_directory)` |
+
+If you pass a `summary` to `tenuo_execute_activity()` or
+`workflow.execute_activity()`, Tenuo preserves it and prepends the prefix:
+
+```python
+await tenuo_execute_activity(
+    read_file,
+    args=["/data/report.txt"],
+    start_to_close_timeout=timedelta(seconds=30),
+    summary="monthly sales report",
+)
+# UI shows: [tenuo.TenuoTemporalPlugin] read_file: monthly sales report
+```
+
+Summaries are capped at 200 bytes by the Temporal SDK.  Avoid putting
+sensitive data (constraint values, key material) in them — warrant IDs are
+fine.
+
 ## Security Model
 
 See **[Security considerations](#security-considerations)** for the full threat model, trust boundaries, PoP time windows, dedup semantics, and root rotation. The [Failure Semantics](#failure-semantics-integrator-view) table maps exceptions to integration handling.
