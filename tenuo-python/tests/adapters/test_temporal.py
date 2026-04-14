@@ -2071,7 +2071,6 @@ class TestConstraintTypesThroughInterceptor:
         Raises on authorization failure.
         """
         import time as _time
-        import types
 
         from tenuo.temporal._constants import TENUO_POP_HEADER, TENUO_ARG_KEYS_HEADER
         from tenuo.temporal._interceptors import TenuoPlugin
