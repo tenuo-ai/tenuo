@@ -602,11 +602,15 @@ jobs:
           docs_temporal = root / "docs/temporal.md"
           docs_temporal_ref = root / "docs/temporal-reference.md"
           readme = root / "README.md"
-          temporal_py = root / "tenuo-python/tenuo/temporal.py"
+          temporal_pkg = root / "tenuo-python/tenuo/temporal"
 
           # Guard against stale example name regressions.
           stale_token = "authorized_workflow_demo.py"
-          for p in (docs_temporal, docs_temporal_ref, readme, temporal_py, root / "CHANGELOG.md"):
+          check_paths = [docs_temporal, docs_temporal_ref, readme, root / "CHANGELOG.md"]
+          check_paths.extend(sorted(temporal_pkg.glob("*.py")))
+          for p in check_paths:
+              if not p.exists():
+                  continue
               txt = p.read_text(encoding="utf-8")
               if stale_token in txt:
                   errors.append(f"{p}: contains stale reference '{stale_token}'")
