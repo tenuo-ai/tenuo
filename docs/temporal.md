@@ -25,36 +25,22 @@ This installs `tenuo_core`, a compiled Rust extension with prebuilt wheels for c
 
 ## Configure Workers to use Tenuo
 
-Add the `TenuoTemporalPlugin` to your Worker and Client. The plugin wires client interceptors, worker interceptors, and the sandbox runner in one step.
+Add the `TenuoTemporalPlugin` to your Client. The plugin wires client interceptors, worker interceptors, and the workflow sandbox runner in one step.
 
 ```python
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from tenuo import SigningKey
-from tenuo.temporal import TenuoPluginConfig, EnvKeyResolver, execute_workflow_authorized
+from tenuo.temporal import TenuoPluginConfig, EnvKeyResolver
 from tenuo.temporal_plugin import TenuoTemporalPlugin
-
-# Keys: issuer mints warrants, holder signs PoP on each activity dispatch.
-# In production, use VaultKeyResolver / AWSSecretsManagerKeyResolver instead of EnvKeyResolver.
-control_key = SigningKey.generate()   # issuer — stays with your authorization team
-agent_key = SigningKey.generate()     # holder — lives on the worker
-
-# Register the holder key for development
-import os, base64
-os.environ["TENUO_KEY_agent1"] = base64.b64encode(bytes(agent_key.secret_key_bytes())).decode()
-
-resolver = EnvKeyResolver()
-resolver.preload_keys(["agent1"])
 
 plugin = TenuoTemporalPlugin(
     TenuoPluginConfig(
-        key_resolver=resolver,
-        trusted_roots=[control_key.public_key],
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[issuer_public_key],
     )
 )
 
-# Add the plugin to both Client and Worker
 client = await Client.connect("localhost:7233", plugins=[plugin])
 worker = Worker(
     client,
@@ -64,24 +50,16 @@ worker = Worker(
 )
 ```
 
+Set `TENUO_KEY_<key_id>` environment variables with your base64-encoded holder signing keys. For production, use `VaultKeyResolver` or `AWSSecretsManagerKeyResolver` instead. See the [reference](./temporal-reference.md#key-management-required) for key management details.
+
 > **Important:** Pass the plugin on `Client.connect(plugins=[plugin])` only. Workers created from that client automatically merge client plugins — do not duplicate.
 
 ## Start an authorized workflow
 
-Mint a warrant that defines what the agent is allowed to do, then start the workflow:
+Pass a warrant and key ID when starting a workflow. The warrant defines what the agent is allowed to do — your control plane or policy layer mints it.
 
 ```python
-from tenuo import Warrant
-from tenuo_core import Subpath
-
-warrant = (
-    Warrant.mint_builder()
-    .holder(agent_key.public_key)
-    .capability("read_file", path=Subpath("/data/"))
-    .capability("write_file", path=Subpath("/data/output/"))
-    .ttl(3600)
-    .mint(control_key)
-)
+from tenuo.temporal import execute_workflow_authorized
 
 result = await execute_workflow_authorized(
     client=client,
