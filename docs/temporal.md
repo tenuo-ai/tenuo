@@ -119,7 +119,7 @@ Warrants use a **closed-world (zero-trust) model**: every argument the activity 
 
 ```python
 from tenuo import Warrant, SigningKey
-from tenuo_core import Subpath, Wildcard
+from tenuo_core import Subpath, UrlSafe, Wildcard
 
 warrant = (
     Warrant.mint_builder()
