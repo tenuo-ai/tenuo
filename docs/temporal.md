@@ -31,8 +31,7 @@ Add the `TenuoTemporalPlugin` to your Client. The plugin wires client intercepto
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from tenuo.temporal import TenuoPluginConfig, EnvKeyResolver
-from tenuo.temporal_plugin import TenuoTemporalPlugin
+from tenuo.temporal import TenuoTemporalPlugin, TenuoPluginConfig, EnvKeyResolver
 
 plugin = TenuoTemporalPlugin(
     TenuoPluginConfig(
