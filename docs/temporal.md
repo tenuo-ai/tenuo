@@ -15,8 +15,6 @@ When building AI agents with Temporal, you get durable execution: automatic retr
 | **Agent authorization** | What each agent may do, with what arguments, under whose delegation | Tenuo |
 | **Observability** | Tracing, evals, audit logs | OpenTelemetry / Braintrust |
 
-> The Tenuo integration is currently in **Public Preview**.
-
 ## Prerequisites
 
 - Familiarity with Temporal. If you're new, start with [Understanding Temporal](https://learn.temporal.io/getting_started/) or the Temporal 101 course.
