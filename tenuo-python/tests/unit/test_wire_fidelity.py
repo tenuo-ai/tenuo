@@ -22,7 +22,7 @@ from tenuo import (
     Warrant,
     Wildcard,
 )
-from tenuo.temporal import _extract_warrant_from_headers, tenuo_headers
+from tenuo.temporal._headers import _extract_warrant_from_headers, tenuo_headers
 
 
 def test_all_constraints_serialization_roundtrip():

@@ -600,19 +600,24 @@ jobs:
           errors: list[str] = []
 
           docs_temporal = root / "docs/temporal.md"
+          docs_temporal_ref = root / "docs/temporal-reference.md"
           readme = root / "README.md"
-          temporal_py = root / "tenuo-python/tenuo/temporal.py"
+          temporal_pkg = root / "tenuo-python/tenuo/temporal"
 
           # Guard against stale example name regressions.
           stale_token = "authorized_workflow_demo.py"
-          for p in (docs_temporal, readme, temporal_py, root / "CHANGELOG.md"):
+          check_paths = [docs_temporal, docs_temporal_ref, readme, root / "CHANGELOG.md"]
+          check_paths.extend(sorted(temporal_pkg.glob("*.py")))
+          for p in check_paths:
+              if not p.exists():
+                  continue
               txt = p.read_text(encoding="utf-8")
               if stale_token in txt:
                   errors.append(f"{p}: contains stale reference '{stale_token}'")
 
           # Validate referenced temporal example files actually exist.
           link_re = re.compile(r"\(([^)]*tenuo-python/examples/temporal/[^)#]+)(?:#[^)]+)?\)")
-          for p in (docs_temporal, readme):
+          for p in (docs_temporal, docs_temporal_ref, readme):
               txt = p.read_text(encoding="utf-8")
               for match in link_re.finditer(txt):
                   rel = match.group(1)
@@ -623,9 +628,9 @@ jobs:
                   if not target.exists():
                       errors.append(f"{p}: broken Temporal example link -> {rel}")
 
-          # Production snippets in docs/temporal.md should use strict mode
+          # Production snippets in temporal-reference.md should use strict mode
           # with trusted roots.
-          temporal_text = docs_temporal.read_text(encoding="utf-8")
+          temporal_ref_text = docs_temporal_ref.read_text(encoding="utf-8")
           production_heads = [
               "#### Production: Vault",
               "#### Production: AWS Secrets Manager",
@@ -633,16 +638,16 @@ jobs:
               "#### Composite Resolver (Fallback Chain)",
           ]
           for head in production_heads:
-              start = temporal_text.find(head)
+              start = temporal_ref_text.find(head)
               if start == -1:
-                  errors.append(f"{docs_temporal}: missing section '{head}'")
+                  errors.append(f"{docs_temporal_ref}: missing section '{head}'")
                   continue
-              next_h = temporal_text.find("#### ", start + len(head))
-              block = temporal_text[start: next_h if next_h != -1 else len(temporal_text)]
+              next_h = temporal_ref_text.find("#### ", start + len(head))
+              block = temporal_ref_text[start: next_h if next_h != -1 else len(temporal_ref_text)]
               if "strict_mode=True" not in block:
-                  errors.append(f"{docs_temporal}: section '{head}' missing strict_mode=True")
+                  errors.append(f"{docs_temporal_ref}: section '{head}' missing strict_mode=True")
               if "trusted_roots=[root_key.public_key]" not in block:
-                  errors.append(f"{docs_temporal}: section '{head}' missing trusted_roots=[root_key.public_key]")
+                  errors.append(f"{docs_temporal_ref}: section '{head}' missing trusted_roots=[root_key.public_key]")
 
           if errors:
               print("Temporal docs consistency check failed:")

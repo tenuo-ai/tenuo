@@ -18,39 +18,27 @@ import pytest
 # Skip all tests if temporalio is not installed
 pytest.importorskip("temporalio")
 
-from tenuo.temporal import (  # noqa: E402 - must be after importorskip
+from tenuo.temporal._constants import (  # noqa: E402 - must be after importorskip
     TENUO_COMPRESSED_HEADER,
     TENUO_KEY_ID_HEADER,
     TENUO_POP_HEADER,
     TENUO_WARRANT_HEADER,
+)
+from tenuo.temporal.exceptions import (  # noqa: E402
     ChainValidationError,
-    # Exceptions
-    TemporalConstraintViolation,
-    EnvKeyResolver,
     KeyResolutionError,
-    # Key Resolvers
-    KeyResolver,
-    # Phase 2 exceptions
     LocalActivityError,
     PopVerificationError,
-    # Audit
-    TemporalAuditEvent,
-    # Interceptor
-    TenuoPlugin,
-    # Config
-    TenuoPluginConfig,
+    TemporalConstraintViolation,
     WarrantExpired,
-    _compute_pop_challenge,
-    _extract_key_id_from_headers,
-    get_tool_name,
-    is_unprotected,
-    # Header utilities
-    tenuo_headers,
-    # Phase 3: Decorators and delegation
-    tool,
-    # Phase 2: Decorators
-    unprotected,
 )
+from tenuo.temporal._resolvers import EnvKeyResolver, KeyResolver  # noqa: E402
+from tenuo.temporal._observability import TemporalAuditEvent  # noqa: E402
+from tenuo.temporal._interceptors import TenuoPlugin  # noqa: E402
+from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
+from tenuo.temporal._pop import _compute_pop_challenge  # noqa: E402
+from tenuo.temporal._headers import _extract_key_id_from_headers, tenuo_headers  # noqa: E402
+from tenuo.temporal._decorators import get_tool_name, is_unprotected, tool, unprotected  # noqa: E402
 
 from tenuo import SigningKey as _TenCfgSigningKey  # noqa: E402
 
@@ -973,7 +961,7 @@ class TestCompositeKeyResolver:
         """CompositeKeyResolver uses first resolver that succeeds."""
         import asyncio
 
-        from tenuo.temporal import CompositeKeyResolver
+        from tenuo.temporal._resolvers import CompositeKeyResolver
 
         # Mock resolvers
         failing_resolver = MagicMock(spec=KeyResolver)
@@ -994,7 +982,7 @@ class TestCompositeKeyResolver:
         """CompositeKeyResolver raises if all resolvers fail."""
         import asyncio
 
-        from tenuo.temporal import CompositeKeyResolver
+        from tenuo.temporal._resolvers import CompositeKeyResolver
 
         resolver1 = MagicMock(spec=KeyResolver)
         resolver1.resolve = AsyncMock(side_effect=KeyResolutionError("key1"))
@@ -1009,7 +997,7 @@ class TestCompositeKeyResolver:
 
     def test_requires_at_least_one_resolver(self):
         """CompositeKeyResolver requires at least one resolver."""
-        from tenuo.temporal import CompositeKeyResolver
+        from tenuo.temporal._resolvers import CompositeKeyResolver
 
         with pytest.raises(ValueError):
             CompositeKeyResolver([])
@@ -1024,7 +1012,7 @@ class TestAWSSecretsManagerKeyResolver:
         import sys
         from unittest.mock import patch
 
-        from tenuo.temporal import AWSSecretsManagerKeyResolver
+        from tenuo.temporal._resolvers import AWSSecretsManagerKeyResolver
 
         mock_key_bytes = b"\x00" * 32  # 32-byte key
         mock_response = {"SecretBinary": mock_key_bytes}
@@ -1052,7 +1040,7 @@ class TestAWSSecretsManagerKeyResolver:
         import sys
         from unittest.mock import patch
 
-        from tenuo.temporal import AWSSecretsManagerKeyResolver
+        from tenuo.temporal._resolvers import AWSSecretsManagerKeyResolver
 
         mock_key_bytes = b"\x00" * 32
         mock_response = {"SecretString": base64.b64encode(mock_key_bytes).decode()}
@@ -1077,7 +1065,7 @@ class TestAWSSecretsManagerKeyResolver:
         import sys
         from unittest.mock import patch
 
-        from tenuo.temporal import AWSSecretsManagerKeyResolver
+        from tenuo.temporal._resolvers import AWSSecretsManagerKeyResolver
 
         mock_response = {"SecretBinary": b"\x00" * 32}
 
@@ -1107,7 +1095,8 @@ class TestAWSSecretsManagerKeyResolver:
         import sys
         from unittest.mock import patch
 
-        from tenuo.temporal import AWSSecretsManagerKeyResolver, KeyResolutionError
+        from tenuo.temporal._resolvers import AWSSecretsManagerKeyResolver
+        from tenuo.temporal.exceptions import KeyResolutionError
 
         resolver = AWSSecretsManagerKeyResolver()
 
@@ -1186,7 +1175,7 @@ class TestGCPSecretManagerKeyResolver:
         import asyncio
         from unittest.mock import patch
 
-        from tenuo.temporal import GCPSecretManagerKeyResolver
+        from tenuo.temporal._resolvers import GCPSecretManagerKeyResolver
 
         mock_key_bytes = b"\x00" * 32
 
@@ -1213,7 +1202,7 @@ class TestGCPSecretManagerKeyResolver:
         import asyncio
         from unittest.mock import patch
 
-        from tenuo.temporal import GCPSecretManagerKeyResolver
+        from tenuo.temporal._resolvers import GCPSecretManagerKeyResolver
 
         mock_sm = MagicMock()
         mock_client = MagicMock()
@@ -1241,7 +1230,7 @@ class TestGCPSecretManagerKeyResolver:
         import asyncio
         from unittest.mock import patch
 
-        from tenuo.temporal import GCPSecretManagerKeyResolver
+        from tenuo.temporal._resolvers import GCPSecretManagerKeyResolver
 
         mock_sm = MagicMock()
         mock_client = MagicMock()
@@ -1270,7 +1259,7 @@ class TestTenuoMetrics:
 
     def test_records_authorized(self):
         """TenuoMetrics records authorized activities."""
-        from tenuo.temporal import TenuoMetrics
+        from tenuo.temporal._observability import TenuoMetrics
 
         metrics = TenuoMetrics(prefix="test")
         metrics.record_authorized("read_file", "MyWorkflow", 0.005)
@@ -1282,7 +1271,7 @@ class TestTenuoMetrics:
 
     def test_records_denied(self):
         """TenuoMetrics records denied activities."""
-        from tenuo.temporal import TenuoMetrics
+        from tenuo.temporal._observability import TenuoMetrics
 
         metrics = TenuoMetrics(prefix="test")
         metrics.record_denied("write_file", "expired", "MyWorkflow", 0.003)
@@ -1293,7 +1282,7 @@ class TestTenuoMetrics:
 
     def test_calculates_average_latency(self):
         """TenuoMetrics calculates average latency."""
-        from tenuo.temporal import TenuoMetrics
+        from tenuo.temporal._observability import TenuoMetrics
 
         metrics = TenuoMetrics(prefix="test")
         metrics.record_authorized("read_file", "MyWorkflow", 0.010)
@@ -1316,7 +1305,7 @@ class TestPhase4Config:
 
     def test_can_enable_metrics(self):
         """Can enable metrics in config."""
-        from tenuo.temporal import TenuoMetrics
+        from tenuo.temporal._observability import TenuoMetrics
 
         resolver = MagicMock(spec=KeyResolver)
         metrics = TenuoMetrics(prefix="test")
@@ -1392,7 +1381,7 @@ class TestVaultKeyResolverCache:
         """Cached key is returned without Vault fetch when within TTL."""
         import time
 
-        from tenuo.temporal import VaultKeyResolver
+        from tenuo.temporal._resolvers import VaultKeyResolver
 
         resolver = VaultKeyResolver(
             url="https://vault.test:8200",
@@ -1414,7 +1403,7 @@ class TestVaultKeyResolverCache:
         """Cached key is NOT returned after TTL expires — triggers fresh fetch."""
         import time
 
-        from tenuo.temporal import VaultKeyResolver
+        from tenuo.temporal._resolvers import VaultKeyResolver
 
         resolver = VaultKeyResolver(
             url="https://vault.test:8200",
@@ -1434,7 +1423,8 @@ class TestVaultKeyResolverCache:
 
     def test_missing_token_raises_key_resolution_error(self):
         """Vault resolver raises KeyResolutionError when no token available."""
-        from tenuo.temporal import KeyResolutionError, VaultKeyResolver
+        from tenuo.temporal.exceptions import KeyResolutionError
+        from tenuo.temporal._resolvers import VaultKeyResolver
 
         resolver = VaultKeyResolver(
             url="https://vault.test:8200",
@@ -1453,7 +1443,7 @@ class TestVaultKeyResolverCache:
         """Multiple threads reading/writing cache don't corrupt it."""
         import time
 
-        from tenuo.temporal import VaultKeyResolver
+        from tenuo.temporal._resolvers import VaultKeyResolver
 
         resolver = VaultKeyResolver(
             url="https://vault.test:8200",
@@ -1498,7 +1488,7 @@ class TestDedupCacheEviction:
 
     def test_dedup_cache_has_max_size_constant(self):
         """_DEDUP_MAX_SIZE is defined and reasonable."""
-        from tenuo.temporal import _DEDUP_MAX_SIZE
+        from tenuo.temporal._state import _DEDUP_MAX_SIZE
         assert _DEDUP_MAX_SIZE > 0
         assert _DEDUP_MAX_SIZE <= 100_000
 
@@ -1506,7 +1496,7 @@ class TestDedupCacheEviction:
         """Basic smoke test: cache supports dict operations."""
         import time
 
-        from tenuo.temporal import _pop_dedup_cache
+        from tenuo.temporal._dedup import _pop_dedup_cache
 
         _pop_dedup_cache.clear()
 
@@ -1627,7 +1617,8 @@ class TestPopDedupStoreHook:
 
 def test_pop_signing_error_is_non_retryable():
     """PoP signing failures must be non-retryable to prevent infinite Temporal retries."""
-    from tenuo.temporal import _raise_non_retryable, TenuoContextError
+    from tenuo.temporal._interceptors import _raise_non_retryable
+    from tenuo.temporal.exceptions import TenuoContextError
     try:
         from temporalio.exceptions import ApplicationError
     except ImportError:
@@ -1646,7 +1637,7 @@ def test_pop_signing_error_is_non_retryable():
 
 def test_otel_import_check():
     """OTel tracing module-level flag is always a bool (soft dependency)."""
-    from tenuo.temporal import _otel_available
+    from tenuo.temporal._interceptors import _otel_available
 
     assert isinstance(_otel_available, bool)
 
@@ -1660,13 +1651,11 @@ def test_otel_span_emitted_on_allow():
 
     from tenuo import SigningKey, Warrant
     from tenuo_core import Subpath
-    from tenuo.temporal import (
-        TENUO_POP_HEADER,
-        TenuoPlugin,
-        TenuoPluginConfig,
-        EnvKeyResolver,
-        tenuo_headers,
-    )
+    from tenuo.temporal._constants import TENUO_POP_HEADER
+    from tenuo.temporal._interceptors import TenuoPlugin
+    from tenuo.temporal._config import TenuoPluginConfig
+    from tenuo.temporal._resolvers import EnvKeyResolver
+    from tenuo.temporal._headers import tenuo_headers
 
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
@@ -1738,7 +1727,7 @@ def test_otel_span_emitted_on_allow():
 
     loop = asyncio.new_event_loop()
     try:
-        with patch("tenuo.temporal._otel_trace", test_trace), \
+        with patch("tenuo.temporal._interceptors._otel_trace", test_trace), \
              patch("temporalio.activity.info", return_value=info):
             loop.run_until_complete(ai.execute_activity(inp))
     finally:
@@ -1763,14 +1752,14 @@ def test_otel_span_emitted_on_allow():
 
 
 def test_tenuo_warrant_context_manager_exists():
-    from tenuo.temporal import tenuo_warrant_context, TenuoWarrantContextPropagator
+    from tenuo.temporal._client import tenuo_warrant_context, TenuoWarrantContextPropagator
 
     assert tenuo_warrant_context is not None
     assert TenuoWarrantContextPropagator is not None
 
 
 def test_context_propagator_sets_and_clears():
-    from tenuo.temporal import TenuoWarrantContextPropagator
+    from tenuo.temporal._client import TenuoWarrantContextPropagator
 
     prop = TenuoWarrantContextPropagator()
     assert prop.get() is None
@@ -1788,7 +1777,7 @@ def test_context_propagator_sets_and_clears():
 
 
 def test_literal_warrant_source_wraps_warrant():
-    from tenuo.temporal import LiteralWarrantSource
+    from tenuo.temporal._warrant_source import LiteralWarrantSource
     import inspect
     source = LiteralWarrantSource(object(), "k1")
     assert inspect.iscoroutinefunction(source.resolve)
@@ -1796,7 +1785,8 @@ def test_literal_warrant_source_wraps_warrant():
 
 def test_env_warrant_source_missing_var():
     import os
-    from tenuo.temporal import EnvWarrantSource, TenuoContextError
+    from tenuo.temporal._warrant_source import EnvWarrantSource
+    from tenuo.temporal.exceptions import TenuoContextError
     os.environ.pop("TENUO_TEST_WARRANT_MISSING", None)
     source = EnvWarrantSource("TENUO_TEST_WARRANT_MISSING", "k1")
     with pytest.raises(TenuoContextError, match="is not set"):
@@ -1805,14 +1795,14 @@ def test_env_warrant_source_missing_var():
 
 def test_warrant_source_and_literal_mutually_exclusive():
     """Passing both warrant= and warrant_source= to execute_workflow_authorized must raise."""
-    from tenuo.temporal import execute_workflow_authorized
+    from tenuo.temporal._workflow import execute_workflow_authorized
     import inspect
     sig = inspect.signature(execute_workflow_authorized)
     assert "warrant_source" in sig.parameters, "warrant_source kwarg must be present"
 
 
 def test_cloud_trigger_warrant_source_importable():
-    from tenuo.temporal import CloudTriggerWarrantSource
+    from tenuo.temporal._warrant_source import CloudTriggerWarrantSource
     source = CloudTriggerWarrantSource(
         base_url="https://example.com",
         trigger_id="trig_123",
@@ -1824,7 +1814,7 @@ def test_cloud_trigger_warrant_source_importable():
 
 
 def test_cloud_trigger_warrant_source_uses_event_mapper():
-    from tenuo.temporal import CloudTriggerWarrantSource
+    from tenuo.temporal._warrant_source import CloudTriggerWarrantSource
     events_captured = []
 
     def mapper(patient_id, *a, **kw):
@@ -1849,7 +1839,7 @@ def test_cloud_trigger_warrant_source_uses_event_mapper():
 
 def test_dynamic_activity_falls_back_to_runtime_name():
     """When fn resolution fails, fall back to input.activity for dynamic activities."""
-    from tenuo.temporal import _warrant_tool_name_for_activity_type
+    from tenuo.temporal._decorators import _warrant_tool_name_for_activity_type
 
     class MockInput:
         fn = None  # no function reference (dynamic handler)
@@ -1867,7 +1857,7 @@ def test_dynamic_activity_falls_back_to_runtime_name():
 
 def test_dynamic_activity_legacy_call_unchanged():
     """Legacy 3-arg call still works: (config, activity_type, activity_fn)."""
-    from tenuo.temporal import _warrant_tool_name_for_activity_type
+    from tenuo.temporal._decorators import _warrant_tool_name_for_activity_type
 
     class MockConfig:
         tool_mappings: dict = {}
@@ -1878,7 +1868,7 @@ def test_dynamic_activity_legacy_call_unchanged():
 
 def test_dynamic_activity_legacy_call_with_tool_mapping():
     """tool_mappings override still applies in legacy call."""
-    from tenuo.temporal import _warrant_tool_name_for_activity_type
+    from tenuo.temporal._decorators import _warrant_tool_name_for_activity_type
 
     class MockConfig:
         tool_mappings = {"MyActivity": "mapped_tool"}
@@ -1893,14 +1883,14 @@ def test_dynamic_activity_legacy_call_with_tool_mapping():
 
 
 def test_tenuo_continue_as_new_exists():
-    from tenuo.temporal import tenuo_continue_as_new
+    from tenuo.temporal._workflow import tenuo_continue_as_new
 
     assert tenuo_continue_as_new is not None
     assert callable(tenuo_continue_as_new)
 
 
 def test_tenuo_continue_as_new_has_attenuation_kwarg():
-    from tenuo.temporal import tenuo_continue_as_new
+    from tenuo.temporal._workflow import tenuo_continue_as_new
     import inspect
 
     sig = inspect.signature(tenuo_continue_as_new)
@@ -1908,21 +1898,21 @@ def test_tenuo_continue_as_new_has_attenuation_kwarg():
 
 
 def test_tenuo_continue_as_new_in_all():
-    import tenuo.temporal as _mod
+    from tenuo.temporal._workflow import tenuo_continue_as_new
 
-    assert "tenuo_continue_as_new" in _mod.__all__
+    assert callable(tenuo_continue_as_new)
 
 
 def test_create_scheduled_workflow_with_warrant_exists():
     """Verify the scheduled workflow helper is exported."""
-    from tenuo.temporal import create_scheduled_workflow_with_warrant
+    from tenuo.temporal._workflow import create_scheduled_workflow_with_warrant
     import inspect
     assert inspect.iscoroutinefunction(create_scheduled_workflow_with_warrant)
 
 
 def test_signal_and_update_constraints_in_config():
     """TenuoPluginConfig exposes signal and update constraint fields."""
-    from tenuo.temporal import TenuoPluginConfig
+    from tenuo.temporal._config import TenuoPluginConfig
     from unittest.mock import MagicMock
     resolver = MagicMock(spec=KeyResolver)
     cfg = TenuoPluginConfig(
@@ -1942,9 +1932,582 @@ def test_signal_and_update_constraints_in_config():
 
 def test_tenuo_complete_async_activity_exists():
     """Verify the async activity completion wrapper is exported."""
-    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._workflow import tenuo_complete_async_activity
     import inspect
     assert inspect.iscoroutinefunction(tenuo_complete_async_activity)
+
+
+# =============================================================================
+# set_activity_approvals
+# =============================================================================
+
+
+class TestSetActivityApprovals:
+    """Tests for the set_activity_approvals workflow helper."""
+
+    def _call_with_mock_wf(self, wf_id, approvals):
+        """Call set_activity_approvals while mocking temporalio.workflow.info."""
+        from tenuo.temporal._workflow import set_activity_approvals
+
+        fake_info = MagicMock()
+        fake_info.workflow_id = wf_id
+
+        with patch("temporalio.workflow.info", return_value=fake_info):
+            set_activity_approvals(approvals)
+
+    def test_stores_approvals_in_pending_map(self):
+        """Approvals are stashed in _pending_activity_approvals keyed by workflow_id."""
+        from tenuo.temporal._state import _pending_activity_approvals, _store_lock
+
+        sentinel_a = MagicMock(name="approval_a")
+        sentinel_b = MagicMock(name="approval_b")
+        self._call_with_mock_wf("wf-approvals-test", [sentinel_a, sentinel_b])
+
+        with _store_lock:
+            stored = _pending_activity_approvals.get("wf-approvals-test")
+
+        assert stored is not None
+        assert len(stored) == 2
+        assert stored[0] is sentinel_a
+        assert stored[1] is sentinel_b
+
+        with _store_lock:
+            _pending_activity_approvals.pop("wf-approvals-test", None)
+
+    def test_copies_list_defensively(self):
+        """set_activity_approvals makes a copy so later mutations don't affect state."""
+        from tenuo.temporal._state import _pending_activity_approvals, _store_lock
+
+        original = [MagicMock(name="a1")]
+        self._call_with_mock_wf("wf-defensive-copy", original)
+
+        original.append(MagicMock(name="a2"))
+
+        with _store_lock:
+            stored = _pending_activity_approvals.get("wf-defensive-copy")
+
+        assert len(stored) == 1
+
+        with _store_lock:
+            _pending_activity_approvals.pop("wf-defensive-copy", None)
+
+    def test_overwrites_previous_approvals(self):
+        """A second call replaces (not appends to) the stored approvals."""
+        from tenuo.temporal._state import _pending_activity_approvals, _store_lock
+
+        self._call_with_mock_wf("wf-overwrite", [MagicMock(name="first")])
+        self._call_with_mock_wf("wf-overwrite", [MagicMock(name="second"), MagicMock(name="third")])
+
+        with _store_lock:
+            stored = _pending_activity_approvals.get("wf-overwrite")
+
+        assert len(stored) == 2
+
+        with _store_lock:
+            _pending_activity_approvals.pop("wf-overwrite", None)
+
+    def test_empty_list_clears_approvals(self):
+        """Passing an empty list stores an empty list (no-op on next dispatch)."""
+        from tenuo.temporal._state import _pending_activity_approvals, _store_lock
+
+        self._call_with_mock_wf("wf-empty", [MagicMock(name="something")])
+        self._call_with_mock_wf("wf-empty", [])
+
+        with _store_lock:
+            stored = _pending_activity_approvals.get("wf-empty")
+
+        assert stored == []
+
+        with _store_lock:
+            _pending_activity_approvals.pop("wf-empty", None)
+
+    def test_consumed_by_outbound_interceptor(self):
+        """Approvals stored by set_activity_approvals are popped by the outbound interceptor."""
+        from tenuo.temporal._state import _pending_activity_approvals, _store_lock
+
+        wf_id = "wf-consume-test"
+        sentinel = MagicMock(name="approval")
+
+        with _store_lock:
+            _pending_activity_approvals[wf_id] = [sentinel]
+
+        with _store_lock:
+            consumed = _pending_activity_approvals.pop(wf_id, None)
+
+        assert consumed is not None
+        assert consumed[0] is sentinel
+
+        with _store_lock:
+            assert wf_id not in _pending_activity_approvals
+
+
+# =============================================================================
+# Constraint-type coverage: UrlSafe, Wildcard
+# =============================================================================
+
+
+class TestConstraintTypesThroughInterceptor:
+    """End-to-end interceptor tests for constraint types beyond Subpath.
+
+    Each test mints a warrant with the given constraint, creates a signed PoP,
+    sends it through the activity interceptor, and asserts allow/deny.
+
+    Shlex is a Python-only constraint and cannot be embedded in warrants, so it
+    is not covered here.
+    """
+
+    @staticmethod
+    def _build_interceptor_and_run(
+        *,
+        control_key,
+        agent_key,
+        warrant,
+        activity_name: str,
+        activity_args: dict,
+    ):
+        """Wire up the full interceptor stack and execute a single activity.
+
+        Returns the result from the next interceptor (i.e. "ok" on success).
+        Raises on authorization failure.
+        """
+        import time as _time
+
+        from tenuo.temporal._constants import TENUO_POP_HEADER, TENUO_ARG_KEYS_HEADER
+        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._resolvers import EnvKeyResolver
+        from tenuo.temporal._headers import tenuo_headers
+
+        h = tenuo_headers(warrant, "agent1")
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+        )
+        plugin = TenuoPlugin(cfg)
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="ok")
+        nxt.init = MagicMock()
+        ai = plugin.intercept_activity(nxt)
+
+        pop = warrant.sign(
+            agent_key,
+            activity_name,
+            activity_args,
+            int(_time.time()),
+        )
+
+        act_headers: dict = {}
+        for k, v in h.items():
+            raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+            if k.startswith("x-tenuo-"):
+                act_headers[k] = raw_v
+        act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+        act_headers[TENUO_ARG_KEYS_HEADER] = ",".join(activity_args.keys()).encode()
+
+        class FakePayload:
+            def __init__(self, data):
+                self.data = data
+
+        payload_headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
+
+        info = MagicMock()
+        info.activity_type = activity_name
+        info.activity_id = "1"
+        info.workflow_id = "wf-constraint-test"
+        info.workflow_run_id = "run-1"
+        info.workflow_type = "TestWorkflow"
+        info.task_queue = "test-q"
+        info.attempt = 1
+        info.is_local = False
+
+        inp = MagicMock()
+        inp.fn = None
+        inp.args = tuple(activity_args.values())
+        inp.headers = payload_headers
+
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("temporalio.activity.info", return_value=info):
+                return loop.run_until_complete(ai.execute_activity(inp))
+        finally:
+            loop.close()
+
+    # -- Wildcard --------------------------------------------------------
+
+    def test_wildcard_allows_any_value(self):
+        """A Wildcard() constraint allows any string value."""
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import Wildcard
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("search", query=Wildcard())
+            .ttl(3600)
+            .mint(control_key)
+        )
+
+        result = self._build_interceptor_and_run(
+            control_key=control_key,
+            agent_key=agent_key,
+            warrant=warrant,
+            activity_name="search",
+            activity_args={"query": "anything at all"},
+        )
+        assert result == "ok"
+
+    def test_wildcard_allows_empty_string(self):
+        """Wildcard() also accepts the empty string."""
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import Wildcard
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("search", query=Wildcard())
+            .ttl(3600)
+            .mint(control_key)
+        )
+
+        result = self._build_interceptor_and_run(
+            control_key=control_key,
+            agent_key=agent_key,
+            warrant=warrant,
+            activity_name="search",
+            activity_args={"query": ""},
+        )
+        assert result == "ok"
+
+    # -- UrlSafe ---------------------------------------------------------
+
+    def test_urlsafe_allows_matching_url(self):
+        """UrlSafe constraint allows a URL that matches allowed domains/schemes."""
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import UrlSafe
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability(
+                "fetch_url",
+                url=UrlSafe(
+                    allow_schemes=["https"],
+                    allow_domains=["api.example.com"],
+                    block_private=True,
+                ),
+            )
+            .ttl(3600)
+            .mint(control_key)
+        )
+
+        result = self._build_interceptor_and_run(
+            control_key=control_key,
+            agent_key=agent_key,
+            warrant=warrant,
+            activity_name="fetch_url",
+            activity_args={"url": "https://api.example.com/v1/data"},
+        )
+        assert result == "ok"
+
+    def test_urlsafe_denies_wrong_domain(self):
+        """UrlSafe constraint denies a URL with a non-allowed domain."""
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import UrlSafe
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability(
+                "fetch_url",
+                url=UrlSafe(
+                    allow_schemes=["https"],
+                    allow_domains=["api.example.com"],
+                    block_private=True,
+                ),
+            )
+            .ttl(3600)
+            .mint(control_key)
+        )
+
+        with pytest.raises(Exception):
+            self._build_interceptor_and_run(
+                control_key=control_key,
+                agent_key=agent_key,
+                warrant=warrant,
+                activity_name="fetch_url",
+                activity_args={"url": "https://evil.com/steal"},
+            )
+
+    def test_urlsafe_denies_http_scheme(self):
+        """UrlSafe rejects http:// when only https:// is allowed."""
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import UrlSafe
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability(
+                "fetch_url",
+                url=UrlSafe(
+                    allow_schemes=["https"],
+                    allow_domains=["api.example.com"],
+                    block_private=True,
+                ),
+            )
+            .ttl(3600)
+            .mint(control_key)
+        )
+
+        with pytest.raises(Exception):
+            self._build_interceptor_and_run(
+                control_key=control_key,
+                agent_key=agent_key,
+                warrant=warrant,
+                activity_name="fetch_url",
+                activity_args={"url": "http://api.example.com/v1/data"},
+            )
+
+    # -- Wildcard + UrlSafe combined capability --------------------------
+
+    def test_combined_wildcard_and_urlsafe_capability(self):
+        """A capability with mixed constraint types works end-to-end."""
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import UrlSafe, Wildcard
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability(
+                "web_search",
+                query=Wildcard(),
+                endpoint=UrlSafe(
+                    allow_schemes=["https"],
+                    allow_domains=["search.example.com"],
+                    block_private=True,
+                ),
+            )
+            .ttl(3600)
+            .mint(control_key)
+        )
+
+        result = self._build_interceptor_and_run(
+            control_key=control_key,
+            agent_key=agent_key,
+            warrant=warrant,
+            activity_name="web_search",
+            activity_args={
+                "query": "temporal workflow best practices",
+                "endpoint": "https://search.example.com/api",
+            },
+        )
+        assert result == "ok"
+
+
+# =============================================================================
+# Metrics wiring
+# =============================================================================
+
+
+class TestMetricsWiring:
+    """Verify TenuoMetrics.record_authorized/record_denied are called."""
+
+    def test_metrics_record_authorized_on_allow(self):
+        """TenuoMetrics.record_authorized is invoked when an activity is allowed."""
+        import time as _time
+
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import Wildcard
+        from tenuo.temporal._constants import TENUO_ARG_KEYS_HEADER, TENUO_POP_HEADER
+        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._resolvers import EnvKeyResolver
+        from tenuo.temporal._headers import tenuo_headers
+        from tenuo.temporal._observability import TenuoMetrics
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("ping", msg=Wildcard())
+            .ttl(3600)
+            .mint(control_key)
+        )
+
+        metrics = TenuoMetrics()
+        h = tenuo_headers(warrant, "agent1")
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            metrics=metrics,
+        )
+        plugin = TenuoPlugin(cfg)
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="ok")
+        nxt.init = MagicMock()
+        ai = plugin.intercept_activity(nxt)
+
+        pop = warrant.sign(agent_key, "ping", {"msg": "hello"}, int(_time.time()))
+        act_headers: dict = {}
+        for k, v in h.items():
+            raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+            if k.startswith("x-tenuo-"):
+                act_headers[k] = raw_v
+        act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+        act_headers[TENUO_ARG_KEYS_HEADER] = b"msg"
+
+        class FakePayload:
+            def __init__(self, data):
+                self.data = data
+
+        info = MagicMock()
+        info.activity_type = "ping"
+        info.activity_id = "1"
+        info.workflow_id = "wf-metrics-test"
+        info.workflow_run_id = "run-1"
+        info.workflow_type = "MetricsWF"
+        info.task_queue = "test-q"
+        info.attempt = 1
+        info.is_local = False
+
+        inp = MagicMock()
+        inp.fn = None
+        inp.args = ("hello",)
+        inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
+
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("temporalio.activity.info", return_value=info):
+                loop.run_until_complete(ai.execute_activity(inp))
+        finally:
+            loop.close()
+
+        stats = metrics.get_stats()
+        assert stats["authorized"].get("ping:MetricsWF", 0) >= 1
+        assert stats["latency_count"] >= 1
+
+    def test_metrics_record_denied_on_constraint_violation(self):
+        """TenuoMetrics.record_denied is invoked when an activity is denied."""
+        import time as _time
+
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import Subpath
+        from tenuo.temporal._constants import TENUO_ARG_KEYS_HEADER, TENUO_POP_HEADER
+        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._resolvers import EnvKeyResolver
+        from tenuo.temporal._headers import tenuo_headers
+        from tenuo.temporal._observability import TenuoMetrics
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("read_file", path=Subpath("/tmp/safe"))
+            .ttl(3600)
+            .mint(control_key)
+        )
+
+        metrics = TenuoMetrics()
+        h = tenuo_headers(warrant, "agent1")
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            metrics=metrics,
+        )
+        plugin = TenuoPlugin(cfg)
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="ok")
+        nxt.init = MagicMock()
+        ai = plugin.intercept_activity(nxt)
+
+        pop = warrant.sign(
+            agent_key, "read_file", {"path": "/etc/passwd"}, int(_time.time())
+        )
+        act_headers: dict = {}
+        for k, v in h.items():
+            raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+            if k.startswith("x-tenuo-"):
+                act_headers[k] = raw_v
+        act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+        act_headers[TENUO_ARG_KEYS_HEADER] = b"path"
+
+        class FakePayload:
+            def __init__(self, data):
+                self.data = data
+
+        info = MagicMock()
+        info.activity_type = "read_file"
+        info.activity_id = "1"
+        info.workflow_id = "wf-metrics-deny"
+        info.workflow_run_id = "run-1"
+        info.workflow_type = "MetricsDenyWF"
+        info.task_queue = "test-q"
+        info.attempt = 1
+        info.is_local = False
+
+        inp = MagicMock()
+        inp.fn = None
+        inp.args = ("/etc/passwd",)
+        inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
+
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("temporalio.activity.info", return_value=info):
+                with pytest.raises(Exception):
+                    loop.run_until_complete(ai.execute_activity(inp))
+        finally:
+            loop.close()
+
+        stats = metrics.get_stats()
+        assert stats["latency_count"] >= 1
+
+
+# =============================================================================
+# error_code on exception classes
+# =============================================================================
+
+
+class TestExceptionErrorCodes:
+    """Verify every Temporal exception has an error_code attribute."""
+
+    def test_all_exceptions_have_error_code(self):
+        exc_classes = [
+            TemporalConstraintViolation,
+            PopVerificationError,
+            ChainValidationError,
+            WarrantExpired,
+            KeyResolutionError,
+            LocalActivityError,
+        ]
+        for cls in exc_classes:
+            assert hasattr(cls, "error_code"), f"{cls.__name__} missing error_code"
+
+    def test_context_error_has_error_code(self):
+        from tenuo.temporal.exceptions import TenuoContextError
+        assert TenuoContextError.error_code == "CONTEXT_MISSING"
+
+    def test_arg_normalization_error_has_error_code(self):
+        from tenuo.temporal.exceptions import TenuoArgNormalizationError
+        assert TenuoArgNormalizationError.error_code == "ARG_NORMALIZATION_FAILED"
+
+    def test_pre_validation_error_has_error_code(self):
+        from tenuo.temporal.exceptions import TenuoPreValidationError
+        assert TenuoPreValidationError.error_code == "PRE_VALIDATION_FAILED"
 
 
 # =============================================================================

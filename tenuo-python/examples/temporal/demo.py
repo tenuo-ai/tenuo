@@ -52,16 +52,13 @@ except ImportError:
 from tenuo import Pattern, Subpath
 
 from tenuo import SigningKey, Warrant
-from tenuo.temporal import (
-    AuthorizedWorkflow,
-    EnvKeyResolver,
-    TemporalAuditEvent,
-    TenuoClientInterceptor,
-    TenuoPlugin,
-    TenuoPluginConfig,
-    execute_workflow_authorized,
-    tenuo_headers,
-)
+from tenuo.temporal._client import TenuoClientInterceptor
+from tenuo.temporal._config import TenuoPluginConfig
+from tenuo.temporal._headers import tenuo_headers
+from tenuo.temporal._interceptors import TenuoPlugin
+from tenuo.temporal._observability import TemporalAuditEvent
+from tenuo.temporal._resolvers import EnvKeyResolver
+from tenuo.temporal._workflow import AuthorizedWorkflow, execute_workflow_authorized
 
 # Logging
 logging.basicConfig(

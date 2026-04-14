@@ -146,7 +146,7 @@ omit = [
     "*/__pycache__/*",
     "*/conftest.py",
     # Requires running Temporal server — covered by e2e tests only
-    "*/tenuo/temporal.py",
+    "*/tenuo/temporal/*.py",
     # CLI module — covered by CLI integration tests, not unit tests
     "*/tenuo/cli.py",
     # A2A client/helpers — require running A2A servers

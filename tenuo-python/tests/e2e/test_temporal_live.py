@@ -45,12 +45,12 @@ from tenuo.temporal import (  # noqa: E402
     TenuoClientInterceptor,
     TenuoPlugin,
     TenuoPluginConfig,
-    _set_worker_config,
-    _tenuo_internal_mint_activity,
     tenuo_execute_activity,
     tenuo_execute_child_workflow,
     tenuo_headers,
 )
+from tenuo.temporal._state import _set_worker_config  # noqa: E402
+from tenuo.temporal._workflow import _tenuo_internal_mint_activity  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Activities

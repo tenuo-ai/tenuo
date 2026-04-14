@@ -14,12 +14,10 @@ from temporalio.worker.workflow_sandbox import (  # noqa: E402
 )
 
 from tenuo import SigningKey  # noqa: E402
-from tenuo.temporal import (  # noqa: E402
-    EnvKeyResolver,
-    TenuoClientInterceptor,
-    TenuoPlugin,
-    TenuoPluginConfig,
-)
+from tenuo.temporal._client import TenuoClientInterceptor  # noqa: E402
+from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
+from tenuo.temporal._interceptors import TenuoPlugin  # noqa: E402
+from tenuo.temporal._resolvers import EnvKeyResolver  # noqa: E402
 from tenuo.temporal_plugin import (  # noqa: E402
     TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME,
     TenuoTemporalPlugin,
@@ -36,7 +34,7 @@ def _minimal_config() -> TenuoPluginConfig:
     )
 
 
-def test_plugin_name_matches_partner_id() -> None:
+def test_plugin_name_matches_expected_id() -> None:
     p = TenuoTemporalPlugin(_minimal_config())
     assert p.name() == TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME == "tenuo.TenuoTemporalPlugin"
 
@@ -115,7 +113,7 @@ def test_lazy_export_from_tenuo_temporal() -> None:
 def test_internal_mint_activity_registered():
     """_tenuo_internal_mint_activity is auto-registered by TenuoTemporalPlugin."""
     pytest.importorskip("temporalio")
-    from tenuo.temporal import _tenuo_internal_mint_activity
+    from tenuo.temporal._workflow import _tenuo_internal_mint_activity
 
     # The activity should be importable
     assert _tenuo_internal_mint_activity is not None

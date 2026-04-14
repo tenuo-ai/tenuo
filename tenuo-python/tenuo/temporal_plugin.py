@@ -54,22 +54,23 @@ except ImportError as e:  # pragma: no cover - guarded by temporalio version
     ) from e
 
 from tenuo.exceptions import ConfigurationError
-from tenuo.temporal import (
+from tenuo.temporal._client import (
     TenuoClientInterceptor,
-    TenuoPlugin,
-    TenuoPluginConfig,
     TenuoWarrantContextPropagator,
-    _build_activity_registry,
-    _set_worker_config,
-    _tenuo_internal_mint_activity,
 )
+from tenuo.temporal._config import (
+    TenuoPluginConfig,
+    _build_activity_registry,
+)
+from tenuo.temporal._interceptors import TenuoPlugin
+from tenuo.temporal._state import _set_worker_config
+from tenuo.temporal._workflow import _tenuo_internal_mint_activity
 
 _logger = logging.getLogger("tenuo.temporal")
 
 if TYPE_CHECKING:
     from temporalio.worker import WorkflowRunner
 
-# Partner program naming: my_library.MyPlugin
 TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME = "tenuo.TenuoTemporalPlugin"
 
 
@@ -135,7 +136,7 @@ def ensure_tenuo_workflow_runner(
 
 
 class TenuoTemporalPlugin(SimplePlugin):
-    """Temporal AI Partner Program plugin for warrant + PoP enforcement.
+    """Temporal plugin for warrant + PoP enforcement.
 
     **Plugin name:** :data:`TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME` (``tenuo.TenuoTemporalPlugin``).
 

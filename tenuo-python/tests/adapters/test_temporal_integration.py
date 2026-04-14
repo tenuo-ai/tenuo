@@ -22,23 +22,16 @@ from unittest.mock import MagicMock
 import pytest
 
 from tenuo import SigningKey as _TI_SigningKey
-from tenuo.temporal import (
+from tenuo.temporal._config import TenuoPluginConfig
+from tenuo.temporal._decorators import get_tool_name, is_unprotected, tool, unprotected
+from tenuo.temporal._observability import TemporalAuditEvent
+from tenuo.temporal._resolvers import KeyResolver
+from tenuo.temporal.exceptions import (
     ChainValidationError,
-    # Exceptions
-    TemporalConstraintViolation,
-    KeyResolver,
     LocalActivityError,
     PopVerificationError,
-    # Audit
-    TemporalAuditEvent,
-    # Config
-    TenuoPluginConfig,
+    TemporalConstraintViolation,
     WarrantExpired,
-    get_tool_name,
-    is_unprotected,
-    tool,
-    # Decorators
-    unprotected,
 )
 
 _TI_TRUST_ROOTS = [_TI_SigningKey.generate().public_key]

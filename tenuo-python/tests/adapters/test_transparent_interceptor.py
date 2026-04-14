@@ -20,6 +20,7 @@ Design Decision: timestamp parameter is OPTIONAL
 
 import asyncio
 import base64
+import importlib
 import os
 import time
 import uuid
@@ -43,13 +44,45 @@ except ImportError:
 from tenuo_core import Subpath
 
 from tenuo import SigningKey, Warrant
-from tenuo.temporal import (
-    EnvKeyResolver,
-    TenuoClientInterceptor,
-    TenuoPlugin,
-    TenuoPluginConfig,
-    tenuo_headers,
-)
+from tenuo.temporal._client import TenuoClientInterceptor
+from tenuo.temporal._config import TenuoPluginConfig
+from tenuo.temporal._headers import tenuo_headers
+from tenuo.temporal._interceptors import TenuoPlugin
+from tenuo.temporal._resolvers import EnvKeyResolver
+
+
+def _fix_protobuf_beartype_pollution():
+    """Work around beartype/sandbox pollution of google.protobuf.message.
+
+    The Temporal sandbox re-imports modules inside an isolated namespace.
+    When beartype import-hooks are active, the sandbox can replace
+    ``google.protobuf.message`` (both in ``sys.modules`` and as an
+    attribute on ``google.protobuf``) with a beartype-wrapped copy whose
+    ``Message`` class fails ``isinstance()`` checks.  This function
+    restores the canonical module from ``sys.modules`` to the package
+    attribute chain so that ``google.protobuf.message.Message`` is once
+    again usable.
+    """
+    import sys as _sys
+
+    clean = _sys.modules.get("google.protobuf.message")
+    if clean is None:
+        return
+
+    try:
+        isinstance(object(), clean.Message)
+    except TypeError:
+        importlib.reload(clean)
+        clean = _sys.modules["google.protobuf.message"]
+
+    gpb = _sys.modules.get("google.protobuf")
+    if gpb is not None:
+        gpb.message = clean
+
+    g = _sys.modules.get("google")
+    if g is not None and hasattr(g, "protobuf"):
+        g.protobuf.message = clean
+
 
 # =============================================================================
 # Test sign() backward compatibility
@@ -225,9 +258,11 @@ if TEMPORAL_AVAILABLE:
                 task_queue = f"test-transparent-{uuid.uuid4().hex[:8]}"
 
                 activities = [read_file, write_file, list_files]
+                resolver = EnvKeyResolver()
+                resolver.preload_keys(["agent1"])
                 worker_interceptor = TenuoPlugin(
                     TenuoPluginConfig(
-                        key_resolver=EnvKeyResolver(),
+                        key_resolver=resolver,
                         on_denial="raise",
                         trusted_roots=[control_key.public_key],
                         activity_fns=activities,
@@ -240,7 +275,7 @@ if TEMPORAL_AVAILABLE:
                 )
                 sandbox_runner = SandboxedWorkflowRunner(
                     restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                        "tenuo", "tenuo_core",
+                        "tenuo", "tenuo_core", "beartype", "google",
                     )
                 )
 
@@ -252,6 +287,7 @@ if TEMPORAL_AVAILABLE:
                     interceptors=[worker_interceptor],
                     workflow_runner=sandbox_runner,
                 ):
+                    _fix_protobuf_beartype_pollution()
                     client_interceptor.set_headers(
                         tenuo_headers(warrant, "agent1")
                     )
@@ -309,9 +345,11 @@ if TEMPORAL_AVAILABLE:
                 task_queue = f"test-parallel-{uuid.uuid4().hex[:8]}"
 
                 parallel_activities = [read_file]
+                resolver = EnvKeyResolver()
+                resolver.preload_keys(["agent1"])
                 worker_interceptor = TenuoPlugin(
                     TenuoPluginConfig(
-                        key_resolver=EnvKeyResolver(),
+                        key_resolver=resolver,
                         on_denial="raise",
                         trusted_roots=[control_key.public_key],
                         activity_fns=parallel_activities,
@@ -324,7 +362,7 @@ if TEMPORAL_AVAILABLE:
                 )
                 sandbox_runner = SandboxedWorkflowRunner(
                     restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                        "tenuo", "tenuo_core",
+                        "tenuo", "tenuo_core", "beartype", "google",
                     )
                 )
 
@@ -336,6 +374,7 @@ if TEMPORAL_AVAILABLE:
                     interceptors=[worker_interceptor],
                     workflow_runner=sandbox_runner,
                 ):
+                    _fix_protobuf_beartype_pollution()
                     client_interceptor.set_headers(
                         tenuo_headers(warrant, "agent1")
                     )
@@ -364,10 +403,8 @@ def test_parameter_name_resolution_consistency():
     """Verify outbound and inbound interceptors use same arg resolution strategy."""
     import inspect
 
-    from tenuo.temporal import (
-        TenuoActivityInboundInterceptor,
-        _args_to_dict_by_fn,
-    )
+    from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+    from tenuo.temporal._pop import _args_to_dict_by_fn
 
     # start_activity delegates to _args_to_dict_by_fn for signature inspection;
     # check the helper where the logic lives.
@@ -388,7 +425,7 @@ def test_fail_closed_behavior():
     """Verify that PoP computation failures abort the activity (fail-closed)."""
     import inspect
 
-    from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+    from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
 
     source = inspect.getsource(_TenuoWorkflowOutboundInterceptor.start_activity)
 

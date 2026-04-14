@@ -32,22 +32,23 @@ from tenuo_core import Subpath  # noqa: E402
 
 from tenuo import SigningKey, Warrant  # noqa: E402
 from tenuo.temporal import (  # noqa: E402
-    TENUO_COMPRESSED_HEADER,
-    TENUO_KEY_ID_HEADER,
-    TENUO_POP_HEADER,
-    TENUO_WARRANT_HEADER,
     EnvKeyResolver,
     TenuoClientInterceptor,
     TenuoPlugin,
     TenuoPluginConfig,
-    execute_workflow_authorized,
-    _extract_warrant_from_headers,
-    _pop_dedup_cache,
-    _store_lock,
-    _TenuoWorkflowInboundInterceptor,
-    _workflow_headers_store,
     tenuo_headers,
 )
+from tenuo.temporal._constants import (  # noqa: E402
+    TENUO_COMPRESSED_HEADER,
+    TENUO_KEY_ID_HEADER,
+    TENUO_POP_HEADER,
+    TENUO_WARRANT_HEADER,
+)
+from tenuo.temporal._dedup import _pop_dedup_cache  # noqa: E402
+from tenuo.temporal._headers import _extract_warrant_from_headers  # noqa: E402
+from tenuo.temporal._interceptors import _TenuoWorkflowInboundInterceptor  # noqa: E402
+from tenuo.temporal._state import _store_lock, _workflow_headers_store  # noqa: E402
+from tenuo.temporal._workflow import execute_workflow_authorized  # noqa: E402
 
 # -- Fixtures ----------------------------------------------------------------
 
@@ -1180,7 +1181,7 @@ class TestOutboundInterceptorHeaderInjection:
         self, warrant, agent_key, headers_dict
     ):
         """Outbound interceptor computes PoP transparently and injects into activity headers."""
-        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-outbound"
         _populate_store(wf_id, headers_dict)
@@ -1235,7 +1236,7 @@ class TestOutboundInterceptorHeaderInjection:
         """No input.fn and no activity_fns → arg0 fallback; warrant has path →
         _prevalidate_args_against_warrant fires (arg0 vs path mismatch) and
         the error is wrapped in a non-retryable ApplicationError."""
-        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-positional-pop-warn"
         _populate_store(wf_id, headers_dict)
@@ -1280,7 +1281,7 @@ class TestOutboundInterceptorHeaderInjection:
     ):
         """strict_mode=True: positional fallback + named constraints →
         _prevalidate_args_against_warrant fires first, wrapped in ApplicationError."""
-        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-positional-pop-strict"
         _populate_store(wf_id, headers_dict)
@@ -1380,10 +1381,8 @@ class TestChildWorkflowDelegation:
         self, warrant, agent_key, control_key, headers_dict
     ):
         """Outbound interceptor pops _pending_child_headers and injects into child."""
-        from tenuo.temporal import (
-            _pending_child_headers,
-            _TenuoWorkflowOutboundInterceptor,
-        )
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
+        from tenuo.temporal._state import _pending_child_headers
 
         child_id = "wf-child-001"
         raw_child_headers = {}
@@ -1419,7 +1418,7 @@ class TestChildWorkflowDelegation:
 
     def test_child_workflow_no_headers_passes_through(self):
         """When no pending headers exist, child receives no Tenuo headers (fail-closed)."""
-        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
 
         captured = {}
         class FakeNext:
@@ -1442,10 +1441,8 @@ class TestChildWorkflowDelegation:
     ):
         """Even if the parent has stored headers, a plain child workflow call
         must NOT inherit them — fail-closed requires explicit attenuation."""
-        from tenuo.temporal import (
-            _TenuoWorkflowOutboundInterceptor,
-            _workflow_headers_store,
-        )
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
+        from tenuo.temporal._state import _workflow_headers_store
 
         parent_wf_id = "wf-parent-with-headers"
         raw_parent_headers: Dict[str, bytes] = {}
@@ -1491,7 +1488,7 @@ class TestContinueAsNew:
 
     def test_continue_as_new_reinjects_headers(self, warrant, headers_dict):
         """continue_as_new should inject stored warrant headers into the new run."""
-        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-continue"
         _populate_store(wf_id, headers_dict)
@@ -1516,7 +1513,7 @@ class TestContinueAsNew:
 
     def test_continue_as_new_no_store_passes_through(self):
         """Without stored headers, continue_as_new passes through."""
-        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-no-store"
         captured = {}
@@ -1538,7 +1535,7 @@ class TestContinueAsNew:
 
     def test_continue_as_new_attenuation_raises_not_implemented(self):
         """tenuo_continue_as_new with tenuo_attenuation must raise NotImplementedError."""
-        from tenuo.temporal import tenuo_continue_as_new
+        from tenuo.temporal._workflow import tenuo_continue_as_new
 
         with patch("temporalio.workflow.continue_as_new"):
             with pytest.raises(NotImplementedError, match="not yet implemented"):
@@ -1556,7 +1553,7 @@ class TestNexusHeaderPropagation:
 
     def test_nexus_receives_base64_encoded_headers(self, warrant, headers_dict):
         """start_nexus_operation base64-encodes stored headers for cross-namespace transport."""
-        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-nexus"
         _populate_store(wf_id, headers_dict)
@@ -1593,12 +1590,9 @@ class TestMintActivityIssueExecution:
         self, warrant, agent_key, control_key
     ):
         """If the Warrant type lacks issue_execution(), mint must raise, not fallback."""
-        from tenuo.temporal import (
-            _tenuo_internal_mint_activity,
-            _MintRequest,
-            _pending_mint_capabilities,
-            _set_worker_config,
-        )
+        from tenuo.temporal._observability import _MintRequest
+        from tenuo.temporal._state import _pending_mint_capabilities, _set_worker_config
+        from tenuo.temporal._workflow import _tenuo_internal_mint_activity
 
         cap_ref = "test-ref-issue-exec"
         with _store_lock:
@@ -1654,7 +1648,7 @@ class TestOutboundFailClosed:
 
     def test_pop_failure_raises_context_error(self, warrant, headers_dict):
         """If key resolver fails, outbound interceptor raises TenuoContextError."""
-        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-fail-pop"
         _populate_store(wf_id, headers_dict)
@@ -1703,7 +1697,7 @@ class TestOutboundFailClosed:
 
     def test_no_headers_passes_through_silently(self):
         """If no warrant in store, activity passes through without error (unprotected)."""
-        from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-empty-store"
 
@@ -1730,6 +1724,258 @@ class TestOutboundFailClosed:
             outbound.start_activity(FakeInput())
 
         assert called.get("pass") is True
+
+
+# -- Activity summaries (Temporal UI debuggability) ---------------------------
+
+class TestActivitySummaries:
+    """Verify Tenuo injects activity summaries for Temporal Web UI
+    debuggability.  Summaries help operators correlate UI events with
+    warrant-authorized tool names.
+    """
+
+    def test_outbound_injects_summary_with_tool_name(
+        self, warrant, agent_key, headers_dict
+    ):
+        """Outbound interceptor sets summary = '[tenuo...] <tool_name>'."""
+        from tenuo.temporal._constants import TENUO_TEMPORAL_PLUGIN_ID
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
+
+        wf_id = "wf-summary-inject"
+        _populate_store(wf_id, headers_dict)
+
+        captured = {}
+        class FakeNext:
+            def start_activity(self, input):
+                captured["summary"] = getattr(input, "summary", None)
+                return MagicMock()
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve_sync = MagicMock(return_value=agent_key)
+        config = TenuoPluginConfig(
+            key_resolver=mock_resolver,
+            trusted_roots=[SigningKey.generate().public_key],
+        )
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext(), config=config)
+
+        @dataclass
+        class FakeStartActivityInput:
+            activity: str = "read_file"
+            fn: Any = lambda path: path
+            args: tuple = ("/tmp/demo/f.txt",)
+            headers: Optional[Dict[str, Any]] = None
+            summary: Optional[str] = None
+
+        inp = FakeStartActivityInput()
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            with patch("temporalio.workflow.now") as mock_now:
+                import datetime
+                mock_now.return_value = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+                outbound.start_activity(inp)
+
+        assert captured["summary"] is not None
+        assert TENUO_TEMPORAL_PLUGIN_ID in captured["summary"]
+        assert "read_file" in captured["summary"]
+
+    def test_outbound_preserves_user_summary(
+        self, warrant, agent_key, headers_dict
+    ):
+        """When the user provides a summary, the interceptor preserves it
+        and prepends the Tenuo prefix + tool name."""
+        from tenuo.temporal._constants import TENUO_TEMPORAL_PLUGIN_ID
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
+
+        wf_id = "wf-summary-preserve"
+        _populate_store(wf_id, headers_dict)
+
+        captured = {}
+        class FakeNext:
+            def start_activity(self, input):
+                captured["summary"] = getattr(input, "summary", None)
+                return MagicMock()
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve_sync = MagicMock(return_value=agent_key)
+        config = TenuoPluginConfig(
+            key_resolver=mock_resolver,
+            trusted_roots=[SigningKey.generate().public_key],
+        )
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext(), config=config)
+
+        @dataclass
+        class FakeStartActivityInput:
+            activity: str = "read_file"
+            fn: Any = lambda path: path
+            args: tuple = ("/tmp/demo/f.txt",)
+            headers: Optional[Dict[str, Any]] = None
+            summary: Optional[str] = "fetch report"
+
+        inp = FakeStartActivityInput()
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            with patch("temporalio.workflow.now") as mock_now:
+                import datetime
+                mock_now.return_value = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+                outbound.start_activity(inp)
+
+        s = captured["summary"]
+        assert TENUO_TEMPORAL_PLUGIN_ID in s
+        assert "fetch report" in s
+        assert "read_file" in s
+
+    def test_outbound_summary_shows_mapped_tool_name(
+        self, warrant, agent_key, headers_dict
+    ):
+        """When tool_mappings renames an activity, the summary shows the
+        warrant tool name, not the Temporal activity type."""
+        from tenuo.temporal._constants import TENUO_TEMPORAL_PLUGIN_ID
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
+
+        wf_id = "wf-summary-mapped"
+        _populate_store(wf_id, headers_dict)
+
+        captured = {}
+        class FakeNext:
+            def start_activity(self, input):
+                captured["summary"] = getattr(input, "summary", None)
+                return MagicMock()
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve_sync = MagicMock(return_value=agent_key)
+        config = TenuoPluginConfig(
+            key_resolver=mock_resolver,
+            trusted_roots=[SigningKey.generate().public_key],
+            tool_mappings={"fetch_doc": "read_file"},
+        )
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext(), config=config)
+
+        @dataclass
+        class FakeStartActivityInput:
+            activity: str = "fetch_doc"
+            fn: Any = lambda path: path
+            args: tuple = ("/tmp/demo/f.txt",)
+            headers: Optional[Dict[str, Any]] = None
+            summary: Optional[str] = None
+
+        inp = FakeStartActivityInput()
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            with patch("temporalio.workflow.now") as mock_now:
+                import datetime
+                mock_now.return_value = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+                outbound.start_activity(inp)
+
+        s = captured["summary"]
+        assert "read_file" in s, "Summary should use the warrant tool name"
+        assert TENUO_TEMPORAL_PLUGIN_ID in s
+
+    def test_no_summary_field_does_not_crash(
+        self, warrant, agent_key, headers_dict
+    ):
+        """If the SDK dataclass lacks a summary field, the interceptor
+        should not crash — older SDK versions don't have it."""
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
+
+        wf_id = "wf-summary-missing-field"
+        _populate_store(wf_id, headers_dict)
+
+        passed = {}
+        class FakeNext:
+            def start_activity(self, input):
+                passed["ok"] = True
+                return MagicMock()
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve_sync = MagicMock(return_value=agent_key)
+        config = TenuoPluginConfig(
+            key_resolver=mock_resolver,
+            trusted_roots=[SigningKey.generate().public_key],
+        )
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext(), config=config)
+
+        @dataclass
+        class FakeStartActivityInputNoSummary:
+            activity: str = "read_file"
+            fn: Any = lambda path: path
+            args: tuple = ("/tmp/demo/f.txt",)
+            headers: Optional[Dict[str, Any]] = None
+
+        inp = FakeStartActivityInputNoSummary()
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            with patch("temporalio.workflow.now") as mock_now:
+                import datetime
+                mock_now.return_value = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+                outbound.start_activity(inp)
+
+        assert passed.get("ok") is True
+
+
+class TestMintActivitySummary:
+    """Verify _dispatch_mint_activity sets a summary on the internal
+    local activity so it renders meaningfully in the Temporal UI."""
+
+    @pytest.mark.asyncio
+    async def test_mint_activity_summary_contains_kind_and_tools(
+        self, warrant, agent_key
+    ):
+        """The local activity call includes a summary with the mint kind
+        and the tool names being minted."""
+        from tenuo.temporal._constants import TENUO_TEMPORAL_PLUGIN_ID
+        from tenuo.temporal._workflow import _dispatch_mint_activity
+
+        captured = {}
+
+        async def fake_execute_local_activity(fn, req, **kwargs):
+            captured["summary"] = kwargs.get("summary")
+            return warrant.to_bytes()
+
+        with patch("temporalio.workflow.execute_local_activity", side_effect=fake_execute_local_activity):
+            with patch("temporalio.workflow.uuid4", return_value="test-cap-ref"):
+                await _dispatch_mint_activity(
+                    kind="attenuate",
+                    parent_warrant=warrant,
+                    key_id="agent1",
+                    capabilities={"read_file": {}, "list_directory": {}},
+                    ttl_seconds=300,
+                )
+
+        s = captured["summary"]
+        assert TENUO_TEMPORAL_PLUGIN_ID in s
+        assert "attenuate" in s
+        assert "read_file" in s or "list_directory" in s
+
+    @pytest.mark.asyncio
+    async def test_mint_activity_summary_issue_execution(
+        self, warrant, agent_key
+    ):
+        """The summary correctly reflects issue_execution kind."""
+        from tenuo.temporal._workflow import _dispatch_mint_activity
+
+        captured = {}
+
+        async def fake_execute_local_activity(fn, req, **kwargs):
+            captured["summary"] = kwargs.get("summary")
+            return warrant.to_bytes()
+
+        with patch("temporalio.workflow.execute_local_activity", side_effect=fake_execute_local_activity):
+            with patch("temporalio.workflow.uuid4", return_value="test-ref"):
+                await _dispatch_mint_activity(
+                    kind="issue_execution",
+                    parent_warrant=warrant,
+                    key_id="agent1",
+                    capabilities={"read_file": {}},
+                    ttl_seconds=60,
+                )
+
+        s = captured["summary"]
+        assert "issue_execution" in s
+        assert "read_file" in s
 
 
 if __name__ == "__main__":
