@@ -15,12 +15,14 @@ import json
 
 import pytest
 
-from tenuo.temporal import (
-    TenuoArgNormalizationError,
-    TenuoPreValidationError,
+from tenuo.temporal._pop import (
     _normalize_args_for_pop,
     _normalize_pop_arg_value,
     _prevalidate_args_against_warrant,
+)
+from tenuo.temporal.exceptions import (
+    TenuoArgNormalizationError,
+    TenuoPreValidationError,
 )
 
 
@@ -390,7 +392,7 @@ class TestPrevalidateArgsAgainstWarrant:
 
     def test_error_type_is_non_retryable_subclass(self):
         """TenuoPreValidationError inherits from TenuoContextError — caught as non-retryable."""
-        from tenuo.temporal import TenuoContextError
+        from tenuo.temporal.exceptions import TenuoContextError
         warrant = _make_mock_warrant({"tool": {"x": None}})
         with pytest.raises(TenuoPreValidationError) as exc_info:
             _prevalidate_args_against_warrant(warrant, "tool", {"unknown": 1})

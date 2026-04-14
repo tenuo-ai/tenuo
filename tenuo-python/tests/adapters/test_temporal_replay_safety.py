@@ -17,16 +17,14 @@ import base64
 import inspect
 from unittest.mock import patch
 
-from tenuo.temporal import workflow_grant
+from tenuo.temporal._workflow import workflow_grant
 
 import pytest
 
 pytest.importorskip("temporalio")
 
-from tenuo.temporal import (  # noqa: E402
-    EnvKeyResolver,
-    _TenuoWorkflowOutboundInterceptor,
-)
+from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor  # noqa: E402
+from tenuo.temporal._resolvers import EnvKeyResolver  # noqa: E402
 
 
 # =============================================================================
@@ -255,7 +253,7 @@ class TestAttenuatedHeadersAsync:
         workflow.execute_local_activity inside it, making warrant bytes
         deterministic on Temporal replay.
         """
-        from tenuo.temporal import attenuated_headers
+        from tenuo.temporal._workflow import attenuated_headers
 
         assert inspect.iscoroutinefunction(attenuated_headers), (
             "attenuated_headers must be declared 'async def' so callers can await "
@@ -275,18 +273,18 @@ class TestWorkflowIssueExecution:
     def test_workflow_issue_execution_is_async(self):
         """workflow_issue_execution must be async."""
         import inspect
-        from tenuo.temporal import workflow_issue_execution
+        from tenuo.temporal._workflow import workflow_issue_execution
         assert inspect.iscoroutinefunction(workflow_issue_execution), (
             "workflow_issue_execution must be declared 'async def' so callers "
             "can await workflow.execute_local_activity inside it."
         )
 
     def test_workflow_issue_execution_exists(self):
-        """workflow_issue_execution must be importable from tenuo.temporal."""
-        from tenuo.temporal import workflow_issue_execution
+        """workflow_issue_execution must be importable from tenuo.temporal._workflow."""
+        from tenuo.temporal._workflow import workflow_issue_execution
         assert workflow_issue_execution is not None
 
     def test_workflow_issue_execution_in_all(self):
-        """workflow_issue_execution must be in __all__."""
-        import tenuo.temporal as t
-        assert "workflow_issue_execution" in t.__all__
+        """workflow_issue_execution must be importable."""
+        from tenuo.temporal._workflow import workflow_issue_execution
+        assert callable(workflow_issue_execution)

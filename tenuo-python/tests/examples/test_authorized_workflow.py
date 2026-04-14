@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tenuo.temporal import AuthorizedWorkflow, TenuoContextError
+from tenuo.temporal._workflow import AuthorizedWorkflow
+from tenuo.temporal.exceptions import TenuoContextError
 
 try:
     from temporalio.exceptions import ApplicationError
@@ -28,9 +29,9 @@ def _run(coro):
 # Mock dependencies
 @pytest.fixture
 def mock_context():
-    with patch("tenuo.temporal.current_warrant") as mock_warrant, \
-         patch("tenuo.temporal.current_key_id") as mock_key_id, \
-         patch("tenuo.temporal.tenuo_execute_activity", new_callable=AsyncMock) as mock_exec:
+    with patch("tenuo.temporal._workflow.current_warrant") as mock_warrant, \
+         patch("tenuo.temporal._workflow.current_key_id") as mock_key_id, \
+         patch("tenuo.temporal._workflow.tenuo_execute_activity", new_callable=AsyncMock) as mock_exec:
         yield mock_warrant, mock_key_id, mock_exec
 
 
@@ -113,5 +114,5 @@ class TestAuthorizedWorkflow:
 
     def test_escape_hatch_availability(self):
         """Verify tenuo_execute_activity is available as an escape hatch."""
-        from tenuo.temporal import tenuo_execute_activity
+        from tenuo.temporal._workflow import tenuo_execute_activity
         assert callable(tenuo_execute_activity)

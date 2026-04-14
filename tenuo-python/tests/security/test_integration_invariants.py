@@ -1289,9 +1289,10 @@ class _TemporalAdapter(_Adapter):
 
     def __init__(self) -> None:
         pytest.importorskip("temporalio")
-        from tenuo.temporal import (
-            KeyResolver, TenuoPlugin, TenuoPluginConfig, TENUO_WARRANT_HEADER,
-        )
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._constants import TENUO_WARRANT_HEADER
+        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._resolvers import KeyResolver
 
         self._root = SigningKey.generate()
         self._HEADER = TENUO_WARRANT_HEADER
@@ -1322,7 +1323,8 @@ class _TemporalAdapter(_Adapter):
     ) -> Dict[str, Any]:
         import base64
 
-        from tenuo.temporal import TENUO_POP_HEADER, tenuo_headers
+        from tenuo.temporal._constants import TENUO_POP_HEADER
+        from tenuo.temporal._headers import tenuo_headers
 
         ad = dict(args) if args is not None else {}
         h = tenuo_headers(w, "matrix-agent")
@@ -2056,11 +2058,9 @@ class TestTemporalInvariants:
 
     def _make_interceptor(self, trusted_key: SigningKey):
         pytest.importorskip("temporalio")
-        from tenuo.temporal import (
-            KeyResolver,
-            TenuoPlugin,
-            TenuoPluginConfig,
-        )
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._resolvers import KeyResolver
 
         class _StaticResolver(KeyResolver):
             def __init__(self, key: SigningKey) -> None:
@@ -2136,7 +2136,7 @@ class TestTemporalInvariants:
         from unittest.mock import MagicMock, patch
 
         pytest.importorskip("temporalio")
-        from tenuo.temporal import TENUO_WARRANT_HEADER
+        from tenuo.temporal._constants import TENUO_WARRANT_HEADER
 
         @dataclass
         class _Info:
@@ -2278,7 +2278,9 @@ class TestTemporalInvariantsExtended:
 
     def _make_interceptor(self, trusted_key: SigningKey):
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoPlugin, TenuoPluginConfig
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._resolvers import KeyResolver
 
         class _R(KeyResolver):
             def __init__(self, k):
@@ -2297,7 +2299,7 @@ class TestTemporalInvariantsExtended:
         from unittest.mock import MagicMock
         inp = MagicMock()
         inp.headers = {}
-        from tenuo.temporal import TENUO_WARRANT_HEADER
+        from tenuo.temporal._constants import TENUO_WARRANT_HEADER
         inp.headers = {TENUO_WARRANT_HEADER: warrant.to_base64().encode()}
         fn = MagicMock()
         fn.__name__ = activity_name

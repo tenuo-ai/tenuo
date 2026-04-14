@@ -571,8 +571,8 @@ class TestTemporalControlPlane:
     @pytest.fixture
     def interceptor_config(self, mock_cp, issuer_key):
         """Build a minimal TenuoPluginConfig with the mock control plane."""
-        from tenuo.temporal import TenuoPluginConfig
-        from tenuo.temporal import EnvKeyResolver
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._resolvers import EnvKeyResolver
 
         return TenuoPluginConfig(
             key_resolver=EnvKeyResolver(),
@@ -583,7 +583,7 @@ class TestTemporalControlPlane:
     @pytest.fixture
     def interceptor(self, interceptor_config):
         """Build a TenuoActivityInboundInterceptor with the config."""
-        from tenuo.temporal import TenuoActivityInboundInterceptor
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
 
         # next_interceptor is not called in our tests (we call _emit_* directly)
         return TenuoActivityInboundInterceptor(
@@ -673,7 +673,9 @@ class TestTemporalControlPlane:
         self, fake_info, simple_warrant, issuer_key
     ):
         """No error when control_plane is not configured."""
-        from tenuo.temporal import TenuoActivityInboundInterceptor, TenuoPluginConfig, EnvKeyResolver
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+        from tenuo.temporal._resolvers import EnvKeyResolver
 
         config = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(),

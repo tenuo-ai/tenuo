@@ -51,6 +51,27 @@ Checklist for moving past local demos (each item stands alone; links go deeper):
 
 ---
 
+## Package layout
+
+All documented symbols can be imported from the top-level package (`from tenuo.temporal import X`). The package uses lazy loading so only the symbols you reference are imported. For direct imports in library or internal code, the canonical submodule homes are:
+
+| Submodule | Key symbols |
+|-----------|------------|
+| `tenuo.temporal._config` | `TenuoPluginConfig` |
+| `tenuo.temporal._resolvers` | `KeyResolver`, `EnvKeyResolver`, `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, `GCPSecretManagerKeyResolver`, `CompositeKeyResolver` |
+| `tenuo.temporal._headers` | `tenuo_headers` |
+| `tenuo.temporal._workflow` | `execute_workflow_authorized`, `start_workflow_authorized`, `tenuo_execute_activity`, `tenuo_execute_child_workflow`, `AuthorizedWorkflow`, `current_warrant`, `current_key_id`, `workflow_grant`, `set_activity_approvals` |
+| `tenuo.temporal._client` | `TenuoClientInterceptor`, `TenuoWarrantContextPropagator`, `tenuo_warrant_context` |
+| `tenuo.temporal._interceptors` | `TenuoPlugin` |
+| `tenuo.temporal._dedup` | `PopDedupStore`, `InMemoryPopDedupStore` |
+| `tenuo.temporal._decorators` | `tool`, `unprotected` |
+| `tenuo.temporal._observability` | `TemporalAuditEvent`, `TenuoMetrics` |
+| `tenuo.temporal._constants` | `TENUO_WARRANT_HEADER`, `TENUO_KEY_ID_HEADER`, `TENUO_POP_HEADER`, `TENUO_COMPRESSED_HEADER` |
+| `tenuo.temporal.exceptions` | `TenuoContextError`, `PopVerificationError`, `TemporalConstraintViolation`, `WarrantExpired`, `ChainValidationError`, `LocalActivityError`, `KeyResolutionError` |
+| `tenuo.temporal_plugin` | `TenuoTemporalPlugin`, `ensure_tenuo_workflow_runner` |
+
+---
+
 ## `TenuoPlugin` (manual setup)
 
 For cases where you need manual control over interceptors and the sandbox runner (instead of `TenuoTemporalPlugin`):

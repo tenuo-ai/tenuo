@@ -69,15 +69,13 @@ except ImportError:
 
 from tenuo import Exact, SigningKey, Subpath, Warrant
 from tenuo.decorators import key_scope, warrant_scope
-from tenuo.temporal import (
-    EnvKeyResolver,
-    TenuoClientInterceptor,
-    TenuoPlugin,
-    TenuoPluginConfig,
-    TemporalAuditEvent,
-    execute_workflow_authorized,
-    tenuo_headers,
-)
+from tenuo.temporal._client import TenuoClientInterceptor
+from tenuo.temporal._config import TenuoPluginConfig
+from tenuo.temporal._headers import tenuo_headers
+from tenuo.temporal._interceptors import TenuoPlugin
+from tenuo.temporal._observability import TemporalAuditEvent
+from tenuo.temporal._resolvers import EnvKeyResolver
+from tenuo.temporal._workflow import execute_workflow_authorized
 
 logging.basicConfig(
     level=logging.INFO,

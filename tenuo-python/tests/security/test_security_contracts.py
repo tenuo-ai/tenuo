@@ -241,7 +241,10 @@ class TestOnDenialBehaviouralContracts:
         from dataclasses import dataclass
 
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoPlugin, TenuoPluginConfig, TENUO_WARRANT_HEADER
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._constants import TENUO_WARRANT_HEADER
+        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._resolvers import KeyResolver
 
         trusted_key = SigningKey.generate()
 
@@ -502,7 +505,8 @@ class TestDryRunIsOptIn:
     def test_temporal_interceptor_default_is_not_dry_run(self):
         """Temporal TenuoPluginConfig defaults to dry_run=False."""
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoPluginConfig
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._resolvers import KeyResolver
 
         root = SigningKey.generate()
 
@@ -527,7 +531,9 @@ class TestDryRunIsOptIn:
         from dataclasses import dataclass
 
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoPlugin, TenuoPluginConfig
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._resolvers import KeyResolver
 
         root = SigningKey.generate()
 
@@ -587,7 +593,9 @@ class TestDryRunIsOptIn:
         from dataclasses import dataclass
 
         pytest.importorskip("temporalio")
-        from tenuo.temporal import KeyResolver, TenuoPlugin, TenuoPluginConfig
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._resolvers import KeyResolver
 
         root = SigningKey.generate()
 
