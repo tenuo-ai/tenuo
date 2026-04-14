@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-beta.21] - 2026-04-14
+
+### Changed
+
+- **Modularized `tenuo.temporal` package** — the monolithic `temporal.py` (5 300+ lines) is now 15 focused submodules (`_interceptors`, `_workflow`, `_client`, `_config`, `_pop`, `_headers`, `_decorators`, `_state`, `_dedup`, `_observability`, `_constants`, `_resolvers`, `_warrant_source`, `exceptions`, `temporal_plugin`). Public imports (`from tenuo.temporal import X`) are unchanged thanks to `__getattr__` lazy loading. Internal (`_`-prefixed) symbols must now be imported from their submodule.
+- **`docs/temporal.md` split** — deep reference content moved to `docs/temporal-reference.md` (908 lines). Quick-start guide stays in `temporal.md`.
+- **Removed `docs/temporal-sandbox-passthrough.md`** — rationale folded into `temporal-reference.md`.
+
+### Fixed
+
+- **`TenuoMetrics` now wired into interceptors** — `record_authorized` and `record_denied` are called on allow/deny paths when a `TenuoMetrics` instance is configured. Previously the `metrics` config field was accepted but never used.
+- **`WarrantExpired` raised consistently** — core `ExpiredError` is now surfaced as `WarrantExpired` instead of being wrapped as a generic `TemporalConstraintViolation`.
+- **Denial metrics include latency** — `start_ns` is now passed to all `_emit_denial_event` call sites (chain-depth denial was missing it).
+- **Removed stale "partner program" terminology** from code comments, test names, and docs.
+
+### Added
+
+- **Activity summaries for Temporal Web UI** — the outbound interceptor auto-prefixes activity summaries with `[tenuo.TenuoTemporalPlugin] <tool>` for debuggability in the Temporal UI. `tenuo_execute_activity` accepts a `summary` kwarg. (#376)
+- **`error_code` on all Temporal exception classes** — `TenuoContextError` (`CONTEXT_MISSING`), `TenuoArgNormalizationError` (`ARG_NORMALIZATION_FAILED`), and `TenuoPreValidationError` (`PRE_VALIDATION_FAILED`) now carry `error_code` like all other exception types.
+- **`_bind_warrant_headers` helper** — deduplicates warrant resolution logic between `execute_workflow_authorized` and `start_workflow_authorized`.
+- **`PopDedupStore` in `_dedup.py`** — PoP replay deduplication extracted from `exceptions.py` to its own module.
+- **Package layout table** in `docs/temporal-reference.md` mapping public symbols to canonical submodule homes.
+- **New tests:** UrlSafe/Wildcard constraint interceptor tests, metrics wiring tests (allow + deny), error_code presence tests, `set_activity_approvals` unit tests.
+
 ## [0.1.0-beta.20] - 2026-04-13
 
 ### Breaking
