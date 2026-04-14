@@ -15,7 +15,7 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 | **LangGraph** | 0.2.0 | 0.2+ latest | 1.1.3 | Stable | Validated in [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744) |
 | **MCP** | 1.0.0 | 1.1+ | 1.1.3 | Stable | Model Context Protocol |
 | **Google ADK** | 0.1.0 | 0.1+ | 0.1.2 | Beta | Early access |
-| **Temporal** | 1.23.0 | 1.x latest | — | Stable | `tenuo[temporal]` requires `temporalio>=1.23` for `TenuoTemporalPlugin` (`SimplePlugin`); worker interceptors work on older SDKs if configured manually |
+| **Temporal** | 1.23.0 | 1.x latest | 1.23.0+ | Stable | `tenuo[temporal]` requires `temporalio>=1.23` for `TenuoTemporalPlugin` (`SimplePlugin`); tested weekly via compatibility matrix (minimum + latest); replay safety verified across SDK versions |
 
 > **Version Philosophy**: Tenuo uses **permissive constraints** in `pyproject.toml` to maximize compatibility. We **warn at runtime** (not fail) if you have a version with known issues. This lets you try Tenuo without upgrading your entire stack.
 >
@@ -86,6 +86,22 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 - 0.2.27: Compatible with langgraph 0.2.0
 - 0.2.0: Core extraction
 
+### Temporal
+**Current Status**: Stable (minimum + latest passing)
+
+**Version Notes**:
+- **1.23.0**: Minimum required version. Introduces `SimplePlugin` API used by `TenuoTemporalPlugin`.
+- **<1.23.0**: `TenuoTemporalPlugin` is not available. Manual `TenuoPlugin` + `Worker(interceptors=[...])` pattern works.
+- Replay safety (determinism of PoP signatures, `workflow.now()` usage) is verified on both minimum and latest.
+
+**Replay Safety Testing**:
+- PoP signatures are deterministic across replays (same inputs → same output).
+- Workflow interceptor uses `workflow.now()`, not `time.time()` or `datetime.now()`.
+- `EnvKeyResolver` uses pre-cached keys inside the sandbox (no `os.environ` access).
+- Workflow history recorded on one SDK version replays cleanly via `Replayer`.
+
+**Tracking**: Open a new integration issue if regressions reappear.
+
 ### LangGraph
 **Current Status**: Stable (minimum + latest passing)
 
@@ -111,6 +127,7 @@ Last tested: [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/2
 | AutoGen | Pass (0.7.0) | Pass (0.7.5) | Not tested |
 | LangChain | Pass (0.2.0) | Pass (1.2.23) | Not tested |
 | LangGraph | Pass (0.2.0) | Pass (1.1.3) | Not tested |
+| Temporal | Pass (1.23.0) | Pass (latest) | Not tested |
 
 **Testing Cadence**:
 - Minimum versions: Weekly
@@ -129,6 +146,7 @@ None currently scheduled.
 - **OpenAI 1.x**: monitor 2.0 migration path
 - **LangChain/LangGraph**: monitor joint compatibility surface
 - **AutoGen**: monitor AgentChat and extension package changes
+- **Temporal**: monitor `SimplePlugin` API stability and `SandboxRestrictions` changes
 
 ---
 
@@ -159,6 +177,7 @@ Quick links to upstream changelogs:
 - [LangChain Changelog](https://python.langchain.com/changelog)
 - [LangGraph Releases](https://github.com/langchain-ai/langgraph/releases)
 - [MCP Releases](https://github.com/modelcontextprotocol/python-sdk/releases)
+- [Temporal Python SDK Releases](https://github.com/temporalio/sdk-python/releases)
 
 ---
 

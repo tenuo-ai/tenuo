@@ -12,6 +12,8 @@ on:
       - 'tenuo-python/tenuo/autogen.py'
       - 'tenuo-python/tenuo/langchain.py'
       - 'tenuo-python/tenuo/langgraph.py'
+      - 'tenuo-python/tenuo/temporal/**'
+      - 'tenuo-python/tenuo/temporal_plugin.py'
       - 'tenuo-python/pyproject.toml'
 
 permissions:
@@ -141,4 +143,129 @@ jobs:
               title: title,
               body: body,
               labels: ['integration', 'breaking-change', '${{ matrix.integration }}', 'automated']
+            });
+
+  # ==========================================================================
+  # Temporal — needs Rust toolchain + test server, so runs as a separate job.
+  # Tests both minimum (1.23.0, where SimplePlugin was introduced) and latest.
+  # Replay safety: records workflow history on one version, replays on both.
+  # ==========================================================================
+  temporal-compatibility:
+    name: temporal @ ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - minimum
+          - latest
+        python-version: ['3.12']
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: tenuo-python
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: tenuo-python/pyproject.toml
+
+      - name: Cache Temporal test server
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/temporalio
+          key: temporal-test-server-${{ runner.os }}
+
+      - name: Build and install Tenuo
+        working-directory: tenuo-python
+        run: |
+          pip install uv
+          uv pip install --system maturin
+          maturin build
+          uv pip install --system target/wheels/*.whl
+          uv pip install --system pytest pytest-asyncio pytest-timeout
+
+      - name: Install temporalio (minimum)
+        if: matrix.version == 'minimum'
+        run: |
+          uv pip install --system "temporalio==1.23.0" "protobuf>=6.0"
+
+      - name: Install temporalio (latest)
+        if: matrix.version == 'latest'
+        run: |
+          uv pip install --system "temporalio" "protobuf>=6.0"
+
+      - name: Show installed versions
+        run: |
+          pip list | grep -E "(temporalio|tenuo|protobuf|grpcio)"
+
+      - name: Run Temporal adapter tests (unit + replay safety)
+        working-directory: tenuo-python
+        run: |
+          pytest tests/adapters/test_temporal.py \
+                 tests/adapters/test_temporal_replay_safety.py \
+                 tests/adapters/test_temporal_plugin.py \
+                 tests/adapters/test_temporal_integration.py \
+                 tests/adapters/test_temporal_delegation.py \
+                 tests/adapters/test_transparent_interceptor.py \
+                 -v --tb=short -m "not temporal_live"
+
+      - name: Run Temporal live + replay tests
+        working-directory: tenuo-python
+        timeout-minutes: 10
+        env:
+          TEMPORAL_LIVE_TESTS: "1"
+        run: |
+          pytest tests/e2e/test_temporal_live.py \
+                 tests/e2e/test_temporal_replay.py \
+                 -v -m temporal_live --timeout=300
+
+      - name: Check for deprecation warnings
+        working-directory: tenuo-python
+        run: |
+          pytest tests/adapters/test_temporal.py \
+                 tests/adapters/test_temporal_replay_safety.py \
+                 -W error::DeprecationWarning \
+                 -W error::PendingDeprecationWarning \
+                 --tb=short -m "not temporal_live" \
+            || echo "::warning::Deprecation warnings detected in temporal @ ${{ matrix.version }}"
+
+      - name: Report compatibility failure
+        if: failure()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const title = `[Integration] temporal ${{ matrix.version }} compatibility issue`;
+            const body = `
+            ## Temporal Integration Test Failure
+
+            **Version track**: ${{ matrix.version }}
+            **Python**: ${{ matrix.python-version }}
+            **Workflow**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ### Action Items
+            - [ ] Review test logs
+            - [ ] Check for breaking changes in [temporalio releases](https://github.com/temporalio/sdk-python/releases)
+            - [ ] Verify replay safety across SDK versions
+            - [ ] Update minimum version in pyproject.toml if needed
+            - [ ] Update compatibility matrix documentation
+            `;
+
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['integration', 'breaking-change', 'temporal', 'automated']
             });
