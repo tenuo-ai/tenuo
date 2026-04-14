@@ -449,11 +449,10 @@ class TenuoPlugin(_TemporalWorkerInterceptor):
             ) from _e
 
         if config.pop_dedup_store is None:
-            logger.warning(
+            logger.debug(
                 "TenuoPluginConfig: using in-memory PopDedupStore (single-process only). "
-                "In multi-worker deployments, PoP replays from other workers will not be "
-                "detected. Set pop_dedup_store= to a shared backend (Redis, Memcached, "
-                "etc.) for fleet-wide replay prevention."
+                "In multi-worker deployments, set pop_dedup_store= to a shared backend "
+                "(Redis, Memcached, etc.) for fleet-wide PoP replay prevention."
             )
 
         logger.info(

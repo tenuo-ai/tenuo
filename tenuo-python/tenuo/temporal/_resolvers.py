@@ -106,7 +106,7 @@ class EnvKeyResolver(KeyResolver):
 
     For development/testing only. Do not use in production.
 
-    Expects: TENUO_KEY_{key_id}=<base64-encoded-key>
+    Expects: TENUO_KEY_{key_id}=<base64-or-hex-encoded-key>
 
     Args:
         prefix: Environment variable prefix (default: "TENUO_KEY_")
@@ -146,6 +146,38 @@ class EnvKeyResolver(KeyResolver):
             )
         self._warned = True
 
+    @staticmethod
+    def _decode_key_bytes(value: str) -> bytes:
+        """Decode a key value that may be base64 or hex-encoded."""
+        stripped = value.strip()
+
+        try:
+            raw = base64.b64decode(stripped, validate=True)
+            if len(raw) == 32:
+                return raw
+        except (binascii.Error, ValueError):
+            pass
+
+        try:
+            raw = bytes.fromhex(stripped)
+            if len(raw) == 32:
+                return raw
+        except ValueError:
+            pass
+
+        # Fall back to non-strict base64 (handles values without padding)
+        try:
+            raw = base64.b64decode(stripped)
+            if len(raw) == 32:
+                return raw
+        except (binascii.Error, ValueError):
+            pass
+
+        raise ValueError(
+            f"Cannot decode as base64 or hex (expected 32 bytes for Ed25519). "
+            f"Got {len(stripped)} characters."
+        )
+
     def _load_key_from_env(self, key_id: str) -> Any:
         """Read ``{prefix}{key_id}`` from ``os.environ`` and build a ``SigningKey``."""
         import os
@@ -158,7 +190,7 @@ class EnvKeyResolver(KeyResolver):
         try:
             from tenuo_core import SigningKey
 
-            return SigningKey.from_bytes(base64.b64decode(value))
+            return SigningKey.from_bytes(self._decode_key_bytes(value))
         except (binascii.Error, ValueError) as e:
             logger.error(f"Failed to decode key from {env_name}: {e}")
             raise KeyResolutionError(key_id=key_id)

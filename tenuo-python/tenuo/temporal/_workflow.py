@@ -43,6 +43,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger("tenuo.temporal")
 
 
+def _fail_workflow_non_retryable(exc: Exception) -> Exception:
+    """Wrap *exc* as a non-retryable ``ApplicationError``.
+
+    Authorization failures raised in workflow context (not activity context)
+    must be wrapped this way; otherwise Temporal treats them as workflow task
+    failures and retries forever.
+    """
+    try:
+        from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
+    except ImportError:
+        return exc
+    return ApplicationError(
+        str(exc),
+        type=type(exc).__name__,
+        non_retryable=True,
+    )
+
+
 # ── Context Accessors ────────────────────────────────────────────────────
 
 def current_warrant() -> Any:
@@ -468,6 +486,31 @@ except ImportError:
 
 # ── Public workflow functions ────────────────────────────────────────────
 
+def _resolve_client_interceptor(
+    client: Any,
+    client_interceptor: "Optional[TenuoClientInterceptor]",
+) -> "TenuoClientInterceptor":
+    """Return *client_interceptor* if given, otherwise discover it from the client."""
+    if client_interceptor is not None:
+        return client_interceptor
+
+    from tenuo.temporal._client import TenuoClientInterceptor as _TCI
+
+    try:
+        config = client.config(active_config=True)
+    except Exception:
+        config = {}
+
+    for ic in config.get("interceptors", []):
+        if isinstance(ic, _TCI):
+            return ic
+
+    raise TenuoContextError(
+        "No TenuoClientInterceptor found. Either pass client_interceptor= "
+        "explicitly, or use Client.connect(plugins=[TenuoTemporalPlugin(...)])."
+    )
+
+
 async def _bind_warrant_headers(
     *,
     caller: str,
@@ -510,7 +553,7 @@ async def _bind_warrant_headers(
 async def execute_workflow_authorized(
     *,
     client: Any,
-    client_interceptor: "TenuoClientInterceptor",
+    client_interceptor: "Optional[TenuoClientInterceptor]" = None,
     workflow_run_fn: Any,
     workflow_id: str,
     warrant: Any = None,
@@ -529,10 +572,15 @@ async def execute_workflow_authorized(
     Accepts either a pre-minted ``warrant`` + ``key_id`` pair, or a
     ``warrant_source`` that resolves the pair lazily at call time. The two
     are mutually exclusive — passing both raises ``TenuoContextError``.
+
+    ``client_interceptor`` is optional when the client was created with
+    ``Client.connect(plugins=[TenuoTemporalPlugin(...)])``.  The interceptor
+    is discovered automatically from the client's active config.
     """
+    resolved = _resolve_client_interceptor(client, client_interceptor)
     await _bind_warrant_headers(
         caller="execute_workflow_authorized",
-        client_interceptor=client_interceptor,
+        client_interceptor=resolved,
         workflow_id=workflow_id,
         warrant=warrant,
         key_id=key_id,
@@ -552,7 +600,7 @@ async def execute_workflow_authorized(
 async def start_workflow_authorized(
     *,
     client: Any,
-    client_interceptor: "TenuoClientInterceptor",
+    client_interceptor: "Optional[TenuoClientInterceptor]" = None,
     workflow_run_fn: Any,
     workflow_id: str,
     warrant: Any = None,
@@ -568,10 +616,14 @@ async def start_workflow_authorized(
     pipelines — where the caller should not block on the final result. The
     function returns a ``WorkflowHandle`` as soon as the workflow is accepted
     by the Temporal server.
+
+    ``client_interceptor`` is optional when the client was created with
+    ``Client.connect(plugins=[TenuoTemporalPlugin(...)])``.
     """
+    resolved = _resolve_client_interceptor(client, client_interceptor)
     await _bind_warrant_headers(
         caller="start_workflow_authorized",
-        client_interceptor=client_interceptor,
+        client_interceptor=resolved,
         workflow_id=workflow_id,
         warrant=warrant,
         key_id=key_id,
@@ -617,12 +669,12 @@ async def attenuated_headers(
         requested_tools = set(tools)
         if not requested_tools.issubset(parent_tools):
             excess = requested_tools - parent_tools
-            raise TemporalConstraintViolation(
+            raise _fail_workflow_non_retryable(TemporalConstraintViolation(
                 tool=str(list(excess)[0]),
                 arguments={},
                 constraint=f"Cannot delegate tools not in parent: {excess}",
                 warrant_id=parent_warrant.id,
-            )
+            ))
     else:
         tools = list(parent_tools)
 
@@ -634,7 +686,7 @@ async def attenuated_headers(
         narrowing = extra.get(tool_key, {})
         unknown_keys = set(narrowing) - set(base)
         if unknown_keys:
-            raise TemporalConstraintViolation(
+            raise _fail_workflow_non_retryable(TemporalConstraintViolation(
                 tool=tool_key,
                 arguments={},
                 constraint=(
@@ -643,10 +695,13 @@ async def attenuated_headers(
                     "narrowed in a child warrant."
                 ),
                 warrant_id=parent_warrant.id,
-            )
+            ))
         for field_name, new_val in narrowing.items():
             parent_val = base.get(field_name)
-            _check_subpath_not_widened(tool_key, field_name, parent_val, new_val, parent_warrant.id)
+            try:
+                _check_subpath_not_widened(tool_key, field_name, parent_val, new_val, parent_warrant.id)
+            except TemporalConstraintViolation as subpath_exc:
+                raise _fail_workflow_non_retryable(subpath_exc) from subpath_exc
         base.update(narrowing)
         capabilities[tool_key] = base
 
@@ -761,12 +816,12 @@ async def workflow_grant(
 
     parent_tools = parent_warrant.tools or []
     if tool not in parent_tools:
-        raise TemporalConstraintViolation(
+        raise _fail_workflow_non_retryable(TemporalConstraintViolation(
             tool=tool,
             arguments={},
             constraint=f"Tool '{tool}' not in parent warrant capabilities",
             warrant_id=parent_warrant.id,
-        )
+        ))
 
     key_id, _config_entry = _workflow_mint_context("attenuated grants")
 
@@ -803,12 +858,12 @@ async def workflow_issue_execution(
 
     parent_tools = parent_warrant.tools or []
     if tool not in parent_tools:
-        raise TemporalConstraintViolation(
+        raise _fail_workflow_non_retryable(TemporalConstraintViolation(
             tool=tool,
             arguments={},
             constraint=f"Tool '{tool}' not in parent warrant capabilities",
             warrant_id=parent_warrant.id,
-        )
+        ))
 
     key_id, _config_entry = _workflow_mint_context("outbound PoP signing")
 

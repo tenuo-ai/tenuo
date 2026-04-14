@@ -77,7 +77,6 @@ Recommended start path: use `execute_workflow_authorized(...)` for deterministic
 ```python
 result = await execute_workflow_authorized(
     client=client,
-    client_interceptor=client_interceptor,
     workflow_run_fn=MyWorkflow.run,
     workflow_id="wf-123",
     warrant=warrant,
@@ -120,7 +119,7 @@ The outbound interceptor learns parameter names from, in order:
 
 If (4) happens while your warrant has field constraints for that tool, verification will not match the warrant. The worker **logs a warning**; with **`strict_mode=True`** it **raises** instead so you fix config before production.
 
-**Rule of thumb:** if the warrant names arguments (`path=`, `message=`, …), set `activity_fns` next to `TenuoPlugin` (see `demo.py`). Tool-only capabilities without per-field constraints often do not need it.
+**Rule of thumb:** if the warrant names arguments (`path=`, `message=`, …), set `activity_fns` in `TenuoPluginConfig` (see `demo.py`). Tool-only capabilities without per-field constraints often do not need it.
 
 See also: the **Activity registry (`activity_fns`) and PoP argument names** section in [`docs/temporal-reference.md`](../../../docs/temporal-reference.md) (repository root).
 
@@ -276,11 +275,11 @@ pytest tests/e2e/test_temporal_e2e.py -v   # mocked Temporal integration tests (
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `ConfigurationError` … `trusted_roots` | `TenuoPluginConfig` built without roots and no global `configure` | Pass `trusted_roots=[control_key.public_key]` or call `tenuo.configure(trusted_roots=[...])` before constructing the config |
-| `ImportError: PyO3 modules ... initialized once` | Missing passthrough modules | Add `with_passthrough_modules("tenuo", "tenuo_core")` to sandbox config |
+| `ImportError: PyO3 modules ... initialized once` | Missing passthrough modules | `TenuoTemporalPlugin` handles this automatically. If using manual `TenuoPlugin`, add `with_passthrough_modules("tenuo", "tenuo_core")` to sandbox config |
 | `TenuoContextError: No Tenuo headers in store` | Workflow started without headers | Use `execute_workflow_authorized(...)` or call `set_headers_for_workflow(workflow_id, tenuo_headers(...))` before `execute_workflow` |
-| `TemporalConstraintViolation: No warrant provided` | Headers not reaching worker | Ensure `TenuoClientInterceptor` is in the client's interceptor list |
+| `TemporalConstraintViolation: No warrant provided` | Headers not reaching worker | Ensure `TenuoTemporalPlugin` is passed to `Client.connect(plugins=[plugin])`, or if using manual setup, that `TenuoClientInterceptor` is in the client's interceptor list |
 | `PopVerificationError: replay detected` | Same activity attempt reached two workers (fleet-wide dedup not configured) | Expected with in-memory dedup and multiple worker pods; configure `pop_dedup_store` with a shared backend for fleet-wide suppression |
-| `KeyResolutionError: Cannot resolve key: <id>` | Signing key not found by `KeyResolver` | For `EnvKeyResolver`: set `TENUO_KEY_<key_id>` and call `resolver.preload_keys([...])` before `Worker(...)` (workflows need cached keys; the sandbox blocks `os.environ`). For cloud resolvers: verify secret name, permissions, and region |
+| `KeyResolutionError: Cannot resolve key: <id>` | Signing key not found by `KeyResolver` | For `EnvKeyResolver`: set `TENUO_KEY_<key_id>` env vars before constructing the plugin. `TenuoTemporalPlugin` calls `preload_all()` automatically; if using manual `TenuoPlugin`, call `resolver.preload_all()` before `Worker(...)`. For cloud resolvers: verify secret name, permissions, and region |
 | Warning: `PoP signing … uses positional argument keys (arg0, …)` | Warrant uses named field constraints but activity function reference not available | Add `activity_fns=[read_file, ...]` to `TenuoPluginConfig` (same list as `Worker(activities=...)`), or use `tenuo_execute_activity()` |
 | `TenuoContextError` (in `strict_mode`) | Same as above but fail-fast is on | See above; remove `strict_mode=True` temporarily to diagnose, then fix `activity_fns` |
 | Activity denied despite valid warrant | PoP computation failed silently | Check worker logs for WARNING/ERROR messages from outbound interceptor; verify `key_id` matches a key accessible to `KeyResolver` |

@@ -35,18 +35,15 @@ from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.common import RetryPolicy
 from temporalio.worker import Worker
-from temporalio.worker.workflow_sandbox import (
-    SandboxedWorkflowRunner,
-    SandboxRestrictions,
-)
 from tenuo import Pattern, SigningKey, Subpath, Warrant
-from tenuo.temporal._client import TenuoClientInterceptor
-from tenuo.temporal._config import TenuoPluginConfig
-from tenuo.temporal._headers import tenuo_headers
-from tenuo.temporal._interceptors import TenuoPlugin
-from tenuo.temporal._observability import TemporalAuditEvent
-from tenuo.temporal._resolvers import EnvKeyResolver
-from tenuo.temporal._workflow import tenuo_execute_child_workflow
+from tenuo.temporal import (
+    EnvKeyResolver,
+    TemporalAuditEvent,
+    TenuoPluginConfig,
+    TenuoTemporalPlugin,
+    tenuo_execute_child_workflow,
+    tenuo_headers,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S",
@@ -243,10 +240,6 @@ def on_audit(event: TemporalAuditEvent):
 # =============================================================================
 
 async def main():
-    client_interceptor = TenuoClientInterceptor()
-    client = await Client.connect("localhost:7233", interceptors=[client_interceptor])
-    logger.info("Connected to Temporal server")
-
     control_key = SigningKey.generate()
     ingest_key = SigningKey.generate()
     transform_key = SigningKey.generate()
@@ -289,32 +282,24 @@ async def main():
     logger.info(f"Ingest warrant:    {ingest_warrant.id} (read {source_dir})")
     logger.info(f"Transform warrant: {transform_warrant.id} (write {output_dir})")
 
-    # Pre-load keys to avoid os.environ access inside Temporal's workflow sandbox
-    # Note: orchestrator and writeonly keys are created later in the demo
     key_resolver = EnvKeyResolver()
-    key_resolver.preload_keys(["ingest", "transform"])
-
-    worker_interceptor = TenuoPlugin(
+    plugin = TenuoTemporalPlugin(
         TenuoPluginConfig(
             key_resolver=key_resolver,
             on_denial="raise",
             audit_callback=on_audit,
             trusted_roots=[control_key.public_key],
             strict_mode=True,
-            activity_fns=[read_file, write_file, list_directory],
         )
     )
 
-    sandbox_runner = SandboxedWorkflowRunner(
-        restrictions=SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")
-    )
+    client = await Client.connect("localhost:7233", plugins=[plugin])
+    logger.info("Connected to Temporal server")
 
     async with Worker(
         client, task_queue=task_queue,
         workflows=[IngestWorkflow, TransformWorkflow, OrchestratorWorkflow, ReaderChild, WriterChild],
         activities=[read_file, write_file, list_directory],
-        interceptors=[worker_interceptor],
-        workflow_runner=sandbox_runner,
     ):
         logger.info("Worker started\n")
 
@@ -327,7 +312,7 @@ async def main():
         # -- Stage 1: Ingest (read-only warrant) --
         logger.info("  Stage 1: Ingest (read-only)")
         ingest_id = f"ingest-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             ingest_id,
             tenuo_headers(ingest_warrant, "ingest"),
         )
@@ -342,7 +327,7 @@ async def main():
         # -- Stage 2: Transform (write-only warrant) --
         logger.info("  Stage 2: Transform (write-only)")
         transform_id = f"transform-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             transform_id,
             tenuo_headers(transform_warrant, "transform"),
         )
@@ -357,7 +342,7 @@ async def main():
         # -- Verify: transform warrant cannot read source --
         logger.info("  Verify: transform warrant cannot read (should be denied)")
         bad_id = f"bad-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             bad_id,
             tenuo_headers(transform_warrant, "transform"),
         )
@@ -390,7 +375,7 @@ async def main():
         os.environ["TENUO_KEY_orchestrator"] = base64.b64encode(
             orchestrator_key.secret_key_bytes()
         ).decode()
-        key_resolver.preload_keys(["orchestrator"])  # Cache for workflow sandbox
+        key_resolver.preload_all()  # Re-cache after adding new key
 
         broad_warrant = (
             Warrant.mint_builder()
@@ -408,7 +393,7 @@ async def main():
         output2_dir.mkdir(parents=True, exist_ok=True)
 
         orchestrator_id = f"orchestrator-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             orchestrator_id,
             tenuo_headers(broad_warrant, "orchestrator"),
         )
@@ -430,7 +415,7 @@ async def main():
             os.environ["TENUO_KEY_writeonly"] = base64.b64encode(
                 write_only_key.secret_key_bytes()
             ).decode()
-            key_resolver.preload_keys(["writeonly"])  # Cache for workflow sandbox
+            key_resolver.preload_all()  # Re-cache after adding new key
             write_only_warrant = (
                 Warrant.mint_builder()
                 .holder(write_only_key.public_key)
@@ -439,7 +424,7 @@ async def main():
                 .mint(control_key)
             )
             bad_reader_id = f"bad-reader-{uuid.uuid4().hex[:8]}"
-            client_interceptor.set_headers_for_workflow(
+            plugin.client_interceptor.set_headers_for_workflow(
                 bad_reader_id,
                 tenuo_headers(write_only_warrant, "writeonly"),
             )

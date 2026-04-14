@@ -52,13 +52,15 @@ except ImportError:
 from tenuo import Pattern, Subpath
 
 from tenuo import SigningKey, Warrant
-from tenuo.temporal._client import TenuoClientInterceptor
-from tenuo.temporal._config import TenuoPluginConfig
-from tenuo.temporal._headers import tenuo_headers
-from tenuo.temporal._interceptors import TenuoPlugin
-from tenuo.temporal._observability import TemporalAuditEvent
-from tenuo.temporal._resolvers import EnvKeyResolver
-from tenuo.temporal._workflow import AuthorizedWorkflow, execute_workflow_authorized
+from tenuo.temporal import (
+    AuthorizedWorkflow,
+    EnvKeyResolver,
+    TemporalAuditEvent,
+    TenuoPluginConfig,
+    TenuoTemporalPlugin,
+    execute_workflow_authorized,
+    tenuo_headers,
+)
 
 # Logging
 logging.basicConfig(
@@ -195,13 +197,6 @@ def on_audit(event: TemporalAuditEvent):
 # =============================================================================
 
 async def main():
-    # --- Client setup ---
-    client_interceptor = TenuoClientInterceptor()
-    client = await Client.connect(
-        "localhost:7233", interceptors=[client_interceptor],
-    )
-    logger.info("Connected to Temporal server")
-
     # --- Key generation (in production: Vault / KMS) ---
     control_key = SigningKey.generate()
     agent_key = SigningKey.generate()
@@ -210,6 +205,20 @@ async def main():
     os.environ["TENUO_KEY_agent1"] = base64.b64encode(
         agent_key.secret_key_bytes()
     ).decode()
+
+    # --- Plugin setup (handles interceptors, sandbox passthrough, and key preloading) ---
+    plugin = TenuoTemporalPlugin(
+        TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            on_denial="raise",
+            audit_callback=on_audit,
+            trusted_roots=[control_key.public_key],
+            strict_mode=True,
+        )
+    )
+
+    client = await Client.connect("localhost:7233", plugins=[plugin])
+    logger.info("Connected to Temporal server")
 
     # --- Demo data ---
     demo_dir = Path("/tmp/tenuo-demo")
@@ -234,39 +243,11 @@ async def main():
 
     task_queue = f"tenuo-demo-{uuid.uuid4().hex[:8]}"
 
-    # --- Worker setup ---
-    # Pre-load keys to avoid os.environ access inside Temporal's workflow sandbox
-    key_resolver = EnvKeyResolver()
-    key_resolver.preload_keys(["agent1"])
-
-    worker_interceptor = TenuoPlugin(
-        TenuoPluginConfig(
-            key_resolver=key_resolver,
-            on_denial="raise",
-            audit_callback=on_audit,
-            trusted_roots=[control_key.public_key],
-            strict_mode=True,
-            activity_fns=[read_file, write_file, list_directory],
-        )
-    )
-
-    from temporalio.worker.workflow_sandbox import (
-        SandboxedWorkflowRunner,
-        SandboxRestrictions,
-    )
-    sandbox_runner = SandboxedWorkflowRunner(
-        restrictions=SandboxRestrictions.default.with_passthrough_modules(
-            "tenuo", "tenuo_core",
-        )
-    )
-
     async with Worker(
         client,
         task_queue=task_queue,
         workflows=[ResearchWorkflow, ProcessAndWriteWorkflow],
         activities=[read_file, write_file, list_directory],
-        interceptors=[worker_interceptor],
-        workflow_runner=sandbox_runner,
     ):
         logger.info("Worker started\n")
 
@@ -274,7 +255,6 @@ async def main():
         logger.info("=== Pattern A: Standard API — sequential read ===")
         result = await execute_workflow_authorized(
             client=client,
-            client_interceptor=client_interceptor,
             workflow_run_fn=ResearchWorkflow.run,
             workflow_id=f"research-{uuid.uuid4().hex[:8]}",
             warrant=warrant,
@@ -288,7 +268,7 @@ async def main():
         logger.info("=== Pattern B: AuthorizedWorkflow — read + write ===")
         summary_path = str(demo_dir / "summary.txt")
         process_id = f"process-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             process_id,
             tenuo_headers(warrant, "agent1"),
         )
@@ -304,7 +284,7 @@ async def main():
         # ── Unauthorized access: path outside warrant scope ───────────
         logger.info("=== Unauthorized access (path=/etc — outside warrant scope) ===")
         unauth_id = f"unauth-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             unauth_id,
             tenuo_headers(warrant, "agent1"),
         )

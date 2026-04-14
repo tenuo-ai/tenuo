@@ -329,8 +329,8 @@ This runs the [orchestrator -> worker -> authorizer demo](https://tenuo.ai/demo.
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
 ```bash
-docker pull tenuo/authorizer:0.1.0-beta.21  # Sidecar for warrant verification
-docker pull tenuo/control:0.1.0-beta.21     # Control plane (demo/reference)
+docker pull tenuo/authorizer:0.1.0-beta.22  # Sidecar for warrant verification
+docker pull tenuo/control:0.1.0-beta.22     # Control plane (demo/reference)
 ```
 
 **Helm Chart**:
@@ -376,7 +376,7 @@ What you get in Rust:
 
 ```toml
 [dependencies]
-tenuo = "0.1.0-beta.21"
+tenuo = "0.1.0-beta.22"
 ```
 
 Use the Rust API when you need a language-native enforcement boundary

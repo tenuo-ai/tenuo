@@ -53,7 +53,7 @@ uv pip install "tenuo[fastapi]"     # FastAPI
 
 > **Note:** Quotes are required in zsh (default macOS shell) since `[]` are glob characters.
 
-> **Rust SDK**: If you're using Rust directly, add `tenuo = "0.1.0-beta.21"` to your `Cargo.toml`. See the [crates.io documentation](https://crates.io/crates/tenuo) for Rust-specific examples. This guide focuses on Python.
+> **Rust SDK**: If you're using Rust directly, add `tenuo = "0.1.0-beta.22"` to your `Cargo.toml`. See the [crates.io documentation](https://crates.io/crates/tenuo) for Rust-specific examples. This guide focuses on Python.
 
 ---
 

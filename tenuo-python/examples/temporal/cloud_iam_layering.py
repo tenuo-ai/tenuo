@@ -69,13 +69,14 @@ except ImportError:
 
 from tenuo import Exact, SigningKey, Subpath, Warrant
 from tenuo.decorators import key_scope, warrant_scope
-from tenuo.temporal._client import TenuoClientInterceptor
-from tenuo.temporal._config import TenuoPluginConfig
-from tenuo.temporal._headers import tenuo_headers
-from tenuo.temporal._interceptors import TenuoPlugin
-from tenuo.temporal._observability import TemporalAuditEvent
-from tenuo.temporal._resolvers import EnvKeyResolver
-from tenuo.temporal._workflow import execute_workflow_authorized
+from tenuo.temporal import (
+    EnvKeyResolver,
+    TemporalAuditEvent,
+    TenuoPluginConfig,
+    TenuoTemporalPlugin,
+    execute_workflow_authorized,
+    tenuo_headers,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -262,35 +263,22 @@ async def main() -> None:
     )
 
     task_queue = f"cloud-iam-mcp-demo-{uuid.uuid4().hex[:8]}"
-    key_resolver = EnvKeyResolver()
-    key_resolver.preload_keys(["agent_a", "agent_b"])
-
-    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
-
-    worker_interceptor = TenuoPlugin(
+    plugin = TenuoTemporalPlugin(
         TenuoPluginConfig(
-            key_resolver=key_resolver,
+            key_resolver=EnvKeyResolver(),
             on_denial="raise",
             trusted_roots=[control_key.public_key],
             strict_mode=True,
-            activity_fns=[read_s3_via_mcp],
             audit_callback=on_audit,
         )
     )
-    client_interceptor = TenuoClientInterceptor()
-    client = await Client.connect("localhost:7233", interceptors=[client_interceptor])
+    client = await Client.connect("localhost:7233", plugins=[plugin])
 
     async with Worker(
         client,
         task_queue=task_queue,
         workflows=[CloudIamLayeringWorkflow],
         activities=[read_s3_via_mcp],
-        interceptors=[worker_interceptor],
-        workflow_runner=SandboxedWorkflowRunner(
-            restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                "tenuo", "tenuo_core"
-            )
-        ),
     ):
         layers = "Temporal + MCP + IAM" if not DRY_RUN else "Temporal + MCP (dry-run) + IAM"
         logger.info("Worker started — %s — IAM role: s3:GetObject on %s/*\n", layers, BUCKET)
@@ -305,7 +293,6 @@ async def main() -> None:
         logger.info("=== Authorized (tenant A, key within prefix) ===")
         result = await execute_workflow_authorized(
             client=client,
-            client_interceptor=client_interceptor,
             workflow_run_fn=CloudIamLayeringWorkflow.run,
             workflow_id=f"cloud-allowed-{uuid.uuid4().hex[:8]}",
             warrant=warrant_tenant_a,
@@ -324,7 +311,7 @@ async def main() -> None:
         )
         logger.info("=== Denied at Temporal (tenant A warrant, key outside prefix) ===")
         denied_id = f"cloud-denied-outside-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             denied_id, tenuo_headers(warrant_tenant_a, "agent_a")
         )
         try:
@@ -349,7 +336,7 @@ async def main() -> None:
         )
         logger.info("=== Cross-tenant (tenant B warrant, tenant A object) ===")
         cross_id = f"cloud-denied-cross-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             cross_id, tenuo_headers(warrant_tenant_b, "agent_b")
         )
         try:
@@ -376,7 +363,7 @@ async def main() -> None:
             "=== Temporal allows activity; MCP denies tool (missing s3_get_object cap) ==="
         )
         wf_mcp = f"cloud-mcp-deny-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             wf_mcp, tenuo_headers(warrant_a_temporal_only, "agent_a")
         )
         try:

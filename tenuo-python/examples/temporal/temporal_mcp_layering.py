@@ -61,14 +61,14 @@ except ImportError:
 
 from tenuo import SigningKey, Subpath, Warrant
 from tenuo.decorators import key_scope, warrant_scope
-
-from tenuo.temporal._client import TenuoClientInterceptor
-from tenuo.temporal._config import TenuoPluginConfig
-from tenuo.temporal._headers import tenuo_headers
-from tenuo.temporal._interceptors import TenuoPlugin
-from tenuo.temporal._observability import TemporalAuditEvent
-from tenuo.temporal._resolvers import EnvKeyResolver
-from tenuo.temporal._workflow import execute_workflow_authorized
+from tenuo.temporal import (
+    EnvKeyResolver,
+    TemporalAuditEvent,
+    TenuoPluginConfig,
+    TenuoTemporalPlugin,
+    execute_workflow_authorized,
+    tenuo_headers,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -203,35 +203,22 @@ async def main() -> None:
     )
 
     task_queue = f"temporal-mcp-demo-{uuid.uuid4().hex[:8]}"
-    key_resolver = EnvKeyResolver()
-    key_resolver.preload_keys(["agent_mcp"])
-
-    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
-
-    worker_interceptor = TenuoPlugin(
+    plugin = TenuoTemporalPlugin(
         TenuoPluginConfig(
-            key_resolver=key_resolver,
+            key_resolver=EnvKeyResolver(),
             on_denial="raise",
             trusted_roots=[control_key.public_key],
             strict_mode=True,
-            activity_fns=[invoke_mcp_echo],
             audit_callback=on_audit,
         )
     )
-    client_interceptor = TenuoClientInterceptor()
-    client = await Client.connect("localhost:7233", interceptors=[client_interceptor])
+    client = await Client.connect("localhost:7233", plugins=[plugin])
 
     async with Worker(
         client,
         task_queue=task_queue,
         workflows=[TemporalMcpWorkflow],
         activities=[invoke_mcp_echo],
-        interceptors=[worker_interceptor],
-        workflow_runner=SandboxedWorkflowRunner(
-            restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                "tenuo", "tenuo_core"
-            )
-        ),
     ):
         ok_msg = f"{MSG_PREFIX}hello"
 
@@ -245,7 +232,6 @@ async def main() -> None:
         logger.info("=== Both Temporal and MCP authorize ===")
         out = await execute_workflow_authorized(
             client=client,
-            client_interceptor=client_interceptor,
             workflow_run_fn=TemporalMcpWorkflow.run,
             workflow_id=f"mcp-ok-{uuid.uuid4().hex[:8]}",
             warrant=warrant_both,
@@ -264,7 +250,7 @@ async def main() -> None:
         )
         logger.info("=== Temporal allows activity; MCP denies tool (no safe_echo cap) ===")
         wf_mcp_deny = f"mcp-inner-deny-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             wf_mcp_deny, tenuo_headers(warrant_temporal_only, "agent_mcp")
         )
         try:
@@ -295,7 +281,7 @@ async def main() -> None:
         logger.info("=== Temporal denies (message outside warrant prefix) ===")
         bad = "other/not-allowed"
         denied_id = f"mcp-temporal-deny-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             denied_id, tenuo_headers(warrant_both, "agent_mcp")
         )
         try:

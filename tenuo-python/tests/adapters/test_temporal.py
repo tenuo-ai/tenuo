@@ -398,6 +398,42 @@ class TestEnvKeyResolver:
 
         asyncio.run(_test())
 
+    def test_resolves_hex_encoded_key(self):
+        """EnvKeyResolver auto-detects hex-encoded keys."""
+        import asyncio
+
+        async def _test():
+            key_hex = ("ab" * 32)  # 64 hex chars = 32 bytes
+
+            with patch.dict(os.environ, {"TENUO_KEY_hexkey": key_hex}):
+                with patch("tenuo_core.SigningKey") as MockSigningKey:
+                    MockSigningKey.from_bytes.return_value = MagicMock()
+
+                    resolver = EnvKeyResolver()
+                    key = await resolver.resolve("hexkey")
+
+                    assert key is not None
+                    MockSigningKey.from_bytes.assert_called_once_with(bytes.fromhex(key_hex))
+
+        asyncio.run(_test())
+
+    def test_decode_key_bytes_base64(self):
+        """_decode_key_bytes handles base64."""
+        raw = b"x" * 32
+        encoded = base64.b64encode(raw).decode()
+        assert EnvKeyResolver._decode_key_bytes(encoded) == raw
+
+    def test_decode_key_bytes_hex(self):
+        """_decode_key_bytes handles hex."""
+        raw = bytes(range(32))
+        encoded = raw.hex()
+        assert EnvKeyResolver._decode_key_bytes(encoded) == raw
+
+    def test_decode_key_bytes_rejects_garbage(self):
+        """_decode_key_bytes raises on unrecognized format."""
+        with pytest.raises(ValueError, match="Cannot decode"):
+            EnvKeyResolver._decode_key_bytes("not-a-valid-key-at-all!!!")
+
 
 # =============================================================================
 # Test KeyResolver.resolve_sync()
@@ -1628,6 +1664,77 @@ def test_pop_signing_error_is_non_retryable():
         _raise_non_retryable(TenuoContextError("key resolution failed"))
 
     assert exc_info.value.non_retryable is True
+
+
+def test_workflow_constraint_violation_is_non_retryable():
+    """TemporalConstraintViolation in workflow context must be non-retryable.
+
+    Without this, misconfigured delegation chains (e.g. delegating a tool the
+    parent doesn't have) cause the workflow to hang forever because Temporal
+    retries the workflow task indefinitely.
+    """
+    from tenuo.temporal._workflow import _fail_workflow_non_retryable
+    from tenuo.temporal.exceptions import TemporalConstraintViolation
+    try:
+        from temporalio.exceptions import ApplicationError
+    except ImportError:
+        pytest.skip("temporalio not installed")
+
+    violation = TemporalConstraintViolation(
+        tool="nonexistent_tool",
+        arguments={},
+        constraint="Cannot delegate tools not in parent: {'nonexistent_tool'}",
+        warrant_id="wrt_test123",
+    )
+    wrapped = _fail_workflow_non_retryable(violation)
+    assert isinstance(wrapped, ApplicationError)
+    assert wrapped.non_retryable is True
+    assert "nonexistent_tool" in str(wrapped)
+    assert wrapped.__cause__ is None  # returned, not raised-from
+
+
+def test_resolve_client_interceptor_auto_discovers():
+    """_resolve_client_interceptor finds TenuoClientInterceptor from client config."""
+    from tenuo.temporal._workflow import _resolve_client_interceptor
+    from tenuo.temporal._client import TenuoClientInterceptor
+
+    interceptor = TenuoClientInterceptor()
+
+    class FakeClient:
+        def config(self, *, active_config=False):
+            return {"interceptors": [interceptor]}
+
+    result = _resolve_client_interceptor(FakeClient(), None)
+    assert result is interceptor
+
+
+def test_resolve_client_interceptor_explicit_takes_precedence():
+    """Explicit client_interceptor is returned without introspection."""
+    from tenuo.temporal._workflow import _resolve_client_interceptor
+    from tenuo.temporal._client import TenuoClientInterceptor
+
+    explicit = TenuoClientInterceptor()
+    auto = TenuoClientInterceptor()
+
+    class FakeClient:
+        def config(self, *, active_config=False):
+            return {"interceptors": [auto]}
+
+    result = _resolve_client_interceptor(FakeClient(), explicit)
+    assert result is explicit
+
+
+def test_resolve_client_interceptor_raises_if_not_found():
+    """Clear error when no TenuoClientInterceptor is available."""
+    from tenuo.temporal._workflow import _resolve_client_interceptor
+    from tenuo.temporal.exceptions import TenuoContextError
+
+    class FakeClient:
+        def config(self, *, active_config=False):
+            return {"interceptors": []}
+
+    with pytest.raises(TenuoContextError, match="No TenuoClientInterceptor found"):
+        _resolve_client_interceptor(FakeClient(), None)
 
 
 # =============================================================================

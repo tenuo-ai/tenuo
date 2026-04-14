@@ -21,7 +21,7 @@ If you're building agentic systems on Temporal, Tenuo lets you ship agents that 
 uv pip install "tenuo[temporal]"
 ```
 
-This installs `tenuo_core`, a compiled Rust extension with prebuilt wheels for common platforms.
+Requires `temporalio>=1.23.0` (for `SimplePlugin` support) and Python 3.10+. This installs `tenuo_core`, a compiled Rust extension with prebuilt wheels for common platforms.
 
 ## Configure Workers to use Tenuo
 
@@ -30,8 +30,12 @@ Add the `TenuoTemporalPlugin` to your Client. The plugin wires client intercepto
 ```python
 from temporalio.client import Client
 from temporalio.worker import Worker
-
+from tenuo import SigningKey
 from tenuo.temporal import TenuoTemporalPlugin, TenuoPluginConfig, EnvKeyResolver
+
+# For local development — generate a key pair:
+control_key = SigningKey.generate()
+issuer_public_key = control_key.public_key
 
 plugin = TenuoTemporalPlugin(
     TenuoPluginConfig(
@@ -54,7 +58,19 @@ worker = Worker(
 - **`trusted_roots`** — public keys of warrant issuers (for verification on the activity worker)
 - **`key_resolver`** — how the workflow worker fetches holder signing keys for PoP (e.g. `EnvKeyResolver`, `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`)
 
-Set `TENUO_KEY_<key_id>` environment variables with your base64-encoded holder signing keys. `TenuoTemporalPlugin` automatically preloads all matching keys into an in-memory cache so that `resolve_sync()` never touches `os.environ` inside the workflow sandbox. For production, use `VaultKeyResolver` or `AWSSecretsManagerKeyResolver` instead. **[Tenuo Cloud](https://cloud.tenuo.ai)** handles key issuance, warrant minting, rotation, and audit for teams that prefer a managed control plane. See the [reference](./temporal-reference.md#key-management-required) for key management details.
+`EnvKeyResolver` maps `key_id` to environment variables using the convention **`TENUO_KEY_<key_id>`** with **base64-encoded** signing key bytes:
+
+| `key_id` passed to warrant | Environment variable | Format |
+|---|---|---|
+| `"agent1"` | `TENUO_KEY_agent1` | Base64 or hex |
+| `"my-service"` | `TENUO_KEY_my-service` | Base64 or hex |
+
+```bash
+# Generate and export a key for local development:
+export TENUO_KEY_agent1=$(python -c "from tenuo import SigningKey; import base64; k=SigningKey.generate(); print(base64.b64encode(k.secret_key_bytes()).decode())")
+```
+
+`TenuoTemporalPlugin` automatically preloads all `TENUO_KEY_*` variables into an in-memory cache so that key resolution never touches `os.environ` inside the workflow sandbox. For production, use `VaultKeyResolver` or `AWSSecretsManagerKeyResolver` instead. **[Tenuo Cloud](https://cloud.tenuo.ai)** handles key issuance, warrant minting, rotation, and audit for teams that prefer a managed control plane. See the [reference](./temporal-reference.md#key-management-required) for key management details.
 
 > **Important:** Pass the plugin on `Client.connect(plugins=[plugin])` only. Workers created from that client automatically merge client plugins — do not duplicate.
 
@@ -67,7 +83,6 @@ from tenuo.temporal import execute_workflow_authorized
 
 result = await execute_workflow_authorized(
     client=client,
-    client_interceptor=plugin.client_interceptor,
     workflow_run_fn=MyWorkflow.run,
     workflow_id="process-001",
     warrant=warrant,
@@ -75,6 +90,26 @@ result = await execute_workflow_authorized(
     args=["/data/input/report.txt"],
     task_queue="my-queue",
 )
+```
+
+For long-running workflows where you need a handle to signal or query later, use `start_workflow_authorized()`:
+
+```python
+from tenuo.temporal import start_workflow_authorized
+
+handle = await start_workflow_authorized(
+    client=client,
+    workflow_run_fn=ApprovalWorkflow.run,
+    workflow_id="approval-001",
+    warrant=warrant,
+    key_id="agent1",
+    args=[request_data],
+    task_queue="my-queue",
+)
+
+# Signal, query, or await later
+await handle.signal(ApprovalWorkflow.approve, decision)
+result = await handle.result()
 ```
 
 ## Define activities and workflows
@@ -118,8 +153,7 @@ class MyWorkflow(AuthorizedWorkflow):
 Warrants use a **closed-world (zero-trust) model**: every argument the activity receives must be declared in the capability, even if unconstrained. Use `Wildcard()` for arguments that can take any value:
 
 ```python
-from tenuo import Warrant, SigningKey
-from tenuo_core import Subpath, UrlSafe, Wildcard
+from tenuo import Warrant, SigningKey, Subpath, UrlSafe, Wildcard
 
 warrant = (
     Warrant.mint_builder()

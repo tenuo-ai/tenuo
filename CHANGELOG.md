@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-beta.22] - 2026-04-14
+
+### Fixed
+
+- **Delegation constraint violations no longer hang workflows** — `TemporalConstraintViolation` raised inside `tenuo_execute_child_workflow()`, `workflow_grant()`, and `workflow_issue_execution()` is now wrapped as `ApplicationError(non_retryable=True)`. Previously, misconfigured delegation chains (e.g. delegating a tool the parent doesn't have) caused infinite Temporal retries.
+- **PopDedupStore warning downgraded to DEBUG** — the "using in-memory PopDedupStore" message no longer prints at WARNING level on every worker startup during local development.
+
+### Added
+
+- **`client_interceptor` auto-discovery** — `execute_workflow_authorized()` and `start_workflow_authorized()` now find the `TenuoClientInterceptor` automatically from the client's plugin config. The `client_interceptor` parameter is optional when using `TenuoTemporalPlugin`.
+- **Key format auto-detection** — `EnvKeyResolver` now accepts both base64 and hex-encoded keys in `TENUO_KEY_*` environment variables (auto-detected by length and character set).
+- **`__dir__()` on `tenuo.temporal`** — lazy-loaded symbols now appear in `dir()`, `help()`, and tab-completion.
+- **`start_workflow_authorized()` documented** — getting-started guide and reference now show the signal/query pattern alongside `execute_workflow_authorized()`.
+- **`TENUO_KEY_` convention documented** — getting-started guide and reference now explain the `key_id` → env var mapping with a table and inline key generation example.
+- **`UrlSafe` vs `UrlPattern` clarified** — reference doc now explains the distinction (structured validation vs glob matching) and when to use each.
+
+### Changed
+
+- **Examples use public imports and `TenuoTemporalPlugin`** — all 5 example files (`demo.py`, `delegation.py`, `multi_warrant.py`, `cloud_iam_layering.py`, `temporal_mcp_layering.py`) now import from `tenuo.temporal` (not private `_`-prefixed submodules) and use `TenuoTemporalPlugin` with `Client.connect(plugins=[...])` instead of manual `TenuoPlugin` + `SandboxedWorkflowRunner`.
+- **`activity_fns` removed from examples** — `TenuoTemporalPlugin` auto-discovers activity functions from the worker config, so explicit `activity_fns=[...]` is no longer needed (or shown) in examples.
+
 ## [0.1.0-beta.21] - 2026-04-14
 
 ### Changed

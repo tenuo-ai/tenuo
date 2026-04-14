@@ -32,18 +32,15 @@ from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.common import RetryPolicy
 from temporalio.worker import Worker
-from temporalio.worker.workflow_sandbox import (
-    SandboxedWorkflowRunner,
-    SandboxRestrictions,
-)
 from tenuo import SigningKey, Subpath, Warrant
-from tenuo.temporal._client import TenuoClientInterceptor
-from tenuo.temporal._config import TenuoPluginConfig
-from tenuo.temporal._headers import tenuo_headers
-from tenuo.temporal._interceptors import TenuoPlugin
-from tenuo.temporal._observability import TemporalAuditEvent
-from tenuo.temporal._resolvers import EnvKeyResolver
-from tenuo.temporal._workflow import execute_workflow_authorized
+from tenuo.temporal import (
+    EnvKeyResolver,
+    TemporalAuditEvent,
+    TenuoPluginConfig,
+    TenuoTemporalPlugin,
+    execute_workflow_authorized,
+    tenuo_headers,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S",
@@ -111,10 +108,6 @@ def on_audit(event: TemporalAuditEvent):
 # -- Main ---------------------------------------------------------------------
 
 async def main():
-    client_interceptor = TenuoClientInterceptor()
-    client = await Client.connect("localhost:7233", interceptors=[client_interceptor])
-    logger.info("Connected to Temporal server")
-
     control_key = SigningKey.generate()
     agent_a_key = SigningKey.generate()
     agent_b_key = SigningKey.generate()
@@ -153,31 +146,23 @@ async def main():
 
     task_queue = f"multi-warrant-{uuid.uuid4().hex[:8]}"
 
-    # Pre-load keys to avoid os.environ access inside Temporal's workflow sandbox
-    key_resolver = EnvKeyResolver()
-    key_resolver.preload_keys(["agentA", "agentB"])
-
-    worker_interceptor = TenuoPlugin(
+    plugin = TenuoTemporalPlugin(
         TenuoPluginConfig(
-            key_resolver=key_resolver,
+            key_resolver=EnvKeyResolver(),
             on_denial="raise",
             audit_callback=on_audit,
             trusted_roots=[control_key.public_key],
             strict_mode=True,
-            activity_fns=[list_directory, read_file],
         )
     )
 
-    sandbox_runner = SandboxedWorkflowRunner(
-        restrictions=SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")
-    )
+    client = await Client.connect("localhost:7233", plugins=[plugin])
+    logger.info("Connected to Temporal server")
 
     async with Worker(
         client, task_queue=task_queue,
         workflows=[ScopedReadWorkflow],
         activities=[list_directory, read_file],
-        interceptors=[worker_interceptor],
-        workflow_runner=sandbox_runner,
     ):
         logger.info("Worker started\n")
 
@@ -185,7 +170,6 @@ async def main():
         logger.info("=== Workflow A: reading project-a ===")
         result_a = await execute_workflow_authorized(
             client=client,
-            client_interceptor=client_interceptor,
             workflow_run_fn=ScopedReadWorkflow.run,
             workflow_id=f"wf-a-{uuid.uuid4().hex[:8]}",
             warrant=warrant_a,
@@ -198,7 +182,7 @@ async def main():
         # --- Workflow B: reads project-b ---
         logger.info("=== Workflow B: reading project-b ===")
         wf_b_id = f"wf-b-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             wf_b_id,
             tenuo_headers(warrant_b, "agentB"),
         )
@@ -213,7 +197,7 @@ async def main():
         # --- Cross-access: Workflow A tries project-b (should be denied) ---
         logger.info("=== Cross-access: Warrant A on project-b (should be denied) ===")
         wf_cross_id = f"wf-cross-{uuid.uuid4().hex[:8]}"
-        client_interceptor.set_headers_for_workflow(
+        plugin.client_interceptor.set_headers_for_workflow(
             wf_cross_id,
             tenuo_headers(warrant_a, "agentA"),
         )

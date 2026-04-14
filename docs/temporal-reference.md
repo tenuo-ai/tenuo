@@ -42,7 +42,7 @@ Checklist for moving past local demos (each item stands alone; links go deeper):
 
 1. **Issuer vs holder keys** — Issuer (`control_key`) only mints warrants; the holder key is resolved on the worker via a production [`KeyResolver`](#key-management-required) (Vault, AWS Secrets Manager, or GCP Secret Manager), not [`EnvKeyResolver`](#development-environment-variables).
 2. **Preload if you still use env keys in lower envs** — Call [`preload_keys`](#development-environment-variables) with every holder `key_id` **before** `Worker(...)`, because PoP signing runs in the workflow sandbox where `os.environ` is unavailable for non-determinism reasons.
-3. **Sandbox passthrough** — Every workflow worker must use `SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")` so PyO3 can load once; without it, workflow tasks fail with `ImportError: PyO3 modules may only be initialized once...` ([details](#sandbox-passthrough-explained)).
+3. **Sandbox passthrough** — `TenuoTemporalPlugin` handles this automatically. If using `TenuoPlugin` manually, you must set `SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")` so PyO3 can load once; without it, workflow tasks fail with `ImportError: PyO3 modules may only be initialized once...` ([details](#sandbox-passthrough-explained)).
 4. **Named argument constraints** — If the warrant constrains fields like `path=` or `bucket=`, set [`activity_fns`](#activity-registry-activity_fns-and-pop-argument-names) to the **same** callables as `Worker(activities=[...])`, or use `tenuo_execute_activity()`, so PoP can name arguments correctly.
 5. **Starting workflows under concurrency** — Prefer `execute_workflow_authorized(...)` so Tenuo headers are bound to `workflow_id` and are not mixed across parallel starts.
 6. **Authorized child workflows** — Use only `tenuo_execute_child_workflow()`; the stock `workflow.execute_child_workflow()` does not propagate warrant headers.
@@ -105,12 +105,11 @@ worker = Worker(client, task_queue="q", workflows=[...], activities=[...],
 
 ### Recommended: `execute_workflow_authorized(...)`
 
-The safest way to start authorized workflows. Binds headers to a specific workflow ID and executes immediately.
+The safest way to start authorized workflows. Binds headers to a specific workflow ID and executes immediately. When the client was created with `TenuoTemporalPlugin`, the interceptor is discovered automatically — no need to pass `client_interceptor`.
 
 ```python
 result = await execute_workflow_authorized(
     client=client,
-    client_interceptor=client_interceptor,
     workflow_run_fn=DataProcessingWorkflow.run,
     workflow_id="process-001",
     warrant=warrant,
@@ -119,6 +118,28 @@ result = await execute_workflow_authorized(
     task_queue="data-processing",
 )
 ```
+
+### Long-running workflows: `start_workflow_authorized(...)`
+
+For workflows where you need a handle to signal, query, or await later (human-in-the-loop gates, multi-day pipelines):
+
+```python
+handle = await start_workflow_authorized(
+    client=client,
+    workflow_run_fn=ApprovalWorkflow.run,
+    workflow_id="approval-001",
+    warrant=warrant,
+    key_id="agent-key-1",
+    args=[request_data],
+    task_queue="approvals",
+)
+
+# Signal later
+await handle.signal(ApprovalWorkflow.approve, decision)
+result = await handle.result()
+```
+
+Same header binding as `execute_workflow_authorized()` — but returns a `WorkflowHandle` immediately instead of blocking on the result.
 
 ### Advanced: `set_headers_for_workflow(...)` + `client.execute_workflow(...)`
 
@@ -258,13 +279,24 @@ config = TenuoPluginConfig(
 )
 ```
 
-Set environment variable:
+`EnvKeyResolver` maps `key_id` to environment variables using the convention **`TENUO_KEY_<key_id>`**:
+
+| `key_id` | Environment variable | Format |
+|---|---|---|
+| `"agent1"` | `TENUO_KEY_agent1` | Base64 or hex (auto-detected) |
+| `"my-service"` | `TENUO_KEY_my-service` | Base64 or hex (auto-detected) |
+
 ```bash
+# From an existing key file:
 export TENUO_KEY_agent1=$(cat signing_key.bin | base64)
+
+# Or generate one inline:
+export TENUO_KEY_agent1=$(python -c "from tenuo import SigningKey; import base64; k=SigningKey.generate(); print(base64.b64encode(k.secret_key_bytes()).decode())")
+
 export TENUO_ENV=development   # suppress production warning
 ```
 
-Before starting a worker, call `resolver.preload_keys([...])` with every holder `key_id`. PoP signing runs inside the workflow sandbox where `os.environ` is blocked.
+`TenuoTemporalPlugin` calls `preload_all()` automatically, scanning all `TENUO_KEY_*` variables into an in-memory cache before the sandbox activates. If using `TenuoPlugin` manually, call `resolver.preload_all()` before `Worker(...)` — PoP signing runs inside the workflow sandbox where `os.environ` is blocked.
 
 > **Warning:** `EnvKeyResolver` is for development only. In production, use Vault, AWS Secrets Manager, or GCP Secret Manager.
 
@@ -659,6 +691,37 @@ TenuoPluginConfig(
 
 Both `tool_mappings` and `@tool()` can coexist; `tool_mappings` takes precedence.
 
+### set_activity_approvals() - Pre-Supply Multisig Approvals
+
+Call from a workflow before `workflow.execute_activity()` when the warrant has guards that require approval. The outbound interceptor attaches the approvals to the next activity dispatch.
+
+```python
+from tenuo.temporal import set_activity_approvals
+
+set_activity_approvals([signed_approval_1, signed_approval_2])
+await workflow.execute_activity(
+    transfer_funds,
+    args=[account, amount],
+    start_to_close_timeout=timedelta(seconds=30),
+)
+```
+
+### tenuo_warrant_context() - Warrant Context for Plain Client Calls
+
+Async context manager that sets the active warrant for `client.execute_workflow()` or `client.start_workflow()` without using `execute_workflow_authorized()`. Useful when you need full control over the Temporal client call.
+
+```python
+from tenuo.temporal import tenuo_warrant_context
+
+async with tenuo_warrant_context(warrant, key_id="agent1"):
+    result = await client.execute_workflow(
+        MyWorkflow.run,
+        id="wf-123",
+        args=["/data/report.txt"],
+        task_queue="my-queue",
+    )
+```
+
 ### workflow_grant() - Scoped In-Workflow Grants
 
 ```python
@@ -807,8 +870,8 @@ Authorization failures are wrapped in `ApplicationError(non_retryable=True)` to 
 ## Constraint Types for AI Agent Workflows
 
 ```python
-from tenuo_core import (
-    Subpath, UrlPattern, Exact, Range, OneOf, AnyOf,
+from tenuo import (
+    Subpath, UrlSafe, UrlPattern, Exact, Range, OneOf, AnyOf,
     CEL, Wildcard, Regex, NotOneOf, Pattern,
 )
 ```
@@ -818,7 +881,8 @@ from tenuo_core import (
 | `Wildcard()` | Any value; attenuates to any type. **Use for unconstrained fields.** | `path=Wildcard()` |
 | `Exact("value")` | Single literal | `format=Exact("json")` |
 | `Subpath("/prefix/")` | Path prefix match | `path=Subpath("/data/reports/")` |
-| `UrlPattern("https://*.example.com/*")` | URL glob match | `url=UrlPattern("https://*.wikipedia.org/*")` |
+| `UrlSafe(allow_schemes=..., allow_domains=..., block_private=True)` | Structured URL validation with SSRF protection (scheme, domain, private-IP blocking) | `url=UrlSafe(allow_schemes=["https"], allow_domains=["api.example.com"])` |
+| `UrlPattern("https://*.example.com/*")` | URL glob match (simpler but no SSRF protection) | `url=UrlPattern("https://*.wikipedia.org/*")` |
 | `Pattern("glob*")` | String glob; attenuates to narrower globs only | `query=Pattern("search:*")` |
 | `Range(min, max)` | Numeric range `[min, max]` | `max_length=Range(100, 5000)` |
 | `OneOf(["a", "b"])` | Fixed set | `format=OneOf(["markdown", "json"])` |
@@ -842,7 +906,7 @@ For the full constraint reference, see [`docs/constraints.md`](./constraints.md)
 3. **Named fields**: set `activity_fns` or use `tenuo_execute_activity()` or `strict_mode=True`.
 4. **`AuthorizedWorkflow`**: use when missing headers should fail at workflow start.
 5. **Child workflows**: only `tenuo_execute_child_workflow()`.
-6. **Start path**: prefer `execute_workflow_authorized(...)` under concurrency.
+6. **Start path**: prefer `execute_workflow_authorized(...)` (blocks on result) or `start_workflow_authorized(...)` (returns handle) under concurrency.
 7. **Audit**: wire `audit_callback` and keep `redact_args_in_logs=True`.
 8. **`@unprotected`**: limit to internal, low-risk local activities.
 9. **TTLs**: short for sensitive work; combine with `trusted_roots_provider`.
@@ -854,8 +918,8 @@ For the full constraint reference, see [`docs/constraints.md`](./constraints.md)
 
 ## Migration Path (from plain Temporal)
 
-1. **Worker**: add `TenuoPlugin` and sandbox passthrough.
-2. **Client**: start workflows with `execute_workflow_authorized(...)`.
+1. **Plugin**: add `TenuoTemporalPlugin` to `Client.connect(plugins=[...])` — this handles interceptors, sandbox passthrough, and key preloading in one step. (For manual control, use `TenuoPlugin` + `SandboxedWorkflowRunner` instead; see [examples README](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal).)
+2. **Client**: start workflows with `execute_workflow_authorized(...)` (or `start_workflow_authorized(...)` for the signal/query pattern).
 3. **Children**: replace `execute_child_workflow()` with `tenuo_execute_child_workflow()`.
 4. **Rollout**: one task queue or tenant first, then expand.
 
@@ -884,7 +948,7 @@ ingest_warrant = (
 transform_warrant = (
     Warrant.mint_builder()
     .holder(transform_key.public_key)
-    .capability("write_file", path=Subpath("/data/output"), content=Pattern("*"))
+    .capability("write_file", path=Subpath("/data/output"), content=Wildcard())
     .ttl(600)
     .mint(control_key)
 )
