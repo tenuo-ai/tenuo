@@ -237,9 +237,11 @@ class TestStrictMode:
 
         tools = guard_tools([search], strict=True)
 
-        # Without constraints - should fail in strict mode
+        # Without constraints - should fail in strict mode.
+        # enforce_tool_call reports this as a ConstraintViolation (missing_constraints).
+        from tenuo.exceptions import ConstraintViolation
         with mint_sync(Capability("search")):
-            with pytest.raises(ConfigurationError, match="requires at least one constraint"):
+            with pytest.raises(ConstraintViolation, match="requires at least one constraint"):
                 tools[0].invoke({"query": "test"})
 
     def test_non_strict_allows_without_constraints(self):

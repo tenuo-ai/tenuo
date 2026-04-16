@@ -608,10 +608,16 @@ def enforce_tool_call(
             warrant_id=warrant_id,
         )
 
+    # Skip policy checks for tools not in the warrant — the Rust core will
+    # reject them authoritatively, and checking constraints for a tool the
+    # warrant doesn't even grant produces confusing errors.
+    warrant_tools = _get_allowed_tools(bound_warrant)
+    _tool_in_warrant = warrant_tools is None or tool_name in warrant_tools
+
     # 2. Critical tool policy - require relevant constraints for high-risk tools
     #    This is a Python-side policy decision based on ToolSchema.
     #    The Rust core enforces the actual constraints; this just ensures they exist.
-    if schema and schema.risk_level == "critical":
+    if _tool_in_warrant and schema and schema.risk_level == "critical":
         constraints = _get_constraints_dict(bound_warrant)
         has_relevant = any(c in constraints for c in schema.recommended_constraints)
 
@@ -634,7 +640,7 @@ def enforce_tool_call(
             )
 
     # 3. Optional strict mode - require constraints for require_at_least_one tools
-    if require_constraints and schema and schema.require_at_least_one:
+    if _tool_in_warrant and require_constraints and schema and schema.require_at_least_one:
         constraints = _get_constraints_dict(bound_warrant)
         if not constraints:
             return EnforcementResult(
@@ -942,7 +948,10 @@ async def enforce_tool_call_async(
             error_type="tool_not_allowed", warrant_id=warrant_id,
         )
 
-    if schema and schema.risk_level == "critical":
+    warrant_tools = _get_allowed_tools(bound_warrant)
+    _tool_in_warrant = warrant_tools is None or tool_name in warrant_tools
+
+    if _tool_in_warrant and schema and schema.risk_level == "critical":
         constraints = _get_constraints_dict(bound_warrant)
         has_relevant = any(c in constraints for c in schema.recommended_constraints)
         if not has_relevant:
@@ -960,7 +969,7 @@ async def enforce_tool_call_async(
                 error_type="policy_violation", warrant_id=warrant_id,
             )
 
-    if require_constraints and schema and schema.require_at_least_one:
+    if _tool_in_warrant and require_constraints and schema and schema.require_at_least_one:
         constraints = _get_constraints_dict(bound_warrant)
         if not constraints:
             return EnforcementResult(

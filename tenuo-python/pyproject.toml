@@ -50,6 +50,7 @@ autogen = [
 ]
 langchain = [
     "langchain-core>=0.2",
+    "langchain>=0.2",  # guard_agent / SecureAgentExecutor need langchain.agents
 ]
 langgraph = [
     "langgraph>=0.2",  # 0.2+ required for langchain-core>=0.2 compatibility

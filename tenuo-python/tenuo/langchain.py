@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Optional
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_langchain_compat  # noqa: E402
 
-from ._enforcement import enforce_tool_call
+from ._enforcement import enforce_tool_call, enforce_tool_call_async
 from .audit import log_authorization_success
 from .config import allow_passthrough, resolve_trusted_roots
 from .decorators import chain_scope, get_allowed_tools_context, key_scope, warrant_scope
@@ -139,107 +139,105 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         if hasattr(wrapped, "args_schema"):
             object.__setattr__(self, "args_schema", wrapped.args_schema)
 
-    def _check_authorization(self, tool_input: Dict[str, Any]) -> None:
-        """Check authorization before tool execution."""
-        # Use explicit bound_warrant if provided, else context
+    def _resolve_bound_warrant(self) -> "BoundWarrant":
+        """Resolve a BoundWarrant from explicit binding, context, or key scope.
+
+        Raises ToolNotAuthorized if no warrant is available and passthrough is off.
+        """
+        from .bound_warrant import BoundWarrant
+
         bound_warrant = getattr(self, "_bound_warrant", None)
-
         if bound_warrant:
-            warrant = bound_warrant
-        else:
-            warrant = warrant_scope()
+            return bound_warrant
 
-        schema = self._schemas.get(self.name)
-
+        warrant = warrant_scope()
         if warrant is None:
             if allow_passthrough():
                 logger.warning(f"PASSTHROUGH: Tool '{self.name}' executed without warrant")
-                return
+                return None  # type: ignore[return-value]
             raise ToolNotAuthorized(tool=self.name)
 
-        # scoped_task's allowed_tools takes precedence over warrant.tools
-        allowed_tools = get_allowed_tools_context()
-        if allowed_tools is not None:
-            if self.name not in allowed_tools:
-                raise ToolNotAuthorized(
-                    tool=self.name,
-                    authorized_tools=allowed_tools,
-                )
-        # Fall back to warrant's tool allowlist
-        elif warrant.tools and self.name not in warrant.tools:
-            raise ToolNotAuthorized(
-                tool=self.name,
-                authorized_tools=warrant.tools if warrant.tools else None,
-            )
+        if isinstance(warrant, BoundWarrant):
+            return warrant
 
-        if schema and schema.risk_level == "critical":
-            constraints = _get_constraints_dict(warrant)
-            has_relevant = any(c in constraints for c in schema.recommended_constraints)
-            if not has_relevant and not constraints:
-                raise ConfigurationError(
-                    f"Critical tool '{self.name}' requires at least one constraint. "
-                    f"Recommended: {schema.recommended_constraints}."
-                )
+        signing_key = key_scope()
+        if signing_key:
+            return warrant.bind(signing_key)
 
-        if self.strict and schema and schema.require_at_least_one:
-            constraints = _get_constraints_dict(warrant)
-            if not constraints:
-                raise ConfigurationError(f"Strict mode: tool '{self.name}' requires at least one constraint.")
+        raise ToolNotAuthorized(tool=self.name)
 
-        # Build args dict for authorization
-        constraint_args = {k: v for k, v in tool_input.items()}
+    def _run_enforcement(self, tool_input: Dict[str, Any], bound_warrant: "BoundWarrant") -> None:
+        """Run enforce_tool_call and handle the result (sync)."""
+        result = enforce_tool_call(
+            tool_name=self.name,
+            tool_args=tool_input,
+            bound_warrant=bound_warrant,
+            allowed_tools=get_allowed_tools_context(),
+            schemas=self._schemas,
+            require_constraints=self.strict,
+            trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
+            approval_handler=getattr(self, "_approval_handler", None),
+            approvals=getattr(self, "_approvals", None),
+            warrant_chain=chain_scope(),
+        )
+        self._emit_and_check(result, bound_warrant, tool_input)
 
+    async def _run_enforcement_async(self, tool_input: Dict[str, Any], bound_warrant: "BoundWarrant") -> None:
+        """Run enforce_tool_call_async and handle the result (async)."""
+        result = await enforce_tool_call_async(
+            tool_name=self.name,
+            tool_args=tool_input,
+            bound_warrant=bound_warrant,
+            allowed_tools=get_allowed_tools_context(),
+            schemas=self._schemas,
+            require_constraints=self.strict,
+            trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
+            approval_handler=getattr(self, "_approval_handler", None),
+            approvals=getattr(self, "_approvals", None),
+            warrant_chain=chain_scope(),
+        )
+        self._emit_and_check(result, bound_warrant, tool_input)
+
+    def _emit_and_check(self, result: Any, bound_warrant: Any, tool_input: Dict[str, Any]) -> None:
+        """Emit control plane event and raise on denial."""
+        _cp = getattr(self, "_control_plane", None)
+        if _cp is not None:
+            try:
+                _cp.emit_for_enforcement(result, chain_result=result.chain_result)
+            except Exception:
+                logger.warning("Control plane emission failed for '%s'; audit event lost", self.name, exc_info=True)
+
+        if not result.allowed:
+            result.raise_if_denied()
+
+        log_authorization_success(bound_warrant, self.name, tool_input)
+
+    def _check_authorization(self, tool_input: Dict[str, Any]) -> None:
+        """Synchronous authorization check before tool execution."""
+        bw = self._resolve_bound_warrant()
+        if bw is None:
+            return  # passthrough mode
         try:
-            # Detect if we have a BoundWarrant (has .authorize without signature param)
-            # or a plain Warrant (requires explicit signature)
-            is_bound = hasattr(warrant, "warrant") and hasattr(warrant, "_key")
+            self._run_enforcement(tool_input, bw)
+        except (ToolNotAuthorized, ConstraintViolation, ConfigurationError):
+            raise
+        except Exception as e:
+            from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
+            if isinstance(e, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
+                raise
+            raise ConstraintViolation(
+                field="unknown",
+                reason=f"Authorization error: {str(e)}",
+                value=None,
+            ) from e
 
-            if is_bound:
-                # BoundWarrant — use shared enforcement (includes approval support)
-                approval_handler = getattr(self, "_approval_handler", None)
-                result = enforce_tool_call(
-                    tool_name=self.name,
-                    tool_args=constraint_args,
-                    bound_warrant=warrant,
-                    trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
-                    approval_handler=approval_handler,
-                    approvals=getattr(self, "_approvals", None),
-                    warrant_chain=chain_scope(),
-                )
-                _cp = getattr(self, "_control_plane", None)
-                if _cp is not None:
-                    try:
-                        _cp.emit_for_enforcement(result, chain_result=result.chain_result)
-                    except Exception:
-                        logger.warning("Control plane emission failed for '%s'; audit event lost", self.name, exc_info=True)
-                if not result.allowed:
-                    raise ToolNotAuthorized(tool=self.name)
-            else:
-                signing_key = key_scope()
-                if signing_key:
-                    bw = warrant.bind(signing_key)
-                    result = enforce_tool_call(
-                        tool_name=self.name,
-                        tool_args=constraint_args,
-                        bound_warrant=bw,
-                        trusted_roots=resolve_trusted_roots(getattr(self, "_trusted_roots", None)),
-                        approval_handler=getattr(self, "_approval_handler", None),
-                        approvals=getattr(self, "_approvals", None),
-                        warrant_chain=chain_scope(),
-                    )
-                    _cp = getattr(self, "_control_plane", None)
-                    if _cp is not None:
-                        try:
-                            _cp.emit_for_enforcement(result, chain_result=result.chain_result)
-                        except Exception:
-                            logger.warning("Control plane emission failed for '%s'; audit event lost", self.name, exc_info=True)
-                    if not result.allowed:
-                        raise ToolNotAuthorized(tool=self.name)
-                else:
-                    raise ToolNotAuthorized(tool=self.name)
-
-            log_authorization_success(warrant, self.name, tool_input)
-
+    async def _acheck_authorization(self, tool_input: Dict[str, Any]) -> None:
+        """Asynchronous authorization check — uses enforce_tool_call_async."""
+        bw = self._resolve_bound_warrant()
+        if bw is None:
+            return  # passthrough mode
+        try:
+            await self._run_enforcement_async(tool_input, bw)
         except (ToolNotAuthorized, ConstraintViolation, ConfigurationError):
             raise
         except Exception as e:
@@ -269,7 +267,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
     async def _arun(self, *args: Any, **kwargs: Any) -> Any:
         """Asynchronous tool execution with authorization."""
         tool_input = self._build_tool_input(args, kwargs)
-        self._check_authorization(tool_input)
+        await self._acheck_authorization(tool_input)
 
         if hasattr(self.wrapped, "coroutine") and self.wrapped.coroutine is not None:
             return await self.wrapped.coroutine(*args, **kwargs)
@@ -315,31 +313,6 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             pass
 
         return tool_input
-
-
-def _get_constraints_dict(warrant: Any) -> Dict[str, Any]:
-    """Safely get constraints dict from warrant.
-
-    Extracts all constraint field names across all tools in the warrant.
-    Used by guard() to verify critical tools have constraints configured.
-    """
-    # Try extracting from capabilities (works for both Warrant and BoundWarrant)
-    # capabilities returns {tool: {field: constraint, ...}, ...}
-    if hasattr(warrant, "capabilities"):
-        try:
-            caps = warrant.capabilities
-            if caps:
-                # Flatten all constraint fields across all tools
-                all_constraints = {}
-                for tool_name, constraints in caps.items():
-                    if constraints:
-                        all_constraints.update(constraints)
-                if all_constraints:
-                    return all_constraints
-        except Exception:
-            pass
-
-    return {}
 
 
 # =============================================================================
