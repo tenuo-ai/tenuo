@@ -9,7 +9,6 @@ import pytest
 from tenuo import (
     LANGCHAIN_AVAILABLE,
     Capability,
-    ConfigurationError,
     SigningKey,
     Warrant,
     configure,
