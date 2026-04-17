@@ -29,10 +29,15 @@ Example:
 For multi-agent graphs with automatic delegation, see tenuo.langgraph.
 """
 
+from __future__ import annotations
+
 import asyncio
 import inspect
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from .bound_warrant import BoundWarrant
 
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_langchain_compat  # noqa: E402
@@ -139,12 +144,12 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         if hasattr(wrapped, "args_schema"):
             object.__setattr__(self, "args_schema", wrapped.args_schema)
 
-    def _resolve_bound_warrant(self) -> "BoundWarrant":
+    def _resolve_bound_warrant(self) -> BoundWarrant | None:
         """Resolve a BoundWarrant from explicit binding, context, or key scope.
 
         Raises ToolNotAuthorized if no warrant is available and passthrough is off.
         """
-        from .bound_warrant import BoundWarrant
+        from .bound_warrant import BoundWarrant as _BoundWarrant
 
         bound_warrant = getattr(self, "_bound_warrant", None)
         if bound_warrant:
@@ -157,7 +162,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                 return None  # type: ignore[return-value]
             raise ToolNotAuthorized(tool=self.name)
 
-        if isinstance(warrant, BoundWarrant):
+        if isinstance(warrant, _BoundWarrant):
             return warrant
 
         signing_key = key_scope()
