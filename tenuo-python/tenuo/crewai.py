@@ -847,6 +847,59 @@ class CrewAIGuard:
         hook = self._create_async_hook(agent_role=agent_role)
         return await hook(context)
 
+    def authorize(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        *,
+        agent_role: Optional[str] = None,
+    ) -> Optional[DenialResult]:
+        """Check authorization for a tool call.
+
+        This is the primary public API for standalone usage (outside CrewAI
+        hooks). Use it when you have a tool name and arguments and want to
+        check whether the call is permitted by this guard's policy and
+        warrant.
+
+        Args:
+            tool_name: Name of the tool being called
+            args: Arguments passed to the tool
+            agent_role: Optional agent role for namespaced constraint lookup
+
+        Returns:
+            None if authorized, DenialResult if denied (when on_denial
+            is ``"log"`` or ``"skip"``)
+
+        Raises:
+            ToolDenied, CrewAIConstraintViolation, UnlistedArgument:
+                If denied and on_denial is ``"raise"``
+
+        Example::
+
+            result = guard.authorize("send_email", {
+                "to": "external@evil.com",
+                "subject": "data",
+                "body": "secrets",
+            })
+            if result is not None:
+                print(f"Blocked: {result.reason}")
+        """
+        return self._authorize(tool_name, args, agent_role=agent_role)
+
+    async def authorize_async(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        *,
+        agent_role: Optional[str] = None,
+    ) -> Optional[DenialResult]:
+        """Async variant of :meth:`authorize`.
+
+        Uses ``enforce_tool_call_async`` for Tier 2, allowing async approval
+        handlers to be awaited natively.
+        """
+        return await self._authorize_async(tool_name, args, agent_role=agent_role)
+
     def _resolve_tool_name(self, tool_name: str, agent_role: Optional[str]) -> Optional[str]:
         """Resolve tool name with namespace fallback.
 
