@@ -446,11 +446,7 @@ impl LatencyTracker {
     }
 
     fn avg(&self) -> u64 {
-        if self.total_count == 0 {
-            0
-        } else {
-            self.total_sum / self.total_count
-        }
+        self.total_sum.checked_div(self.total_count).unwrap_or(0)
     }
 
     fn p99(&self) -> u64 {
@@ -589,7 +585,7 @@ impl MetricsCollector {
         let top_deny_reasons = {
             let mut reasons = self.inner.deny_reasons.lock().await;
             let mut sorted: Vec<_> = reasons.drain().collect();
-            sorted.sort_by(|a, b| b.1.cmp(&a.1));
+            sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
             sorted.truncate(10);
             sorted
         };
@@ -598,7 +594,7 @@ impl MetricsCollector {
         let top_actions = {
             let mut actions = self.inner.actions.lock().await;
             let mut sorted: Vec<_> = actions.drain().collect();
-            sorted.sort_by(|a, b| b.1.cmp(&a.1));
+            sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
             sorted.truncate(10);
             sorted
         };

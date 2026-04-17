@@ -163,6 +163,171 @@ def _warrant_stack_from_bound(bw: "BoundWarrant") -> Optional[str]:
 
 
 # =============================================================================
+# Shared Authorization Helpers (used by TenuoMiddleware + TenuoToolNode)
+# =============================================================================
+
+
+def _authorize_tool_request(
+    request: Any,
+    handler: Callable[..., Any],
+    *,
+    bw_factory: Callable[[Any], "BoundWarrant"],
+    require_constraints: bool = False,
+    trusted_roots: Optional[List[Any]] = None,
+    approval_handler: Optional[Any] = None,
+    approvals: Optional[Any] = None,
+    control_plane: Optional[Any] = None,
+    debug: bool = False,
+) -> Any:
+    """Shared sync authorization logic for LangGraph tool call requests.
+
+    Both TenuoMiddleware and TenuoToolNode delegate here.
+
+    Args:
+        request: Tool call request with .tool_call and .state/.runtime attrs.
+        handler: Downstream handler to call on success.
+        bw_factory: Callable that extracts a BoundWarrant from the request.
+            Raises on failure (e.g. missing warrant or key).
+        debug: If True, include detailed denial reasons in ToolMessages.
+    """
+    import time
+
+    request_id = str(uuid.uuid4())
+    tool_call = request.tool_call
+    tool_name = tool_call.get("name", "unknown")
+    tool_args = tool_call.get("args", {})
+
+    try:
+        bw = bw_factory(request)
+    except Exception as e:
+        logger.warning(f"[{request_id}] Failed to get BoundWarrant: {e}")
+        error_msg = (
+            f"Configuration error: {e}" if debug
+            else f"Security configuration error (ref: {request_id})"
+        )
+        return ToolMessage(
+            content=error_msg,
+            tool_call_id=tool_call.get("id", "unknown"),
+            status="error",
+        )
+
+    start_ns = time.perf_counter_ns()
+    try:
+        result = enforce_tool_call(
+            tool_name=tool_name,
+            tool_args=tool_args,
+            bound_warrant=bw,
+            require_constraints=require_constraints,
+            trusted_roots=trusted_roots,
+            approval_handler=approval_handler,
+            approvals=approvals,
+        )
+    except (ApprovalGateTriggered, ApprovalRequired, ApprovalDenied, ApprovalVerificationError):
+        raise
+
+    if control_plane:
+        latency_us = (time.perf_counter_ns() - start_ns) // 1000
+        try:
+            control_plane.emit_for_enforcement(
+                result, chain_result=result.chain_result,
+                latency_us=latency_us, request_id=request_id,
+                warrant_stack_override=_warrant_stack_from_bound(bw),
+            )
+        except Exception:
+            logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
+
+    if not result.allowed:
+        logger.warning(f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}")
+        error_msg = (
+            f"Authorization denied: {result.denial_reason}" if debug
+            else f"Authorization denied (ref: {request_id})"
+        )
+        return ToolMessage(
+            content=error_msg,
+            tool_call_id=tool_call.get("id", "unknown"),
+            status="error",
+        )
+
+    logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
+    return handler(request)
+
+
+async def _authorize_tool_request_async(
+    request: Any,
+    handler: Callable[..., Any],
+    *,
+    bw_factory: Callable[[Any], "BoundWarrant"],
+    require_constraints: bool = False,
+    trusted_roots: Optional[List[Any]] = None,
+    approval_handler: Optional[Any] = None,
+    approvals: Optional[Any] = None,
+    control_plane: Optional[Any] = None,
+    debug: bool = False,
+) -> Any:
+    """Shared async authorization logic for LangGraph tool call requests."""
+    import time
+
+    request_id = str(uuid.uuid4())
+    tool_call = request.tool_call
+    tool_name = tool_call.get("name", "unknown")
+    tool_args = tool_call.get("args", {})
+
+    try:
+        bw = bw_factory(request)
+    except Exception as e:
+        logger.warning(f"[{request_id}] Failed to get BoundWarrant: {e}")
+        error_msg = (
+            f"Configuration error: {e}" if debug
+            else f"Security configuration error (ref: {request_id})"
+        )
+        return ToolMessage(
+            content=error_msg,
+            tool_call_id=tool_call.get("id", "unknown"),
+            status="error",
+        )
+
+    start_ns = time.perf_counter_ns()
+    try:
+        result = await enforce_tool_call_async(
+            tool_name=tool_name,
+            tool_args=tool_args,
+            bound_warrant=bw,
+            require_constraints=require_constraints,
+            trusted_roots=trusted_roots,
+            approval_handler=approval_handler,
+            approvals=approvals,
+        )
+    except (ApprovalGateTriggered, ApprovalRequired, ApprovalDenied, ApprovalVerificationError):
+        raise
+
+    if control_plane:
+        latency_us = (time.perf_counter_ns() - start_ns) // 1000
+        try:
+            control_plane.emit_for_enforcement(
+                result, chain_result=result.chain_result,
+                latency_us=latency_us, request_id=request_id,
+                warrant_stack_override=_warrant_stack_from_bound(bw),
+            )
+        except Exception:
+            logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
+
+    if not result.allowed:
+        logger.warning(f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}")
+        error_msg = (
+            f"Authorization denied: {result.denial_reason}" if debug
+            else f"Authorization denied (ref: {request_id})"
+        )
+        return ToolMessage(
+            content=error_msg,
+            tool_call_id=tool_call.get("id", "unknown"),
+            status="error",
+        )
+
+    logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
+    return await handler(request)
+
+
+# =============================================================================
 # Key Auto-Loading (Convention over Configuration)
 # =============================================================================
 
@@ -393,6 +558,10 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         """Async version of wrap_tool_call — authorizes tool calls for async agents."""
         return await self._authorize_and_run_async(request, handler)
 
+    def _bw_factory(self, request: Any) -> "BoundWarrant":
+        """Extract BoundWarrant from a middleware request."""
+        return self._get_bound_warrant_from_request(request.state, request.runtime)
+
     def _authorize_and_run(
         self,
         request: "ToolCallRequest",
@@ -400,208 +569,34 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         *,
         is_async: bool = False,
     ) -> Any:
-        """Shared authorization logic for sync tool calls."""
-        import time
-
-        request_id = str(uuid.uuid4())
-        tool_call = request.tool_call
-        tool_name = tool_call.get("name", "unknown")
-        tool_args = tool_call.get("args", {})
-
-        try:
-            bw = self._get_bound_warrant_from_request(request.state, request.runtime)
-
-            start_ns = time.perf_counter_ns()
-
-            result = enforce_tool_call(
-                tool_name=tool_name,
-                tool_args=tool_args,
-                bound_warrant=bw,
-                require_constraints=self._require_constraints,
-                trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                approval_handler=self._approval_handler,
-                approvals=self._approvals,
-            )
-
-            if self._control_plane:
-                latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                try:
-                    self._control_plane.emit_for_enforcement(
-                        result, chain_result=result.chain_result,
-                        latency_us=latency_us, request_id=request_id,
-                        warrant_stack_override=_warrant_stack_from_bound(bw),
-                    )
-                except Exception:
-                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
-
-            if not result.allowed:
-                logger.warning(
-                    f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}"
-                )
-                error_msg = (
-                    f"Authorization denied: {result.denial_reason}"
-                    if self._debug
-                    else f"Authorization denied (ref: {request_id})"
-                )
-                return ToolMessage(
-                    content=error_msg,
-                    tool_call_id=tool_call.get("id", "unknown"),
-                    status="error",
-                )
-
-            logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
-            return handler(request)
-
-        except (ApprovalGateTriggered, ApprovalRequired) as gate:
-            if self._control_plane:
-                from ._enforcement import EnforcementResult
-                gate_result = EnforcementResult(
-                    allowed=False,
-                    tool=tool_name,
-                    arguments=tool_args,
-                    denial_reason=str(gate),
-                    error_type="approval_required",
-                )
-                latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                try:
-                    self._control_plane.emit_for_enforcement(
-                        gate_result, latency_us=latency_us, request_id=request_id,
-                        warrant_stack_override=_warrant_stack_from_bound(bw),
-                    )
-                except Exception:
-                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
-            raise
-        except (ApprovalDenied, ApprovalVerificationError) as e:
-            logger.warning(f"[{request_id}] Approval verification failed for '{tool_name}': {e}")
-            raise
-        except ConfigurationError as e:
-            logger.warning(f"[{request_id}] Configuration error: {e}")
-            error_msg = (
-                f"Configuration error: {e}"
-                if self._debug
-                else f"Security configuration error (ref: {request_id})"
-            )
-            return ToolMessage(
-                content=error_msg,
-                tool_call_id=tool_call.get("id", "unknown"),
-                status="error",
-            )
-        except Exception as e:
-            logger.error(f"[{request_id}] Unexpected error in authorization: {e}")
-            error_msg = (
-                f"Unexpected error: {e}"
-                if self._debug
-                else f"Authorization error (ref: {request_id})"
-            )
-            return ToolMessage(
-                content=error_msg,
-                tool_call_id=tool_call.get("id", "unknown"),
-                status="error",
-            )
+        """Sync authorization — delegates to shared helper."""
+        return _authorize_tool_request(
+            request, handler,
+            bw_factory=self._bw_factory,
+            require_constraints=self._require_constraints,
+            trusted_roots=resolve_trusted_roots(self._trusted_roots),
+            approval_handler=self._approval_handler,
+            approvals=self._approvals,
+            control_plane=self._control_plane,
+            debug=self._debug,
+        )
 
     async def _authorize_and_run_async(
         self,
         request: "ToolCallRequest",
         handler: Callable[["ToolCallRequest"], Any],
     ) -> Any:
-        """Shared authorization logic for async tool calls."""
-        import time
-
-        request_id = str(uuid.uuid4())
-        tool_call = request.tool_call
-        tool_name = tool_call.get("name", "unknown")
-        tool_args = tool_call.get("args", {})
-
-        try:
-            bw = self._get_bound_warrant_from_request(request.state, request.runtime)
-
-            start_ns = time.perf_counter_ns()
-
-            result = await enforce_tool_call_async(
-                tool_name=tool_name,
-                tool_args=tool_args,
-                bound_warrant=bw,
-                require_constraints=self._require_constraints,
-                trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                approval_handler=self._approval_handler,
-                approvals=self._approvals,
-            )
-
-            if self._control_plane:
-                latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                try:
-                    self._control_plane.emit_for_enforcement(
-                        result, chain_result=result.chain_result,
-                        latency_us=latency_us, request_id=request_id,
-                        warrant_stack_override=_warrant_stack_from_bound(bw),
-                    )
-                except Exception:
-                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
-
-            if not result.allowed:
-                logger.warning(
-                    f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}"
-                )
-                error_msg = (
-                    f"Authorization denied: {result.denial_reason}"
-                    if self._debug
-                    else f"Authorization denied (ref: {request_id})"
-                )
-                return ToolMessage(
-                    content=error_msg,
-                    tool_call_id=tool_call.get("id", "unknown"),
-                    status="error",
-                )
-
-            logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
-            return await handler(request)
-
-        except (ApprovalGateTriggered, ApprovalRequired) as gate:
-            if self._control_plane:
-                from ._enforcement import EnforcementResult
-                gate_result = EnforcementResult(
-                    allowed=False,
-                    tool=tool_name,
-                    arguments=tool_args,
-                    denial_reason=str(gate),
-                    error_type="approval_required",
-                )
-                latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                try:
-                    self._control_plane.emit_for_enforcement(
-                        gate_result, latency_us=latency_us, request_id=request_id,
-                        warrant_stack_override=_warrant_stack_from_bound(bw),
-                    )
-                except Exception:
-                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
-            raise
-        except (ApprovalDenied, ApprovalVerificationError) as e:
-            logger.warning(f"[{request_id}] Approval verification failed for '{tool_name}': {e}")
-            raise
-        except ConfigurationError as e:
-            logger.warning(f"[{request_id}] Configuration error: {e}")
-            error_msg = (
-                f"Configuration error: {e}"
-                if self._debug
-                else f"Security configuration error (ref: {request_id})"
-            )
-            return ToolMessage(
-                content=error_msg,
-                tool_call_id=tool_call.get("id", "unknown"),
-                status="error",
-            )
-        except Exception as e:
-            logger.error(f"[{request_id}] Unexpected error in authorization: {e}")
-            error_msg = (
-                f"Unexpected error: {e}"
-                if self._debug
-                else f"Authorization error (ref: {request_id})"
-            )
-            return ToolMessage(
-                content=error_msg,
-                tool_call_id=tool_call.get("id", "unknown"),
-                status="error",
-            )
+        """Async authorization — delegates to shared helper."""
+        return await _authorize_tool_request_async(
+            request, handler,
+            bw_factory=self._bw_factory,
+            require_constraints=self._require_constraints,
+            trusted_roots=resolve_trusted_roots(self._trusted_roots),
+            approval_handler=self._approval_handler,
+            approvals=self._approvals,
+            control_plane=self._control_plane,
+            debug=self._debug,
+        )
 
 
 # =============================================================================
@@ -911,7 +906,6 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 "Install with: uv pip install langgraph"
             )
 
-        # Capture auth config in closure so the wrappers are self-contained.
         _require_constraints = require_constraints
         _trusted_roots = trusted_roots
         _approval_handler = approval_handler
@@ -919,122 +913,33 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         _control_plane = control_plane
         _key_id = key_id
 
-        def _make_bound_warrant(request: Any) -> Any:
-            """Extract BoundWarrant from the tool call request."""
+        def _bw_factory(request: Any) -> Any:
             state = request.state
             state_dict = state if isinstance(state, dict) else vars(state)
             config = getattr(request.runtime, "config", None)
             return _get_bound_warrant(state_dict, config, key_id=_key_id)
 
         def _auth_wrap(request: Any, handler: Callable[..., Any]) -> Any:
-            """Sync authorization wrapper passed to ToolNode."""
-            import time
-
-            request_id = str(uuid.uuid4())
-            tool_call = request.tool_call
-            tool_name = tool_call.get("name", "unknown")
-            tool_args = tool_call.get("args", {})
-
-            try:
-                bw = _make_bound_warrant(request)
-            except Exception as e:
-                logger.warning(f"[{request_id}] Failed to get BoundWarrant: {e}")
-                return ToolMessage(
-                    content=f"Security configuration error (ref: {request_id})",
-                    tool_call_id=tool_call.get("id", "unknown"),
-                    status="error",
-                )
-
-            start_ns = time.perf_counter_ns()
-            try:
-                result = enforce_tool_call(
-                    tool_name=tool_name,
-                    tool_args=tool_args,
-                    bound_warrant=bw,
-                    require_constraints=_require_constraints,
-                    trusted_roots=_trusted_roots,
-                    approval_handler=_approval_handler,
-                    approvals=_approvals,
-                )
-            except (ApprovalGateTriggered, ApprovalRequired, ApprovalDenied, ApprovalVerificationError):
-                raise
-
-            if _control_plane:
-                latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                try:
-                    _control_plane.emit_for_enforcement(
-                        result, chain_result=result.chain_result,
-                        latency_us=latency_us, request_id=request_id,
-                        warrant_stack_override=_warrant_stack_from_bound(bw),
-                    )
-                except Exception:
-                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
-
-            if not result.allowed:
-                logger.warning(f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}")
-                return ToolMessage(
-                    content=f"Authorization denied (ref: {request_id})",
-                    tool_call_id=tool_call.get("id", "unknown"),
-                    status="error",
-                )
-
-            logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
-            return handler(request)
+            return _authorize_tool_request(
+                request, handler,
+                bw_factory=_bw_factory,
+                require_constraints=_require_constraints,
+                trusted_roots=_trusted_roots,
+                approval_handler=_approval_handler,
+                approvals=_approvals,
+                control_plane=_control_plane,
+            )
 
         async def _auth_awrap(request: Any, handler: Callable[..., Any]) -> Any:
-            """Async authorization wrapper passed to ToolNode."""
-            import time
-
-            request_id = str(uuid.uuid4())
-            tool_call = request.tool_call
-            tool_name = tool_call.get("name", "unknown")
-            tool_args = tool_call.get("args", {})
-
-            try:
-                bw = _make_bound_warrant(request)
-            except Exception as e:
-                logger.warning(f"[{request_id}] Failed to get BoundWarrant: {e}")
-                return ToolMessage(
-                    content=f"Security configuration error (ref: {request_id})",
-                    tool_call_id=tool_call.get("id", "unknown"),
-                    status="error",
-                )
-
-            start_ns = time.perf_counter_ns()
-            try:
-                result = await enforce_tool_call_async(
-                    tool_name=tool_name,
-                    tool_args=tool_args,
-                    bound_warrant=bw,
-                    require_constraints=_require_constraints,
-                    trusted_roots=_trusted_roots,
-                    approval_handler=_approval_handler,
-                    approvals=_approvals,
-                )
-            except (ApprovalGateTriggered, ApprovalRequired, ApprovalDenied, ApprovalVerificationError):
-                raise
-
-            if _control_plane:
-                latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                try:
-                    _control_plane.emit_for_enforcement(
-                        result, chain_result=result.chain_result,
-                        latency_us=latency_us, request_id=request_id,
-                        warrant_stack_override=_warrant_stack_from_bound(bw),
-                    )
-                except Exception:
-                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
-
-            if not result.allowed:
-                logger.warning(f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}")
-                return ToolMessage(
-                    content=f"Authorization denied (ref: {request_id})",
-                    tool_call_id=tool_call.get("id", "unknown"),
-                    status="error",
-                )
-
-            logger.debug(f"[{request_id}] Tool '{tool_name}' authorized")
-            return await handler(request)
+            return await _authorize_tool_request_async(
+                request, handler,
+                bw_factory=_bw_factory,
+                require_constraints=_require_constraints,
+                trusted_roots=_trusted_roots,
+                approval_handler=_approval_handler,
+                approvals=_approvals,
+                control_plane=_control_plane,
+            )
 
         try:
             super().__init__(
