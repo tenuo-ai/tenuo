@@ -284,7 +284,10 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         elif hasattr(self.wrapped, "_arun"):
             return await self.wrapped._arun(*args, **kwargs)
         elif hasattr(self.wrapped, "_run"):
-            return self.wrapped._run(*args, **kwargs)
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None, lambda: self.wrapped._run(*args, **kwargs)
+            )
         else:
             result = self.wrapped(*args, **kwargs)
             if asyncio.iscoroutine(result):

@@ -851,7 +851,8 @@ def require_warrant(
     Example:
         def my_node(state, config=None):
             bw = require_warrant(state, config)
-            if bw.authorize("search", {"query": "test"}):
+            result = bw.validate("search", {"query": "test"})
+            if result.success:
                 ...
     """
     return _get_bound_warrant(state, config)

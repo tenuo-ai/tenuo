@@ -133,7 +133,7 @@ from tenuo.constraints import Subpath, UrlSafe
 check_openai_compat()
 
 # Import shared enforcement logic (after version check)
-from tenuo._enforcement import DenialPolicy, EnforcementResult, enforce_tool_call, handle_denial  # noqa: E402
+from tenuo._enforcement import DenialPolicy, EnforcementResult, enforce_tool_call, enforce_tool_call_async, handle_denial  # noqa: E402
 from tenuo.config import resolve_trusted_roots  # noqa: E402
 
 logger = logging.getLogger("tenuo.openai")
@@ -604,6 +604,81 @@ def verify_tool_call(
                 )
 
 
+async def verify_tool_call_async(
+    tool_name: str,
+    arguments: Dict[str, Any],
+    allow_tools: Optional[List[str]],
+    deny_tools: Optional[List[str]],
+    constraints: Optional[Dict[str, Dict[str, Constraint]]],
+    warrant: Optional[Warrant] = None,
+    signing_key: Optional[SigningKey] = None,
+    trusted_roots: Optional[list] = None,
+    approval_handler: Optional[Any] = None,
+    approvals: Optional[list] = None,
+) -> None:
+    """Async variant of verify_tool_call — uses enforce_tool_call_async for Tier 2.
+
+    Required for async streaming paths so approval handlers can be awaited.
+    See verify_tool_call for full documentation.
+    """
+    if warrant is not None:
+        if signing_key is None:
+            raise MissingSigningKey()
+
+        bound_warrant = warrant.bind(signing_key)
+
+        result = await enforce_tool_call_async(
+            tool_name=tool_name,
+            tool_args=arguments,
+            bound_warrant=bound_warrant,
+            trusted_roots=resolve_trusted_roots(trusted_roots),
+            approval_handler=approval_handler,
+            approvals=approvals,
+        )
+
+        if not result.allowed:
+            if result.error_type == "expired":
+                raise WarrantDenied(tool_name, "warrant expired")
+            else:
+                raise WarrantDenied(tool_name, result.denial_reason or "not authorized by warrant")
+
+    if deny_tools and tool_name in deny_tools:
+        raise ToolDenied(tool_name, "Tool is in denylist")
+
+    if allow_tools is not None and tool_name not in allow_tools:
+        raise ToolDenied(tool_name, "Tool not in allowlist")
+
+    if warrant is None and constraints and tool_name in constraints:
+        tool_constraints = constraints[tool_name]
+        allow_unknown = tool_constraints.get("_allow_unknown", False)
+
+        for arg_name, value in arguments.items():
+            try:
+                if arg_name in tool_constraints:
+                    constraint = tool_constraints[arg_name]
+                    if arg_name.startswith("_"):
+                        continue
+                    type_mismatch, reason = _check_type_compatibility(constraint, value)
+                    if type_mismatch:
+                        raise OpenAIConstraintViolation(
+                            tool_name, arg_name, value, constraint, type_mismatch=True, reason=reason
+                        )
+                    if not check_constraint(constraint, value):
+                        raise OpenAIConstraintViolation(tool_name, arg_name, value, constraint)
+                elif not allow_unknown:
+                    raise OpenAIConstraintViolation(
+                        tool_name, arg_name, value,
+                        constraint=Wildcard(),
+                        reason=f"Unknown argument '{arg_name}' - not in constraints",
+                    )
+            except OpenAIConstraintViolation:
+                raise
+            except Exception as e:
+                raise OpenAIConstraintViolation(
+                    tool_name, arg_name, value, constraint=Wildcard(), reason=f"internal validation error: {e}"
+                )
+
+
 def _check_type_compatibility(constraint: Constraint, value: Any) -> tuple:
     """Check if value type is compatible with constraint.
 
@@ -1035,6 +1110,7 @@ class GuardedCompletions:
         """Async buffer-verify-emit pattern for streaming responses.
 
         SECURITY: Same TOCTOU protection as sync version.
+        Uses verify_tool_call_async for async approval handler support.
         """
         buffers: Dict[int, ToolCallBuffer] = {}
         pending_chunks: List[Any] = []
@@ -1062,7 +1138,7 @@ class GuardedCompletions:
         for index, buffer in buffers.items():
             try:
                 arguments = buffer.get_arguments()
-                verify_tool_call(
+                await verify_tool_call_async(
                     buffer.name,
                     arguments,
                     self._allow_tools,
@@ -2162,7 +2238,7 @@ class TenuoToolGuardrail:
         violations = []
         for tool_name, arguments in tool_calls:
             try:
-                verify_tool_call(
+                await verify_tool_call_async(
                     tool_name,
                     arguments,
                     self.allow_tools,

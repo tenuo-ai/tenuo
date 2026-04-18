@@ -30,7 +30,7 @@ from typing import (
 )
 
 from ._builder import BaseGuardBuilder
-from ._enforcement import EnforcementResult, enforce_tool_call, handle_denial
+from ._enforcement import EnforcementResult, enforce_tool_call, enforce_tool_call_async, handle_denial
 from .config import resolve_trusted_roots
 from .exceptions import (
     AuthorizationDenied,
@@ -461,6 +461,59 @@ class _Guard:
         constraints = self._constraints.get(tool_name)
         _check_constraints(tool_name, constraints, auth_args)
 
+    async def _authorize_async(self, tool_name: str, auth_args: Dict[str, Any]) -> None:
+        """Async variant of _authorize — uses enforce_tool_call_async for Tier 2."""
+        if self._bound is not None:
+            result = await enforce_tool_call_async(
+                tool_name, auth_args, self._bound,
+                trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                approval_handler=self._approval_handler,
+                approvals=self._approvals,
+            )
+
+            if self._control_plane is not None:
+                try:
+                    self._control_plane.emit_for_enforcement(result, chain_result=result.chain_result)
+                except Exception:
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
+
+            if not result.allowed:
+                from .exceptions import ConstraintResult, ExpiredError
+
+                if result.error_type == "expired":
+                    raise ExpiredError(result.denial_reason or "Warrant has expired")
+                elif result.error_type == "tool_not_allowed":
+                    raise ToolNotAuthorized(tool=tool_name)
+                elif result.error_type == "clearance_insufficient":
+                    raise AuthorizationDenied(
+                        tool=tool_name,
+                        constraint_results=[],
+                        reason=result.denial_reason or "Insufficient clearance",
+                    )
+                elif _is_tool_not_authorized(result.denial_reason or ""):
+                    raise ToolNotAuthorized(tool=tool_name)
+
+                constraint_results = []
+                if result.constraint_violated:
+                    constraint_results.append(
+                        ConstraintResult(
+                            name=result.constraint_violated,
+                            passed=False,
+                            constraint_repr="<see warrant>",
+                            value=auth_args.get(result.constraint_violated, "<unknown>"),
+                            explanation=result.denial_reason or "Constraint not satisfied",
+                        )
+                    )
+                raise AuthorizationDenied(
+                    tool=tool_name,
+                    constraint_results=constraint_results,
+                    reason=result.denial_reason or "Authorization denied",
+                )
+            return
+
+        constraints = self._constraints.get(tool_name)
+        _check_constraints(tool_name, constraints, auth_args)
+
     def _handle_denial(
         self,
         exc: Exception,
@@ -514,7 +567,7 @@ class _Guard:
         kwargs: Dict[str, Any],
     ) -> Any:
         try:
-            self._authorize(tool_name, auth_args)
+            await self._authorize_async(tool_name, auth_args)
         except (
             AuthorizationDenied,
             ConstraintViolation,
