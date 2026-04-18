@@ -804,6 +804,20 @@ def enforce_tool_call(
                 # Build the full chain: [root, ..., parents, leaf]
                 # warrant_chain contains parent warrants in root-first order.
                 full_chain = list(warrant_chain or []) + [bound_warrant.warrant]
+
+                # Pre-check expiry so we don't conflate trust failures with
+                # expired warrants inside the except handler.
+                if bound_warrant.warrant.is_expired():
+                    return EnforcementResult(
+                        allowed=False,
+                        tool=tool_name,
+                        arguments=tool_args,
+                        denial_reason="Warrant has expired",
+                        constraint_violated=None,
+                        error_type="expired",
+                        warrant_id=warrant_id,
+                    )
+
                 _chain_result = authorizer.check_chain(
                     full_chain,
                     tool_name,
@@ -814,9 +828,6 @@ def enforce_tool_call(
             except Exception as chain_err:
                 denial_reason = str(chain_err)
                 error_type = "authorization_failed"
-                if bound_warrant.warrant.is_expired():
-                    denial_reason = "Warrant has expired"
-                    error_type = "expired"
                 return EnforcementResult(
                     allowed=False,
                     tool=tool_name,
@@ -1078,6 +1089,14 @@ async def enforce_tool_call_async(
                 raise ConfigurationError("authorizer required for verify_mode='verify'")
             try:
                 full_chain = list(warrant_chain or []) + [bound_warrant.warrant]
+
+                if bound_warrant.warrant.is_expired():
+                    return EnforcementResult(
+                        allowed=False, tool=tool_name, arguments=tool_args,
+                        denial_reason="Warrant has expired", constraint_violated=None,
+                        error_type="expired", warrant_id=warrant_id,
+                    )
+
                 _chain_result = authorizer.check_chain(
                     full_chain, tool_name, tool_args,
                     signature=precomputed_signature, approvals=_gate_approvals or [],
@@ -1085,9 +1104,6 @@ async def enforce_tool_call_async(
             except Exception as chain_err:
                 denial_reason = str(chain_err)
                 error_type = "authorization_failed"
-                if bound_warrant.warrant.is_expired():
-                    denial_reason = "Warrant has expired"
-                    error_type = "expired"
                 return EnforcementResult(
                     allowed=False, tool=tool_name, arguments=tool_args,
                     denial_reason=denial_reason, constraint_violated=None,

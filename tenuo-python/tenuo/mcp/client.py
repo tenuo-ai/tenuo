@@ -13,7 +13,7 @@ import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Literal, Optional
 
-from .._enforcement import EnforcementResult, enforce_tool_call
+from .._enforcement import EnforcementResult, enforce_tool_call_async
 from ..config import is_configured
 from ..decorators import key_scope, warrant_scope
 from ..exceptions import (
@@ -495,8 +495,8 @@ class SecureMCPClient:
                     exc_info=True,
                 )
 
-        # Use unified enforcement logic
-        enforcement: EnforcementResult = enforce_tool_call(
+        # Use unified enforcement logic (async for approval handler support)
+        enforcement: EnforcementResult = await enforce_tool_call_async(
             tool_name=tool_name,
             tool_args=extraction_args,
             bound_warrant=bound_warrant,
@@ -521,7 +521,6 @@ class SecureMCPClient:
             )
             return ValidationResult.fail(
                 reason=enforcement.denial_reason or "Authorization denied",
-                # TODO: enforcement module could provide suggestions in the future
                 suggestions=[],
             )
 
@@ -704,7 +703,7 @@ class SecureMCPClient:
                     "Use `with warrant_scope(w), key_scope(k):` or set warrant_context=False."
                 )
             bw = BoundWarrant(w, k)
-            result = enforce_tool_call(
+            result = await enforce_tool_call_async(
                 tool_name=tool_name,
                 tool_args=arguments,
                 bound_warrant=bw,
@@ -780,7 +779,7 @@ class SecureMCPClient:
             k = key_scope()
             if w is not None and k is not None:
                 bw = BoundWarrant(w, k)
-                result = enforce_tool_call(
+                result = await enforce_tool_call_async(
                     tool_name=tool_name,
                     tool_args=auth_args,
                     bound_warrant=bw,
@@ -799,6 +798,18 @@ class SecureMCPClient:
                     "MCP tool authorised: %s (warrant=%s)",
                     tool_name,
                     getattr(w, "id", None),
+                )
+            elif w is not None or k is not None:
+                raise ConfigurationError(
+                    f"Incomplete authorization context for MCP tool '{tool_name}': "
+                    f"warrant={'set' if w else 'missing'}, "
+                    f"signing_key={'set' if k else 'missing'}. "
+                    f"Both must be provided via warrant_scope/key_scope."
+                )
+            else:
+                logger.warning(
+                    "MCP tool '%s' executed without authorization context "
+                    "(no warrant/key in scope)", tool_name,
                 )
 
             if allowed_keys is not None:

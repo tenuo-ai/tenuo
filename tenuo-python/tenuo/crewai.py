@@ -501,12 +501,11 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
             .on_denial("raise")
             .build())
 
-        protected_tool = guard.protect(my_tool)
+        # Use as a CrewAI hook
+        hook = guard.as_hook()
 
-    Security Note:
-        By default, protect() returns a NEW tool, and the original is unchanged.
-        If you want to ensure the original cannot be used (preventing bypass),
-        use .seal(True) to destructively seal the original tool.
+        # Or authorize directly
+        result = guard.authorize(tool_name, args)
     """
 
     def __init__(self):
@@ -743,12 +742,10 @@ class CrewAIGuard:
                 result = guard._authorize(tool_name, args, agent_role=effective_role)
             except TenuoCrewAIError as e:
                 logger.info(f"[TENUO] BLOCKED {tool_name}: {e}")
-                report_unguarded_call(tool_name)
                 return False
 
             if result is not None:
                 logger.info(f"[TENUO] BLOCKED {tool_name}: {result.reason}")
-                report_unguarded_call(tool_name)
                 return False
 
             return None
@@ -807,12 +804,10 @@ class CrewAIGuard:
                 result = await guard._authorize_async(tool_name, args, agent_role=effective_role)
             except TenuoCrewAIError as e:
                 logger.info(f"[TENUO] BLOCKED {tool_name}: {e}")
-                report_unguarded_call(tool_name)
                 return False
 
             if result is not None:
                 logger.info(f"[TENUO] BLOCKED {tool_name}: {result.reason}")
-                report_unguarded_call(tool_name)
                 return False
 
             return None
@@ -1006,6 +1001,14 @@ class CrewAIGuard:
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
 
+        elif self._warrant and not self._signing_key:
+            raise CrewAIConfigurationError(
+                f"Warrant is configured but signing_key is missing — Tier 2 PoP "
+                f"authorization cannot proceed for tool '{tool_name}'. "
+                f"Either provide a signing_key via .with_warrant(warrant, key) "
+                f"or remove the warrant to use Tier 1 only."
+            )
+
         # Authorization granted
         self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
         logger.debug(f"Authorized {tool_name}")
@@ -1088,6 +1091,14 @@ class CrewAIGuard:
                 reason = enforcement.denial_reason or "Authorization denied"
                 error = self._map_enforcement_error(enforcement, tool_name, args, reason)  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
+
+        elif self._warrant and not self._signing_key:
+            raise CrewAIConfigurationError(
+                f"Warrant is configured but signing_key is missing — Tier 2 PoP "
+                f"authorization cannot proceed for tool '{tool_name}'. "
+                f"Either provide a signing_key via .with_warrant(warrant, key) "
+                f"or remove the warrant to use Tier 1 only."
+            )
 
         # Authorization granted
         self._emit_audit(tool_name, args, "ALLOW", "Authorized", agent_role=agent_role)
@@ -1692,7 +1703,7 @@ class UnguardedToolError(TenuoCrewAIError):
         super().__init__(
             f"Strict mode violation in step '{step_name}': "
             f"{len(tools)} unguarded tool call(s) detected: {', '.join(tools)}. "
-            "Ensure all tools called within a guarded step are protected."
+            "Ensure all tools called within a guarded step are covered by the guard."
         )
 
 
@@ -1724,7 +1735,11 @@ def is_strict_mode() -> bool:
 
 
 def report_unguarded_call(tool_name: str) -> None:
-    """Report an unguarded tool call in strict mode."""
+    """Report a tool call that bypassed Tenuo enforcement entirely.
+
+    This should only be called for calls that the guard never evaluated —
+    NOT for calls that were evaluated and denied (those are guarded).
+    """
     if is_strict_mode():
         calls = _unguarded_calls.get()
         calls.append(tool_name)

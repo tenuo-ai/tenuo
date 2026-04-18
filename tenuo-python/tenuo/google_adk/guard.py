@@ -66,7 +66,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
-from tenuo._enforcement import EnforcementResult, enforce_tool_call
+from tenuo._enforcement import EnforcementResult, enforce_tool_call, enforce_tool_call_async
 from tenuo.config import resolve_trusted_roots
 
 if TYPE_CHECKING:
@@ -553,14 +553,97 @@ class TenuoGuard:
         """
         Async ADK before_tool_callback.
 
-        Delegates to the synchronous :meth:`before_tool` — warrant verification
-        is pure CPU/memory work that does not require async execution.
+        Uses ``enforce_tool_call_async`` for Tier 2 warrant authorization,
+        allowing async approval handlers to be awaited natively.
         Register this as ``before_tool_callback`` on async ADK agents.
 
         Returns:
             None: Allow tool execution
             Dict: Skip tool, use this as result (denial message)
         """
+        import time
+        start_ns = time.perf_counter_ns()
+
+        skill_name = self._skill_map.get(tool.name, tool.name)
+        validation_args = self._remap_args(skill_name, args)
+
+        warrant = self._get_warrant(tool_context)
+        use_direct_constraints = warrant is None and (self._constraints or self._allow_tools)
+
+        if warrant is None and not use_direct_constraints:
+            return self._deny("No warrant or constraints available", tool.name, args,
+                              start_ns=start_ns)
+
+        if warrant is not None and self._require_pop:
+            if self._signing_key is None:
+                raise MissingSigningKeyError()
+
+            try:
+                bound_warrant = warrant.bind(self._signing_key)
+
+                result = await enforce_tool_call_async(
+                    tool_name=skill_name,
+                    tool_args=validation_args,
+                    bound_warrant=bound_warrant,
+                    trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                    approval_handler=self._approval_handler,
+                    approvals=self._approvals,
+                )
+
+                if self._control_plane is not None:
+                    latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                    _warrant_stack = None
+                    try:
+                        from tenuo_core import encode_warrant_stack
+                        _warrant_stack = encode_warrant_stack([bound_warrant.warrant])
+                    except Exception:
+                        logger.warning(
+                            "encode_warrant_stack failed; warrant stack will be missing "
+                            "from control plane event for '%s'",
+                            skill_name,
+                            exc_info=True,
+                        )
+                    try:
+                        self._control_plane.emit_for_enforcement(
+                            result, chain_result=result.chain_result,
+                            latency_us=latency_us,
+                            warrant_stack_override=_warrant_stack,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Control plane emission failed for '%s'; audit event lost",
+                            skill_name,
+                            exc_info=True,
+                        )
+
+                if not result.allowed:
+                    if result.error_type == "expired":
+                        return self._deny("Warrant expired", tool.name, args,
+                                          start_ns=start_ns, _cp_already_emitted=True)
+                    else:
+                        reason, constraint_param, constraint = self._get_denial_info(warrant, skill_name, validation_args)
+                        return self._deny(
+                            f"Authorization failed: {reason}",
+                            tool.name,
+                            args,
+                            constraint_param=constraint_param,
+                            constraint=constraint,
+                            start_ns=start_ns,
+                            _cp_already_emitted=True,
+                        )
+
+                self._audit("tool_allowed", tool.name, args, warrant)
+                return None
+
+            except AttributeError as e:
+                logger.warning(f"Warrant missing required methods: {e}")
+                return self._deny(
+                    f"Warrant type doesn't support PoP: {type(warrant).__name__}",
+                    tool.name,
+                    args,
+                )
+
+        # Tier 1 path is CPU-only, safe to delegate to sync
         return self.before_tool(tool, args, tool_context)
 
     def after_tool(
