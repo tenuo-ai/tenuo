@@ -117,7 +117,7 @@ class TestBypassSecurity:
         finally:
             _bypass_context.reset(token)
 
-    @given(env_val=st.text(min_size=1, max_size=30).filter(lambda s: s.lower() != "test"))
+    @given(env_val=st.text(min_size=1, max_size=30).filter(lambda s: s.lower() != "test" and "\x00" not in s))
     @settings(max_examples=20)
     def test_bypass_false_for_arbitrary_env(self, env_val):
         """is_bypass_enabled returns False for any TENUO_ENV value that isn't 'test'."""

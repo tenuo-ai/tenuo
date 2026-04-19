@@ -349,12 +349,12 @@ class TestTemporalCallsRust:
         except ImportError:
             pytest.skip("temporalio not installed")
 
-        # Verify that the Temporal interceptor code imports and uses Authorizer
-        # by checking the module source contains the expected calls.
+        # The Temporal __init__.py uses lazy imports; the actual enforcement
+        # logic lives in _interceptors.py.
         import inspect
-        from tenuo import temporal as temporal_mod
+        from tenuo.temporal import _interceptors as interceptors_mod
 
-        source = inspect.getsource(temporal_mod)
-        assert "Authorizer(" in source, "Temporal module must construct Authorizer"
+        source = inspect.getsource(interceptors_mod)
+        assert "Authorizer(" in source, "Temporal interceptors must construct Authorizer"
         assert "authorize_one(" in source or "check_chain(" in source, \
-            "Temporal module must call authorize_one or check_chain"
+            "Temporal interceptors must call authorize_one or check_chain"

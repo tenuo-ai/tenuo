@@ -81,6 +81,16 @@ class TestAdaptersUseRustPath:
             pytest.skip(f"{adapter_name} not installed")
 
         source = inspect.getsource(mod)
+
+        # Temporal uses lazy imports in __init__.py; the enforcement logic
+        # lives in _interceptors.py — check that submodule too.
+        if adapter_name == "temporal":
+            try:
+                sub = __import__("tenuo.temporal._interceptors", fromlist=["_interceptors"])
+                source += "\n" + inspect.getsource(sub)
+            except (ImportError, OSError):
+                pass
+
         has_enforce = "enforce_tool_call" in source
         has_authorizer = "Authorizer" in source
         has_authorize = "authorize_one" in source or "check_chain" in source
