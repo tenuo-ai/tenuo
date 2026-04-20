@@ -14,6 +14,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Literal, Optional
 
 from .._enforcement import EnforcementResult, enforce_tool_call_async
+from .._pop_canonicalize import strip_none_values
 from ..config import is_configured
 from ..decorators import key_scope, warrant_scope
 from ..exceptions import (
@@ -482,12 +483,14 @@ class SecureMCPClient:
         # Create BoundWarrant for enforcement
         bound_warrant = warrant.bind(keypair)
 
-        # Re-map arguments if we have a config
-        extraction_args = arguments
+        # Re-map arguments if we have a config. Strip None values at the
+        # FFI boundary so optional tool params with None defaults don't
+        # crash the Rust canonicalizer.
+        extraction_args = strip_none_values(arguments)
         if self.compiled_config:
             try:
                 result = self.compiled_config.extract_constraints(tool_name, arguments)
-                extraction_args = result.constraints
+                extraction_args = strip_none_values(dict(result.constraints))
             except Exception:
                 logger.warning(
                     "Constraint extraction failed for '%s'; falling back to raw arguments",
@@ -611,23 +614,12 @@ class SecureMCPClient:
                             warrant_base64 = warrant.to_base64()
                     else:
                         warrant_base64 = warrant.to_base64()
-                    # PoP must sign the same constraint view the server will
-                    # verify against. When a CompiledMcpConfig is loaded, that
-                    # means extracted (renamed/coerced) constraints — not raw args.
-                    sign_args = args
-                    if self.compiled_config:
-                        try:
-                            extraction = self.compiled_config.extract_constraints(
-                                tool_name, args
-                            )
-                            sign_args = dict(extraction.constraints)
-                        except Exception:
-                            logger.warning(
-                                "Config extraction failed for '%s'; PoP will sign raw "
-                                "arguments (server-side verification may reject)",
-                                tool_name,
-                                exc_info=True,
-                            )
+                    # PoP covers the raw wire args. The server canonicalizes the
+                    # same wire args for verification (split-view authorize) and
+                    # runs constraint extraction separately for policy matching.
+                    # See tenuo._pop_canonicalize.strip_none_values for the exact
+                    # canonicalization both sides apply.
+                    sign_args = strip_none_values(args)
                     pop_sig = warrant.sign(keypair, tool_name, sign_args, int(time.time()))
                     signature_base64 = base64.b64encode(bytes(pop_sig)).decode("utf-8")
 

@@ -49,11 +49,13 @@ Usage pattern
 
 ``CompiledMcpConfig`` and PoP signatures
 -----------------------------------------
-When using ``CompiledMcpConfig`` for field-name extraction (e.g., mapping
-``maxSize`` → ``max_size``), the PoP signature must be computed over the
-**extracted** (renamed) constraint dict, not the raw MCP body.  Both the
-client and server must share the same config so their constraint views agree.
-``SecureMCPClient`` does this automatically when given a ``config_path``.
+The PoP signature is **always** computed over the raw MCP ``arguments``
+dict (with :func:`tenuo._pop_canonicalize.strip_none_values` applied).
+``CompiledMcpConfig`` extraction — field renaming, coercion, defaults — runs
+separately and feeds only the constraint-matching path. This means a server
+can enforce constraint mappings independently of whether the client has the
+same config loaded: PoP parity depends only on the wire args, not on the
+extraction schema. ``SecureMCPClient`` signs the raw wire args automatically.
 
 Warrant transport
 -----------------
@@ -105,6 +107,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from .._pop_canonicalize import strip_none_values
 from ..exceptions import (
     ApprovalGateTriggered,
     ConstraintViolation,
@@ -418,6 +421,11 @@ class MCPVerifier:
             ``jsonrpc_error_code`` on failure.
         """
         args: Dict[str, Any] = arguments or {}
+        # PoP bytes cover the wire-args view. Both client and server apply
+        # strip_none_values to that view so optional arguments with None
+        # defaults don't crash the Rust canonicalizer and don't silently
+        # diverge the signed-bytes shape between sides.
+        pop_args: Dict[str, Any] = strip_none_values(args)
 
         def _emit_and_return(
             result: MCPVerificationResult,
@@ -462,25 +470,20 @@ class MCPVerifier:
                     jsonrpc_error_code=-32602,
                 ))
             clean_arguments = dict(args)
-            constraints = dict(extraction.constraints)
+            # Strip None from constraints too: extraction may propagate None
+            # defaults, which the Rust canonicalizer rejects.
+            constraints = strip_none_values(dict(extraction.constraints))
 
-            unauthenticated_keys = set(args.keys()) - set(constraints.keys())
-            if unauthenticated_keys:
-                logger.warning(
-                    "Tool '%s': arguments %s are not mapped to constraints in "
-                    "mcp-config and are therefore unauthenticated (not covered "
-                    "by PoP signature). If these are security-sensitive, add "
-                    "them to your mcp-config.yaml.",
-                    tool_name,
-                    sorted(unauthenticated_keys),
-                )
-
+            # Note: PoP covers the raw wire args (pop_args), not the extracted
+            # constraint view. That means every wire arg is covered by the
+            # signature regardless of extraction mapping. The extraction is
+            # only used for warrant-constraint matching.
             warrant_b64 = tenuo_envelope.get("warrant")
             signature_b64 = tenuo_envelope.get("signature")
         else:
-            # Raw mode: arguments are the constraints
+            # Raw mode: arguments are the constraints. Strip None there too.
             clean_arguments = dict(args)
-            constraints = dict(args)
+            constraints = strip_none_values(dict(args))
             warrant_b64 = tenuo_envelope.get("warrant")
             signature_b64 = tenuo_envelope.get("signature")
 
@@ -660,12 +663,22 @@ class MCPVerifier:
         try:
             if _chain_parents:
                 full_chain = list(_chain_parents) + [warrant]
-                chain_result = self._authorizer.check_chain(
-                    full_chain, tool_name, constraints, pop_sig, approvals
+                chain_result = self._authorizer.check_chain_with_pop_args(
+                    full_chain,
+                    tool_name,
+                    pop_args,
+                    constraints,
+                    pop_sig,
+                    approvals,
                 )
             else:
-                chain_result = self._authorizer.authorize_one(
-                    warrant, tool_name, constraints, pop_sig, approvals
+                chain_result = self._authorizer.authorize_one_with_pop_args(
+                    warrant,
+                    tool_name,
+                    pop_args,
+                    constraints,
+                    pop_sig,
+                    approvals,
                 )
 
             # ── Replay prevention ────────────────────────────────────────

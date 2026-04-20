@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **MCP Proof-of-Possession now always signs raw wire arguments.** Previously,
+  when a `CompiledMcpConfig` was loaded on the client, `SecureMCPClient` would
+  run `extract_constraints(...)` before signing and compute PoP over the
+  extracted (renamed/coerced) view. The server did the same on its side, so
+  PoP byte parity depended on both sides having *identical* configs loaded —
+  a subtle drift mode caused every call to be rejected with
+  "Signature verification failed" whenever the client had no config or a
+  slightly different one. The PoP signature now covers the raw MCP
+  `arguments` dict on both client and server; constraint extraction runs
+  server-only and feeds only the policy-matching path. This removes an
+  entire class of silent-denial misconfigurations but changes the bytes
+  that go into the PoP digest — clients and servers must upgrade together.
+
+### Added
+
+- **Split-view authorize APIs in `tenuo-core`** — `Warrant::authorize_with_pop_args`,
+  `Warrant::authorize_with_pop_args_and_config`, `Authorizer::authorize_one_with_pop_args`,
+  and `Authorizer::check_chain_with_pop_args` accept two argument dicts:
+  `pop_args` (covered by the PoP signature, approval gates, request hash, and
+  approval signatures) and `constraint_args` (matched against the warrant's
+  per-tool constraints). Exposed to Python via `authorize_one_with_pop_args`
+  and `check_chain_with_pop_args`. The existing single-arg methods are
+  unchanged and become thin wrappers that pass the same dict for both — no
+  behavior change for non-transport callers.
+- **`tenuo._pop_canonicalize.strip_none_values(args)`** helper — a small
+  pure-Python canonicalizer that both sides of the MCP handshake apply to
+  wire args before they cross the Rust FFI boundary. Drops top-level `None`
+  values and `None` list elements so optional tool parameters with
+  `Optional[...] = None` defaults don't crash the canonicalizer.
+
+### Fixed
+
+- **MCP PoP parity across config asymmetry.** A client without a
+  `CompiledMcpConfig` loaded (or with a different one) can now call a server
+  that does have a config; PoP byte parity no longer depends on the
+  extraction schema. Signature-verification denials now only mean what they
+  should: the caller is not the legitimate holder of the warrant.
+- **`None` values in tool arguments no longer crash signing/verification.**
+  Calling `warrant.sign` or invoking an MCP tool with arguments like
+  `{"encoding": None, "limit": None}` used to raise
+  `ValueError: value must be str, int, float, bool, or list` from the Rust
+  core. Both the MCP client and MCP verifier now apply `strip_none_values`
+  symmetrically before the FFI boundary, so optional arguments left unset
+  flow through cleanly.
+- **Misleading "unauthenticated arguments" server warning removed.** With
+  split-view authorize, every raw wire arg is covered by the PoP signature
+  regardless of the extraction mapping, so the warning was factually wrong
+  under the new model.
+
+### Migration
+
+- Upgrade client and server together. A pre-upgrade client talking to a
+  post-upgrade server (or vice versa) will still cross-verify in the
+  common case where client and server have identical configs loaded, but
+  will silently fail anywhere the old and new canonicalization diverge
+  (i.e. most of the real-world mismatch scenarios this PR was written to
+  fix). If you cannot upgrade both sides simultaneously, pin the
+  `tenuo-python` / `tenuo-core` versions on each side and plan a
+  coordinated rollout.
+
 ## [0.1.0-beta.22] - 2026-04-14
 
 ### Fixed
