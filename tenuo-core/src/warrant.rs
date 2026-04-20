@@ -985,6 +985,30 @@ impl Warrant {
         pop_window_secs: i64,
         pop_max_windows: u32,
     ) -> Result<()> {
+        self.authorize_with_pop_args_and_config(
+            tool,
+            args,
+            args,
+            signature,
+            pop_window_secs,
+            pop_max_windows,
+        )
+    }
+
+    /// Split-view authorize with custom PoP window configuration.
+    ///
+    /// Same split-view semantics as [`Warrant::authorize_with_pop_args`] but
+    /// accepts explicit PoP window parameters. Used by
+    /// [`crate::planes::Authorizer::check_chain_with_pop_args`].
+    pub fn authorize_with_pop_args_and_config(
+        &self,
+        tool: &str,
+        pop_args: &HashMap<String, ConstraintValue>,
+        constraint_args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+        pop_window_secs: i64,
+        pop_max_windows: u32,
+    ) -> Result<()> {
         // Check expiration
         if self.is_expired() {
             return Err(Error::WarrantExpired(self.expires_at()));
@@ -1007,9 +1031,11 @@ impl Warrant {
             });
         };
 
-        self.verify_pop(tool, args, signature, pop_window_secs, pop_max_windows)?;
+        // PoP covers the wire-args view
+        self.verify_pop(tool, pop_args, signature, pop_window_secs, pop_max_windows)?;
 
-        constraints.matches(args)
+        // Warrant constraints match the extracted view
+        constraints.matches(constraint_args)
     }
 
     /// Check if constraints match without performing other authorization checks (like PoP or expiration).

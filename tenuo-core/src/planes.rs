@@ -1887,6 +1887,29 @@ impl Authorizer {
         )
     }
 
+    /// Split-view single-warrant authorization.
+    ///
+    /// See [`Authorizer::check_chain_with_pop_args`] for semantics — this
+    /// is the single-warrant convenience wrapper.
+    pub fn authorize_one_with_pop_args(
+        &self,
+        warrant: &Warrant,
+        tool: &str,
+        pop_args: &HashMap<String, ConstraintValue>,
+        constraint_args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::SignedApproval],
+    ) -> Result<ChainVerificationResult> {
+        self.check_chain_with_pop_args(
+            std::slice::from_ref(warrant),
+            tool,
+            pop_args,
+            constraint_args,
+            signature,
+            approvals,
+        )
+    }
+
     /// Verify multi-sig approvals against a warrant.
     fn verify_approvals(
         &self,
@@ -2322,6 +2345,34 @@ impl Authorizer {
         signature: Option<&crate::crypto::Signature>,
         approvals: &[crate::approval::SignedApproval],
     ) -> Result<ChainVerificationResult> {
+        self.check_chain_with_pop_args(chain, tool, args, args, signature, approvals)
+    }
+
+    /// Verify chain with separate PoP bytes and constraint-matching args.
+    ///
+    /// Split-view variant of [`Authorizer::check_chain`] for transports (like
+    /// MCP) that sign PoP over the raw wire args but match warrant
+    /// constraints against an extracted/renamed view of those args.
+    ///
+    /// Semantics mirror [`Warrant::authorize_with_pop_args`]:
+    /// - `pop_args` is canonicalized for PoP verification **and** for
+    ///   approval-gate matching, request-hash computation, and approval
+    ///   signature verification (i.e. everything the holder/approvers
+    ///   committed to).
+    /// - `constraint_args` is matched against the leaf warrant's
+    ///   per-tool constraints only.
+    ///
+    /// For callers with a single invocation view, pass the same dict for
+    /// both — this is exactly [`Authorizer::check_chain`].
+    pub fn check_chain_with_pop_args(
+        &self,
+        chain: &[Warrant],
+        tool: &str,
+        pop_args: &HashMap<String, ConstraintValue>,
+        constraint_args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::SignedApproval],
+    ) -> Result<ChainVerificationResult> {
         let result = self.verify_chain(chain)?;
         let mut verified_approvals = Vec::new();
 
@@ -2338,24 +2389,25 @@ impl Authorizer {
                 }
             }
 
-            // Capability, constraint, and PoP verification
-            leaf.authorize_with_pop_config(
+            // Capability, constraint, and PoP verification (split-view)
+            leaf.authorize_with_pop_args_and_config(
                 tool,
-                args,
+                pop_args,
+                constraint_args,
                 signature,
                 self.pop_window_secs,
                 self.pop_max_windows,
             )?;
 
-            // Approval gate evaluation: determines whether this invocation requires approval.
-            // Parse approval gate map once, then evaluate.
+            // Approval gate evaluation: evaluated against the wire-args view so
+            // gates see the actual invocation as committed by the PoP holder.
             let approval_gate_map = crate::approval_gate::parse_approval_gate_map(
                 leaf.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
             )?;
             let needs_approval = crate::approval_gate::evaluate_approval_gates(
                 approval_gate_map.as_ref(),
                 tool,
-                args,
+                pop_args,
             )?;
 
             if needs_approval {
@@ -2374,17 +2426,18 @@ impl Authorizer {
                 if approvals.is_empty() {
                     // No approvals provided — emit ApprovalRequired with an
                     // ApprovalRequest so the engine can obtain human approval.
+                    // Request hash covers the wire-args view (what approvers sign over).
                     let request_hash = crate::approval::compute_request_hash(
                         &leaf.id().to_string(),
                         tool,
-                        args,
+                        pop_args,
                         Some(leaf.authorized_holder()),
                     );
                     let threshold = leaf.approval_threshold();
                     let request = crate::approval::ApprovalRequest::new(
                         &leaf.id().to_string(),
                         tool,
-                        args,
+                        pop_args,
                         request_hash,
                         approvers,
                         threshold,
@@ -2395,9 +2448,8 @@ impl Authorizer {
                         request: Box::new(request),
                     });
                 }
-                // Approvals were provided — verify them. If they're insufficient
-                // or invalid, InsufficientApprovals propagates with diagnostics.
-                verified_approvals = self.verify_approvals(leaf, tool, args, approvals)?;
+                // Approvals were provided — verify them over the wire-args view.
+                verified_approvals = self.verify_approvals(leaf, tool, pop_args, approvals)?;
             }
             // needs_approval = false → tool is free (either approval gate map present
             // and no approval gate matched, or no approval gate map and no required_approvers)

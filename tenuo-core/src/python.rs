@@ -5600,6 +5600,151 @@ impl PyAuthorizer {
             .map_err(to_py_err)?;
         Ok(PyChainVerificationResult { inner: result })
     }
+
+    /// Split-view single-warrant authorization.
+    ///
+    /// For MCP-style transports where the PoP signature is computed over the
+    /// raw wire args, but the warrant's per-tool constraints need to match
+    /// an extracted/renamed view of those args (e.g. ``maxSize`` → ``max_size``).
+    ///
+    /// Args:
+    ///     warrant: The warrant to authorize against
+    ///     tool: Tool name being invoked
+    ///     pop_args: Dict used for PoP verification, approval-gate matching,
+    ///         request-hash computation, and approval verification. Must
+    ///         exactly equal (modulo field order) the dict the client signed.
+    ///     constraint_args: Dict matched against the warrant's per-tool
+    ///         constraints. For MCP this is typically the output of
+    ///         ``CompiledMcpConfig.extract_constraints``.
+    ///     signature: Optional PoP signature bytes (64 bytes)
+    ///     approvals: Optional list of SignedApproval objects
+    ///
+    /// Returns:
+    ///     ChainVerificationResult on success, raises exception on failure
+    #[pyo3(signature = (warrant, tool, pop_args, constraint_args, signature=None, approvals=None))]
+    fn authorize_one_with_pop_args(
+        &self,
+        warrant: &PyWarrant,
+        tool: &str,
+        pop_args: &Bound<'_, PyDict>,
+        constraint_args: &Bound<'_, PyDict>,
+        signature: Option<&[u8]>,
+        approvals: Option<Vec<PyRef<PySignedApproval>>>,
+    ) -> PyResult<PyChainVerificationResult> {
+        let mut rust_pop_args = HashMap::new();
+        for (key, value) in pop_args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_pop_args.insert(field, cv);
+        }
+
+        let mut rust_constraint_args = HashMap::new();
+        for (key, value) in constraint_args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_constraint_args.insert(field, cv);
+        }
+
+        let sig = match signature {
+            Some(bytes) => {
+                let arr: [u8; 64] = bytes
+                    .try_into()
+                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+                Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
+            }
+            None => None,
+        };
+
+        let rust_approvals: Vec<crate::approval::SignedApproval> = approvals
+            .unwrap_or_default()
+            .iter()
+            .map(|a| a.inner.clone())
+            .collect();
+
+        let result = self
+            .inner
+            .authorize_one_with_pop_args(
+                &warrant.inner,
+                tool,
+                &rust_pop_args,
+                &rust_constraint_args,
+                sig.as_ref(),
+                &rust_approvals,
+            )
+            .map_err(to_py_err)?;
+        Ok(PyChainVerificationResult { inner: result })
+    }
+
+    /// Split-view delegation-chain authorization.
+    ///
+    /// See :meth:`authorize_one_with_pop_args` for semantics — this is the
+    /// multi-warrant form for delegation chains.
+    #[pyo3(signature = (chain, tool, pop_args, constraint_args, signature=None, approvals=None))]
+    fn check_chain_with_pop_args(
+        &self,
+        chain: &Bound<'_, PySequence>,
+        tool: &str,
+        pop_args: &Bound<'_, PyDict>,
+        constraint_args: &Bound<'_, PyDict>,
+        signature: Option<&[u8]>,
+        approvals: Option<Vec<PyRef<PySignedApproval>>>,
+    ) -> PyResult<PyChainVerificationResult> {
+        let len = chain.len()?;
+        if len == 0 {
+            return Err(PyValueError::new_err("chain cannot be empty"));
+        }
+
+        let mut warrants = Vec::with_capacity(len);
+        for i in 0..len {
+            let item = chain.get_item(i)?;
+            let warrant_bound = item.downcast::<PyWarrant>()?;
+            let warrant = warrant_bound.borrow();
+            warrants.push(warrant.inner.clone());
+        }
+
+        let mut rust_pop_args = HashMap::new();
+        for (key, value) in pop_args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_pop_args.insert(field, cv);
+        }
+
+        let mut rust_constraint_args = HashMap::new();
+        for (key, value) in constraint_args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_constraint_args.insert(field, cv);
+        }
+
+        let sig = match signature {
+            Some(bytes) => {
+                let arr: [u8; 64] = bytes
+                    .try_into()
+                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+                Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
+            }
+            None => None,
+        };
+
+        let rust_approvals: Vec<crate::approval::SignedApproval> = approvals
+            .unwrap_or_default()
+            .iter()
+            .map(|a| a.inner.clone())
+            .collect();
+
+        let result = self
+            .inner
+            .check_chain_with_pop_args(
+                &warrants,
+                tool,
+                &rust_pop_args,
+                &rust_constraint_args,
+                sig.as_ref(),
+                &rust_approvals,
+            )
+            .map_err(to_py_err)?;
+        Ok(PyChainVerificationResult { inner: result })
+    }
 }
 
 // ============================================================================
