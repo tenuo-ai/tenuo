@@ -60,14 +60,13 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             crate::error::Error::WarrantRevoked(id) => {
                 ("RevokedError", PyTuple::new(py, [id.as_str()]))
             }
-            crate::error::Error::WarrantExpired(t) => {
-                // Python ExpiredError expects (warrant_id, expired_at)
-                // We don't have warrant_id here easily, so pass "unknown"
-                (
-                    "ExpiredError",
-                    PyTuple::new(py, ["unknown", t.to_rfc3339().as_str()]),
-                )
-            }
+            crate::error::Error::WarrantExpired {
+                warrant_id,
+                expired_at,
+            } => (
+                "ExpiredError",
+                PyTuple::new(py, [warrant_id.as_str(), expired_at.to_rfc3339().as_str()]),
+            ),
             crate::error::Error::DepthExceeded(d, m) => {
                 ("DepthExceeded", PyTuple::new(py, [*d, *m]))
             }
@@ -295,7 +294,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 parent_inclusive: _,
                 child_inclusive: _,
             } => (
-                "RangeExpanded",
+                "RangeInclusivityExpanded",
                 PyTuple::new(
                     py,
                     [
@@ -306,7 +305,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 ),
             ),
             crate::error::Error::ValueNotInRange { value, min, max } => (
-                "RangeExpanded",
+                "ValueNotInRange",
                 PyTuple::new(
                     py,
                     ["value", &format!("{:?}-{:?}", min, max), &value.to_string()],

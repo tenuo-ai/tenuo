@@ -1,4 +1,5 @@
 import pytest
+import time
 
 import tenuo_core as core
 from tenuo.exceptions import TenuoError
@@ -30,3 +31,43 @@ def test_function_level_validation_errors_are_tenuo_errors():
 def test_mcp_config_errors_are_tenuo_errors(tmp_path):
     missing = tmp_path / "missing.yml"
     _assert_tenuo_error(lambda: core.McpConfig.from_file(str(missing)))
+
+
+def test_to_py_err_exception_names_exist():
+    import tenuo.exceptions as exc
+
+    required_names = {
+        "InvalidWarrantType",
+        "IssueDepthExceeded",
+        "IssuerChainTooLong",
+        "SelfIssuanceProhibited",
+        "ClearanceLevelExceeded",
+        "UnauthorizedToolIssuance",
+        "DelegationAuthorityError",
+        "ConstraintDepthExceeded",
+        "PayloadTooLarge",
+        "RangeInclusivityExpanded",
+        "ValueNotInRange",
+    }
+    missing = sorted(name for name in required_names if not hasattr(exc, name))
+    assert not missing, f"missing exception classes in tenuo.exceptions: {missing}"
+
+
+def test_warrant_expired_preserves_warrant_id():
+    issuer = core.SigningKey.generate()
+    holder = core.SigningKey.generate()
+    warrant = core.Warrant.issue(
+        issuer,
+        capabilities={"tool.expire": {}},
+        ttl_seconds=1,
+        holder=holder.public_key,
+    )
+    time.sleep(2)
+
+    authorizer = core.Authorizer(trusted_roots=[issuer.public_key])
+    with pytest.raises(TenuoError) as exc_info:
+        authorizer.authorize_one(warrant, "tool.expire", {}, None)
+
+    err = exc_info.value
+    details = getattr(err, "details", {})
+    assert details.get("warrant_id") == str(warrant.id)

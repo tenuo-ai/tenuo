@@ -941,7 +941,10 @@ impl Warrant {
     ) -> Result<()> {
         // Check expiration
         if self.is_expired() {
-            return Err(Error::WarrantExpired(self.expires_at()));
+            return Err(Error::WarrantExpired {
+                warrant_id: self.id().to_string(),
+                expired_at: self.expires_at(),
+            });
         }
 
         // Only execution warrants can authorize actions
@@ -1011,7 +1014,10 @@ impl Warrant {
     ) -> Result<()> {
         // Check expiration
         if self.is_expired() {
-            return Err(Error::WarrantExpired(self.expires_at()));
+            return Err(Error::WarrantExpired {
+                warrant_id: self.id().to_string(),
+                expired_at: self.expires_at(),
+            });
         }
 
         if self.payload.warrant_type != WarrantType::Execution {
@@ -1933,7 +1939,10 @@ impl<'a> AttenuationBuilder<'a> {
         }
 
         if self.parent.is_expired() {
-            return Err(Error::WarrantExpired(self.parent.expires_at()));
+            return Err(Error::WarrantExpired {
+                warrant_id: self.parent.id().to_string(),
+                expired_at: self.parent.expires_at(),
+            });
         }
 
         // Validate attenuation monotonicity based on warrant type
@@ -2719,7 +2728,10 @@ impl OwnedAttenuationBuilder {
                 .timestamp_opt(self.parent.payload.expires_at as i64, 0)
                 .single()
                 .unwrap_or_else(Utc::now);
-            return Err(Error::WarrantExpired(expiry));
+            return Err(Error::WarrantExpired {
+                warrant_id: self.parent.id().to_string(),
+                expired_at: expiry,
+            });
         }
 
         // Validate attenuation monotonicity
@@ -3132,7 +3144,10 @@ impl<'a> IssuanceBuilder<'a> {
                 .timestamp_opt(self.issuer.payload.expires_at as i64, 0)
                 .single()
                 .unwrap_or_else(Utc::now);
-            return Err(Error::WarrantExpired(expiry));
+            return Err(Error::WarrantExpired {
+                warrant_id: self.issuer.id().to_string(),
+                expired_at: expiry,
+            });
         }
 
         // Validate required fields

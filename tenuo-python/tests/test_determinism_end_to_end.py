@@ -5,9 +5,10 @@ from datetime import timedelta
 from tenuo_core import SigningKey, Warrant, py_compute_request_hash
 
 
-def _shuffled_args(base_args: dict) -> dict:
+def _shuffled_args(base_args: dict, seed: int) -> dict:
     items = list(base_args.items())
-    random.shuffle(items)
+    rng = random.Random(seed)
+    rng.shuffle(items)
     return {k: v for k, v in items}
 
 
@@ -38,16 +39,16 @@ def test_end_to_end_deterministic_sign_dedup_and_request_hash():
         "score": 1.5,
     }
 
-    def run_sign() -> bytes:
-        shuffled = _shuffled_args(args)
+    def run_sign(iter_idx: int) -> bytes:
+        shuffled = _shuffled_args(args, seed=iter_idx)
         return warrant.sign(holder, tool_name, shuffled, timestamp=timestamp)
 
-    def run_dedup() -> str:
-        shuffled = _shuffled_args(args)
+    def run_dedup(iter_idx: int) -> str:
+        shuffled = _shuffled_args(args, seed=iter_idx)
         return warrant.dedup_key(tool_name, shuffled)
 
-    def run_hash() -> bytes:
-        shuffled = _shuffled_args(args)
+    def run_hash(iter_idx: int) -> bytes:
+        shuffled = _shuffled_args(args, seed=iter_idx)
         return bytes(
             py_compute_request_hash(
                 str(warrant.id),
@@ -58,9 +59,9 @@ def test_end_to_end_deterministic_sign_dedup_and_request_hash():
         )
 
     with ThreadPoolExecutor(max_workers=16) as pool:
-        sign_values = list(pool.map(lambda _: run_sign(), range(100)))
-        dedup_values = list(pool.map(lambda _: run_dedup(), range(100)))
-        hash_values = list(pool.map(lambda _: run_hash(), range(100)))
+        sign_values = list(pool.map(run_sign, range(100)))
+        dedup_values = list(pool.map(run_dedup, range(100)))
+        hash_values = list(pool.map(run_hash, range(100)))
 
     _assert_all_equal(sign_values)
     _assert_all_equal(dedup_values)

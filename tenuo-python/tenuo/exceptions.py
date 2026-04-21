@@ -93,6 +93,8 @@ __all__ = [
     "ExclusionRemoved",
     "ValueNotInParentSet",
     "RangeExpanded",
+    "RangeInclusivityExpanded",
+    "ValueNotInRange",
     "PatternExpanded",
     "RequiredValueRemoved",
     "ExactValueMismatch",
@@ -644,6 +646,44 @@ class RangeExpanded(MonotonicityError):
             f"Child {bound} ({child_value}, hint=hint) exceeds parent {bound} ({parent_value}, hint=hint)", hint=hint
         )
         self.details = {"bound": bound, "parent_value": parent_value, "child_value": child_value}
+
+
+@wire_code(ErrorCode.CAPABILITY_EXPANSION)
+class RangeInclusivityExpanded(MonotonicityError):
+    """Range child changed an equal bound from exclusive to inclusive."""
+
+    error_code = "range_inclusivity_expanded"
+    rust_variant = "RangeInclusivityExpanded"
+
+    def __init__(self, bound: str, parent_desc: str, child_desc: str, hint: Optional[str] = None):
+        super().__init__(
+            f"Child {bound} ({child_desc}) expands parent bound ({parent_desc}) via inclusivity",
+            hint=hint,
+        )
+        self.details = {
+            "bound": bound,
+            "parent_description": parent_desc,
+            "child_description": child_desc,
+        }
+
+
+@wire_code(ErrorCode.CONSTRAINT_VIOLATION)
+class ValueNotInRange(MonotonicityError):
+    """Value failed to satisfy a range bound."""
+
+    error_code = "value_not_in_range"
+    rust_variant = "ValueNotInRange"
+
+    def __init__(self, bound: str, allowed_range: str, actual_value: str, hint: Optional[str] = None):
+        super().__init__(
+            f"Value not in range: {bound} expected {allowed_range}, got {actual_value}",
+            hint=hint,
+        )
+        self.details = {
+            "bound": bound,
+            "allowed_range": allowed_range,
+            "actual_value": actual_value,
+        }
 
 
 @wire_code(ErrorCode.CAPABILITY_EXPANSION)
