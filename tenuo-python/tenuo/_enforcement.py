@@ -475,6 +475,8 @@ def enforce_tool_call(
     tool_args: Dict[str, Any],
     bound_warrant: BoundWarrant,
     *,
+    pop_args: Optional[Dict[str, Any]] = None,
+    constraint_args: Optional[Dict[str, Any]] = None,
     allowed_tools: Optional[List[str]] = None,
     schemas: Optional[Dict[str, ToolSchema]] = None,
     require_constraints: bool = False,
@@ -498,7 +500,11 @@ def enforce_tool_call(
 
     Args:
         tool_name: Name of the tool being called
-        tool_args: Arguments passed to the tool
+        tool_args: Arguments passed to the tool (legacy single-view path).
+        pop_args: Optional raw/wire args for PoP/authentication checks.
+            When omitted, ``tool_args`` is used.
+        constraint_args: Optional extracted args for warrant constraint matching.
+            When omitted, ``tool_args`` is used.
         bound_warrant: BoundWarrant instance (warrant + signing key).
             Must be created via warrant.bind(signing_key).
         allowed_tools: Optional explicit allowlist that overrides warrant.tools.
@@ -675,13 +681,16 @@ def enforce_tool_call(
 
         _warrant_obj = bound_warrant.warrant
         _gate_approvals: Optional[List[Any]] = None
-        # Keep the original tool_args for diagnostics/audit payloads, but use the
-        # None-stripped canonical view for every Rust-bound auth operation. This
-        # mirrors MCP client/server PoP canonicalization and prevents local
-        # warrant_context=True paths from crashing on optional args passed as None.
-        _auth_args = _strip_none_values(tool_args)
+        _raw_pop_args = pop_args if pop_args is not None else tool_args
+        _raw_constraint_args = (
+            constraint_args if constraint_args is not None else tool_args
+        )
+        # Keep original tool_args for diagnostics/audit payloads, but canonicalize
+        # each auth view independently before crossing the Rust FFI boundary.
+        _pop_auth_args = _strip_none_values(_raw_pop_args)
+        _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
-        if _evaluate_approval_gates(_warrant_obj, tool_name, _auth_args):
+        if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
             _gate_approvers = _warrant_obj.required_approvers()
             _gate_threshold = _warrant_obj.approval_threshold()
 
@@ -701,7 +710,7 @@ def enforce_tool_call(
             # Collect and verify approvals — raises if missing or invalid.
             # Returns verified SignedApproval objects to pass to validate().
             _gate_approvals = _collect_approvals_for_approval_gate(
-                tool_name, _auth_args, bound_warrant,
+                tool_name, _pop_auth_args, bound_warrant,
                 _gate_approvers, _gate_threshold,
                 approval_handler, approvals,
             )
@@ -742,21 +751,52 @@ def enforce_tool_call(
             try:
                 _warrant = bound_warrant.warrant
                 _key = bound_warrant._key
-                _pop = bytes(_warrant.sign(_key, tool_name, _auth_args, int(_time.time())))
+                _pop = bytes(
+                    _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
+                )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
+                use_split_view = (
+                    pop_args is not None
+                    or constraint_args is not None
+                    or _pop_auth_args != _constraint_auth_args
+                )
                 if warrant_chain:
                     full_chain = list(warrant_chain) + [_warrant]
-                    _chain_result = _auth.check_chain(
-                        full_chain, tool_name, _auth_args,
-                        signature=_pop,
-                        approvals=_gate_approvals or [],
-                    )
+                    if use_split_view:
+                        _chain_result = _auth.check_chain_with_pop_args(
+                            full_chain,
+                            tool_name,
+                            _pop_auth_args,
+                            _constraint_auth_args,
+                            signature=_pop,
+                            approvals=_gate_approvals or [],
+                        )
+                    else:
+                        _chain_result = _auth.check_chain(
+                            full_chain,
+                            tool_name,
+                            _constraint_auth_args,
+                            signature=_pop,
+                            approvals=_gate_approvals or [],
+                        )
                 else:
-                    _chain_result = _auth.authorize_one(
-                        _warrant, tool_name, _auth_args,
-                        signature=_pop,
-                        approvals=_gate_approvals or [],
-                    )
+                    if use_split_view:
+                        _chain_result = _auth.authorize_one_with_pop_args(
+                            _warrant,
+                            tool_name,
+                            _pop_auth_args,
+                            _constraint_auth_args,
+                            signature=_pop,
+                            approvals=_gate_approvals or [],
+                        )
+                    else:
+                        _chain_result = _auth.authorize_one(
+                            _warrant,
+                            tool_name,
+                            _constraint_auth_args,
+                            signature=_pop,
+                            approvals=_gate_approvals or [],
+                        )
                 # ── Replay prevention ────────────────────────────────────────
                 # Resolve nonce_store: explicit param > module-level default.
                 # Ed25519 PoP is deterministic, so an exact replay of the same
@@ -785,7 +825,7 @@ def enforce_tool_call(
                 # regexing the error string — why_denied is available even when
                 # authorize_one raises because it interrogates the warrant directly.
                 try:
-                    _why = _warrant.why_denied(tool_name, _auth_args)
+                    _why = _warrant.why_denied(tool_name, _constraint_auth_args)
                     violated_field = getattr(_why, "field", None)
                 except Exception:
                     violated_field = None
@@ -824,13 +864,28 @@ def enforce_tool_call(
                         warrant_id=warrant_id,
                     )
 
-                _chain_result = authorizer.check_chain(
-                    full_chain,
-                    tool_name,
-                    _auth_args,
-                    signature=precomputed_signature,
-                    approvals=_gate_approvals or [],
+                use_split_view = (
+                    pop_args is not None
+                    or constraint_args is not None
+                    or _pop_auth_args != _constraint_auth_args
                 )
+                if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
+                    _chain_result = authorizer.check_chain_with_pop_args(
+                        full_chain,
+                        tool_name,
+                        _pop_auth_args,
+                        _constraint_auth_args,
+                        signature=precomputed_signature,
+                        approvals=_gate_approvals or [],
+                    )
+                else:
+                    _chain_result = authorizer.check_chain(
+                        full_chain,
+                        tool_name,
+                        _constraint_auth_args,
+                        signature=precomputed_signature,
+                        approvals=_gate_approvals or [],
+                    )
             except Exception as chain_err:
                 denial_reason = str(chain_err)
                 error_type = "authorization_failed"
@@ -918,6 +973,8 @@ async def enforce_tool_call_async(
     tool_args: Dict[str, Any],
     bound_warrant: BoundWarrant,
     *,
+    pop_args: Optional[Dict[str, Any]] = None,
+    constraint_args: Optional[Dict[str, Any]] = None,
     allowed_tools: Optional[List[str]] = None,
     schemas: Optional[Dict[str, ToolSchema]] = None,
     require_constraints: bool = False,
@@ -1003,9 +1060,14 @@ async def enforce_tool_call_async(
 
         _warrant_obj = bound_warrant.warrant
         _gate_approvals: Optional[List[Any]] = None
-        _auth_args = _strip_none_values(tool_args)
+        _raw_pop_args = pop_args if pop_args is not None else tool_args
+        _raw_constraint_args = (
+            constraint_args if constraint_args is not None else tool_args
+        )
+        _pop_auth_args = _strip_none_values(_raw_pop_args)
+        _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
-        if _evaluate_approval_gates(_warrant_obj, tool_name, _auth_args):
+        if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
             _gate_approvers = _warrant_obj.required_approvers()
             _gate_threshold = _warrant_obj.approval_threshold()
 
@@ -1020,7 +1082,7 @@ async def enforce_tool_call_async(
                 )
 
             _gate_approvals = await _collect_approvals_for_approval_gate_async(
-                tool_name, _auth_args, bound_warrant,
+                tool_name, _pop_auth_args, bound_warrant,
                 _gate_approvers, _gate_threshold,
                 approval_handler, approvals,
             )
@@ -1051,19 +1113,52 @@ async def enforce_tool_call_async(
             try:
                 _warrant = bound_warrant.warrant
                 _key = bound_warrant._key
-                _pop = bytes(_warrant.sign(_key, tool_name, _auth_args, int(_time.time())))
+                _pop = bytes(
+                    _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
+                )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
+                use_split_view = (
+                    pop_args is not None
+                    or constraint_args is not None
+                    or _pop_auth_args != _constraint_auth_args
+                )
                 if warrant_chain:
                     full_chain = list(warrant_chain) + [_warrant]
-                    _chain_result = _auth.check_chain(
-                        full_chain, tool_name, _auth_args,
-                        signature=_pop, approvals=_gate_approvals or [],
-                    )
+                    if use_split_view:
+                        _chain_result = _auth.check_chain_with_pop_args(
+                            full_chain,
+                            tool_name,
+                            _pop_auth_args,
+                            _constraint_auth_args,
+                            signature=_pop,
+                            approvals=_gate_approvals or [],
+                        )
+                    else:
+                        _chain_result = _auth.check_chain(
+                            full_chain,
+                            tool_name,
+                            _constraint_auth_args,
+                            signature=_pop,
+                            approvals=_gate_approvals or [],
+                        )
                 else:
-                    _chain_result = _auth.authorize_one(
-                        _warrant, tool_name, _auth_args,
-                        signature=_pop, approvals=_gate_approvals or [],
-                    )
+                    if use_split_view:
+                        _chain_result = _auth.authorize_one_with_pop_args(
+                            _warrant,
+                            tool_name,
+                            _pop_auth_args,
+                            _constraint_auth_args,
+                            signature=_pop,
+                            approvals=_gate_approvals or [],
+                        )
+                    else:
+                        _chain_result = _auth.authorize_one(
+                            _warrant,
+                            tool_name,
+                            _constraint_auth_args,
+                            signature=_pop,
+                            approvals=_gate_approvals or [],
+                        )
                 _ns = nonce_store
                 if _ns is None:
                     from .nonce import get_default_nonce_store as _get_ns
@@ -1081,7 +1176,7 @@ async def enforce_tool_call_async(
                 if isinstance(_exc, (_ExpiredError, _SignatureInvalid, _MissingSignature)):
                     raise
                 try:
-                    _why = _warrant.why_denied(tool_name, _auth_args)
+                    _why = _warrant.why_denied(tool_name, _constraint_auth_args)
                     violated_field = getattr(_why, "field", None)
                 except Exception:
                     violated_field = None
@@ -1105,10 +1200,28 @@ async def enforce_tool_call_async(
                         error_type="expired", warrant_id=warrant_id,
                     )
 
-                _chain_result = authorizer.check_chain(
-                    full_chain, tool_name, _auth_args,
-                    signature=precomputed_signature, approvals=_gate_approvals or [],
+                use_split_view = (
+                    pop_args is not None
+                    or constraint_args is not None
+                    or _pop_auth_args != _constraint_auth_args
                 )
+                if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
+                    _chain_result = authorizer.check_chain_with_pop_args(
+                        full_chain,
+                        tool_name,
+                        _pop_auth_args,
+                        _constraint_auth_args,
+                        signature=precomputed_signature,
+                        approvals=_gate_approvals or [],
+                    )
+                else:
+                    _chain_result = authorizer.check_chain(
+                        full_chain,
+                        tool_name,
+                        _constraint_auth_args,
+                        signature=precomputed_signature,
+                        approvals=_gate_approvals or [],
+                    )
             except Exception as chain_err:
                 denial_reason = str(chain_err)
                 error_type = "authorization_failed"

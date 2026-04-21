@@ -132,15 +132,15 @@ def _access_denial_reason(exc: BaseException) -> str:
     base = f"Access denied: {exc}"
     if isinstance(exc, SignatureInvalid):
         return (
-            f"{base} If you use CompiledMcpConfig, the client PoP must sign the "
-            "same extracted constraint dict as the server (identical mcp-config.yaml / "
-            "register_config path)."
+            f"{base} PoP covers the raw tool arguments (with None values stripped). "
+            "Check that the client signs with the same key bound in the warrant and "
+            "that the timestamp has not drifted beyond the PoP window."
         )
     if isinstance(exc, SignatureMismatch):
         return (
             f"{base} PoP was verified structurally but does not match this warrant/holder "
-            "or constraint view. With CompiledMcpConfig, use the same extraction on client "
-            "and server when signing."
+            "or the raw wire-args view. Confirm the client and server agree on argument "
+            "canonicalization (both apply tenuo._pop_canonicalize.strip_none_values)."
         )
     if isinstance(exc, MissingSignature):
         return f"{base} Ensure the client sends a PoP signature in _meta.tenuo.signature."
@@ -744,6 +744,7 @@ class MCPVerifier:
             ExpiredError,
             MissingSignature,
             SignatureInvalid,
+            SignatureMismatch,
             ToolNotAuthorized,
         ) as exc:
             logger.info(
