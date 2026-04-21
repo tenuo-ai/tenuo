@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "note": "Deterministic PoP canonicalization fixture. Regenerate with tenuo-python/tests/unit/_regen_pop_canonical.py. Do NOT edit by hand.",
+  "issuer_priv_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "holder_priv_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "cases": [
+    {
+      "name": "empty_args",
+      "tool": "noop",
+      "args": {},
+      "warrant_b64": "gwFYh6oAAQFQAZ2teXs8e3KwfV-AOW4Q0wIAA6Fkbm9vcKFrY29uc3RyYWludHOgBIIBWCAprLrhQbzK8LIuGpTTTQvHNh5SbQv-EsiXlLyTIpZt1wWCAVggA6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbgGGmnmxwkHGmpdbgkIGEASAIIBWED1d7y-u4RC8SKH60YQIL8DblEvcJC8xaGV6M9M6owwmb6BH_-FvdTy3INu-ywQGMdkjzmyoah7DjOr3j8b3SEH",
+      "timestamp": 1700000000,
+      "expected_signature_hex": "5f057c5d1c8fdf3163988e820e6c7242488f83a50451a640abd64e239979ecc2a9e0969c8fea89f2ba165da00ae83df70d609515739673ef3d94456e636fa807"
+    },
+    {
+      "name": "single_string",
+      "tool": "read_file",
+      "args": {
+        "path": "/data/log.txt"
+      },
+      "warrant_b64": "gwFYjKoAAQFQAZ2teXs9dBGUKgZCPKFjEwIAA6FpcmVhZF9maWxloWtjb25zdHJhaW50c6AEggFYICmsuuFBvMrwsi4alNNNC8c2HlJtC_4SyJeUvJMilm3XBYIBWCADoQe_884Qvh1w3RjnS8CZZ-TWMJulDV8d3IZkElUxuAYaaebHCQcaal1uCQgYQBIAggFYQBJhGQBVCzv_beYz_NCB-nOXsopHFFA3L9HgMtSzoGMwg2N2gmn1aSO5yZn5-oz59EisdULsrEVvDWLllbCgLQY",
+      "timestamp": 1700000000,
+      "expected_signature_hex": "0f50fcccd0a3ac5cc651aa51e6092631d44ae1de87e06b7d2a071128a1c0148c3679b5bbfeea3245f0cfd7fcf8ff404e11ca4b91c1edeb8ba405b00fe336f300"
+    },
+    {
+      "name": "string_and_int",
+      "tool": "read_file",
+      "args": {
+        "path": "/data/log.txt",
+        "max_size": 2048
+      },
+      "warrant_b64": "gwFYjKoAAQFQAZ2teXs9dBGUKgZSIxyhJwIAA6FpcmVhZF9maWxloWtjb25zdHJhaW50c6AEggFYICmsuuFBvMrwsi4alNNNC8c2HlJtC_4SyJeUvJMilm3XBYIBWCADoQe_884Qvh1w3RjnS8CZZ-TWMJulDV8d3IZkElUxuAYaaebHCQcaal1uCQgYQBIAggFYQHnf-hNy9a39M1rmJgXKNE2CwZdevdjhYE5TXRkBQL_H6_uGobJrhQ_8oIPVs4TKERXIxXRx5NHTlwm5Wfj6WQE",
+      "timestamp": 1700000000,
+      "expected_signature_hex": "09ce674c8317d7e602cbeec1ce3929d8c80e850fb09aa1e80f5dad70670996ccd5a45b5f3d9767846166ce96814b0cc61ad5c68136abf1ce6ce09648680a750c"
+    },
+    {
+      "name": "sort_order_probe",
+      "tool": "query",
+      "args": {
+        "zebra": 1,
+        "apple": 2,
+        "mango": 3
+      },
+      "warrant_b64": "gwFYiKoAAQFQAZ2teXs9dBGUKgZox8kq-QIAA6FlcXVlcnmha2NvbnN0cmFpbnRzoASCAVggKay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdcFggFYIAOhB7_zzhC-HXDdGOdLwJln5NYwm6UNXx3chmQSVTG4Bhpp5scJBxpqXW4JCBhAEgCCAVhA9PgU1e6HAR-OvkYYPjeVDtWNKmBCT2ipTkTrm6OjLuKA920cNNd23MJRgJo4JRFMGvZX9Q1s8i4CMuxkgePSCw",
+      "timestamp": 1700000000,
+      "expected_signature_hex": "f2f2719c220b2f3d948dbc8347fdb355296382362db4cbc40ce96abdd2dcf2df4371b0a4aab62c56d0847a1cd9ef171bcd120dd3b6c3a03f556b1287eec1b00e"
+    },
+    {
+      "name": "booleans_and_floats",
+      "tool": "configure",
+      "args": {
+        "enabled": true,
+        "ratio": 0.5,
+        "count": 0
+      },
+      "warrant_b64": "gwFYjKoAAQFQAZ2teXs9dBGUKgZ9exBPBwIAA6FpY29uZmlndXJloWtjb25zdHJhaW50c6AEggFYICmsuuFBvMrwsi4alNNNC8c2HlJtC_4SyJeUvJMilm3XBYIBWCADoQe_884Qvh1w3RjnS8CZZ-TWMJulDV8d3IZkElUxuAYaaebHCQcaal1uCQgYQBIAggFYQB8CKlYnEgT3OmUH_u1CpGb71ys1qpNawYUJNaR1p--VZRJTDUvYwbbUc2qhYTTty5nA2U58jX81aOyeIoExXAo",
+      "timestamp": 1700000000,
+      "expected_signature_hex": "8f6eb25fbcfa709fc3fc713e9d7dde2d73c446f18f7de13fe2501319e26814309a0d920645685bf88dc086d68907cd71a1e362a427c37e55f4ba8dc4b3851508"
+    },
+    {
+      "name": "list_of_strings",
+      "tool": "tag",
+      "args": {
+        "tags": [
+          "prod",
+          "us-east",
+          "tier-1"
+        ]
+      },
+      "warrant_b64": "gwFYhqoAAQFQAZ2teXs9dBGUKgaGdbj68QIAA6FjdGFnoWtjb25zdHJhaW50c6AEggFYICmsuuFBvMrwsi4alNNNC8c2HlJtC_4SyJeUvJMilm3XBYIBWCADoQe_884Qvh1w3RjnS8CZZ-TWMJulDV8d3IZkElUxuAYaaebHCQcaal1uCQgYQBIAggFYQADmbY2S6XpARmz68Ks1HWBMBG4NSTlHrn3ygeidD9va3iLI7-Q3qQ39lHfUVZXJ2KtOmeigHYBsem4zdr-cMAU",
+      "timestamp": 1700000000,
+      "expected_signature_hex": "ac8e14d0656db1884281a2a56b9b116b14d1c5f19161d29a606e132fa590ba7c26347bba6feed9ee9c4978f48e8c30613e0109b7adf7485d033b3560796f9107"
+    },
+    {
+      "name": "unicode_keys_and_values",
+      "tool": "translate",
+      "args": {
+        "texte": "café chaud",
+        "中文": "ok"
+      },
+      "warrant_b64": "gwFYjKoAAQFQAZ2teXs9dBGUKgaYZIZsBgIAA6FpdHJhbnNsYXRloWtjb25zdHJhaW50c6AEggFYICmsuuFBvMrwsi4alNNNC8c2HlJtC_4SyJeUvJMilm3XBYIBWCADoQe_884Qvh1w3RjnS8CZZ-TWMJulDV8d3IZkElUxuAYaaebHCQcaal1uCQgYQBIAggFYQEcPkZQA_nl5Zc2p420A35a_vTVYH2qq4cMe64d5N0vOJLOVY216iqaX_WaITYPCuVOEAVzDg-4iCjCHbl-4IQs",
+      "timestamp": 1700000000,
+      "expected_signature_hex": "a6d1b961e81320d321849a55cbcf276542ee7b40c26b0b9a1ab3ee7f27ae97323014a73059787d5f9fb2dc15835c8d6818b98d35c9232dfe12322252b4a70b04"
+    },
+    {
+      "name": "large_int_within_i64",
+      "tool": "offset",
+      "args": {
+        "offset": 9000000000
+      },
+      "warrant_b64": "gwFYiaoAAQFQAZ2teXs9dBGUKgagwPurJQIAA6Fmb2Zmc2V0oWtjb25zdHJhaW50c6AEggFYICmsuuFBvMrwsi4alNNNC8c2HlJtC_4SyJeUvJMilm3XBYIBWCADoQe_884Qvh1w3RjnS8CZZ-TWMJulDV8d3IZkElUxuAYaaebHCQcaal1uCQgYQBIAggFYQEILupGoeCnZ2jLfbtXKzA6Y-_UF6h6ExS5v9Fhv6vK9mg6SU_EZeafZD3CVIH9fQffpKJu7ecLicckCdmZswg0",
+      "timestamp": 1700000000,
+      "expected_signature_hex": "fb709b510a93824b1f5c86aba23121488bec384cbd669c8033e89d4931d956d5a4aceadda3139a8d3a38db5b367770e1eb7eb9a1ef5631a1bf86671f88ae2c06"
+    },
+    {
+      "name": "negative_int",
+      "tool": "offset",
+      "args": {
+        "offset": -42
+      },
+      "warrant_b64": "gwFYiaoAAQFQAZ2teXs9dBGUKga8GPa7QQIAA6Fmb2Zmc2V0oWtjb25zdHJhaW50c6AEggFYICmsuuFBvMrwsi4alNNNC8c2HlJtC_4SyJeUvJMilm3XBYIBWCADoQe_884Qvh1w3RjnS8CZZ-TWMJulDV8d3IZkElUxuAYaaebHCQcaal1uCQgYQBIAggFYQBDPdvHjnCK_xA8ZQ5rINJox3swAT20KEV9RiaMdvKQ1b_7N8wBupRn0lHuxG59i9cbcKGTNpKXWdMhjmBVROQw",
+      "timestamp": 1700000000,
+      "expected_signature_hex": "e30d1fb5778c004a99579ac6919e096cad47c5ec48ca3f96c08d36ed1e6ab1863dc7a6ec7fe59e7542495205746d35c76bf803565d9e85844abc9708503aab09"
+    }
+  ]
+}

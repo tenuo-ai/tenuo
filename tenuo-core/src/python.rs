@@ -2316,14 +2316,24 @@ fn py_dict_to_constraint_set(
 
 /// Convert a Python value to a ConstraintValue.
 fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
+    // Extraction order matters for canonicalization parity with the Rust
+    // core: Python ``bool`` inherits from ``int`` (``True == 1``), so
+    // ``extract::<i64>()`` succeeds for ``True``/``False`` and would
+    // silently map them to ``ConstraintValue::Integer(1)`` /
+    // ``Integer(0)``. CBOR encodes booleans and integers with different
+    // major types, so that coercion produces different PoP signed bytes
+    // than the Rust core does for the same logical value — a silent
+    // cross-language drift caught by the PoP fixture regression test
+    // (see ``tenuo-core/tests/pop_canonical_fixture.rs``). Keep ``bool``
+    // ahead of ``i64`` so actual booleans stay booleans.
     if let Ok(s) = obj.extract::<String>() {
         Ok(ConstraintValue::String(s))
+    } else if let Ok(b) = obj.extract::<bool>() {
+        Ok(ConstraintValue::Boolean(b))
     } else if let Ok(i) = obj.extract::<i64>() {
         Ok(ConstraintValue::Integer(i))
     } else if let Ok(f) = obj.extract::<f64>() {
         Ok(ConstraintValue::Float(f))
-    } else if let Ok(b) = obj.extract::<bool>() {
-        Ok(ConstraintValue::Boolean(b))
     } else if let Ok(l) = obj.extract::<Vec<Py<PyAny>>>() {
         // Recursively convert list items
         let py = obj.py();
