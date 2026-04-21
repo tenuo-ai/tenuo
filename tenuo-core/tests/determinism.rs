@@ -93,7 +93,7 @@ proptest! {
                 let holder = &holder;
                 handles.push(scope.spawn(move || {
                     warrant
-                        .sign_with_timestamp(&holder, tool_name, &map, Some(timestamp))
+                        .sign_with_timestamp(holder, tool_name, &map, Some(timestamp))
                         .expect("sign should succeed")
                         .to_bytes()
                         .to_vec()
@@ -140,7 +140,7 @@ proptest! {
             for map in shuffled {
                 let approval_gate_map = &approval_gate_map;
                 handles.push(scope.spawn(move || {
-                    evaluate_approval_gates(Some(&approval_gate_map), tool_name, &map)
+                    evaluate_approval_gates(Some(approval_gate_map), tool_name, &map)
                         .expect("approval gate evaluation should succeed")
                 }));
             }
@@ -184,11 +184,11 @@ fn parallel_check_chain_with_pop_args_serializes_identically() {
             let chain = &chain;
             handles.push(scope.spawn(move || {
                 let signature = warrant
-                    .sign_with_timestamp(&holder, tool_name, &map, Some(timestamp))
+                    .sign_with_timestamp(holder, tool_name, &map, Some(timestamp))
                     .expect("sign should succeed");
 
                 let result = authorizer
-                    .check_chain_with_pop_args(&chain, tool_name, &map, &map, Some(&signature), &[])
+                    .check_chain_with_pop_args(chain, tool_name, &map, &map, Some(&signature), &[])
                     .expect("authorization should succeed");
 
                 let mut bytes = Vec::new();
