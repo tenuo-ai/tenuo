@@ -5307,6 +5307,16 @@ impl PyAuthorizer {
         pop_window_secs: i64,
         pop_max_windows: u32,
     ) -> PyResult<Self> {
+        if clock_tolerance_secs < 0 {
+            return Err(py_validation_err("clock_tolerance_secs must be >= 0"));
+        }
+        if pop_window_secs <= 0 {
+            return Err(py_validation_err("pop_window_secs must be > 0"));
+        }
+        if pop_max_windows == 0 {
+            return Err(py_validation_err("pop_max_windows must be >= 1"));
+        }
+
         let mut authorizer = RustAuthorizer::new()
             .with_clock_tolerance(chrono::Duration::seconds(clock_tolerance_secs))
             .with_pop_window(pop_window_secs, pop_max_windows);
