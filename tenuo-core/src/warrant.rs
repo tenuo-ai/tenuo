@@ -1082,6 +1082,7 @@ impl Warrant {
         let now = Utc::now().timestamp();
 
         let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
+        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-pop-verify-sort.
         sorted_args.sort_by_key(|(k, _)| *k);
 
         let mut verified = false;
@@ -1163,6 +1164,7 @@ impl Warrant {
         timestamp: Option<i64>,
     ) -> Result<Signature> {
         let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
+        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-pop-sign-sort.
         sorted_args.sort_by_key(|(k, _)| *k);
 
         let now = timestamp.unwrap_or_else(|| Utc::now().timestamp());
@@ -1185,6 +1187,7 @@ impl Warrant {
         use sha2::{Digest, Sha256};
 
         let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
+        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-dedup-sort.
         sorted_args.sort_by_key(|(k, _)| *k);
 
         let payload = (self.payload.id.to_hex(), tool, &sorted_args);
