@@ -46,9 +46,9 @@ fn json_to_constraint_value(v: &JsonValue) -> ConstraintValue {
         JsonValue::Array(items) => {
             ConstraintValue::List(items.iter().map(json_to_constraint_value).collect())
         }
-        JsonValue::Null => panic!(
-            "fixture contains a null value — regenerator must emit None-free args"
-        ),
+        JsonValue::Null => {
+            panic!("fixture contains a null value — regenerator must emit None-free args")
+        }
         JsonValue::Object(_) => panic!(
             "fixture contains a nested object — Rust ConstraintValue has no object variant \
              at the arg-dict top level, and the regenerator must not emit them"
@@ -56,7 +56,9 @@ fn json_to_constraint_value(v: &JsonValue) -> ConstraintValue {
     }
 }
 
-fn json_object_to_arg_map(obj: &serde_json::Map<String, JsonValue>) -> HashMap<String, ConstraintValue> {
+fn json_object_to_arg_map(
+    obj: &serde_json::Map<String, JsonValue>,
+) -> HashMap<String, ConstraintValue> {
     obj.iter()
         .map(|(k, v)| (k.clone(), json_to_constraint_value(v)))
         .collect()
@@ -64,8 +66,7 @@ fn json_object_to_arg_map(obj: &serde_json::Map<String, JsonValue>) -> HashMap<S
 
 #[test]
 fn rust_pop_matches_cross_language_fixture() {
-    let fixture: JsonValue =
-        serde_json::from_str(FIXTURE_BYTES).expect("fixture JSON must parse");
+    let fixture: JsonValue = serde_json::from_str(FIXTURE_BYTES).expect("fixture JSON must parse");
     let cases = fixture
         .get("cases")
         .and_then(JsonValue::as_array)
