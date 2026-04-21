@@ -15,6 +15,7 @@ import pytest
 from tenuo_core import Authorizer, SigningKey, Warrant
 
 from tenuo import Pattern
+from tenuo._pop_canonicalize import strip_none_values
 from tenuo.mcp.server import MCPVerifier
 
 pytest.importorskip("mcp")
@@ -62,6 +63,16 @@ def _make_meta(
         "signature": _encode_pop(warrant, key, tool, tool_args),
     }
     return RequestParams.Meta.model_validate({"tenuo": tenuo})
+
+
+def _make_meta_strip_none(
+    warrant: Warrant,
+    key: SigningKey,
+    tool: str,
+    tool_args: Dict[str, Any],
+) -> RequestParams.Meta:
+    """Build metadata using the same canonicalization as MCP client/server."""
+    return _make_meta(warrant, key, tool, strip_none_values(tool_args))
 
 
 @pytest.fixture
@@ -212,6 +223,38 @@ async def test_middleware_denies_tampered_pop(
     te = res.structuredContent.get("tenuo")
     assert te.get("code") == -32001
     assert "Access denied" in (te.get("message") or "")
+
+
+@pytest.mark.asyncio
+async def test_middleware_accepts_none_optional_args(
+    authorizer: Authorizer,
+    simple_warrant: Warrant,
+    agent_key: SigningKey,
+) -> None:
+    """Regression: None-valued args must not crash through middleware path."""
+    verifier = MCPVerifier(authorizer=authorizer, require_warrant=True)
+    mw = TenuoMiddleware(verifier)
+    args = {"path": "/data/x.txt", "max_size": None}
+    meta = _make_meta_strip_none(simple_warrant, agent_key, "read_file", args)
+    params = CallToolRequestParams(name="read_file", arguments=args, _meta=meta)
+    ctx = MiddlewareContext(
+        message=params,
+        source="client",
+        type="request",
+        method="tools/call",
+        fastmcp_context=None,
+    )
+    seen: dict[str, Any] = {}
+
+    async def call_next(c: MiddlewareContext) -> ToolResult:
+        seen["args"] = dict(c.message.arguments or {})
+        return ToolResult(content=[TextContent(type="text", text="ok")])
+
+    out = await mw.on_call_tool(ctx, call_next)
+    assert isinstance(out, ToolResult)
+    # Middleware keeps original call args for handler; verifier strips internally.
+    assert seen["args"]["path"] == "/data/x.txt"
+    assert "max_size" in seen["args"]
 
 
 class _RecordingControlPlane:

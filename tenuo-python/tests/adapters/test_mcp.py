@@ -818,3 +818,115 @@ class TestCallToolIsErrorHandling:
         )
         out = await client.call_tool("t", {}, warrant_context=False, raise_on_tool_error=False)
         assert out == blocks
+
+
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestValidateToolSplitView:
+    @pytest.mark.asyncio
+    async def test_validate_tool_uses_split_views_when_config_present(self):
+        client = _make_client()
+        mock_warrant = MagicMock()
+        mock_key = MagicMock()
+        mock_bound = MagicMock()
+        mock_warrant.bind.return_value = mock_bound
+
+        mock_extraction = MagicMock()
+        mock_extraction.constraints = {"path": "/tmp/x.txt", "max_size": 1024}
+        mock_config = MagicMock()
+        mock_config.extract_constraints.return_value = mock_extraction
+        client.compiled_config = mock_config
+
+        mock_enforcement = MagicMock(allowed=True, chain_result=None, denial_reason=None)
+
+        with (
+            patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
+            patch("tenuo.mcp.client.key_scope", return_value=mock_key),
+            patch("tenuo.mcp.client.enforce_tool_call_async", new=AsyncMock(return_value=mock_enforcement)) as mock_enforce,
+        ):
+            result = await client.validate_tool(
+                "read_file",
+                {"path": "/tmp/x.txt", "maxSize": None},
+            )
+
+        assert result.success is True
+        kwargs = mock_enforce.call_args.kwargs
+        assert kwargs["tool_name"] == "read_file"
+        assert kwargs["tool_args"] == {"path": "/tmp/x.txt", "maxSize": None}
+        assert kwargs["pop_args"] == {"path": "/tmp/x.txt"}
+        assert kwargs["constraint_args"] == {
+            "path": "/tmp/x.txt",
+            "max_size": 1024,
+        }
+
+    @pytest.mark.asyncio
+    async def test_validate_tool_handles_bind_failure(self):
+        client = _make_client()
+        mock_warrant = MagicMock()
+        mock_key = MagicMock()
+        mock_warrant.bind.side_effect = RuntimeError("wrong keypair")
+
+        with (
+            patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
+            patch("tenuo.mcp.client.key_scope", return_value=mock_key),
+        ):
+            result = await client.validate_tool("read_file", {"path": "/tmp/x.txt"})
+
+        assert result.success is False
+        assert "Failed to bind warrant" in result.reason
+
+
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestDenialErrorTypeAliases:
+    def test_tool_not_authorized_alias_maps_to_tool_not_authorized_exception(self):
+        from tenuo.exceptions import ToolNotAuthorized
+        from tenuo.mcp.client import _raise_for_denial
+
+        result = MagicMock(
+            denial_reason="not allowed",
+            error_type="tool_not_authorized",
+            constraint_violated=None,
+        )
+        with pytest.raises(ToolNotAuthorized):
+            _raise_for_denial(result, "read_file")
+
+
+@pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+class TestToolDiscoveryAndWrappingRaces:
+    @pytest.mark.asyncio
+    async def test_get_tools_serialized_under_concurrency(self):
+        client = _make_client()
+        fake_tool = MagicMock()
+        fake_tool.name = "read_file"
+        client.session.list_tools = AsyncMock(return_value=MagicMock(tools=[fake_tool]))
+        client._tools = None
+
+        await asyncio.gather(client.get_tools(), client.get_tools(), client.get_tools())
+
+        assert client.session.list_tools.await_count == 1
+        assert client._tools is not None
+        assert len(client._tools) == 1
+
+    def test_tools_property_does_not_publish_partial_wraps(self):
+        client = _make_client()
+        t1 = MagicMock()
+        t1.name = "read_file"
+        t2 = MagicMock()
+        t2.name = "write_file"
+        client._tools = [t1, t2]
+        client._wrapped_tools = {}
+
+        calls = {"n": 0}
+
+        def boom_if_second(tool):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("wrap failed on second tool")
+            return AsyncMock()
+
+        client.create_protected_tool = boom_if_second  # type: ignore[assignment]
+        wrapped = client.tools
+
+        # On failure we keep previous stable snapshot (empty) instead of
+        # leaking partially wrapped tool dicts.
+        assert wrapped == {}
+        assert client._wrapped_tools == {}

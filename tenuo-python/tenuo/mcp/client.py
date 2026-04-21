@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 
 from .._enforcement import EnforcementResult, enforce_tool_call_async
 from .._pop_canonicalize import strip_none_values
+from ..approval import ApprovalHandler
 from ..config import is_configured
 from ..decorators import key_scope, warrant_scope
 from ..exceptions import (
@@ -57,7 +58,7 @@ def _raise_for_denial(result: "EnforcementResult", tool_name: str) -> None:
     if etype == "constraint_violation":
         field = result.constraint_violated or tool_name
         raise ConstraintViolation(field, reason)
-    if etype == "tool_not_allowed":
+    if etype in {"tool_not_allowed", "tool_not_authorized"}:
         raise ToolNotAuthorized(reason)
     if etype == "expired":
         raise ExpiredError(reason)
@@ -136,7 +137,7 @@ class SecureMCPClient:
         timeout: float = 30.0,
         sse_read_timeout: float = 300.0,
         auth: Optional[Any] = None,
-        approval_handler: Optional[Any] = None,
+        approval_handler: Optional[ApprovalHandler] = None,
     ):
         """
         Initialize MCP client.
@@ -422,8 +423,17 @@ class SecureMCPClient:
             )
 
         if self._tools is None:
-            response = await self.session.list_tools()  # type: ignore[union-attr]
-            self._tools = response.tools
+            # Serialize lazy discovery to avoid duplicate list_tools calls when
+            # concurrent callers race on first access.
+            async with self._connect_lock:
+                if self._tools is None:
+                    if self.session is None:
+                        raise RuntimeError(
+                            "Not connected to MCP server. "
+                            "Use 'async with SecureMCPClient(...) as client:' or call await client.connect() first."
+                        )
+                    response = await self.session.list_tools()  # type: ignore[union-attr]
+                    self._tools = response.tools
         return self._tools
 
     @property
@@ -438,11 +448,14 @@ class SecureMCPClient:
         if not wrapped and self.session is not None:
             try:
                 if self._tools:
+                    built: Dict[str, Callable] = {}
                     for tool in self._tools:
-                        wrapped[tool.name] = self.create_protected_tool(tool)
-                    self._wrapped_tools = wrapped
+                        built[tool.name] = self.create_protected_tool(tool)
+                    # Publish atomically so callers never observe partial wraps.
+                    self._wrapped_tools = built
+                    wrapped = built
             except Exception as exc:
-                logger.warning("Failed to wrap tool '%s': %s", tool.name, exc, exc_info=True)
+                logger.warning("Failed to wrap MCP tools: %s", exc, exc_info=True)
 
         return dict(wrapped)
 
@@ -481,16 +494,22 @@ class SecureMCPClient:
             )
 
         # Create BoundWarrant for enforcement
-        bound_warrant = warrant.bind(keypair)
+        try:
+            bound_warrant = warrant.bind(keypair)
+        except Exception as exc:
+            return ValidationResult.fail(
+                f"Failed to bind warrant to signing key: {exc}",
+                suggestions=["Ensure the active key matches the warrant holder"],
+            )
 
-        # Re-map arguments if we have a config. Strip None values at the
-        # FFI boundary so optional tool params with None defaults don't
-        # crash the Rust canonicalizer.
-        extraction_args = strip_none_values(arguments)
+        pop_args = strip_none_values(arguments)
+        constraint_args = pop_args
         if self.compiled_config:
             try:
                 result = self.compiled_config.extract_constraints(tool_name, arguments)
-                extraction_args = strip_none_values(dict(result.constraints))
+                combined = dict(pop_args)
+                combined.update(strip_none_values(dict(result.constraints)))
+                constraint_args = combined
             except Exception:
                 logger.warning(
                     "Constraint extraction failed for '%s'; falling back to raw arguments",
@@ -498,10 +517,14 @@ class SecureMCPClient:
                     exc_info=True,
                 )
 
-        # Use unified enforcement logic (async for approval handler support)
+        # Dry-run local enforcement mirroring real call semantics:
+        # - PoP/auth path uses raw wire args (pop_args)
+        # - constraint matching uses extracted args when config is present
         enforcement: EnforcementResult = await enforce_tool_call_async(
             tool_name=tool_name,
-            tool_args=extraction_args,
+            tool_args=arguments,
+            pop_args=pop_args,
+            constraint_args=constraint_args,
             bound_warrant=bound_warrant,
         )
 
@@ -695,9 +718,27 @@ class SecureMCPClient:
                     "Use `with warrant_scope(w), key_scope(k):` or set warrant_context=False."
                 )
             bw = BoundWarrant(w, k)
+            pop_args = strip_none_values(arguments)
+            constraint_args = pop_args
+            if self.compiled_config:
+                try:
+                    extracted = self.compiled_config.extract_constraints(
+                        tool_name, arguments
+                    )
+                    combined = dict(pop_args)
+                    combined.update(strip_none_values(dict(extracted.constraints)))
+                    constraint_args = combined
+                except Exception:
+                    logger.warning(
+                        "Constraint extraction failed for '%s'; falling back to raw arguments",
+                        tool_name,
+                        exc_info=True,
+                    )
             result = await enforce_tool_call_async(
                 tool_name=tool_name,
                 tool_args=arguments,
+                pop_args=pop_args,
+                constraint_args=constraint_args,
                 bound_warrant=bw,
                 trusted_roots=resolve_trusted_roots(),
                 approval_handler=self._approval_handler,
@@ -741,7 +782,7 @@ class SecureMCPClient:
         properties = input_schema.get("properties", {})
         allowed_keys: Optional[set] = set(properties.keys()) if properties else None
 
-        def _extract_auth_args(**kwargs):
+        def _extract_constraint_args(**kwargs):
             # Strip _approvals — it is a Tenuo transport kwarg, not a tool argument.
             # Passing SignedApproval objects to extract_constraints would fail JSON
             # serialization and is not part of the constraint schema.
@@ -751,10 +792,8 @@ class SecureMCPClient:
                 # We do NOT suppress exceptions here (Fail Closed).
                 # If extraction fails, it means the request doesn't match the required configuration.
                 result = self.compiled_config.extract_constraints(tool_name, tool_kwargs)
-
-                # Merge extracted constraints (which have defaults/types) over raw kwargs
                 combined = tool_kwargs.copy()
-                combined.update(result.constraints)
+                combined.update(dict(result.constraints))
                 return combined
             return tool_kwargs
 
@@ -765,7 +804,10 @@ class SecureMCPClient:
 
             _approvals = kwargs.pop("_approvals", None)
 
-            auth_args = _extract_auth_args(**kwargs)
+            constraint_args = _extract_constraint_args(**kwargs)
+            pop_args = {
+                k: v for k, v in kwargs.items() if k != "_approvals"
+            }
 
             w = warrant_scope()
             k = key_scope()
@@ -773,7 +815,9 @@ class SecureMCPClient:
                 bw = BoundWarrant(w, k)
                 result = await enforce_tool_call_async(
                     tool_name=tool_name,
-                    tool_args=auth_args,
+                    tool_args=kwargs,
+                    pop_args=pop_args,
+                    constraint_args=constraint_args,
                     bound_warrant=bw,
                     trusted_roots=resolve_trusted_roots(),
                     approval_handler=self._approval_handler,
