@@ -72,6 +72,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tenuo-python/tests/unit/test_pop_canonical_fixture.py`. Any future
   canonicalization change will break one side but not the other and is
   intentionally loud.
+- **MCP local-vs-server parity matrix test + dedicated CI smoke lane** —
+  `tenuo-python/tests/adapters/test_mcp_local_server_parity.py` now asserts
+  that local enforcement (`warrant_context=True`) and server verification
+  (`MCPVerifier.verify`) agree on allow/deny outcomes across allow, deny,
+  `None`-optional, and unknown-field cases. CI now includes
+  `MCP Smoke (FastMCP + SecureMCPClient)`, a minimal end-to-end stdio
+  subprocess test (`test_mcp_ci_smoke.py`) that verifies allow, deny, and
+  `None`-arg behavior on real transport wiring.
 
 ### Fixed
 
@@ -87,6 +95,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   core. Both the MCP client and MCP verifier now apply `strip_none_values`
   symmetrically before the FFI boundary, so optional arguments left unset
   flow through cleanly.
+- **Local preflight enforcement now canonicalizes `None` arguments exactly
+  like MCP sign/verify paths.** `enforce_tool_call_async` now uses
+  `strip_none_values` before approval-gate evaluation, PoP signing, and
+  authorizer checks, so `SecureMCPClient(..., warrant_context=True)` no
+  longer fails closed with an internal FFI `ValueError` on optional
+  `None` arguments.
 - **Misleading "unauthenticated arguments" server warning removed.** With
   split-view authorize, every raw wire arg is covered by the PoP signature
   regardless of the extraction mapping, so the warning was factually wrong

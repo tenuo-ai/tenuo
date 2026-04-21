@@ -671,11 +671,17 @@ def enforce_tool_call(
         # with the PoP check.
         # =================================================================
         from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
+        from ._pop_canonicalize import strip_none_values as _strip_none_values
 
         _warrant_obj = bound_warrant.warrant
         _gate_approvals: Optional[List[Any]] = None
+        # Keep the original tool_args for diagnostics/audit payloads, but use the
+        # None-stripped canonical view for every Rust-bound auth operation. This
+        # mirrors MCP client/server PoP canonicalization and prevents local
+        # warrant_context=True paths from crashing on optional args passed as None.
+        _auth_args = _strip_none_values(tool_args)
 
-        if _evaluate_approval_gates(_warrant_obj, tool_name, tool_args):
+        if _evaluate_approval_gates(_warrant_obj, tool_name, _auth_args):
             _gate_approvers = _warrant_obj.required_approvers()
             _gate_threshold = _warrant_obj.approval_threshold()
 
@@ -695,7 +701,7 @@ def enforce_tool_call(
             # Collect and verify approvals — raises if missing or invalid.
             # Returns verified SignedApproval objects to pass to validate().
             _gate_approvals = _collect_approvals_for_approval_gate(
-                tool_name, tool_args, bound_warrant,
+                tool_name, _auth_args, bound_warrant,
                 _gate_approvers, _gate_threshold,
                 approval_handler, approvals,
             )
@@ -736,18 +742,18 @@ def enforce_tool_call(
             try:
                 _warrant = bound_warrant.warrant
                 _key = bound_warrant._key
-                _pop = bytes(_warrant.sign(_key, tool_name, tool_args, int(_time.time())))
+                _pop = bytes(_warrant.sign(_key, tool_name, _auth_args, int(_time.time())))
                 _auth = _Authorizer(trusted_roots=trusted_roots)
                 if warrant_chain:
                     full_chain = list(warrant_chain) + [_warrant]
                     _chain_result = _auth.check_chain(
-                        full_chain, tool_name, tool_args,
+                        full_chain, tool_name, _auth_args,
                         signature=_pop,
                         approvals=_gate_approvals or [],
                     )
                 else:
                     _chain_result = _auth.authorize_one(
-                        _warrant, tool_name, tool_args,
+                        _warrant, tool_name, _auth_args,
                         signature=_pop,
                         approvals=_gate_approvals or [],
                     )
@@ -779,7 +785,7 @@ def enforce_tool_call(
                 # regexing the error string — why_denied is available even when
                 # authorize_one raises because it interrogates the warrant directly.
                 try:
-                    _why = _warrant.why_denied(tool_name, tool_args)
+                    _why = _warrant.why_denied(tool_name, _auth_args)
                     violated_field = getattr(_why, "field", None)
                 except Exception:
                     violated_field = None
@@ -821,7 +827,7 @@ def enforce_tool_call(
                 _chain_result = authorizer.check_chain(
                     full_chain,
                     tool_name,
-                    tool_args,
+                    _auth_args,
                     signature=precomputed_signature,
                     approvals=_gate_approvals or [],
                 )
@@ -993,11 +999,13 @@ async def enforce_tool_call_async(
     # ── Rust core authorization (with async approval collection) ──
     try:
         from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
+        from ._pop_canonicalize import strip_none_values as _strip_none_values
 
         _warrant_obj = bound_warrant.warrant
         _gate_approvals: Optional[List[Any]] = None
+        _auth_args = _strip_none_values(tool_args)
 
-        if _evaluate_approval_gates(_warrant_obj, tool_name, tool_args):
+        if _evaluate_approval_gates(_warrant_obj, tool_name, _auth_args):
             _gate_approvers = _warrant_obj.required_approvers()
             _gate_threshold = _warrant_obj.approval_threshold()
 
@@ -1012,7 +1020,7 @@ async def enforce_tool_call_async(
                 )
 
             _gate_approvals = await _collect_approvals_for_approval_gate_async(
-                tool_name, tool_args, bound_warrant,
+                tool_name, _auth_args, bound_warrant,
                 _gate_approvers, _gate_threshold,
                 approval_handler, approvals,
             )
@@ -1043,17 +1051,17 @@ async def enforce_tool_call_async(
             try:
                 _warrant = bound_warrant.warrant
                 _key = bound_warrant._key
-                _pop = bytes(_warrant.sign(_key, tool_name, tool_args, int(_time.time())))
+                _pop = bytes(_warrant.sign(_key, tool_name, _auth_args, int(_time.time())))
                 _auth = _Authorizer(trusted_roots=trusted_roots)
                 if warrant_chain:
                     full_chain = list(warrant_chain) + [_warrant]
                     _chain_result = _auth.check_chain(
-                        full_chain, tool_name, tool_args,
+                        full_chain, tool_name, _auth_args,
                         signature=_pop, approvals=_gate_approvals or [],
                     )
                 else:
                     _chain_result = _auth.authorize_one(
-                        _warrant, tool_name, tool_args,
+                        _warrant, tool_name, _auth_args,
                         signature=_pop, approvals=_gate_approvals or [],
                     )
                 _ns = nonce_store
@@ -1073,7 +1081,7 @@ async def enforce_tool_call_async(
                 if isinstance(_exc, (_ExpiredError, _SignatureInvalid, _MissingSignature)):
                     raise
                 try:
-                    _why = _warrant.why_denied(tool_name, tool_args)
+                    _why = _warrant.why_denied(tool_name, _auth_args)
                     violated_field = getattr(_why, "field", None)
                 except Exception:
                     violated_field = None
@@ -1098,7 +1106,7 @@ async def enforce_tool_call_async(
                     )
 
                 _chain_result = authorizer.check_chain(
-                    full_chain, tool_name, tool_args,
+                    full_chain, tool_name, _auth_args,
                     signature=precomputed_signature, approvals=_gate_approvals or [],
                 )
             except Exception as chain_err:

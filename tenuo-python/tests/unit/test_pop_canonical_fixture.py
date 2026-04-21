@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from tenuo._pop_canonicalize import strip_none_values
 from tenuo_core import SigningKey, Warrant
 
 
@@ -47,6 +48,8 @@ def test_fixture_is_well_formed(fixture_data):
         for key in ("name", "tool", "args", "warrant_b64", "timestamp", "expected_signature_hex"):
             assert key in case, f"case {case.get('name')!r} missing key {key}"
         assert len(bytes.fromhex(case["expected_signature_hex"])) == 64
+        if "raw_args" in case:
+            assert strip_none_values(case["raw_args"]) == case["args"]
 
 
 def test_python_pop_matches_fixture(fixture_data):
