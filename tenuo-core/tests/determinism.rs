@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::thread;
 use std::time::Duration;
 use tenuo::approval::compute_request_hash;
-use tenuo::approval_gate::{evaluate_approval_gates, ApprovalGateMap, ArgApprovalGate, ToolApprovalGate};
+use tenuo::approval_gate::{
+    evaluate_approval_gates, ApprovalGateMap, ArgApprovalGate, ToolApprovalGate,
+};
 use tenuo::{Authorizer, ConstraintSet, ConstraintValue, SigningKey, Warrant};
 
 const SHUFFLE_RUNS: usize = 16;
@@ -186,22 +188,19 @@ fn parallel_check_chain_with_pop_args_serializes_identically() {
                     .expect("sign should succeed");
 
                 let result = authorizer
-                    .check_chain_with_pop_args(
-                        &chain,
-                        tool_name,
-                        &map,
-                        &map,
-                        Some(&signature),
-                        &[],
-                    )
+                    .check_chain_with_pop_args(&chain, tool_name, &map, &map, Some(&signature), &[])
                     .expect("authorization should succeed");
 
                 let mut bytes = Vec::new();
-                ciborium::ser::into_writer(&result, &mut bytes).expect("result serialization should succeed");
+                ciborium::ser::into_writer(&result, &mut bytes)
+                    .expect("result serialization should succeed");
                 bytes
             }));
         }
-        handles.into_iter().map(|h| h.join().expect("join")).collect::<Vec<_>>()
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("join"))
+            .collect::<Vec<_>>()
     });
 
     assert_all_equal(&outputs, "check_chain_with_pop_args result serialization");

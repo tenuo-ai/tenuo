@@ -447,9 +447,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
         // Unwrap the args Result (PyTuple::new can fail on conversion)
         let args = match args {
             Ok(a) => a,
-            Err(e) => {
-                return py_validation_err(format!("Failed to create args tuple: {}", e))
-            }
+            Err(e) => return py_validation_err(format!("Failed to create args tuple: {}", e)),
         };
 
         match exceptions.getattr(exc_name) {
@@ -458,10 +456,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 // Note: call1 takes a tuple of arguments. Our 'args' IS that tuple.
                 PyErr::from_value(cls.call1(args).unwrap_or_else(|e| {
                     // Fallback if constructor fails
-                    py_validation_err(e.to_string())
-                        .value(py)
-                        .as_any()
-                        .clone()
+                    py_validation_err(e.to_string()).value(py).as_any().clone()
                 }))
             }
             Err(e) => py_validation_err(e.to_string()),
@@ -476,15 +471,14 @@ fn py_validation_err(message: impl Into<String>) -> PyErr {
 /// Convert a ConfigError to a Python exception.
 fn config_err_to_py(e: crate::gateway_config::ConfigError) -> PyErr {
     Python::attach(|py| match py.import("tenuo.exceptions") {
-        Ok(m) => match m.getattr("ConfigurationError") {
-            Ok(cls) => PyErr::from_value(cls.call1((e.to_string(),)).unwrap_or_else(|_| {
-                py_validation_err(e.to_string())
-                    .value(py)
-                    .as_any()
-                    .clone()
-            })),
-            Err(_) => py_validation_err(e.to_string()),
-        },
+        Ok(m) => {
+            match m.getattr("ConfigurationError") {
+                Ok(cls) => PyErr::from_value(cls.call1((e.to_string(),)).unwrap_or_else(|_| {
+                    py_validation_err(e.to_string()).value(py).as_any().clone()
+                })),
+                Err(_) => py_validation_err(e.to_string()),
+            }
+        }
         Err(_) => py_validation_err(e.to_string()),
     })
 }
