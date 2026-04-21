@@ -32,7 +32,6 @@ use crate::warrant::{
     Clearance, OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant as RustWarrant, WarrantType,
 };
 use crate::wire;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySequence, PyTuple};
 use pyo3::IntoPyObjectExt;
@@ -215,12 +214,27 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 ref detail,
             } => {
                 let detail_str = detail.as_deref().unwrap_or("");
-                let elements: [pyo3::Py<PyAny>; 3] = [
-                    required.into_py_any(py).unwrap(),
-                    received.into_py_any(py).unwrap(),
-                    detail_str.into_py_any(py).unwrap(),
+                let req = match required.into_py_any(py) {
+                    Ok(v) => v,
+                    Err(e) => return py_validation_err(e.to_string()),
+                };
+                let rec = match received.into_py_any(py) {
+                    Ok(v) => v,
+                    Err(e) => return py_validation_err(e.to_string()),
+                };
+                let det = match detail_str.into_py_any(py) {
+                    Ok(v) => v,
+                    Err(e) => return py_validation_err(e.to_string()),
+                };
+                let elements = vec![
+                    req,
+                    rec,
+                    det,
                 ];
-                ("InsufficientApprovals", PyTuple::new(py, elements))
+                (
+                    "InsufficientApprovals",
+                    PyTuple::new(py, elements),
+                )
             }
             crate::error::Error::InvalidApproval(m) => {
                 ("InvalidApproval", PyTuple::new(py, [m.as_str()]))
@@ -416,7 +430,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             ),
             crate::error::Error::InvalidPath { path, reason } => {
                 // Use Python's built-in ValueError directly since it's not in tenuo.exceptions
-                return PyValueError::new_err(format!("invalid path '{}': {}", path, reason));
+                return py_validation_err(format!("invalid path '{}': {}", path, reason));
             }
             crate::error::Error::UrlNotSafe { url, reason } => (
                 "ConstraintViolation",
@@ -434,7 +448,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
         let args = match args {
             Ok(a) => a,
             Err(e) => {
-                return PyRuntimeError::new_err(format!("Failed to create args tuple: {}", e))
+                return py_validation_err(format!("Failed to create args tuple: {}", e))
             }
         };
 
@@ -444,15 +458,19 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 // Note: call1 takes a tuple of arguments. Our 'args' IS that tuple.
                 PyErr::from_value(cls.call1(args).unwrap_or_else(|e| {
                     // Fallback if constructor fails
-                    PyRuntimeError::new_err(e.to_string())
+                    py_validation_err(e.to_string())
                         .value(py)
                         .as_any()
                         .clone()
                 }))
             }
-            Err(e) => PyRuntimeError::new_err(e.to_string()),
+            Err(e) => py_validation_err(e.to_string()),
         }
     })
+}
+
+fn py_validation_err(message: impl Into<String>) -> PyErr {
+    to_py_err(crate::error::Error::Validation(message.into()))
 }
 
 /// Convert a ConfigError to a Python exception.
@@ -460,14 +478,14 @@ fn config_err_to_py(e: crate::gateway_config::ConfigError) -> PyErr {
     Python::attach(|py| match py.import("tenuo.exceptions") {
         Ok(m) => match m.getattr("ConfigurationError") {
             Ok(cls) => PyErr::from_value(cls.call1((e.to_string(),)).unwrap_or_else(|_| {
-                PyValueError::new_err(e.to_string())
+                py_validation_err(e.to_string())
                     .value(py)
                     .as_any()
                     .clone()
             })),
-            Err(_) => PyValueError::new_err(e.to_string()),
+            Err(_) => py_validation_err(e.to_string()),
         },
-        Err(_) => PyValueError::new_err(e.to_string()),
+        Err(_) => py_validation_err(e.to_string()),
     })
 }
 
@@ -1962,7 +1980,7 @@ impl PyShlex {
     #[pyo3(signature = (allow))]
     fn new(allow: Vec<String>) -> PyResult<Self> {
         if allow.is_empty() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
+            return Err(py_validation_err(
                 "Shlex requires at least one allowed binary",
             ));
         }
@@ -2046,7 +2064,7 @@ impl PySigningKey {
     fn from_bytes(bytes: &[u8]) -> PyResult<Self> {
         let arr: [u8; 32] = bytes
             .try_into()
-            .map_err(|_| PyValueError::new_err("secret key must be exactly 32 bytes"))?;
+            .map_err(|_| py_validation_err("secret key must be exactly 32 bytes"))?;
         Ok(Self {
             inner: RustSigningKey::from_bytes(&arr),
         })
@@ -2112,50 +2130,68 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<Py<PyAn
         Constraint::Pattern(p) =>
         {
             #[allow(deprecated)]
-            Ok(PyPattern { inner: p.clone() }.into_py_any(py).unwrap())
+            Ok(PyPattern { inner: p.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::Exact(e) =>
         {
             #[allow(deprecated)]
-            Ok(PyExact { inner: e.clone() }.into_py_any(py).unwrap())
+            Ok(PyExact { inner: e.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::OneOf(o) =>
         {
             #[allow(deprecated)]
-            Ok(PyOneOf { inner: o.clone() }.into_py_any(py).unwrap())
+            Ok(PyOneOf { inner: o.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::NotOneOf(n) =>
         {
             #[allow(deprecated)]
-            Ok(PyNotOneOf { inner: n.clone() }.into_py_any(py).unwrap())
+            Ok(PyNotOneOf { inner: n.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
-        Constraint::Unknown { .. } => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        Constraint::Unknown { .. } => Err(py_validation_err(
             "Unknown constraint type encountered (not supported in Python bindings)",
         )),
         Constraint::Range(r) =>
         {
             #[allow(deprecated)]
-            Ok(PyRange { inner: r.clone() }.into_py_any(py).unwrap())
+            Ok(PyRange { inner: r.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::Cidr(c) =>
         {
             #[allow(deprecated)]
-            Ok(PyCidr { inner: c.clone() }.into_py_any(py).unwrap())
+            Ok(PyCidr { inner: c.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::UrlPattern(u) =>
         {
             #[allow(deprecated)]
-            Ok(PyUrlPattern { inner: u.clone() }.into_py_any(py).unwrap())
+            Ok(PyUrlPattern { inner: u.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::Contains(c) =>
         {
             #[allow(deprecated)]
-            Ok(PyContains { inner: c.clone() }.into_py_any(py).unwrap())
+            Ok(PyContains { inner: c.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::Subset(s) =>
         {
             #[allow(deprecated)]
-            Ok(PySubset { inner: s.clone() }.into_py_any(py).unwrap())
+            Ok(PySubset { inner: s.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::All(a) => {
             let py_constraints = Python::attach(|py| -> PyResult<Vec<Py<PyAny>>> {
@@ -2166,7 +2202,9 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<Py<PyAn
                 Ok(vec)
             })?;
             #[allow(deprecated)]
-            Ok(PyAll::new(py_constraints)?.into_py_any(py).unwrap())
+            Ok(PyAll::new(py_constraints)?
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::Any(a) => {
             let py_constraints = Python::attach(|py| -> PyResult<Vec<Py<PyAny>>> {
@@ -2177,44 +2215,60 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<Py<PyAn
                 Ok(vec)
             })?;
             #[allow(deprecated)]
-            Ok(PyAnyOf::new(py_constraints)?.into_py_any(py).unwrap())
+            Ok(PyAnyOf::new(py_constraints)?
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::Not(n) => {
             let py_constraint = Python::attach(|py| -> PyResult<Py<PyAny>> {
                 constraint_to_py(py, &n.constraint)
             })?;
             #[allow(deprecated)]
-            Ok(PyNot::new(py_constraint)?.into_py_any(py).unwrap())
+            Ok(PyNot::new(py_constraint)?
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::Cel(c) =>
         {
             #[allow(deprecated)]
-            Ok(PyCel { inner: c.clone() }.into_py_any(py).unwrap())
+            Ok(PyCel { inner: c.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::Wildcard(w) =>
         {
             #[allow(deprecated)]
-            Ok(PyWildcard { inner: w.clone() }.into_py_any(py).unwrap())
+            Ok(PyWildcard { inner: w.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::Regex(r) =>
         {
             #[allow(deprecated)]
-            Ok(PyRegex { inner: r.clone() }.into_py_any(py).unwrap())
+            Ok(PyRegex { inner: r.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::Subpath(s) =>
         {
             #[allow(deprecated)]
-            Ok(PySubpath { inner: s.clone() }.into_py_any(py).unwrap())
+            Ok(PySubpath { inner: s.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::UrlSafe(u) =>
         {
             #[allow(deprecated)]
-            Ok(PyUrlSafe { inner: u.clone() }.into_py_any(py).unwrap())
+            Ok(PyUrlSafe { inner: u.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         Constraint::Shlex(sh) =>
         {
             #[allow(deprecated)]
-            Ok(PyShlex { inner: sh.clone() }.into_py_any(py).unwrap())
+            Ok(PyShlex { inner: sh.clone() }
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
     }
 }
@@ -2279,7 +2333,7 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
     if let Ok(b) = obj.downcast::<PyShlex>() {
         return Ok(Constraint::Shlex(b.borrow().inner.clone()));
     }
-    Err(PyValueError::new_err(
+    Err(py_validation_err(
         "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard, Subpath, UrlSafe, or Shlex",
     ))
 }
@@ -2302,7 +2356,7 @@ fn py_dict_to_constraint_set(
         if field == ALLOW_UNKNOWN_KEY {
             let allow: bool = constraint_val
                 .extract()
-                .map_err(|_| PyValueError::new_err("_allow_unknown must be a boolean"))?;
+                .map_err(|_| py_validation_err("_allow_unknown must be a boolean"))?;
             constraint_set.set_allow_unknown(allow);
             continue;
         }
@@ -2343,7 +2397,7 @@ fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
         }
         Ok(ConstraintValue::List(values))
     } else {
-        Err(PyValueError::new_err(
+        Err(py_validation_err(
             "value must be str, int, float, bool, or list",
         ))
     }
@@ -2352,16 +2406,26 @@ fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
 /// Convert a ConstraintValue back to a Python object.
 fn constraint_value_to_py(py: Python<'_>, value: &ConstraintValue) -> PyResult<Py<PyAny>> {
     match value {
-        ConstraintValue::String(s) => Ok(s.into_py_any(py).unwrap()),
-        ConstraintValue::Integer(i) => Ok(i.into_py_any(py).unwrap()),
-        ConstraintValue::Float(f) => Ok(f.into_py_any(py).unwrap()),
-        ConstraintValue::Boolean(b) => Ok(b.into_py_any(py).unwrap()),
+        ConstraintValue::String(s) => Ok(s
+            .into_py_any(py)
+            .map_err(|e| py_validation_err(e.to_string()))?),
+        ConstraintValue::Integer(i) => Ok(i
+            .into_py_any(py)
+            .map_err(|e| py_validation_err(e.to_string()))?),
+        ConstraintValue::Float(f) => Ok(f
+            .into_py_any(py)
+            .map_err(|e| py_validation_err(e.to_string()))?),
+        ConstraintValue::Boolean(b) => Ok(b
+            .into_py_any(py)
+            .map_err(|e| py_validation_err(e.to_string()))?),
         ConstraintValue::List(l) => {
             let py_list: Vec<Py<PyAny>> = l
                 .iter()
                 .map(|v| constraint_value_to_py(py, v))
                 .collect::<PyResult<Vec<_>>>()?;
-            Ok(py_list.into_py_any(py).unwrap())
+            Ok(py_list
+                .into_py_any(py)
+                .map_err(|e| py_validation_err(e.to_string()))?)
         }
         ConstraintValue::Object(o) => {
             let dict = pyo3::types::PyDict::new(py);
@@ -2397,20 +2461,20 @@ fn py_to_arg_approval_gate(
     // {"exempt": <constraint>} form — plain Python dict with a single "exempt" key.
     if let Ok(d) = av.downcast::<PyDict>() {
         if d.len() != 1 {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            return Err(py_validation_err(format!(
                 "arg gate '{}': approval gate dict must have exactly one key ('exempt')",
                 arg_name
             )));
         }
         let inner = d.get_item("exempt")?.ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!(
+            py_validation_err(format!(
                 "arg gate '{}': approval gate dict must have key 'exempt'",
                 arg_name
             ))
         })?;
         let constraint = py_to_constraint(&inner)?;
         return ArgApprovalGate::exempt(constraint).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!(
+            py_validation_err(format!(
                 "arg gate '{}': invalid Exempt inner constraint — {}",
                 arg_name, e
             ))
@@ -2458,7 +2522,7 @@ fn py_dict_to_approval_gate_map(
             }
             gm.insert(tool, ToolApprovalGate::with_args(args));
         } else {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            return Err(py_validation_err(format!(
                 "approval gate for '{}' must be None (whole-tool) or a dict of arg approval gates",
                 tool
             )));
@@ -2482,7 +2546,7 @@ impl PyWarrantType {
             "execution" => WarrantType::Execution,
             "issuer" => WarrantType::Issuer,
             _ => {
-                return Err(PyValueError::new_err(
+                return Err(py_validation_err(
                     "WarrantType must be 'execution' or 'issuer'",
                 ))
             }
@@ -2498,9 +2562,7 @@ impl PyWarrantType {
         match op {
             pyo3::basic::CompareOp::Eq => Ok(self.inner == other.inner),
             pyo3::basic::CompareOp::Ne => Ok(self.inner != other.inner),
-            _ => Err(pyo3::exceptions::PyTypeError::new_err(
-                "Comparison not supported",
-            )),
+            _ => Err(py_validation_err("Comparison not supported")),
         }
     }
 
@@ -2534,14 +2596,14 @@ impl PyClearance {
     #[new]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         if let Ok(s) = value.extract::<String>() {
-            let inner = s.parse().map_err(|e: String| PyValueError::new_err(e))?;
+            let inner = s.parse().map_err(py_validation_err)?;
             Ok(Self { inner })
         } else if let Ok(n) = value.extract::<u8>() {
             Ok(Self {
                 inner: Clearance(n),
             })
         } else {
-            Err(PyValueError::new_err(
+            Err(py_validation_err(
                 "Clearance must be initialized with a string name or integer (0-255)",
             ))
         }
@@ -3015,7 +3077,7 @@ impl PyDelegationDiff {
     fn to_json(&self) -> PyResult<String> {
         self.inner
             .to_json()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(|e| py_validation_err(e.to_string()))
     }
 
     /// Get human-readable diff output.
@@ -3027,7 +3089,7 @@ impl PyDelegationDiff {
     fn to_siem_json(&self) -> PyResult<String> {
         self.inner
             .to_siem_json()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(|e| py_validation_err(e.to_string()))
     }
 
     fn __repr__(&self) -> String {
@@ -3153,14 +3215,14 @@ impl PyDelegationReceipt {
     fn to_json(&self) -> PyResult<String> {
         self.inner
             .to_json()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(|e| py_validation_err(e.to_string()))
     }
 
     /// Get SIEM-compatible JSON output.
     fn to_siem_json(&self) -> PyResult<String> {
         self.inner
             .to_siem_json()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(|e| py_validation_err(e.to_string()))
     }
 
     fn __repr__(&self) -> String {
@@ -3618,7 +3680,7 @@ impl PyWarrant {
 
                 let constraints_dict: &Bound<'_, PyDict> = constraints_val
                     .downcast()
-                    .map_err(|_| PyValueError::new_err("capabilities values must be dicts"))?;
+                    .map_err(|_| py_validation_err("capabilities values must be dicts"))?;
 
                 let constraint_set = py_dict_to_constraint_set(constraints_dict)?;
                 builder = builder.capability(tool_name, constraint_set);
@@ -3734,7 +3796,7 @@ impl PyWarrant {
     fn issue_execution(&self) -> PyResult<PyIssuanceBuilder> {
         // Validate this is an issuer warrant
         if self.inner.r#type() != WarrantType::Issuer {
-            return Err(PyValueError::new_err(
+            return Err(py_validation_err(
                 "can only issue execution warrants from issuer warrants",
             ));
         }
@@ -3954,7 +4016,7 @@ impl PyWarrant {
 
             let constraints_dict: &Bound<'_, PyDict> = constraints_val
                 .downcast()
-                .map_err(|_| PyValueError::new_err("capabilities values must be dicts"))?;
+                .map_err(|_| py_validation_err("capabilities values must be dicts"))?;
 
             let constraint_set = py_dict_to_constraint_set(constraints_dict)?;
             builder = builder.capability(tool_name, constraint_set);
@@ -4127,7 +4189,7 @@ impl PyWarrant {
     fn verify(&self, public_key_bytes: &[u8]) -> PyResult<bool> {
         let arr: [u8; 32] = public_key_bytes
             .try_into()
-            .map_err(|_| PyValueError::new_err("public key must be exactly 32 bytes"))?;
+            .map_err(|_| py_validation_err("public key must be exactly 32 bytes"))?;
         let pk = crate::crypto::PublicKey::from_bytes(&arr).map_err(to_py_err)?;
 
         match self.inner.verify(&pk) {
@@ -4314,13 +4376,13 @@ impl PyCompiledMcpConfig {
         };
 
         let args_value: serde_json::Value = serde_json::from_str(&json_str)
-            .map_err(|e| PyValueError::new_err(format!("Invalid JSON arguments: {}", e)))?;
+            .map_err(|e| py_validation_err(format!("Invalid JSON arguments: {}", e)))?;
 
         // Extract
         let result = self
             .inner
             .extract_constraints(tool_name, &args_value)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            .map_err(|e| py_validation_err(e.to_string()))?;
 
         // Convert extracted constraints to Python dict
         let dict = PyDict::new(py);
@@ -4382,7 +4444,7 @@ impl PyPublicKey {
     fn from_bytes(bytes: &[u8]) -> PyResult<Self> {
         let arr: [u8; 32] = bytes
             .try_into()
-            .map_err(|_| PyValueError::new_err("public key must be exactly 32 bytes"))?;
+            .map_err(|_| py_validation_err("public key must be exactly 32 bytes"))?;
         let inner = RustPublicKey::from_bytes(&arr).map_err(to_py_err)?;
         Ok(Self { inner })
     }
@@ -4395,9 +4457,7 @@ impl PyPublicKey {
         match op {
             pyo3::basic::CompareOp::Eq => Ok(self.inner == other.inner),
             pyo3::basic::CompareOp::Ne => Ok(self.inner != other.inner),
-            _ => Err(pyo3::exceptions::PyTypeError::new_err(
-                "Comparison not supported",
-            )),
+            _ => Err(py_validation_err("Comparison not supported")),
         }
     }
 
@@ -4434,7 +4494,7 @@ impl PySignature {
     fn from_bytes(bytes: &[u8]) -> PyResult<Self> {
         let arr: [u8; 64] = bytes
             .try_into()
-            .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+            .map_err(|_| py_validation_err("signature must be exactly 64 bytes"))?;
         let inner = RustSignature::from_bytes(&arr).map_err(to_py_err)?;
         Ok(Self { inner })
     }
@@ -4724,7 +4784,7 @@ impl PySignedApproval {
         signature: &[u8],
     ) -> PyResult<Self> {
         if signature.len() != 64 {
-            return Err(PyValueError::new_err(format!(
+            return Err(py_validation_err(format!(
                 "Invalid signature length: expected 64 bytes, got {}",
                 signature.len()
             )));
@@ -4733,7 +4793,7 @@ impl PySignedApproval {
         sig_bytes.copy_from_slice(signature);
 
         let sig = crate::crypto::Signature::from_bytes(&sig_bytes)
-            .map_err(|e| PyValueError::new_err(format!("Invalid signature bytes: {}", e)))?;
+            .map_err(|e| py_validation_err(format!("Invalid signature bytes: {}", e)))?;
 
         Ok(Self {
             inner: RustSignedApproval {
@@ -4768,7 +4828,7 @@ impl PySignedApproval {
     fn to_bytes(&self) -> PyResult<Vec<u8>> {
         let mut buf = Vec::new();
         ciborium::into_writer(&self.inner, &mut buf)
-            .map_err(|e| PyValueError::new_err(format!("Serialization failed: {}", e)))?;
+            .map_err(|e| py_validation_err(format!("Serialization failed: {}", e)))?;
         Ok(buf)
     }
 
@@ -4776,7 +4836,7 @@ impl PySignedApproval {
     #[staticmethod]
     fn from_bytes(data: &[u8]) -> PyResult<Self> {
         let inner: RustSignedApproval = ciborium::from_reader(data)
-            .map_err(|e| PyValueError::new_err(format!("Deserialization failed: {}", e)))?;
+            .map_err(|e| py_validation_err(format!("Deserialization failed: {}", e)))?;
         Ok(Self { inner })
     }
 
@@ -4960,7 +5020,7 @@ fn py_verify_approvals(
     clock_tolerance_secs: u64,
 ) -> PyResult<Vec<PyApprovalPayload>> {
     if request_hash.len() != 32 {
-        return Err(PyValueError::new_err(format!(
+        return Err(py_validation_err(format!(
             "request_hash must be 32 bytes, got {}",
             request_hash.len()
         )));
@@ -4969,13 +5029,13 @@ fn py_verify_approvals(
     hash_arr.copy_from_slice(request_hash);
 
     if threshold == 0 {
-        return Err(PyValueError::new_err("threshold must be >= 1"));
+        return Err(py_validation_err("threshold must be >= 1"));
     }
 
     // DoS protection: limit approval count to 2× approver set
     let max_approvals = trusted_approvers.len().saturating_mul(2);
     if approvals.len() > max_approvals {
-        return Err(PyValueError::new_err(format!(
+        return Err(py_validation_err(format!(
             "too many approvals: {} provided, max {} (2× trusted_approvers)",
             approvals.len(),
             max_approvals
@@ -5400,7 +5460,7 @@ impl PyAuthorizer {
             Some(bytes) => {
                 let arr: [u8; 64] = bytes
                     .try_into()
-                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+                    .map_err(|_| py_validation_err("signature must be exactly 64 bytes"))?;
                 Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
             }
             None => None,
@@ -5483,7 +5543,7 @@ impl PyAuthorizer {
             Some(bytes) => {
                 let arr: [u8; 64] = bytes
                     .try_into()
-                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+                    .map_err(|_| py_validation_err("signature must be exactly 64 bytes"))?;
                 Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
             }
             None => None,
@@ -5530,7 +5590,7 @@ impl PyAuthorizer {
     fn verify_chain(&self, chain: &Bound<'_, PySequence>) -> PyResult<PyChainVerificationResult> {
         let len = chain.len()?;
         if len == 0 {
-            return Err(PyValueError::new_err("chain cannot be empty"));
+            return Err(py_validation_err("chain cannot be empty"));
         }
 
         let mut warrants = Vec::with_capacity(len);
@@ -5570,7 +5630,7 @@ impl PyAuthorizer {
     ) -> PyResult<PyChainVerificationResult> {
         let len = chain.len()?;
         if len == 0 {
-            return Err(PyValueError::new_err("chain cannot be empty"));
+            return Err(py_validation_err("chain cannot be empty"));
         }
 
         let mut warrants = Vec::with_capacity(len);
@@ -5592,7 +5652,7 @@ impl PyAuthorizer {
             Some(bytes) => {
                 let arr: [u8; 64] = bytes
                     .try_into()
-                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+                    .map_err(|_| py_validation_err("signature must be exactly 64 bytes"))?;
                 Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
             }
             None => None,
@@ -5659,7 +5719,7 @@ impl PyAuthorizer {
             Some(bytes) => {
                 let arr: [u8; 64] = bytes
                     .try_into()
-                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+                    .map_err(|_| py_validation_err("signature must be exactly 64 bytes"))?;
                 Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
             }
             None => None,
@@ -5701,7 +5761,7 @@ impl PyAuthorizer {
     ) -> PyResult<PyChainVerificationResult> {
         let len = chain.len()?;
         if len == 0 {
-            return Err(PyValueError::new_err("chain cannot be empty"));
+            return Err(py_validation_err("chain cannot be empty"));
         }
 
         let mut warrants = Vec::with_capacity(len);
@@ -5730,7 +5790,7 @@ impl PyAuthorizer {
             Some(bytes) => {
                 let arr: [u8; 64] = bytes
                     .try_into()
-                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+                    .map_err(|_| py_validation_err("signature must be exactly 64 bytes"))?;
                 Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
             }
             None => None,
