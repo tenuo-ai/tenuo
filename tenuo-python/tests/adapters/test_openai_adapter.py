@@ -2057,14 +2057,15 @@ class TestSubpathConstraint:
     def test_root_must_be_absolute(self):
         """Root must be an absolute path.
 
-        Note: Rust raises RuntimeError (wrapped) instead of ValueError.
-        Both enforce the same security property: relative roots are rejected.
+        Error taxonomy hardening routes Rust-side validation failures through
+        tenuo.exceptions instead of bare builtins.
         """
-        # Rust raises RuntimeError for invalid paths
-        with pytest.raises((ValueError, RuntimeError)):
+        from tenuo.exceptions import TenuoError
+
+        with pytest.raises(TenuoError):
             Subpath("data")
 
-        with pytest.raises((ValueError, RuntimeError)):
+        with pytest.raises(TenuoError):
             Subpath("./data")
 
     def test_integration_with_guard(self):

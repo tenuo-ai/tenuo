@@ -1498,8 +1498,11 @@ fn parse_deny_reason(
 
             deny = deny.with_constraint(field, reason, actual);
         }
-        Error::WarrantExpired(ts) => {
-            deny = deny.with_reason(format!("warrant_expired: {}", ts));
+        Error::WarrantExpired {
+            warrant_id,
+            expired_at,
+        } => {
+            deny = deny.with_reason(format!("warrant_expired: {} at {}", warrant_id, expired_at));
         }
         Error::WarrantRevoked(id) => {
             deny = deny.with_reason(format!("warrant_revoked: {}", id));

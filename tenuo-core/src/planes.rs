@@ -1049,7 +1049,10 @@ impl DataPlane {
 
         // 4. Check child is not expired (with clock tolerance)
         if child.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired(child.expires_at()));
+            return Err(Error::WarrantExpired {
+                warrant_id: child.id().to_string(),
+                expired_at: child.expires_at(),
+            });
         }
 
         // 5. Validate constraint attenuation (monotonicity)
@@ -2168,7 +2171,10 @@ impl Authorizer {
 
         // Check expiration with clock tolerance
         if child.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired(child.expires_at()));
+            return Err(Error::WarrantExpired {
+                warrant_id: child.id().to_string(),
+                expired_at: child.expires_at(),
+            });
         }
 
         // Validate monotonicity based on warrant type

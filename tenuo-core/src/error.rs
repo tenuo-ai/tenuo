@@ -321,8 +321,11 @@ pub enum Error {
     WarrantRevoked(String),
 
     /// Warrant has expired.
-    #[error("warrant expired at {0}")]
-    WarrantExpired(chrono::DateTime<chrono::Utc>),
+    #[error("warrant '{warrant_id}' expired at {expired_at}")]
+    WarrantExpired {
+        warrant_id: String,
+        expired_at: chrono::DateTime<chrono::Utc>,
+    },
 
     /// Warrant issued in the future (Clock Skew violation).
     #[error("warrant issued in the future (check system clock)")]
@@ -665,7 +668,7 @@ impl Error {
 
             // Warrant Lifecycle Errors
             Self::WarrantRevoked(_) => ErrorCode::WarrantRevoked,
-            Self::WarrantExpired(_) => ErrorCode::WarrantExpired,
+            Self::WarrantExpired { .. } => ErrorCode::WarrantExpired,
             Self::IssuedInFuture => ErrorCode::IssuedInFuture,
             Self::DepthExceeded(_, _) => ErrorCode::DepthExceeded,
             Self::InvalidWarrantId(_) => ErrorCode::InvalidPayloadStructure,
@@ -885,7 +888,10 @@ mod tests {
         assert_eq!(err.http_status(), 401);
 
         // Temporal errors
-        let err = Error::WarrantExpired(chrono::Utc::now());
+        let err = Error::WarrantExpired {
+            warrant_id: "tnu_wrt_test".into(),
+            expired_at: chrono::Utc::now(),
+        };
         assert_eq!(err.code(), ErrorCode::WarrantExpired);
         assert_eq!(err.name(), "warrant-expired");
 
@@ -927,7 +933,10 @@ mod tests {
             Error::MissingSignature("test".into()),
             Error::CryptoError("test".into()),
             Error::WarrantRevoked("test".into()),
-            Error::WarrantExpired(chrono::Utc::now()),
+            Error::WarrantExpired {
+                warrant_id: "tnu_wrt_test".into(),
+                expired_at: chrono::Utc::now(),
+            },
             Error::DepthExceeded(1, 0),
             Error::InvalidWarrantId("test".into()),
             Error::InvalidTtl("test".into()),

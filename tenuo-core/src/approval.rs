@@ -395,6 +395,7 @@ pub fn canonical_tool_args_cbor(
 ) -> Option<Vec<u8>> {
     use std::collections::BTreeMap;
 
+    // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-request-hash-sort.
     let sorted: BTreeMap<_, _> = args.iter().collect();
     let mut cbor_buf = Vec::new();
     if ciborium::into_writer(&sorted, &mut cbor_buf).is_ok() {

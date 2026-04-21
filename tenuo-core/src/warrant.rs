@@ -941,7 +941,10 @@ impl Warrant {
     ) -> Result<()> {
         // Check expiration
         if self.is_expired() {
-            return Err(Error::WarrantExpired(self.expires_at()));
+            return Err(Error::WarrantExpired {
+                warrant_id: self.id().to_string(),
+                expired_at: self.expires_at(),
+            });
         }
 
         // Only execution warrants can authorize actions
@@ -1011,7 +1014,10 @@ impl Warrant {
     ) -> Result<()> {
         // Check expiration
         if self.is_expired() {
-            return Err(Error::WarrantExpired(self.expires_at()));
+            return Err(Error::WarrantExpired {
+                warrant_id: self.id().to_string(),
+                expired_at: self.expires_at(),
+            });
         }
 
         if self.payload.warrant_type != WarrantType::Execution {
@@ -1082,6 +1088,7 @@ impl Warrant {
         let now = Utc::now().timestamp();
 
         let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
+        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-pop-verify-sort.
         sorted_args.sort_by_key(|(k, _)| *k);
 
         let mut verified = false;
@@ -1163,6 +1170,7 @@ impl Warrant {
         timestamp: Option<i64>,
     ) -> Result<Signature> {
         let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
+        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-pop-sign-sort.
         sorted_args.sort_by_key(|(k, _)| *k);
 
         let now = timestamp.unwrap_or_else(|| Utc::now().timestamp());
@@ -1185,6 +1193,7 @@ impl Warrant {
         use sha2::{Digest, Sha256};
 
         let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
+        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-dedup-sort.
         sorted_args.sort_by_key(|(k, _)| *k);
 
         let payload = (self.payload.id.to_hex(), tool, &sorted_args);
@@ -1930,7 +1939,10 @@ impl<'a> AttenuationBuilder<'a> {
         }
 
         if self.parent.is_expired() {
-            return Err(Error::WarrantExpired(self.parent.expires_at()));
+            return Err(Error::WarrantExpired {
+                warrant_id: self.parent.id().to_string(),
+                expired_at: self.parent.expires_at(),
+            });
         }
 
         // Validate attenuation monotonicity based on warrant type
@@ -2716,7 +2728,10 @@ impl OwnedAttenuationBuilder {
                 .timestamp_opt(self.parent.payload.expires_at as i64, 0)
                 .single()
                 .unwrap_or_else(Utc::now);
-            return Err(Error::WarrantExpired(expiry));
+            return Err(Error::WarrantExpired {
+                warrant_id: self.parent.id().to_string(),
+                expired_at: expiry,
+            });
         }
 
         // Validate attenuation monotonicity
@@ -3129,7 +3144,10 @@ impl<'a> IssuanceBuilder<'a> {
                 .timestamp_opt(self.issuer.payload.expires_at as i64, 0)
                 .single()
                 .unwrap_or_else(Utc::now);
-            return Err(Error::WarrantExpired(expiry));
+            return Err(Error::WarrantExpired {
+                warrant_id: self.issuer.id().to_string(),
+                expired_at: expiry,
+            });
         }
 
         // Validate required fields
