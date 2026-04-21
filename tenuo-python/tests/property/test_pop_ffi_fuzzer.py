@@ -38,7 +38,6 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     pytest.skip("hypothesis not installed", allow_module_level=True)
 
-from tenuo import Pattern
 from tenuo_core import Authorizer, SigningKey, Warrant
 
 from tenuo._pop_canonicalize import strip_none_values
