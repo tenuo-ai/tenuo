@@ -616,31 +616,27 @@ tools:
         agent_key: SigningKey,
         mcp_config,
     ):
-        from tenuo import Pattern
-
-        from tenuo import Range
+        from tenuo import Pattern, Range
 
         warrant = Warrant.issue(
             issuer_key,
             capabilities={"read_file": {"path": Pattern("/data/*"), "max_size": Range(max=10 * 1024 * 1024)}},
             holder=agent_key.public_key,
         )
-        # When using CompiledMcpConfig, the client computes PoP over the
-        # extracted (renamed) constraints — both sides share the config.
-        # The extracted constraints use "max_size" (mapped from "maxSize").
-        extracted_constraints = {"path": "/data/log.txt", "max_size": 2048}
-        pop_sig = _encode_pop(warrant, agent_key, "read_file", extracted_constraints)
-
+        # Split-view: PoP covers raw wire args (camelCase); constraint
+        # extraction runs server-side and renames maxSize → max_size.
         raw_body = {"path": "/data/log.txt", "maxSize": 2048}
+        pop_sig = _encode_pop(warrant, agent_key, "read_file", raw_body)
         meta = {"tenuo": {"warrant": warrant.to_base64(), "signature": pop_sig}}
 
         result = MCPVerifier(authorizer=authorizer, config=mcp_config).verify(
             "read_file", raw_body, meta=meta
         )
 
-        assert result.allowed
+        assert result.allowed, result.denial_reason
         # constraints should use the mapped name ("max_size" not "maxSize")
-        assert "max_size" in result.constraints or "path" in result.constraints
+        assert "max_size" in result.constraints
+        assert "path" in result.constraints
 
     def test_extraction_error_returns_minus_32602(
         self,
@@ -687,13 +683,18 @@ tools:
         assert not result.allowed
         assert result.jsonrpc_error_code == -32602
 
-    def test_pop_signed_over_raw_body_not_extracted_hints_config_sync(
+    def test_pop_parity_independent_of_config_on_client(
         self,
         authorizer: Authorizer,
         issuer_key: SigningKey,
         agent_key: SigningKey,
         mcp_config,
     ):
+        """PoP byte parity holds when the client signs raw wire args even if
+        the client has no CompiledMcpConfig loaded — the server extracts
+        separately. This is the central invariant behind the split-view
+        authorize path.
+        """
         from tenuo import Pattern, Range
 
         warrant = Warrant.issue(
@@ -706,20 +707,17 @@ tools:
             },
             holder=agent_key.public_key,
         )
-        # Correct server-side extraction uses max_size; PoP must sign that dict.
-        # Sign over wrong (camelCase) shape → denial with CompiledMcpConfig hint.
-        wrong_for_pop = {"path": "/data/log.txt", "maxSize": 2048}
-        pop_sig = _encode_pop(warrant, agent_key, "read_file", wrong_for_pop)
         raw_body = {"path": "/data/log.txt", "maxSize": 2048}
+        # Client has *no* config loaded; it just signs the raw wire args.
+        pop_sig = _encode_pop(warrant, agent_key, "read_file", raw_body)
         meta = {"tenuo": {"warrant": warrant.to_base64(), "signature": pop_sig}}
 
+        # Server has the config and performs extraction — PoP still verifies.
         result = MCPVerifier(authorizer=authorizer, config=mcp_config).verify(
             "read_file", raw_body, meta=meta
         )
 
-        assert not result.allowed
-        dr = result.denial_reason or ""
-        assert "CompiledMcpConfig" in dr
+        assert result.allowed, result.denial_reason
 
 
 # ---------------------------------------------------------------------------
@@ -761,17 +759,24 @@ class TestVerifyMcpCall:
 # ---------------------------------------------------------------------------
 
 
-class TestUnmappedArgumentWarning:
-    """Verify that MCPVerifier warns when tool args are not mapped to constraints."""
+class TestAllWireArgsArePopCovered:
+    """Regression: every raw wire arg is covered by the PoP signature, regardless
+    of whether an extraction mapping exists for it.
 
-    def test_warns_on_unmapped_args(
+    Previously the server emitted an "unauthenticated arguments" warning for
+    wire args not present in ``extraction.constraints`` because PoP used to
+    cover only the extracted view. Under the split-view authorize path PoP
+    covers the raw wire args directly, so this warning would always be
+    incorrect — no warning should fire even when extras are present.
+    """
+
+    def test_no_unauthenticated_warning_when_extras_present(
         self,
         authorizer: Authorizer,
         simple_warrant: Warrant,
         agent_key: SigningKey,
         caplog: pytest.LogCaptureFixture,
     ):
-        """Args not present in extraction.constraints trigger a warning."""
         from unittest.mock import MagicMock
 
         mock_config = MagicMock()
@@ -781,17 +786,14 @@ class TestUnmappedArgumentWarning:
 
         verifier = MCPVerifier(authorizer=authorizer, config=mock_config)
 
-        constraint_args = {"path": "/data/f.txt"}
         tool_args = {"path": "/data/f.txt", "dry_run": True, "format": "json"}
-        _, meta = _make_arguments(simple_warrant, agent_key, "read_file", constraint_args)
+        _, meta = _make_arguments(simple_warrant, agent_key, "read_file", tool_args)
 
         import logging
         with caplog.at_level(logging.WARNING, logger="tenuo.mcp.server"):
             verifier.verify("read_file", tool_args, meta=meta)
 
-        assert any("unauthenticated" in r.message.lower() for r in caplog.records)
-        assert any("dry_run" in r.message for r in caplog.records)
-        assert any("format" in r.message for r in caplog.records)
+        assert not any("unauthenticated" in r.message.lower() for r in caplog.records)
 
     def test_no_warning_when_all_args_mapped(
         self,
@@ -800,7 +802,6 @@ class TestUnmappedArgumentWarning:
         agent_key: SigningKey,
         caplog: pytest.LogCaptureFixture,
     ):
-        """No warning when every arg has a corresponding constraint."""
         from unittest.mock import MagicMock
 
         mock_config = MagicMock()

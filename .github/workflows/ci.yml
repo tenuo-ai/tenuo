@@ -218,6 +218,46 @@ jobs:
         run: pytest -v -m "not temporal_live"
 
   # ============================================================================
+  # MCP END-TO-END SMOKE
+  # ============================================================================
+  mcp-smoke:
+    name: MCP Smoke (FastMCP + SecureMCPClient)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+        with:
+          workspaces: tenuo-python
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tenuo-python/pyproject.toml
+
+      - name: Install Tenuo + MCP smoke dependencies
+        working-directory: tenuo-python
+        run: |
+          pip install uv
+          uv pip install --system maturin
+          maturin build --release
+          uv pip install --system target/wheels/*.whl
+          uv pip install --system pytest pytest-asyncio mcp fastmcp
+
+      - name: Run MCP smoke test
+        working-directory: tenuo-python
+        run: |
+          pytest -v tests/adapters/test_mcp_ci_smoke.py
+
+  # ============================================================================
   # TEMPORAL INTEGRATION (live Temporal server)
   # ============================================================================
   temporal-integration:

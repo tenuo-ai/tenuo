@@ -682,6 +682,32 @@ class TestEnforcementIntegration:
         assert result.allowed is False
         # Rust core should catch the constraint violation
 
+    def test_none_valued_optional_args_do_not_crash_local_enforcement(self, signing_key):
+        """Local warrant_context/sign-mode enforcement should canonicalize None
+        arguments before Rust auth calls, matching MCP client/server behavior."""
+        from tenuo import Pattern
+
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read_file", path=Pattern("/tmp/*"))
+            .holder(signing_key.public_key)
+            .ttl(3600)
+            .mint(signing_key)
+        )
+        bound = warrant.bind(signing_key)
+
+        # Before the fix this raised/denied with:
+        # "value must be str, int, float, bool, or list"
+        # because None crossed the FFI boundary during approval-gate eval/sign.
+        result = enforce_tool_call(
+            "read_file",
+            {"path": "/tmp/demo.txt", "max_size": None},
+            bound,
+            trusted_roots=[signing_key.public_key],
+        )
+
+        assert result.allowed is True
+
     def test_wildcard_tool_access(self, signing_key):
         """Wildcard capability should allow any tool."""
         warrant = (

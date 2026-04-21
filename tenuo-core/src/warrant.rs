@@ -915,6 +915,30 @@ impl Warrant {
         args: &HashMap<String, ConstraintValue>,
         signature: Option<&Signature>,
     ) -> Result<()> {
+        self.authorize_with_pop_args(tool, args, args, signature)
+    }
+
+    /// Authorize an action using separate PoP bytes and constraint-matching args.
+    ///
+    /// Split-view authorize for transports (like MCP) that canonicalize
+    /// proof-of-possession over the raw wire args, but match warrant constraints
+    /// against an extracted/renamed view of those args.
+    ///
+    /// - `pop_args`: the dict the PoP signature was computed over (typically the
+    ///   raw wire args the caller sent).
+    /// - `constraint_args`: the dict whose fields are checked against the
+    ///   warrant's per-tool constraints (typically the result of an
+    ///   `McpConfig` extraction, with renamed/coerced fields).
+    ///
+    /// For non-transport callers, pass the same dict for both — that matches
+    /// [`Warrant::authorize`].
+    pub fn authorize_with_pop_args(
+        &self,
+        tool: &str,
+        pop_args: &HashMap<String, ConstraintValue>,
+        constraint_args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+    ) -> Result<()> {
         // Check expiration
         if self.is_expired() {
             return Err(Error::WarrantExpired(self.expires_at()));
@@ -939,17 +963,17 @@ impl Warrant {
             });
         };
 
-        // Check Proof-of-Possession (mandatory)
+        // Check Proof-of-Possession over the wire-args view (mandatory)
         self.verify_pop(
             tool,
-            args,
+            pop_args,
             signature,
             POP_TIMESTAMP_WINDOW_SECS,
             POP_MAX_WINDOWS,
         )?;
 
-        // Check constraints
-        constraints.matches(args)
+        // Check warrant constraints against the extracted view
+        constraints.matches(constraint_args)
     }
 
     /// Authorize an action with custom PoP window configuration.
@@ -957,6 +981,30 @@ impl Warrant {
         &self,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+        pop_window_secs: i64,
+        pop_max_windows: u32,
+    ) -> Result<()> {
+        self.authorize_with_pop_args_and_config(
+            tool,
+            args,
+            args,
+            signature,
+            pop_window_secs,
+            pop_max_windows,
+        )
+    }
+
+    /// Split-view authorize with custom PoP window configuration.
+    ///
+    /// Same split-view semantics as [`Warrant::authorize_with_pop_args`] but
+    /// accepts explicit PoP window parameters. Used by
+    /// [`crate::planes::Authorizer::check_chain_with_pop_args`].
+    pub fn authorize_with_pop_args_and_config(
+        &self,
+        tool: &str,
+        pop_args: &HashMap<String, ConstraintValue>,
+        constraint_args: &HashMap<String, ConstraintValue>,
         signature: Option<&Signature>,
         pop_window_secs: i64,
         pop_max_windows: u32,
@@ -983,9 +1031,11 @@ impl Warrant {
             });
         };
 
-        self.verify_pop(tool, args, signature, pop_window_secs, pop_max_windows)?;
+        // PoP covers the wire-args view
+        self.verify_pop(tool, pop_args, signature, pop_window_secs, pop_max_windows)?;
 
-        constraints.matches(args)
+        // Warrant constraints match the extracted view
+        constraints.matches(constraint_args)
     }
 
     /// Check if constraints match without performing other authorization checks (like PoP or expiration).

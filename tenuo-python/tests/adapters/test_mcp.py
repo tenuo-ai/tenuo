@@ -354,13 +354,18 @@ class TestCallToolApprovalsInjection:
 
 
 @pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
-class TestPopSignsExtractedConstraints:
-    """When a CompiledMcpConfig is loaded, the client must sign the PoP over
-    extracted (renamed/coerced) constraints — not raw tool arguments."""
+class TestPopSignsRawWireArgs:
+    """PoP is always computed over the raw wire args (with None values stripped),
+    independently of whether the client has a CompiledMcpConfig loaded.
+
+    The server performs any constraint extraction (field renaming, coercion)
+    separately as part of its split-view authorize call, so client-side
+    config is never needed for PoP byte parity with the server.
+    """
 
     @pytest.mark.asyncio
-    async def test_pop_signed_over_extracted_constraints_not_raw_args(self):
-        """With compiled_config, warrant.sign() receives extracted constraints."""
+    async def test_pop_signs_raw_wire_args_even_with_config_loaded(self):
+        """With compiled_config loaded, sign() still receives raw args, not extracted ones."""
         client = _make_client()
         mock_warrant, mock_keypair = _mock_warrant_context()
 
@@ -370,28 +375,28 @@ class TestPopSignsExtractedConstraints:
         mock_config.extract_constraints.return_value = mock_extraction
         client.compiled_config = mock_config
 
+        raw_args = {"path": "/data/log.txt", "maxSize": 2048}
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
             patch("tenuo.mcp.client.key_scope", return_value=mock_keypair),
         ):
             await client.call_tool(
                 "read_file",
-                {"path": "/data/log.txt", "maxSize": 2048},
+                raw_args,
                 warrant_context=False,
                 inject_warrant=True,
             )
 
-        mock_config.extract_constraints.assert_called_once_with(
-            "read_file", {"path": "/data/log.txt", "maxSize": 2048}
-        )
+        # Extraction is never used by the signing path now — the server does it.
+        mock_config.extract_constraints.assert_not_called()
         sign_call_args = mock_warrant.sign.call_args[0]
         assert sign_call_args[0] is mock_keypair  # key
         assert sign_call_args[1] == "read_file"  # tool_name
-        assert sign_call_args[2] == {"max_size": 2048, "path": "/data/log.txt"}  # extracted
+        assert sign_call_args[2] == raw_args  # raw wire args, not extracted
 
     @pytest.mark.asyncio
     async def test_pop_signs_raw_args_without_config(self):
-        """Without compiled_config, warrant.sign() receives raw args."""
+        """Without compiled_config, warrant.sign() receives raw args (unchanged behavior)."""
         client = _make_client()
         assert client.compiled_config is None
         mock_warrant, mock_keypair = _mock_warrant_context()
@@ -413,16 +418,13 @@ class TestPopSignsExtractedConstraints:
         assert sign_call_args[2] == raw_args
 
     @pytest.mark.asyncio
-    async def test_extraction_failure_falls_back_to_raw_args(self):
-        """If extract_constraints raises, PoP signs over raw args (server catches error)."""
+    async def test_pop_signs_args_with_none_values_stripped(self):
+        """None-valued wire args are stripped before signing (bridges Rust FFI
+        which rejects None, and must match the server's identical stripping)."""
         client = _make_client()
         mock_warrant, mock_keypair = _mock_warrant_context()
 
-        mock_config = MagicMock()
-        mock_config.extract_constraints.side_effect = RuntimeError("missing field")
-        client.compiled_config = mock_config
-
-        raw_args = {"maxSize": 2048}
+        raw_args = {"path": "/data/log.txt", "encoding": None, "maxSize": 2048}
 
         with (
             patch("tenuo.mcp.client.warrant_scope", return_value=mock_warrant),
@@ -436,7 +438,8 @@ class TestPopSignsExtractedConstraints:
             )
 
         sign_call_args = mock_warrant.sign.call_args[0]
-        assert sign_call_args[2] == raw_args
+        assert sign_call_args[2] == {"path": "/data/log.txt", "maxSize": 2048}
+        assert "encoding" not in sign_call_args[2]
 
 
 # ---------------------------------------------------------------------------
