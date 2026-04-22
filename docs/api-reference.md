@@ -2016,19 +2016,47 @@ This runs on every tool call.
 
 ### Policy Evaluation Without Crypto
 
-A useful reference point: `Warrant::check_constraints` runs exactly the policy portion of `authorize` (tool-name lookup + full `ConstraintSet::matches` over every constraint on the warrant) with no signature verification. This is what your authorization logic would cost if cryptography were free.
+`Warrant::check_constraints` runs exactly the policy portion of `authorize` (tool-name lookup + full `ConstraintSet::matches` over every constraint on the warrant) with no signature verification. This is what your authorization logic would cost if cryptography were free.
+
+We publish two numbers. The *primitive ceiling* is a lower bound measured with a single constraint type and stable inputs. The *realistic warrant* is a representative production shape and is what you should cite when comparing against other authorization engines.
+
+**Primitive ceiling** (sweep of simple `Pattern` constraints, happy path, stable inputs):
 
 | Constraints on warrant | Time (mean) | Notes |
 |------------------------|-------------|-------|
-| 1 Pattern | **~138 ns** | Baseline: tool lookup + single regex match |
-| 2 Patterns | **~308 ns** | Same shape as `warrant_authorize` benchmark above |
-| 5 Patterns | **~771 ns** | ~155 ns marginal per added Pattern constraint |
-| 10 Patterns | **~1.54 us** | Still well under 5% of a single Ed25519 verify |
+| 1 Pattern | **~126 ns** | Tool lookup + single regex match |
+| 2 Patterns | **~236 ns** | Same shape as `warrant_authorize` benchmark above |
+| 5 Patterns | **~537 ns** | ~130 ns marginal per added Pattern constraint |
+| 10 Patterns | **~1.32 us** | Still well under 5% of a single Ed25519 verify |
+
+**Realistic warrant** (6 distinct constraint types: `Exact` + `Pattern` + `Range` + `Cidr` + `UrlPattern` + `Subpath`, inputs rotated across iterations so regex and IP-parsing caches can't fully warm):
+
+| Path | Time (mean) | Notes |
+|------|-------------|-------|
+| `mixed_allow` (all 6 constraints match) | **~1.34 us** | Representative policy-only cost for a production-shaped warrant |
+| `mixed_deny` (one constraint fails) | **~894 ns** | Short-circuits on first failing constraint |
 
 Two implications for policy authors:
 
-1. **Stack constraints freely.** The per-constraint cost (~150 ns for Pattern) is noise next to the ~36 us signature verify. Adding defensive constraints costs nothing measurable at the authorization layer.
+1. **Stack constraints freely.** Even the heavy mixed warrant is under ~1.4 us, well below 5% of a single Ed25519 verify. Adding defensive constraints costs nothing measurable at the authorization layer.
 2. **The only meaningful optimization lever is the crypto path.** If you ever need to push `warrant_authorize` below ~30 us on this hardware, the three available levers are batch verification via `dalek::verify_batch` (amortizes across multiple signatures in a chain), a pre-verified warrant cache (trades determinism for throughput, needs careful revocation handling), and a faster target curve. Policy engines don't have these tradeoffs; they're already primitive-bounded.
+
+### Comparison to Cedar and OPA
+
+Pure policy-evaluation time for comparable workloads. Cedar numbers are from the [Cedar OOPSLA 2024 paper](https://assets.amazon.science/96/a8/1b427993481cbdf0ef2c8ca6db85/cedar-a-new-language-for-expressive-fast-safe-and-analyzable-authorization.pdf) and the [AWS Security Blog](https://aws.amazon.com/blogs/security/how-we-designed-cedar-to-be-intuitive-to-use-fast-and-safe/). OPA numbers are from the [official OPA Policy Performance docs](https://www.openpolicyagent.org/docs/policy-performance/) and reproducible via `opa bench`.
+
+| Engine | Workload | Policy-only time | Includes crypto verification? |
+|--------|----------|------------------|-------------------------------|
+| Cedar | Google Drive model (5 to 50 entities) | ~4 to 5 us median | No |
+| Cedar | GitHub-like model | ~11 us median | No |
+| OPA | Simple RBAC (`opa bench`) | ~14 us mean, ~30 us p99 | No |
+| **Tenuo** | **Realistic 6-constraint warrant** | **~1.34 us** | **Yes (adds ~36 us Ed25519 verify on top)** |
+
+Three things to notice:
+
+1. **On pure policy evaluation, Tenuo runs roughly 3 to 4 times faster than Cedar's best published case and about 10 times faster than OPA.** This is partly because our constraint primitives (`Pattern`, `Range`, `Cidr`, `Subpath`, `UrlPattern`, `UrlSafe`) are tighter and more specialized than Cedar's general expression language or Rego's Datalog-style evaluation. It is not a claim we generalize: Cedar and OPA are more expressive policy languages and pay for that expressiveness in evaluation cost.
+2. **Tenuo additionally runs a full Ed25519 signature verification on every call** (~36 us on this hardware, tracking the `ed25519-dalek::verify_strict` primitive). Cedar and OPA do not: they assume the caller has been authenticated separately, typically via a network round-trip to an identity or session service. When you add a realistic external auth check to Cedar or OPA, the end-to-end authorization latency is usually comparable to or higher than Tenuo's all-in number.
+3. **The competitive point is not speed, it is what you get per microsecond.** Tenuo's ~36 us gives you local, offline, cryptographically self-proving authorization. Cedar's ~5 us gives you a local policy decision that still requires you to trust the caller through some other mechanism. Those are different products. The benchmark comparison is useful only to anchor the conversation in the same order of magnitude.
 
 ### Denial Performance
 
@@ -2069,13 +2097,13 @@ Two separate costs scale with delegation depth. Do not conflate them.
 | Chain Depth | Verification Time | Notes |
 |-------------|-------------------|-------|
 | 1 | **~41 us** | Single warrant: signature + TTL + root-trust + revocation cache lookup |
-| 4 | **~181 us** | Typical production chain (issuer → orchestrator → worker) fits here |
-| 8 | **~351 us** | |
-| 16 | **~794 us** | |
-| 32 | **~1.66 ms** | |
+| 4 | **~181 us** | Short chain (issuer → orchestrator → worker) |
+| 8 | **~351 us** | Multi-team delegation (platform → service owner → subagent → tool) |
+| 16 | **~794 us** | Deep multi-tenant fan-out with per-step attenuation |
+| 32 | **~1.66 ms** | Stress test territory |
 | 64 (`MAX_DELEGATION_DEPTH`) | **~3.24 ms** | Protocol ceiling |
 
-Marginal cost per additional link is roughly ~50 us on this hardware profile (dominated by the per-link Ed25519 check plus linkage/monotonicity validation). Most production deployments sit at depth 2–4, where verification cost stays well under half a millisecond.
+Marginal cost per additional link is roughly ~50 us on this hardware profile (dominated by the per-link Ed25519 check plus linkage/monotonicity validation). We observe production deployments settling in the **depth 4 to 12 range**: shallow chains (2–4) are common for single-team agents, but realistic multi-agent topologies — control plane → orchestrator → planner → researcher → retriever → tool, often with cross-team hand-offs — routinely reach 8 to 12. Verification cost across this band stays under ~0.6 ms per call, still an order of magnitude below typical network round-trips.
 
 **Chain construction** (`delegation_chain_depth_8` ≈ ~172 us for one root + eight attenuations ≈ ~19 us per `attenuate + build`) is a control-plane-side cost, paid when *minting* a delegated warrant rather than when handling a tool call. Listed here only so readers don't misread construction numbers as hot-path numbers.
 

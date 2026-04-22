@@ -1,6 +1,6 @@
 //! Benchmarks for Tenuo warrant operations and constraint types.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use std::collections::HashMap;
 use std::time::Duration;
 use tenuo::{
@@ -205,13 +205,28 @@ fn benchmark_constraint_evaluation(c: &mut Criterion) {
 /// loop over every constraint on the warrant. The delta between this and
 /// `warrant_authorize` is the cost of the Ed25519 PoP verify on the hot path.
 ///
-/// We sweep over constraint-set size to expose the per-constraint cost —
-/// useful for policy authors deciding whether stacking 10+ constraints on a
-/// capability is a performance concern (spoiler: it isn't).
+/// # Primitive ceiling: `constraints_N`
+///
+/// Sweeps 1/2/5/10 simple `Pattern` constraints on the happy path with stable
+/// inputs. This is a *best-case* number: only one constraint type, trivial
+/// prefix globs, no failure path. Useful for showing per-constraint marginal
+/// cost but *not* representative of a production warrant.
+///
+/// # Realistic mix: `mixed_allow` / `mixed_deny`
+///
+/// Six-constraint warrant reflecting a plausible production capability
+/// (one each of `Exact`, `Pattern`, `Range`, `Cidr`, `UrlPattern`, `Subpath`).
+/// Inputs are rotated across iterations via `iter_batched` so the regex/DNS
+/// caches can't fully warm on a single value pair. Both the allow path (all
+/// constraints match) and a deny path (one constraint fails) are measured.
+/// Cite these numbers, not `constraints_N`, when comparing against Cedar/OPA
+/// or quoting a representative policy-only cost.
 fn benchmark_constraint_authorize_no_crypto(c: &mut Criterion) {
     let keypair = SigningKey::generate();
 
     let mut group = c.benchmark_group("authorize_no_crypto");
+
+    // --- Primitive ceiling: sweep over simple Pattern constraints -----------
     for &n_constraints in &[1usize, 2, 5, 10] {
         let mut constraints_vec = Vec::with_capacity(n_constraints);
         let mut args = HashMap::with_capacity(n_constraints);
@@ -239,6 +254,190 @@ fn benchmark_constraint_authorize_no_crypto(c: &mut Criterion) {
             })
         });
     }
+
+    // --- Realistic mix: 6 distinct constraint types -------------------------
+    //
+    // Mirrors the shape of a plausible infra-ops capability: deploy-like
+    // operation with environment pinning, cluster/region glob, replica range,
+    // source-IP CIDR gate, callback URL pattern, and filesystem subpath.
+    let mixed_constraints = ConstraintSet::from_iter(vec![
+        ("environment".to_string(), Exact::new("production").into()),
+        (
+            "cluster".to_string(),
+            Pattern::new("us-west-*").unwrap().into(),
+        ),
+        (
+            "replicas".to_string(),
+            Range::new(Some(1.0), Some(100.0)).unwrap().into(),
+        ),
+        (
+            "source_ip".to_string(),
+            Cidr::new("10.0.0.0/8").unwrap().into(),
+        ),
+        (
+            "target_url".to_string(),
+            UrlPattern::new("https://api.example.com/v1/*")
+                .unwrap()
+                .into(),
+        ),
+        (
+            "file_path".to_string(),
+            Subpath::new("/data").unwrap().into(),
+        ),
+    ]);
+    let mixed_warrant = Warrant::builder()
+        .capability("deploy_service", mixed_constraints)
+        .ttl(Duration::from_secs(600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Small pool of valid argument bundles. Rotating across iterations keeps
+    // the regex engine and IP parser from caching a single hot pair.
+    let allow_pool: Vec<HashMap<String, ConstraintValue>> = vec![
+        HashMap::from([
+            (
+                "environment".to_string(),
+                ConstraintValue::String("production".to_string()),
+            ),
+            (
+                "cluster".to_string(),
+                ConstraintValue::String("us-west-2".to_string()),
+            ),
+            ("replicas".to_string(), ConstraintValue::Float(10.0)),
+            (
+                "source_ip".to_string(),
+                ConstraintValue::String("10.0.1.2".to_string()),
+            ),
+            (
+                "target_url".to_string(),
+                ConstraintValue::String("https://api.example.com/v1/users".to_string()),
+            ),
+            (
+                "file_path".to_string(),
+                ConstraintValue::String("/data/reports/q1.csv".to_string()),
+            ),
+        ]),
+        HashMap::from([
+            (
+                "environment".to_string(),
+                ConstraintValue::String("production".to_string()),
+            ),
+            (
+                "cluster".to_string(),
+                ConstraintValue::String("us-west-1".to_string()),
+            ),
+            ("replicas".to_string(), ConstraintValue::Float(50.0)),
+            (
+                "source_ip".to_string(),
+                ConstraintValue::String("10.42.99.17".to_string()),
+            ),
+            (
+                "target_url".to_string(),
+                ConstraintValue::String("https://api.example.com/v1/orders/123".to_string()),
+            ),
+            (
+                "file_path".to_string(),
+                ConstraintValue::String("/data/exports/2026/jan.json".to_string()),
+            ),
+        ]),
+        HashMap::from([
+            (
+                "environment".to_string(),
+                ConstraintValue::String("production".to_string()),
+            ),
+            (
+                "cluster".to_string(),
+                ConstraintValue::String("us-west-3".to_string()),
+            ),
+            ("replicas".to_string(), ConstraintValue::Float(1.0)),
+            (
+                "source_ip".to_string(),
+                ConstraintValue::String("10.200.0.1".to_string()),
+            ),
+            (
+                "target_url".to_string(),
+                ConstraintValue::String("https://api.example.com/v1/health".to_string()),
+            ),
+            (
+                "file_path".to_string(),
+                ConstraintValue::String("/data/logs/audit.log".to_string()),
+            ),
+        ]),
+    ];
+    let allow_pool_clone = allow_pool.clone();
+
+    group.bench_function("mixed_allow", |b| {
+        let mut idx = 0usize;
+        b.iter_batched(
+            || {
+                let args = allow_pool_clone[idx % allow_pool_clone.len()].clone();
+                idx = idx.wrapping_add(1);
+                args
+            },
+            |args| {
+                mixed_warrant
+                    .check_constraints(black_box("deploy_service"), black_box(&args))
+                    .unwrap()
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    // Deny path: same warrant, one constraint flipped to fail. We rotate which
+    // field fails so we don't always fail on the same index in BTreeMap order.
+    let deny_pool: Vec<HashMap<String, ConstraintValue>> = vec![
+        {
+            let mut a = allow_pool[0].clone();
+            a.insert(
+                "replicas".to_string(),
+                ConstraintValue::Float(500.0), // out of Range(1..100)
+            );
+            a
+        },
+        {
+            let mut a = allow_pool[1].clone();
+            a.insert(
+                "source_ip".to_string(),
+                ConstraintValue::String("192.168.1.1".to_string()), // outside 10.0.0.0/8
+            );
+            a
+        },
+        {
+            let mut a = allow_pool[2].clone();
+            a.insert(
+                "target_url".to_string(),
+                ConstraintValue::String("https://evil.example.com/v1/exfil".to_string()),
+            );
+            a
+        },
+        {
+            let mut a = allow_pool[0].clone();
+            a.insert(
+                "file_path".to_string(),
+                ConstraintValue::String("/etc/passwd".to_string()), // outside /data subpath
+            );
+            a
+        },
+    ];
+
+    group.bench_function("mixed_deny", |b| {
+        let mut idx = 0usize;
+        b.iter_batched(
+            || {
+                let args = deny_pool[idx % deny_pool.len()].clone();
+                idx = idx.wrapping_add(1);
+                args
+            },
+            |args| {
+                let result =
+                    mixed_warrant.check_constraints(black_box("deploy_service"), black_box(&args));
+                assert!(result.is_err());
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
     group.finish();
 }
 
@@ -308,7 +507,7 @@ fn benchmark_deep_delegation_chain(c: &mut Criterion) {
 /// attenuations), using a single keypair for simplicity. Returns the chain as
 /// `[root, level_1, level_2, ...]` ready to pass to `DataPlane::verify_chain`.
 fn build_chain(keypair: &SigningKey, depth: usize) -> Vec<Warrant> {
-    assert!(depth >= 1 && depth <= 64, "depth must be in [1, 64]");
+    assert!((1..=64).contains(&depth), "depth must be in [1, 64]");
     let mut chain = Vec::with_capacity(depth);
     let root = Warrant::builder()
         .capability("test", ConstraintSet::new())
@@ -340,7 +539,7 @@ fn benchmark_chain_verification(c: &mut Criterion) {
     data_plane.trust_issuer("root", keypair.public_key());
 
     let mut group = c.benchmark_group("chain_verify");
-    for &depth in &[1usize, 4, 8, 16, 32, 64] {
+    for &depth in &[1usize, 4, 8, 12, 16, 32, 64] {
         let chain = build_chain(&keypair, depth);
         group.bench_function(format!("depth_{}", depth), |b| {
             b.iter(|| data_plane.verify_chain(black_box(&chain)).unwrap())
