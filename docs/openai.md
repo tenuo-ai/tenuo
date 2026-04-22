@@ -5,8 +5,6 @@ description: Tool protection for OpenAI agents and the Agents SDK
 
 # Tenuo OpenAI Integration
 
-> **Status**: Implemented
-
 ## Overview
 
 Tenuo integrates with OpenAI's APIs using a **two-tier** protection model:

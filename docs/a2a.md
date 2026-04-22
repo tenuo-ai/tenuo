@@ -5,8 +5,6 @@ description: Warrant-based authorization for inter-agent communication
 
 # Tenuo A2A Integration
 
-> **Status**: Production Ready
-
 ## Overview
 
 Tenuo A2A adds **warrant-based authorization** to agent-to-agent communication. When Agent A delegates a task to Agent B, the warrant specifies exactly what Agent B is allowed to do.
@@ -287,7 +285,7 @@ Proof-of-Possession adds an additional security layer by requiring the client to
 **PoP is optional when:**
 - All agents run on trusted infrastructure (same data center, VPC)
 - Network isolation provides security (private network, mTLS)
-- Performance is critical and risk is low (microsecond latency matters)
+- Performance is critical and risk is low (every extra signature operation matters)
 
 **Never skip PoP when:**
 - Agents are on the public Internet
@@ -392,18 +390,12 @@ server = A2AServer(
 
 ### Performance Impact
 
-PoP adds cryptographic overhead:
+Enabling PoP adds two extra Ed25519 signature operations per request on top of warrant verification:
 
-```
-Without PoP:
-  - Warrant verification: ~0.5ms (Ed25519 signature check)
+- **Without PoP:** warrant verification only.
+- **With PoP:** warrant verification + client-side PoP signing + server-side PoP verification.
 
-With PoP:
-  - Warrant verification: ~0.5ms
-  - PoP signature generation (client): ~0.3ms
-  - PoP signature verification (server): ~0.3ms
-  - Total overhead: ~1.1ms per request
-```
+All three operations are local and offline. See [Performance Benchmarks](./api-reference#performance-benchmarks) for measured timings.
 
 **Recommendation:** Always use PoP in production unless you have network-level security (mTLS + VPC).
 

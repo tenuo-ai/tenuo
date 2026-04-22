@@ -7,7 +7,7 @@ description: Why Tenuo? Problem/solution, threat model, and core invariants
 
 This page explains the problem Tenuo solves, the security model it enforces, and how it fits into real deployments. If you are new to Tenuo, start here.
 
-For a visual walkthrough, see the [Demo](./demo.html), [Architecture Infographic](./architecture-infographic.html), or try the [Explorer Playground](https://tenuo.ai/explorer/).
+For a visual walkthrough, see the [Demo](./demo.html) or try the [Explorer Playground](https://tenuo.ai/explorer/).
 
 ## The Problem
 

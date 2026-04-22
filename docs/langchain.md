@@ -5,10 +5,6 @@ description: Tool protection for LangChain agents
 
 # Tenuo LangChain Integration
 
-> **Status**: Implemented  
-
-**Visual guide**: See the [LangChain Infographic](./langchain-infographic.html) for where Tenuo fits in your agent stack.
-
 ## Overview
 
 Tenuo integrates with LangChain using a **zero-intrusion** pattern:

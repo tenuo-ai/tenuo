@@ -326,7 +326,7 @@ plugins:
 | Orchestrator budget | Application | In-memory | Task-level budgets |
 | Gateway rate limiting | Infrastructure | Yes | Hard call limits |
 
-**Design principle:** Tenuo handles **authorization** (what CAN be done). Your infrastructure handles **rate limiting** (how MANY times). This keeps warrant verification fast (~27μs), offline, and stateless.
+**Design principle:** Tenuo handles **authorization** (what CAN be done). Your infrastructure handles **rate limiting** (how MANY times). This keeps warrant verification local, offline, and stateless. See [Performance Benchmarks](./api-reference#performance-benchmarks) for measured timings.
 
 ---
 

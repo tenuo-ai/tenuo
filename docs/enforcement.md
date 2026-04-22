@@ -100,7 +100,7 @@ One Tenuo instance protects many backend services. Plugs into existing service m
                                     └─────────────────────────┘
 ```
 
-Authorization is stateless (~27μs) with no external dependencies. Tenuo adds negligible latency to the request path.
+Authorization is stateless and local: no runtime network call, no shared database, no token introspection endpoint. See [Performance Benchmarks](./api-reference#performance-benchmarks) for measured timings.
 
 ### MCP Proxy: Securing the Model Context Protocol
 
@@ -165,7 +165,7 @@ All security-critical logic runs in a single Rust library (`tenuo_core`), compil
 | **Chain validation** | Full delegation chain verified from root to leaf |
 | **Attenuation enforcement** | Child warrants cannot exceed parent's scope |
 
-Authorization (signature + expiration + tool lookup) takes ~27μs, with **zero external dependencies**. Constraint evaluation adds variable time depending on complexity. No database, no auth server, no token introspection endpoint. A warrant is entirely self-contained.
+Authorization (signature + expiration + tool lookup) runs locally with no runtime external dependencies. Constraint evaluation adds variable time depending on complexity. No database, no auth server, no token introspection endpoint. A warrant is entirely self-contained. See [Performance Benchmarks](./api-reference#performance-benchmarks) for measured timings.
 
 ### What's in the Python Layer (Defense in Depth)
 

@@ -25,7 +25,7 @@ This guide covers how to deploy and operate Tenuo in Kubernetes.
 │   │   warrants   │      │  │ • Verifies      │  │ • LangGraph   │  │    │
 │   │ • Holds root │      │  │   warrants      │  │ • Your code   │  │    │
 │   │   key        │      │  │ • Checks PoP    │  │               │  │    │
-│   │              │      │  │ • ~27μs         │  │ • Holds       │  │    │
+│   │              │      │  │ • Offline       │  │ • Holds       │  │    │
 │   │  (you build  │      │  │                 │  │   keypair     │  │    │
 │   │   this)      │      │  │(tenuo/authorizer)│ │               │  │    │
 │   └──────────────┘      │  └─────────────────┘  └───────────────┘  │    │
