@@ -5,8 +5,6 @@ description: Secure LangGraph workflows with Tenuo
 
 # Tenuo LangGraph Integration
 
-> **Status**: Implemented (v0.1)
-
 ---
 
 ## Why Tenuo for LangGraph?

@@ -5,8 +5,6 @@ description: Tool protection for CrewAI multi-agent workflows
 
 # Tenuo CrewAI Integration
 
-> **Status**: Implemented (Tier 1 + Tier 2 + Delegation + Crew/Flow)
-
 ## Overview
 
 Tenuo integrates with [CrewAI](https://crewai.com) using a **two-tier** protection model designed for multi-agent workflows:

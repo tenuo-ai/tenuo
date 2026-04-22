@@ -5,8 +5,6 @@ description: Zero-boilerplate API protection for FastAPI
 
 # Tenuo FastAPI Integration
 
-> **Status**: Implemented (v0.1)
-
 ---
 
 ## When to Use This

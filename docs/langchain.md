@@ -5,8 +5,6 @@ description: Tool protection for LangChain agents
 
 # Tenuo LangChain Integration
 
-> **Status**: Implemented
-
 ## Overview
 
 Tenuo integrates with LangChain using a **zero-intrusion** pattern:

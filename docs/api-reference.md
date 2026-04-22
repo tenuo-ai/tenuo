@@ -1994,32 +1994,37 @@ def process_warrant(w: AnyWarrant) -> None:
 
 ## Performance Benchmarks
 
-> **TL;DR:** Full authorization (verify + constraints + PoP) takes ~55us. Denials fail in ~200ns. Tenuo will never be your bottleneck.
+> **TL;DR:** A single warrant verification runs in ~27us; the full authorization path (verify + constraint evaluation + PoP check) runs in ~55us on the hardware profile below. Most denials return in hundreds of nanoseconds; cryptographic denials (invalid PoP signature) take ~109us. Numbers are Rust-side; Python callers pay an additional PyO3 boundary cost on top.
 
-Benchmarks measure the core operations using [Criterion.rs](https://github.com/bheisler/criterion.rs) on Apple M3 Max. These are microbenchmarks measuring individual Rust operations in isolation.
+### Methodology
+
+- **Tool**: [Criterion.rs](https://github.com/bheisler/criterion.rs) microbenchmarks measuring individual Rust operations in isolation. Throughput under contention and end-to-end per-request latency in your agent process are not measured here.
+- **Hardware**: Apple M3 Max (ARM64), single-threaded. x86 cloud VMs and noisy-neighbor environments will show different numbers; always re-run on your target hardware before quoting.
+- **Source of truth**: [`warrant_benchmarks.rs`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-core/benches/warrant_benchmarks.rs). Numbers below are the reference run associated with this release; expect drift commit-to-commit.
+- **Python users**: these are Rust-core numbers. The `tenuo` Python SDK adds PyO3 marshalling on every call; measure your actual decorator or adapter path, not these isolated ops, when capacity-planning.
 
 ### The Hot Path (Verification + Authorization)
 
-This runs on every single tool call.
+This runs on every tool call. The `~27us` figure used elsewhere in our docs refers to `warrant_verify` alone; the full authorization path is roughly twice that.
 
 | Operation | Time (mean) | Description |
 |-----------|-------------|-------------|
-| `warrant_verify` | **26.6 us** | Full crypto signature check + TTL validation |
-| `warrant_authorize` | **28.0 us** | Constraint logic + Proof-of-Possession verification |
-| **Total Overhead** | **~54.6 us** | End-to-end authorization latency |
+| `warrant_verify` | **26.6 us** | Ed25519 signature check + TTL validation |
+| `warrant_authorize` | **28.0 us** | Constraint evaluation + PoP verification (benchmark uses 2 Pattern constraints; more constraints add roughly sub-μs each) |
+| **Total** | **~54.6 us** | Verify + authorize with PoP, back-to-back |
 
 ### Denial Performance
 
-Fast denials prevent DoS attacks. If authorization failures are slow, attackers can exhaust resources with invalid requests.
+Cheap denials matter because they bound the cost of adversarial traffic. Three of the four denial paths are sub-microsecond; the fourth (a well-formed but cryptographically invalid PoP signature) runs the full Ed25519 verification before failing and costs ~109us — the same order of magnitude as a successful authorization.
 
 | Denial Type | Time (mean) | Code Path |
 |-------------|-------------|-----------|
-| Wrong tool | **114 ns** | Early rejection (tool name check) |
+| Wrong tool | **114 ns** | Early rejection (tool name lookup) |
 | Constraint violation | **192 ns** | Pattern matching failure |
-| Missing PoP | **192 ns** | Missing signature check |
-| Invalid PoP | **109 us** | Cryptographic verification failure |
+| Missing PoP | **192 ns** | Absent-signature check |
+| Invalid PoP | **109 us** | Full signature verification, then reject |
 
-Most attacks fail in sub-microsecond time, making DoS via invalid requests impractical.
+Cheap denials prevent amplification from unauthenticated or malformed requests. An attacker who can forge well-formed PoP candidates pays authorization-level cost per attempt, so rate limiting remains your primary defense against crypto-grinding DoS.
 
 ### Control Plane (Issuance)
 
@@ -2038,16 +2043,16 @@ Most attacks fail in sub-microsecond time, making DoS via invalid requests impra
 | `wire_encode_base64` | **1.42 us** | CBOR + Base64 encoding |
 | `wire_decode_base64` | **8.85 us** | Base64 + CBOR decoding |
 
-### Delegation Depth
+### Delegation Depth (Chain Construction)
 
-Performance scales linearly with chain depth.
+This benchmark measures the cost of **building** a chain (one root + N attenuations), not of verifying a pre-built chain. It's a proxy for issuance cost at depth, not hot-path authorization cost.
 
 | Chain Depth | Measured Time | Notes |
 |-------------|---------------|-------|
-| 1 (Root) | ~27 us | Single warrant verification |
-| 8 | ~251 us | Benchmark-tested depth |
+| 1 (Root) | ~27 us | Root warrant creation + verification |
+| 8 | ~251 us | Root + 8 attenuations (~28us per additional level) |
 
-> The protocol allows up to 64 delegation levels (`MAX_DELEGATION_DEPTH`). The benchmark tests depth 8 as a representative worst case (~31us per additional level).
+The protocol allows up to 64 delegation levels (`MAX_DELEGATION_DEPTH`). Hot-path verification of a pre-built chain is dominated by per-link signature checks at roughly `warrant_verify` cost per link; a dedicated chain-verify benchmark is planned.
 
 ### Run It Yourself
 

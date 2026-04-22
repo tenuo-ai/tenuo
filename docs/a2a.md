@@ -5,8 +5,6 @@ description: Warrant-based authorization for inter-agent communication
 
 # Tenuo A2A Integration
 
-> **Status**: Production Ready
-
 ## Overview
 
 Tenuo A2A adds **warrant-based authorization** to agent-to-agent communication. When Agent A delegates a task to Agent B, the warrant specifies exactly what Agent B is allowed to do.
