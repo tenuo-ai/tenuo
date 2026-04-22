@@ -548,6 +548,165 @@ fn benchmark_chain_verification(c: &mut Criterion) {
     group.finish();
 }
 
+/// Prototype: verifier-side cache of verified warrants, keyed on `WarrantId`.
+///
+/// Models the highest-leverage optimization available to us today at deeper
+/// chain depths: once a gateway or authorizer has verified a warrant's
+/// signature, it can remember that result (up to the warrant's own `exp`) and
+/// skip the Ed25519 check on subsequent presentations.
+///
+/// This is deliberately NOT a production implementation. It has no revocation
+/// invalidation, no size bound, no persistence, and no cross-process sharing.
+/// It exists solely to measure the ceiling of what cache-aware chain
+/// verification could achieve, so we can decide whether the complexity is
+/// worth shipping before touching the live `DataPlane`.
+///
+/// Caveats for anyone lifting this into production:
+///
+/// 1. Revocation invalidation must hook a real revocation event stream (or
+///    accept a bounded staleness window) and evict cached entries.
+/// 2. Memory must be bounded: LRU or TTL-wheel sized to the working set.
+/// 3. Cross-process sharing: each authorizer instance starts cold; a shared
+///    cache (e.g. Redis) amortizes but adds its own trust/latency profile.
+/// 4. Cache only the *signature* verification result. Authorization depends
+///    on per-call tool name + args + PoP and must be evaluated fresh.
+struct CachedChainVerifier {
+    trusted_roots: Vec<tenuo::crypto::PublicKey>,
+    /// `warrant_id -> expires_at (unix seconds)`. A present-and-not-expired
+    /// entry means: we already verified this warrant's signature, safe to
+    /// short-circuit.
+    cache: HashMap<tenuo::warrant::WarrantId, u64>,
+}
+
+impl CachedChainVerifier {
+    fn new(root: &tenuo::crypto::PublicKey) -> Self {
+        Self {
+            trusted_roots: vec![root.clone()],
+            cache: HashMap::new(),
+        }
+    }
+
+    fn preload(&mut self, w: &Warrant) {
+        self.cache
+            .insert(w.id().clone(), w.expires_at().timestamp() as u64);
+    }
+
+    fn clone_for_bench(&self) -> Self {
+        Self {
+            trusted_roots: self.trusted_roots.clone(),
+            cache: self.cache.clone(),
+        }
+    }
+
+    fn verify_chain(&mut self, chain: &[Warrant], now_secs: u64) -> Result<(), &'static str> {
+        if chain.is_empty() {
+            return Err("empty chain");
+        }
+        let root = &chain[0];
+        if !self.trusted_roots.iter().any(|k| k == root.issuer()) {
+            return Err("untrusted root");
+        }
+        for i in 0..chain.len() {
+            let w = &chain[i];
+            let expected_issuer = if i == 0 {
+                w.issuer()
+            } else {
+                chain[i - 1].authorized_holder()
+            };
+            if w.issuer() != expected_issuer {
+                return Err("linkage broken");
+            }
+            let cached_ok = self
+                .cache
+                .get(w.id())
+                .map(|&exp| exp > now_secs)
+                .unwrap_or(false);
+            if cached_ok {
+                continue;
+            }
+            w.verify(expected_issuer).map_err(|_| "verify failed")?;
+            self.cache
+                .insert(w.id().clone(), w.expires_at().timestamp() as u64);
+        }
+        Ok(())
+    }
+}
+
+/// Measure the ceiling of partial chain caching at depth 12 (the upper end of
+/// the realistic production range per `api-reference.md`). Three scenarios:
+///
+/// - `cold` — fresh verifier every iteration. Equivalent work to
+///   `chain_verify/depth_12`; sanity-checks that the prototype's structural
+///   checks match `DataPlane::verify_chain` when nothing is cached.
+/// - `warm_all` — every warrant in the chain has been pre-verified. This is
+///   the absolute floor: only root-trust + per-link linkage checks run.
+/// - `warm_leaf_miss` — the realistic org-topology case. First 10 of 12
+///   warrants are cached (stable delegation topology); the last 2 (e.g.
+///   session warrant + per-call warrant) still require fresh signature
+///   verification.
+fn benchmark_chain_verification_cached(c: &mut Criterion) {
+    let keypair = SigningKey::generate();
+    let root_pk = keypair.public_key();
+
+    const DEPTH: usize = 12;
+    let chain = build_chain(&keypair, DEPTH);
+    // Use a synthetic "now" well before any warrant expires so every cache
+    // lookup in the warm scenarios hits. The benched chains all use 3600s TTLs.
+    let now_secs = chain[0].expires_at().timestamp() as u64 - 1800;
+
+    let mut group = c.benchmark_group("chain_verify_cached");
+
+    group.bench_function("cold", |b| {
+        b.iter_batched(
+            || CachedChainVerifier::new(&root_pk),
+            |mut v| {
+                v.verify_chain(black_box(&chain), black_box(now_secs))
+                    .unwrap()
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    let warm_all = {
+        let mut v = CachedChainVerifier::new(&root_pk);
+        for w in &chain {
+            v.preload(w);
+        }
+        v
+    };
+    group.bench_function("warm_all", |b| {
+        let mut v = warm_all.clone_for_bench();
+        b.iter(|| {
+            v.verify_chain(black_box(&chain), black_box(now_secs))
+                .unwrap()
+        })
+    });
+
+    let warm_leaf_miss = {
+        let mut v = CachedChainVerifier::new(&root_pk);
+        for w in &chain[..DEPTH - 2] {
+            v.preload(w);
+        }
+        v
+    };
+    group.bench_function("warm_leaf_miss", |b| {
+        // Each iteration needs the "first 10 cached, last 2 cold" starting
+        // state, so we clone the pre-warmed cache once per batch and let the
+        // benched call insert the leaf entries it verifies. The clone cost is
+        // amortized across the batch and doesn't contaminate the measurement.
+        b.iter_batched(
+            || warm_leaf_miss.clone_for_bench(),
+            |mut v| {
+                v.verify_chain(black_box(&chain), black_box(now_secs))
+                    .unwrap()
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    group.finish();
+}
+
 fn benchmark_authorization_denials(c: &mut Criterion) {
     let keypair = SigningKey::generate();
     let wrong_keypair = SigningKey::generate();
@@ -812,6 +971,7 @@ criterion_group!(
     benchmark_wire_encoding,
     benchmark_deep_delegation_chain,
     benchmark_chain_verification,
+    benchmark_chain_verification_cached,
     benchmark_constraint_evaluation,
     benchmark_constraint_authorize_no_crypto,
     benchmark_cidr_operations,
