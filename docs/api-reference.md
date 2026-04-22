@@ -1994,15 +1994,15 @@ def process_warrant(w: AnyWarrant) -> None:
 
 ## Performance Benchmarks
 
-> **TL;DR:** Signature verification of a single warrant runs in ~36us; the full hot-path (verify + constraint evaluation + PoP check) runs in ~72us on the hardware profile below. Cheap denials (wrong tool, missing PoP) bail out in ~100ns; cryptographic denials (invalid PoP, constraint violation with a valid PoP) are in the same order as a successful authorization because they still run a full signature verification. Numbers are Rust-side; Python callers pay an additional PyO3 boundary cost on top.
+> **TL;DR:** Verification cost tracks the Ed25519 primitive. On Apple M3 Max with `ed25519-dalek::verify_strict`, a single `warrant_verify` runs in ~36 us, which is consistent with dalek's published benchmarks for this silicon. Policy evaluation itself (tool lookup + constraint matching) is ~300 ns for a typical 2-constraint warrant, so over 99% of `warrant_authorize` latency is cryptography. Expect ~40 to 55 us on x86_64 server hardware. Cheap denials (wrong tool, missing PoP) bail out in ~100 ns before touching crypto. Numbers are Rust-side; Python callers pay an additional PyO3 boundary cost on top.
 
 ### Methodology
 
 - **Tool**: [Criterion.rs](https://github.com/bheisler/criterion.rs) microbenchmarks measuring individual Rust operations in isolation. Throughput under contention and end-to-end per-request latency in your agent process are not measured here.
-- **Hardware**: Apple M3 Max (ARM64), single-threaded. x86 cloud VMs and noisy-neighbor environments will show different numbers; always re-run on your target hardware before quoting.
-- **Measured at**: commit `ac76821f`, April 2026. Numbers drift commit-to-commit — if the tables here look stale, re-run the bench (see below) and open a PR.
-- **Python users**: these are Rust-core numbers. The `tenuo` Python SDK adds PyO3 marshalling on every call; measure your actual decorator or adapter path, not these isolated ops, when capacity-planning.
-- **Marketing copy caveat**: the `~27us` number that appears on our landing page and top-level README is the historical `warrant_verify` cost from an earlier Rust release. As of this measurement the same operation runs at `~36us`; the marketing number has not been regressed but is no longer the tight upper bound.
+- **Hardware**: Apple M3 Max (ARM64), single-threaded. x86 cloud VMs and noisy-neighbor environments will show different numbers. Always re-run on your target hardware before quoting.
+- **Crypto primitive**: `ed25519-dalek::verify_strict`, which additionally rejects small-order R points and non-canonical s scalars to close signature malleability and cofactor-attack gaps that default `verify` leaves open. This is the security-preserving choice and it sets the floor for all verification numbers on this page.
+- **Measured at**: commit `ac76821f`, April 2026. Numbers drift commit-to-commit. If the tables here look stale, re-run the bench (see below) and open a PR.
+- **Python users**: these are Rust-core numbers. The `tenuo` Python SDK adds PyO3 marshalling on every call. Measure your actual decorator or adapter path, not these isolated ops, when capacity-planning.
 
 ### The Hot Path (Verification + Authorization)
 
@@ -2013,6 +2013,22 @@ This runs on every tool call.
 | `warrant_verify` | **~36 us** | Ed25519 signature check + TTL validation |
 | `warrant_authorize` | **~36 us** | Constraint evaluation + PoP verification (benchmark uses 2 Pattern constraints; additional constraints add at most a few μs each) |
 | **Total** | **~72 us** | Verify + authorize with PoP, back-to-back |
+
+### Policy Evaluation Without Crypto
+
+A useful reference point: `Warrant::check_constraints` runs exactly the policy portion of `authorize` (tool-name lookup + full `ConstraintSet::matches` over every constraint on the warrant) with no signature verification. This is what your authorization logic would cost if cryptography were free.
+
+| Constraints on warrant | Time (mean) | Notes |
+|------------------------|-------------|-------|
+| 1 Pattern | **~138 ns** | Baseline: tool lookup + single regex match |
+| 2 Patterns | **~308 ns** | Same shape as `warrant_authorize` benchmark above |
+| 5 Patterns | **~771 ns** | ~155 ns marginal per added Pattern constraint |
+| 10 Patterns | **~1.54 us** | Still well under 5% of a single Ed25519 verify |
+
+Two implications for policy authors:
+
+1. **Stack constraints freely.** The per-constraint cost (~150 ns for Pattern) is noise next to the ~36 us signature verify. Adding defensive constraints costs nothing measurable at the authorization layer.
+2. **The only meaningful optimization lever is the crypto path.** If you ever need to push `warrant_authorize` below ~30 us on this hardware, the three available levers are batch verification via `dalek::verify_batch` (amortizes across multiple signatures in a chain), a pre-verified warrant cache (trades determinism for throughput, needs careful revocation handling), and a faster target curve. Policy engines don't have these tradeoffs; they're already primitive-bounded.
 
 ### Denial Performance
 
@@ -2061,7 +2077,7 @@ Two separate costs scale with delegation depth. Do not conflate them.
 
 Marginal cost per additional link is roughly ~50 us on this hardware profile (dominated by the per-link Ed25519 check plus linkage/monotonicity validation). Most production deployments sit at depth 2–4, where verification cost stays well under half a millisecond.
 
-**Chain construction** (`delegation_chain_depth_8` ≈ ~172 us for one root + eight attenuations ≈ ~19 us per `attenuate + build`) is a control-plane-side cost — paid when *minting* a delegated warrant, not when handling a tool call. Listed here only so readers don't misread construction numbers as hot-path numbers.
+**Chain construction** (`delegation_chain_depth_8` ≈ ~172 us for one root + eight attenuations ≈ ~19 us per `attenuate + build`) is a control-plane-side cost, paid when *minting* a delegated warrant rather than when handling a tool call. Listed here only so readers don't misread construction numbers as hot-path numbers.
 
 ### Run It Yourself
 

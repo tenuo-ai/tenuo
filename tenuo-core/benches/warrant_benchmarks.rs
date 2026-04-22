@@ -198,6 +198,50 @@ fn benchmark_constraint_evaluation(c: &mut Criterion) {
     group.finish();
 }
 
+/// Measure the authorize path with crypto stripped out.
+///
+/// `check_constraints` performs exactly what `authorize` does *minus* PoP
+/// signature verification: tool-name lookup + full `ConstraintSet::matches`
+/// loop over every constraint on the warrant. The delta between this and
+/// `warrant_authorize` is the cost of the Ed25519 PoP verify on the hot path.
+///
+/// We sweep over constraint-set size to expose the per-constraint cost —
+/// useful for policy authors deciding whether stacking 10+ constraints on a
+/// capability is a performance concern (spoiler: it isn't).
+fn benchmark_constraint_authorize_no_crypto(c: &mut Criterion) {
+    let keypair = SigningKey::generate();
+
+    let mut group = c.benchmark_group("authorize_no_crypto");
+    for &n_constraints in &[1usize, 2, 5, 10] {
+        let mut constraints_vec = Vec::with_capacity(n_constraints);
+        let mut args = HashMap::with_capacity(n_constraints);
+        for i in 0..n_constraints {
+            let field = format!("field_{}", i);
+            let pattern = format!("value-{}-*", i);
+            let matching = format!("value-{}-ok", i);
+            constraints_vec.push((field.clone(), Pattern::new(&pattern).unwrap().into()));
+            args.insert(field, ConstraintValue::String(matching));
+        }
+        let constraints = ConstraintSet::from_iter(constraints_vec);
+
+        let warrant = Warrant::builder()
+            .capability("test_tool", constraints)
+            .ttl(Duration::from_secs(600))
+            .holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+
+        group.bench_function(format!("constraints_{}", n_constraints), |b| {
+            b.iter(|| {
+                warrant
+                    .check_constraints(black_box("test_tool"), black_box(&args))
+                    .unwrap()
+            })
+        });
+    }
+    group.finish();
+}
+
 fn benchmark_wire_encoding(c: &mut Criterion) {
     let keypair = SigningKey::generate();
     let constraints = ConstraintSet::from_iter(vec![
@@ -570,6 +614,7 @@ criterion_group!(
     benchmark_deep_delegation_chain,
     benchmark_chain_verification,
     benchmark_constraint_evaluation,
+    benchmark_constraint_authorize_no_crypto,
     benchmark_cidr_operations,
     benchmark_url_pattern_operations,
     benchmark_subpath_operations,
