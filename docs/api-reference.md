@@ -1994,54 +1994,55 @@ def process_warrant(w: AnyWarrant) -> None:
 
 ## Performance Benchmarks
 
-> **TL;DR:** A single warrant verification runs in ~27us; the full authorization path (verify + constraint evaluation + PoP check) runs in ~55us on the hardware profile below. Most denials return in hundreds of nanoseconds; cryptographic denials (invalid PoP signature) take ~109us. Numbers are Rust-side; Python callers pay an additional PyO3 boundary cost on top.
+> **TL;DR:** Signature verification of a single warrant runs in ~36us; the full hot-path (verify + constraint evaluation + PoP check) runs in ~72us on the hardware profile below. Cheap denials (wrong tool, missing PoP) bail out in ~100ns; cryptographic denials (invalid PoP, constraint violation with a valid PoP) are in the same order as a successful authorization because they still run a full signature verification. Numbers are Rust-side; Python callers pay an additional PyO3 boundary cost on top.
 
 ### Methodology
 
 - **Tool**: [Criterion.rs](https://github.com/bheisler/criterion.rs) microbenchmarks measuring individual Rust operations in isolation. Throughput under contention and end-to-end per-request latency in your agent process are not measured here.
 - **Hardware**: Apple M3 Max (ARM64), single-threaded. x86 cloud VMs and noisy-neighbor environments will show different numbers; always re-run on your target hardware before quoting.
-- **Source of truth**: [`warrant_benchmarks.rs`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-core/benches/warrant_benchmarks.rs). Numbers below are the reference run associated with this release; expect drift commit-to-commit.
+- **Measured at**: commit `ac76821f`, April 2026. Numbers drift commit-to-commit — if the tables here look stale, re-run the bench (see below) and open a PR.
 - **Python users**: these are Rust-core numbers. The `tenuo` Python SDK adds PyO3 marshalling on every call; measure your actual decorator or adapter path, not these isolated ops, when capacity-planning.
+- **Marketing copy caveat**: the `~27us` number that appears on our landing page and top-level README is the historical `warrant_verify` cost from an earlier Rust release. As of this measurement the same operation runs at `~36us`; the marketing number has not been regressed but is no longer the tight upper bound.
 
 ### The Hot Path (Verification + Authorization)
 
-This runs on every tool call. The `~27us` figure used elsewhere in our docs refers to `warrant_verify` alone; the full authorization path is roughly twice that.
+This runs on every tool call.
 
 | Operation | Time (mean) | Description |
 |-----------|-------------|-------------|
-| `warrant_verify` | **26.6 us** | Ed25519 signature check + TTL validation |
-| `warrant_authorize` | **28.0 us** | Constraint evaluation + PoP verification (benchmark uses 2 Pattern constraints; more constraints add roughly sub-μs each) |
-| **Total** | **~54.6 us** | Verify + authorize with PoP, back-to-back |
+| `warrant_verify` | **~36 us** | Ed25519 signature check + TTL validation |
+| `warrant_authorize` | **~36 us** | Constraint evaluation + PoP verification (benchmark uses 2 Pattern constraints; additional constraints add at most a few μs each) |
+| **Total** | **~72 us** | Verify + authorize with PoP, back-to-back |
 
 ### Denial Performance
 
-Cheap denials matter because they bound the cost of adversarial traffic. Three of the four denial paths are sub-microsecond; the fourth (a well-formed but cryptographically invalid PoP signature) runs the full Ed25519 verification before failing and costs ~109us — the same order of magnitude as a successful authorization.
+Cheap denials matter because they bound the cost of adversarial traffic. Two of the four denial paths bail before touching crypto; the other two run a full signature verification first and therefore cost roughly the same as a successful authorization.
 
 | Denial Type | Time (mean) | Code Path |
 |-------------|-------------|-----------|
-| Wrong tool | **114 ns** | Early rejection (tool name lookup) |
-| Constraint violation | **192 ns** | Pattern matching failure |
-| Missing PoP | **192 ns** | Absent-signature check |
-| Invalid PoP | **109 us** | Full signature verification, then reject |
+| Wrong tool | **~105 ns** | Early rejection on tool name lookup |
+| Missing PoP | **~61 ns** | Absent-signature short-circuit |
+| Constraint violation (valid PoP) | **~54 us** | Full PoP verify, then constraint match fails |
+| Invalid PoP | **~180 us** | Full signature verification path, then reject |
 
-Cheap denials prevent amplification from unauthenticated or malformed requests. An attacker who can forge well-formed PoP candidates pays authorization-level cost per attempt, so rate limiting remains your primary defense against crypto-grinding DoS.
+Unauthenticated or malformed requests fail almost for free. An attacker who can forge well-formed PoP candidates pays authorization-level cost per attempt, so network-layer rate limiting remains your primary defense against crypto-grinding DoS.
 
 ### Control Plane (Issuance)
 
 | Operation | Time (mean) | Description |
 |-----------|-------------|-------------|
-| `warrant_create_minimal` | **13.5 us** | Ed25519 signing (minimal warrant) |
-| `warrant_create_with_constraints` | **15.5 us** | Warrant with Pattern + Range constraints |
-| `warrant_attenuate` | **30.8 us** | Parent verification + child signing |
+| `warrant_create_minimal` | **~17 us** | Ed25519 signing (minimal warrant) |
+| `warrant_create_with_constraints` | **~20 us** | Warrant with Pattern + Range constraints |
+| `warrant_attenuate` | **~18 us** | Parent verification + child signing |
 
 ### Wire Format
 
 | Operation | Time (mean) | Description |
 |-----------|-------------|-------------|
-| `wire_encode` | **1.12 us** | Serialization to CBOR binary format |
-| `wire_decode` | **8.53 us** | Deserialization from CBOR |
-| `wire_encode_base64` | **1.42 us** | CBOR + Base64 encoding |
-| `wire_decode_base64` | **8.85 us** | Base64 + CBOR decoding |
+| `wire_encode` | **~161 ns** | Serialization to CBOR binary format |
+| `wire_decode` | **~44 us** | Deserialization from CBOR (includes canonicalization checks) |
+| `wire_encode_base64` | **~300 ns** | CBOR + Base64 encoding |
+| `wire_decode_base64` | **~47 us** | Base64 + CBOR decoding |
 
 ### Delegation Depth
 
@@ -2051,16 +2052,16 @@ Two separate costs scale with delegation depth. Do not conflate them.
 
 | Chain Depth | Verification Time | Notes |
 |-------------|-------------------|-------|
-| 1 | ~38 us | Single warrant: signature + TTL + root-trust + revocation cache lookup |
-| 4 | ~186 us | Typical production chain (issuer → orchestrator → worker) fits here |
-| 8 | ~408 us | |
-| 16 | ~771 us | |
-| 32 | ~1.63 ms | |
-| 64 (`MAX_DELEGATION_DEPTH`) | ~3.68 ms | Protocol ceiling |
+| 1 | **~41 us** | Single warrant: signature + TTL + root-trust + revocation cache lookup |
+| 4 | **~181 us** | Typical production chain (issuer → orchestrator → worker) fits here |
+| 8 | **~351 us** | |
+| 16 | **~794 us** | |
+| 32 | **~1.66 ms** | |
+| 64 (`MAX_DELEGATION_DEPTH`) | **~3.24 ms** | Protocol ceiling |
 
-Marginal cost per additional link is roughly ~55 us on this hardware profile (dominated by the per-link Ed25519 check plus linkage/monotonicity validation). Most production deployments sit at depth 2–4, where verification cost is well under half a millisecond.
+Marginal cost per additional link is roughly ~50 us on this hardware profile (dominated by the per-link Ed25519 check plus linkage/monotonicity validation). Most production deployments sit at depth 2–4, where verification cost stays well under half a millisecond.
 
-**Chain construction** (`delegation_chain_depth_8` ≈ 251 us for one root + eight attenuations ≈ ~28 us per `attenuate + build`) is a control-plane-side cost — paid when *minting* a delegated warrant, not when handling a tool call. Mentioned here only so readers don't misread construction numbers as hot-path numbers.
+**Chain construction** (`delegation_chain_depth_8` ≈ ~172 us for one root + eight attenuations ≈ ~19 us per `attenuate + build`) is a control-plane-side cost — paid when *minting* a delegated warrant, not when handling a tool call. Listed here only so readers don't misread construction numbers as hot-path numbers.
 
 ### Run It Yourself
 
