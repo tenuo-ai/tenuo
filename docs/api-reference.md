@@ -2103,7 +2103,7 @@ Two separate costs scale with delegation depth. Do not conflate them.
 | 32 | **~1.66 ms** | Stress test territory |
 | 64 (`MAX_DELEGATION_DEPTH`) | **~3.24 ms** | Protocol ceiling |
 
-Marginal cost per additional link is roughly ~50 us on this hardware profile (dominated by the per-link Ed25519 check plus linkage/monotonicity validation). We observe production deployments settling in the **depth 4 to 12 range**: shallow chains (2–4) are common for single-team agents, but realistic multi-agent topologies — control plane → orchestrator → planner → researcher → retriever → tool, often with cross-team hand-offs — routinely reach 8 to 12. Verification cost across this band stays under ~0.6 ms per call, still an order of magnitude below typical network round-trips.
+Marginal cost per additional link is roughly ~50 us on this hardware profile (dominated by the per-link Ed25519 check plus linkage/monotonicity validation). We observe production deployments settling in the **depth 4 to 12 range**. Shallow chains (2 to 4) are common for single-team agents, but realistic multi-agent topologies routinely reach 8 to 12: control plane to orchestrator to planner to researcher to retriever to tool, often with cross-team hand-offs along the way. Verification cost across this band stays under ~0.6 ms per call, still an order of magnitude below typical network round-trips.
 
 **Chain construction** (`delegation_chain_depth_8` ≈ ~172 us for one root + eight attenuations ≈ ~19 us per `attenuate + build`) is a control-plane-side cost, paid when *minting* a delegated warrant rather than when handling a tool call. Listed here only so readers don't misread construction numbers as hot-path numbers.
 
