@@ -730,8 +730,8 @@ Moving from unprotected CrewAI to Tenuo GuardedCrew:
 
 ## Performance Considerations
 
-- **Tier 1 (Guardrails):** Overhead is negligible (< 50µs per call). Logic is purely regex/string matching.
-- **Tier 2 (Warrants):** Cryptographic verification (Ed25519) takes approx 1-2ms per call.
+- **Tier 1 (Guardrails):** Pure regex/string matching — not the bottleneck on any realistic agent workload.
+- **Tier 2 (Warrants):** Verification is local and offline — no runtime network call, no shared database. See [Performance Benchmarks](./api-reference#performance-benchmarks) for measured timings.
 - **Audit Logging:** The `audit_callback` is synchronous. For high-throughput production, use a non-blocking logger (e.g., `logging` with a queue handler) to avoid stalling the agent thread.
 
 ---
