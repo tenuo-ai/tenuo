@@ -8,6 +8,7 @@ use tenuo::{
         Cidr, ConstraintSet, ConstraintValue, Exact, Pattern, Range, Subpath, UrlPattern, UrlSafe,
     },
     crypto::SigningKey,
+    planes::DataPlane,
     warrant::Warrant,
     wire,
 };
@@ -257,6 +258,51 @@ fn benchmark_deep_delegation_chain(c: &mut Criterion) {
             warrant
         })
     });
+}
+
+/// Build a pre-signed delegation chain of total length `depth` (root + `depth - 1`
+/// attenuations), using a single keypair for simplicity. Returns the chain as
+/// `[root, level_1, level_2, ...]` ready to pass to `DataPlane::verify_chain`.
+fn build_chain(keypair: &SigningKey, depth: usize) -> Vec<Warrant> {
+    assert!(depth >= 1 && depth <= 64, "depth must be in [1, 64]");
+    let mut chain = Vec::with_capacity(depth);
+    let root = Warrant::builder()
+        .capability("test", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(keypair)
+        .unwrap();
+    chain.push(root);
+    for _ in 1..depth {
+        let next = chain
+            .last()
+            .unwrap()
+            .attenuate()
+            .inherit_all()
+            .build(keypair)
+            .unwrap();
+        chain.push(next);
+    }
+    chain
+}
+
+/// Measure the hot-path cost of verifying a *pre-built* delegation chain at
+/// various depths. This is what a gateway or authorizer sidecar pays on every
+/// call when presented with a N-link chain; it is distinct from the one-shot
+/// construction cost measured in `benchmark_deep_delegation_chain`.
+fn benchmark_chain_verification(c: &mut Criterion) {
+    let keypair = SigningKey::generate();
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", keypair.public_key());
+
+    let mut group = c.benchmark_group("chain_verify");
+    for &depth in &[1usize, 4, 8, 16, 32, 64] {
+        let chain = build_chain(&keypair, depth);
+        group.bench_function(format!("depth_{}", depth), |b| {
+            b.iter(|| data_plane.verify_chain(black_box(&chain)).unwrap())
+        });
+    }
+    group.finish();
 }
 
 fn benchmark_authorization_denials(c: &mut Criterion) {
@@ -522,6 +568,7 @@ criterion_group!(
     benchmark_warrant_attenuation,
     benchmark_wire_encoding,
     benchmark_deep_delegation_chain,
+    benchmark_chain_verification,
     benchmark_constraint_evaluation,
     benchmark_cidr_operations,
     benchmark_url_pattern_operations,

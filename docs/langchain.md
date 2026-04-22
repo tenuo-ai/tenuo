@@ -5,6 +5,8 @@ description: Tool protection for LangChain agents
 
 # Tenuo LangChain Integration
 
+> **Note on examples.** Snippets on this page use `configure(..., dev_mode=True)` for brevity. `dev_mode=True` relaxes several safety checks and is not suitable for production. Switch to a real signing key, disable `dev_mode`, and follow the [Production Guide](./production-guide) before deploying.
+
 ## Overview
 
 Tenuo integrates with LangChain using a **zero-intrusion** pattern:

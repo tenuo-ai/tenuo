@@ -2043,16 +2043,24 @@ Cheap denials prevent amplification from unauthenticated or malformed requests. 
 | `wire_encode_base64` | **1.42 us** | CBOR + Base64 encoding |
 | `wire_decode_base64` | **8.85 us** | Base64 + CBOR decoding |
 
-### Delegation Depth (Chain Construction)
+### Delegation Depth
 
-This benchmark measures the cost of **building** a chain (one root + N attenuations), not of verifying a pre-built chain. It's a proxy for issuance cost at depth, not hot-path authorization cost.
+Two separate costs scale with delegation depth. Do not conflate them.
 
-| Chain Depth | Measured Time | Notes |
-|-------------|---------------|-------|
-| 1 (Root) | ~27 us | Root warrant creation + verification |
-| 8 | ~251 us | Root + 8 attenuations (~28us per additional level) |
+**Chain verification** (`chain_verify/depth_N`) is the hot-path cost: what a gateway or authorizer pays on every call when handed a pre-built chain of length N. Linear in depth.
 
-The protocol allows up to 64 delegation levels (`MAX_DELEGATION_DEPTH`). Hot-path verification of a pre-built chain is dominated by per-link signature checks at roughly `warrant_verify` cost per link; a dedicated chain-verify benchmark is planned.
+| Chain Depth | Verification Time | Notes |
+|-------------|-------------------|-------|
+| 1 | ~38 us | Single warrant: signature + TTL + root-trust + revocation cache lookup |
+| 4 | ~186 us | Typical production chain (issuer → orchestrator → worker) fits here |
+| 8 | ~408 us | |
+| 16 | ~771 us | |
+| 32 | ~1.63 ms | |
+| 64 (`MAX_DELEGATION_DEPTH`) | ~3.68 ms | Protocol ceiling |
+
+Marginal cost per additional link is roughly ~55 us on this hardware profile (dominated by the per-link Ed25519 check plus linkage/monotonicity validation). Most production deployments sit at depth 2–4, where verification cost is well under half a millisecond.
+
+**Chain construction** (`delegation_chain_depth_8` ≈ 251 us for one root + eight attenuations ≈ ~28 us per `attenuate + build`) is a control-plane-side cost — paid when *minting* a delegated warrant, not when handling a tool call. Mentioned here only so readers don't misread construction numbers as hot-path numbers.
 
 ### Run It Yourself
 
