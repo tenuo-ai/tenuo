@@ -258,11 +258,33 @@ def set_activity_approvals(approvals: List[Any]) -> None:
     """Pre-supply signed approvals for the next activity execution.
 
     Call this from a workflow before ``workflow.execute_activity()`` when
-    the warrant has guards that require approval.  The outbound interceptor
+    the warrant has guards that require approval. The outbound interceptor
     encodes them into activity headers and the inbound interceptor uses
     them to satisfy the guard check.
 
-    Approvals are consumed on the next activity dispatch (one-shot).
+    One-shot semantics
+    ~~~~~~~~~~~~~~~~~~
+
+    Approvals are consumed on the **next** ``start_activity`` call inside
+    the same workflow, then cleared. Two important consequences:
+
+    * **Serial dispatches**: ``set_activity_approvals(...)`` followed by
+      ``await workflow.execute_activity(...)`` works as expected. Each
+      activity that needs approvals must be preceded by its own
+      ``set_activity_approvals`` call.
+
+    * **Parallel dispatches**: if you run multiple activities concurrently
+      with a single ``set_activity_approvals`` call (e.g. via
+      ``asyncio.gather``), only whichever activity happens to be
+      dispatched first receives the approvals. The others dispatch
+      without approvals and the server will deny them with
+      ``ApprovalGateTriggered``. Supply approvals per activity by
+      interleaving ``set_activity_approvals`` + ``execute_activity``
+      pairs, or gather the results after awaiting each one in turn.
+
+    Calling ``set_activity_approvals`` twice without an intervening
+    dispatch overwrites the prior entry; a warning is logged so the
+    second caller can distinguish this from the intended path.
 
     Args:
         approvals: List of ``SignedApproval`` objects.
@@ -284,6 +306,19 @@ def set_activity_approvals(approvals: List[Any]) -> None:
 
     wf_id = workflow.info().workflow_id
     with _store_lock:
+        if wf_id in _pending_activity_approvals:
+            # Catches the "set twice without dispatching" footgun and the
+            # "set_activity_approvals before asyncio.gather" misuse where
+            # the second pre-gather set would silently clobber the first.
+            logger.warning(
+                "set_activity_approvals(): overwriting %d pending approvals "
+                "for workflow_id=%s that were never consumed. If you are "
+                "dispatching activities in parallel via asyncio.gather, "
+                "only the first dispatch will receive approvals; interleave "
+                "set_activity_approvals + execute_activity pairs instead.",
+                len(_pending_activity_approvals[wf_id]),
+                wf_id,
+            )
         _pending_activity_approvals[wf_id] = list(approvals)
 
 

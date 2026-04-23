@@ -90,7 +90,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deprecated alias and will be removed in a future beta. Users of
   `TenuoTemporalPlugin` via `Client.connect(plugins=[plugin])` are
   unaffected.
-- **Temporal correctness fixes**:
+- **Temporal auth errors now reach the wire with stable codes and
+  non-retryable semantics**:
+  - `ApplicationError.type` is now the Tenuo `error_code`
+    (`POP_VERIFICATION_FAILED`, `CONSTRAINT_VIOLATED`,
+    `approval_required`, …) instead of the Python class name, so
+    downstream consumers can branch on a documented wire code.
+  - `ApprovalGateTriggered` is no longer collapsed into
+    `TemporalConstraintViolation`; it surfaces as
+    `ApplicationError(type="approval_required")` so clients can
+    distinguish "needs approval" from "denied".
+  - Missing `Authorizer` (invalid config) is now wrapped as a
+    non-retryable `ApplicationError` instead of a bare
+    `ConfigurationError` that Temporal would retry every attempt.
+  - Unexpected non-Tenuo exceptions inside the auth block (e.g. a
+    custom `PopDedupStore` raising `RuntimeError`) now fail closed as
+    non-retryable instead of letting Temporal's retry policy loop on
+    the same broken path.
+- **`TenuoClientInterceptor.set_headers_for_workflow` is now bounded**
+  with a TTL (default 1 h) and max-size (default 10 000 entries) so
+  long-running clients that bind headers for workflow ids that never
+  start no longer leak memory. Added
+  `discard_headers_for_workflow(workflow_id)` for explicit cleanup.
+- **Audit-callback failures now log with a traceback** on both the
+  ALLOW and DENY paths (`exc_info=True`), matching the control-plane
+  sink. DENY-path audit loss is compliance-critical; operators can now
+  diagnose the callback bug and recover the dropped record.
+- **`set_activity_approvals` now warns on overwrite** — back-to-back
+  calls without an intervening `execute_activity` log a warning naming
+  the `asyncio.gather` footgun (only the first dispatch would receive
+  approvals). The docstring spells out the one-shot semantics.
+- **`KeyResolver` re-raises now normalize to `KeyResolutionError`** —
+  `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`,
+  `GCPSecretManagerKeyResolver`, and the `EnvKeyResolver` decode path
+  now surface `KeyResolutionError from e` for every failure path
+  (transport, permissions, decode), preserving `__cause__` for
+  debugging and giving callers a single documented class to handle.
+- **Temporal correctness fixes** (prior deep-review rounds):
   - `trusted_roots_provider` refresh silently dropped
     `clearance_requirements` and the current SRL; it now routes through
     `_build_authorizer` so both survive key rotation.

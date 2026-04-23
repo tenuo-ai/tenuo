@@ -6,9 +6,11 @@ import asyncio
 import contextvars
 import logging
 import threading
+import time
 import warnings
+from collections import OrderedDict
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from tenuo.temporal._headers import tenuo_headers
 from tenuo.temporal._state import (
@@ -52,11 +54,56 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
         await client.execute_workflow(MyWorkflow.run, ...)
     """
 
-    def __init__(self) -> None:
+    #: Default maximum number of pending ``(workflow_id, headers)`` entries
+    #: before the oldest are evicted. Protects long-running clients that bind
+    #: headers for workflow ids that never start.
+    DEFAULT_PENDING_HEADERS_MAX_SIZE: int = 10_000
+
+    #: Default TTL (seconds) for pending ``(workflow_id, headers)`` entries.
+    #: ``None`` disables TTL eviction.
+    DEFAULT_PENDING_HEADERS_TTL_SECS: Optional[float] = 3600.0
+
+    def __init__(
+        self,
+        *,
+        pending_headers_max_size: Optional[int] = None,
+        pending_headers_ttl_secs: Optional[float] = None,
+    ) -> None:
         super().__init__()
         self._next_headers: Dict[str, bytes] = {}
-        self._headers_by_workflow_id: Dict[str, Dict[str, bytes]] = {}
+        # ``OrderedDict`` so we can evict oldest-first when the bound grows
+        # past ``_pending_headers_max_size``. Entry value is
+        # ``(headers, insert_monotonic_time)`` so TTL eviction is cheap.
+        self._headers_by_workflow_id: "OrderedDict[str, Tuple[Dict[str, bytes], float]]" = (
+            OrderedDict()
+        )
         self._lock = threading.Lock()
+        self._pending_headers_max_size: int = (
+            pending_headers_max_size
+            if pending_headers_max_size is not None
+            else self.DEFAULT_PENDING_HEADERS_MAX_SIZE
+        )
+        self._pending_headers_ttl_secs: Optional[float] = (
+            pending_headers_ttl_secs
+            if pending_headers_ttl_secs is not None
+            else self.DEFAULT_PENDING_HEADERS_TTL_SECS
+        )
+
+    def _evict_expired_locked(self) -> None:
+        """Drop expired pending-header entries. Caller must hold ``self._lock``."""
+        ttl = self._pending_headers_ttl_secs
+        if ttl is None or not self._headers_by_workflow_id:
+            return
+        now = time.monotonic()
+        expired: List[str] = []
+        for wf_id, (_headers, inserted_at) in self._headers_by_workflow_id.items():
+            if (now - inserted_at) < ttl:
+                # OrderedDict preserves insertion order; once we hit a fresh
+                # entry everything after is also fresh.
+                break
+            expired.append(wf_id)
+        for wf_id in expired:
+            self._headers_by_workflow_id.pop(wf_id, None)
 
     def set_headers(self, headers: Dict[str, bytes]) -> None:
         """Set one-shot headers for the next workflow start.
@@ -79,11 +126,47 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
 
         This is concurrency-safe and deterministic for multi-tenant clients.
         The headers are consumed once when that workflow ID is started.
+
+        If the workflow is never started (e.g. the start request fails
+        upstream), the entry is retained for up to
+        ``pending_headers_ttl_secs`` (default 1h) or until the map reaches
+        ``pending_headers_max_size`` (default 10000 entries), whichever
+        comes first. This protects long-running clients from unbounded
+        growth. Callers can also call :meth:`discard_headers_for_workflow`
+        to drop an entry explicitly.
         """
         if not workflow_id:
             raise ValueError("workflow_id must be a non-empty string")
         with self._lock:
-            self._headers_by_workflow_id[workflow_id] = dict(headers)
+            self._evict_expired_locked()
+            # Move-to-end semantics so explicit re-binding refreshes the TTL.
+            self._headers_by_workflow_id.pop(workflow_id, None)
+            self._headers_by_workflow_id[workflow_id] = (
+                dict(headers),
+                time.monotonic(),
+            )
+            max_size = self._pending_headers_max_size
+            if max_size > 0:
+                while len(self._headers_by_workflow_id) > max_size:
+                    evicted_id, _ = self._headers_by_workflow_id.popitem(last=False)
+                    logger.warning(
+                        "TenuoClientInterceptor pending-headers map exceeded "
+                        "%d entries; evicting oldest workflow_id=%s. "
+                        "Consider calling discard_headers_for_workflow() for "
+                        "workflows that never start.",
+                        max_size,
+                        evicted_id,
+                    )
+
+    def discard_headers_for_workflow(self, workflow_id: str) -> bool:
+        """Drop any pending headers bound to *workflow_id*.
+
+        Returns ``True`` if an entry was removed. Use when a workflow start
+        was aborted upstream and the bound headers would otherwise sit in
+        the map until TTL eviction.
+        """
+        with self._lock:
+            return self._headers_by_workflow_id.pop(workflow_id, None) is not None
 
     def clear_headers(self) -> None:
         """Clear all pending headers."""
@@ -230,8 +313,11 @@ class _TenuoClientOutbound:
 
         selected_headers: Dict[str, bytes] = {}
         with self._parent._lock:
+            self._parent._evict_expired_locked()
             if workflow_id and workflow_id in self._parent._headers_by_workflow_id:
-                selected_headers = self._parent._headers_by_workflow_id.pop(workflow_id)
+                selected_headers = self._parent._headers_by_workflow_id.pop(
+                    workflow_id
+                )[0]
             elif self._parent._next_headers:
                 selected_headers = self._parent._next_headers
                 self._parent._next_headers = {}

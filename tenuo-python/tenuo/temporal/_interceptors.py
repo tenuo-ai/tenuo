@@ -86,6 +86,22 @@ except ImportError:  # pragma: no cover
 
 # ── Utility helpers ──────────────────────────────────────────────────────
 
+def _error_type_for_wire(exc: BaseException) -> str:
+    """Return the preferred ``ApplicationError.type`` string for *exc*.
+
+    We prefer the Tenuo ``error_code`` (e.g. ``POP_VERIFICATION_FAILED``)
+    when present, because that is the documented wire contract — downstream
+    consumers that want to branch on "why was this denied?" can read the
+    code off ``ApplicationError.type`` without string-matching the message.
+    Falls back to the Python class name for exceptions that don't carry a
+    ``error_code`` attribute.
+    """
+    code = getattr(exc, "error_code", None)
+    if isinstance(code, str) and code:
+        return code
+    return exc.__class__.__name__
+
+
 def _raise_non_retryable(violation: BaseException) -> None:
     """Raise *violation* wrapped in a non-retryable ApplicationError.
 
@@ -99,7 +115,7 @@ def _raise_non_retryable(violation: BaseException) -> None:
         raise violation
     raise ApplicationError(
         str(violation),
-        type=violation.__class__.__name__,
+        type=_error_type_for_wire(violation),
         non_retryable=True,
     ) from violation
 
@@ -698,6 +714,15 @@ class TenuoActivityInboundInterceptor:
                 return
             import dataclasses as _dc
             try:
+                # ``self._config`` diverges from the ``TenuoPluginConfig`` held
+                # by ``TenuoWorkerInterceptor`` (and by any running workflow's
+                # ``_workflow_config_store[wf_id]`` snapshot). Today that's
+                # benign because only the activity inbound path consults
+                # ``revocation_list`` — the workflow inbound path checks
+                # ``authorized_signals``/``authorized_updates`` only. If you
+                # add a future feature that consults ``revocation_list`` off
+                # the workflow-config snapshot, route it through the
+                # Authorizer instead; the snapshot is *not* resynced.
                 self._config = _dc.replace(self._config, revocation_list=srl)
                 for auth in (self._authorizer, self._retry_authorizer):
                     if auth is not None and hasattr(auth, "set_revocation_list"):
@@ -718,14 +743,20 @@ class TenuoActivityInboundInterceptor:
 
     @staticmethod
     def _wrap_as_non_retryable(exc: Exception) -> Exception:
-        """Wrap authorization failures as non-retryable ApplicationError."""
+        """Wrap authorization failures as non-retryable ApplicationError.
+
+        Prefers the Tenuo ``error_code`` for ``ApplicationError.type`` so that
+        downstream consumers can branch on the documented wire code
+        (``POP_VERIFICATION_FAILED`` / ``CONSTRAINT_VIOLATED`` / …) rather
+        than the Python class name.
+        """
         try:
             from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
         except ImportError:
             return exc
         return ApplicationError(
             str(exc),
-            type=type(exc).__name__,
+            type=_error_type_for_wire(exc),
             non_retryable=True,
         )
 
@@ -842,10 +873,14 @@ class TenuoActivityInboundInterceptor:
 
         if self._authorizer is None:
             from tenuo.exceptions import ConfigurationError
-            raise ConfigurationError(
+            # The Authorizer is built once in ``__init__``. If it's missing
+            # the config is invalid; retrying won't make it appear. Wrap as
+            # non-retryable so Temporal stops the activity immediately rather
+            # than looping through every attempt in the retry policy.
+            raise self._wrap_as_non_retryable(ConfigurationError(
                 "Tenuo activity interceptor missing Authorizer; "
                 "use TenuoPluginConfig with trusted_roots."
-            )
+            ))
 
         _span_ctx: Any = None
         if _otel_available and _otel_trace is not None:
@@ -923,7 +958,19 @@ class TenuoActivityInboundInterceptor:
                 _active_span.set_attribute("tenuo.decision", "allow")
                 _active_span.set_attribute("tenuo.constraint_violated", "")
 
-        except (TemporalConstraintViolation, PopVerificationError, ChainValidationError, WarrantExpired) as auth_exc:
+        except (
+            TemporalConstraintViolation,
+            PopVerificationError,
+            ChainValidationError,
+            WarrantExpired,
+            ApprovalGateTriggered,
+        ) as auth_exc:
+            # ``ApprovalGateTriggered`` is listed explicitly so it reaches the
+            # wire with its own ``ApplicationError.type`` (``approval_required``
+            # via ``_error_type_for_wire``) rather than being collapsed into a
+            # generic ``TemporalConstraintViolation`` by the fallback branch
+            # below. Clients can then distinguish "needs approval" from
+            # "denied" without string-matching the message.
             if _active_span is not None:
                 _active_span.set_attribute("tenuo.decision", "deny")
                 _active_span.set_attribute("tenuo.constraint_violated", "")
@@ -980,7 +1027,26 @@ class TenuoActivityInboundInterceptor:
                     f"Internal error during authorization for {tool_name}: {e}",
                     exc_info=True,
                 )
-                raise
+                # Fail closed and non-retryable. A non-Tenuo exception here
+                # usually means a bug in the interceptor, a custom
+                # ``PopDedupStore`` / ``Authorizer`` raising an unexpected
+                # type, or a tenuo_core error that isn't in the class list
+                # above. Temporal's default retry policy would otherwise
+                # retry this activity until the policy gives up, re-running
+                # the same failing path over and over. Stopping on the first
+                # attempt surfaces the bug loudly instead of burning through
+                # retries.
+                raise self._wrap_as_non_retryable(
+                    TemporalConstraintViolation(
+                        tool=tool_name,
+                        arguments=args,
+                        constraint=(
+                            f"Internal authorization error: "
+                            f"{type(e).__name__}: {e}"
+                        ),
+                        warrant_id=getattr(warrant, "id", None) or "<unknown>",
+                    )
+                ) from e
         finally:
             if _span_ctx is not None:
                 _span_ctx.__exit__(None, None, None)
@@ -1165,7 +1231,14 @@ class TenuoActivityInboundInterceptor:
         try:
             self._config.audit_callback(event)
         except Exception as e:
-            logger.error(f"Audit callback failed: {e}")
+            # Match the control-plane error path: include ``exc_info=True``
+            # so stack traces reach operator dashboards. An ALLOW-path audit
+            # failure is an availability issue; logging with a traceback
+            # makes it diagnosable rather than a one-line mystery.
+            logger.error(
+                "Audit callback failed for ALLOW event (tool=%s): %s",
+                tool, e, exc_info=True,
+            )
 
     def _emit_denial_event(
         self,
@@ -1199,7 +1272,11 @@ class TenuoActivityInboundInterceptor:
                 from tenuo_core import encode_warrant_stack
                 warrant_stack_b64 = encode_warrant_stack([warrant])
             except Exception:
-                pass
+                logger.debug(
+                    "encode_warrant_stack failed for denial audit; "
+                    "proceeding without warrant_stack_override",
+                    exc_info=True,
+                )
 
             res = EnforcementResult(
                 allowed=False,
@@ -1242,4 +1319,10 @@ class TenuoActivityInboundInterceptor:
         try:
             self._config.audit_callback(event)
         except Exception as e:
-            logger.error(f"Audit callback failed: {e}")
+            # DENY-path audit loss is compliance-sensitive; include a full
+            # traceback so operators can diagnose the callback bug and
+            # recover the dropped record from log aggregation.
+            logger.error(
+                "Audit callback failed for DENY event (tool=%s, reason=%s): %s",
+                tool, reason, e, exc_info=True,
+            )

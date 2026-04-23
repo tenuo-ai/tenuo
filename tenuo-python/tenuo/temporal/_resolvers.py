@@ -193,7 +193,7 @@ class EnvKeyResolver(KeyResolver):
             return SigningKey.from_bytes(self._decode_key_bytes(value))
         except (binascii.Error, ValueError) as e:
             logger.error(f"Failed to decode key from {env_name}: {e}")
-            raise KeyResolutionError(key_id=key_id)
+            raise KeyResolutionError(key_id=key_id) from e
 
     async def resolve(self, key_id: str) -> Any:
         """Resolve key from environment variable."""
@@ -336,7 +336,7 @@ class VaultKeyResolver(KeyResolver):
                     key = SigningKey.from_bytes(key_bytes)
                 except (binascii.Error, ValueError) as e:
                     logger.error(f"Vault returned undecodable key for {key_id}: {e}")
-                    raise KeyResolutionError(key_id=key_id)
+                    raise KeyResolutionError(key_id=key_id) from e
 
                 with self._cache_lock:
                     self._cache[key_id] = (key, now)
@@ -352,7 +352,12 @@ class VaultKeyResolver(KeyResolver):
                 e,
                 exc_info=True,
             )
-            raise
+            # Normalize arbitrary transport/parse exceptions (httpx errors,
+            # KeyError on the JSON path, etc.) into ``KeyResolutionError`` so
+            # callers get a single, documented failure class to handle. The
+            # original exception stays reachable via ``__cause__`` for
+            # debugging.
+            raise KeyResolutionError(key_id=key_id) from e
 
 
 class AWSSecretsManagerKeyResolver(KeyResolver):
@@ -423,7 +428,7 @@ class AWSSecretsManagerKeyResolver(KeyResolver):
                     key_bytes = base64.b64decode(response["SecretString"])
                 except (binascii.Error, ValueError) as e:
                     logger.error(f"AWS Secrets Manager returned undecodable key for {key_id}: {e}")
-                    raise KeyResolutionError(key_id=key_id)
+                    raise KeyResolutionError(key_id=key_id) from e
             else:
                 raise KeyResolutionError(key_id=key_id)
 
@@ -436,9 +441,9 @@ class AWSSecretsManagerKeyResolver(KeyResolver):
             logger.debug(f"AWS Secrets Manager resolved key: {key_id}")
             return signing_key
 
-        except ImportError:
+        except ImportError as e:
             logger.error("boto3 not installed. Install with: pip install boto3")
-            raise KeyResolutionError(key_id=key_id)
+            raise KeyResolutionError(key_id=key_id) from e
         except KeyResolutionError:
             raise
         except Exception as e:
@@ -449,7 +454,7 @@ class AWSSecretsManagerKeyResolver(KeyResolver):
                 e,
                 exc_info=True,
             )
-            raise
+            raise KeyResolutionError(key_id=key_id) from e
 
 
 class GCPSecretManagerKeyResolver(KeyResolver):
@@ -526,12 +531,12 @@ class GCPSecretManagerKeyResolver(KeyResolver):
             logger.debug(f"GCP Secret Manager resolved key: {key_id}")
             return signing_key
 
-        except ImportError:
+        except ImportError as e:
             logger.error(
                 "google-cloud-secret-manager not installed. "
                 "Install with: pip install google-cloud-secret-manager"
             )
-            raise KeyResolutionError(key_id=key_id)
+            raise KeyResolutionError(key_id=key_id) from e
         except KeyResolutionError:
             raise
         except Exception as e:
@@ -542,7 +547,7 @@ class GCPSecretManagerKeyResolver(KeyResolver):
                 e,
                 exc_info=True,
             )
-            raise
+            raise KeyResolutionError(key_id=key_id) from e
 
 
 class CompositeKeyResolver(KeyResolver):
