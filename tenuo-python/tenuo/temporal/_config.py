@@ -37,7 +37,7 @@ def _build_activity_registry(
 
 @dataclass
 class TenuoPluginConfig:
-    """Configuration for TenuoPlugin."""
+    """Configuration for TenuoTemporalPlugin / TenuoWorkerInterceptor."""
 
     key_resolver: Optional[KeyResolver] = None
     """Optional — required for outbound PoP signing (most workers). Omit for

@@ -106,7 +106,7 @@ class AuthorizedWorkflow:
     workflow *start* (fail-fast), then exposes ``execute_authorized_activity()``
     as a named alias for ``workflow.execute_activity()``.
 
-    **What it does not change:** TenuoPlugin enforces authorization on *every*
+    **What it does not change:** TenuoTemporalPlugin enforces authorization on *every*
     activity regardless of which base class you use.  AuthorizedWorkflow adds no
     security guarantee beyond what the interceptor already provides — it only
     surfaces missing-header errors earlier (at workflow start vs at the first
@@ -353,12 +353,12 @@ def _workflow_mint_context(purpose: str) -> tuple[str, "TenuoPluginConfig"]:
 
     if not raw_headers:
         raise TenuoContextError(
-            "No Tenuo headers in store. Ensure TenuoPlugin is "
+            "No Tenuo headers in store. Ensure TenuoTemporalPlugin is "
             "registered and tenuo_headers() was passed at workflow start."
         )
     if not config_store_entry:
         raise TenuoContextError(
-            "No interceptor config found. Ensure TenuoPlugin is registered."
+            "No interceptor config found. Ensure TenuoTemporalPlugin is registered."
         )
 
     key_id = raw_headers.get(TENUO_KEY_ID_HEADER, b"").decode("utf-8")
@@ -431,7 +431,7 @@ try:
         if config is None or config.key_resolver is None:
             raise TenuoContextError(
                 "_tenuo_internal_mint_activity: no worker config or key_resolver. "
-                "Ensure TenuoPlugin is registered with a key_resolver."
+                "Ensure TenuoTemporalPlugin is registered with a key_resolver."
             )
 
         try:

@@ -8,7 +8,7 @@ instead of the echo tool here.
 This example shows defense in depth when a Temporal activity calls an MCP tool
 over stdio:
 
-1. **Temporal activity inbound** — ``TenuoPlugin`` verifies warrant + PoP in
+1. **Temporal activity inbound** — ``TenuoWorkerInterceptor`` verifies warrant + PoP in
    Temporal headers before ``invoke_mcp_echo`` runs.
 2. **MCP tools/call** — ``MCPVerifier`` on ``temporal_mcp_server.py`` verifies
    warrant + PoP in ``params._meta["tenuo"]`` before ``safe_echo`` runs.

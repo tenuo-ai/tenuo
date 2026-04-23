@@ -44,7 +44,7 @@ Integrates with the frameworks teams already use:
 | LangGraph | `tenuo.langgraph` | `TenuoToolNode` / `TenuoMiddleware` |
 | OpenAI | `tenuo.openai` | `verify_tool_call()` |
 | CrewAI | `tenuo.crewai` | `@guard` decorator |
-| Google ADK | `tenuo.google_adk` | `TenuoPlugin` |
+| Google ADK | `tenuo.google_adk` | `TenuoWorkerInterceptor` |
 | AutoGen | `tenuo.autogen` | `@guard` decorator |
 | Temporal | `tenuo.temporal` | Workflow-level warrants |
 | FastAPI | `tenuo.fastapi` | Middleware / dependency injection |

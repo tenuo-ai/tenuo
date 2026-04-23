@@ -16,7 +16,7 @@ from temporalio.worker.workflow_sandbox import (  # noqa: E402
 from tenuo import SigningKey  # noqa: E402
 from tenuo.temporal._client import TenuoClientInterceptor  # noqa: E402
 from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
-from tenuo.temporal._interceptors import TenuoPlugin  # noqa: E402
+from tenuo.temporal._interceptors import TenuoWorkerInterceptor  # noqa: E402
 from tenuo.temporal._resolvers import EnvKeyResolver  # noqa: E402
 from tenuo.temporal_plugin import (  # noqa: E402
     TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME,
@@ -50,7 +50,7 @@ def test_client_interceptor_exposed_and_shared() -> None:
 def test_simple_plugin_kwargs_match_sdk_signature() -> None:
     """Every key we pass to ``SimplePlugin.__init__`` must exist on the installed SDK."""
     ci = TenuoClientInterceptor()
-    wi = TenuoPlugin(_minimal_config())
+    wi = TenuoWorkerInterceptor(_minimal_config())
     kw = _simple_plugin_kwargs(ci, wi)
     params = inspect.signature(SimplePlugin.__init__).parameters
     for name in kw:
@@ -69,7 +69,7 @@ def test_configure_worker_merges_interceptor_and_runner() -> None:
     out = p.configure_worker(cfg)
     inters = out.get("interceptors") or []
     assert len(inters) == 1
-    assert isinstance(inters[0], TenuoPlugin)
+    assert isinstance(inters[0], TenuoWorkerInterceptor)
     wr = out.get("workflow_runner")
     assert isinstance(wr, SandboxedWorkflowRunner)
 
@@ -502,3 +502,31 @@ def test_revocation_list_provider_none_by_default() -> None:
     sk = SigningKey.generate()
     config = TenuoPluginConfig(signing_key=sk, trusted_roots=[sk.public_key])
     assert config.revocation_list_provider is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deprecated alias: ``tenuo.temporal.TenuoPlugin`` → ``TenuoWorkerInterceptor``
+#
+# The old name ``TenuoPlugin`` was confusing because the class is a Temporal
+# SDK WorkerInterceptor, not a Temporal SDK Plugin. It was also too similar
+# to ``tenuo.temporal_plugin.TenuoTemporalPlugin``. The alias stays importable
+# for one beta cycle and emits a ``DeprecationWarning``.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_deprecated_tenuo_plugin_alias_warns_and_points_to_worker_interceptor() -> None:
+    """``from tenuo.temporal import TenuoPlugin`` must warn and resolve to the new class."""
+    import warnings
+
+    import tenuo.temporal as tt
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        alias = tt.TenuoPlugin
+
+    assert alias is TenuoWorkerInterceptor
+    dep_warns = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert dep_warns, "expected DeprecationWarning for tenuo.temporal.TenuoPlugin"
+    msg = str(dep_warns[-1].message)
+    assert "TenuoPlugin" in msg and "TenuoWorkerInterceptor" in msg
+    assert "deprecated" in msg.lower()

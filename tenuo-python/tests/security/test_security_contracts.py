@@ -243,7 +243,7 @@ class TestOnDenialBehaviouralContracts:
         pytest.importorskip("temporalio")
         from tenuo.temporal._config import TenuoPluginConfig
         from tenuo.temporal._constants import TENUO_WARRANT_HEADER
-        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
         from tenuo.temporal._resolvers import KeyResolver
 
         trusted_key = SigningKey.generate()
@@ -261,7 +261,7 @@ class TestOnDenialBehaviouralContracts:
             require_warrant=True,
             on_denial="log",
         )
-        interceptor = TenuoPlugin(cfg)
+        interceptor = TenuoWorkerInterceptor(cfg)
 
         inp = MagicMock()
         inp.headers = {TENUO_WARRANT_HEADER: bytes(w.to_bytes())}
@@ -532,7 +532,7 @@ class TestDryRunIsOptIn:
 
         pytest.importorskip("temporalio")
         from tenuo.temporal._config import TenuoPluginConfig
-        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
         from tenuo.temporal._resolvers import KeyResolver
 
         root = SigningKey.generate()
@@ -547,7 +547,7 @@ class TestDryRunIsOptIn:
             require_warrant=True,
             dry_run=True,
         )
-        interceptor = TenuoPlugin(cfg)
+        interceptor = TenuoWorkerInterceptor(cfg)
 
         inp = MagicMock()
         inp.headers = {}  # no warrant
@@ -594,7 +594,7 @@ class TestDryRunIsOptIn:
 
         pytest.importorskip("temporalio")
         from tenuo.temporal._config import TenuoPluginConfig
-        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
         from tenuo.temporal._resolvers import KeyResolver
 
         root = SigningKey.generate()
@@ -610,7 +610,7 @@ class TestDryRunIsOptIn:
             dry_run=False,
             on_denial="raise",
         )
-        interceptor = TenuoPlugin(cfg)
+        interceptor = TenuoWorkerInterceptor(cfg)
 
         inp = MagicMock()
         inp.headers = {}  # no warrant

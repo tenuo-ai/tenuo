@@ -74,6 +74,15 @@ export TENUO_KEY_agent1=$(python -c "from tenuo import SigningKey; import base64
 
 > **Important:** Pass the plugin on `Client.connect(plugins=[plugin])` only. Workers created from that client automatically merge client plugins — do not duplicate.
 
+> **About the names.** Two public classes have similar names on purpose — they are *not* the same:
+>
+> | Class | Type | When to use |
+> |---|---|---|
+> | `tenuo.temporal_plugin.TenuoTemporalPlugin` | Temporal SDK **`SimplePlugin`** | **Default.** Pass to `Client.connect(plugins=[...])`. Wires the client interceptor, worker interceptor, and sandboxed workflow runner in one step. |
+> | `tenuo.temporal.TenuoWorkerInterceptor` | Temporal SDK **`WorkerInterceptor`** | Advanced only. Use when you are hand-composing your own `Plugin` / `SimplePlugin` and just want Tenuo's authorization interceptor. |
+>
+> `TenuoWorkerInterceptor` was previously named `TenuoPlugin`. That old name is still importable from `tenuo.temporal` but now emits a `DeprecationWarning` because it is a worker interceptor, not a plugin, and the resemblance to `TenuoTemporalPlugin` caused real misconfiguration (`Worker(plugins=[TenuoPlugin(...)])` — which silently does nothing). Update imports to `TenuoWorkerInterceptor`.
+
 ## Start an authorized workflow
 
 Pass a warrant and key ID when starting a workflow. The warrant defines what the agent is allowed to do — your control plane or policy layer mints it.

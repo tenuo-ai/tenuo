@@ -62,7 +62,7 @@ from tenuo.temporal._config import (
     TenuoPluginConfig,
     _build_activity_registry,
 )
-from tenuo.temporal._interceptors import TenuoPlugin
+from tenuo.temporal._interceptors import TenuoWorkerInterceptor
 from tenuo.temporal._resolvers import EnvKeyResolver
 from tenuo.temporal._state import _set_worker_config
 from tenuo.temporal._workflow import _tenuo_internal_mint_activity
@@ -99,7 +99,7 @@ _TENUO_WORKFLOW_FAILURE_EXCEPTION_TYPES: tuple[type[BaseException], ...] = (
 
 def _simple_plugin_kwargs(
     client_interceptor: TenuoClientInterceptor,
-    worker_interceptor: TenuoPlugin,
+    worker_interceptor: TenuoWorkerInterceptor,
 ) -> dict[str, Any]:
     """Build ``super().__init__(..., **kwargs)`` for the installed ``SimplePlugin`` shape."""
     params = inspect.signature(SimplePlugin.__init__).parameters
@@ -138,7 +138,7 @@ def ensure_tenuo_workflow_runner(
     """Return a workflow runner with ``tenuo`` and ``tenuo_core`` sandbox passthrough.
 
     Use when **not** adopting :class:`TenuoTemporalPlugin` — for example if you
-    register ``TenuoPlugin`` manually but still need PyO3 passthrough.
+    register ``TenuoWorkerInterceptor`` manually but still need PyO3 passthrough.
 
     - If ``existing`` is ``None``, returns a :class:`SandboxedWorkflowRunner`
       with default restrictions plus passthrough.
@@ -213,7 +213,7 @@ class TenuoTemporalPlugin(SimplePlugin):
     Configures:
 
     - **Client:** :class:`TenuoClientInterceptor` (warrant headers, workflow-ID binding).
-    - **Worker / Replayer:** :class:`TenuoPlugin` with your :class:`TenuoPluginConfig`.
+    - **Worker / Replayer:** :class:`TenuoWorkerInterceptor` with your :class:`TenuoPluginConfig`.
     - **Workflow runner:** sandbox passthrough for ``tenuo`` and ``tenuo_core``.
 
     After construction, :attr:`client_interceptor` is the instance registered
@@ -264,7 +264,7 @@ class TenuoTemporalPlugin(SimplePlugin):
             self._tenuo_config.activity_fns
         )
 
-        worker_interceptor = TenuoPlugin(self._tenuo_config)
+        worker_interceptor = TenuoWorkerInterceptor(self._tenuo_config)
         self.client_interceptor = client_interceptor or TenuoClientInterceptor()
         self.context_propagator = TenuoWarrantContextPropagator()
         self._tenuo_worker_configured = False

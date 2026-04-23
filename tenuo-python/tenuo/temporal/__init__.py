@@ -30,7 +30,7 @@ For direct imports (preferred in library / internal code)::
                                   set_activity_approvals, tenuo_continue_as_new, …
     tenuo.temporal._client        TenuoClientInterceptor, TenuoWarrantContextPropagator,
                                   tenuo_warrant_context
-    tenuo.temporal._interceptors  TenuoPlugin
+    tenuo.temporal._interceptors  TenuoWorkerInterceptor (alias ``TenuoPlugin`` is deprecated)
     tenuo.temporal._dedup         PopDedupStore, InMemoryPopDedupStore
     tenuo.temporal._decorators    tool, unprotected
     tenuo.temporal._observability TemporalAuditEvent, TenuoMetrics
@@ -50,7 +50,7 @@ from tenuo.temporal._resolvers import (  # noqa: F401
     KeyResolver,
 )
 from tenuo.temporal._headers import tenuo_headers  # noqa: F401
-from tenuo.temporal._interceptors import TenuoPlugin  # noqa: F401
+from tenuo.temporal._interceptors import TenuoWorkerInterceptor  # noqa: F401
 from tenuo.temporal._client import TenuoClientInterceptor  # noqa: F401
 from tenuo.temporal.exceptions import TenuoContextError  # noqa: F401
 
@@ -105,7 +105,40 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
 }
 
 
+# Deprecated aliases: name -> (new_name, replacement_object_location)
+# Resolved via ``__getattr__`` so that importing the old name emits a
+# DeprecationWarning exactly once per site of use.
+_DEPRECATED_ALIASES: dict[str, tuple[str, str]] = {
+    # ``TenuoPlugin`` was an awkward name because the class is a Temporal SDK
+    # *WorkerInterceptor*, not a Temporal SDK *Plugin*. The similarity to
+    # ``TenuoTemporalPlugin`` (which actually is a ``SimplePlugin``) caused
+    # confusion (e.g. passed to ``Worker(plugins=...)``).
+    "TenuoPlugin": ("TenuoWorkerInterceptor", "tenuo.temporal._interceptors"),
+}
+
+
 def __getattr__(name: str) -> Any:
+    deprecated = _DEPRECATED_ALIASES.get(name)
+    if deprecated is not None:
+        new_name, module_path = deprecated
+        import importlib
+        import warnings
+
+        warnings.warn(
+            (
+                f"`tenuo.temporal.{name}` is deprecated and will be removed "
+                f"in a future beta release; import "
+                f"`tenuo.temporal.{new_name}` instead. "
+                f"(The class is a Temporal SDK worker interceptor, not a "
+                f"Temporal SDK plugin — the new name makes that explicit "
+                f"and disambiguates from `tenuo.temporal_plugin.TenuoTemporalPlugin`.)"
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        mod = importlib.import_module(module_path)
+        return getattr(mod, new_name)
+
     entry = _LAZY_IMPORTS.get(name)
     if entry is not None:
         module_path, attr = entry
@@ -117,7 +150,7 @@ def __getattr__(name: str) -> Any:
 
 def __dir__() -> list[str]:
     eager = list(globals())
-    return sorted(set(eager) | set(_LAZY_IMPORTS))
+    return sorted(set(eager) | set(_LAZY_IMPORTS) | set(_DEPRECATED_ALIASES))
 
 
 __all__ = [
@@ -126,9 +159,11 @@ __all__ = [
     "KeyResolver",
     "EnvKeyResolver",
     "tenuo_headers",
-    "TenuoPlugin",
+    "TenuoWorkerInterceptor",
     "TenuoClientInterceptor",
     "TenuoContextError",
     # Lazy-loaded (documented public API)
     *_LAZY_IMPORTS,
+    # Deprecated aliases (still importable; emit DeprecationWarning)
+    *_DEPRECATED_ALIASES,
 ]

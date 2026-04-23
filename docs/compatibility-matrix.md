@@ -91,7 +91,7 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 
 **Version Notes**:
 - **1.23.0**: Minimum required version. Introduces `SimplePlugin` API used by `TenuoTemporalPlugin`.
-- **<1.23.0**: `TenuoTemporalPlugin` is not available. Manual `TenuoPlugin` + `Worker(interceptors=[...])` pattern works.
+- **<1.23.0**: `TenuoTemporalPlugin` is not available. Manual `TenuoWorkerInterceptor` + `Worker(interceptors=[...])` pattern works.
 - Replay safety (determinism of PoP signatures, `workflow.now()` usage) is verified on both minimum and latest.
 
 **Replay Safety Testing**:

@@ -34,7 +34,7 @@ from tenuo import SigningKey, Warrant  # noqa: E402
 from tenuo.temporal import (  # noqa: E402
     EnvKeyResolver,
     TenuoClientInterceptor,
-    TenuoPlugin,
+    TenuoWorkerInterceptor,
     TenuoPluginConfig,
     tenuo_headers,
 )
@@ -318,7 +318,7 @@ class TestActivityInterceptorAuthorizer:
             trusted_roots=[ck.public_key],
             audit_callback=events.append if events is not None else None,
         )
-        return TenuoPlugin(cfg)
+        return TenuoWorkerInterceptor(cfg)
 
     def test_allows_authorized_activity(self, warrant, agent_key, control_key, headers_dict):
         events = []
@@ -467,7 +467,7 @@ class TestAuditEvents:
             trusted_roots=[control_key.public_key],
             audit_callback=events.append, redact_args_in_logs=False,
         )
-        ti = TenuoPlugin(cfg)
+        ti = TenuoWorkerInterceptor(cfg)
         wf = "wf-ae"
         act_headers = _make_activity_headers(
             headers_dict, warrant, agent_key, "read_file", {"path": "/tmp/demo/a.txt"})
@@ -495,7 +495,7 @@ class TestAuditEvents:
             trusted_roots=[control_key.public_key],
             audit_callback=events.append,
         )
-        ti = TenuoPlugin(cfg)
+        ti = TenuoWorkerInterceptor(cfg)
         wf = "wf-de"
         act_headers = _make_activity_headers(
             headers_dict, warrant, agent_key, "read_file", {"path": "/etc/shadow"})
@@ -530,7 +530,7 @@ class TestDryRunMode:
             trusted_roots=[control_key.public_key],
             audit_callback=events.append,
         )
-        ti = TenuoPlugin(cfg)
+        ti = TenuoWorkerInterceptor(cfg)
         wf = "wf-dry-deny"
         act_headers = _make_activity_headers(
             headers_dict, warrant, agent_key, "read_file", {"path": "/etc/shadow"}
@@ -559,7 +559,7 @@ class TestDryRunMode:
             dry_run=True,
             require_warrant=True,
         )
-        ti = TenuoPlugin(cfg)
+        ti = TenuoWorkerInterceptor(cfg)
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="executed")
         nxt.init = MagicMock()
@@ -584,7 +584,7 @@ class TestParallelActivities:
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[ck.public_key],
         )
-        return TenuoPlugin(cfg)
+        return TenuoWorkerInterceptor(cfg)
 
     def test_two_different_activities_both_authorized(
         self, warrant, agent_key, control_key, headers_dict
@@ -704,7 +704,7 @@ class TestActivityRetries:
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[ck.public_key],
         )
-        return TenuoPlugin(cfg)
+        return TenuoWorkerInterceptor(cfg)
 
     def test_retry_with_fresh_pop(
         self, warrant, agent_key, control_key, headers_dict
@@ -757,7 +757,7 @@ class TestConcurrentWorkflows:
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoPlugin(ti_cfg)
+        ti = TenuoWorkerInterceptor(ti_cfg)
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="data")
@@ -804,7 +804,7 @@ class TestWarrantExpiration:
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoPlugin(cfg)
+        ti = TenuoWorkerInterceptor(cfg)
         wf = "wf-exp-auth"
 
         act_headers = _make_activity_headers(
@@ -832,7 +832,7 @@ class TestPopValidation:
     """PoP signature must match exactly — wrong key, wrong args, missing PoP."""
 
     def _make(self, ck):
-        return TenuoPlugin(TenuoPluginConfig(
+        return TenuoWorkerInterceptor(TenuoPluginConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[ck.public_key],
         ))
@@ -946,7 +946,7 @@ class TestConcurrentWorkflowsFullRoundTrip:
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoPlugin(cfg)
+        ti = TenuoWorkerInterceptor(cfg)
 
         h1 = tenuo_headers(warrant1, "a1")
         h2 = tenuo_headers(warrant2, "a2")
@@ -996,7 +996,7 @@ class TestConcurrentWorkflowsFullRoundTrip:
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoPlugin(cfg)
+        ti = TenuoWorkerInterceptor(cfg)
 
         h1 = tenuo_headers(warrant1, "a1")
         # PoP for an out-of-scope path
@@ -1106,7 +1106,7 @@ class TestDistributedHeaderPropagation:
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoPlugin(cfg)
+        ti = TenuoWorkerInterceptor(cfg)
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="content")
@@ -1347,7 +1347,7 @@ class TestOutboundInterceptorHeaderInjection:
             key_resolver=EnvKeyResolver(), on_denial="raise",
             trusted_roots=[control_key.public_key],
         )
-        ti = TenuoPlugin(cfg)
+        ti = TenuoWorkerInterceptor(cfg)
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="remote-result")

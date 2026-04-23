@@ -17,7 +17,7 @@ from tenuo.temporal import (
     AuthorizedWorkflow,
     KeyResolver,
     TenuoClientInterceptor,
-    TenuoPlugin,
+    TenuoWorkerInterceptor,
     TenuoPluginConfig,
     tenuo_headers,
 )
@@ -75,7 +75,7 @@ def _tenuo_sandbox_runner() -> SandboxedWorkflowRunner:
 @pytest.mark.temporal_live
 @pytest.mark.asyncio
 async def test_tenuo_plugin_replay_safety():
-    """TenuoPlugin + AuthorizedWorkflow stay deterministic under Temporal Replayer."""
+    """TenuoWorkerInterceptor + AuthorizedWorkflow stay deterministic under Temporal Replayer."""
     signing_key = SigningKey.generate()
     config = TenuoPluginConfig(
         key_resolver=DictKeyResolver({KEY_ID: signing_key}),
@@ -108,7 +108,7 @@ async def test_tenuo_plugin_replay_safety():
             task_queue="replay-task-queue",
             workflows=[ReplayTestWorkflow],
             activities=[write_db_activity],
-            interceptors=[TenuoPlugin(config)],
+            interceptors=[TenuoWorkerInterceptor(config)],
             workflow_runner=_tenuo_sandbox_runner(),
         ):
             client_interceptor.set_headers_for_workflow(
@@ -128,7 +128,7 @@ async def test_tenuo_plugin_replay_safety():
 
     replayer = Replayer(
         workflows=[ReplayTestWorkflow],
-        interceptors=[TenuoPlugin(config)],
+        interceptors=[TenuoWorkerInterceptor(config)],
         workflow_runner=_tenuo_sandbox_runner(),
     )
     replay_results = await replayer.replay_workflow(

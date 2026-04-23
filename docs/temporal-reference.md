@@ -42,7 +42,7 @@ Checklist for moving past local demos (each item stands alone; links go deeper):
 
 1. **Issuer vs holder keys** — Issuer (`control_key`) only mints warrants; the holder key is resolved on the worker via a production [`KeyResolver`](#key-management-required) (Vault, AWS Secrets Manager, or GCP Secret Manager), not [`EnvKeyResolver`](#development-environment-variables).
 2. **Preload if you still use env keys in lower envs** — Call [`preload_keys`](#development-environment-variables) with every holder `key_id` **before** `Worker(...)`, because PoP signing runs in the workflow sandbox where `os.environ` is unavailable for non-determinism reasons.
-3. **Sandbox passthrough** — `TenuoTemporalPlugin` handles this automatically. If using `TenuoPlugin` manually, you must set `SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")` so PyO3 can load once; without it, workflow tasks fail with `ImportError: PyO3 modules may only be initialized once...` ([details](#sandbox-passthrough-explained)).
+3. **Sandbox passthrough** — `TenuoTemporalPlugin` handles this automatically. If using `TenuoWorkerInterceptor` manually, you must set `SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")` so PyO3 can load once; without it, workflow tasks fail with `ImportError: PyO3 modules may only be initialized once...` ([details](#sandbox-passthrough-explained)).
 4. **Named argument constraints** — If the warrant constrains fields like `path=` or `bucket=`, set [`activity_fns`](#activity-registry-activity_fns-and-pop-argument-names) to the **same** callables as `Worker(activities=[...])`, or use `tenuo_execute_activity()`, so PoP can name arguments correctly.
 5. **Starting workflows under concurrency** — Prefer `execute_workflow_authorized(...)` so Tenuo headers are bound to `workflow_id` and are not mixed across parallel starts.
 6. **Authorized child workflows** — Use only `tenuo_execute_child_workflow()`; the stock `workflow.execute_child_workflow()` does not propagate warrant headers.
@@ -62,7 +62,7 @@ All documented symbols can be imported from the top-level package (`from tenuo.t
 | `tenuo.temporal._headers` | `tenuo_headers` |
 | `tenuo.temporal._workflow` | `execute_workflow_authorized`, `start_workflow_authorized`, `tenuo_execute_activity`, `tenuo_execute_child_workflow`, `AuthorizedWorkflow`, `current_warrant`, `current_key_id`, `workflow_grant`, `set_activity_approvals` |
 | `tenuo.temporal._client` | `TenuoClientInterceptor`, `TenuoWarrantContextPropagator`, `tenuo_warrant_context` |
-| `tenuo.temporal._interceptors` | `TenuoPlugin` |
+| `tenuo.temporal._interceptors` | `TenuoWorkerInterceptor` |
 | `tenuo.temporal._dedup` | `PopDedupStore`, `InMemoryPopDedupStore` |
 | `tenuo.temporal._decorators` | `tool`, `unprotected` |
 | `tenuo.temporal._observability` | `TemporalAuditEvent`, `TenuoMetrics` |
@@ -72,7 +72,9 @@ All documented symbols can be imported from the top-level package (`from tenuo.t
 
 ---
 
-## `TenuoPlugin` (manual setup)
+## `TenuoWorkerInterceptor` (manual setup)
+
+> Renamed from `TenuoPlugin` to `TenuoWorkerInterceptor`. The old name is still importable from `tenuo.temporal` but emits a `DeprecationWarning` — it was a Temporal SDK `WorkerInterceptor`, not a Temporal SDK `Plugin`, and the resemblance to [`TenuoTemporalPlugin`](#tenuotemporalplugin-recommended) caused real misconfiguration.
 
 For cases where you need manual control over interceptors and the sandbox runner (instead of `TenuoTemporalPlugin`):
 
@@ -81,14 +83,14 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 from tenuo import SigningKey
-from tenuo.temporal import TenuoPlugin, TenuoPluginConfig, TenuoClientInterceptor, EnvKeyResolver
+from tenuo.temporal import TenuoWorkerInterceptor, TenuoPluginConfig, TenuoClientInterceptor, EnvKeyResolver
 
 control = SigningKey.generate()
 
 client_interceptor = TenuoClientInterceptor()
 client = await Client.connect("localhost:7233", interceptors=[client_interceptor])
 
-worker_interceptor = TenuoPlugin(TenuoPluginConfig(
+worker_interceptor = TenuoWorkerInterceptor(TenuoPluginConfig(
     key_resolver=EnvKeyResolver(),
     trusted_roots=[control.public_key],
 ))
@@ -171,7 +173,7 @@ For distributed deployments (separate client and worker processes):
 | Component | Responsibility | Required |
 |-----------|----------------|----------|
 | Client | Start workflows with Tenuo headers (`execute_workflow_authorized` or `set_headers_for_workflow`) | Yes |
-| Workflow worker | Register `TenuoPlugin` and passthrough modules (`tenuo`, `tenuo_core`) | Yes |
+| Workflow worker | Register `TenuoWorkerInterceptor` and passthrough modules (`tenuo`, `tenuo_core`) | Yes |
 | Activity worker | Receive propagated headers and enforce PoP/constraints | Yes |
 | Key management | Resolve `key_id` to signing key using `KeyResolver` | Yes |
 | Trusted roots | Provide `trusted_roots` (or global `configure(trusted_roots=...)`) | Yes |
@@ -296,7 +298,7 @@ export TENUO_KEY_agent1=$(python -c "from tenuo import SigningKey; import base64
 export TENUO_ENV=development   # suppress production warning
 ```
 
-`TenuoTemporalPlugin` calls `preload_all()` automatically, scanning all `TENUO_KEY_*` variables into an in-memory cache before the sandbox activates. If using `TenuoPlugin` manually, call `resolver.preload_all()` before `Worker(...)` — PoP signing runs inside the workflow sandbox where `os.environ` is blocked.
+`TenuoTemporalPlugin` calls `preload_all()` automatically, scanning all `TENUO_KEY_*` variables into an in-memory cache before the sandbox activates. If using `TenuoWorkerInterceptor` manually, call `resolver.preload_all()` before `Worker(...)` — PoP signing runs inside the workflow sandbox where `os.environ` is blocked.
 
 > **Warning:** `EnvKeyResolver` is for development only. In production, use Vault, AWS Secrets Manager, or GCP Secret Manager.
 
@@ -393,7 +395,7 @@ Each activity call gets a PoP signature over a payload that includes the **tool 
 ```python
 activities = [read_file, write_file]
 
-interceptor = TenuoPlugin(
+interceptor = TenuoWorkerInterceptor(
     TenuoPluginConfig(
         key_resolver=EnvKeyResolver(),
         trusted_roots=[control_key.public_key],
@@ -918,7 +920,7 @@ For the full constraint reference, see [`docs/constraints.md`](./constraints.md)
 
 ## Migration Path (from plain Temporal)
 
-1. **Plugin**: add `TenuoTemporalPlugin` to `Client.connect(plugins=[...])` — this handles interceptors, sandbox passthrough, and key preloading in one step. (For manual control, use `TenuoPlugin` + `SandboxedWorkflowRunner` instead; see [examples README](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal).)
+1. **Plugin**: add `TenuoTemporalPlugin` to `Client.connect(plugins=[...])` — this handles interceptors, sandbox passthrough, and key preloading in one step. (For manual control, use `TenuoWorkerInterceptor` + `SandboxedWorkflowRunner` instead; see [examples README](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal).)
 2. **Client**: start workflows with `execute_workflow_authorized(...)` (or `start_workflow_authorized(...)` for the signal/query pattern).
 3. **Children**: replace `execute_child_workflow()` with `tenuo_execute_child_workflow()`.
 4. **Rollout**: one task queue or tenant first, then expand.

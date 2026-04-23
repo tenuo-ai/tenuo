@@ -43,7 +43,7 @@ from tenuo.temporal import (  # noqa: E402
     KeyResolver,
     TemporalAuditEvent,
     TenuoClientInterceptor,
-    TenuoPlugin,
+    TenuoWorkerInterceptor,
     TenuoPluginConfig,
     tenuo_execute_activity,
     tenuo_execute_child_workflow,
@@ -319,7 +319,7 @@ async def _run_workflow(
     if plugin_config:
         cfg_kwargs.update(plugin_config)
     cfg = TenuoPluginConfig(**cfg_kwargs)
-    interceptor = TenuoPlugin(cfg)
+    interceptor = TenuoWorkerInterceptor(cfg)
     _set_worker_config(cfg)
 
     sandbox_runner = SandboxedWorkflowRunner(

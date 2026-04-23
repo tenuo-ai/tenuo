@@ -1291,7 +1291,7 @@ class _TemporalAdapter(_Adapter):
         pytest.importorskip("temporalio")
         from tenuo.temporal._config import TenuoPluginConfig
         from tenuo.temporal._constants import TENUO_WARRANT_HEADER
-        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
         from tenuo.temporal._resolvers import KeyResolver
 
         self._root = SigningKey.generate()
@@ -1309,7 +1309,7 @@ class _TemporalAdapter(_Adapter):
             require_warrant=True,
             on_denial="raise",
         )
-        self._interceptor = TenuoPlugin(cfg)
+        self._interceptor = TenuoWorkerInterceptor(cfg)
         self._warrant = Warrant.issue(
             self._root, capabilities={"test_activity": {}}, ttl_seconds=3600,
             holder=self._root.public_key,
@@ -2049,7 +2049,7 @@ class TestMCPInvariants:
 @pytest.mark.security
 class TestTemporalInvariants:
     """
-    Security invariants for the Temporal TenuoPlugin integration.
+    Security invariants for the Temporal TenuoWorkerInterceptor integration.
 
     The interceptor validates warrants arriving in Temporal activity headers.
     These tests exercise execute_activity() with synthetic headers so no
@@ -2059,7 +2059,7 @@ class TestTemporalInvariants:
     def _make_interceptor(self, trusted_key: SigningKey):
         pytest.importorskip("temporalio")
         from tenuo.temporal._config import TenuoPluginConfig
-        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
         from tenuo.temporal._resolvers import KeyResolver
 
         class _StaticResolver(KeyResolver):
@@ -2075,7 +2075,7 @@ class TestTemporalInvariants:
             require_warrant=True,
             on_denial="raise",
         )
-        return TenuoPlugin(cfg)
+        return TenuoWorkerInterceptor(cfg)
 
     def _make_activity_input(self, headers: Dict[str, Any]):
         """Build a fake Temporal ExecuteActivityInput from a headers dict."""
@@ -2279,7 +2279,7 @@ class TestTemporalInvariantsExtended:
     def _make_interceptor(self, trusted_key: SigningKey):
         pytest.importorskip("temporalio")
         from tenuo.temporal._config import TenuoPluginConfig
-        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
         from tenuo.temporal._resolvers import KeyResolver
 
         class _R(KeyResolver):
@@ -2293,7 +2293,7 @@ class TestTemporalInvariantsExtended:
             trusted_roots=[trusted_key.public_key],
             require_warrant=True, on_denial="raise",
         )
-        return TenuoPlugin(cfg)
+        return TenuoWorkerInterceptor(cfg)
 
     def _make_input(self, warrant: Warrant, activity_name: str = "test_activity"):
         from unittest.mock import MagicMock

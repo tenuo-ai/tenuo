@@ -95,6 +95,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error points at the `Client.connect(plugins=[plugin])` inheritance
   pattern. `DictKeyResolver` in the replay tests now raises
   `KeyResolutionError` instead of `ValueError`.
+- **`tenuo.temporal.TenuoPlugin` renamed to `TenuoWorkerInterceptor`**
+  (DABH "plugin confusion" feedback): the class is a Temporal SDK
+  `WorkerInterceptor`, not a Temporal SDK `Plugin`, and its old name was
+  easy to confuse with `tenuo.temporal_plugin.TenuoTemporalPlugin` — with
+  real failure modes (`Worker(plugins=[TenuoPlugin(...)])` silently
+  accepting an unusable argument). The old name is still importable from
+  `tenuo.temporal` as a deprecated alias that emits a `DeprecationWarning`
+  on first use; it will be removed in a future beta. Update imports to
+  `from tenuo.temporal import TenuoWorkerInterceptor`. (Most users use
+  `TenuoTemporalPlugin` via `Client.connect(plugins=[plugin])` and are
+  unaffected.)
 - **MCP PoP parity across config asymmetry.** A client without a
   `CompiledMcpConfig` loaded (or with a different one) can now call a server
   that does have a config; PoP byte parity no longer depends on the

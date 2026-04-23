@@ -1,7 +1,7 @@
 """
 Test transparent PoP computation in the outbound workflow interceptor.
 
-This test suite verifies that the TenuoPlugin correctly computes PoP
+This test suite verifies that the TenuoWorkerInterceptor correctly computes PoP
 inline during start_activity() calls, eliminating the need for queue machinery.
 
 Key aspects tested:
@@ -12,7 +12,7 @@ Key aspects tested:
 5. Fail-closed behavior when PoP computation fails
 
 Design Decision: timestamp parameter is OPTIONAL
-  - For Temporal: TenuoPlugin always provides it (workflow.now())
+  - For Temporal: TenuoWorkerInterceptor always provides it (workflow.now())
   - For non-Temporal: None → wall-clock time (correct behavior)
   - Users should NEVER call warrant.sign() directly in Temporal workflows
   - The transparent interceptor architecture ensures correct usage
@@ -47,7 +47,7 @@ from tenuo import SigningKey, Warrant
 from tenuo.temporal._client import TenuoClientInterceptor
 from tenuo.temporal._config import TenuoPluginConfig
 from tenuo.temporal._headers import tenuo_headers
-from tenuo.temporal._interceptors import TenuoPlugin
+from tenuo.temporal._interceptors import TenuoWorkerInterceptor
 from tenuo.temporal._resolvers import EnvKeyResolver
 
 
@@ -260,7 +260,7 @@ if TEMPORAL_AVAILABLE:
                 activities = [read_file, write_file, list_files]
                 resolver = EnvKeyResolver()
                 resolver.preload_keys(["agent1"])
-                worker_interceptor = TenuoPlugin(
+                worker_interceptor = TenuoWorkerInterceptor(
                     TenuoPluginConfig(
                         key_resolver=resolver,
                         on_denial="raise",
@@ -347,7 +347,7 @@ if TEMPORAL_AVAILABLE:
                 parallel_activities = [read_file]
                 resolver = EnvKeyResolver()
                 resolver.preload_keys(["agent1"])
-                worker_interceptor = TenuoPlugin(
+                worker_interceptor = TenuoWorkerInterceptor(
                     TenuoPluginConfig(
                         key_resolver=resolver,
                         on_denial="raise",
