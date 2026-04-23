@@ -1,4 +1,26 @@
 //! Benchmarks for Tenuo warrant operations and constraint types.
+//!
+//! # Methodology notes (read before interpreting numbers)
+//!
+//! - Criterion defaults (3 s warmup, 5 s measurement, 100 samples) are used
+//!   for sub-millisecond benches. `chain_verify` bumps `measurement_time` to
+//!   10 s because its deepest variants (depth 32/64) run in the milliseconds
+//!   and need more samples to stabilize.
+//! - Primitive benches (`constraints/*`, `cidr/*`, `url_pattern/*`, `subpath/*`,
+//!   `url_safe/*`, `authorize_deny_*`) use a single fixed input per benchmark.
+//!   They are intentionally a "per-primitive ceiling": they warm the regex,
+//!   CIDR, and URL parser caches and then measure the fast path. Do not quote
+//!   them as representative policy cost.
+//! - `authorize_no_crypto/mixed_{allow,deny}` rotate across a small input pool
+//!   via `iter_batched` so the caches cannot fully warm on a single value pair.
+//!   These are the numbers to cite when comparing to Cedar / OPA or describing
+//!   realistic policy evaluation cost.
+//! - `chain_verify` is measured in two variants: `shared_key` (every link signed
+//!   by the same keypair, which is the protocol *floor* because Ed25519 batch
+//!   verification can collapse scalars on repeated public keys) and
+//!   `distinct_keys` (every link signed by a different keypair, which is what
+//!   real delegation chains look like). Cite `distinct_keys` as the realistic
+//!   number.
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use std::collections::HashMap;
@@ -15,13 +37,16 @@ use tenuo::{
 
 fn benchmark_warrant_creation(c: &mut Criterion) {
     let keypair = SigningKey::generate();
+    let holder_pk = keypair.public_key();
+    let ttl_short = Duration::from_secs(60);
+    let ttl_long = Duration::from_secs(600);
 
     c.bench_function("warrant_create_minimal", |b| {
         b.iter(|| {
             Warrant::builder()
                 .capability("test", ConstraintSet::new())
-                .ttl(Duration::from_secs(60))
-                .holder(keypair.public_key())
+                .ttl(ttl_short)
+                .holder(holder_pk.clone())
                 .build(black_box(&keypair))
                 .unwrap()
         })
@@ -46,8 +71,8 @@ fn benchmark_warrant_creation(c: &mut Criterion) {
         b.iter(|| {
             Warrant::builder()
                 .capability("upgrade_cluster", constraints_template.clone())
-                .ttl(Duration::from_secs(600))
-                .holder(keypair.public_key())
+                .ttl(ttl_long)
+                .holder(holder_pk.clone())
                 .build(black_box(&keypair))
                 .unwrap()
         })
@@ -58,14 +83,14 @@ fn benchmark_warrant_creation(c: &mut Criterion) {
             "path".to_string(),
             Pattern::new("/data/*").unwrap().into(),
         )]);
+        // Precompute tool names so we don't allocate 10 strings per iteration.
+        let tool_names: Vec<String> = (0..10).map(|i| format!("tool_{}", i)).collect();
 
         b.iter(|| {
-            let mut builder = Warrant::builder()
-                .ttl(Duration::from_secs(600))
-                .holder(keypair.public_key());
+            let mut builder = Warrant::builder().ttl(ttl_long).holder(holder_pk.clone());
 
-            for i in 0..10 {
-                builder = builder.capability(format!("tool_{}", i), constraints_template.clone());
+            for name in &tool_names {
+                builder = builder.capability(name.as_str(), constraints_template.clone());
             }
 
             builder.build(black_box(&keypair)).unwrap()
@@ -503,10 +528,15 @@ fn benchmark_deep_delegation_chain(c: &mut Criterion) {
     });
 }
 
-/// Build a pre-signed delegation chain of total length `depth` (root + `depth - 1`
-/// attenuations), using a single keypair for simplicity. Returns the chain as
-/// `[root, level_1, level_2, ...]` ready to pass to `DataPlane::verify_chain`.
-fn build_chain(keypair: &SigningKey, depth: usize) -> Vec<Warrant> {
+/// Build a pre-signed delegation chain where every link is signed by the
+/// *same* keypair (holder == issuer at every hop). This is the protocol floor
+/// for `verify_chain`: Ed25519 batch verification does a multi-scalar
+/// multiplication over `(A_i, h_i, s_i, R_i)` tuples, and when all `A_i` are
+/// the same public key the MSM can collapse scalar coefficients on `A`.
+/// Real delegation chains have distinct `A_i` at every link; use
+/// `build_chain_distinct_keys` for that. Kept for parity with older numbers
+/// and to bound the best-case side.
+fn build_chain_shared_key(keypair: &SigningKey, depth: usize) -> Vec<Warrant> {
     assert!((1..=64).contains(&depth), "depth must be in [1, 64]");
     let mut chain = Vec::with_capacity(depth);
     let root = Warrant::builder()
@@ -529,20 +559,76 @@ fn build_chain(keypair: &SigningKey, depth: usize) -> Vec<Warrant> {
     chain
 }
 
+/// Build a pre-signed delegation chain where each link is signed by a
+/// distinct keypair, matching a real delegation flow
+/// (control-plane -> orchestrator -> planner -> ...). Every hop contributes a
+/// distinct public key to the `verify_batch` MSM, so this is the
+/// realistic-cost variant of `chain_verify`.
+///
+/// Structure:
+/// - `keys[0]` signs the root; the root's holder is `keys[1]`.
+/// - For `i` in `1..depth`, `keys[i]` signs `chain[i]` whose holder is
+///   `keys[i + 1]` (or `keys[i]` for the leaf).
+/// - Only `keys[0]` needs to be trusted in the `DataPlane`.
+fn build_chain_distinct_keys(depth: usize) -> (Vec<SigningKey>, Vec<Warrant>) {
+    assert!((1..=64).contains(&depth), "depth must be in [1, 64]");
+    // For depth N we need N signing keys (one per link) plus one more to be
+    // the leaf's holder. Use N + 1 to cover the leaf's holder cleanly.
+    let keys: Vec<SigningKey> = (0..=depth).map(|_| SigningKey::generate()).collect();
+
+    let mut chain = Vec::with_capacity(depth);
+    let root = Warrant::builder()
+        .capability("test", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .holder(keys[1].public_key())
+        .build(&keys[0])
+        .unwrap();
+    chain.push(root);
+    for i in 1..depth {
+        let parent = chain.last().unwrap().clone();
+        let next = parent
+            .attenuate()
+            .inherit_all()
+            .holder(keys[i + 1].public_key())
+            .build(&keys[i])
+            .unwrap();
+        chain.push(next);
+    }
+    (keys, chain)
+}
+
 /// Measure the hot-path cost of verifying a *pre-built* delegation chain at
 /// various depths. This is what a gateway or authorizer sidecar pays on every
 /// call when presented with a N-link chain; it is distinct from the one-shot
 /// construction cost measured in `benchmark_deep_delegation_chain`.
+///
+/// Reports two variants per depth:
+/// - `shared_key/depth_N` — protocol floor (single keypair throughout).
+/// - `distinct_keys/depth_N` — realistic cost (N distinct keypairs, matching
+///   a real agent delegation topology). Cite this one.
 fn benchmark_chain_verification(c: &mut Criterion) {
-    let keypair = SigningKey::generate();
-    let mut data_plane = DataPlane::new();
-    data_plane.trust_issuer("root", keypair.public_key());
-
     let mut group = c.benchmark_group("chain_verify");
+    // Deeper variants run in the milliseconds; give Criterion more samples so
+    // CV stabilizes for the numbers we put in api-reference.md.
+    group
+        .measurement_time(Duration::from_secs(10))
+        .sample_size(50);
+
+    let shared_keypair = SigningKey::generate();
+    let mut shared_plane = DataPlane::new();
+    shared_plane.trust_issuer("root", shared_keypair.public_key());
+
     for &depth in &[1usize, 4, 8, 12, 16, 32, 64] {
-        let chain = build_chain(&keypair, depth);
-        group.bench_function(format!("depth_{}", depth), |b| {
-            b.iter(|| data_plane.verify_chain(black_box(&chain)).unwrap())
+        let chain = build_chain_shared_key(&shared_keypair, depth);
+        group.bench_function(format!("shared_key/depth_{}", depth), |b| {
+            b.iter(|| shared_plane.verify_chain(black_box(&chain)).unwrap())
+        });
+
+        let (keys, chain) = build_chain_distinct_keys(depth);
+        let mut plane = DataPlane::new();
+        plane.trust_issuer("root", keys[0].public_key());
+        group.bench_function(format!("distinct_keys/depth_{}", depth), |b| {
+            b.iter(|| plane.verify_chain(black_box(&chain)).unwrap())
         });
     }
     group.finish();

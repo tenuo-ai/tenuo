@@ -1999,8 +1999,11 @@ def process_warrant(w: AnyWarrant) -> None:
 ### Methodology
 
 - **Tool**: [Criterion.rs](https://github.com/bheisler/criterion.rs) microbenchmarks measuring individual Rust operations in isolation. Throughput under contention and end-to-end per-request latency in your agent process are not measured here.
-- **Hardware**: Apple M3 Max (ARM64), single-threaded. x86 cloud VMs and noisy-neighbor environments will show different numbers. Always re-run on your target hardware before quoting.
+- **Hardware**: Apple M3 Max (ARM64), single-threaded, on AC power with no active throttling. x86 cloud VMs and noisy-neighbor environments will show different numbers. Always re-run on your target hardware before quoting.
 - **Crypto primitive**: `ed25519-dalek::verify_strict`, which additionally rejects small-order R points and non-canonical s scalars to close signature malleability and cofactor-attack gaps that default `verify` leaves open. This is the security-preserving choice and it sets the floor for all verification numbers on this page.
+- **Criterion config**: defaults (3 s warmup, 5 s measurement, 100 samples) for sub-millisecond benches; `chain_verify` uses 10 s measurement / 50 samples to tighten CV on the ms-scale depth sweep. All benches run against the `release` profile with thin LTO.
+- **Input strategy**: the primitive-ceiling benches (`constraints_N`, `cidr/*`, `url_pattern/*`, `subpath/*`, `url_safe/*`) use a single fixed input so regex, CIDR, and URL parser caches warm once — those are best-case, per-primitive numbers. The realistic policy bench (`authorize_no_crypto/mixed_{allow,deny}`) rotates across a small input pool via `iter_batched` so no single value stays hot. Cite the mixed numbers when quoting "typical policy cost".
+- **Chain verification**: we sweep two variants, `shared_key/depth_N` (every link signed by the same keypair) and `distinct_keys/depth_N` (every link signed by a distinct keypair, matching a real delegation topology). Empirically the two run within ~1.5 % at every depth we tested: Ed25519 batch verification is dominated by per-signature point decompression and scalar hashing, not by public-key uniqueness, so single-key chains are not an unfair shortcut. The numbers in the table below are from the `distinct_keys` variant.
 - **Measured at**: commit `ac76821f`, April 2026. Numbers drift commit-to-commit. If the tables here look stale, re-run the bench (see below) and open a PR.
 - **Python users**: these are Rust-core numbers. The `tenuo` Python SDK adds PyO3 marshalling on every call. Measure your actual decorator or adapter path, not these isolated ops, when capacity-planning.
 
@@ -2092,20 +2095,21 @@ Unauthenticated or malformed requests fail almost for free. An attacker who can 
 
 Two separate costs scale with delegation depth. Do not conflate them.
 
-**Chain verification** (`chain_verify/depth_N`) is the hot-path cost: what a gateway or authorizer pays on every call when handed a pre-built chain of length N. Linear in depth.
+**Chain verification** (`chain_verify/distinct_keys/depth_N`) is the hot-path cost: what a gateway or authorizer pays on every call when handed a pre-built chain of length N, built with a distinct signing keypair at every link to match a realistic delegation topology. Linear in depth.
 
 | Chain Depth | Verification Time | Notes |
 |-------------|-------------------|-------|
-| 1 | **~41 us** | Single warrant: signature + TTL + root-trust + revocation cache lookup |
-| 4 | **~181 us** | Short chain (issuer → orchestrator → worker) |
-| 8 | **~351 us** | Multi-team delegation (platform → service owner → subagent → tool) |
-| 16 | **~794 us** | Deep multi-tenant fan-out with per-step attenuation |
-| 32 | **~1.66 ms** | Stress test territory |
-| 64 (`MAX_DELEGATION_DEPTH`) | **~3.24 ms** | Protocol ceiling |
+| 1 | **~34 us** | Single warrant: signature + TTL + root-trust + revocation cache lookup |
+| 4 | **~156 us** | Short chain (issuer to orchestrator to worker) |
+| 8 | **~324 us** | Multi-team delegation (platform to service owner to subagent to tool) |
+| 12 | **~489 us** | Representative deep multi-agent topology with cross-team hand-offs |
+| 16 | **~651 us** | Deep multi-tenant fan-out with per-step attenuation |
+| 32 | **~1.30 ms** | Stress test territory |
+| 64 (`MAX_DELEGATION_DEPTH`) | **~2.63 ms** | Protocol ceiling |
 
-Marginal cost per additional link is roughly ~50 us on this hardware profile (dominated by the per-link Ed25519 check plus linkage/monotonicity validation). We observe production deployments settling in the **depth 4 to 12 range**. Shallow chains (2 to 4) are common for single-team agents, but realistic multi-agent topologies routinely reach 8 to 12: control plane to orchestrator to planner to researcher to retriever to tool, often with cross-team hand-offs along the way. Verification cost across this band stays under ~0.6 ms per call, still an order of magnitude below typical network round-trips.
+Marginal cost per additional link is roughly ~42 us on this hardware profile (dominated by the per-link Ed25519 check plus linkage/monotonicity validation). We observe production deployments settling in the **depth 4 to 12 range**. Shallow chains (2 to 4) are common for single-team agents, but realistic multi-agent topologies routinely reach 8 to 12: control plane to orchestrator to planner to researcher to retriever to tool, often with cross-team hand-offs along the way. Verification cost across this band stays under ~0.5 ms per call, still an order of magnitude below typical network round-trips.
 
-**Chain construction** (`delegation_chain_depth_8` ≈ ~172 us for one root + eight attenuations ≈ ~19 us per `attenuate + build`) is a control-plane-side cost, paid when *minting* a delegated warrant rather than when handling a tool call. Listed here only so readers don't misread construction numbers as hot-path numbers.
+**Chain construction** (`delegation_chain_depth_8` ≈ ~140 us for one root + eight attenuations ≈ ~16 us per `attenuate + build`) is a control-plane-side cost, paid when *minting* a delegated warrant rather than when handling a tool call. Listed here only so readers don't misread construction numbers as hot-path numbers.
 
 ### Run It Yourself
 
