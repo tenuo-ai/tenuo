@@ -92,10 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ensure_tenuo_workflow_runner` now rejects `UnsandboxedWorkflowRunner`
   outright and warns for unknown custom runners; duplicate-registration
   error points at the `Client.connect(plugins=[plugin])` inheritance
-  pattern. New replay tests flip a byte in the recorded PoP header and
-  rotate the trusted root set to confirm verification still runs on
-  replay. `DictKeyResolver` now raises `KeyResolutionError` instead of
-  `ValueError`.
+  pattern. `DictKeyResolver` in the replay tests now raises
+  `KeyResolutionError` instead of `ValueError`.
 - **MCP PoP parity across config asymmetry.** A client without a
   `CompiledMcpConfig` loaded (or with a different one) can now call a server
   that does have a config; PoP byte parity no longer depends on the

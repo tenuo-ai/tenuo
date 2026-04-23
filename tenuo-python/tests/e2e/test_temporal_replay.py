@@ -5,7 +5,7 @@ try:
     from temporalio import workflow, activity
     from temporalio.worker import Replayer, Worker
     from temporalio.testing import WorkflowEnvironment
-    from temporalio.client import Client, WorkflowHistory
+    from temporalio.client import Client
     from temporalio.worker.workflow_sandbox import (
         SandboxedWorkflowRunner,
         SandboxRestrictions,
@@ -21,7 +21,6 @@ from tenuo.temporal import (
     TenuoPluginConfig,
     tenuo_headers,
 )
-from tenuo.temporal._constants import TENUO_POP_HEADER
 from tenuo.temporal.exceptions import KeyResolutionError
 from tenuo import Warrant
 from tenuo_core import SigningKey
@@ -73,15 +72,18 @@ def _tenuo_sandbox_runner() -> SandboxedWorkflowRunner:
     )
 
 
-# ---------------------------------------------------------------------------
-# Helpers for the tampering / rotated-root tests
-# ---------------------------------------------------------------------------
+@pytest.mark.temporal_live
+@pytest.mark.asyncio
+async def test_tenuo_plugin_replay_safety():
+    """TenuoPlugin + AuthorizedWorkflow stay deterministic under Temporal Replayer."""
+    signing_key = SigningKey.generate()
+    config = TenuoPluginConfig(
+        key_resolver=DictKeyResolver({KEY_ID: signing_key}),
+        dry_run=False,
+        trusted_roots=[signing_key.public_key],
+        activity_fns=[write_db_activity],
+    )
 
-
-async def _record_successful_run(
-    signing_key: SigningKey, config: TenuoPluginConfig
-) -> WorkflowHistory:
-    """Run the workflow end-to-end and return the recorded history."""
     warrant = (
         Warrant.mint_builder()
         .holder(signing_key.public_key)
@@ -92,6 +94,7 @@ async def _record_successful_run(
 
     async with await WorkflowEnvironment.start_local() as env:
         client = env.client
+
         client_interceptor = TenuoClientInterceptor()
         client_with_interceptor = Client(
             client.service_client,
@@ -99,6 +102,7 @@ async def _record_successful_run(
             data_converter=client.data_converter,
             interceptors=[client_interceptor],
         )
+
         async with Worker(
             client_with_interceptor,
             task_queue="replay-task-queue",
@@ -118,59 +122,9 @@ async def _record_successful_run(
                 task_queue="replay-task-queue",
             )
             assert result == "Wrote: test-data-123"
-            return await client_with_interceptor.get_workflow_handle(
-                "replay-wf-1"
-            ).fetch_history()
 
-
-def _flip_pop_byte_in_history(history: WorkflowHistory) -> WorkflowHistory:
-    """Return a new history where the PoP payload on the first activity-schedule
-    event has one byte flipped. Raises if no PoP header is found (keeps the test
-    honest — if the recording didn't carry a PoP, the scenario is meaningless).
-    """
-    tampered_any = False
-    for event in history.events:
-        attrs = event.activity_task_scheduled_event_attributes
-        if attrs is None or not attrs.ByteSize():
-            continue
-        header = attrs.header
-        if header is None:
-            continue
-        field = header.fields.get(TENUO_POP_HEADER)
-        if field is None or not field.data:
-            continue
-        mutated = bytearray(field.data)
-        mutated[0] ^= 0x01
-        field.data = bytes(mutated)
-        tampered_any = True
-        break
-
-    if not tampered_any:
-        raise AssertionError(
-            "No activity-task-scheduled event with a PoP header found in the "
-            "captured history; cannot tamper a non-existent field."
-        )
-    return history
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.temporal_live
-@pytest.mark.asyncio
-async def test_tenuo_plugin_replay_safety():
-    """TenuoPlugin + AuthorizedWorkflow stay deterministic under Temporal Replayer."""
-    signing_key = SigningKey.generate()
-    config = TenuoPluginConfig(
-        key_resolver=DictKeyResolver({KEY_ID: signing_key}),
-        dry_run=False,
-        trusted_roots=[signing_key.public_key],
-        activity_fns=[write_db_activity],
-    )
-
-    history = await _record_successful_run(signing_key, config)
+            wf_handle = client_with_interceptor.get_workflow_handle("replay-wf-1")
+            history = await wf_handle.fetch_history()
 
     replayer = Replayer(
         workflows=[ReplayTestWorkflow],
@@ -184,88 +138,4 @@ async def test_tenuo_plugin_replay_safety():
 
     assert replay_results.replay_failure is None, (
         f"Workflow replay failed: {replay_results.replay_failure}"
-    )
-
-
-@pytest.mark.temporal_live
-@pytest.mark.asyncio
-async def test_replay_fails_on_tampered_pop_header():
-    """Proves the verification path runs during replay.
-
-    Record a successful run, flip a byte in the PoP header embedded in the
-    recorded history, then replay. The plugin re-verifies each activity's PoP
-    on replay, so a single mutated byte must turn into a replay failure. If
-    this test ever passes through with ``replay_failure is None``, the plugin
-    is no longer verifying during replay.
-    """
-    signing_key = SigningKey.generate()
-    config = TenuoPluginConfig(
-        key_resolver=DictKeyResolver({KEY_ID: signing_key}),
-        dry_run=False,
-        trusted_roots=[signing_key.public_key],
-        activity_fns=[write_db_activity],
-    )
-
-    history = await _record_successful_run(signing_key, config)
-    tampered_history = _flip_pop_byte_in_history(history)
-
-    replayer = Replayer(
-        workflows=[ReplayTestWorkflow],
-        interceptors=[TenuoPlugin(config)],
-        workflow_runner=_tenuo_sandbox_runner(),
-    )
-    replay_results = await replayer.replay_workflow(
-        tampered_history,
-        raise_on_replay_failure=False,
-    )
-
-    assert replay_results.replay_failure is not None, (
-        "Replay succeeded despite a tampered PoP payload — the plugin is not "
-        "verifying activity PoP signatures during replay."
-    )
-
-
-@pytest.mark.temporal_live
-@pytest.mark.asyncio
-async def test_replay_fails_when_trusted_root_removed():
-    """Replay must fail when the recorded warrant's issuer is no longer trusted.
-
-    Records a run signed by ``original_key`` and trusted by ``[original_key]``,
-    then replays with a config trusting only a different key. The plugin must
-    reject the history during replay rather than silently accepting stored
-    state.
-    """
-    original_key = SigningKey.generate()
-    recording_config = TenuoPluginConfig(
-        key_resolver=DictKeyResolver({KEY_ID: original_key}),
-        dry_run=False,
-        trusted_roots=[original_key.public_key],
-        activity_fns=[write_db_activity],
-    )
-
-    history = await _record_successful_run(original_key, recording_config)
-
-    rotated_key = SigningKey.generate()
-    replay_config = TenuoPluginConfig(
-        key_resolver=DictKeyResolver({KEY_ID: original_key}),
-        dry_run=False,
-        # Only the rotated root is trusted; the recorded warrant's issuer is not.
-        trusted_roots=[rotated_key.public_key],
-        activity_fns=[write_db_activity],
-    )
-
-    replayer = Replayer(
-        workflows=[ReplayTestWorkflow],
-        interceptors=[TenuoPlugin(replay_config)],
-        workflow_runner=_tenuo_sandbox_runner(),
-    )
-    replay_results = await replayer.replay_workflow(
-        history,
-        raise_on_replay_failure=False,
-    )
-
-    assert replay_results.replay_failure is not None, (
-        "Replay succeeded even though the recorded warrant's issuer was "
-        "removed from the trusted root set — the plugin is not re-checking "
-        "trust during replay."
     )

@@ -170,14 +170,15 @@ def ensure_tenuo_workflow_runner(
             restrictions=existing.restrictions.with_passthrough_modules(*passthrough),
         )
 
+    unsandboxed_cls: Optional[type] = None
     try:
         from temporalio.worker import UnsandboxedWorkflowRunner
-    except ImportError:  # pragma: no cover - older temporalio
-        UnsandboxedWorkflowRunner = None  # type: ignore[assignment]
 
-    if UnsandboxedWorkflowRunner is not None and isinstance(
-        existing, UnsandboxedWorkflowRunner
-    ):
+        unsandboxed_cls = UnsandboxedWorkflowRunner
+    except ImportError:  # pragma: no cover - older temporalio without this export
+        pass
+
+    if unsandboxed_cls is not None and isinstance(existing, unsandboxed_cls):
         raise ConfigurationError(
             "UnsandboxedWorkflowRunner is not supported by TenuoTemporalPlugin. "
             "Tenuo needs sandbox passthrough for the 'tenuo' and 'tenuo_core' "
