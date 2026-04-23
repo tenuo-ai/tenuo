@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 
 from tenuo.exceptions import ApprovalGateTriggered  # noqa: F401 — re-exported
+
+if TYPE_CHECKING:
+    from temporalio.exceptions import ApplicationError
 
 
 def _error_type_for_wire(exc: BaseException) -> str:
@@ -28,6 +31,47 @@ def _error_type_for_wire(exc: BaseException) -> str:
     if isinstance(code, str) and code:
         return code
     return type(exc).__name__
+
+
+def _build_non_retryable_application_error(exc: BaseException) -> "ApplicationError":
+    """Return a non-retryable :class:`ApplicationError` encoding *exc* per
+    the Tenuo-Temporal boundary contract.
+
+    The *single* construction site for every non-retryable auth failure that
+    crosses the Temporal wire — activity-inbound, workflow-inbound,
+    workflow-context helpers, ``AuthorizedWorkflow.__init__``. Three legs
+    are always set:
+
+    1. ``non_retryable=True`` — auth denials never retry (the warrant,
+       constraints, and key resolver state don't change between attempts).
+    2. ``type`` = :func:`_error_type_for_wire` — the stable Tenuo
+       ``error_code`` (``POP_VERIFICATION_FAILED``, ``CONSTRAINT_VIOLATED``,
+       …) so clients can branch on ``ApplicationError.type`` without caring
+       whether the denial fired in activity or workflow context.
+    3. ``__cause__ is exc`` — Temporal's traceback points back at the
+       Tenuo exception that rejected the action, not at this wrapper.
+
+    Having one constructor means the wire contract is enforced **by
+    construction** rather than re-checked at every call site. A test in
+    ``tests/adapters/test_boundary_contract.py`` AST-scans
+    ``tenuo/temporal/**/*.py`` to make sure no new code constructs
+    ``ApplicationError(...)`` directly (which would bypass this helper
+    and risk regressing the contract).
+
+    Callers that need ``raise ... from exc`` semantics should still use
+    ``from`` at the raise site; the function sets ``__cause__``
+    unconditionally, and ``raise X from exc`` just re-binds it to the
+    same value.
+    """
+    from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
+
+    app_error = ApplicationError(
+        str(exc),
+        type=_error_type_for_wire(exc),
+        non_retryable=True,
+    )
+    app_error.__cause__ = exc
+    return app_error
 
 
 class TenuoTemporalError(Exception):

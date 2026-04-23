@@ -109,14 +109,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-Tenuo exceptions inside the auth block (e.g. a custom
   `PopDedupStore` raising `RuntimeError`), wrap as non-retryable
   instead of letting Temporal's retry policy loop forever on a
-  configuration bug. The workflow-context wrapper
-  (`_fail_workflow_non_retryable`, used by `execute_child_workflow_authorized`,
-  `workflow_grant`, `delegate_warrant`, …) previously emitted
-  `type=<Python class name>` and dropped `__cause__`; it now matches
-  the activity-context wrapper's three-leg contract (wire code +
-  non-retryable + `__cause__` preserved), and the boundary-contract
-  sweep in `tests/adapters/test_boundary_contract.py` exercises both
-  wrappers so this can't drift again.
+  configuration bug. Every non-retryable `ApplicationError` in the
+  Tenuo-Temporal package now goes through one construction site
+  (`_build_non_retryable_application_error`), so the three-leg wire
+  contract (stable `error_code` + `non_retryable=True` + `__cause__`
+  preserved) is enforced by construction. Callers that previously
+  hand-rolled the `ApplicationError` (activity-inbound wrapper,
+  `_fail_workflow_non_retryable`, `_raise_non_retryable`, and
+  `AuthorizedWorkflow.__init__` — the last of which was silently
+  emitting `type="TenuoContextError"` instead of `type="CONTEXT_MISSING"`,
+  breaking client-side branching on the wire code) now all delegate
+  to the builder. Enforcement is belt-and-suspenders: a parametrised
+  data sweep in `tests/adapters/test_boundary_contract.py` runs every
+  Tenuo exception through the builder, and an AST guard in the same
+  file fails if any `ApplicationError(...)` in `tenuo/temporal/**/*.py`
+  is constructed outside the builder.
 - **`TenuoClientInterceptor.set_headers_for_workflow` is bounded**
   with a TTL (default 1 h) and max-size (default 10 000) so clients
   that bind headers for workflow ids that never start don't leak

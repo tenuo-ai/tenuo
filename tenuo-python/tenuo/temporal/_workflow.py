@@ -47,37 +47,19 @@ logger = logging.getLogger("tenuo.temporal")
 def _fail_workflow_non_retryable(exc: Exception) -> Exception:
     """Wrap *exc* as a non-retryable ``ApplicationError``.
 
-    Authorization failures raised in workflow context (not activity context)
-    must be wrapped this way; otherwise Temporal treats them as workflow task
-    failures and retries forever.
-
-    Matches the three-leg wire contract enforced by
-    ``tests/adapters/test_boundary_contract.py``:
-
-    1. ``non_retryable=True``
-    2. ``type == exc.error_code`` (stable Tenuo wire code, not the Python
-       class name — so clients can branch on ``ApplicationError.type``
-       consistently regardless of whether the denial fires in workflow
-       or activity context).
-    3. ``__cause__ is exc`` (traceback points back at the Tenuo code that
-       rejected the action, not at this wrapper).
+    Authorization failures raised in workflow context (not activity
+    context) must be wrapped this way; otherwise Temporal treats them as
+    workflow task failures and retries forever. Thin wrapper around
+    :func:`tenuo.temporal.exceptions._build_non_retryable_application_error`
+    so every boundary wrapper shares one construction site (and one
+    enforcement point for the three-leg wire contract).
     """
-    from tenuo.temporal.exceptions import _error_type_for_wire
+    from tenuo.temporal.exceptions import _build_non_retryable_application_error
 
     try:
-        from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
+        return _build_non_retryable_application_error(exc)
     except ImportError:
         return exc
-    app_error = ApplicationError(
-        str(exc),
-        type=_error_type_for_wire(exc),
-        non_retryable=True,
-    )
-    # Preserve traceback linkage. Call sites that already use
-    # ``raise _fail_workflow_non_retryable(...) from cause`` will just
-    # re-chain to the same cause; that's a no-op.
-    app_error.__cause__ = exc
-    return app_error
 
 
 # ── Context Accessors ────────────────────────────────────────────────────
@@ -167,15 +149,25 @@ class AuthorizedWorkflow:
             current_warrant()
             current_key_id()
         except TenuoContextError as e:
+            # Wrap the raw TenuoContextError with a contextual message, but
+            # route it through the shared builder so the wire contract
+            # (non_retryable + stable error_code + __cause__) is enforced
+            # the same way as every other boundary wrapper. Without this
+            # indirection it's trivially easy to hardcode
+            # ``type="TenuoContextError"`` (the Python class name) instead
+            # of ``e.error_code`` (the stable wire code), which has been
+            # the exact regression pattern in this module historically.
+            contextual = TenuoContextError(
+                f"AuthorizedWorkflow requires Tenuo headers: {e}"
+            )
             try:
-                from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
+                from tenuo.temporal.exceptions import (
+                    _build_non_retryable_application_error,
+                )
+
+                raise _build_non_retryable_application_error(contextual) from e
             except ImportError:
                 raise e
-            raise ApplicationError(
-                f"AuthorizedWorkflow requires Tenuo headers: {e}",
-                type="TenuoContextError",
-                non_retryable=True,
-            ) from e
 
     async def execute_authorized_activity(self, activity: Any, **kwargs: Any) -> Any:
         """Execute activity with automatic Tenuo authorization.

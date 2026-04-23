@@ -59,7 +59,8 @@ from tenuo.temporal.exceptions import (
     TenuoContextError,
     TenuoTemporalError,
     WarrantExpired,
-    _error_type_for_wire,  # re-exported for back-compat (tests import from here)
+    _build_non_retryable_application_error,
+    _error_type_for_wire,  # noqa: F401 — re-exported for back-compat (tests import from here)
 )
 
 if TYPE_CHECKING:
@@ -95,21 +96,18 @@ except ImportError:  # pragma: no cover
 
 
 def _raise_non_retryable(violation: BaseException) -> None:
-    """Raise *violation* wrapped in a non-retryable ApplicationError.
+    """Raise *violation* wrapped in a non-retryable ``ApplicationError``.
 
     Authorization denials and PoP signing failures must never be retried —
     the warrant constraints and key resolver state do not change between
-    attempts.
+    attempts. Thin wrapper around
+    :func:`_build_non_retryable_application_error` so every boundary
+    wrapper shares exactly one construction site.
     """
     try:
-        from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
-    except ImportError:
+        raise _build_non_retryable_application_error(violation) from violation
+    except ImportError:  # temporalio not installed — re-raise raw
         raise violation
-    raise ApplicationError(
-        str(violation),
-        type=_error_type_for_wire(violation),
-        non_retryable=True,
-    ) from violation
 
 
 def _replace_field(obj: Any, field: str, value: Any) -> Any:
@@ -726,22 +724,17 @@ class TenuoActivityInboundInterceptor:
 
     @staticmethod
     def _wrap_as_non_retryable(exc: Exception) -> Exception:
-        """Wrap authorization failures as non-retryable ApplicationError.
+        """Wrap authorization failures as non-retryable ``ApplicationError``.
 
-        Prefers the Tenuo ``error_code`` for ``ApplicationError.type`` so that
-        downstream consumers can branch on the documented wire code
-        (``POP_VERIFICATION_FAILED`` / ``CONSTRAINT_VIOLATED`` / …) rather
-        than the Python class name.
+        Thin wrapper around :func:`_build_non_retryable_application_error`
+        so every boundary wrapper shares one construction site and one
+        enforcement point for the three-leg wire contract
+        (``non_retryable=True`` + stable ``error_code`` + ``__cause__``).
         """
         try:
-            from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
+            return _build_non_retryable_application_error(exc)
         except ImportError:
             return exc
-        return ApplicationError(
-            str(exc),
-            type=_error_type_for_wire(exc),
-            non_retryable=True,
-        )
 
     async def execute_activity(self, input: Any) -> Any:
         """Intercept activity execution for authorization."""

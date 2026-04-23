@@ -4,28 +4,44 @@ Boundary-contract tests: Tenuo exceptions → Temporal wire.
 These tests express a single, permanent invariant:
 
     When a Tenuo exception reaches the Temporal hook boundary
-    (``execute_activity`` / ``handle_signal`` / ``handle_update_handler``),
-    it becomes ``ApplicationError`` with:
+    (``execute_activity`` / workflow context / ``AuthorizedWorkflow.__init__``
+    / signal / update handler), it becomes ``ApplicationError`` with:
 
       * ``non_retryable=True``              (auth failures never retry)
       * ``type == exc.error_code``          (stable wire code, not class name)
       * ``__cause__ is exc``                (original traceback preserved)
 
-This file is the runtime enforcement of that contract. Deep-review round 4
-turned up *three* separate bugs where one of those legs regressed
-(``ApprovalGateTriggered`` collapsed into ``CONSTRAINT_VIOLATED``;
-``ConfigurationError`` reached the wire as retryable; generic
-``Exception`` was retryable). The sweep below covers every concrete
-Tenuo exception with an ``error_code`` so future drift is caught at
-commit time instead of in production.
+Enforcement strategy (after deep-review round 4+5):
 
-Adding a new Tenuo exception? No code change needed here — the sweep
-picks it up automatically from ``inspect.getmembers``.
+  1. *Data* sweep — ``TestBuilderContract`` parametrises every
+     Tenuo exception class through the single builder
+     (``_build_non_retryable_application_error``) and asserts all
+     three legs.
+
+  2. *Structural* guard — ``TestNoRawApplicationErrorInTemporalPackage``
+     AST-scans ``tenuo/temporal/**/*.py`` and asserts that every
+     ``ApplicationError(...)`` constructor call lives inside the
+     builder. This is what actually prevents the "new wrapper forgets
+     to delegate" class of regression that motivated this file: the
+     data sweep can only cover wrappers it knows about; the AST
+     guard fires regardless of whether the new wrapper was ever
+     registered anywhere.
+
+  3. Thin per-wrapper smoke tests (``TestWrappersDelegateToBuilder``)
+     catch outright call-site breakage (e.g. wrapper stops being
+     called at all). These are *not* parametrised — the builder
+     sweep does that work.
+
+Adding a new Tenuo exception? No code change needed — the sweep picks
+it up from ``inspect.getmembers``. Adding a new wrapper? Route it
+through the builder; the AST guard will fail otherwise.
 """
 
 from __future__ import annotations
 
+import ast
 import inspect
+from pathlib import Path
 from typing import List, Type
 
 import pytest
@@ -42,6 +58,9 @@ from tenuo.temporal._interceptors import (  # noqa: E402
     _raise_non_retryable,
 )
 from tenuo.temporal._workflow import _fail_workflow_non_retryable  # noqa: E402
+from tenuo.temporal.exceptions import (  # noqa: E402
+    _build_non_retryable_application_error,
+)
 
 
 # ── Exception discovery ─────────────────────────────────────────────────
@@ -112,10 +131,6 @@ def _instantiate(cls: Type[BaseException]) -> BaseException:
         except TypeError as e:
             last_exc = e
             continue
-    # Final fallback: bypass __init__, then seed the attributes
-    # ``TenuoError.__str__`` / ``repr`` reach for. We don't care about a
-    # "realistic" payload — only about whether the exception round-trips
-    # ``error_code`` through ``_error_type_for_wire`` / ``_wrap_as_non_retryable``.
     try:
         inst = cls.__new__(cls)  # type: ignore[call-arg]
         BaseException.__init__(inst, "sweep-fallback")
@@ -141,12 +156,13 @@ def _instantiate(cls: Type[BaseException]) -> BaseException:
 _EXCEPTION_CLASSES = _discoverable_exception_classes()
 
 
-# ── Unit sweep: wire mapping is stable and correct ─────────────────────
+# ── Data sweep: every exception round-trips the contract via the builder ──
 
 
 class TestExceptionToWireCodeMapping:
-    """Every Tenuo exception with ``error_code`` must map to that code at
-    the Temporal wire boundary (``ApplicationError.type``).
+    """``_error_type_for_wire`` is the pure mapping from exception → wire
+    type; the builder composes it with ``non_retryable=True`` and
+    ``__cause__``. Test both.
     """
 
     @pytest.mark.parametrize(
@@ -174,87 +190,113 @@ class TestExceptionToWireCodeMapping:
         assert _error_type_for_wire(ValueError("x")) == "ValueError"
         assert _error_type_for_wire(KeyError("x")) == "KeyError"
 
+
+class TestBuilderContract:
+    """Single authoritative sweep of the three-leg wire contract, run
+    against the one construction site all wrappers delegate to. Every
+    ``ApplicationError`` that reaches the Temporal wire in this package
+    flows through here (enforced structurally by
+    :class:`TestNoRawApplicationErrorInTemporalPackage`).
+    """
+
     @pytest.mark.parametrize(
         "exc_cls",
         _EXCEPTION_CLASSES,
         ids=[c.__name__ for c in _EXCEPTION_CLASSES],
     )
-    def test_wrap_as_non_retryable_preserves_error_code_and_non_retryable(
+    def test_builder_emits_contract_compliant_application_error(
         self, exc_cls: Type[BaseException]
     ) -> None:
-        """``TenuoActivityInboundInterceptor._wrap_as_non_retryable`` is
-        the single path every auth denial funnels through before raising.
-        Its output must be a non-retryable ``ApplicationError`` tagged
-        with the Tenuo ``error_code``. If this test fails, denials are
-        either retryable (activity loops on a broken auth config) or
-        carry a class-name type (client branching breaks).
+        """Builder output must: be ``ApplicationError``, be
+        ``non_retryable=True``, carry ``type == error_code``, and
+        preserve ``__cause__``.
+
+        Regression history:
+          * ``ApprovalGateTriggered`` was collapsed into
+            ``CONSTRAINT_VIOLATED`` (different semantics).
+          * ``ConfigurationError`` reached the wire as retryable.
+          * Workflow-context wrapper emitted the Python class name
+            (e.g. ``"TemporalConstraintViolation"``) while the
+            activity-context wrapper emitted ``"CONSTRAINT_VIOLATED"``
+            — same violation, different wire code, silent client
+            breakage.
         """
         if not issubclass(exc_cls, Exception):
             pytest.skip(
                 f"{exc_cls.__name__} is not an ``Exception`` subclass; "
-                f"``_wrap_as_non_retryable`` takes ``Exception``."
+                f"builder signature takes ``BaseException`` but the "
+                f"wrappers that use it take ``Exception``."
             )
         exc = _instantiate(exc_cls)
-        wrapped = TenuoActivityInboundInterceptor._wrap_as_non_retryable(exc)
-        assert isinstance(wrapped, ApplicationError), (
+        app = _build_non_retryable_application_error(exc)
+
+        assert isinstance(app, ApplicationError), (
             f"{exc_cls.__name__} did not wrap to ApplicationError — "
             f"fail-closed is broken"
         )
-        assert wrapped.non_retryable is True, (
+        assert app.non_retryable is True, (
             f"{exc_cls.__name__} wrapped as *retryable*. Temporal will "
-            f"loop the failing activity until the retry policy gives up, "
-            f"re-running the same broken auth path every attempt."
+            f"loop the failing activity/workflow task until the retry "
+            f"policy gives up, re-running the same broken auth path "
+            f"every attempt."
         )
-        assert wrapped.type == exc_cls.error_code, (  # type: ignore[attr-defined]
-            f"{exc_cls.__name__} wrapped with type={wrapped.type!r} but "
+        assert app.type == exc_cls.error_code, (  # type: ignore[attr-defined]
+            f"{exc_cls.__name__} wrapped with type={app.type!r} but "
             f"error_code={exc_cls.error_code!r}"  # type: ignore[attr-defined]
         )
-
-    @pytest.mark.parametrize(
-        "exc_cls",
-        _EXCEPTION_CLASSES,
-        ids=[c.__name__ for c in _EXCEPTION_CLASSES],
-    )
-    def test_fail_workflow_non_retryable_preserves_error_code_and_non_retryable(
-        self, exc_cls: Type[BaseException]
-    ) -> None:
-        """``_fail_workflow_non_retryable`` is the workflow-context twin of
-        ``_wrap_as_non_retryable``: used by ``execute_child_workflow_authorized``,
-        ``workflow_grant``, ``delegate_warrant``, etc. It must obey the same
-        three-leg contract.
-
-        Regression test — before this sweep covered it, the helper was
-        emitting ``type=type(exc).__name__`` (Python class name) instead of
-        the Tenuo ``error_code``, so workflow-context denials surfaced as
-        ``type="TemporalConstraintViolation"`` while the identical violation
-        in activity context surfaced as ``type="CONSTRAINT_VIOLATED"``.
-        Clients branching on ``ApplicationError.type`` broke silently.
-        """
-        if not issubclass(exc_cls, Exception):
-            pytest.skip(
-                f"{exc_cls.__name__} is not an ``Exception`` subclass; "
-                f"``_fail_workflow_non_retryable`` takes ``Exception``."
-            )
-        exc = _instantiate(exc_cls)
-        wrapped = _fail_workflow_non_retryable(exc)
-        assert isinstance(wrapped, ApplicationError), (
-            f"{exc_cls.__name__} did not wrap to ApplicationError in "
-            f"workflow context — fail-closed is broken"
-        )
-        assert wrapped.non_retryable is True, (
-            f"{exc_cls.__name__} wrapped as *retryable* in workflow "
-            f"context. Temporal will retry the workflow task forever."
-        )
-        assert wrapped.type == exc_cls.error_code, (  # type: ignore[attr-defined]
-            f"{exc_cls.__name__} wrapped with type={wrapped.type!r} but "
-            f"error_code={exc_cls.error_code!r}. Workflow-context denials "
-            f"must expose the same wire code as activity-context denials."  # type: ignore[attr-defined]
-        )
-        assert wrapped.__cause__ is exc, (
+        assert app.__cause__ is exc, (
             f"{exc_cls.__name__}: __cause__ was not preserved; Temporal's "
             f"traceback will point at the wrapper, not at the Tenuo "
             f"exception that actually rejected the action."
         )
+
+
+# ── Wrapper smoke tests: each call site actually reaches the builder ─────
+
+
+class TestWrappersDelegateToBuilder:
+    """Smoke-test each wrapper call site with a single representative
+    exception. The *data* sweep (builder contract) + *structural* sweep
+    (AST guard) together prove that every wrapper goes through the
+    builder for every exception class. These thin tests are belt-and-
+    suspenders: they catch "wrapper stops being called at all" or
+    "wrapper raises its own unrelated error" regressions that neither
+    the data nor structural sweep would notice.
+    """
+
+    def _representative_exception(self) -> BaseException:
+        from tenuo.temporal.exceptions import PopVerificationError
+
+        return PopVerificationError(
+            reason="smoke-test", activity_name="sweep",
+        )
+
+    def test_raise_non_retryable_delegates(self) -> None:
+        original = self._representative_exception()
+        try:
+            _raise_non_retryable(original)
+        except ApplicationError as app:
+            assert app.non_retryable is True
+            assert app.type == type(original).error_code  # type: ignore[attr-defined]
+            assert app.__cause__ is original
+        else:  # pragma: no cover — helper always raises
+            pytest.fail("_raise_non_retryable must raise")
+
+    def test_wrap_as_non_retryable_delegates(self) -> None:
+        original = self._representative_exception()
+        wrapped = TenuoActivityInboundInterceptor._wrap_as_non_retryable(original)
+        assert isinstance(wrapped, ApplicationError)
+        assert wrapped.non_retryable is True
+        assert wrapped.type == type(original).error_code  # type: ignore[attr-defined]
+        assert wrapped.__cause__ is original
+
+    def test_fail_workflow_non_retryable_delegates(self) -> None:
+        original = self._representative_exception()
+        wrapped = _fail_workflow_non_retryable(original)
+        assert isinstance(wrapped, ApplicationError)
+        assert wrapped.non_retryable is True
+        assert wrapped.type == type(original).error_code  # type: ignore[attr-defined]
+        assert wrapped.__cause__ is original
 
 
 # ── Cause preservation ──────────────────────────────────────────────────
@@ -300,6 +342,105 @@ class TestCausePreservation:
             pytest.fail("_raise_non_retryable must raise")
 
 
+# ── Structural guard: no raw ApplicationError() outside the builder ──────
+
+
+class TestNoRawApplicationErrorInTemporalPackage:
+    """AST-scan ``tenuo/temporal/**/*.py`` and fail if any
+    ``ApplicationError(...)`` constructor call lives outside
+    ``_build_non_retryable_application_error``.
+
+    This is the *structural* half of the wire-contract enforcement.
+    The data sweep (``TestBuilderContract``) only covers what it can
+    enumerate — the builder — so a new wrapper that constructs
+    ``ApplicationError`` directly would bypass it silently (exactly
+    how ``_fail_workflow_non_retryable`` and
+    ``AuthorizedWorkflow.__init__`` historically drifted from the
+    contract). Adding this guard means:
+
+      * Every existing and future wrapper must funnel through the
+        builder (enforced at test time by this scan).
+      * The builder is then the *only* thing the data sweep has to
+        cover — one construction site, one test, impossible to
+        skip-list a new wrapper into a quiet regression.
+
+    If this test fails because you legitimately need a new construction
+    site: ask yourself whether the new call site preserves all three
+    legs of the contract (``non_retryable=True``, stable
+    ``error_code``, ``__cause__`` preserved). If yes, route it through
+    the builder. If no, you're weakening the wire contract — don't.
+    """
+
+    _BUILDER_NAME = "_build_non_retryable_application_error"
+
+    def _temporal_package_py_files(self) -> list[Path]:
+        """Every .py file in the ``tenuo/temporal`` package tree."""
+        from tenuo import temporal as _tenuo_temporal_pkg
+
+        package_root = Path(_tenuo_temporal_pkg.__file__).resolve().parent
+        return sorted(package_root.rglob("*.py"))
+
+    def test_only_builder_constructs_application_error(self) -> None:
+        violations: list[str] = []
+        saw_any_py_file = False
+
+        for py_path in self._temporal_package_py_files():
+            saw_any_py_file = True
+            source = py_path.read_text()
+            try:
+                tree = ast.parse(source, filename=str(py_path))
+            except SyntaxError as e:  # pragma: no cover — defensive
+                pytest.fail(f"Cannot parse {py_path}: {e}")
+
+            # Build a map from each Call node to the FunctionDef /
+            # AsyncFunctionDef that encloses it (or None if it's at
+            # module scope). We walk top-down and pass the enclosing
+            # function name down manually because ``ast`` doesn't
+            # expose parent pointers.
+            def _scan(node: ast.AST, enclosing_func: str | None) -> None:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    enclosing_func = node.name
+                if isinstance(node, ast.Call) and _is_application_error_call(node.func):
+                    if enclosing_func != self._BUILDER_NAME:
+                        rel = py_path.relative_to(py_path.parents[2])
+                        violations.append(
+                            f"{rel}:{node.lineno}: ApplicationError(...) "
+                            f"constructed inside "
+                            f"{enclosing_func or '<module>'}() — must go "
+                            f"through {self._BUILDER_NAME}() so the "
+                            f"three-leg wire contract "
+                            f"(non_retryable + error_code + __cause__) "
+                            f"is enforced by construction."
+                        )
+                for child in ast.iter_child_nodes(node):
+                    _scan(child, enclosing_func)
+
+            _scan(tree, None)
+
+        assert saw_any_py_file, (
+            "AST scan found no .py files under tenuo/temporal — fixture "
+            "is broken, not a real pass."
+        )
+        assert not violations, (
+            "Direct ApplicationError(...) constructions detected in "
+            "tenuo/temporal. Route them through "
+            f"{self._BUILDER_NAME}() in tenuo/temporal/exceptions.py:\n\n"
+            + "\n".join(violations)
+        )
+
+
+def _is_application_error_call(func: ast.AST) -> bool:
+    """True if the call target is ``ApplicationError`` — either the
+    bare name (``ApplicationError(...)``) or an attribute
+    (``temporalio.exceptions.ApplicationError(...)``).
+    """
+    if isinstance(func, ast.Name):
+        return func.id == "ApplicationError"
+    if isinstance(func, ast.Attribute):
+        return func.attr == "ApplicationError"
+    return False
+
+
 # ── Drift guard: adding a new exception without error_code is flagged ──
 
 
@@ -310,9 +451,6 @@ class TestNewExceptionsDeclareErrorCode:
     flagged as intentionally untyped in ``_NO_ERROR_CODE_OK``.
     """
 
-    # Exceptions that are deliberately not wire-exposed (abstract bases,
-    # helpers). Keep this set tiny; if you're adding a new entry, ask
-    # whether the exception should instead be wire-exposed.
     _NO_ERROR_CODE_OK = frozenset({
         "TenuoError",
         "TenuoTemporalError",
