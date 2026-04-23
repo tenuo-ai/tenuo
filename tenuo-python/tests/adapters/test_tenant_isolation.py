@@ -237,26 +237,38 @@ class TestWorkerConfigIsRoutedByTaskQueue:
 
         assert _worker_configs == {"tq-a": cfg_a, "tq-b": cfg_b}
 
-    def test_ambiguous_lookup_returns_none_when_two_queues_registered(self):
-        """When multiple configs are registered and the caller does not
-        supply a task queue, we must refuse to pick one rather than risk
-        cross-tenant signing."""
+    def test_lookup_is_exact_match_no_fallback(self):
+        """Strict routing: ``None``, empty, or non-matching task_queue
+        must all return ``None`` regardless of how many configs are
+        registered. There is no "last registered wins" or "if only one
+        config, use it" fallback — that was exactly the class of bug
+        the run_id / task_queue split was meant to close.
+        """
         _set_worker_config(MagicMock(name="a"), task_queue="tq-a")
         _set_worker_config(MagicMock(name="b"), task_queue="tq-b")
 
-        # ``None`` task_queue with two registrations → ambiguous → refuse.
         assert _get_worker_config(None) is None
-        # Unknown task queue → same refusal.
+        assert _get_worker_config("") is None
         assert _get_worker_config("tq-missing") is None
 
-    def test_single_registration_allows_legacy_no_task_queue_lookup(self):
-        """Legacy callers (older tests, hand-composed workers) pass no
-        ``task_queue``; the lookup remains unambiguous when only one config
-        exists in the process."""
+    def test_set_worker_config_rejects_empty_task_queue(self):
+        """``task_queue=""`` or ``None`` at registration time is a
+        programmer error — the whole point of the kwarg is to key the
+        config under a queue. Failing loud at registration beats silently
+        swallowing the registration and failing at mint time.
+        """
+        with pytest.raises(ValueError, match="non-empty task_queue"):
+            _set_worker_config(MagicMock(), task_queue="")
+
+    def test_single_registration_lookup_is_still_exact_match(self):
+        """Even with just one registration, lookup is exact-match —
+        there is no "singleton fallback" path.
+        """
         cfg = MagicMock(name="only")
-        _set_worker_config(cfg)  # no task_queue
-        assert _get_worker_config(None) is cfg
-        assert _get_worker_config("anything") is cfg
+        _set_worker_config(cfg, task_queue="the-only-queue")
+        assert _get_worker_config("the-only-queue") is cfg
+        assert _get_worker_config(None) is None
+        assert _get_worker_config("something-else") is None
 
     def test_mint_activity_uses_task_queue_to_select_config(self):
         """Simulate two workers in one process: each mint activity must
@@ -343,3 +355,189 @@ class TestWorkerConfigIsRoutedByTaskQueue:
 
         assert minted[0] == ("parent-A", signing_key_a)
         assert minted[1] == ("parent-B", signing_key_b)
+
+
+# =============================================================================
+# 3. Manual-setup registration paths (non-plugin users)
+# =============================================================================
+
+
+class TestManualSetupRegistrationPaths:
+    """Three paths to register a worker config, all equivalent:
+
+      1. :class:`TenuoTemporalPlugin` — automatic during
+         ``configure_worker`` (covered elsewhere).
+      2. ``TenuoWorkerInterceptor(config, task_queue=...)`` — self-
+         registers at interceptor construction so plugin-less setups
+         don't need a second call.
+      3. ``register_worker_config(config, task_queue=...)`` — explicit
+         helper for setups that construct the interceptor before
+         knowing the task queue (dynamic orchestrators, test
+         harnesses).
+
+    And one failure path: forgot to register at all → clear
+    :class:`TenuoContextError` from the mint activity with the exact
+    remediation steps, **not** a cryptic deep-stack ``KeyResolutionError``.
+    """
+
+    def _make_config(self) -> "object":
+        """Minimal real config; we only need the interceptor to
+        construct without error and the mint activity to read back
+        ``key_resolver``.
+        """
+        from tenuo import SigningKey
+        from tenuo.temporal import KeyResolver, TenuoPluginConfig
+
+        control = SigningKey.generate()
+        agent = SigningKey.generate()
+
+        class _InlineDictResolver(KeyResolver):
+            """Sandbox-safe minimal resolver for the tenant-isolation sweep."""
+
+            def __init__(self, keys: Dict[str, Any]) -> None:
+                self._keys = keys
+
+            async def resolve(self, key_id: str) -> Any:
+                return self.resolve_sync(key_id)
+
+            def resolve_sync(self, key_id: str) -> Any:
+                return self._keys[key_id]
+
+        return TenuoPluginConfig(
+            key_resolver=_InlineDictResolver({"agent1": agent}),
+            trusted_roots=[control.public_key],
+        )
+
+    def test_interceptor_constructor_self_registers(self):
+        """Passing ``task_queue=`` to the interceptor should register the
+        config under that queue with no second call.
+        """
+        from tenuo.temporal import TenuoWorkerInterceptor
+
+        config = self._make_config()
+        assert _get_worker_config("queue-self-register") is None
+
+        TenuoWorkerInterceptor(config, task_queue="queue-self-register")
+
+        resolved = _get_worker_config("queue-self-register")
+        # Config may be shallow-copied by the interceptor to attach a
+        # control_plane; the key_resolver identity should still match.
+        assert resolved is not None
+        assert resolved.key_resolver is config.key_resolver  # type: ignore[attr-defined]
+
+    def test_interceptor_without_task_queue_does_not_register(self):
+        """Omitting ``task_queue=`` must *not* register anywhere — no
+        implicit "default queue", no fallback slot. Users who skip the
+        kwarg are explicitly opting into the manual-register path and
+        must call ``register_worker_config`` themselves (or accept that
+        delegation features will raise at mint time).
+        """
+        from tenuo.temporal import TenuoWorkerInterceptor
+
+        config = self._make_config()
+        TenuoWorkerInterceptor(config)  # no task_queue
+        assert _worker_configs == {}
+
+    def test_register_worker_config_helper(self):
+        """The public helper must be importable from the top-level
+        ``tenuo.temporal`` package and register under the exact queue
+        name given.
+        """
+        from tenuo.temporal import register_worker_config
+
+        config = self._make_config()
+        register_worker_config(config, task_queue="helper-queue")
+
+        assert _get_worker_config("helper-queue") is config
+
+    def test_register_worker_config_rejects_empty_queue(self):
+        """The helper shares ``_set_worker_config``'s ValueError; users
+        should find out at registration time, not at mint time.
+        """
+        from tenuo.temporal import register_worker_config
+
+        with pytest.raises(ValueError, match="non-empty task_queue"):
+            register_worker_config(self._make_config(), task_queue="")
+
+    def test_mint_activity_raises_clear_error_when_unregistered(self):
+        """The remediation message must name *all three* registration
+        paths and match the actual public API surface, because this is
+        the error users hit first when they forget to register.
+        """
+        from tenuo.temporal._observability import _MintRequest
+        from tenuo.temporal._state import _pending_mint_capabilities
+        from tenuo.temporal._workflow import _tenuo_internal_mint_activity
+
+        if _tenuo_internal_mint_activity is None:
+            pytest.skip("temporalio not installed; mint activity unavailable")
+
+        cap_ref = "unregistered-ref"
+        with _store_lock:
+            _pending_mint_capabilities[cap_ref] = {"read_file": {}}
+
+        req = _MintRequest(
+            kind="attenuate",
+            parent_warrant_bytes=b"irrelevant",
+            key_id="k",
+            capabilities_ref=cap_ref,
+            ttl_seconds=300,
+        )
+
+        import asyncio as _asyncio
+
+        activity_info = _FakeActivityInfo(task_queue="forgotten-queue")
+        loop = _asyncio.new_event_loop()
+        try:
+            with patch("temporalio.activity.info", return_value=activity_info):
+                with pytest.raises(Exception) as excinfo:
+                    loop.run_until_complete(_tenuo_internal_mint_activity(req))
+        finally:
+            loop.close()
+            with _store_lock:
+                _pending_mint_capabilities.pop(cap_ref, None)
+
+        msg = str(excinfo.value)
+        # The message must name the exact remediation — every path a
+        # plugin-less user might be using — so the error is self-
+        # solving rather than forcing a trip to the docs.
+        assert "forgotten-queue" in msg, "error must name the unresolved queue"
+        assert "TenuoTemporalPlugin" in msg, "error must mention the plugin path"
+        assert "TenuoWorkerInterceptor" in msg and "task_queue" in msg, (
+            "error must mention the interceptor constructor path"
+        )
+        assert "register_worker_config" in msg, (
+            "error must mention the explicit helper path"
+        )
+
+    def test_async_completion_honors_task_queue_kwarg(self):
+        """``tenuo_complete_async_activity`` dropped its singleton
+        lookup; callers must pass ``task_queue=`` to get PoP signing.
+        Verify the resolver is actually hit when the queue matches.
+        """
+        from tenuo.temporal._workflow import tenuo_complete_async_activity
+
+        config = self._make_config()
+        _set_worker_config(config, task_queue="async-complete-q")
+
+        handle = AsyncMock()
+        warrant = MagicMock()
+        warrant.sign_pop = MagicMock()
+
+        import asyncio as _asyncio
+
+        loop = _asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(
+                tenuo_complete_async_activity(
+                    handle,
+                    "result-payload",
+                    warrant,
+                    "agent1",
+                    task_queue="async-complete-q",
+                )
+            )
+        finally:
+            loop.close()
+
+        warrant.sign_pop.assert_called_once()
+        handle.complete.assert_awaited_once_with("result-payload")

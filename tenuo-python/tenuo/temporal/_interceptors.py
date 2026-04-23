@@ -471,9 +471,38 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
         be removed in a future beta. Imports should be updated to
         ``TenuoWorkerInterceptor`` — the new name correctly reflects that this
         is a Temporal SDK **interceptor**, not a Temporal SDK **plugin**.
+
+    Parameters
+    ----------
+    config:
+        The Tenuo plugin configuration.
+    task_queue:
+        The task queue this worker will be registered on. When provided,
+        ``config`` is registered under *task_queue* so that the internal
+        mint/delegation activity (:func:`workflow_grant`,
+        :func:`tenuo_execute_child_workflow` with ``constraints=``, …) can
+        resolve the correct key resolver for the worker that owns the
+        activity. Pass the same string you pass to ``Worker(...,
+        task_queue=...)``.
+
+        Omitting ``task_queue`` is supported for back-compat with setups
+        that never use delegation/mint features, but is discouraged. If
+        you don't pass it here, you must call
+        :func:`register_worker_config` before ``Worker(...)`` starts.
+        Otherwise the first delegation call inside a workflow will raise
+        :class:`TenuoContextError` with a remediation message.
+
+        :class:`TenuoTemporalPlugin` reads the task queue off the worker
+        config automatically; this kwarg only matters for manual setups
+        where the interceptor is constructed outside the plugin.
     """
 
-    def __init__(self, config: "TenuoPluginConfig") -> None:
+    def __init__(
+        self,
+        config: "TenuoPluginConfig",
+        *,
+        task_queue: Optional[str] = None,
+    ) -> None:
         super().__init__()
 
         if config.control_plane is None:
@@ -490,6 +519,14 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
             config.control_plane = get_or_create()
         self._config = config
         self._version = self._get_version()
+
+        if task_queue:
+            # Self-register so manual users (not using
+            # TenuoTemporalPlugin) don't have to remember a second call.
+            # One object, one construction site, queue routing closed.
+            from tenuo.temporal._state import _set_worker_config
+
+            _set_worker_config(config, task_queue=task_queue)
         try:
             import tenuo_core as _tc  # noqa: F401
         except ImportError as _e:

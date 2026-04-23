@@ -96,76 +96,120 @@ def _current_run_key() -> str:
 
 # ── Worker-level config registry ────────────────────────────────────────
 #
-# Each ``TenuoTemporalPlugin.configure_worker`` call records its
-# ``TenuoPluginConfig`` keyed by the worker's ``task_queue`` so that when
-# ``_tenuo_internal_mint_activity`` executes we can resolve the *correct*
-# key resolver for the worker that actually owns this activity.
+# Each worker registers its ``TenuoPluginConfig`` keyed by the worker's
+# ``task_queue`` so that when ``_tenuo_internal_mint_activity`` executes
+# we can resolve the *correct* key resolver for the worker that actually
+# owns this activity.
 #
-# A single global slot (as we used before) would be overwritten when a
-# second worker registers in the same process, and the first worker's
-# internal-mint activity would then attempt to sign with the second
-# worker's key resolver — producing either a ``KeyResolutionError`` or, far
-# worse, a silently mis-signed child warrant.
+# Registration happens automatically when using ``TenuoTemporalPlugin``
+# (via :meth:`TenuoTemporalPlugin.configure_worker`) and when using
+# ``TenuoWorkerInterceptor(config, task_queue=...)`` directly. For
+# exotic setups that don't know the task queue at interceptor
+# construction time (dynamic worker orchestration, test harnesses)
+# :func:`register_worker_config` provides an explicit helper.
+#
+# Keying is **exact-match on task_queue**: no fallback to a "last
+# registered" slot, no silent disambiguation when multiple workers run
+# in the same process. A process with two workers on different queues
+# must register each config on its own queue or the mint path raises a
+# configuration error. The cost of being strict is one required kwarg;
+# the cost of being lenient was the ability for worker A's internal-mint
+# to sign with worker B's key resolver — a silent
+# cross-tenant capability leak.
 
 _worker_configs: Dict[str, "TenuoPluginConfig"] = {}
-# Retained as a last-resort fallback so legacy call sites that never learned
-# about task_queue routing (e.g. hand-wired workers in old e2e tests that
-# call ``_set_worker_config(cfg)`` directly) still function when exactly one
-# config is registered. When two or more configs are registered, callers
-# *must* disambiguate via task_queue; the fallback returns ``None``.
-_last_registered_worker_config: Optional["TenuoPluginConfig"] = None
 
 
 def _set_worker_config(
     config: "TenuoPluginConfig",
     *,
-    task_queue: Optional[str] = None,
+    task_queue: str,
 ) -> None:
-    """Register worker-level config, optionally keyed by ``task_queue``.
+    """Register *config* as the worker-level config for *task_queue*.
 
-    Called by :meth:`TenuoTemporalPlugin.configure_worker` with the task
-    queue the worker was built for. Legacy call sites without a task queue
-    (tests, hand-composed workers) may pass ``task_queue=None``; the
-    config is recorded in the fallback slot instead.
+    Called by:
+      * :meth:`TenuoTemporalPlugin.configure_worker` (automatic path)
+      * :class:`TenuoWorkerInterceptor` ``__init__`` when constructed
+        with ``task_queue=`` (manual path)
+      * :func:`register_worker_config` (public escape hatch for users
+        who can't pass ``task_queue`` to either of the above)
+
+    ``task_queue`` is required — there is no "singleton" slot. Multiple
+    calls for the same queue overwrite (so reconfiguring a worker during
+    tests or hot-reload is supported), but cross-queue contamination is
+    impossible.
     """
-    global _last_registered_worker_config
-    if task_queue:
-        _worker_configs[task_queue] = config
-    _last_registered_worker_config = config
+    if not task_queue:
+        raise ValueError(
+            "register_worker_config requires a non-empty task_queue. "
+            "Pass the same string you pass to Worker(..., task_queue=...)."
+        )
+    _worker_configs[task_queue] = config
 
 
 def _get_worker_config(
-    task_queue: Optional[str] = None,
+    task_queue: Optional[str],
 ) -> "Optional[TenuoPluginConfig]":
-    """Resolve the worker-level config for *task_queue*.
+    """Return the ``TenuoPluginConfig`` registered for *task_queue*, or
+    ``None`` if no exact match exists.
 
-    Resolution order:
-
-    1. Explicit match in ``_worker_configs[task_queue]`` (the correct answer
-       whenever the plugin registered itself via
-       :meth:`TenuoTemporalPlugin.configure_worker`).
-    2. If no ``task_queue`` is supplied (or no explicit entry exists) and
-       **only one** worker config has been registered process-wide, return
-       that one. This preserves backward compatibility for tests and
-       custom setups with a single worker.
-    3. Otherwise return ``None`` — refusing to pick one config at random
-       when multiple are registered prevents cross-tenant key leakage.
+    Exact match only. Callers are responsible for surfacing a helpful
+    error when ``None`` comes back — see the mint activity's
+    :class:`TenuoContextError` for the canonical remediation message.
     """
-    if task_queue and task_queue in _worker_configs:
-        return _worker_configs[task_queue]
-    if len(_worker_configs) == 1:
-        only = next(iter(_worker_configs.values()))
-        return only
-    if not _worker_configs:
-        return _last_registered_worker_config
-    return None
+    if not task_queue:
+        return None
+    return _worker_configs.get(task_queue)
 
 
 def _clear_worker_config(task_queue: Optional[str] = None) -> None:
-    """Testing hook: clear the registered worker config(s)."""
-    global _last_registered_worker_config
+    """Testing hook: clear the registered worker config(s).
+
+    ``task_queue=None`` clears all registrations; otherwise clears only
+    the entry for that queue.
+    """
     if task_queue is None:
         _worker_configs.clear()
-        _last_registered_worker_config = None
     else:
         _worker_configs.pop(task_queue, None)
+
+
+def register_worker_config(
+    config: "TenuoPluginConfig",
+    *,
+    task_queue: str,
+) -> None:
+    """Register a :class:`TenuoPluginConfig` for a task queue.
+
+    Use this helper when you're **not** using :class:`TenuoTemporalPlugin`
+    (which registers automatically) and **can't** pass ``task_queue=`` to
+    :class:`TenuoWorkerInterceptor` at construction time (which also
+    self-registers). Typical cases:
+
+    * Dynamic worker orchestrators that pick the task queue after the
+      interceptor is constructed.
+    * Test harnesses that invoke the internal mint activity directly
+      without going through ``Worker(...)``.
+
+    Registration must happen **before** the worker starts processing
+    tasks. Re-registering the same task_queue overwrites; different
+    queues coexist. There is no "singleton" fallback — the mint path
+    looks up the config by exact task-queue match.
+
+    Parameters
+    ----------
+    config:
+        The plugin configuration (same object you would pass to
+        :class:`TenuoTemporalPlugin` or :class:`TenuoWorkerInterceptor`).
+    task_queue:
+        The task queue this config should be routed to. Must match the
+        ``task_queue=`` the worker is constructed with; otherwise
+        ``workflow_grant()`` / ``tenuo_execute_child_workflow(...)``
+        can't find the config and raise :class:`TenuoContextError`.
+
+    Raises
+    ------
+    ValueError
+        If *task_queue* is empty.
+    """
+    _set_worker_config(config, task_queue=task_queue)

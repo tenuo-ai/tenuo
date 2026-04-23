@@ -78,6 +78,25 @@ from tenuo.temporal.exceptions import (
 
 _logger = logging.getLogger("tenuo.temporal")
 
+
+def _extract_task_queue(config: Any) -> "Optional[str]":
+    """Return the ``task_queue`` from a Temporal ``WorkerConfig`` or dict.
+
+    Temporal's ``WorkerConfig`` is a :class:`TypedDict` in current SDKs;
+    earlier versions used a dataclass-style object. Handle both by
+    trying mapping-style access first and falling back to
+    :func:`getattr`. Returns ``None`` when the config doesn't expose a
+    task queue (e.g. SDK plumbing passing a partial config, or test
+    fixtures passing a bare dict without ``task_queue``).
+    """
+    if isinstance(config, dict):
+        task_queue = config.get("task_queue")
+    else:
+        task_queue = getattr(config, "task_queue", None)
+    if isinstance(task_queue, str) and task_queue:
+        return task_queue
+    return None
+
 if TYPE_CHECKING:
     from temporalio.worker import WorkflowRunner
 
@@ -342,8 +361,15 @@ class TenuoTemporalPlugin(SimplePlugin):
         the first worker would start minting warrants with the second
         worker's signing key.
         """
-        task_queue = getattr(config, "task_queue", None) or None
-        _set_worker_config(self._tenuo_config, task_queue=task_queue)
+        task_queue = _extract_task_queue(config)
+        if task_queue:
+            _set_worker_config(self._tenuo_config, task_queue=task_queue)
+        # Silently skip when no queue is discoverable (e.g. SDK plumbing
+        # that merges runner/interceptor config before the Worker has its
+        # task_queue set, or test fixtures that pass a bare ``{}``). The
+        # mint activity will fire a targeted ``TenuoContextError`` with
+        # remediation steps if delegation is attempted without a
+        # registration, so there's no silent-failure risk.
         return super().configure_worker(config)
 
     def _preload_keys(self) -> None:

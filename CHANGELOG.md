@@ -31,9 +31,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order now checks `bool` first, so booleans stay booleans on both sides.
   This is a signed-bytes-format change that affects any tool-call
   argument dict containing Python `True` / `False`.
+- **Worker-config registration is strict-match by `task_queue`.** The
+  internal worker-config registry no longer has a "last registered"
+  fallback slot or a "if only one is registered, use it" convenience
+  path. Registration requires a non-empty `task_queue`; lookup returns
+  `None` for any queue that wasn't registered explicitly. This closes
+  a cross-tenant leak where one worker's config could route into
+  another worker's mint activity in a multi-worker process. Callers
+  that were relying on the fallback must now pass `task_queue=` to
+  `TenuoWorkerInterceptor`, call `register_worker_config(...)`
+  explicitly, or use `TenuoTemporalPlugin` (which self-registers).
+  `tenuo_complete_async_activity()` gains an optional `task_queue=`
+  kwarg for the same reason; omitting it skips PoP signing (with a
+  debug log) instead of silently reaching for "whichever config
+  registered last".
 
 ### Added
 
+- **`TenuoWorkerInterceptor(config, task_queue=...)` and
+  `register_worker_config(config, *, task_queue=...)`.** Manual
+  (plugin-less) worker setups previously had to call an internal
+  `_set_worker_config` helper to wire up the internal mint/delegation
+  activity, so the documented "advanced" path silently broke
+  `workflow_grant()` / `tenuo_execute_child_workflow(constraints=...)`
+  / `delegate_warrant()`. `TenuoWorkerInterceptor` now accepts a
+  `task_queue=` kwarg that self-registers the config on construction,
+  and `register_worker_config` is the public escape hatch for setups
+  that don't know the queue at interceptor-construction time.
+  `TenuoTemporalPlugin` continues to register automatically; the
+  kwarg only matters for the manual path. Forgetting to register
+  now produces a `TenuoContextError` that names every registration
+  path (plugin, constructor kwarg, helper) in the message.
 - **Split-view authorize APIs in `tenuo-core`**: `Warrant::authorize_with_pop_args`,
   `Authorizer::authorize_one_with_pop_args`, and
   `Authorizer::check_chain_with_pop_args` accept separate `pop_args`

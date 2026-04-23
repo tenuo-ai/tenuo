@@ -1628,10 +1628,15 @@ class TestMintActivityIssueExecution:
     ):
         """If the Warrant type lacks issue_execution(), mint must raise, not fallback."""
         from tenuo.temporal._observability import _MintRequest
-        from tenuo.temporal._state import _pending_mint_capabilities, _set_worker_config
+        from tenuo.temporal._state import (
+            _clear_worker_config,
+            _pending_mint_capabilities,
+            _set_worker_config,
+        )
         from tenuo.temporal._workflow import _tenuo_internal_mint_activity
 
         cap_ref = "test-ref-issue-exec"
+        task_queue = "test-mint-issue-exec"
         with _store_lock:
             _pending_mint_capabilities[cap_ref] = {"read_file": {}}
 
@@ -1650,7 +1655,13 @@ class TestMintActivityIssueExecution:
             key_resolver=fake_resolver,
             trusted_roots=[control_key.public_key],
         )
-        _set_worker_config(cfg)
+        # Register config under a specific task_queue and fake
+        # ``activity.info().task_queue`` to match. Strict routing is
+        # exact-match, so the mint activity only finds the config when
+        # both sides agree on the queue name.
+        _set_worker_config(cfg, task_queue=task_queue)
+        fake_info = MagicMock()
+        fake_info.task_queue = task_queue
 
         req = _MintRequest(
             parent_warrant_bytes=warrant.to_bytes(),
@@ -1662,9 +1673,8 @@ class TestMintActivityIssueExecution:
 
         loop = asyncio.new_event_loop()
         try:
-            with patch(
-                "tenuo.temporal._tenuo_internal_mint_activity.__wrapped__.__globals__"
-                if False else "tenuo_core.Warrant", _FakeWarrantClass
+            with patch("tenuo_core.Warrant", _FakeWarrantClass), patch(
+                "temporalio.activity.info", return_value=fake_info
             ):
                 with pytest.raises(Exception, match="issue_execution.*not available"):
                     loop.run_until_complete(_tenuo_internal_mint_activity(req))
@@ -1672,6 +1682,7 @@ class TestMintActivityIssueExecution:
             loop.close()
             with _store_lock:
                 _pending_mint_capabilities.pop(cap_ref, None)
+            _clear_worker_config(task_queue)
 
 
 # -- Fail-closed outbound interceptor behavior -------------------------------

@@ -487,14 +487,26 @@ try:
             task_queue = None
 
         config = _get_worker_config(task_queue)
-        if config is None or config.key_resolver is None:
+        if config is None:
             raise TenuoContextError(
-                "_tenuo_internal_mint_activity: no worker config or key_resolver "
-                f"for task_queue={task_queue!r}. Ensure TenuoTemporalPlugin (or "
-                "manual TenuoWorkerInterceptor setup) is configured with a "
-                "TenuoPluginConfig(key_resolver=...). If multiple workers share "
-                "this process, each must register its own plugin instance on its "
-                "own Worker so task-queue routing resolves to the right config."
+                "_tenuo_internal_mint_activity: no TenuoPluginConfig registered "
+                f"for task_queue={task_queue!r}. Register one via any of:\n"
+                "  * TenuoTemporalPlugin(config)  — automatic; recommended.\n"
+                "  * TenuoWorkerInterceptor(config, task_queue=<queue>)  "
+                "— manual setup, self-registers on construction.\n"
+                "  * register_worker_config(config, task_queue=<queue>)  "
+                "— explicit helper for dynamic / test-harness setups.\n"
+                "Registration must happen before Worker(...) starts processing "
+                "tasks. If multiple workers share this process, each must "
+                "register under its own task_queue."
+            )
+        if config.key_resolver is None:
+            raise TenuoContextError(
+                "_tenuo_internal_mint_activity: TenuoPluginConfig for "
+                f"task_queue={task_queue!r} has no key_resolver set. "
+                "Delegation/mint requires a KeyResolver (EnvKeyResolver, "
+                "VaultKeyResolver, etc.) so the internal mint activity can "
+                "sign child warrants with the agent's holder key."
             )
 
         try:
@@ -1012,8 +1024,15 @@ async def tenuo_complete_async_activity(
     key_id: str,
     *,
     client: Optional["Client"] = None,
+    task_queue: Optional[str] = None,
 ) -> None:
-    """Complete an async activity with Tenuo authorization headers."""
+    """Complete an async activity with Tenuo authorization headers.
+
+    PoP signing is best-effort and is skipped (with a debug log) when
+    no worker config can be located. To enable it, pass *task_queue*
+    to select the registered :class:`TenuoPluginConfig`; otherwise the
+    completion proceeds without a PoP signature.
+    """
     import datetime as _datetime
 
     from tenuo.temporal._state import _get_worker_config
@@ -1021,7 +1040,7 @@ async def tenuo_complete_async_activity(
     now = _datetime.datetime.now(_datetime.timezone.utc)
 
     try:
-        worker_cfg = _get_worker_config()
+        worker_cfg = _get_worker_config(task_queue)
         if worker_cfg is not None and worker_cfg.key_resolver is not None:
             key = await worker_cfg.key_resolver.resolve(key_id)
             if key is not None:

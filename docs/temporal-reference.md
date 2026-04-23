@@ -90,16 +90,44 @@ control = SigningKey.generate()
 client_interceptor = TenuoClientInterceptor()
 client = await Client.connect("localhost:7233", interceptors=[client_interceptor])
 
-worker_interceptor = TenuoWorkerInterceptor(TenuoPluginConfig(
+config = TenuoPluginConfig(
     key_resolver=EnvKeyResolver(),
     trusted_roots=[control.public_key],
-))
+)
+
+# Pass the same task_queue the Worker uses; the interceptor self-registers
+# this config under that queue so workflow_grant / tenuo_execute_child_workflow
+# can find the right key resolver when minting attenuated warrants.
+worker_interceptor = TenuoWorkerInterceptor(config, task_queue="q")
+
 sandbox_runner = SandboxedWorkflowRunner(
     restrictions=SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")
 )
 worker = Worker(client, task_queue="q", workflows=[...], activities=[...],
                 interceptors=[worker_interceptor], workflow_runner=sandbox_runner)
 ```
+
+> **`task_queue=` is required for delegation.** If you omit it, basic
+> authorization (activity PoP, constraint matching) still works, but
+> calls to `workflow_grant()`, `tenuo_execute_child_workflow(constraints=...)`,
+> or `delegate_warrant()` will fail with a `TenuoContextError` the first
+> time a workflow tries to mint an attenuated warrant. The error message
+> names the remediation exactly — either pass `task_queue=` to the
+> interceptor (as above) or call `register_worker_config(config,
+> task_queue="q")` before `Worker(...)` starts. The plugin path
+> (`TenuoTemporalPlugin`) handles this automatically; the kwarg only
+> matters here.
+>
+> If you need to construct the interceptor before knowing the queue
+> (dynamic worker orchestration, test harnesses), use the helper:
+>
+> ```python
+> from tenuo.temporal import register_worker_config
+>
+> worker_interceptor = TenuoWorkerInterceptor(config)
+> # ... later, when the queue is known ...
+> register_worker_config(config, task_queue="q")
+> ```
 
 ---
 
@@ -418,7 +446,8 @@ interceptor = TenuoWorkerInterceptor(
         trusted_roots=[control_key.public_key],
         strict_mode=True,
         activity_fns=activities,
-    )
+    ),
+    task_queue="my-queue",
 )
 
 async with Worker(
