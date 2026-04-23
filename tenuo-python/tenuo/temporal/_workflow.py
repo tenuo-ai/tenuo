@@ -353,12 +353,15 @@ def _workflow_mint_context(purpose: str) -> tuple[str, "TenuoPluginConfig"]:
 
     if not raw_headers:
         raise TenuoContextError(
-            "No Tenuo headers in store. Ensure TenuoTemporalPlugin is "
-            "registered and tenuo_headers() was passed at workflow start."
+            "No Tenuo headers in store. Ensure TenuoTemporalPlugin is registered "
+            "on the Client (or, for manual setup, TenuoClientInterceptor is installed "
+            "and tenuo_headers() was passed at workflow start)."
         )
     if not config_store_entry:
         raise TenuoContextError(
-            "No interceptor config found. Ensure TenuoTemporalPlugin is registered."
+            "No interceptor config found. Ensure TenuoTemporalPlugin is registered "
+            "via Client.connect(plugins=[...]), or that TenuoWorkerInterceptor is "
+            "configured on the Worker with a matching TenuoClientInterceptor on the Client."
         )
 
     key_id = raw_headers.get(TENUO_KEY_ID_HEADER, b"").decode("utf-8")
@@ -431,7 +434,8 @@ try:
         if config is None or config.key_resolver is None:
             raise TenuoContextError(
                 "_tenuo_internal_mint_activity: no worker config or key_resolver. "
-                "Ensure TenuoTemporalPlugin is registered with a key_resolver."
+                "Ensure TenuoTemporalPlugin (or manual TenuoWorkerInterceptor setup) "
+                "is configured with a TenuoPluginConfig(key_resolver=...)."
             )
 
         try:

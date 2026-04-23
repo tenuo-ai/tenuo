@@ -145,12 +145,6 @@ class TenuoPluginConfig:
     Pass a TenuoMetrics instance to enable metrics.
     """
 
-    enable_tracing: bool = False
-    """
-    Enable OpenTelemetry tracing spans for authorization.
-    Requires opentelemetry-api to be installed.
-    """
-
     require_warrant: bool = True
     """
     Require a warrant for all activities (fail-closed).
@@ -376,12 +370,6 @@ class TenuoPluginConfig:
 
     Requires ``revocation_list_provider`` to be set; ignored otherwise.
     """
-
-    signal_constraints: Optional[Dict[str, Dict[str, Any]]] = None
-    """Per-signal payload constraints: {signal_name: {field_name: Constraint}}."""
-
-    update_constraints: Optional[Dict[str, Dict[str, Any]]] = None
-    """Per-update payload constraints: {update_name: {field_name: Constraint}}."""
 
     def __post_init__(self) -> None:
         if self.dry_run:

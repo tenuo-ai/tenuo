@@ -81,7 +81,10 @@ _logger = logging.getLogger("tenuo.temporal")
 if TYPE_CHECKING:
     from temporalio.worker import WorkflowRunner
 
-TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME = "tenuo.TenuoTemporalPlugin"
+# Alias of :data:`tenuo.temporal._constants.TENUO_TEMPORAL_PLUGIN_ID`, re-exported
+# here so users and tests can import the canonical Temporal plugin name directly
+# from ``tenuo.temporal_plugin``.
+from tenuo.temporal._constants import TENUO_TEMPORAL_PLUGIN_ID as TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME  # noqa: E402
 
 # Tenuo exceptions that should fail the workflow cleanly (non-retryable) rather
 # than being wrapped by ``ActivityError``. Registered on ``SimplePlugin`` so the

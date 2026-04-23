@@ -446,9 +446,11 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
 
     def __init__(self, config: "TenuoPluginConfig") -> None:
         super().__init__()
+        import dataclasses
+
         if config.control_plane is None:
             from tenuo.control_plane import get_or_create
-            config.control_plane = get_or_create()
+            config = dataclasses.replace(config, control_plane=get_or_create())
         self._config = config
         self._version = self._get_version()
         try:
@@ -470,7 +472,7 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
                 "(Redis, Memcached, etc.) for fleet-wide PoP replay prevention."
             )
 
-        logger.info(
+        logger.debug(
             "Loaded %s (warrant authorization middleware for Temporal Python SDK)",
             TENUO_TEMPORAL_PLUGIN_ID,
         )

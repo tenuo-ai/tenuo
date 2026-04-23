@@ -311,14 +311,19 @@ tools = guard(
 ### Temporal
 
 ```python
-from tenuo.temporal import TenuoPluginConfig, TenuoWorkerInterceptor
+from temporalio.client import Client
+from tenuo.temporal import TenuoPluginConfig
+from tenuo.temporal_plugin import TenuoTemporalPlugin
 
-config = TenuoPluginConfig(
-    key_resolver=resolver,
-    trusted_roots=[control_key.public_key],
-    approval_handler=cli_prompt(approver_key=approver_key),
+plugin = TenuoTemporalPlugin(
+    TenuoPluginConfig(
+        key_resolver=resolver,
+        trusted_roots=[control_key.public_key],
+        approval_handler=cli_prompt(approver_key=approver_key),
+    )
 )
-plugin = TenuoWorkerInterceptor(config)
+
+client = await Client.connect("localhost:7233", plugins=[plugin])
 ```
 
 ---

@@ -82,8 +82,6 @@ class _MintRequest:
     key_id: str
     capabilities_ref: str  # key into _pending_mint_capabilities
     ttl_seconds: Optional[int] = None
-    holder_bytes: Optional[bytes] = None      # PublicKey bytes, if attenuating to a new holder
-    clearance_bytes: Optional[bytes] = None   # Clearance bytes, if restricting clearance
 
 
 class TenuoMetrics:

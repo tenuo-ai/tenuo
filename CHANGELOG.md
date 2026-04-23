@@ -106,6 +106,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `from tenuo.temporal import TenuoWorkerInterceptor`. (Most users use
   `TenuoTemporalPlugin` via `Client.connect(plugins=[plugin])` and are
   unaffected.)
+- **Temporal integration polish** (pre-review sweep): removed placeholder
+  config fields that did nothing (`signal_constraints`,
+  `update_constraints`, `enable_tracing` — beta, no deprecation cycle);
+  `TenuoWorkerInterceptor.__init__` now works on a copy of the caller's
+  config when setting the control-plane default and demotes its startup
+  `INFO` log to `DEBUG`; `_workflow.py` error messages now cover both the
+  `Client.connect(plugins=[...])` and manual-interceptor setups; removed
+  dead helpers (`_compute_pop_challenge`, `POP_WINDOW_SECONDS`, unused
+  `_MintRequest.holder_bytes` / `clearance_bytes`); consolidated
+  `TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME` to alias the canonical
+  `TENUO_TEMPORAL_PLUGIN_ID`. Fixed a `docs/enforcement.md` regression
+  from the earlier rename that incorrectly changed the Google ADK entry;
+  fixed broken doc anchors (`#constraint-types`,
+  `#tenuotemporalplugin-recommended`), a Python-version contradiction in
+  `docs/temporal.md` (3.10+ is correct), and a misleading
+  `TenuoWarrantContextPropagator` docstring that claimed it was
+  "registered automatically" by the plugin. Added Temporal coverage
+  (install, quickstart, docs link) to `tenuo-python/README.md` and
+  dropped a redundant `client_interceptor=` kwarg from the top-level
+  README's Temporal snippet. Fixed a stale Temporal example claiming
+  parallel-read support and rewrote the Temporal snippet in
+  `docs/approvals.md` to use the recommended
+  `TenuoTemporalPlugin` + `Client.connect(plugins=[...])` pattern.
 - **MCP PoP parity across config asymmetry.** A client without a
   `CompiledMcpConfig` loaded (or with a different one) can now call a server
   that does have a config; PoP byte parity no longer depends on the

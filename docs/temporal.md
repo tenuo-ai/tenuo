@@ -13,7 +13,7 @@ If you're building agentic systems on Temporal, Tenuo lets you ship agents that 
 
 - Familiarity with Temporal. If you're new, start with [Understanding Temporal](https://learn.temporal.io/getting_started/) or the Temporal 101 course.
 - A running Temporal cluster (local `temporal server start-dev` or Temporal Cloud).
-- Python 3.9+.
+- Python 3.10+ (inherited from `temporalio>=1.23.0`, which provides `SimplePlugin`).
 
 ## Install
 
@@ -21,7 +21,7 @@ If you're building agentic systems on Temporal, Tenuo lets you ship agents that 
 uv pip install "tenuo[temporal]"
 ```
 
-Requires `temporalio>=1.23.0` (for `SimplePlugin` support) and Python 3.10+. This installs `tenuo_core`, a compiled Rust extension with prebuilt wheels for common platforms.
+This installs `temporalio>=1.23.0` and `tenuo_core`, a compiled Rust extension with prebuilt wheels for common platforms.
 
 ## Configure Workers to use Tenuo
 
@@ -184,7 +184,7 @@ If an activity argument is not listed in the capability, the interceptor rejects
 
 > **Common mistake:** listing only the constrained fields. If your activity has parameters `path` and `encoding`, the capability needs both — e.g. `.capability("read_file", path=Subpath("/data"), encoding=Wildcard())`.
 
-See [Temporal Integration Reference — Constraint types](./temporal-reference.md#constraint-types) for the full list of constraint types (`Subpath`, `UrlSafe`, `Exact`, `Pattern`, `Range`, `AnyOf`, etc.).
+See [Temporal Integration Reference — Constraint Types](./temporal-reference.md#constraint-types-for-ai-agent-workflows) for the full list of constraint types (`Subpath`, `UrlSafe`, `Exact`, `Pattern`, `Range`, `AnyOf`, etc.).
 
 ## How it works
 

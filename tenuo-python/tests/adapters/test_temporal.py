@@ -36,7 +36,6 @@ from tenuo.temporal._resolvers import EnvKeyResolver, KeyResolver  # noqa: E402
 from tenuo.temporal._observability import TemporalAuditEvent  # noqa: E402
 from tenuo.temporal._interceptors import TenuoWorkerInterceptor  # noqa: E402
 from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
-from tenuo.temporal._pop import _compute_pop_challenge  # noqa: E402
 from tenuo.temporal._headers import _extract_key_id_from_headers, tenuo_headers  # noqa: E402
 from tenuo.temporal._decorators import get_tool_name, is_unprotected, tool, unprotected  # noqa: E402
 
@@ -840,69 +839,6 @@ class TestPhase2Exceptions:
 # =============================================================================
 
 
-class TestPopChallenge:
-    """Tests for PoP challenge computation."""
-
-    def test_compute_pop_challenge_deterministic(self):
-        """Same inputs produce same challenge."""
-        ts = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-
-        challenge1 = _compute_pop_challenge(
-            workflow_id="wf-123",
-            activity_id="act-456",
-            tool_name="read_file",
-            args={"path": "/data/file.txt"},
-            scheduled_time=ts,
-        )
-
-        challenge2 = _compute_pop_challenge(
-            workflow_id="wf-123",
-            activity_id="act-456",
-            tool_name="read_file",
-            args={"path": "/data/file.txt"},
-            scheduled_time=ts,
-        )
-
-        assert challenge1 == challenge2
-
-    def test_compute_pop_challenge_different_inputs(self):
-        """Different inputs produce different challenges."""
-        ts = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-
-        challenge1 = _compute_pop_challenge(
-            workflow_id="wf-123",
-            activity_id="act-456",
-            tool_name="read_file",
-            args={"path": "/data/file.txt"},
-            scheduled_time=ts,
-        )
-
-        challenge2 = _compute_pop_challenge(
-            workflow_id="wf-123",
-            activity_id="act-456",
-            tool_name="read_file",
-            args={"path": "/data/other.txt"},  # Different path
-            scheduled_time=ts,
-        )
-
-        assert challenge1 != challenge2
-
-    def test_compute_pop_challenge_returns_bytes(self):
-        """Challenge is returned as bytes (SHA-256)."""
-        ts = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-
-        challenge = _compute_pop_challenge(
-            workflow_id="wf-123",
-            activity_id="act-456",
-            tool_name="read_file",
-            args={},
-            scheduled_time=ts,
-        )
-
-        assert isinstance(challenge, bytes)
-        assert len(challenge) == 32  # SHA-256 = 32 bytes
-
-
 # =============================================================================
 # Phase 2: Config Tests
 # =============================================================================
@@ -1337,7 +1273,6 @@ class TestPhase4Config:
         config = TenuoPluginConfig(key_resolver=resolver, trusted_roots=_TEMPORAL_TRUST_ROOTS)
 
         assert config.metrics is None
-        assert config.enable_tracing is False
 
     def test_can_enable_metrics(self):
         """Can enable metrics in config."""
@@ -1352,18 +1287,6 @@ class TestPhase4Config:
         )
 
         assert config.metrics is metrics
-
-    def test_can_enable_tracing(self):
-        """Can enable tracing in config."""
-        resolver = MagicMock(spec=KeyResolver)
-        config = TenuoPluginConfig(
-            key_resolver=resolver,
-            trusted_roots=_TEMPORAL_TRUST_ROOTS,
-            enable_tracing=True,
-        )
-
-        assert config.enable_tracing is True
-
 
 class TestSecurityConfig:
     """Tests for security hardening config options."""
@@ -2015,21 +1938,6 @@ def test_create_scheduled_workflow_with_warrant_exists():
     from tenuo.temporal._workflow import create_scheduled_workflow_with_warrant
     import inspect
     assert inspect.iscoroutinefunction(create_scheduled_workflow_with_warrant)
-
-
-def test_signal_and_update_constraints_in_config():
-    """TenuoPluginConfig exposes signal and update constraint fields."""
-    from tenuo.temporal._config import TenuoPluginConfig
-    from unittest.mock import MagicMock
-    resolver = MagicMock(spec=KeyResolver)
-    cfg = TenuoPluginConfig(
-        key_resolver=resolver,
-        trusted_roots=_TEMPORAL_TRUST_ROOTS,
-        signal_constraints={"my_signal": {}},
-        update_constraints={"my_update": {}},
-    )
-    assert cfg.signal_constraints == {"my_signal": {}}
-    assert cfg.update_constraints == {"my_update": {}}
 
 
 # =============================================================================

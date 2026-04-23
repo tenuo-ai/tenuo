@@ -244,7 +244,6 @@ class MyWorkflow(AuthorizedWorkflow):
 
 result = await execute_workflow_authorized(
     client=client,
-    client_interceptor=plugin.client_interceptor,
     workflow_run_fn=MyWorkflow.run,
     workflow_id="wf-123",
     warrant=warrant,

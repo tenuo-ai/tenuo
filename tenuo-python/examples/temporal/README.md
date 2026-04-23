@@ -35,11 +35,11 @@ Five examples showing a clean progression from basic transparent authorization t
 
 | Example | Concept | What it demonstrates |
 |---------|---------|---------------------|
-| [`demo.py`](demo.py) | **Transparent authorization** | Standard `workflow.execute_activity()`, zero workflow changes, sequential + parallel reads, unauthorized access denial |
-| [`cloud_iam_layering.py`](cloud_iam_layering.py) | **IAM + MCP layering** | Same pattern as [`temporal_mcp_layering.py`](temporal_mcp_layering.py): activity uses `SecureMCPClient` to call [`cloud_iam_mcp_server.py`](cloud_iam_mcp_server.py) (`s3_get_object`). Two Tenuo boundaries (Temporal + MCP), then IAM at AWS. Per-tenant key prefixes; `TENUO_DEMO_DRY_RUN=1` mocks the MCP server (no boto3 in the activity) |
+| [`demo.py`](demo.py) | **Transparent authorization** | Standard `workflow.execute_activity()` with no Tenuo imports inside the workflow, plus a side-by-side `AuthorizedWorkflow` variant; sequential activity calls and an unauthorized-access denial |
 | [`multi_warrant.py`](multi_warrant.py) | **Multi-tenant isolation** | Identical workflow code for different tenants, isolation via warrant only, cross-access denial |
 | [`delegation.py`](delegation.py) | **Inline attenuation** | Per-stage pipeline authorization with attenuated child workflows via `tenuo_execute_child_workflow()` |
-| [`temporal_mcp_layering.py`](temporal_mcp_layering.py) | **Temporal + MCP** | Abstract pattern: `SecureMCPClient` + [`temporal_mcp_server.py`](temporal_mcp_server.py) (`safe_echo`). [`cloud_iam_layering.py`](cloud_iam_layering.py) is the same shape with S3 (`cloud_iam_mcp_server.py`) |
+| [`temporal_mcp_layering.py`](temporal_mcp_layering.py) | **Temporal + MCP** | Abstract pattern: `SecureMCPClient` + [`temporal_mcp_server.py`](temporal_mcp_server.py) (`safe_echo`) — two Tenuo boundaries, one warrant |
+| [`cloud_iam_layering.py`](cloud_iam_layering.py) | **IAM + MCP layering** | Same shape as `temporal_mcp_layering.py` but with S3 via [`cloud_iam_mcp_server.py`](cloud_iam_mcp_server.py) (`s3_get_object`). Per-tenant key prefixes; `TENUO_DEMO_DRY_RUN=1` mocks the MCP server (no boto3 in the activity) |
 
 ### Quick start
 
@@ -86,7 +86,7 @@ result = await execute_workflow_authorized(
 )
 ```
 
-With `TenuoWorkerInterceptor` on the worker, you can call normal `workflow.execute_activity(...)`. No Tenuo imports are required inside the workflow for that path. If the warrant uses named field constraints (`path=`, `bucket=`, …), configure `activity_fns` (below).
+With `TenuoTemporalPlugin` registered on the client (`Client.connect(plugins=[plugin])`), you can call normal `workflow.execute_activity(...)`. No Tenuo imports are required inside the workflow for that path. If the warrant uses named field constraints (`path=`, `bucket=`, …), configure `activity_fns` (below).
 
 ```python
 @workflow.defn

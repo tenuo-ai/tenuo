@@ -124,13 +124,21 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
 
 
 class TenuoWarrantContextPropagator:
-    """Context propagator for passing Tenuo warrants via Python contextvars.
+    """Thin wrapper over a Python :mod:`contextvars` slot that carries the
+    currently-active ``(warrant, key_id)`` across ``await`` boundaries.
 
-    Used internally by :func:`tenuo_warrant_context`. Registered automatically
-    by :class:`~tenuo.temporal_plugin.TenuoTemporalPlugin` so that plain
-    ``client.execute_workflow()`` calls pick up the active warrant from context.
+    This is **not** a Temporal SDK context propagator — Temporal has no plugin
+    hook to register one, and Tenuo does not depend on that mechanism.
+    Instead, :class:`~tenuo.temporal._client.TenuoClientInterceptor` reads the
+    same contextvar on outbound ``start_workflow`` / ``execute_workflow`` calls
+    and attaches Tenuo headers automatically, so plain
+    ``client.execute_workflow(...)`` picks up the active warrant without the
+    caller having to pass headers explicitly.
 
-    Example — direct use (uncommon; prefer :func:`tenuo_warrant_context`)::
+    Most users should prefer the :func:`tenuo_warrant_context` context manager
+    instead of constructing this directly.
+
+    Example — direct use (uncommon)::
 
         propagator = TenuoWarrantContextPropagator()
         token = propagator.set(warrant, "agent1")
