@@ -698,6 +698,210 @@ class TestTenuoPluginConfig:
         assert interceptor._config.trusted_roots_provider is cfg.trusted_roots_provider
         assert interceptor._config.trusted_roots == [root]
 
+    def test_trusted_roots_refresh_ignores_provider_exceptions(self, monkeypatch):
+        """When ``trusted_roots_provider`` raises, the existing Authorizer is kept
+        and the error is logged but not surfaced — otherwise a transient fetch
+        failure would take the whole worker down mid-activity.
+        """
+        from tenuo import SigningKey
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+
+        import tenuo_core  # type: ignore[import-not-found]
+
+        class _FakeAuthorizer:
+            instances: list = []
+
+            def __init__(self, *, trusted_roots, **kwargs):
+                self.trusted_roots = list(trusted_roots)
+                type(self).instances.append(self)
+
+            def require_clearance(self, tool, clearance):  # pragma: no cover
+                pass
+
+            def set_revocation_list(self, srl):  # pragma: no cover
+                pass
+
+        _FakeAuthorizer.instances.clear()
+        monkeypatch.setattr(tenuo_core, "Authorizer", _FakeAuthorizer)
+
+        root = SigningKey.generate().public_key
+        call_count = {"n": 0}
+
+        def flaky_provider():
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return [root]
+            raise RuntimeError("transient KMS outage")
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots_provider=flaky_provider,
+            trusted_roots_refresh_interval_secs=1.0,
+        )
+        ai = TenuoActivityInboundInterceptor(
+            next_interceptor=MagicMock(), config=cfg, version="test"
+        )
+        before = _FakeAuthorizer.instances[-1]
+        assert before.trusted_roots == [root]
+
+        ai._last_trusted_roots_refresh = -1e9
+        ai._maybe_refresh_trusted_roots()
+
+        assert _FakeAuthorizer.instances[-1] is before, (
+            "Authorizer must NOT be rebuilt when the provider raises"
+        )
+
+    def test_trusted_roots_refresh_ignores_empty_provider_result(self, monkeypatch):
+        """An empty ``trusted_roots_provider()`` result must keep the prior Authorizer
+        (otherwise a misconfigured provider would silently reject every request).
+        """
+        from tenuo import SigningKey
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+
+        import tenuo_core  # type: ignore[import-not-found]
+
+        class _FakeAuthorizer:
+            instances: list = []
+
+            def __init__(self, *, trusted_roots, **kwargs):
+                self.trusted_roots = list(trusted_roots)
+                type(self).instances.append(self)
+
+            def require_clearance(self, tool, clearance):  # pragma: no cover
+                pass
+
+            def set_revocation_list(self, srl):  # pragma: no cover
+                pass
+
+        _FakeAuthorizer.instances.clear()
+        monkeypatch.setattr(tenuo_core, "Authorizer", _FakeAuthorizer)
+
+        root = SigningKey.generate().public_key
+        roots_to_return = [root]
+
+        def provider():
+            return list(roots_to_return)
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots_provider=provider,
+            trusted_roots_refresh_interval_secs=1.0,
+        )
+        ai = TenuoActivityInboundInterceptor(
+            next_interceptor=MagicMock(), config=cfg, version="test"
+        )
+        before = _FakeAuthorizer.instances[-1]
+
+        roots_to_return = []
+        ai._last_trusted_roots_refresh = -1e9
+        ai._maybe_refresh_trusted_roots()
+
+        assert _FakeAuthorizer.instances[-1] is before
+
+    def test_revocation_list_refresh_survives_set_revocation_list_exception(
+        self, monkeypatch
+    ):
+        """A failing ``set_revocation_list`` on the Authorizer must not crash
+        the refresh loop; the next refresh tick must still fire.
+        """
+        from tenuo import SigningKey
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+
+        import tenuo_core  # type: ignore[import-not-found]
+
+        class _FakeAuthorizer:
+            def __init__(self, *, trusted_roots, **kwargs):
+                self.trusted_roots = list(trusted_roots)
+                self.srl_attempts = 0
+
+            def require_clearance(self, tool, clearance):  # pragma: no cover
+                pass
+
+            def set_revocation_list(self, srl):
+                self.srl_attempts += 1
+                raise RuntimeError("authorizer rejected SRL")
+
+        monkeypatch.setattr(tenuo_core, "Authorizer", _FakeAuthorizer)
+
+        root = SigningKey.generate().public_key
+        srl_value = {"revoked": ["warrant-xyz"]}
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[root],
+            revocation_list_provider=lambda: srl_value,
+            revocation_refresh_secs=1.0,
+        )
+        ai = TenuoActivityInboundInterceptor(
+            next_interceptor=MagicMock(), config=cfg, version="test"
+        )
+
+        ai._last_srl_refresh = -1e9
+        ai._maybe_refresh_revocation_list()
+
+        assert ai._authorizer.srl_attempts == 1
+        assert ai._config.revocation_list == srl_value, (
+            "config.revocation_list should be updated even if the Authorizer "
+            "call failed — the next refresh tick must be able to retry."
+        )
+
+    def test_retry_authorizer_selected_on_retry_attempt(self):
+        """``_retry_authorizer`` must be used for ``info.attempt > 1``."""
+        from tenuo import SigningKey
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[SigningKey.generate().public_key],
+            retry_pop_max_windows=120,
+        )
+        ai = TenuoActivityInboundInterceptor(
+            next_interceptor=MagicMock(), config=cfg, version="test"
+        )
+        assert ai._authorizer is not None
+        assert ai._retry_authorizer is not None
+        assert ai._authorizer is not ai._retry_authorizer, (
+            "Retry authorizer must be a distinct instance so the wider "
+            "pop_max_windows only applies on retry attempts."
+        )
+
+    def test_retry_authorizer_not_built_when_disabled(self):
+        """Setting ``retry_pop_max_windows=None`` disables retry widening entirely."""
+        from tenuo import SigningKey
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[SigningKey.generate().public_key],
+            retry_pop_max_windows=None,
+        )
+        ai = TenuoActivityInboundInterceptor(
+            next_interceptor=MagicMock(), config=cfg, version="test"
+        )
+        assert ai._retry_authorizer is None
+
+    def test_empty_authorized_signals_rejected_at_config_time(self):
+        """``authorized_signals=[]`` is a deny-everything footgun — reject early."""
+        from tenuo.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="authorized_signals"):
+            TenuoPluginConfig(
+                key_resolver=EnvKeyResolver(),
+                trusted_roots=_TEMPORAL_TRUST_ROOTS,
+                authorized_signals=[],
+            )
+
+    def test_empty_authorized_updates_rejected_at_config_time(self):
+        """``authorized_updates=[]`` is also deny-everything — reject early."""
+        from tenuo.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="authorized_updates"):
+            TenuoPluginConfig(
+                key_resolver=EnvKeyResolver(),
+                trusted_roots=_TEMPORAL_TRUST_ROOTS,
+                authorized_updates=[],
+            )
+
 
 # =============================================================================
 # Test Audit Events
@@ -2517,6 +2721,310 @@ class TestWorkflowInboundWarrantId:
                 _workflow_headers_store.pop(wf_id, None)
 
         assert resolved == "<undecodable-warrant>"
+
+
+# =============================================================================
+# Approval gates (warrant-gated activities)
+# =============================================================================
+
+
+class TestApprovalGates:
+    """End-to-end coverage for approval-gated activities through the interceptor.
+
+    ``_resolve_approval_gate_approvals`` has three paths:
+
+    * ``x-tenuo-approvals`` header present → decode + verify.
+    * ``approval_handler`` on the config → invoke handler + verify.
+    * Neither → raise ``ApprovalGateTriggered``.
+
+    Prior to this PR only the "nothing available" path had coverage.
+    """
+
+    @staticmethod
+    def _mint_gated_warrant(control_key, holder_key, *, approver_key):
+        from tenuo import Warrant
+
+        return (
+            Warrant.mint_builder()
+            .holder(holder_key.public_key)
+            .capability("deploy")
+            .required_approvers([approver_key.public_key])
+            .min_approvals(1)
+            .approval_gates({"deploy": None})
+            .ttl(3600)
+            .mint(control_key)
+        )
+
+    @staticmethod
+    def _sign_approval(warrant, approver_key, tool, args):
+        import time as _time
+
+        import tenuo_core
+
+        now = int(_time.time())
+        request_hash = tenuo_core.py_compute_request_hash(
+            warrant.id, tool, args, warrant.holder_key,
+        )
+        payload = tenuo_core.ApprovalPayload(
+            request_hash=request_hash,
+            nonce=bytes(range(16)),
+            external_id="admin@test.com",
+            approved_at=now,
+            expires_at=now + 300,
+        )
+        return tenuo_core.SignedApproval.create(payload, approver_key)
+
+    @staticmethod
+    def _build_activity_inputs(warrant, pop_bytes, approvals_header=None):
+        from tenuo.temporal._constants import (
+            TENUO_APPROVALS_HEADER,
+            TENUO_ARG_KEYS_HEADER,
+            TENUO_POP_HEADER,
+        )
+        from tenuo.temporal._headers import tenuo_headers
+
+        h = tenuo_headers(warrant, "agent1")
+        act_headers: dict = {}
+        for k, v in h.items():
+            raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+            if k.startswith("x-tenuo-"):
+                act_headers[k] = raw_v
+        act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop_bytes))
+        act_headers[TENUO_ARG_KEYS_HEADER] = b""
+        if approvals_header is not None:
+            act_headers[TENUO_APPROVALS_HEADER] = approvals_header
+
+        class FakePayload:
+            def __init__(self, data):
+                self.data = data
+
+        info = MagicMock()
+        info.activity_type = "deploy"
+        info.activity_id = "1"
+        info.workflow_id = "wf-approval-test"
+        info.workflow_run_id = "run-1"
+        info.workflow_type = "W"
+        info.task_queue = "q"
+        info.attempt = 1
+        info.is_local = False
+
+        inp = MagicMock()
+        inp.fn = lambda: None
+        inp.args = ()
+        inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
+        return info, inp
+
+    def _run(self, plugin, info, inp):
+        ai = plugin.intercept_activity(MagicMock(
+            execute_activity=AsyncMock(return_value="ok"),
+            init=MagicMock(),
+        ))
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("temporalio.activity.info", return_value=info):
+                return loop.run_until_complete(ai.execute_activity(inp))
+        finally:
+            loop.close()
+
+    def test_approval_handler_happy_path_allows_gated_activity(self):
+        """A warrant-gated tool succeeds when ``approval_handler`` returns a valid
+        signed approval from one of the warrant's required approvers.
+        """
+        import time as _time
+
+        from tenuo import SigningKey
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+
+        warrant = self._mint_gated_warrant(
+            control_key, agent_key, approver_key=approver_key,
+        )
+        signed = self._sign_approval(warrant, approver_key, "deploy", {})
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+
+        captured: dict = {}
+
+        def handler(request):
+            captured["tool"] = request.tool
+            captured["warrant_id"] = request.warrant_id
+            return signed
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            approval_handler=handler,
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        info, inp = self._build_activity_inputs(warrant, pop)
+
+        result = self._run(plugin, info, inp)
+
+        assert result == "ok"
+        assert captured["tool"] == "deploy"
+        assert captured["warrant_id"] == warrant.id
+
+    def test_approvals_header_happy_path_allows_gated_activity(self):
+        """A warrant-gated tool succeeds when the client attaches valid signed
+        approvals via the ``x-tenuo-approvals`` header (the path used by the
+        outbound workflow interceptor when ``set_activity_approvals`` ran).
+        """
+        import json as _json
+        import time as _time
+
+        from tenuo import SigningKey
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+
+        warrant = self._mint_gated_warrant(
+            control_key, agent_key, approver_key=approver_key,
+        )
+        signed = self._sign_approval(warrant, approver_key, "deploy", {})
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+
+        approvals_header = _json.dumps(
+            [base64.b64encode(signed.to_bytes()).decode("ascii")]
+        ).encode("utf-8")
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        info, inp = self._build_activity_inputs(
+            warrant, pop, approvals_header=approvals_header,
+        )
+
+        result = self._run(plugin, info, inp)
+
+        assert result == "ok"
+
+    def test_missing_approvals_on_gated_warrant_raises_approval_gate(self):
+        """Sanity: no handler and no header → ``ApprovalGateTriggered``."""
+        import time as _time
+
+        from tenuo import SigningKey
+        from tenuo.exceptions import ApprovalGateTriggered
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+
+        warrant = self._mint_gated_warrant(
+            control_key, agent_key, approver_key=approver_key,
+        )
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        info, inp = self._build_activity_inputs(warrant, pop)
+
+        with pytest.raises((ApprovalGateTriggered, Exception)) as exc_info:
+            self._run(plugin, info, inp)
+        # ApprovalGateTriggered may be wrapped in Temporal's ApplicationError.
+        msg = str(exc_info.value)
+        assert "approval" in msg.lower() or "gate" in msg.lower() or \
+            isinstance(exc_info.value, ApprovalGateTriggered)
+
+
+# =============================================================================
+# block_local_activities
+# =============================================================================
+
+
+class TestBlockLocalActivities:
+    """``block_local_activities=True`` (the default) denies protected local
+    activities both on the outbound workflow path and the inbound activity path.
+    """
+
+    def _make_outbound(self, *, block=True):
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            block_local_activities=block,
+        )
+        nxt = MagicMock()
+        nxt.start_local_activity = MagicMock(return_value="dispatched")
+        return _TenuoWorkflowOutboundInterceptor(nxt, cfg), nxt
+
+    def test_outbound_blocks_protected_local_activity(self):
+        """A plain (protected) local activity must raise ``LocalActivityError``."""
+        outbound, nxt = self._make_outbound()
+
+        def my_activity(x):
+            return x
+
+        inp = MagicMock(fn=my_activity, activity="my_activity")
+
+        with pytest.raises(LocalActivityError):
+            outbound.start_local_activity(inp)
+        nxt.start_local_activity.assert_not_called()
+
+    def test_outbound_allows_unprotected_local_activity(self):
+        """``@unprotected`` local activities must pass through untouched."""
+        outbound, nxt = self._make_outbound()
+
+        @unprotected
+        def safe_activity(x):
+            return x
+
+        inp = MagicMock(fn=safe_activity, activity="safe_activity")
+
+        assert outbound.start_local_activity(inp) == "dispatched"
+        nxt.start_local_activity.assert_called_once_with(inp)
+
+    def test_outbound_respects_block_local_activities_false(self):
+        """With ``block_local_activities=False`` every local activity passes."""
+        outbound, nxt = self._make_outbound(block=False)
+
+        def my_activity(x):
+            return x
+
+        inp = MagicMock(fn=my_activity, activity="my_activity")
+
+        assert outbound.start_local_activity(inp) == "dispatched"
+        nxt.start_local_activity.assert_called_once_with(inp)
+
+    def test_inbound_blocks_protected_local_activity(self):
+        """The activity inbound interceptor also fails-closed when ``is_local=True``."""
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            block_local_activities=True,
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="ok")
+        nxt.init = MagicMock()
+        ai = plugin.intercept_activity(nxt)
+
+        def my_activity(x):
+            return x
+
+        info = MagicMock()
+        info.activity_type = "my_activity"
+        info.is_local = True
+        info.attempt = 1
+
+        inp = MagicMock(fn=my_activity, args=("x",), headers={})
+
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("temporalio.activity.info", return_value=info):
+                with pytest.raises(Exception):
+                    loop.run_until_complete(ai.execute_activity(inp))
+        finally:
+            loop.close()
+
+        nxt.execute_activity.assert_not_called()
 
 
 # =============================================================================

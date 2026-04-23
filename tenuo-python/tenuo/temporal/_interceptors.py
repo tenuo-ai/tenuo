@@ -9,6 +9,7 @@ checks).
 from __future__ import annotations
 
 import base64
+import binascii
 import inspect as _inspect
 import json
 import logging
@@ -876,7 +877,16 @@ class TenuoActivityInboundInterceptor:
             pop_bytes = None
             pop_header = headers.get(TENUO_POP_HEADER)
             if pop_header:
-                pop_bytes = base64.b64decode(pop_header)
+                try:
+                    pop_bytes = base64.b64decode(pop_header, validate=True)
+                except (binascii.Error, ValueError) as _e:
+                    # A malformed base64 PoP header must surface as a
+                    # non-retryable auth failure, not a raw exception that
+                    # Temporal would retry forever.
+                    raise PopVerificationError(
+                        reason=f"Malformed PoP header (base64 decode failed): {_e}",
+                        activity_name=tool_name,
+                    ) from _e
 
             gate_approvals = self._resolve_approval_gate_approvals(
                 warrant, tool_name, args, headers,
@@ -1119,7 +1129,11 @@ class TenuoActivityInboundInterceptor:
             res = EnforcementResult(
                 allowed=True,
                 tool=tool,
-                arguments=args,
+                # Respect ``redact_args_in_logs`` for the control-plane sink
+                # just like the in-process audit callback below; otherwise a
+                # user setting the flag still leaks plaintext arguments
+                # off-host.
+                arguments=self._redact_args(args),
                 warrant_id=getattr(warrant, "id", None)
             )
             try:
@@ -1190,7 +1204,8 @@ class TenuoActivityInboundInterceptor:
             res = EnforcementResult(
                 allowed=False,
                 tool=tool,
-                arguments=args,
+                # See parity comment in ``_emit_allow_event``.
+                arguments=self._redact_args(args),
                 denial_reason=reason,
                 constraint_violated=constraint,
                 warrant_id=getattr(warrant, "id", None),

@@ -120,7 +120,11 @@ client = SecureMCPClient(server_url, warrant=warrant, signing_key=key)
 **Temporal**: one plugin, zero workflow changes:
 
 ```python
+from temporalio.client import Client
 from tenuo.temporal import TenuoTemporalPlugin, TenuoPluginConfig, EnvKeyResolver
+
+# issuer_pubkey is the public key that mints your warrants —
+# e.g. ``control_key.public_key`` from the snippets above.
 plugin = TenuoTemporalPlugin(TenuoPluginConfig(
     key_resolver=EnvKeyResolver(), trusted_roots=[issuer_pubkey],
 ))

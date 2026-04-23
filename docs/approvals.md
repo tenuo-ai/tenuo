@@ -312,8 +312,15 @@ tools = guard(
 
 ```python
 from temporalio.client import Client
-from tenuo.temporal import TenuoPluginConfig
-from tenuo.temporal_plugin import TenuoTemporalPlugin
+from tenuo.temporal import (
+    TenuoTemporalPlugin,
+    TenuoPluginConfig,
+    EnvKeyResolver,
+)
+
+# Use whichever KeyResolver matches your deployment
+# (EnvKeyResolver, AWSSecretsManagerKeyResolver, VaultKeyResolver, ...).
+resolver = EnvKeyResolver()
 
 plugin = TenuoTemporalPlugin(
     TenuoPluginConfig(

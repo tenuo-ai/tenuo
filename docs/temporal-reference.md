@@ -439,7 +439,7 @@ The worker **appears healthy** while workflow executions are dead. Diagnose via 
 | Component | Supported | Notes |
 |-----------|-----------|-------|
 | Temporal Python SDK | `temporalio>=1.23.0` | `TenuoTemporalPlugin` needs `SimplePlugin` (1.23+) |
-| Python | 3.9 – 3.14 | Full matrix in CI |
+| Python | 3.10 – 3.14 | `temporalio` itself requires 3.10+, so the Temporal integration does too |
 | Runtime mode | Single-process and distributed | Both supported |
 
 ---

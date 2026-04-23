@@ -109,6 +109,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     config stay isolated).
   - `DictKeyResolver` in the replay tests raises `KeyResolutionError`
     instead of `ValueError`.
+  - A malformed `x-tenuo-pop` header (non-base64) is surfaced as a
+    non-retryable `PopVerificationError` instead of a raw
+    `binascii.Error` that Temporal would retry forever.
+  - `authorized_signals=[]` / `authorized_updates=[]` (a deny-everything
+    footgun) is now rejected at config time with `ConfigurationError`.
+    Use `None` to disable the allowlist; list names to restrict it.
+  - Control-plane audit events (`emit_for_enforcement`) now respect
+    `redact_args_in_logs=True` on both the allow and deny paths, so
+    argument values aren't leaked off-host while the in-process audit
+    callback sees them redacted.
 - **Temporal sandbox/config hardening**: registers Tenuo's domain
   exceptions as `workflow_failure_exception_types` on supporting SDKs;
   `preload_all()` failures log at `ERROR`; `EnvKeyResolver` raises
@@ -135,7 +145,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   auto-discovers from `Worker(activities=...)`). Added Temporal
   coverage (install, quickstart, docs link) to `tenuo-python/README.md`
   and rewrote the Temporal snippet in `docs/approvals.md` to use
-  `TenuoTemporalPlugin` + `Client.connect(plugins=[...])`.
+  `TenuoTemporalPlugin` + `Client.connect(plugins=[...])`. Fixed the
+  Python matrix in `docs/temporal-reference.md` (3.10 – 3.14; the
+  Temporal SDK itself requires 3.10+) and patched the runnable
+  `quickstart.md` / `approvals.md` Temporal snippets to include the
+  `Client` import and a defined `resolver`.
 - **MCP PoP parity across config asymmetry.** A client without a
   `CompiledMcpConfig` loaded (or with a different one) can now call a server
   that does have a config; PoP byte parity no longer depends on the
