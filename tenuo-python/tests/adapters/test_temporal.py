@@ -614,6 +614,90 @@ class TestTenuoPluginConfig:
                 approval_threshold=2,
             )
 
+    def test_trusted_roots_refresh_preserves_clearance_and_srl(self, monkeypatch):
+        """Authorizer refresh must re-apply clearance_requirements and SRL.
+
+        Regression: ``_maybe_refresh_trusted_roots`` used to rebuild the
+        Authorizer with only ``trusted_roots=``, silently dropping clearance
+        policy and the current revocation list.
+        """
+        from tenuo import SigningKey
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+
+        import tenuo_core  # type: ignore[import-not-found]
+
+        class _FakeAuthorizer:
+            instances: list = []
+
+            def __init__(self, *, trusted_roots, **kwargs):
+                self.trusted_roots = list(trusted_roots)
+                self.kwargs = kwargs
+                self.clearance: dict = {}
+                self.srl = None
+                type(self).instances.append(self)
+
+            def require_clearance(self, tool, clearance):
+                self.clearance[tool] = clearance
+
+            def set_revocation_list(self, srl):
+                self.srl = srl
+
+        _FakeAuthorizer.instances.clear()
+        monkeypatch.setattr(tenuo_core, "Authorizer", _FakeAuthorizer)
+
+        initial_root = SigningKey.generate().public_key
+        rotated_root = SigningKey.generate().public_key
+        clearance_requirements = {"read_file": "high"}
+        srl = object()
+
+        roots_to_return = [initial_root]
+
+        def provider():
+            return list(roots_to_return)
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots_provider=provider,
+            trusted_roots_refresh_interval_secs=1.0,
+            clearance_requirements=clearance_requirements,
+            revocation_list=srl,
+        )
+        activity_interceptor = TenuoActivityInboundInterceptor(
+            next_interceptor=MagicMock(), config=cfg, version="test"
+        )
+        assert _FakeAuthorizer.instances[-1].clearance == clearance_requirements
+        assert _FakeAuthorizer.instances[-1].srl is srl
+
+        roots_to_return = [rotated_root]
+        activity_interceptor._last_trusted_roots_refresh = -1e9
+        activity_interceptor._maybe_refresh_trusted_roots()
+
+        rebuilt = _FakeAuthorizer.instances[-1]
+        assert rebuilt.trusted_roots == [rotated_root]
+        assert rebuilt.clearance == clearance_requirements
+        assert rebuilt.srl is srl
+
+    def test_worker_interceptor_accepts_trusted_roots_provider_without_control_plane(self):
+        """``TenuoWorkerInterceptor(cfg)`` must not blow up when ``cfg`` uses
+        ``trusted_roots_provider=`` and no explicit ``control_plane=``.
+
+        Regression: ``__init__`` used ``dataclasses.replace`` to attach a
+        default control plane, which re-ran ``__post_init__`` and tripped the
+        "pass either trusted_roots= or trusted_roots_provider=, not both"
+        check because the first post-init had already seeded ``trusted_roots``
+        from the provider.
+        """
+        from tenuo import SigningKey
+
+        root = SigningKey.generate().public_key
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots_provider=lambda: [root],
+        )
+        interceptor = TenuoWorkerInterceptor(cfg)
+        assert interceptor._config.trusted_roots_provider is cfg.trusted_roots_provider
+        assert interceptor._config.trusted_roots == [root]
+
 
 # =============================================================================
 # Test Audit Events
@@ -1262,6 +1346,23 @@ class TestTenuoMetrics:
 
         stats = metrics.get_stats()
         assert stats["latency_avg"] == pytest.approx(0.015, rel=0.01)
+
+    def test_latency_ring_is_bounded(self):
+        """Internal latency ring must not grow without bound.
+
+        Regression: ``_latencies`` was a plain list, leaking memory in
+        long-lived workers. Prometheus histograms remain the real store.
+        """
+        from tenuo.temporal._observability import TenuoMetrics
+
+        metrics = TenuoMetrics(prefix="test_bounded")
+        cap = TenuoMetrics._LATENCY_RING_SIZE
+        for i in range(cap * 3):
+            metrics.record_authorized(
+                tool="read_file", workflow_type="W", latency_seconds=float(i)
+            )
+        assert len(metrics._latencies) == cap
+        assert metrics.get_stats()["latency_count"] == cap
 
 
 class TestPhase4Config:
@@ -2329,6 +2430,93 @@ class TestConstraintTypesThroughInterceptor:
             },
         )
         assert result == "ok"
+
+
+# =============================================================================
+# Workflow inbound interceptor: signal/update denial warrant-id resolution
+# =============================================================================
+
+
+class TestWorkflowInboundWarrantId:
+    """Verify signal/update denial events carry the real warrant id.
+
+    Regression: the inbound workflow interceptor used to hard-code
+    ``warrant_id="workflow"`` on ``TemporalConstraintViolation`` and its
+    logger.warning calls, destroying audit correlation.
+    """
+
+    def _make_inbound(self):
+        from tenuo.temporal._interceptors import _TenuoWorkflowInboundInterceptor
+
+        return _TenuoWorkflowInboundInterceptor(next_interceptor=MagicMock())
+
+    def test_resolve_warrant_id_returns_real_id_from_headers(self):
+        """``_resolve_warrant_id`` decodes the stored warrant and returns its id."""
+        from tenuo import SigningKey
+        from tenuo_core import Warrant  # type: ignore[import-not-found]
+        from tenuo.temporal._interceptors import _store_lock, _workflow_headers_store
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("noop")
+            .ttl(3600)
+            .mint(control_key)
+        )
+        expected_id = warrant.id
+
+        inbound = self._make_inbound()
+        wf_id = "wf-warrant-id-regression"
+        headers = tenuo_headers(warrant, "agent1")
+        stored = {
+            k: (v if isinstance(v, bytes) else str(v).encode("utf-8"))
+            for k, v in headers.items()
+        }
+        try:
+            with _store_lock:
+                _workflow_headers_store[wf_id] = stored
+            fake_info = MagicMock()
+            fake_info.workflow_id = wf_id
+            with patch("temporalio.workflow.info", return_value=fake_info):
+                resolved = inbound._resolve_warrant_id()
+        finally:
+            with _store_lock:
+                _workflow_headers_store.pop(wf_id, None)
+
+        assert resolved == expected_id
+        assert resolved != "workflow"
+
+    def test_resolve_warrant_id_returns_sentinel_when_no_headers(self):
+        """No stored headers → explicit ``<no-warrant>`` sentinel."""
+        inbound = self._make_inbound()
+        fake_info = MagicMock()
+        fake_info.workflow_id = "wf-missing-headers"
+        with patch("temporalio.workflow.info", return_value=fake_info):
+            assert inbound._resolve_warrant_id() == "<no-warrant>"
+
+    def test_resolve_warrant_id_returns_sentinel_on_malformed_header(self):
+        """Malformed warrant bytes → distinct sentinel, never raises."""
+        from tenuo.temporal._interceptors import _store_lock, _workflow_headers_store
+
+        inbound = self._make_inbound()
+        wf_id = "wf-malformed-warrant"
+        try:
+            with _store_lock:
+                _workflow_headers_store[wf_id] = {
+                    TENUO_WARRANT_HEADER: b"not-a-valid-cbor-warrant",
+                    TENUO_COMPRESSED_HEADER: b"0",
+                }
+            fake_info = MagicMock()
+            fake_info.workflow_id = wf_id
+            with patch("temporalio.workflow.info", return_value=fake_info):
+                resolved = inbound._resolve_warrant_id()
+        finally:
+            with _store_lock:
+                _workflow_headers_store.pop(wf_id, None)
+
+        assert resolved == "<undecodable-warrant>"
 
 
 # =============================================================================
