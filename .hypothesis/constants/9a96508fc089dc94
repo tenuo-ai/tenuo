@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/temporal/_interceptors.py
+# hypothesis_version: 6.151.14
+
+[0.0, 1000000.0, 1000000000.0, 300, ',', '<unknown>', 'ALLOW', 'DENY', 'TenuoPluginConfig', '[REDACTED]', '__dataclass_fields__', '_config', 'activity', 'allow', 'args', 'ascii', 'data', 'deny', 'depth', 'details', 'expired_at', 'fn', 'headers', 'holder_key', 'id', 'is_local', 'log', 'none', 'raise', 'require_clearance', 'set_revocation_list', 'signal', 'summary', 'tenuo.authorize', 'tenuo.decision', 'tenuo.temporal', 'tenuo.tool', 'tenuo.warrant_id', 'unknown', 'update', 'utf-8', 'workflow', 'workflow_type', 'x-tenuo-']

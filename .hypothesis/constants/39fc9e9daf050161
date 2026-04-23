@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/mcp/fastmcp_middleware.py
+# hypothesis_version: 6.151.14
+
+[-32001, 'Authorization denied', 'TenuoMiddleware', '_result', 'arguments', 'code', 'message', 'meta', 'model_dump', 'python', 'request_hash', 'tenuo', 'text']

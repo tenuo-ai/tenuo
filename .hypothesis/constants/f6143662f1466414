@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/config.py
+# hypothesis_version: 6.151.14
+
+[300, ',', '1', 'DEFAULT_TTL_SECONDS', 'EnforcementMode', 'TENUO_', 'TenuoConfig', 'allow_passthrough', 'audit', 'auto_configure', 'configure', 'enforce', 'get_config', 'is_audit_mode', 'is_configured', 'is_enforce_mode', 'permissive', 'reset_config', 'tenuo.config', 'tenuo_config', 'true', 'yes']

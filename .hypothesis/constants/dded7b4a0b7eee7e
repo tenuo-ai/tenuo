@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/diagnostics.py
+# hypothesis_version: 6.151.14
+
+[', ', '=', 'Tenuo Configuration', 'Warrant Diagnosis', 'ascii', 'issuer_key', 'max_depth', 'max_issue_depth', 'to_base64', 'utf-8', 'warrant']

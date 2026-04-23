@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/cp_transport.py
+# hypothesis_version: 6.151.14
+
+[120.0, ',', ':', 'Accept', 'Authorization', 'Content-Type', 'POST', 'application/json', 'error', 'status', 'utf-8']

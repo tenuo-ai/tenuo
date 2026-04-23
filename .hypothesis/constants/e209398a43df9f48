@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/warrant_ext.py
+# hypothesis_version: 6.151.14
+
+[10000, '  [WARNING] Expired', '+00:00', ', ', '.', '?', 'ALLOWED', 'BoundWarrant', 'CONSTRAINT_MISMATCH', 'GrantBuilder', 'TOOL_NOT_FOUND', 'WARRANT_EXPIRED', 'Warrant', 'X-Tenuo-PoP', 'X-Tenuo-Warrant', 'Z', '__str__', '_error', 'allows', 'args', 'ascii', 'capabilities', 'child', 'child_warrant_id', 'constraints', 'constraints.error', 'delegation_receipt', 'depth', 'expired', 'explain', 'get_by_hash', 'get_constraints', 'headers', 'inspect', 'issue_execution', 'max_depth', 'max_issue_depth', 'none', 'note', 'parent', 'parent_warrant_hash', 'terminal', 'timestamp', 'to_base64', 'tool', 'tool.not_found', 'ttl', 'ttl_remaining', 'ttl_seconds', 'unknown', 'utf-8', 'validate', 'warrant', 'warrant.expired', 'why_denied', '{}']

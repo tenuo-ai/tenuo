@@ -194,6 +194,14 @@ def ensure_tenuo_workflow_runner(
             restrictions=existing.restrictions.with_passthrough_modules(*passthrough),
         )
 
+    # mypy narrowing note: ``unsandboxed_cls`` below is typed as
+    # ``Optional[type]`` (the unparameterized ``type``), so
+    # ``isinstance(existing, unsandboxed_cls)`` narrows ``existing`` to
+    # ``object`` rather than ``WorkflowRunner``. ``runner`` aliases the
+    # non-None, correctly-typed binding so the final ``return runner``
+    # sites stay type-correct without sprinkling ``cast`` at every exit.
+    runner: "WorkflowRunner" = existing
+
     unsandboxed_cls: Optional[type] = None
     try:
         from temporalio.worker import UnsandboxedWorkflowRunner
@@ -202,7 +210,7 @@ def ensure_tenuo_workflow_runner(
     except ImportError:  # pragma: no cover - older temporalio without this export
         pass
 
-    if unsandboxed_cls is not None and isinstance(existing, unsandboxed_cls):
+    if unsandboxed_cls is not None and isinstance(runner, unsandboxed_cls):
         msg = (
             "TenuoTemporalPlugin is running with UnsandboxedWorkflowRunner. "
             "Tenuo itself still enforces warrant + PoP authorization, but "
@@ -215,16 +223,16 @@ def ensure_tenuo_workflow_runner(
         )
         warnings.warn(msg, UserWarning, stacklevel=2)
         _logger.warning("%s", msg)
-        return existing
+        return runner
 
     _logger.warning(
         "TenuoTemporalPlugin: unknown workflow runner %s; passthrough for "
         "'tenuo' and 'tenuo_core' was not configured. Workflow code may fail to "
         "import Tenuo modules. Use SandboxedWorkflowRunner or omit "
         "``workflow_runner`` to get automatic passthrough.",
-        type(existing).__name__,
+        type(runner).__name__,
     )
-    return existing
+    return runner
 
 
 class TenuoTemporalPlugin(SimplePlugin):

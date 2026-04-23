@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/_builder.py
+# hypothesis_version: 6.151.14
+
+['BaseGuardBuilder', 'T', 'Warrant is expired', 'authorized_holder', 'id', 'is_expired', 'public_key', 'tenuo.builder']

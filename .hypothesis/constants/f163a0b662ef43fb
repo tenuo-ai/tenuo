@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/testing.py
+# hypothesis_version: 6.151.14
+
+[3600, 1234567890, '1', 'None', 'PYTEST_CURRENT_TEST', 'TENUO_TEST_MODE', 'X-Tenuo-PoP', 'X-Tenuo-Warrant', '__main__', 'allow_all', 'ascii', 'assert_authorized', 'assert_can_grant', 'assert_cannot_grant', 'assert_denied', 'error_code', 'for_testing', 'pytest', 'quick_issue', 'unittest']

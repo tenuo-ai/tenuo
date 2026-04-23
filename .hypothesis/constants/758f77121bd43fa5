@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/temporal/_warrant_source.py
+# hypothesis_version: 6.151.14
+
+[5.0, '/', 'Authorization', 'base64', 'event_data', 'expires_at', 'warrant']

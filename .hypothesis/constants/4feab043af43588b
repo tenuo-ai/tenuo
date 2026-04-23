@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/scoped.py
+# hypothesis_version: 6.151.14
+
+['  Constraints:', "')", ')', '*', '/', 'All', 'Capability', 'Cel', 'CelConstraint', 'Cidr', 'Contains', 'Derived scope:', 'Exact', "Exact('", 'GrantScope', 'NotOneOf', 'OneOf', 'Pattern', "Pattern('", 'Range', 'Regex', 'ScopePreview', 'Shlex', 'Subpath', 'Subset', 'UrlPattern', 'UrlSafe', 'Wildcard', 'allow_domains', 'allowed', 'allowed_bins', 'block_loopback', 'block_private', 'capabilities', 'cidr_string', 'excluded', 'expression', 'grant', 'max', 'min', 'mint', 'mint_sync', 'pattern', 'required', 'root', 'ttl_remaining', 'value', 'values']

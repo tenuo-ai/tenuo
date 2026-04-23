@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/temporal/_dedup.py
+# hypothesis_version: 6.151.14
+
+[0.0, '_last_evict', '_lock', 'cache']

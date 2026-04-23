@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/mcp/client.py
+# hypothesis_version: 6.151.14
+
+[0.0, 0.5, 30.0, 300.0, -32002, 104, 110, 'Authorization denied', 'EnforcementResult', 'ValidationResult', '_approvals', 'approvals', 'args_keys', 'code', 'constraint_violation', 'content', 'expired', 'http', 'id', 'inputSchema', 'isError', 'properties', 'request_hash', 'signature', 'sse', 'stdio', 'structuredContent', 'tenuo', 'text', 'tool', 'tool_not_allowed', 'tool_not_authorized', 'type', 'utf-8', 'warrant']

@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/bound_warrant.py
+# hypothesis_version: 6.151.14
+
+['BoundWarrant', 'X-Tenuo-PoP', 'X-Tenuo-Warrant', '_key', '_key_token', '_trusted_roots', '_warrant', '_warrant_token', 'ascii', 'bind', 'issuer', 'issuer_public_key', 'max_depth', 'max_issue_depth']

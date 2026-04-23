@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/langgraph.py
+# hypothesis_version: 6.151.14
+
+[1000, 1024, '-', 'BoundWarrant', 'F', 'LANGGRAPH_AVAILABLE', 'MIDDLEWARE_AVAILABLE', 'ModelRequest', 'ModelResponse', 'TENUO_KEY_', 'TenuoMiddleware', 'TenuoToolNode', 'ToolCallRequest', '_', 'args', 'bind', 'bound_warrant', 'config', 'configurable', 'default', 'error', 'guard_node', 'id', 'load_tenuo_keys', 'name', 'require_warrant', 'tenuo.langgraph', 'tenuo_key_id', 'tenuo_node', 'tools', 'unknown', 'warrant', 'wrap_tool_call']

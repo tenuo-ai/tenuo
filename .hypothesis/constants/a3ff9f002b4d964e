@@ -1,0 +1,4 @@
+# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/audit.py
+# hypothesis_version: 6.151.14
+
+['@timestamp', 'action', 'actor', 'authorization_failed', 'authorized', 'client_ip', 'constraints', 'context_cleared', 'context_set', 'critical', 'denied', 'details', 'enrollment_failure', 'enrollment_success', 'error', 'error_code', 'event_type', 'id', 'info', 'metadata', 'pop_failed', 'pop_verified', 'related_ids', 'service', 'severity', 'tenuo-python', 'tenuo.audit', 'tool', 'trace_id', 'warning', 'warrant_attenuated', 'warrant_created', 'warrant_expired', 'warrant_id', 'warrant_verified']
