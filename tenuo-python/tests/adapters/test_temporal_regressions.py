@@ -1,4 +1,4 @@
-"""Regression tests for issues found during the Temporal integration deep review.
+"""Regression tests for Temporal integration bugs.
 
 Each test below targets a specific bug where the previous test suite had no
 coverage. See CHANGELOG for the corresponding fixes.
