@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/a2a/client.py
-# hypothesis_version: 6.151.14
-
-[30.0, 300.0, -32004, 120, 200, 3600, '/', '2.0', ';', 'A2AClient', 'A2AClientBuilder', 'Accept', 'Empty warrant chain', 'POST', 'Registration failed', 'SigningKey', 'Unknown error', 'Warrant', 'X-Tenuo-PoP', 'X-Tenuo-Warrant', '_csr', 'agent/discover', 'agent/register', 'application/json', 'arguments', 'ascii', 'code', 'complete', 'content-type', 'data', 'data:', 'delegate', 'error', 'hex', 'holder', 'id', 'iss', 'issuer', 'jsonrpc', 'message', 'method', 'mid_stream', 'params', 'result', 'sign', 'skill', 'sub', 'task', 'task/send', 'task/sendSubscribe', 'task_id', 'tenuo.a2a.client', 'text/event-stream', 'to_base64', 'to_bytes', 'warrant']

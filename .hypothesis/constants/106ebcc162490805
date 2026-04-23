@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/temporal/_constants.py
-# hypothesis_version: 6.151.14
-
-[b'2', 300, 1024, 'x-tenuo-approvals', 'x-tenuo-arg-keys', 'x-tenuo-compressed', 'x-tenuo-key-id', 'x-tenuo-pop', 'x-tenuo-warrant', 'x-tenuo-wire-format']

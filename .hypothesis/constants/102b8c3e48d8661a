@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/control_plane.py
-# hypothesis_version: 6.151.14
-
-[2.0, 5.0, 'ControlPlaneClient', 'HOSTNAME', 'POD_NAME', 'TENUO_API_KEY', 'TENUO_CONNECT_TOKEN', 'TENUO_SIGNING_KEY', '__version__', 'allowed', 'arguments', 'autogen', 'clean_arguments', 'connect', 'constraint_violated', 'crewai', 'denial_reason', 'fastapi', 'fastmcp', 'framework_adk', 'framework_autogen', 'framework_crewai', 'framework_fastapi', 'framework_fastmcp', 'framework_langchain', 'framework_langgraph', 'framework_mcp', 'framework_openai', 'framework_starlette', 'framework_temporal', 'get_client', 'get_or_create', 'google.adk', 'langchain', 'langgraph', 'mcp', 'metadata', 'openai', 'python', 'root_issuer', 'sdk_language', 'sdk_runtime_version', 'starlette', 'temporalio', 'tenuo-python-sdk', 'tool', 'unknown', 'warrant_id', 'warrant_stack_b64']

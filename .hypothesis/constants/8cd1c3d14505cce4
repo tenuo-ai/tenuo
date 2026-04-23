@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/temporal/_resolvers.py
-# hypothesis_version: 6.151.14
-
-[10.0, 300, 404, '/', 'SecretBinary', 'SecretString', 'TENUO_ENV', 'TENUO_KEY_', 'VAULT_TOKEN', 'X-Vault-Token', 'data', 'dev', 'development', 'key', 'latest', 'local', 'secret', 'secretsmanager', 'tenuo-keys-', 'tenuo.temporal', 'tenuo/keys/', 'tenuo/keys/{key_id}', 'test', 'testing']

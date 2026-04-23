@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/explain.py
-# hypothesis_version: 6.151.14
-
-['\nAuthorized tools:', '\nContext:', '\nHow to fix:', '\nMonotonicity rule:', 'authorized_tools', 'details', 'error_code', 'expired_at', 'explain', 'explain_str', 'field', 'reason', 'tool', 'unknown', 'value', 'warrant_id']

@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/autogen.py
-# hypothesis_version: 6.151.14
-
-['0', '<see warrant>', '<unknown>', 'AUTOGEN_AVAILABLE', 'Argument not allowed', 'Authorization denied', 'GuardBuilder', 'Invalid JSON', 'Warrant has expired', '_Guard', '__dict__', '__name__', 'arg0', 'args', 'arguments', 'autogen_agentchat', 'choices', 'delta', 'expired', 'finish_reason', 'function', 'guard_tool', 'guard_tools', 'id', 'index', 'log', 'model_dump', 'name', 'not in warrant', 'protect', 'raise', 'satisfies', 'self', 'skip', 'tenuo.autogen', 'tool not granted', 'tool not in warrant', 'tool_calls', 'tool_not_allowed', 'unknown']

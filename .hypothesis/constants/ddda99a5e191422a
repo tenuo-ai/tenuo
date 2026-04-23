@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/builder.py
-# hypothesis_version: 6.151.14
-
-[3600, 'GrantBuilder', 'IssuanceBuilder', 'MintBuilder', '_approval_gates', 'clearance', 'constraint_bounds', 'constraints', 'execution', 'holder', 'issuable_tools', 'issuer', 'max_issue_depth', 'mint_builder', 'session_id', 'tools', 'ttl_seconds', 'type']

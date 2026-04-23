@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/templates.py
-# hypothesis_version: 6.151.14
-
-[100, 1000, 5000, '.', 'AgentTemplate', 'ApiClient', 'CodeRunner', 'CommonAgents', 'DELETE', 'DatabaseReader', 'DatabaseWriter', 'EmailSender', 'FileReader', 'FileWriter', 'GET', 'INSERT', 'SELECT', 'ShellExecutor', 'Source code access', 'UPDATE', 'WebSearcher', '\\.', '__builtins__', 'api.anthropic.com', 'api.openai.com', 'append_file', 'builtins', 'cat', 'code_assistant', 'ctypes', 'customer_support', 'data_analyst', 'date', 'df', 'domain', 'du', 'echo', 'execute', 'execute_code', 'find', 'grep', 'head', 'hostname', 'http_request', 'importlib', 'ls', 'model', 'multiprocessing', 'os', 'pwd', 'python', 'query', 'read_file', 'research_assistant', 'send_email', 'shell', 'socket', 'subprocess', 'sys', 'tail', 'true', 'uname', 'wc', 'web_agent', 'write_file', '|']

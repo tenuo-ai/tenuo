@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/temporal/_observability.py
-# hypothesis_version: 6.151.14
-
-[0.0, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 'ALLOW', 'DENY', 'activity_id', 'activity_name', 'arguments', 'authorized', 'constraint_violated', 'decision', 'denial_reason', 'denied', 'latency_avg', 'latency_count', 'reason', 'task_queue', 'tenuo.temporal', 'tenuo_temporal', 'tenuo_version', 'timestamp', 'tool', 'warrant_capabilities', 'warrant_expires_at', 'warrant_id', 'workflow_id', 'workflow_run_id', 'workflow_type']

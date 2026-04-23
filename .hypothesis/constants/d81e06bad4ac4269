@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/mcp/server.py
-# hypothesis_version: 6.151.14
-
-[-32602, -32002, -32001, 1000, 1024, 'Authorization denied', 'Empty warrant stack', 'MCPVerifier', 'approvals', 'code', 'data', 'id', 'message', 'request_hash', 'signature', 'tenuo', 'verify_mcp_call', 'warrant']

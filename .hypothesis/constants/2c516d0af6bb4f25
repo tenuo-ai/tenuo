@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/cp_approval.py
-# hypothesis_version: 6.151.14
-
-['arguments', 'attestation', 'created_at_unix', 'error', 'min_approvals', 'request_hash_hex', 'request_id_hex', 'schema_version', 'server_request_id', 'signature', 'signed_approvals_b64', 'signer_key', 'status', 'temporal', 'tool', 'warrant_id']

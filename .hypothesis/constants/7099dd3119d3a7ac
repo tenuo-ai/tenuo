@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/_enforcement.py
-# hypothesis_version: 6.151.14
-
-['Any', 'Authorization denied', 'Authorization failed', 'Constraint violation', 'DENIAL', 'DenialPolicy', 'DenialResult', 'EnforcementResult', 'Warrant has expired', '__name__', '_trusted_roots', 'args_keys', 'authorization_failed', 'constraint_violation', 'critical', 'enforce_tool_call', 'expired', 'field', "field '(\\w+)'", 'handle_denial', 'holder_key', 'id', 'internal_error', 'invalid_pop', 'log', 'missing_constraints', 'name', 'policy_violation', 'raise', 'sign', 'skip', 'tenuo.enforcement', 'tenuo_error', 'tool', 'tool_not_allowed', 'verify', 'warrant_id']

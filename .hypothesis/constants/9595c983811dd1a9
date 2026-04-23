@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/langchain.py
-# hypothesis_version: 6.151.14
-
-['BoundWarrant', 'LANGCHAIN_AVAILABLE', 'SecureAgentExecutor', 'TenuoTool', '_approval_handler', '_approvals', '_arun', '_bound_warrant', '_control_plane', '_run', '_schemas', '_trusted_roots', 'agent', 'args_schema', 'audit', 'auto_protect', 'coroutine', 'description', 'enforce', 'func', 'guard', 'guard_agent', 'guard_tools', 'invoke', 'max_iterations', 'name', 'permissive', 'self', 'strict', 'strict_mode', 'tenuo.langchain', 'tools', 'unknown', 'verbose', 'wrapped']

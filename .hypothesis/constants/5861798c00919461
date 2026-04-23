@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/temporal/_workflow.py
-# hypothesis_version: 6.151.14
-
-[300, ', ', 'Client', 'TenuoContextError', 'TenuoPluginConfig', 'Warrant', 'WarrantSource', 'all', 'args', 'attenuate', 'attenuated grants', 'cancellation_type', 'cron_schedule', 'default', 'execution_timeout', 'heartbeat_timeout', 'id', 'id_reuse_policy', 'interceptors', 'issue_execution', 'memo', 'outbound PoP signing', 'parent_close_policy', 'result', 'retry_policy', 'run_timeout', 'search_attributes', 'sign_pop', 'summary', 'task_queue', 'task_timeout', 'tenuo.temporal', 'tenuo_key_id', 'tenuo_warrant', 'ts', 'utf-8']

@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/temporal_plugin.py
-# hypothesis_version: 6.151.14
-
-['TenuoTemporalPlugin', 'WorkflowRunner', 'client_interceptors', 'interceptors', 'preload_all', 'tenuo', 'tenuo.temporal', 'tenuo_core', 'worker_interceptors']

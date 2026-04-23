@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/temporal/exceptions.py
-# hypothesis_version: 6.151.14
-
-['CHAIN_INVALID', 'CONSTRAINT_VIOLATED', 'CONTEXT_MISSING', 'KEY_NOT_FOUND', 'WARRANT_EXPIRED']

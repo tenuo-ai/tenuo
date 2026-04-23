@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/google_adk/guard.py
-# hypothesis_version: 6.151.14
-
-[100, 1000, 'Access denied.', 'BaseTool', 'GuardBuilder', 'Range', 'SigningKey', 'ToolContext', 'Warrant', 'Warrant expired', 'Wildcard', 'Z', '[REDACTED]', '_', '__name__', '__tenuo_warrant__', '_allow_unknown', '_audit_log', '_owns_audit_log', 'a', 'args', 'authorization_denied', 'capabilities', 'close', 'constraints', 'deny_code', 'details', 'error', 'event', 'expired', 'field', 'full', 'grants', 'hex', 'hints', 'id', 'is_expired', 'iss', 'issuer', 'message', 'minimal', 'name', 'not authorized', 'raise', 'return', 'satisfies', 'session_state', 'silent', 'skill', 'state', 'suggestion', 'timestamp', 'tool', 'tool_allowed', 'tool_completed', 'tool_denied', 'tool_dry_run_denied', 'tools', 'warrant', 'write']

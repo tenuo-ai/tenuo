@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/temporal/_config.py
-# hypothesis_version: 6.151.14
-
-[240, 'TENUO_SIGNING_KEY', 'TenuoMetrics', 'TenuoPluginConfig', '__name__', 'control_plane', 'log', 'name', 'raise', 'signing_key', 'skip', 'tenuo.temporal']

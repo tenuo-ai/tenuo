@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/approval.py
-# hypothesis_version: 6.151.14
-
-[300, '  APPROVAL REQUIRED', '  Approve? [y/N] ', '+00:00', 'ApprovalDenied', 'ApprovalHandler', 'ApprovalRequest', 'ApprovalRequired', 'ApprovalTimeout', 'Z', 'approval_threshold', 'auto-approve', 'auto-denied', 'auto_approve', 'auto_deny', 'cli', 'cli_prompt', 'denied by approver', 'denied via CLI', 'expires_at', 'id', 'n', 'required_approvers', 'sign_approval', 'tenuo.approval', 'uuid7', 'webhook', 'y', 'yes']

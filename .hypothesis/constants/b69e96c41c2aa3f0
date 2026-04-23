@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/keys.py
-# hypothesis_version: 6.151.14
-
-['-----BEGIN', '=', 'KeyRegistry', '_instance_lock', '_keys', '_previous', '_root', 'default', 'from_env', 'from_file', 'unknown', 'utf-8']

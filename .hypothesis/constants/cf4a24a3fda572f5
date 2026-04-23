@@ -1,4 +1,0 @@
-# file: /Users/aimable/Development/tenuo/tenuo-python/tenuo/mcp/langchain.py
-# hypothesis_version: 6.151.14
-
-['array', 'boolean', 'inputSchema', 'integer', 'number', 'object', 'properties', 'required', 'string', 'type']
