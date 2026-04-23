@@ -165,14 +165,14 @@ class _TenuoWorkflowOutboundInterceptor:
             return self._next.start_activity(input)
 
         try:
-            wf_id = workflow.info().workflow_id
+            run_key = workflow.info().run_id
             activity_type = input.activity
 
             with _store_lock:
-                pending_approvals = _pending_activity_approvals.pop(wf_id, None)
+                pending_approvals = _pending_activity_approvals.pop(run_key, None)
 
             with _store_lock:
-                raw_headers = dict(_workflow_headers_store.get(wf_id, {}))
+                raw_headers = dict(_workflow_headers_store.get(run_key, {}))
 
             if raw_headers:
                 warrant = _extract_warrant_from_headers(raw_headers)
@@ -193,7 +193,7 @@ class _TenuoWorkflowOutboundInterceptor:
                     activity_fn = getattr(input, "fn", None)
                     if activity_fn is None:
                         with _store_lock:
-                            activity_fn = _pending_activity_fn.get(wf_id)
+                            activity_fn = _pending_activity_fn.get(run_key)
                     if activity_fn is None and self._config is not None:
                         activity_fn = self._config._activity_registry.get(activity_type)
 
@@ -295,9 +295,9 @@ class _TenuoWorkflowOutboundInterceptor:
         except ImportError:
             return self._next.continue_as_new(input)
 
-        wf_id = workflow.info().workflow_id
+        run_key = workflow.info().run_id
         with _store_lock:
-            raw_headers = _workflow_headers_store.get(wf_id, {})
+            raw_headers = _workflow_headers_store.get(run_key, {})
 
         if raw_headers:
             can_headers = dict(input.headers or {})
@@ -311,9 +311,9 @@ class _TenuoWorkflowOutboundInterceptor:
         """Propagate Tenuo headers into Nexus cross-namespace operations."""
         from temporalio import workflow  # type: ignore[import-not-found]
 
-        wf_id = workflow.info().workflow_id
+        run_key = workflow.info().run_id
         with _store_lock:
-            raw_headers = _workflow_headers_store.get(wf_id, {})
+            raw_headers = _workflow_headers_store.get(run_key, {})
 
         if raw_headers:
             nexus_headers = dict(input.headers or {})
@@ -357,7 +357,7 @@ class _TenuoWorkflowInboundInterceptor:
     async def execute_workflow(self, input: Any) -> Any:
         from temporalio import workflow  # type: ignore[import-not-found]
 
-        wf_id = workflow.info().workflow_id
+        run_key = workflow.info().run_id
 
         incoming: Dict[str, bytes] = {}
         for key, payload in (getattr(input, "headers", None) or {}).items():
@@ -368,25 +368,25 @@ class _TenuoWorkflowInboundInterceptor:
 
         if incoming:
             with _store_lock:
-                _workflow_headers_store[wf_id] = incoming
+                _workflow_headers_store[run_key] = incoming
 
         if self._config is not None:
             with _store_lock:
-                _workflow_config_store[wf_id] = self._config
+                _workflow_config_store[run_key] = self._config
 
         try:
             return await self.next.execute_workflow(input)
         finally:
             with _store_lock:
-                _workflow_headers_store.pop(wf_id, None)
-                _workflow_config_store.pop(wf_id, None)
+                _workflow_headers_store.pop(run_key, None)
+                _workflow_config_store.pop(run_key, None)
 
     def _resolve_config(self) -> Optional["TenuoPluginConfig"]:
         from temporalio import workflow  # type: ignore[import-not-found]
 
-        wf_id = workflow.info().workflow_id
+        run_key = workflow.info().run_id
         with _store_lock:
-            return _workflow_config_store.get(wf_id)
+            return _workflow_config_store.get(run_key)
 
     def _resolve_warrant_id(self) -> str:
         """Return the warrant id from stored workflow headers, or a fallback.
@@ -399,9 +399,9 @@ class _TenuoWorkflowInboundInterceptor:
         """
         from temporalio import workflow  # type: ignore[import-not-found]
 
-        wf_id = workflow.info().workflow_id
+        run_key = workflow.info().run_id
         with _store_lock:
-            headers = _workflow_headers_store.get(wf_id)
+            headers = _workflow_headers_store.get(run_key)
         if not headers:
             return "<no-warrant>"
         try:
@@ -716,7 +716,7 @@ class TenuoActivityInboundInterceptor:
             try:
                 # ``self._config`` diverges from the ``TenuoPluginConfig`` held
                 # by ``TenuoWorkerInterceptor`` (and by any running workflow's
-                # ``_workflow_config_store[wf_id]`` snapshot). Today that's
+                # ``_workflow_config_store[run_id]`` snapshot). Today that's
                 # benign because only the activity inbound path consults
                 # ``revocation_list`` — the workflow inbound path checks
                 # ``authorized_signals``/``authorized_updates`` only. If you

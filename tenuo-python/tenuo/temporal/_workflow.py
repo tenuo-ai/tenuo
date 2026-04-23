@@ -243,15 +243,15 @@ async def tenuo_execute_activity(
         }.items() if v is not None
     }
 
-    wf_id = workflow.info().workflow_id
+    run_key = workflow.info().run_id
     with _store_lock:
-        _pending_activity_fn[wf_id] = activity
+        _pending_activity_fn[run_key] = activity
 
     try:
         return await workflow.execute_activity(activity, **activity_kwargs)
     finally:
         with _store_lock:
-            _pending_activity_fn.pop(wf_id, None)
+            _pending_activity_fn.pop(run_key, None)
 
 
 def set_activity_approvals(approvals: List[Any]) -> None:
@@ -304,22 +304,23 @@ def set_activity_approvals(approvals: List[Any]) -> None:
 
     from tenuo.temporal._state import _pending_activity_approvals
 
-    wf_id = workflow.info().workflow_id
+    run_key = workflow.info().run_id
     with _store_lock:
-        if wf_id in _pending_activity_approvals:
+        if run_key in _pending_activity_approvals:
             # Catches the "set twice without dispatching" footgun and the
             # "set_activity_approvals before asyncio.gather" misuse where
             # the second pre-gather set would silently clobber the first.
             logger.warning(
                 "set_activity_approvals(): overwriting %d pending approvals "
-                "for workflow_id=%s that were never consumed. If you are "
-                "dispatching activities in parallel via asyncio.gather, "
+                "for run_id=%s (workflow_id=%s) that were never consumed. If "
+                "you are dispatching activities in parallel via asyncio.gather, "
                 "only the first dispatch will receive approvals; interleave "
                 "set_activity_approvals + execute_activity pairs instead.",
-                len(_pending_activity_approvals[wf_id]),
-                wf_id,
+                len(_pending_activity_approvals[run_key]),
+                run_key,
+                workflow.info().workflow_id,
             )
-        _pending_activity_approvals[wf_id] = list(approvals)
+        _pending_activity_approvals[run_key] = list(approvals)
 
 
 # ── Internal mint machinery ──────────────────────────────────────────────
@@ -381,10 +382,10 @@ def _workflow_mint_context(purpose: str) -> tuple[str, "TenuoPluginConfig"]:
     """Look up the active workflow's key_id and config for a warrant-mint call."""
     from temporalio import workflow  # type: ignore[import-not-found]
 
-    wf_id = workflow.info().workflow_id
+    run_key = workflow.info().run_id
     with _store_lock:
-        raw_headers = _workflow_headers_store.get(wf_id, {})
-        config_store_entry = _workflow_config_store.get(wf_id)
+        raw_headers = _workflow_headers_store.get(run_key, {})
+        config_store_entry = _workflow_config_store.get(run_key)
 
     if not raw_headers:
         raise TenuoContextError(
@@ -465,12 +466,26 @@ try:
         with _store_lock:
             capabilities = _pending_mint_capabilities.get(req.capabilities_ref, {})
 
-        config = _get_worker_config()
+        # Resolve config by the task queue the activity is running on so
+        # multi-worker processes (each with its own TenuoPluginConfig) route
+        # to the correct key resolver instead of whichever worker registered
+        # its config last. ``activity.info().task_queue`` is the authoritative
+        # identifier here.
+        task_queue: Optional[str] = None
+        try:
+            task_queue = _temporal_activity.info().task_queue
+        except Exception:  # pragma: no cover - activity.info() always works in-activity
+            task_queue = None
+
+        config = _get_worker_config(task_queue)
         if config is None or config.key_resolver is None:
             raise TenuoContextError(
-                "_tenuo_internal_mint_activity: no worker config or key_resolver. "
-                "Ensure TenuoTemporalPlugin (or manual TenuoWorkerInterceptor setup) "
-                "is configured with a TenuoPluginConfig(key_resolver=...)."
+                "_tenuo_internal_mint_activity: no worker config or key_resolver "
+                f"for task_queue={task_queue!r}. Ensure TenuoTemporalPlugin (or "
+                "manual TenuoWorkerInterceptor setup) is configured with a "
+                "TenuoPluginConfig(key_resolver=...). If multiple workers share "
+                "this process, each must register its own plugin instance on its "
+                "own Worker so task-queue routing resolves to the right config."
             )
 
         try:
@@ -699,9 +714,9 @@ async def attenuated_headers(
     parent_warrant = current_warrant()
     parent_key_id, _config_entry = _workflow_mint_context("child workflow delegation")
 
-    wf_id = workflow.info().workflow_id
+    run_key = workflow.info().run_id
     with _store_lock:
-        raw_headers = dict(_workflow_headers_store.get(wf_id, {}))
+        raw_headers = dict(_workflow_headers_store.get(run_key, {}))
 
     parent_tools = set(parent_warrant.tools or [])
     if tools is not None:

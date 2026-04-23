@@ -2266,11 +2266,19 @@ class TestSetActivityApprovals:
     """Tests for the set_activity_approvals workflow helper."""
 
     def _call_with_mock_wf(self, wf_id, approvals):
-        """Call set_activity_approvals while mocking temporalio.workflow.info."""
+        """Call set_activity_approvals while mocking temporalio.workflow.info.
+
+        The internal stores are keyed by ``run_id``; we set both
+        ``workflow_id`` and ``run_id`` to the test-supplied string so
+        existing assertions that look up ``_pending_activity_approvals[wf_id]``
+        continue to function (the string is opaque — the test just needs
+        a stable key).
+        """
         from tenuo.temporal._workflow import set_activity_approvals
 
         fake_info = MagicMock()
         fake_info.workflow_id = wf_id
+        fake_info.run_id = wf_id
 
         with patch("temporalio.workflow.info", return_value=fake_info):
             set_activity_approvals(approvals)
@@ -2683,6 +2691,7 @@ class TestWorkflowInboundWarrantId:
                 _workflow_headers_store[wf_id] = stored
             fake_info = MagicMock()
             fake_info.workflow_id = wf_id
+            fake_info.run_id = wf_id
             with patch("temporalio.workflow.info", return_value=fake_info):
                 resolved = inbound._resolve_warrant_id()
         finally:
@@ -2697,6 +2706,7 @@ class TestWorkflowInboundWarrantId:
         inbound = self._make_inbound()
         fake_info = MagicMock()
         fake_info.workflow_id = "wf-missing-headers"
+        fake_info.run_id = "wf-missing-headers"
         with patch("temporalio.workflow.info", return_value=fake_info):
             assert inbound._resolve_warrant_id() == "<no-warrant>"
 
@@ -2714,6 +2724,7 @@ class TestWorkflowInboundWarrantId:
                 }
             fake_info = MagicMock()
             fake_info.workflow_id = wf_id
+            fake_info.run_id = wf_id
             with patch("temporalio.workflow.info", return_value=fake_info):
                 resolved = inbound._resolve_warrant_id()
         finally:
@@ -3836,6 +3847,7 @@ class TestSignalAndUpdateRuntimeDenial:
     def _fake_wf_info(self, wf_id="wf-sig"):
         info = MagicMock()
         info.workflow_id = wf_id
+        info.run_id = wf_id
         return info
 
     @staticmethod
@@ -3914,6 +3926,7 @@ class TestSetActivityApprovalsOverwriteWarning:
         wf_id = "wf-approval-overwrite"
         fake_info = MagicMock()
         fake_info.workflow_id = wf_id
+        fake_info.run_id = wf_id
 
         try:
             with caplog.at_level(logging.WARNING, logger="tenuo.temporal"):

@@ -284,6 +284,11 @@ class TenuoTemporalPlugin(SimplePlugin):
               copy when the user didn't set them explicitly.
             - Eagerly preload all signing keys so the workflow sandbox never
               has to touch ``os.environ`` or external secret storage.
+
+            The worker-config registration with ``_set_worker_config`` is
+            handled by :meth:`configure_worker` (below) so that we can key
+            the registry by ``task_queue``; this closure only appends the
+            internal mint activity.
             """
             if self._tenuo_worker_configured:
                 raise ConfigurationError(
@@ -299,7 +304,6 @@ class TenuoTemporalPlugin(SimplePlugin):
                 )
             self._tenuo_worker_configured = True
 
-            _set_worker_config(self._tenuo_config)
             existing = list(activities or [])
 
             # Auto-populate activity_fns on our private copy if not set by the
@@ -326,6 +330,21 @@ class TenuoTemporalPlugin(SimplePlugin):
             activities=_add_activities,
             **_simple_plugin_kwargs(self.client_interceptor, worker_interceptor),
         )
+
+    def configure_worker(self, config: Any) -> Any:  # type: ignore[override]
+        """Register this plugin's :class:`TenuoPluginConfig` under the worker's task queue.
+
+        Keying the worker-config registry by ``task_queue`` is what allows
+        :func:`_tenuo_internal_mint_activity` to resolve the correct
+        key resolver when multiple workers (with different configs) share
+        a single Python process. Without this, the second worker to call
+        ``configure_worker`` would overwrite the first worker's global and
+        the first worker would start minting warrants with the second
+        worker's signing key.
+        """
+        task_queue = getattr(config, "task_queue", None) or None
+        _set_worker_config(self._tenuo_config, task_queue=task_queue)
+        return super().configure_worker(config)
 
     def _preload_keys(self) -> None:
         """Eagerly preload signing keys from the configured resolver.

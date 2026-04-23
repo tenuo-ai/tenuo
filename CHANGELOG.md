@@ -110,6 +110,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tenant isolation in multi-namespace / multi-worker Temporal processes.**
+  Two related flaws could leak capabilities or signing keys across tenant
+  boundaries when a single Python process hosted multiple Temporal
+  clients/workers:
+  - **`workflow_id` collisions in workflow-internal stores.**
+    `_workflow_headers_store`, `_workflow_config_store`,
+    `_pending_activity_fn`, and `_pending_activity_approvals` were keyed by
+    `workflow.info().workflow_id`, which is only unique per *namespace*.
+    Two workers serving different namespaces (`tenant-a` / `tenant-b`) both
+    running a workflow named `"onboarding-wf"` would have one tenant
+    overwrite the other's entry, and the outbound interceptor could then
+    attach Tenant B's warrant to Tenant A's activity dispatch. These
+    stores are now keyed by `workflow.info().run_id` — a server-assigned
+    UUID unique across namespaces and `continue_as_new` boundaries. The
+    client-side `_headers_by_workflow_id` stays keyed by `workflow_id`
+    (the only key available before the server creates a run), but no
+    longer mirrors into `_workflow_headers_store`.
+  - **`_worker_config` global overwritten by successive worker
+    registrations.** A single module-level `_worker_config` slot was
+    replaced whenever a second `TenuoTemporalPlugin.configure_worker`
+    ran in the process, and Worker A's `_tenuo_internal_mint_activity`
+    then signed child warrants with Worker B's key resolver — either a
+    hard `KeyResolutionError` or, worse, a silently mis-signed warrant.
+    Replaced with `_worker_configs: Dict[task_queue, TenuoPluginConfig]`;
+    `_tenuo_internal_mint_activity` now resolves its config through
+    `activity.info().task_queue`. `_set_worker_config(cfg)` without
+    `task_queue` is still accepted for legacy/test callers and maps to a
+    fallback slot that is only consulted when no other config is
+    registered. Regression coverage in
+    `tests/adapters/test_tenant_isolation.py`.
 - **`tenuo.temporal.TenuoPlugin` renamed to `TenuoWorkerInterceptor`**
   to stop colliding with `tenuo.temporal_plugin.TenuoTemporalPlugin`
   (`Worker(plugins=[TenuoPlugin(...)])` silently accepted an unusable

@@ -13,11 +13,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
 from tenuo.temporal._headers import tenuo_headers
-from tenuo.temporal._state import (
-    _active_tenuo_warrant,
-    _store_lock,
-    _workflow_headers_store,
-)
+from tenuo.temporal._state import _active_tenuo_warrant
 from tenuo.temporal.exceptions import TenuoContextError
 
 logger = logging.getLogger("tenuo.temporal")
@@ -34,11 +30,10 @@ except ImportError:  # pragma: no cover
 class TenuoClientInterceptor(_TemporalClientInterceptor):
     """Temporal client interceptor for injecting Tenuo warrant headers.
 
-    This interceptor:
-      1. Wraps raw header bytes as ``Payload`` protobufs for Temporal
-      2. Stores the **raw** bytes in ``_workflow_headers_store`` (keyed by
-         ``workflow_id``) so the activity interceptor can read them without
-         going through Temporal's serialization pipeline.
+    This interceptor wraps raw header bytes as ``Payload`` protobufs for
+    Temporal and injects them into ``start_workflow``. The worker-side
+    ``_TenuoWorkflowInboundInterceptor`` then extracts the payloads and
+    populates the run-scoped stores that the outbound interceptor reads.
 
     Usage::
 
@@ -292,13 +287,9 @@ class _TenuoClientOutbound:
     Injects Tenuo headers as ``Payload`` objects into the Temporal
     ``StartWorkflow`` request.  The headers travel through the Temporal
     Server and are extracted on the worker by
-    ``_TenuoWorkflowInboundInterceptor``.
-
-    As a convenience for single-process setups (e.g. demos), we also
-    write the raw bytes directly into ``_workflow_headers_store``.  In
-    production (separate client and worker processes) this in-process
-    write has no effect — the workflow interceptor's extraction from
-    ``input.headers`` is the canonical path.
+    ``_TenuoWorkflowInboundInterceptor``, which keys the internal store
+    by ``run_id`` (server-assigned, globally unique) rather than
+    ``workflow_id`` (only unique per namespace).
     """
 
     def __init__(self, next_interceptor: Any, parent: TenuoClientInterceptor) -> None:
@@ -334,16 +325,15 @@ class _TenuoClientOutbound:
             except ImportError:
                 raise TenuoContextError("temporalio not installed")
 
-            raw_store: Dict[str, bytes] = {}
-
             for k, v in selected_headers.items():
                 raw = v if isinstance(v, bytes) else str(v).encode("utf-8")
                 input.headers = {**(input.headers or {}), k: Payload(data=raw)}
-                if k.startswith("x-tenuo-"):
-                    raw_store[k] = raw
 
-            if workflow_id:
-                with _store_lock:
-                    _workflow_headers_store[workflow_id] = raw_store
+            # NB: we deliberately do **not** write to ``_workflow_headers_store``
+            # here. That store is keyed by ``run_id`` (populated on the worker
+            # by ``_TenuoWorkflowInboundInterceptor.execute_workflow``), which
+            # the client does not yet know at start time. A workflow_id-keyed
+            # write here would collide across namespaces when two tenants pick
+            # the same workflow id.
 
         return await self._next.start_workflow(input)
