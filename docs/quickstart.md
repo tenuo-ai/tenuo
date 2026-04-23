@@ -20,9 +20,9 @@ Tenuo:  Does this warrant allow "restart" on "staging-web"?
 IAM:    Does this service account have permission?
 ```
 
-Tenuo adds a **delegation layer** on top of your existing IAM. If an LLM is prompt-injected, it can request anything — but the warrant only allows what you scoped. The injection succeeds at the LLM level; authorization stops the action.
+Tenuo adds a **delegation layer** on top of your existing IAM. If an LLM is prompt-injected, it can request anything, but the warrant only allows what you scoped. The injection succeeds at the LLM level; authorization stops the action.
 
-**Core invariant**: When a warrant is delegated, its capabilities can only **narrow** — never widen. Enforced cryptographically.
+**Core invariant**: when a warrant is delegated, its capabilities can only **narrow**, never widen. Enforced cryptographically.
 
 ## Install
 
@@ -95,14 +95,14 @@ with mint_sync(Capability("read_file", path=Subpath("/data"))):
 
 ### Quick Examples
 
-**OpenAI** — wrap the client, tools are automatically protected:
+**OpenAI**: wrap the client, tools are automatically protected:
 
 ```python
 from tenuo.openai import guard
 client = guard(openai.OpenAI(), warrant=warrant, signing_key=key)
 ```
 
-**LangGraph** — scope authority per graph node:
+**LangGraph**: scope authority per graph node:
 
 ```python
 from tenuo.langgraph import guard_node, TenuoToolNode
@@ -110,14 +110,14 @@ graph.add_node("agent", guard_node(my_agent, key_id="worker"))
 graph.add_node("tools", TenuoToolNode([search, write_file]))
 ```
 
-**MCP** — verify tool calls between client and server:
+**MCP**: verify tool calls between client and server:
 
 ```python
 from tenuo.mcp import SecureMCPClient
 client = SecureMCPClient(server_url, warrant=warrant, signing_key=key)
 ```
 
-**Temporal** — one plugin, zero workflow changes:
+**Temporal**: one plugin, zero workflow changes:
 
 ```python
 from tenuo.temporal import TenuoTemporalPlugin, TenuoPluginConfig, EnvKeyResolver
@@ -141,13 +141,13 @@ if result.denied:
     print(f"Suggestion: {result.suggestion}")
 ```
 
-Or inspect a warrant interactively in the [Explorer Playground](https://tenuo.ai/explorer/) — warrants contain only signed claims, not secrets, so they're safe to share.
+Or inspect a warrant interactively in the [Explorer Playground](https://tenuo.ai/explorer/). Warrants contain only signed claims, not secrets, so they're safe to share.
 
 ## Next Steps
 
-- **[Going to Production](./production-guide)** — enforcement modes, gradual rollout, key management ([Tenuo Cloud](https://cloud.tenuo.ai) or self-hosted)
-- **[AI Agent Patterns](./ai-agents)** — P-LLM/Q-LLM architecture, prompt injection defense
-- **[Concepts](./concepts)** — threat model, core invariants, why warrant-based auth
-- **[Constraint Types](./constraints)** — `Subpath`, `Pattern`, `Range`, `UrlSafe`, `Exact`, and more
-- **[Security Model](./security)** — full threat model, PoP mechanics, delegation chain verification
-- **[API Reference](./api-reference)** — low-level `Warrant`, `SigningKey`, `BoundWarrant` API
+- **[Going to Production](./production-guide)**: enforcement modes, gradual rollout, key management ([Tenuo Cloud](https://cloud.tenuo.ai) or self-hosted)
+- **[AI Agent Patterns](./ai-agents)**: P-LLM/Q-LLM architecture, prompt injection defense
+- **[Concepts](./concepts)**: threat model, core invariants, why warrant-based auth
+- **[Constraint Types](./constraints)**: `Subpath`, `Pattern`, `Range`, `UrlSafe`, `Exact`, and more
+- **[Security Model](./security)**: full threat model, PoP mechanics, delegation chain verification
+- **[API Reference](./api-reference)**: low-level `Warrant`, `SigningKey`, `BoundWarrant` API

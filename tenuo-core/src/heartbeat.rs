@@ -1509,7 +1509,7 @@ mod tests {
 
     fn test_config() -> HeartbeatConfig {
         HeartbeatConfig {
-            control_plane_url: "https://api.tenuo.cloud".to_string(),
+            control_plane_url: "https://control.example.com".to_string(),
             api_key: "tc_test".to_string(),
             authorizer_name: "test-auth".to_string(),
             authorizer_type: "sidecar".to_string(),

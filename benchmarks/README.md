@@ -101,19 +101,7 @@ python -m benchmarks.cryptographic.report
 
 ### Performance
 
-Rust Criterion benchmarks (authoritative):
-```bash
-cd tenuo-core && cargo bench
-```
-
-| Operation | Rust (Criterion, M3 Max) | Notes |
-|-----------|--------------------------|-------|
-| `warrant_verify` (signature + TTL) | ~36 μs | Dominated by `ed25519-dalek::verify_strict` |
-| `warrant_authorize` (verify + PoP + constraints) | ~36 μs | Full hot path |
-| Policy evaluation only (`check_constraints`, no crypto) | ~300 ns for 2 constraints | Roughly 1% of `authorize` latency |
-| Denial (wrong tool, pre-crypto) | ~105 ns | Early short-circuit |
-
-Python callers add PyO3 marshalling overhead on top of these Rust numbers. For the full tables, hardware qualification, and denial-path details see [`docs/api-reference.md#performance-benchmarks`](../docs/api-reference.md#performance-benchmarks).
+See [`docs/api-reference.md#performance-benchmarks`](../docs/api-reference.md#performance-benchmarks) for the authoritative numbers (hardware-qualified, with denial paths, chain-depth sweeps, and Cedar/OPA comparisons). At a glance: `warrant_verify` runs in ~36 μs on Apple M3 Max, dominated by `ed25519-dalek::verify_strict`; policy evaluation itself is ~300 ns. Reproduce locally with `cd tenuo-core && cargo bench`.
 
 **Read more:** [cryptographic/README.md](cryptographic/README.md)
 

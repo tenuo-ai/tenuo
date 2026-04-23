@@ -759,7 +759,7 @@ Verifiers receiving an SRL MUST:
 
 ### 12.1 Cryptographic Assumptions
 
-- Ed25519 signatures are unforgeable (128-bit security)
+- Ed25519 signatures are existentially unforgeable under chosen-message attack (EUF-CMA) at the 128-bit security level, assuming the discrete logarithm problem on edwards25519 is hard.
 - SHA-256 is collision-resistant
 - UUIDv7 provides sufficient entropy for warrant IDs
 

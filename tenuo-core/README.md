@@ -11,7 +11,7 @@ Cryptographic authorization primitive for AI agents.
 
 Tenuo implements **capability tokens** (Warrants) for AI agent authorization:
 
-- **Offline verification** in ~27μs - no network calls
+- **Offline verification** in under 50 μs - no network calls
 - **Monotonic attenuation** - delegated tokens can only shrink in scope
 - **Proof-of-possession** - stolen tokens are useless without the private key
 - **Constraint types** - `Exact`, `Pattern`, `Range`, `OneOf`, `Regex`, `Wildcard`, `CEL`, `UrlPattern`, `Cidr`

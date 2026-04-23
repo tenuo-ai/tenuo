@@ -1994,18 +1994,16 @@ def process_warrant(w: AnyWarrant) -> None:
 
 ## Performance Benchmarks
 
-> **TL;DR:** Verification cost tracks the Ed25519 primitive. On Apple M3 Max with `ed25519-dalek::verify_strict`, a single `warrant_verify` runs in ~36 us, which is consistent with dalek's published benchmarks for this silicon. Policy evaluation itself (tool lookup + constraint matching) is ~300 ns for a typical 2-constraint warrant, so over 99% of `warrant_authorize` latency is cryptography. Expect ~40 to 55 us on x86_64 server hardware. Cheap denials (wrong tool, missing PoP) bail out in ~100 ns before touching crypto. Numbers are Rust-side; Python callers pay an additional PyO3 boundary cost on top.
+> **TL;DR:** A single `warrant_verify` runs in ~36 us on Apple M3 Max and ~45 us on Intel Sapphire Rapids (GCP `c3-standard-4`, AVX2 SIMD backend), dominated in both cases by `ed25519-dalek::verify_strict`. Policy evaluation itself is ~300 ns for a typical 2-constraint warrant, so over 99% of authorization latency is cryptography. Cheap denials (wrong tool, missing PoP) bail out in ~100 ns before touching crypto. Python callers add PyO3 marshalling on top of these Rust-core numbers.
 
 ### Methodology
 
 - **Tool**: [Criterion.rs](https://github.com/bheisler/criterion.rs) microbenchmarks measuring individual Rust operations in isolation. Throughput under contention and end-to-end per-request latency in your agent process are not measured here.
-- **Hardware**: Apple M3 Max (ARM64), single-threaded, on AC power with no active throttling. x86 cloud VMs and noisy-neighbor environments will show different numbers. Always re-run on your target hardware before quoting.
-- **Crypto primitive**: `ed25519-dalek::verify_strict`, which additionally rejects small-order R points and non-canonical s scalars to close signature malleability and cofactor-attack gaps that default `verify` leaves open. This is the security-preserving choice and it sets the floor for all verification numbers on this page.
-- **Criterion config**: defaults (3 s warmup, 5 s measurement, 100 samples) for sub-millisecond benches; `chain_verify` uses 10 s measurement / 50 samples to tighten CV on the ms-scale depth sweep. All benches run against the `release` profile with thin LTO.
-- **Input strategy**: the primitive-ceiling benches (`constraints_N`, `cidr/*`, `url_pattern/*`, `subpath/*`, `url_safe/*`) use a single fixed input so regex, CIDR, and URL parser caches warm once — those are best-case, per-primitive numbers. The realistic policy bench (`authorize_no_crypto/mixed_{allow,deny}`) rotates across a small input pool via `iter_batched` so no single value stays hot. Cite the mixed numbers when quoting "typical policy cost".
-- **Chain verification**: we sweep two variants, `shared_key/depth_N` (every link signed by the same keypair) and `distinct_keys/depth_N` (every link signed by a distinct keypair, matching a real delegation topology). Empirically the two run within ~1.5 % at every depth we tested: Ed25519 batch verification is dominated by per-signature point decompression and scalar hashing, not by public-key uniqueness, so single-key chains are not an unfair shortcut. The numbers in the table below are from the `distinct_keys` variant.
-- **Measured at**: commit `ac76821f`, April 2026. Numbers drift commit-to-commit. If the tables here look stale, re-run the bench (see below) and open a PR.
-- **Python users**: these are Rust-core numbers. The `tenuo` Python SDK adds PyO3 marshalling on every call. Measure your actual decorator or adapter path, not these isolated ops, when capacity-planning.
+- **Hardware**: primary measurements on Apple M3 Max (ARM64), single-threaded, on AC power with no active throttling. A second set of measurements on Intel Xeon Platinum 8481C (Sapphire Rapids, GCP `c3-standard-4`, dedicated vCPU) with `RUSTFLAGS="-C target-cpu=native --cfg curve25519_dalek_backend=\"simd\""` is listed inline where relevant. Re-run on your target hardware before quoting.
+- **Crypto primitive**: `ed25519-dalek::verify_strict`, which rejects small-order R points and non-canonical s scalars to close signature malleability and cofactor-attack gaps that default `verify` leaves open. This is the security-preserving choice and it sets the floor for every verification number on this page.
+- **Hardware backend**: on `aarch64`, `curve25519-dalek` 4.1.3 uses its serial `u64` backend. On `x86_64` with `--cfg curve25519_dalek_backend="simd"`, it uses an AVX2 SIMD backend. The AVX2 path is only a few percent faster than `u64` at equivalent clocks; curve25519-dalek 4.1.3 does not yet ship an AVX512-IFMA backend, so at typical cloud clock speeds (`c3` ~2.7-3.5 GHz) x86 hosts measure slightly slower than an M3 Max (~4.0 GHz boost). Expect the x86 picture to improve once the IFMA backend lands upstream.
+- **Measured at**: commit `ac76821f`, April 2026. Numbers drift commit-to-commit.
+- **Python users**: Rust-core numbers only. The `tenuo` Python SDK adds PyO3 marshalling on every call. Measure your actual decorator or adapter path when capacity-planning.
 
 ### The Hot Path (Verification + Authorization)
 
@@ -2042,7 +2040,7 @@ We publish two numbers. The *primitive ceiling* is a lower bound measured with a
 Two implications for policy authors:
 
 1. **Stack constraints freely.** Even the heavy mixed warrant is under ~1.4 us, well below 5% of a single Ed25519 verify. Adding defensive constraints costs nothing measurable at the authorization layer.
-2. **The only meaningful optimization lever is the crypto path.** If you ever need to push `warrant_authorize` below ~30 us on this hardware, the three available levers are batch verification via `dalek::verify_batch` (amortizes across multiple signatures in a chain), a pre-verified warrant cache (trades determinism for throughput, needs careful revocation handling), and a faster target curve. Policy engines don't have these tradeoffs; they're already primitive-bounded.
+2. **The only meaningful optimization lever is the crypto path.** Two levers actually move the number: batch verification via `dalek::verify_batch` for multi-link chains (already how `verify_chain` runs), and a pre-verified warrant cache (trades determinism for throughput, with careful revocation handling). Policy engines don't have these tradeoffs; they're already primitive-bounded.
 
 ### Comparison to Cedar and OPA
 
@@ -2055,11 +2053,10 @@ Pure policy-evaluation time for comparable workloads. Cedar numbers are from the
 | OPA | Simple RBAC (`opa bench`) | ~14 us mean, ~30 us p99 | No |
 | **Tenuo** | **Realistic 6-constraint warrant** | **~1.34 us** | **Yes (adds ~36 us Ed25519 verify on top)** |
 
-Three things to notice:
+Two things to notice:
 
 1. **On pure policy evaluation, Tenuo runs roughly 3 to 4 times faster than Cedar's best published case and about 10 times faster than OPA.** This is partly because our constraint primitives (`Pattern`, `Range`, `Cidr`, `Subpath`, `UrlPattern`, `UrlSafe`) are tighter and more specialized than Cedar's general expression language or Rego's Datalog-style evaluation. It is not a claim we generalize: Cedar and OPA are more expressive policy languages and pay for that expressiveness in evaluation cost.
 2. **Tenuo additionally runs a full Ed25519 signature verification on every call** (~36 us on this hardware, tracking the `ed25519-dalek::verify_strict` primitive). Cedar and OPA do not: they assume the caller has been authenticated separately, typically via a network round-trip to an identity or session service. When you add a realistic external auth check to Cedar or OPA, the end-to-end authorization latency is usually comparable to or higher than Tenuo's all-in number.
-3. **The competitive point is not speed, it is what you get per microsecond.** Tenuo's ~36 us gives you local, offline, cryptographically self-proving authorization. Cedar's ~5 us gives you a local policy decision that still requires you to trust the caller through some other mechanism. Those are different products. The benchmark comparison is useful only to anchor the conversation in the same order of magnitude.
 
 ### Denial Performance
 
@@ -2067,10 +2064,10 @@ Cheap denials matter because they bound the cost of adversarial traffic. Two of 
 
 | Denial Type | Time (mean) | Code Path |
 |-------------|-------------|-----------|
-| Wrong tool | **~105 ns** | Early rejection on tool name lookup |
-| Missing PoP | **~61 ns** | Absent-signature short-circuit |
-| Constraint violation (valid PoP) | **~54 us** | Full PoP verify, then constraint match fails |
-| Invalid PoP | **~180 us** | Full signature verification path, then reject |
+| Wrong tool | **~113 ns** | Early rejection on tool name lookup |
+| Missing PoP | **~72 ns** | Absent-signature short-circuit |
+| Constraint violation (valid PoP) | **~36 us** | Full PoP verify, then constraint match fails |
+| Invalid PoP | **~185 us** | Signature verification path (includes PoP-clock-window retries), then reject |
 
 Unauthenticated or malformed requests fail almost for free. An attacker who can forge well-formed PoP candidates pays authorization-level cost per attempt, so network-layer rate limiting remains your primary defense against crypto-grinding DoS.
 

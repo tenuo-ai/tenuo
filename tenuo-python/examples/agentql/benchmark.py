@@ -507,13 +507,13 @@ def benchmark_pop_overhead():
     print("VERIFICATION:")
     print("-"*70)
 
-    claim_verify = 0.027  # Our claim in README
+    claim_verify_ceiling = 0.050  # Our claim in README: sub-50μs verification
     actual_verify = results_verify['mean']
 
-    if actual_verify <= claim_verify * 2:
-        print(f"✅ PASS: Verification latency ({actual_verify:.3f}ms) matches claim (~{claim_verify}ms)")
+    if actual_verify <= claim_verify_ceiling:
+        print(f"✅ PASS: Verification latency ({actual_verify:.3f}ms) within claim (<{claim_verify_ceiling}ms)")
     else:
-        print(f"⚠️  WARN: Verification latency ({actual_verify:.3f}ms) exceeds 2x claim ({claim_verify*2}ms)")
+        print(f"⚠️  WARN: Verification latency ({actual_verify:.3f}ms) exceeds claim ({claim_verify_ceiling}ms)")
 
     return results_sign, results_verify, results_full
 

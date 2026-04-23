@@ -64,6 +64,8 @@ with mint_sync(Capability("search", query=Pattern("weather *"))):
     print(search(query="stock prices"))  # Raises AuthorizationDenied
 ```
 
+`dev_mode=True` above is for local development only: it relaxes trust-root and audit-log requirements so the snippet runs out of the box. The next section shows the production pattern.
+
 ### The Safe Path (Production Pattern)
 
 In production, you receive warrants from an orchestrator and keep keys separate:
