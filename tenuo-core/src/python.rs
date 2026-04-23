@@ -2115,6 +2115,26 @@ impl PySigningKey {
     fn sign_raw(&self, data: &[u8]) -> Vec<u8> {
         self.inner.sign_raw(data).to_bytes().to_vec()
     }
+
+    /// Redacted repr — secret key bytes are NEVER rendered.
+    ///
+    /// Surfaces the derived public-key prefix so ``repr(sk)`` stays
+    /// distinguishable across keys for logs without ever exposing the
+    /// 32-byte Ed25519 secret. This guards against accidental leaks via
+    /// ``logger.info(f"{sk}")``, ``repr(resolver.__dict__)``,
+    /// ``ApplicationError(str(sk))`` in Temporal workers, and pytest
+    /// failure repr dumps.
+    fn __repr__(&self) -> String {
+        let pk = self.inner.public_key().to_bytes();
+        format!(
+            "SigningKey(public_key={:02x}{:02x}{:02x}{:02x}..., secret=[REDACTED])",
+            pk[0], pk[1], pk[2], pk[3]
+        )
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
 }
 
 /// Convert a Rust Constraint to a Python constraint object.

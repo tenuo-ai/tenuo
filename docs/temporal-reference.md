@@ -302,6 +302,23 @@ export TENUO_ENV=development   # suppress production warning
 
 > **Warning:** `EnvKeyResolver` is for development only. In production, use Vault, AWS Secrets Manager, or GCP Secret Manager.
 
+#### `KeyResolver` and the workflow sandbox
+
+PoP signing runs inside `_TenuoWorkflowOutboundInterceptor.start_activity`, which is **inside the workflow sandbox**. That means the sandbox determinism and I/O restrictions apply to whatever the resolver's `resolve_sync` does on each call. Pure-memory resolvers are safe; I/O-bound resolvers must be preloaded at worker startup and must return from their in-memory cache inside the sandbox.
+
+| Resolver | Safe inside sandbox as-is? | How to make it safe |
+|----------|---------------------------|--------------------|
+| `EnvKeyResolver` | Yes — only if `preload_all()` ran outside the sandbox. `TenuoTemporalPlugin` does this automatically; manual `TenuoWorkerInterceptor` users must call it. `os.environ` reads from inside the sandbox will fail. |
+| `DictKeyResolver` | Yes — pure in-memory lookup. |
+| `VaultKeyResolver` | No — does HTTP on cache miss. | Warm the cache at worker startup by issuing one `resolve_sync(key_id)` per key *before* `Worker(...)` is created; tune `cache_ttl` > workflow lifetime. |
+| `AWSSecretsManagerKeyResolver` | No — does boto3 network I/O on cache miss. | Same warmup + cache-TTL strategy. |
+| `GCPSecretManagerKeyResolver` | No — does gRPC on cache miss. | Same warmup + cache-TTL strategy. |
+| `CompositeKeyResolver` | Inherits from whichever child resolver it falls through to. | Put an in-memory / preloaded resolver first so the common path stays in the sandbox. |
+
+A sandbox violation surfaces as `temporalio.worker.workflow_sandbox.RestrictedWorkflowAccessError`, wrapped by our interceptor as a non-retryable `TenuoContextError`. If you see this on a live workflow, the fix is almost always "preload before the sandbox activates" or "extend `cache_ttl`" — not "turn off the sandbox".
+
+Note: `SigningKey.__repr__` is explicitly redacted (prints `SigningKey(public_key=…, secret=[REDACTED])`), so a surprise `logger.info(f"{sk}")` or `ApplicationError(str(resolver))` will not leak secret bytes into Temporal history or the Temporal Web UI.
+
 #### Composite Resolver (Fallback Chain)
 
 ```python
@@ -559,6 +576,43 @@ config = TenuoPluginConfig(
     retry_pop_max_windows=120,   # 120 × 30s = 3600s
 )
 ```
+
+### Warrant TTL vs. workflow lifetime
+
+The warrant's `expires_at` is checked by the **activity** interceptor (on the activity worker, wall-clock). It is NOT checked inside the workflow sandbox during replay — `_TenuoWorkflowInboundInterceptor` only enforces signal / update allowlists, and `_TenuoWorkflowOutboundInterceptor` signs PoP against `workflow.now()`, which is deterministic across replays. So a Temporal replay 3 days after the fact will re-sign PoP at the original workflow time and never raise `WarrantExpired` from the replay path itself.
+
+What the TTL **does** bound is how long activities scheduled by that workflow can continue to dispatch. A workflow that runs for 30 days under a 1-hour warrant will start seeing activity denials (`WarrantExpired`) ~1 hour in, even though the workflow object itself is still valid. Pick one of:
+
+- **Short workflows (< TTL):** mint a warrant whose TTL covers the worst-case workflow duration including retries and timer sleeps.
+- **Long workflows (> a single warrant can safely cover):** treat the warrant like a short-lived session token. Use one of:
+  - `workflow_grant(...)` to mint a narrower per-phase warrant inside the workflow (requires the parent warrant to be an issuer).
+  - `tenuo_execute_child_workflow(...)` to spawn child workflows each with their own freshly-minted warrant.
+  - A resolver-side key rotation so `retry_pop_max_windows` extends the PoP window for durable retries (see previous section).
+- **Unbounded workflows:** structure work as a series of child workflows rather than a single long-lived parent so each fresh warrant is scoped to a bounded unit of work.
+
+### Temporal event history overhead
+
+Each activity dispatch and each child-workflow start injects the Tenuo headers into the event payload, so every Tenuo-protected call adds per-event overhead to Temporal's event history (capped at 50,000 events / 2 MB by default, up to ~50 MB absolute depending on server config).
+
+Approximate size per activity, with gzip compression enabled (the default):
+
+| Component | Uncompressed | Compressed (gzip, level 9) |
+|-----------|--------------|---------------------------|
+| Root-only warrant | ~1 KB | ~500 B |
+| 3-hop delegated warrant | ~4 KB | ~800 B – 1.2 KB |
+| 10-hop delegated warrant | ~12 KB | ~2 – 3 KB |
+| PoP signature (`x-tenuo-pop`) | 88 B (64 B + base64) | Not worth compressing |
+| Misc headers (key id, arg keys, compressed flag) | ~100 B | ~100 B |
+
+**Worked example.** A single workflow that dispatches 200 activities with a 3-hop warrant: `200 × (~1.2 KB warrant + ~100 B misc + ~90 B PoP) ≈ 280 KB` of Tenuo overhead in history. Well under the 2 MB limit, but non-trivial for `archival` replay costs and for workflows that also carry large user payloads.
+
+Operational guidance:
+
+1. **Keep chains short.** Prefer `workflow_grant(...)` (one issuer hop, attenuates in-process) over passing a delegated warrant through multiple external hops before it hits a worker.
+2. **Watch `workflow.info().history_size_bytes`** in Temporal ≥ 1.22 and alert at, say, 1 MB; Tenuo headers are one of several contributors but one of the easier to attribute.
+3. **Structure very-long workflows as parent/child.** Each child gets a fresh history budget. Pairs well with the TTL guidance above.
+
+> **Planned for v0.2 — `warrant_hash` + worker-side LRU cache.** Activities would carry only the PoP signature plus a `warrant_hash` reference; the receiving worker resolves the full warrant from an in-process LRU (falling back to re-fetching from the source, e.g. Tenuo Cloud). This keeps per-event headers flat (~200 B) regardless of chain depth. Tracking: `temporal/warrant-cache-reference`.
 
 ### Access revocation
 

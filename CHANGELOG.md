@@ -119,6 +119,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `redact_args_in_logs=True` on both the allow and deny paths, so
     argument values aren't leaked off-host while the in-process audit
     callback sees them redacted.
+- **`SigningKey.__repr__` / `__str__` are explicitly redacted** —
+  `repr(sk)` now returns
+  `SigningKey(public_key=<4-byte prefix>…, secret=[REDACTED])` instead
+  of the default `<builtins.SigningKey object at 0x…>`. Secret-bytes
+  leakage through accidental `logger.info(f"{sk}")`,
+  `ApplicationError(str(sk))` in Temporal workers, or pytest failure
+  repr dumps is now prevented at the type level. Different keys remain
+  distinguishable in logs via the public-key prefix.
 - **Temporal sandbox/config hardening**: registers Tenuo's domain
   exceptions as `workflow_failure_exception_types` on supporting SDKs;
   `preload_all()` failures log at `ERROR`; `EnvKeyResolver` raises
@@ -149,7 +157,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Python matrix in `docs/temporal-reference.md` (3.10 – 3.14; the
   Temporal SDK itself requires 3.10+) and patched the runnable
   `quickstart.md` / `approvals.md` Temporal snippets to include the
-  `Client` import and a defined `resolver`.
+  `Client` import and a defined `resolver`. Added three operational
+  subsections to `docs/temporal-reference.md`: warrant TTL vs.
+  workflow lifetime (explains why replay is safe and when to use
+  `workflow_grant` / child workflows for long runs), Temporal event
+  history overhead (per-activity header size math with a worked
+  200-activity example, and flagging `warrant_hash` + LRU cache as
+  planned for v0.2), and `KeyResolver` + workflow-sandbox
+  compatibility (per-resolver table explaining which are safe inside
+  the sandbox and how to warm I/O-bound resolvers before the sandbox
+  activates).
 - **MCP PoP parity across config asymmetry.** A client without a
   `CompiledMcpConfig` loaded (or with a different one) can now call a server
   that does have a config; PoP byte parity no longer depends on the

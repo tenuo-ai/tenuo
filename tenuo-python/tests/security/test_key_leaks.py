@@ -27,6 +27,30 @@ class TestKeyLeaks:
         secret_hex = key.secret_key_bytes().hex()
         assert secret_hex not in repr_str
 
+    def test_signing_key_repr_is_explicitly_redacted(self):
+        """``repr(SigningKey)`` is explicitly redacted (not just the default
+        ``<builtins.SigningKey object at ...>``) so accidental ``logger.info(f"{sk}")``
+        or ``ApplicationError(str(sk))`` never leaks secret bytes through Temporal
+        history, pytest failure dumps, or third-party log aggregators.
+        """
+        key = SigningKey.generate()
+        r = repr(key)
+        s = str(key)
+
+        assert "[REDACTED]" in r, f"SigningKey repr must mark secret as redacted, got: {r}"
+        assert r == s, "str() must mirror repr() for safety"
+
+    def test_signing_key_repr_is_distinguishable_across_keys(self):
+        """Redacted repr still surfaces the derived public key prefix so logs
+        can distinguish different keys without exposing secret material.
+        """
+        k1 = SigningKey.generate()
+        k2 = SigningKey.generate()
+        assert repr(k1) != repr(k2), (
+            "Different keys should produce different reprs (via public-key prefix) "
+            "for log-side debuggability."
+        )
+
     def test_signing_key_pickle_fails_or_is_safe(self):
         """
         We prefer pickling to fail for SigningKey to avoid accidental serialization.
