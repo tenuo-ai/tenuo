@@ -68,7 +68,7 @@ All documented symbols can be imported from the top-level package (`from tenuo.t
 | `tenuo.temporal._observability` | `TemporalAuditEvent`, `TenuoMetrics` |
 | `tenuo.temporal._constants` | `TENUO_WARRANT_HEADER`, `TENUO_KEY_ID_HEADER`, `TENUO_POP_HEADER`, `TENUO_COMPRESSED_HEADER` |
 | `tenuo.temporal.exceptions` | `TenuoContextError`, `PopVerificationError`, `TemporalConstraintViolation`, `WarrantExpired`, `ChainValidationError`, `LocalActivityError`, `KeyResolutionError` |
-| `tenuo.temporal_plugin` | `TenuoTemporalPlugin`, `ensure_tenuo_workflow_runner` |
+| `tenuo.temporal_plugin` | `TenuoTemporalPlugin` |
 
 ---
 
