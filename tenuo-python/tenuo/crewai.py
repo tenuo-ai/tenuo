@@ -1207,7 +1207,10 @@ class CrewAIGuard:
             try:
                 self._audit_callback(event)
             except Exception as e:
-                logger.error(f"Audit callback failed: {e}")
+                # Cross-adapter contract: audit emission never crashes the
+                # caller, always logs exc_info=True so the traceback reaches
+                # operators for diagnosis.
+                logger.error("Audit callback failed: %s", e, exc_info=True)
 
     # =========================================================================
     # Explain API (Phase 2)

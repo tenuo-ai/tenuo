@@ -80,6 +80,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MCP Smoke (FastMCP + SecureMCPClient)`, a minimal end-to-end stdio
   subprocess test (`test_mcp_ci_smoke.py`) that verifies allow, deny, and
   `None`-arg behavior on real transport wiring.
+- **Invariant test infrastructure for cross-adapter drift** — three new
+  test modules replace iterative deep-review rounds with permanent
+  contracts enforced at commit time:
+  - `tests/adapters/test_boundary_contract.py` sweeps every Tenuo
+    exception that declares an `error_code` and asserts it wraps to
+    `ApplicationError(non_retryable=True, type=error_code)` with
+    `__cause__` preserved. Adding a new Tenuo exception automatically
+    joins the sweep via `inspect.getmembers`. Catches the
+    "exception becomes retryable on the wire" regression class.
+  - `tests/adapters/test_adapter_audit_invariant.py` drives the
+    Temporal, OpenAI, and CrewAI `audit_callback` paths with a raising
+    callback and asserts (1) the adapter does not re-raise, (2) the
+    failure is logged with `exc_info=True`. Every adapter with an
+    audit hook reuses the shared `raising_audit_callback` fixture
+    from `tests/conftest.py`. Catches the "audit sink silently
+    crashed" durability class.
+  - `tests/property/test_bounded_collections.py` drives Hypothesis
+    workloads through every long-lived cache in the Temporal
+    integration (`TenuoMetrics._latencies`,
+    `TenuoClientInterceptor._headers_by_workflow_id`,
+    `InMemoryPopDedupStore.cache`, `_workflow_headers_store`) and
+    asserts the documented size bound holds in every reachable
+    state. Catches the "worker slowly leaks memory" class.
+  As a corollary, `tenuo.openai` and `tenuo.crewai` audit-callback
+  failure paths now also log with `exc_info=True` — previously only
+  `tenuo.temporal` did. Operators now see a traceback from every
+  adapter when a user-supplied audit sink raises.
 
 ### Fixed
 
