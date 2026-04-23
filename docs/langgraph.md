@@ -240,7 +240,10 @@ def search(query: str) -> str:
 
 @tool
 def calculator(expression: str) -> str:
-    return str(eval(expression))
+    # Use a sandboxed arithmetic parser (e.g. `simpleeval`) in real code.
+    # Never pass LLM-provided strings to eval() / exec() / compile().
+    from simpleeval import simple_eval
+    return str(simple_eval(expression))
 
 # Create secure tool node
 tool_node = TenuoToolNode([search, calculator])

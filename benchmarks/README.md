@@ -49,7 +49,7 @@ python -m benchmarks.agentdojo.evaluate --suite workspace --user-tasks 5
 Focus on:
 - **Cryptographic** - Core security guarantees
 - **Escalation** - Threat model alignment (p/q agent model)
-- **Performance** - See [cryptographic/README.md](cryptographic/README.md#performance) (~27µs Rust / ~50-60µs Python per call)
+- **Performance** - See the [API reference performance benchmarks](../docs/api-reference.md#performance-benchmarks) for the full, hardware-qualified numbers. At a glance: `warrant_verify` is dominated by `ed25519-dalek::verify_strict` and tracks the Ed25519 primitive (~30 to 55 µs depending on hardware). Policy evaluation itself is ~300 ns for a typical warrant. Python callers pay an additional PyO3 boundary cost on top.
 
 ### Academic Research?
 All benchmarks are designed for peer review:
@@ -101,16 +101,7 @@ python -m benchmarks.cryptographic.report
 
 ### Performance
 
-Rust Criterion benchmarks (authoritative):
-```bash
-cd tenuo-core && cargo bench
-```
-
-| Operation | Rust (Criterion) | Python (via PyO3) |
-|-----------|-----------------|-------------------|
-| Full verification (PoP + constraints) | ~27μs | ~50-60μs |
-| Constraint evaluation only | ~100ns | — |
-| Denial (wrong tool) | ~150ns | — |
+See [`docs/api-reference.md#performance-benchmarks`](../docs/api-reference.md#performance-benchmarks) for the authoritative numbers (hardware-qualified, with denial paths, chain-depth sweeps, and Cedar/OPA comparisons). At a glance: `warrant_verify` runs in ~36 μs on Apple M3 Max, dominated by `ed25519-dalek::verify_strict`; policy evaluation itself is ~300 ns. Reproduce locally with `cd tenuo-core && cargo bench`.
 
 **Read more:** [cryptographic/README.md](cryptographic/README.md)
 

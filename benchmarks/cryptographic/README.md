@@ -100,27 +100,29 @@ cd tenuo-core
 # Run all benchmarks
 cargo bench
 
-# Run specific benchmark
-cargo bench --bench authorize
+# Run a subset (e.g. just the hot-path)
+cargo bench --bench warrant_benchmarks -- warrant_verify warrant_authorize
 
 # Generate HTML report (opens in browser)
 cargo bench -- --save-baseline my-baseline
 open target/criterion/report/index.html
 ```
 
-### Performance Numbers
+### Performance Numbers (Apple M3 Max, ARM64)
 
-| Operation | Rust (Criterion) | Python (via PyO3) |
-|-----------|-----------------|-------------------|
-| Full verification (PoP + constraints) | ~27μs | ~50-60μs |
-| Constraint evaluation only | ~100ns | — |
-| Denial (wrong tool) | ~150ns | — |
+| Operation | Time (mean) | What it measures |
+|-----------|-------------|------------------|
+| `warrant_verify` | ~36 μs | Ed25519 signature check (`verify_strict`) + TTL validation |
+| `warrant_authorize` | ~36 μs | Constraint evaluation + PoP signature verification |
+| `check_constraints` (no crypto) | ~138 ns (1 constraint), ~308 ns (2), ~1.54 μs (10) | Policy evaluation only: tool lookup + `ConstraintSet::matches` |
+| Denial: wrong tool | ~105 ns | Early short-circuit before any crypto |
+| Denial: missing PoP | ~61 ns | Absent-signature short-circuit |
 
-The ~27μs number is the Rust-native cost including Ed25519 PoP verification,
-constraint evaluation, and TTL checks. Python timings are higher due to PyO3 FFI
-overhead. Denials are faster because they short-circuit before signature verification.
+Verification cost tracks the Ed25519 primitive. The switch to `verify_strict` closes signature malleability and cofactor-attack gaps that default `ed25519-dalek::verify` leaves open, at the cost of a small additional subgroup and canonical-scalar check on each verify. Over 99% of `warrant_authorize` latency is cryptography; policy evaluation itself is sub-microsecond on this hardware. Expect ~40 to 55 μs for `verify` on x86_64 server hardware. Python callers pay an additional PyO3 boundary cost on top of these Rust numbers.
 
-**Benchmark location:** `tenuo-core/benches/authorize.rs`
+**Benchmark source:** [`tenuo-core/benches/warrant_benchmarks.rs`](../../tenuo-core/benches/warrant_benchmarks.rs).
+
+**Full benchmark suite with denial tables, delegation-depth scaling, and wire-format numbers:** [`docs/api-reference.md#performance-benchmarks`](../../docs/api-reference.md#performance-benchmarks).
 
 ## When to Use Tenuo
 

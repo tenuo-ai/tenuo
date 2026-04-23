@@ -510,12 +510,17 @@ impl<'de> Deserialize<'de> for Warrant {
                         serde::de::Error::custom(format!("invalid payload CBOR: {}", e))
                     })?;
 
-                // Verify signature against domain-separated preimage: version || payload
-                let mut preimage = Vec::with_capacity(1 + payload_bytes.len());
-                preimage.push(envelope_version);
-                preimage.extend_from_slice(&payload_bytes);
+                // Verify signature against domain-separated signed message:
+                // SIGNATURE_CONTEXT || envelope_version || payload_bytes.
+                // Built in a single allocation to avoid the intermediate
+                // preimage vec the earlier code materialized.
+                let ctx = crate::SIGNATURE_CONTEXT;
+                let mut signed = Vec::with_capacity(ctx.len() + 1 + payload_bytes.len());
+                signed.extend_from_slice(ctx);
+                signed.push(envelope_version);
+                signed.extend_from_slice(&payload_bytes);
 
-                if payload.issuer.verify(&preimage, &signature).is_err() {
+                if payload.issuer.verify_raw(&signed, &signature).is_err() {
                     return Err(serde::de::Error::custom("invalid warrant signature"));
                 }
 
@@ -853,6 +858,21 @@ impl Warrant {
         preimage
     }
 
+    /// Build the fully domain-separated signed message:
+    /// `SIGNATURE_CONTEXT || envelope_version || payload_bytes`.
+    ///
+    /// Prefer this over `signature_preimage` in batch-verification hot paths
+    /// so a single allocation covers both the Tenuo domain prefix and the
+    /// envelope version byte.
+    pub fn signed_message(&self) -> Vec<u8> {
+        let ctx = crate::SIGNATURE_CONTEXT;
+        let mut out = Vec::with_capacity(ctx.len() + 1 + self.payload_bytes.len());
+        out.extend_from_slice(ctx);
+        out.push(self.envelope_version);
+        out.extend_from_slice(&self.payload_bytes);
+        out
+    }
+
     /// Get the signature.
     pub fn signature(&self) -> &Signature {
         &self.signature
@@ -903,9 +923,17 @@ impl Warrant {
 
     /// Verify the warrant signature without checking the issuer.
     pub fn verify_signature(&self) -> Result<()> {
-        self.payload
-            .issuer
-            .verify(&self.signature_preimage(), &self.signature)
+        // Build the full signed message (SIGNATURE_CONTEXT || envelope_version ||
+        // payload_bytes) in a single allocation. The previous implementation
+        // composed `signature_preimage()` and `PublicKey::verify()`, each of
+        // which allocated and memcpy'd the payload, paying twice for what is
+        // ultimately a handful of extra bytes of framing.
+        let ctx = crate::SIGNATURE_CONTEXT;
+        let mut signed = Vec::with_capacity(ctx.len() + 1 + self.payload_bytes.len());
+        signed.extend_from_slice(ctx);
+        signed.push(self.envelope_version);
+        signed.extend_from_slice(&self.payload_bytes);
+        self.payload.issuer.verify_raw(&signed, &self.signature)
     }
 
     /// Authorize an action against this warrant.

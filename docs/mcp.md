@@ -709,7 +709,7 @@ authorizer.authorize_one(warrant, "read_file", dict(result.constraints), signatu
 ### Tenuo Does NOT Provide
 - MCP Server Framework: Use [`fastmcp`](https://github.com/jlowin/fastmcp) or the official SDK to build servers. Tenuo's `MCPVerifier` plugs into any framework.
 - MCP Transport: Tenuo relies on standard transports (stdio, SSE, StreamableHTTP).
-- Prompt Injection Detection: Tenuo assumes injection will happen and makes unauthorized actions impossible.
+- Prompt Injection Detection: Tenuo assumes injection will happen. Instead of detecting it, Tenuo fails closed on unauthorized actions — a successful injection can still influence agent reasoning, but cannot invoke tools outside the warrant's scope.
 
 ---
 

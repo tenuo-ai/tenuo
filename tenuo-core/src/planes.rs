@@ -900,15 +900,17 @@ impl DataPlane {
             ));
         }
 
-        // Batch verify all signatures in the chain (3x faster than sequential)
-        use crate::crypto::verify_batch;
-        let preimages: Vec<Vec<u8>> = chain.iter().map(|w| w.signature_preimage()).collect();
+        // Batch verify all signatures in the chain. Each warrant's fully
+        // domain-separated signed bytes are built in a single allocation
+        // (vs. the previous two-step signature_preimage + prefix_message).
+        use crate::crypto::verify_batch_raw;
+        let signed_messages: Vec<Vec<u8>> = chain.iter().map(|w| w.signed_message()).collect();
         let batch_items: Vec<(&crate::crypto::PublicKey, &[u8], &crate::crypto::Signature)> = chain
             .iter()
-            .zip(preimages.iter())
-            .map(|(w, pre)| (w.issuer(), pre.as_slice(), w.signature()))
+            .zip(signed_messages.iter())
+            .map(|(w, msg)| (w.issuer(), msg.as_slice(), w.signature()))
             .collect();
-        verify_batch(&batch_items)?;
+        verify_batch_raw(&batch_items)?;
 
         result.root_issuer = Some(root.issuer().to_bytes());
         result.verified_steps.push(ChainStep {
@@ -2033,16 +2035,17 @@ impl Authorizer {
             ));
         }
 
-        // Batch verify all signatures in the chain (3x faster than sequential)
-        // We verify all signatures in one batch after checking trust
-        use crate::crypto::verify_batch;
-        let preimages: Vec<Vec<u8>> = chain.iter().map(|w| w.signature_preimage()).collect();
+        // Batch verify all signatures in the chain. Each warrant's fully
+        // domain-separated signed bytes are built in a single allocation
+        // (vs. the previous two-step signature_preimage + prefix_message).
+        use crate::crypto::verify_batch_raw;
+        let signed_messages: Vec<Vec<u8>> = chain.iter().map(|w| w.signed_message()).collect();
         let batch_items: Vec<(&crate::crypto::PublicKey, &[u8], &crate::crypto::Signature)> = chain
             .iter()
-            .zip(preimages.iter())
-            .map(|(w, pre)| (w.issuer(), pre.as_slice(), w.signature()))
+            .zip(signed_messages.iter())
+            .map(|(w, msg)| (w.issuer(), msg.as_slice(), w.signature()))
             .collect();
-        verify_batch(&batch_items)?;
+        verify_batch_raw(&batch_items)?;
 
         result.root_issuer = Some(issuer.to_bytes());
         result.verified_steps.push(ChainStep {

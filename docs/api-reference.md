@@ -1994,65 +1994,119 @@ def process_warrant(w: AnyWarrant) -> None:
 
 ## Performance Benchmarks
 
-> **TL;DR:** A single warrant verification runs in ~27us; the full authorization path (verify + constraint evaluation + PoP check) runs in ~55us on the hardware profile below. Most denials return in hundreds of nanoseconds; cryptographic denials (invalid PoP signature) take ~109us. Numbers are Rust-side; Python callers pay an additional PyO3 boundary cost on top.
+> **TL;DR:** A single `warrant_verify` runs in ~36 us on Apple M3 Max and ~45 us on Intel Sapphire Rapids (GCP `c3-standard-4`, AVX2 SIMD backend), dominated in both cases by `ed25519-dalek::verify_strict`. Policy evaluation itself is ~300 ns for a typical 2-constraint warrant, so over 99% of authorization latency is cryptography. Cheap denials (wrong tool, missing PoP) bail out in ~100 ns before touching crypto. Python callers add PyO3 marshalling on top of these Rust-core numbers.
 
 ### Methodology
 
 - **Tool**: [Criterion.rs](https://github.com/bheisler/criterion.rs) microbenchmarks measuring individual Rust operations in isolation. Throughput under contention and end-to-end per-request latency in your agent process are not measured here.
-- **Hardware**: Apple M3 Max (ARM64), single-threaded. x86 cloud VMs and noisy-neighbor environments will show different numbers; always re-run on your target hardware before quoting.
-- **Source of truth**: [`warrant_benchmarks.rs`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-core/benches/warrant_benchmarks.rs). Numbers below are the reference run associated with this release; expect drift commit-to-commit.
-- **Python users**: these are Rust-core numbers. The `tenuo` Python SDK adds PyO3 marshalling on every call; measure your actual decorator or adapter path, not these isolated ops, when capacity-planning.
+- **Hardware**: primary measurements on Apple M3 Max (ARM64), single-threaded, on AC power with no active throttling. A second set of measurements on Intel Xeon Platinum 8481C (Sapphire Rapids, GCP `c3-standard-4`, dedicated vCPU) with `RUSTFLAGS="-C target-cpu=native --cfg curve25519_dalek_backend=\"simd\""` is listed inline where relevant. Re-run on your target hardware before quoting.
+- **Crypto primitive**: `ed25519-dalek::verify_strict`, which rejects small-order R points and non-canonical s scalars to close signature malleability and cofactor-attack gaps that default `verify` leaves open. This is the security-preserving choice and it sets the floor for every verification number on this page.
+- **Hardware backend**: on `aarch64`, `curve25519-dalek` 4.1.3 uses its serial `u64` backend. On `x86_64` with `--cfg curve25519_dalek_backend="simd"`, it uses an AVX2 SIMD backend. The AVX2 path is only a few percent faster than `u64` at equivalent clocks; curve25519-dalek 4.1.3 does not yet ship an AVX512-IFMA backend, so at typical cloud clock speeds (`c3` ~2.7-3.5 GHz) x86 hosts measure slightly slower than an M3 Max (~4.0 GHz boost). Expect the x86 picture to improve once the IFMA backend lands upstream.
+- **Measured at**: commit `ac76821f`, April 2026. Numbers drift commit-to-commit.
+- **Python users**: Rust-core numbers only. The `tenuo` Python SDK adds PyO3 marshalling on every call. Measure your actual decorator or adapter path when capacity-planning.
 
 ### The Hot Path (Verification + Authorization)
 
-This runs on every tool call. The `~27us` figure used elsewhere in our docs refers to `warrant_verify` alone; the full authorization path is roughly twice that.
+This runs on every tool call.
 
 | Operation | Time (mean) | Description |
 |-----------|-------------|-------------|
-| `warrant_verify` | **26.6 us** | Ed25519 signature check + TTL validation |
-| `warrant_authorize` | **28.0 us** | Constraint evaluation + PoP verification (benchmark uses 2 Pattern constraints; more constraints add roughly sub-μs each) |
-| **Total** | **~54.6 us** | Verify + authorize with PoP, back-to-back |
+| `warrant_verify` | **~36 us** | Ed25519 signature check + TTL validation |
+| `warrant_authorize` | **~36 us** | Constraint evaluation + PoP verification (benchmark uses 2 Pattern constraints; additional constraints add at most a few μs each) |
+| **Total** | **~72 us** | Verify + authorize with PoP, back-to-back |
+
+### Policy Evaluation Without Crypto
+
+`Warrant::check_constraints` runs exactly the policy portion of `authorize` (tool-name lookup + full `ConstraintSet::matches` over every constraint on the warrant) with no signature verification. This is what your authorization logic would cost if cryptography were free.
+
+We publish two numbers. The *primitive ceiling* is a lower bound measured with a single constraint type and stable inputs. The *realistic warrant* is a representative production shape and is what you should cite when comparing against other authorization engines.
+
+**Primitive ceiling** (sweep of simple `Pattern` constraints, happy path, stable inputs):
+
+| Constraints on warrant | Time (mean) | Notes |
+|------------------------|-------------|-------|
+| 1 Pattern | **~126 ns** | Tool lookup + single regex match |
+| 2 Patterns | **~236 ns** | Same shape as `warrant_authorize` benchmark above |
+| 5 Patterns | **~537 ns** | ~130 ns marginal per added Pattern constraint |
+| 10 Patterns | **~1.32 us** | Still well under 5% of a single Ed25519 verify |
+
+**Realistic warrant** (6 distinct constraint types: `Exact` + `Pattern` + `Range` + `Cidr` + `UrlPattern` + `Subpath`, inputs rotated across iterations so regex and IP-parsing caches can't fully warm):
+
+| Path | Time (mean) | Notes |
+|------|-------------|-------|
+| `mixed_allow` (all 6 constraints match) | **~1.34 us** | Representative policy-only cost for a production-shaped warrant |
+| `mixed_deny` (one constraint fails) | **~894 ns** | Short-circuits on first failing constraint |
+
+Two implications for policy authors:
+
+1. **Stack constraints freely.** Even the heavy mixed warrant is under ~1.4 us, well below 5% of a single Ed25519 verify. Adding defensive constraints costs nothing measurable at the authorization layer.
+2. **The only meaningful optimization lever is the crypto path.** Two levers actually move the number: batch verification via `dalek::verify_batch` for multi-link chains (already how `verify_chain` runs), and a pre-verified warrant cache (trades determinism for throughput, with careful revocation handling). Policy engines don't have these tradeoffs; they're already primitive-bounded.
+
+### Comparison to Cedar and OPA
+
+Pure policy-evaluation time for comparable workloads. Cedar numbers are from the [Cedar OOPSLA 2024 paper](https://assets.amazon.science/96/a8/1b427993481cbdf0ef2c8ca6db85/cedar-a-new-language-for-expressive-fast-safe-and-analyzable-authorization.pdf) and the [AWS Security Blog](https://aws.amazon.com/blogs/security/how-we-designed-cedar-to-be-intuitive-to-use-fast-and-safe/). OPA numbers are from the [official OPA Policy Performance docs](https://www.openpolicyagent.org/docs/policy-performance/) and reproducible via `opa bench`.
+
+| Engine | Workload | Policy-only time | Includes crypto verification? |
+|--------|----------|------------------|-------------------------------|
+| Cedar | Google Drive model (5 to 50 entities) | ~4 to 5 us median | No |
+| Cedar | GitHub-like model | ~11 us median | No |
+| OPA | Simple RBAC (`opa bench`) | ~14 us mean, ~30 us p99 | No |
+| **Tenuo** | **Realistic 6-constraint warrant** | **~1.34 us** | **Yes (adds ~36 us Ed25519 verify on top)** |
+
+Two things to notice:
+
+1. **On pure policy evaluation, Tenuo runs roughly 3 to 4 times faster than Cedar's best published case and about 10 times faster than OPA.** This is partly because our constraint primitives (`Pattern`, `Range`, `Cidr`, `Subpath`, `UrlPattern`, `UrlSafe`) are tighter and more specialized than Cedar's general expression language or Rego's Datalog-style evaluation. It is not a claim we generalize: Cedar and OPA are more expressive policy languages and pay for that expressiveness in evaluation cost.
+2. **Tenuo additionally runs a full Ed25519 signature verification on every call** (~36 us on this hardware, tracking the `ed25519-dalek::verify_strict` primitive). Cedar and OPA do not: they assume the caller has been authenticated separately, typically via a network round-trip to an identity or session service. When you add a realistic external auth check to Cedar or OPA, the end-to-end authorization latency is usually comparable to or higher than Tenuo's all-in number.
 
 ### Denial Performance
 
-Cheap denials matter because they bound the cost of adversarial traffic. Three of the four denial paths are sub-microsecond; the fourth (a well-formed but cryptographically invalid PoP signature) runs the full Ed25519 verification before failing and costs ~109us — the same order of magnitude as a successful authorization.
+Cheap denials matter because they bound the cost of adversarial traffic. Two of the four denial paths bail before touching crypto; the other two run a full signature verification first and therefore cost roughly the same as a successful authorization.
 
 | Denial Type | Time (mean) | Code Path |
 |-------------|-------------|-----------|
-| Wrong tool | **114 ns** | Early rejection (tool name lookup) |
-| Constraint violation | **192 ns** | Pattern matching failure |
-| Missing PoP | **192 ns** | Absent-signature check |
-| Invalid PoP | **109 us** | Full signature verification, then reject |
+| Wrong tool | **~113 ns** | Early rejection on tool name lookup |
+| Missing PoP | **~72 ns** | Absent-signature short-circuit |
+| Constraint violation (valid PoP) | **~36 us** | Full PoP verify, then constraint match fails |
+| Invalid PoP | **~185 us** | Signature verification path (includes PoP-clock-window retries), then reject |
 
-Cheap denials prevent amplification from unauthenticated or malformed requests. An attacker who can forge well-formed PoP candidates pays authorization-level cost per attempt, so rate limiting remains your primary defense against crypto-grinding DoS.
+Unauthenticated or malformed requests fail almost for free. An attacker who can forge well-formed PoP candidates pays authorization-level cost per attempt, so network-layer rate limiting remains your primary defense against crypto-grinding DoS.
 
 ### Control Plane (Issuance)
 
 | Operation | Time (mean) | Description |
 |-----------|-------------|-------------|
-| `warrant_create_minimal` | **13.5 us** | Ed25519 signing (minimal warrant) |
-| `warrant_create_with_constraints` | **15.5 us** | Warrant with Pattern + Range constraints |
-| `warrant_attenuate` | **30.8 us** | Parent verification + child signing |
+| `warrant_create_minimal` | **~17 us** | Ed25519 signing (minimal warrant) |
+| `warrant_create_with_constraints` | **~20 us** | Warrant with Pattern + Range constraints |
+| `warrant_attenuate` | **~18 us** | Parent verification + child signing |
 
 ### Wire Format
 
 | Operation | Time (mean) | Description |
 |-----------|-------------|-------------|
-| `wire_encode` | **1.12 us** | Serialization to CBOR binary format |
-| `wire_decode` | **8.53 us** | Deserialization from CBOR |
-| `wire_encode_base64` | **1.42 us** | CBOR + Base64 encoding |
-| `wire_decode_base64` | **8.85 us** | Base64 + CBOR decoding |
+| `wire_encode` | **~161 ns** | Serialization to CBOR binary format |
+| `wire_decode` | **~44 us** | Deserialization from CBOR (includes canonicalization checks) |
+| `wire_encode_base64` | **~300 ns** | CBOR + Base64 encoding |
+| `wire_decode_base64` | **~47 us** | Base64 + CBOR decoding |
 
-### Delegation Depth (Chain Construction)
+### Delegation Depth
 
-This benchmark measures the cost of **building** a chain (one root + N attenuations), not of verifying a pre-built chain. It's a proxy for issuance cost at depth, not hot-path authorization cost.
+Two separate costs scale with delegation depth. Do not conflate them.
 
-| Chain Depth | Measured Time | Notes |
-|-------------|---------------|-------|
-| 1 (Root) | ~27 us | Root warrant creation + verification |
-| 8 | ~251 us | Root + 8 attenuations (~28us per additional level) |
+**Chain verification** (`chain_verify/distinct_keys/depth_N`) is the hot-path cost: what a gateway or authorizer pays on every call when handed a pre-built chain of length N, built with a distinct signing keypair at every link to match a realistic delegation topology. Linear in depth.
 
-The protocol allows up to 64 delegation levels (`MAX_DELEGATION_DEPTH`). Hot-path verification of a pre-built chain is dominated by per-link signature checks at roughly `warrant_verify` cost per link; a dedicated chain-verify benchmark is planned.
+| Chain Depth | Verification Time | Notes |
+|-------------|-------------------|-------|
+| 1 | **~34 us** | Single warrant: signature + TTL + root-trust + revocation cache lookup |
+| 4 | **~156 us** | Short chain (issuer to orchestrator to worker) |
+| 8 | **~324 us** | Multi-team delegation (platform to service owner to subagent to tool) |
+| 12 | **~489 us** | Representative deep multi-agent topology with cross-team hand-offs |
+| 16 | **~651 us** | Deep multi-tenant fan-out with per-step attenuation |
+| 32 | **~1.30 ms** | Stress test territory |
+| 64 (`MAX_DELEGATION_DEPTH`) | **~2.63 ms** | Protocol ceiling |
+
+Marginal cost per additional link is roughly ~42 us on this hardware profile (dominated by the per-link Ed25519 check plus linkage/monotonicity validation). We observe production deployments settling in the **depth 4 to 12 range**. Shallow chains (2 to 4) are common for single-team agents, but realistic multi-agent topologies routinely reach 8 to 12: control plane to orchestrator to planner to researcher to retriever to tool, often with cross-team hand-offs along the way. Verification cost across this band stays under ~0.5 ms per call, still an order of magnitude below typical network round-trips.
+
+**Chain construction** (`delegation_chain_depth_8` ≈ ~140 us for one root + eight attenuations ≈ ~16 us per `attenuate + build`) is a control-plane-side cost, paid when *minting* a delegated warrant rather than when handling a tool call. Listed here only so readers don't misread construction numbers as hot-path numbers.
 
 ### Run It Yourself
 

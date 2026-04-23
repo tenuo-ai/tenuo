@@ -141,8 +141,6 @@ from tenuo.fastapi import configure_tenuo
 configure_tenuo(
     app,
     trusted_issuers=[issuer_pubkey],  # Required in production
-    strict=False,                      # Reserved — not yet enforced
-    error_handler=None,                # Reserved — not yet enforced
     expose_error_details=False,        # Don't leak constraint info
 )
 ```
@@ -151,8 +149,6 @@ configure_tenuo(
 |-----------|------|---------|-------------|
 | `app` | `FastAPI` | *required* | FastAPI application instance |
 | `trusted_issuers` | `List[PublicKey]` | `None` | Trusted warrant issuers (**required in production**) |
-| `strict` | `bool` | `False` | Reserved — not yet enforced |
-| `error_handler` | `Callable` | `None` | Reserved — not yet enforced |
 | `expose_error_details` | `bool` | `False` | Include detailed errors in response |
 
 ### `TenuoGuard`

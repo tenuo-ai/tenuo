@@ -18,3 +18,14 @@ crate-type = ["cdylib"]
 tenuo = { path = "../tenuo-core", features = ["python-extension", "cel", "python-server"] }
 # pyo3 is re-exported from tenuo crate with python feature
 pyo3 = { version = "=0.28.3", features = ["abi3-py39", "extension-module"] }
+
+# Cargo only reads `[profile.*]` from the crate/workspace being built, never
+# from path dependencies, so `tenuo-core`'s custom release profile does NOT
+# apply when `maturin build --release` is invoked from this crate. Mirror it
+# here so the published wheel gets thin LTO + symbol stripping (smaller .so,
+# slightly better cross-crate inlining) rather than Cargo's defaults.
+[profile.release]
+lto = "thin"
+codegen-units = 16
+strip = true
+opt-level = 3

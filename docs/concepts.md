@@ -254,7 +254,7 @@ See [Related Work](./related-work) for comparisons with FIDES, Biscuit, Macaroon
 
 ## Relationship to IETF AATs
 
-The [Attenuating Authorization Tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens-00/) Internet-Draft standardizes OAuth-oriented **task-scoped tokens**, **holder-driven attenuation**, and **offline chain verification** for agent delegation—conceptually aligned with warrants (tool constraints, monotonic narrowing, PoP at enforcement). For a readable walkthrough and mapping to agent-security gaps, see the [AAT draft summary](./aat-ietf-summary).
+The [Attenuating Authorization Tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens-00/) Internet-Draft standardizes OAuth-oriented **task-scoped tokens**, **holder-driven attenuation**, and **offline chain verification** for agent delegation. The approach is conceptually aligned with warrants (tool constraints, monotonic narrowing, PoP at enforcement). For a readable walkthrough and mapping to agent-security gaps, see the [AAT draft summary](./aat-ietf-summary).
 
 ## Scope Boundaries
 

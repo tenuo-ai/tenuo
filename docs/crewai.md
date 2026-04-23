@@ -413,7 +413,7 @@ guard.register()
 
 | Mode | Behavior | Use Case | Trade-off |
 |------|----------|----------|-----------|
-| `"raise"` | Exception | **Production** | Guaranteed safety, but requires try/catch block. |
+| `"raise"` | Exception | **Production** | Fail-closed on denial; callers must handle the exception. |
 | `"log"` | Return `DenialResult` | **Development** | Visible errors without crashing agent, but dangerous if result ignored. |
 | `"skip"` | Return `DenialResult` | **Legacy/Transition** | Simulates "tool unavailable", might confuse agent. |
 

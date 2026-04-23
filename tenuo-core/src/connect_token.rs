@@ -29,7 +29,7 @@ pub struct ConnectToken {
     /// Token format version (currently 1).
     #[serde(rename = "v", default = "default_version")]
     pub version: u8,
-    /// Control plane API base endpoint (e.g. `https://staging.tenuo.cloud`).
+    /// Control plane API base endpoint.
     ///
     /// Callers append `/v1/…` paths to this value. If the token's `e` field
     /// contains a trailing `/v1` it is stripped during [`ConnectToken::parse`]
@@ -201,11 +201,11 @@ mod tests {
     #[test]
     fn parse_full_token() {
         let raw = make_token_str(
-            r#"{"v":1,"e":"https://api.tenuo.cloud/v1","k":"tc_abc","a":"my-agent","t":"tok123"}"#,
+            r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc","a":"my-agent","t":"tok123"}"#,
         );
         let ct = ConnectToken::parse(&raw).unwrap();
         assert_eq!(ct.version, 1);
-        assert_eq!(ct.endpoint, "https://api.tenuo.cloud");
+        assert_eq!(ct.endpoint, "https://control.example.com");
         assert_eq!(ct.api_key, "tc_abc");
         assert_eq!(ct.agent_id.as_deref(), Some("my-agent"));
         assert_eq!(ct.registration_token.as_deref(), Some("tok123"));
@@ -214,33 +214,34 @@ mod tests {
     #[test]
     fn parse_token_without_v1_suffix() {
         let raw = make_token_str(
-            r#"{"v":1,"e":"https://api.tenuo.cloud","k":"tc_abc","a":"my-agent","t":"tok123"}"#,
+            r#"{"v":1,"e":"https://control.example.com","k":"tc_abc","a":"my-agent","t":"tok123"}"#,
         );
         let ct = ConnectToken::parse(&raw).unwrap();
-        assert_eq!(ct.endpoint, "https://api.tenuo.cloud");
+        assert_eq!(ct.endpoint, "https://control.example.com");
     }
 
     #[test]
     fn parse_token_with_trailing_slash() {
-        let raw = make_token_str(r#"{"v":1,"e":"https://api.tenuo.cloud/v1/","k":"tc_abc"}"#);
+        let raw = make_token_str(r#"{"v":1,"e":"https://control.example.com/v1/","k":"tc_abc"}"#);
         let ct = ConnectToken::parse(&raw).unwrap();
-        assert_eq!(ct.endpoint, "https://api.tenuo.cloud");
+        assert_eq!(ct.endpoint, "https://control.example.com");
     }
 
     #[test]
     fn parse_authorizer_only_token() {
-        let raw = make_token_str(r#"{"v":1,"e":"https://api.tenuo.cloud/v1","k":"tc_xyz"}"#);
+        let raw = make_token_str(r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_xyz"}"#);
         let ct = ConnectToken::parse(&raw).unwrap();
         assert_eq!(ct.version, 1);
-        assert_eq!(ct.endpoint, "https://api.tenuo.cloud");
+        assert_eq!(ct.endpoint, "https://control.example.com");
         assert!(ct.agent_id.is_none());
         assert!(ct.registration_token.is_none());
     }
 
     #[test]
     fn parse_v0_token_without_version() {
-        let raw =
-            make_token_str(r#"{"e":"https://api.tenuo.cloud/v1","k":"tc_old","a":"ag","t":"rt"}"#);
+        let raw = make_token_str(
+            r#"{"e":"https://control.example.com/v1","k":"tc_old","a":"ag","t":"rt"}"#,
+        );
         let ct = ConnectToken::parse(&raw).unwrap();
         assert_eq!(ct.version, 1); // default
     }
@@ -261,7 +262,7 @@ mod tests {
 
     #[test]
     fn reject_empty_api_key() {
-        let raw = make_token_str(r#"{"v":1,"e":"https://api.tenuo.cloud","k":""}"#);
+        let raw = make_token_str(r#"{"v":1,"e":"https://control.example.com","k":""}"#);
         assert!(matches!(
             ConnectToken::parse(&raw),
             Err(ConnectTokenError::MissingField("api_key"))
@@ -270,7 +271,7 @@ mod tests {
 
     #[test]
     fn reject_future_version() {
-        let raw = make_token_str(r#"{"v":2,"e":"https://api.tenuo.cloud","k":"tc_abc"}"#);
+        let raw = make_token_str(r#"{"v":2,"e":"https://control.example.com","k":"tc_abc"}"#);
         assert!(matches!(
             ConnectToken::parse(&raw),
             Err(ConnectTokenError::UnsupportedVersion(2))

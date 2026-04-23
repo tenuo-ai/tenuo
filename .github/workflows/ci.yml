@@ -810,7 +810,7 @@ jobs:
         working-directory: tenuo-core
         run: |
           # Extract key benchmark times and check against thresholds
-          # We claim ~27μs verification - fail if critical operations exceed thresholds
+          # We claim sub-50 μs verification - fail if critical operations exceed thresholds
           
           echo "=== Benchmark Results Summary ==="
           

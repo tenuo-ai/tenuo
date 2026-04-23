@@ -7,7 +7,7 @@ This demo simulates a **Zero Trust Delegation Chain** between autonomous agents.
 - **Multi-Mission Isolation**: Same worker receives Mission A (`read_file`) and Mission B (`manage_infrastructure`) warrants. Using wrong warrant → DENIED.
 - **Temporal Least-Privilege**: Each mission gets its own short-lived warrant with specific constraints.
 - **TTL Expiration**: Short-lived sub-warrant (2s) expires while parent remains valid.
-- **Chain Verification**: Worker verifies the full delegation chain back to trusted root (~27μs).
+- **Chain Verification**: Worker verifies the full delegation chain back to trusted root (under 50 μs per hop).
 - **Remote Authorization**: Worker sends full `WarrantStack` to Authorizer for zero-trust verification.
 
 ## Architecture
@@ -70,7 +70,7 @@ docker compose logs -f worker
 
 Watch the `worker` logs for a checklist of security verifications:
 
-- [x] **Chain Verification**: Worker validates the full chain offline (~27μs).
+- [x] **Chain Verification**: Worker validates the full chain offline (under 50 μs per hop).
 - [x] **Constraint Enforcement**: `manage_infrastructure` is allowed, but strictly scoped to specific resources.
 - [x] **Temporal Safety**: 
   - A short-lived sub-warrant (2s TTL) works immediately.
