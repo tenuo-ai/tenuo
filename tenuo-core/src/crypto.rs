@@ -241,13 +241,31 @@ pub fn verify_batch(items: &[(&PublicKey, &[u8], &Signature)]) -> Result<()> {
         .map(|(_, msg, _)| SigningKey::prefix_message(msg))
         .collect();
 
-    // Extract components for batch verification
     let messages: Vec<&[u8]> = prefixed_messages.iter().map(|v| v.as_slice()).collect();
     let signatures: Vec<DalekSignature> = items.iter().map(|(_, _, s)| s.inner).collect();
     let verifying_keys: Vec<VerifyingKey> =
         items.iter().map(|(pk, _, _)| pk.verifying_key).collect();
 
-    // Use ed25519_dalek's batch verification
+    ed25519_dalek::verify_batch(&messages, &signatures, &verifying_keys)
+        .map_err(|e| Error::SignatureInvalid(format!("batch verification failed: {}", e)))
+}
+
+/// Batch verify signatures when the caller has already prepared the fully
+/// domain-separated messages (i.e. `SIGNATURE_CONTEXT || <payload>`).
+///
+/// Prefer this over `verify_batch` in hot paths that can build the prefixed
+/// buffer in a single allocation (e.g. chain verification), since it avoids
+/// re-prefixing each item.
+pub fn verify_batch_raw(items: &[(&PublicKey, &[u8], &Signature)]) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+
+    let messages: Vec<&[u8]> = items.iter().map(|(_, msg, _)| *msg).collect();
+    let signatures: Vec<DalekSignature> = items.iter().map(|(_, _, s)| s.inner).collect();
+    let verifying_keys: Vec<VerifyingKey> =
+        items.iter().map(|(pk, _, _)| pk.verifying_key).collect();
+
     ed25519_dalek::verify_batch(&messages, &signatures, &verifying_keys)
         .map_err(|e| Error::SignatureInvalid(format!("batch verification failed: {}", e)))
 }

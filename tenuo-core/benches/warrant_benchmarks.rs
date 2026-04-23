@@ -120,6 +120,68 @@ fn benchmark_warrant_verification(c: &mut Criterion) {
     });
 }
 
+/// Probe benches that isolate how much of `warrant_verify` is raw Ed25519 vs
+/// Tenuo framework tax. Uses the same realistic warrant shape (real payload
+/// CBOR + 1-byte envelope + 16-byte domain context) as the production verify
+/// path, so the SHA-512 input size is identical to what a real `.verify()`
+/// pays.
+///
+/// Interpretation: if `tenuo_warrant_verify` drifts meaningfully above
+/// `dalek_verify_strict_only`, the framework wrapper has regressed and
+/// someone reintroduced an avoidable allocation in the hot path.
+fn benchmark_verify_primitive(c: &mut Criterion) {
+    use ed25519_dalek::VerifyingKey;
+
+    let keypair = SigningKey::generate();
+    let warrant = Warrant::builder()
+        .capability(
+            "test",
+            ConstraintSet::from_iter(vec![(
+                "cluster".to_string(),
+                Pattern::new("staging-*").unwrap().into(),
+            )]),
+        )
+        .ttl(Duration::from_secs(600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    let public_key = keypair.public_key();
+    let verifying_key_bytes = public_key.to_bytes();
+    let verifying_key = VerifyingKey::from_bytes(&verifying_key_bytes).unwrap();
+    let dalek_sig: ed25519_dalek::Signature = warrant
+        .signature()
+        .to_bytes()
+        .as_slice()
+        .try_into()
+        .unwrap();
+
+    // Prebuild the fully-prefixed signed message once so the raw-dalek
+    // variant has no framework work in scope.
+    let prebuilt_msg = warrant.signed_message();
+
+    let mut group = c.benchmark_group("verify_primitive");
+
+    // Pure ed25519-dalek verify_strict on the already-prefixed message.
+    // Zero Tenuo framework overhead; the ISA floor for our security posture.
+    group.bench_function("dalek_verify_strict_only", |b| {
+        b.iter(|| {
+            verifying_key
+                .verify_strict(black_box(&prebuilt_msg), black_box(&dalek_sig))
+                .unwrap()
+        })
+    });
+
+    // Full Warrant::verify: issuer-match check + single-allocation signed
+    // message build + verify_strict. Should track `dalek_verify_strict_only`
+    // within noise.
+    group.bench_function("tenuo_warrant_verify", |b| {
+        b.iter(|| warrant.verify(black_box(&public_key)).unwrap())
+    });
+
+    group.finish();
+}
+
 fn benchmark_warrant_authorization(c: &mut Criterion) {
     let keypair = SigningKey::generate();
     let constraints = ConstraintSet::from_iter(vec![
@@ -892,6 +954,7 @@ criterion_group!(
     benches,
     benchmark_warrant_creation,
     benchmark_warrant_verification,
+    benchmark_verify_primitive,
     benchmark_warrant_authorization,
     benchmark_authorization_denials,
     benchmark_warrant_attenuation,
