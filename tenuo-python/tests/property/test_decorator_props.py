@@ -117,7 +117,17 @@ class TestBypassSecurity:
         finally:
             _bypass_context.reset(token)
 
-    @given(env_val=st.text(min_size=1, max_size=30).filter(lambda s: s.lower() != "test"))
+    @given(
+        env_val=st.text(
+            # ``os.environ.__setitem__`` on POSIX rejects embedded NUL bytes
+            # (``ValueError: embedded null byte``); filter them out at the
+            # strategy level so Hypothesis doesn't shrink to ``"\x00"`` and
+            # report a fixture failure instead of a real property break.
+            alphabet=st.characters(blacklist_characters="\x00"),
+            min_size=1,
+            max_size=30,
+        ).filter(lambda s: s.lower() != "test")
+    )
     @settings(max_examples=20)
     def test_bypass_false_for_arbitrary_env(self, env_val):
         """is_bypass_enabled returns False for any TENUO_ENV value that isn't 'test'."""
