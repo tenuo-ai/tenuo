@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order now checks `bool` first, so booleans stay booleans on both sides.
   This is a signed-bytes-format change that affects any tool-call
   argument dict containing Python `True` / `False`.
+- **`ensure_tenuo_workflow_runner` and `attenuated_headers` are now
+  internal.** Renamed to `_ensure_tenuo_workflow_runner` in
+  `tenuo.temporal_plugin` and `_attenuated_headers` in
+  `tenuo.temporal._workflow`; removed from `tenuo.temporal.__all__`
+  and `tenuo.temporal_plugin.__all__`. Users wiring a worker manually
+  should rely on the plugin (`TenuoTemporalPlugin`) or
+  `TenuoWorkerInterceptor(..., task_queue=...)` / `register_worker_config`;
+  child-workflow delegation should go through
+  `tenuo_execute_child_workflow(...)`.
 - **Worker-config registration is strict-match by `task_queue`.** The
   internal worker-config registry no longer has a "last registered"
   fallback slot or a "if only one is registered, use it" convenience

@@ -41,7 +41,7 @@ For direct imports (preferred in library / internal code)::
     tenuo.temporal._observability TemporalAuditEvent, TenuoMetrics
     tenuo.temporal._constants     TENUO_WARRANT_HEADER, TENUO_KEY_ID_HEADER, …
     tenuo.temporal.exceptions     TenuoContextError, PopVerificationError, …
-    tenuo.temporal_plugin         TenuoTemporalPlugin, ensure_tenuo_workflow_runner
+    tenuo.temporal_plugin         TenuoTemporalPlugin
 """
 
 from __future__ import annotations
@@ -64,7 +64,6 @@ from tenuo.temporal.exceptions import TenuoContextError  # noqa: F401
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # temporal_plugin (heavy: pulls in temporalio.plugin)
     "TenuoTemporalPlugin": ("tenuo.temporal_plugin", "TenuoTemporalPlugin"),
-    "ensure_tenuo_workflow_runner": ("tenuo.temporal_plugin", "ensure_tenuo_workflow_runner"),
     # _workflow — user-facing helpers
     "execute_workflow_authorized": ("tenuo.temporal._workflow", "execute_workflow_authorized"),
     "start_workflow_authorized": ("tenuo.temporal._workflow", "start_workflow_authorized"),
@@ -76,7 +75,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "workflow_grant": ("tenuo.temporal._workflow", "workflow_grant"),
     "workflow_issue_execution": ("tenuo.temporal._workflow", "workflow_issue_execution"),
     "set_activity_approvals": ("tenuo.temporal._workflow", "set_activity_approvals"),
-    "attenuated_headers": ("tenuo.temporal._workflow", "attenuated_headers"),
     "tenuo_continue_as_new": ("tenuo.temporal._workflow", "tenuo_continue_as_new"),
     # _state — public escape hatch for manual worker setup
     "register_worker_config": ("tenuo.temporal._state", "register_worker_config"),

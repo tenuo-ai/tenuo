@@ -22,7 +22,7 @@ from tenuo.temporal_plugin import (  # noqa: E402
     TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME,
     TenuoTemporalPlugin,
     _simple_plugin_kwargs,
-    ensure_tenuo_workflow_runner,
+    _ensure_tenuo_workflow_runner,
 )
 
 
@@ -81,28 +81,26 @@ def test_configure_client_merges_client_interceptors() -> None:
 
 
 def test_ensure_tenuo_workflow_runner_none() -> None:
-    wr = ensure_tenuo_workflow_runner(None)
+    wr = _ensure_tenuo_workflow_runner(None)
     assert isinstance(wr, SandboxedWorkflowRunner)
 
 
 def test_ensure_tenuo_workflow_runner_preserves_custom_restrictions() -> None:
     base = SandboxedWorkflowRunner(
-        restrictions=SandboxRestrictions.default.with_passthrough_modules("json")
+        restrictions=SandboxRestrictions.default.with_passthrough_modules("foo")
     )
-    wr = ensure_tenuo_workflow_runner(base)
+    wr = _ensure_tenuo_workflow_runner(base)
     assert isinstance(wr, SandboxedWorkflowRunner)
     assert wr is not base
 
 
 def test_ensure_tenuo_workflow_runner_non_sandbox_unchanged(caplog) -> None:
-    """Unknown custom runners are returned unchanged with a warning."""
-
     class _NotSandboxed:
         """Stand-in for an unknown custom :class:`WorkflowRunner`."""
 
     existing = _NotSandboxed()
     with caplog.at_level("WARNING", logger="tenuo.temporal"):
-        assert ensure_tenuo_workflow_runner(existing) is existing
+        assert _ensure_tenuo_workflow_runner(existing) is existing
     assert any(
         "passthrough for" in rec.getMessage()
         for rec in caplog.records
@@ -110,22 +108,21 @@ def test_ensure_tenuo_workflow_runner_non_sandbox_unchanged(caplog) -> None:
 
 
 def test_ensure_tenuo_workflow_runner_warns_on_unsandboxed(caplog) -> None:
-    """UnsandboxedWorkflowRunner is allowed but warns loudly (both warnings + logging)."""
+    """UnsandboxedWorkflowRunner is allowed and warns."""
     import warnings
-
     try:
-        from temporalio.worker import UnsandboxedWorkflowRunner
+        from temporalio.worker.workflow_sandbox import UnsandboxedWorkflowRunner
     except ImportError:
-        pytest.skip("temporalio version does not expose UnsandboxedWorkflowRunner")
+        pytest.skip("UnsandboxedWorkflowRunner not available")
 
     existing = UnsandboxedWorkflowRunner()
-    with warnings.catch_warnings(record=True) as captured_warnings:
-        warnings.simplefilter("always")
-        with caplog.at_level("WARNING", logger="tenuo.temporal"):
-            result = ensure_tenuo_workflow_runner(existing)
+    with caplog.at_level("WARNING", logger="tenuo.temporal"):
+        with warnings.catch_warnings(record=True) as captured_warnings:
+            warnings.simplefilter("always")
+            result = _ensure_tenuo_workflow_runner(existing)
 
     assert result is existing, (
-        "ensure_tenuo_workflow_runner must not replace a user-supplied "
+        "_ensure_tenuo_workflow_runner must not replace a user-supplied "
         "UnsandboxedWorkflowRunner — it should return it unchanged and warn."
     )
 
@@ -146,7 +143,6 @@ def test_lazy_export_from_tenuo_temporal() -> None:
 
     cls = tt.TenuoTemporalPlugin
     assert cls is TenuoTemporalPlugin
-    assert tt.ensure_tenuo_workflow_runner is ensure_tenuo_workflow_runner
 
 
 def test_internal_mint_activity_registered():

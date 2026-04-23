@@ -215,48 +215,48 @@ class TestWorkflowGrantAsync:
 
 
 class TestPassthroughModules:
-    """ensure_tenuo_workflow_runner provides tenuo + tenuo_core passthrough."""
+    """_ensure_tenuo_workflow_runner provides tenuo + tenuo_core passthrough."""
 
     def test_ensure_tenuo_workflow_runner_creates_sandboxed_runner(self):
-        """ensure_tenuo_workflow_runner(None) returns a SandboxedWorkflowRunner."""
+        """_ensure_tenuo_workflow_runner(None) returns a SandboxedWorkflowRunner."""
         from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
-        from tenuo.temporal_plugin import ensure_tenuo_workflow_runner
+        from tenuo.temporal_plugin import _ensure_tenuo_workflow_runner
 
-        runner = ensure_tenuo_workflow_runner(None)
+        runner = _ensure_tenuo_workflow_runner(None)
         assert isinstance(runner, SandboxedWorkflowRunner)
 
     def test_ensure_tenuo_workflow_runner_adds_passthrough_to_existing_runner(self):
-        """ensure_tenuo_workflow_runner wraps an existing SandboxedWorkflowRunner."""
+        """_ensure_tenuo_workflow_runner wraps an existing SandboxedWorkflowRunner."""
         from temporalio.worker.workflow_sandbox import (
-            SandboxRestrictions,
             SandboxedWorkflowRunner,
+            SandboxRestrictions,
         )
 
-        from tenuo.temporal_plugin import ensure_tenuo_workflow_runner
+        from tenuo.temporal_plugin import _ensure_tenuo_workflow_runner
 
         existing = SandboxedWorkflowRunner(restrictions=SandboxRestrictions.default)
-        runner = ensure_tenuo_workflow_runner(existing)
+        runner = _ensure_tenuo_workflow_runner(existing)
         assert isinstance(runner, SandboxedWorkflowRunner)
 
 
 # =============================================================================
-# Test 7 — attenuated_headers is async (0.1c)
+# Test 7 — _attenuated_headers is async (0.1c)
 # =============================================================================
 
 
 class TestAttenuatedHeadersAsync:
-    """attenuated_headers must be async so execute_local_activity can be awaited."""
+    """_attenuated_headers must be async so execute_local_activity can be awaited."""
 
     def test_attenuated_headers_is_async(self):
-        """attenuated_headers must be declared 'async def' so callers can await
-        workflow.execute_local_activity inside it, making warrant bytes
-        deterministic on Temporal replay.
+        """``_attenuated_headers`` must be declared ``async def`` so callers
+        can await ``workflow.execute_local_activity`` inside it, making
+        warrant bytes deterministic on Temporal replay.
         """
-        from tenuo.temporal._workflow import attenuated_headers
+        from tenuo.temporal._workflow import _attenuated_headers
 
-        assert inspect.iscoroutinefunction(attenuated_headers), (
-            "attenuated_headers must be declared 'async def' so callers can await "
+        assert inspect.iscoroutinefunction(_attenuated_headers), (
+            "_attenuated_headers must be declared 'async def' so callers can await "
             "workflow.execute_local_activity inside it. This ensures warrant bytes "
             "are deterministic on Temporal workflow replay."
         )

@@ -348,7 +348,7 @@ async def _dispatch_mint_activity(
 
     Centralises the boilerplate (RetryPolicy, timeout, non-retryable error types)
     shared by ``workflow_grant``, ``workflow_issue_execution``, and
-    ``attenuated_headers``. Returns the raw child warrant bytes.
+    ``_attenuated_headers``. Returns the raw child warrant bytes.
 
     Capabilities are stashed in a process-local dict rather than inlined in
     ``_MintRequest``, because PyO3 constraint types cannot survive Temporal's
@@ -715,7 +715,7 @@ async def start_workflow_authorized(
     )
 
 
-async def attenuated_headers(
+async def _attenuated_headers(
     *,
     tools: Optional[List[str]] = None,
     constraints: Optional[Dict[str, Any]] = None,
@@ -723,9 +723,11 @@ async def attenuated_headers(
     child_key_id: Optional[str] = None,
     compress: bool = True,
 ) -> Dict[str, bytes]:
-    """Create headers for a child workflow with attenuated scope.
+    """Internal: build child-workflow headers with an attenuated warrant.
 
-    Must be called from within a workflow context.
+    Called from :func:`tenuo_execute_child_workflow`. Must run inside a
+    workflow context. Not part of the public API; users delegate via
+    ``tenuo_execute_child_workflow(..., tools=..., constraints=...)``.
     """
     try:
         from temporalio import workflow  # type: ignore[import-not-found]  # noqa: F401
@@ -838,7 +840,7 @@ async def tenuo_execute_child_workflow(
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
-    hdrs = await attenuated_headers(
+    hdrs = await _attenuated_headers(
         tools=tools,
         constraints=constraints,
         ttl_seconds=ttl_seconds,

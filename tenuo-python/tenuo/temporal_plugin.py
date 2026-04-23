@@ -154,7 +154,7 @@ def _simple_plugin_kwargs(
     return kwargs
 
 
-def ensure_tenuo_workflow_runner(
+def _ensure_tenuo_workflow_runner(
     existing: Optional["WorkflowRunner"],
 ) -> "WorkflowRunner":
     """Return a workflow runner with ``tenuo`` and ``tenuo_core`` sandbox passthrough.
@@ -353,7 +353,7 @@ class TenuoTemporalPlugin(SimplePlugin):
 
         super().__init__(
             TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME,
-            workflow_runner=ensure_tenuo_workflow_runner,
+            workflow_runner=_ensure_tenuo_workflow_runner,
             activities=_add_activities,
             **_simple_plugin_kwargs(self.client_interceptor, worker_interceptor),
         )
@@ -419,5 +419,4 @@ class TenuoTemporalPlugin(SimplePlugin):
 __all__ = [
     "TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME",
     "TenuoTemporalPlugin",
-    "ensure_tenuo_workflow_runner",
 ]
