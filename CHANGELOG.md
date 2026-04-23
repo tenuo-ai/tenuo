@@ -83,72 +83,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`TenuoTemporalPlugin` hardening** (DABH review follow-ups): no longer
-  mutates the user's `TenuoPluginConfig` (works on a copy so two workers
-  sharing a config stay isolated); registers Tenuo's domain exceptions as
-  `workflow_failure_exception_types` on supporting SDKs; escalates
-  `preload_all()` failures to `ERROR` and raises `ConfigurationError` for
-  `EnvKeyResolver` (no safe `os.environ` fallback in the sandbox);
-  `ensure_tenuo_workflow_runner` now emits a `UserWarning` (plus a logger
-  warning) for `UnsandboxedWorkflowRunner` instead of silently accepting
-  it, and warns for unknown custom runners; duplicate-registration
-  error points at the `Client.connect(plugins=[plugin])` inheritance
-  pattern. `DictKeyResolver` in the replay tests now raises
-  `KeyResolutionError` instead of `ValueError`.
 - **`tenuo.temporal.TenuoPlugin` renamed to `TenuoWorkerInterceptor`**
-  (DABH "plugin confusion" feedback): the class is a Temporal SDK
-  `WorkerInterceptor`, not a Temporal SDK `Plugin`, and its old name was
-  easy to confuse with `tenuo.temporal_plugin.TenuoTemporalPlugin` — with
-  real failure modes (`Worker(plugins=[TenuoPlugin(...)])` silently
-  accepting an unusable argument). The old name is still importable from
-  `tenuo.temporal` as a deprecated alias that emits a `DeprecationWarning`
-  on first use; it will be removed in a future beta. Update imports to
-  `from tenuo.temporal import TenuoWorkerInterceptor`. (Most users use
-  `TenuoTemporalPlugin` via `Client.connect(plugins=[plugin])` and are
-  unaffected.)
-- **Temporal integration deep-review fixes**: (1) `trusted_roots_provider`
-  refresh in `TenuoActivityInboundInterceptor` was silently dropping
-  `clearance_requirements` and the current SRL because it rebuilt the
-  `Authorizer` with only `trusted_roots=`; it now routes through the same
-  `_build_authorizer` helper used at startup so clearance and SRL survive
-  key rotation. (2) Constructing `TenuoWorkerInterceptor` with
-  `trusted_roots_provider=` and no explicit `control_plane=` raised
-  `ConfigurationError` because the default-control-plane step re-ran
-  `__post_init__` via `dataclasses.replace`; the interceptor now shallow-copies
-  the config instead. (3) Signal/update denial events on
-  `_TenuoWorkflowInboundInterceptor` no longer log a placeholder
-  `warrant_id="workflow"` — they decode the stored warrant and emit the real
-  id (with `<no-warrant>` / `<undecodable-warrant>` sentinels for the
-  legitimate edge cases). (4) `TenuoMetrics._latencies` is now a bounded
-  ring buffer (`_LATENCY_RING_SIZE=1024`) — previously it grew unbounded in
-  long-lived workers; Prometheus histograms remain the production-grade
-  latency store. (5) `examples/temporal/README.md` activity_fns rule-of-thumb
-  now matches `demo.py` (plugin auto-discovers from `Worker(activities=...)`)
-  and a dangling anchor in `docs/temporal-reference.md`
-  (`#threat-model-trusted-root-rotation`) is fixed.
-- **Temporal integration polish** (pre-review sweep): removed placeholder
-  config fields that did nothing (`signal_constraints`,
-  `update_constraints`, `enable_tracing` — beta, no deprecation cycle);
-  `TenuoWorkerInterceptor.__init__` now works on a copy of the caller's
-  config when setting the control-plane default and demotes its startup
-  `INFO` log to `DEBUG`; `_workflow.py` error messages now cover both the
-  `Client.connect(plugins=[...])` and manual-interceptor setups; removed
-  dead helpers (`_compute_pop_challenge`, `POP_WINDOW_SECONDS`, unused
+  to stop colliding with `tenuo.temporal_plugin.TenuoTemporalPlugin`
+  (`Worker(plugins=[TenuoPlugin(...)])` silently accepted an unusable
+  argument). The old name remains importable from `tenuo.temporal` as a
+  deprecated alias and will be removed in a future beta. Users of
+  `TenuoTemporalPlugin` via `Client.connect(plugins=[plugin])` are
+  unaffected.
+- **Temporal correctness fixes**:
+  - `trusted_roots_provider` refresh silently dropped
+    `clearance_requirements` and the current SRL; it now routes through
+    `_build_authorizer` so both survive key rotation.
+  - `TenuoWorkerInterceptor(cfg)` with only `trusted_roots_provider=`
+    raised `ConfigurationError` because the default-control-plane step
+    re-ran `__post_init__` via `dataclasses.replace`; it now
+    shallow-copies the config.
+  - Signal/update denial events log the real warrant id (decoded from
+    the stored header) instead of a `"workflow"` placeholder, with
+    `<no-warrant>` / `<undecodable-warrant>` sentinels for edge cases.
+  - `TenuoMetrics._latencies` is now a bounded ring (1024 samples);
+    previously it grew unbounded in long-lived workers. Prometheus
+    histograms remain the production latency store.
+  - `TenuoTemporalPlugin` no longer mutates the user's
+    `TenuoPluginConfig` (works on a copy so two workers sharing a
+    config stay isolated).
+  - `DictKeyResolver` in the replay tests raises `KeyResolutionError`
+    instead of `ValueError`.
+- **Temporal sandbox/config hardening**: registers Tenuo's domain
+  exceptions as `workflow_failure_exception_types` on supporting SDKs;
+  `preload_all()` failures log at `ERROR`; `EnvKeyResolver` raises
+  `ConfigurationError` (no safe `os.environ` fallback in the sandbox);
+  `ensure_tenuo_workflow_runner` warns for `UnsandboxedWorkflowRunner`
+  and unknown custom runners instead of accepting them silently;
+  duplicate-registration error points at
+  `Client.connect(plugins=[plugin])`.
+- **Temporal polish**: removed placeholder config fields that did
+  nothing (`signal_constraints`, `update_constraints`, `enable_tracing`);
+  demoted the interceptor's startup `INFO` log to `DEBUG`; `_workflow.py`
+  error messages cover both the `Client.connect(plugins=[...])` and
+  manual-interceptor setups; removed dead helpers
+  (`_compute_pop_challenge`, `POP_WINDOW_SECONDS`,
   `_MintRequest.holder_bytes` / `clearance_bytes`); consolidated
-  `TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME` to alias the canonical
-  `TENUO_TEMPORAL_PLUGIN_ID`. Fixed a `docs/enforcement.md` regression
-  from the earlier rename that incorrectly changed the Google ADK entry;
-  fixed broken doc anchors (`#constraint-types`,
-  `#tenuotemporalplugin-recommended`), a Python-version contradiction in
-  `docs/temporal.md` (3.10+ is correct), and a misleading
-  `TenuoWarrantContextPropagator` docstring that claimed it was
-  "registered automatically" by the plugin. Added Temporal coverage
-  (install, quickstart, docs link) to `tenuo-python/README.md` and
-  dropped a redundant `client_interceptor=` kwarg from the top-level
-  README's Temporal snippet. Fixed a stale Temporal example claiming
-  parallel-read support and rewrote the Temporal snippet in
-  `docs/approvals.md` to use the recommended
-  `TenuoTemporalPlugin` + `Client.connect(plugins=[...])` pattern.
+  `TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME` as an alias of
+  `TENUO_TEMPORAL_PLUGIN_ID`. Docs: fixed broken anchors
+  (`#constraint-types`, `#tenuotemporalplugin-recommended`,
+  `#threat-model-trusted-root-rotation`), a stale Python-version note
+  in `docs/temporal.md`, a misleading `TenuoWarrantContextPropagator`
+  docstring, a `docs/enforcement.md` rename regression affecting the
+  Google ADK entry, a stale parallel-read claim in an example, and the
+  `examples/temporal/README.md` activity_fns guidance (plugin
+  auto-discovers from `Worker(activities=...)`). Added Temporal
+  coverage (install, quickstart, docs link) to `tenuo-python/README.md`
+  and rewrote the Temporal snippet in `docs/approvals.md` to use
+  `TenuoTemporalPlugin` + `Client.connect(plugins=[...])`.
 - **MCP PoP parity across config asymmetry.** A client without a
   `CompiledMcpConfig` loaded (or with a different one) can now call a server
   that does have a config; PoP byte parity no longer depends on the
