@@ -21,6 +21,7 @@ from tenuo.temporal._headers import (
 )
 from tenuo.temporal._observability import _MintRequest
 from tenuo.temporal._state import (
+    _current_run_key,
     _pending_activity_fn,
     _pending_child_headers,
     _pending_mint_capabilities,
@@ -49,16 +50,34 @@ def _fail_workflow_non_retryable(exc: Exception) -> Exception:
     Authorization failures raised in workflow context (not activity context)
     must be wrapped this way; otherwise Temporal treats them as workflow task
     failures and retries forever.
+
+    Matches the three-leg wire contract enforced by
+    ``tests/adapters/test_boundary_contract.py``:
+
+    1. ``non_retryable=True``
+    2. ``type == exc.error_code`` (stable Tenuo wire code, not the Python
+       class name — so clients can branch on ``ApplicationError.type``
+       consistently regardless of whether the denial fires in workflow
+       or activity context).
+    3. ``__cause__ is exc`` (traceback points back at the Tenuo code that
+       rejected the action, not at this wrapper).
     """
+    from tenuo.temporal.exceptions import _error_type_for_wire
+
     try:
         from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
     except ImportError:
         return exc
-    return ApplicationError(
+    app_error = ApplicationError(
         str(exc),
-        type=type(exc).__name__,
+        type=_error_type_for_wire(exc),
         non_retryable=True,
     )
+    # Preserve traceback linkage. Call sites that already use
+    # ``raise _fail_workflow_non_retryable(...) from cause`` will just
+    # re-chain to the same cause; that's a no-op.
+    app_error.__cause__ = exc
+    return app_error
 
 
 # ── Context Accessors ────────────────────────────────────────────────────
@@ -243,7 +262,7 @@ async def tenuo_execute_activity(
         }.items() if v is not None
     }
 
-    run_key = workflow.info().run_id
+    run_key = _current_run_key()
     with _store_lock:
         _pending_activity_fn[run_key] = activity
 
@@ -304,7 +323,7 @@ def set_activity_approvals(approvals: List[Any]) -> None:
 
     from tenuo.temporal._state import _pending_activity_approvals
 
-    run_key = workflow.info().run_id
+    run_key = _current_run_key()
     with _store_lock:
         if run_key in _pending_activity_approvals:
             # Catches the "set twice without dispatching" footgun and the
@@ -380,9 +399,7 @@ async def _dispatch_mint_activity(
 
 def _workflow_mint_context(purpose: str) -> tuple[str, "TenuoPluginConfig"]:
     """Look up the active workflow's key_id and config for a warrant-mint call."""
-    from temporalio import workflow  # type: ignore[import-not-found]
-
-    run_key = workflow.info().run_id
+    run_key = _current_run_key()
     with _store_lock:
         raw_headers = _workflow_headers_store.get(run_key, {})
         config_store_entry = _workflow_config_store.get(run_key)
@@ -714,7 +731,7 @@ async def attenuated_headers(
     parent_warrant = current_warrant()
     parent_key_id, _config_entry = _workflow_mint_context("child workflow delegation")
 
-    run_key = workflow.info().run_id
+    run_key = _current_run_key()
     with _store_lock:
         raw_headers = dict(_workflow_headers_store.get(run_key, {}))
 

@@ -100,15 +100,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Worker(plugins=[TenuoPlugin(...)])` silently accepted an unusable
   argument. The old name remains importable as a deprecated alias.
 - **Temporal auth errors now reach the wire with stable codes and
-  non-retryable semantics.** `ApplicationError.type` is the Tenuo
-  `error_code` (`POP_VERIFICATION_FAILED`, `CONSTRAINT_VIOLATED`,
+  non-retryable semantics** in both activity and workflow contexts.
+  `ApplicationError.type` is the Tenuo `error_code`
+  (`POP_VERIFICATION_FAILED`, `CONSTRAINT_VIOLATED`,
   `approval_required`, …) instead of the Python class name;
   `ApprovalGateTriggered` surfaces distinctly from
   `TemporalConstraintViolation`; missing `Authorizer`, and unexpected
   non-Tenuo exceptions inside the auth block (e.g. a custom
   `PopDedupStore` raising `RuntimeError`), wrap as non-retryable
   instead of letting Temporal's retry policy loop forever on a
-  configuration bug.
+  configuration bug. The workflow-context wrapper
+  (`_fail_workflow_non_retryable`, used by `execute_child_workflow_authorized`,
+  `workflow_grant`, `delegate_warrant`, …) previously emitted
+  `type=<Python class name>` and dropped `__cause__`; it now matches
+  the activity-context wrapper's three-leg contract (wire code +
+  non-retryable + `__cause__` preserved), and the boundary-contract
+  sweep in `tests/adapters/test_boundary_contract.py` exercises both
+  wrappers so this can't drift again.
 - **`TenuoClientInterceptor.set_headers_for_workflow` is bounded**
   with a TTL (default 1 h) and max-size (default 10 000) so clients
   that bind headers for workflow ids that never start don't leak

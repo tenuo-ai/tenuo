@@ -41,6 +41,7 @@ from tenuo.temporal._pop import (
     _warrant_tool_has_non_empty_field_constraints,
 )
 from tenuo.temporal._state import (
+    _current_run_key,
     _pending_activity_approvals,
     _pending_activity_fn,
     _pending_child_headers,
@@ -58,6 +59,7 @@ from tenuo.temporal.exceptions import (
     TenuoContextError,
     TenuoTemporalError,
     WarrantExpired,
+    _error_type_for_wire,  # re-exported for back-compat (tests import from here)
 )
 
 if TYPE_CHECKING:
@@ -85,21 +87,11 @@ except ImportError:  # pragma: no cover
 
 
 # ── Utility helpers ──────────────────────────────────────────────────────
-
-def _error_type_for_wire(exc: BaseException) -> str:
-    """Return the preferred ``ApplicationError.type`` string for *exc*.
-
-    We prefer the Tenuo ``error_code`` (e.g. ``POP_VERIFICATION_FAILED``)
-    when present, because that is the documented wire contract — downstream
-    consumers that want to branch on "why was this denied?" can read the
-    code off ``ApplicationError.type`` without string-matching the message.
-    Falls back to the Python class name for exceptions that don't carry a
-    ``error_code`` attribute.
-    """
-    code = getattr(exc, "error_code", None)
-    if isinstance(code, str) and code:
-        return code
-    return exc.__class__.__name__
+# ``_error_type_for_wire`` lives in ``tenuo.temporal.exceptions`` so the
+# workflow-context wrapper (``_workflow._fail_workflow_non_retryable``) can
+# share it without importing this module. It is re-exported above under
+# ``tenuo.temporal._interceptors._error_type_for_wire`` so the
+# boundary-contract test's existing import path keeps working.
 
 
 def _raise_non_retryable(violation: BaseException) -> None:
@@ -165,7 +157,7 @@ class _TenuoWorkflowOutboundInterceptor:
             return self._next.start_activity(input)
 
         try:
-            run_key = workflow.info().run_id
+            run_key = _current_run_key()
             activity_type = input.activity
 
             with _store_lock:
@@ -290,12 +282,11 @@ class _TenuoWorkflowOutboundInterceptor:
     def continue_as_new(self, input: Any) -> None:
         """Re-inject Tenuo headers so the next run keeps its warrant."""
         try:
-            from temporalio import workflow  # type: ignore[import-not-found]
             from temporalio.api.common.v1 import Payload  # type: ignore
         except ImportError:
             return self._next.continue_as_new(input)
 
-        run_key = workflow.info().run_id
+        run_key = _current_run_key()
         with _store_lock:
             raw_headers = _workflow_headers_store.get(run_key, {})
 
@@ -309,9 +300,7 @@ class _TenuoWorkflowOutboundInterceptor:
 
     def start_nexus_operation(self, input: Any) -> Any:
         """Propagate Tenuo headers into Nexus cross-namespace operations."""
-        from temporalio import workflow  # type: ignore[import-not-found]
-
-        run_key = workflow.info().run_id
+        run_key = _current_run_key()
         with _store_lock:
             raw_headers = _workflow_headers_store.get(run_key, {})
 
@@ -355,9 +344,7 @@ class _TenuoWorkflowInboundInterceptor:
         self.next.init(_TenuoWorkflowOutboundInterceptor(outbound, self._config))
 
     async def execute_workflow(self, input: Any) -> Any:
-        from temporalio import workflow  # type: ignore[import-not-found]
-
-        run_key = workflow.info().run_id
+        run_key = _current_run_key()
 
         incoming: Dict[str, bytes] = {}
         for key, payload in (getattr(input, "headers", None) or {}).items():
@@ -382,9 +369,7 @@ class _TenuoWorkflowInboundInterceptor:
                 _workflow_config_store.pop(run_key, None)
 
     def _resolve_config(self) -> Optional["TenuoPluginConfig"]:
-        from temporalio import workflow  # type: ignore[import-not-found]
-
-        run_key = workflow.info().run_id
+        run_key = _current_run_key()
         with _store_lock:
             return _workflow_config_store.get(run_key)
 
@@ -397,9 +382,7 @@ class _TenuoWorkflowInboundInterceptor:
         (malformed header) we return a distinct sentinel so audit logs never
         fabricate a real-looking id.
         """
-        from temporalio import workflow  # type: ignore[import-not-found]
-
-        run_key = workflow.info().run_id
+        run_key = _current_run_key()
         with _store_lock:
             headers = _workflow_headers_store.get(run_key)
         if not headers:

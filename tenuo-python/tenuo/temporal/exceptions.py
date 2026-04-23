@@ -9,6 +9,27 @@ from typing import Any, Dict
 from tenuo.exceptions import ApprovalGateTriggered  # noqa: F401 — re-exported
 
 
+def _error_type_for_wire(exc: BaseException) -> str:
+    """Return the preferred ``ApplicationError.type`` string for *exc*.
+
+    Prefers the Tenuo ``error_code`` (e.g. ``POP_VERIFICATION_FAILED``) when
+    present; this is the documented wire contract — downstream consumers that
+    want to branch on "why was this denied?" can read the code off
+    ``ApplicationError.type`` without string-matching the message. Falls back
+    to the Python class name for exceptions that don't carry an
+    ``error_code`` attribute.
+
+    Defined here (not in ``_interceptors.py``) so the workflow-context wrapper
+    (``_workflow._fail_workflow_non_retryable``) and the activity/interceptor
+    wrappers share a single implementation. ``_interceptors`` re-exports the
+    name under its original path for test back-compat.
+    """
+    code = getattr(exc, "error_code", None)
+    if isinstance(code, str) and code:
+        return code
+    return type(exc).__name__
+
+
 class TenuoTemporalError(Exception):
     """Base exception for tenuo.temporal module."""
 

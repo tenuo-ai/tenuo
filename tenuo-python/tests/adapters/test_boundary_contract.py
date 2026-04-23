@@ -41,6 +41,7 @@ from tenuo.temporal._interceptors import (  # noqa: E402
     _error_type_for_wire,
     _raise_non_retryable,
 )
+from tenuo.temporal._workflow import _fail_workflow_non_retryable  # noqa: E402
 
 
 # ── Exception discovery ─────────────────────────────────────────────────
@@ -207,6 +208,52 @@ class TestExceptionToWireCodeMapping:
         assert wrapped.type == exc_cls.error_code, (  # type: ignore[attr-defined]
             f"{exc_cls.__name__} wrapped with type={wrapped.type!r} but "
             f"error_code={exc_cls.error_code!r}"  # type: ignore[attr-defined]
+        )
+
+    @pytest.mark.parametrize(
+        "exc_cls",
+        _EXCEPTION_CLASSES,
+        ids=[c.__name__ for c in _EXCEPTION_CLASSES],
+    )
+    def test_fail_workflow_non_retryable_preserves_error_code_and_non_retryable(
+        self, exc_cls: Type[BaseException]
+    ) -> None:
+        """``_fail_workflow_non_retryable`` is the workflow-context twin of
+        ``_wrap_as_non_retryable``: used by ``execute_child_workflow_authorized``,
+        ``workflow_grant``, ``delegate_warrant``, etc. It must obey the same
+        three-leg contract.
+
+        Regression test — before this sweep covered it, the helper was
+        emitting ``type=type(exc).__name__`` (Python class name) instead of
+        the Tenuo ``error_code``, so workflow-context denials surfaced as
+        ``type="TemporalConstraintViolation"`` while the identical violation
+        in activity context surfaced as ``type="CONSTRAINT_VIOLATED"``.
+        Clients branching on ``ApplicationError.type`` broke silently.
+        """
+        if not issubclass(exc_cls, Exception):
+            pytest.skip(
+                f"{exc_cls.__name__} is not an ``Exception`` subclass; "
+                f"``_fail_workflow_non_retryable`` takes ``Exception``."
+            )
+        exc = _instantiate(exc_cls)
+        wrapped = _fail_workflow_non_retryable(exc)
+        assert isinstance(wrapped, ApplicationError), (
+            f"{exc_cls.__name__} did not wrap to ApplicationError in "
+            f"workflow context — fail-closed is broken"
+        )
+        assert wrapped.non_retryable is True, (
+            f"{exc_cls.__name__} wrapped as *retryable* in workflow "
+            f"context. Temporal will retry the workflow task forever."
+        )
+        assert wrapped.type == exc_cls.error_code, (  # type: ignore[attr-defined]
+            f"{exc_cls.__name__} wrapped with type={wrapped.type!r} but "
+            f"error_code={exc_cls.error_code!r}. Workflow-context denials "
+            f"must expose the same wire code as activity-context denials."  # type: ignore[attr-defined]
+        )
+        assert wrapped.__cause__ is exc, (
+            f"{exc_cls.__name__}: __cause__ was not preserved; Temporal's "
+            f"traceback will point at the wrapper, not at the Tenuo "
+            f"exception that actually rejected the action."
         )
 
 

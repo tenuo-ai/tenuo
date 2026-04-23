@@ -1918,7 +1918,12 @@ def test_workflow_constraint_violation_is_non_retryable():
     assert isinstance(wrapped, ApplicationError)
     assert wrapped.non_retryable is True
     assert "nonexistent_tool" in str(wrapped)
-    assert wrapped.__cause__ is None  # returned, not raised-from
+    # Wire contract: ``type`` is the Tenuo ``error_code`` (stable across
+    # activity and workflow contexts), not the Python class name.
+    assert wrapped.type == TemporalConstraintViolation.error_code
+    # Cause is preserved so Temporal's traceback points back at the Tenuo
+    # violation, not at the wrapper itself.
+    assert wrapped.__cause__ is violation
 
 
 def test_resolve_client_interceptor_auto_discovers():
