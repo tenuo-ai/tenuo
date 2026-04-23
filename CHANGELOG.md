@@ -89,8 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `workflow_failure_exception_types` on supporting SDKs; escalates
   `preload_all()` failures to `ERROR` and raises `ConfigurationError` for
   `EnvKeyResolver` (no safe `os.environ` fallback in the sandbox);
-  `ensure_tenuo_workflow_runner` now rejects `UnsandboxedWorkflowRunner`
-  outright and warns for unknown custom runners; duplicate-registration
+  `ensure_tenuo_workflow_runner` now emits a `UserWarning` (plus a logger
+  warning) for `UnsandboxedWorkflowRunner` instead of silently accepting
+  it, and warns for unknown custom runners; duplicate-registration
   error points at the `Client.connect(plugins=[plugin])` inheritance
   pattern. `DictKeyResolver` in the replay tests now raises
   `KeyResolutionError` instead of `ValueError`.

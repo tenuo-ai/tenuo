@@ -144,14 +144,16 @@ def ensure_tenuo_workflow_runner(
       with default restrictions plus passthrough.
     - If ``existing`` is already a :class:`SandboxedWorkflowRunner`, adds
       passthrough modules (idempotent if already present).
-    - If ``existing`` is an :class:`UnsandboxedWorkflowRunner`, raises
-      :class:`~tenuo.exceptions.ConfigurationError`. The unsandboxed runner
-      cannot load the ``tenuo_core`` PyO3 extension reliably inside the
-      Temporal workflow worker; users who need the unsandboxed runner should
-      register Tenuo interceptors manually and understand the constraints.
+    - If ``existing`` is an :class:`UnsandboxedWorkflowRunner`, emits a
+      :class:`UserWarning` (and a logger warning) and returns it unchanged.
+      Tenuo can operate under the unsandboxed runner, but the user loses
+      Temporal's determinism guardrails for their own workflow code, so we
+      make sure the choice is visible rather than silent.
     - For any other custom runner, returns ``existing`` unchanged and logs a
       warning so the caller notices passthrough was skipped.
     """
+    import warnings
+
     from temporalio.worker.workflow_sandbox import (
         SandboxedWorkflowRunner,
         SandboxRestrictions,
@@ -179,14 +181,19 @@ def ensure_tenuo_workflow_runner(
         pass
 
     if unsandboxed_cls is not None and isinstance(existing, unsandboxed_cls):
-        raise ConfigurationError(
-            "UnsandboxedWorkflowRunner is not supported by TenuoTemporalPlugin. "
-            "Tenuo needs sandbox passthrough for the 'tenuo' and 'tenuo_core' "
-            "modules so the PyO3 extension can be imported inside the workflow "
-            "worker. Either drop the unsandboxed runner (omit ``workflow_runner`` "
-            "to let the plugin supply one) or register TenuoPlugin manually and "
-            "ensure 'tenuo_core' is importable from your runtime."
+        msg = (
+            "TenuoTemporalPlugin is running with UnsandboxedWorkflowRunner. "
+            "Tenuo itself still enforces warrant + PoP authorization, but "
+            "you are opting out of Temporal's workflow sandbox, so any "
+            "non-deterministic code in your own workflows (time.time(), "
+            "random, unguarded I/O, module-level state) can cause replay "
+            "divergence. Prefer SandboxedWorkflowRunner in production and "
+            "omit ``workflow_runner`` to let the plugin supply one with "
+            "passthrough for 'tenuo' and 'tenuo_core' configured."
         )
+        warnings.warn(msg, UserWarning, stacklevel=2)
+        _logger.warning("%s", msg)
+        return existing
 
     _logger.warning(
         "TenuoTemporalPlugin: unknown workflow runner %s; passthrough for "

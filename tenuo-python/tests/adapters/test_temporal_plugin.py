@@ -109,17 +109,36 @@ def test_ensure_tenuo_workflow_runner_non_sandbox_unchanged(caplog) -> None:
     ), "Custom runners should log a passthrough warning."
 
 
-def test_ensure_tenuo_workflow_runner_rejects_unsandboxed() -> None:
-    """UnsandboxedWorkflowRunner is rejected outright (PyO3 passthrough impossible)."""
-    from tenuo.exceptions import ConfigurationError
+def test_ensure_tenuo_workflow_runner_warns_on_unsandboxed(caplog) -> None:
+    """UnsandboxedWorkflowRunner is allowed but warns loudly (both warnings + logging)."""
+    import warnings
 
     try:
         from temporalio.worker import UnsandboxedWorkflowRunner
     except ImportError:
         pytest.skip("temporalio version does not expose UnsandboxedWorkflowRunner")
 
-    with pytest.raises(ConfigurationError, match="UnsandboxedWorkflowRunner"):
-        ensure_tenuo_workflow_runner(UnsandboxedWorkflowRunner())
+    existing = UnsandboxedWorkflowRunner()
+    with warnings.catch_warnings(record=True) as captured_warnings:
+        warnings.simplefilter("always")
+        with caplog.at_level("WARNING", logger="tenuo.temporal"):
+            result = ensure_tenuo_workflow_runner(existing)
+
+    assert result is existing, (
+        "ensure_tenuo_workflow_runner must not replace a user-supplied "
+        "UnsandboxedWorkflowRunner — it should return it unchanged and warn."
+    )
+
+    user_warnings = [
+        w for w in captured_warnings if issubclass(w.category, UserWarning)
+    ]
+    assert user_warnings, "UserWarning must be emitted for UnsandboxedWorkflowRunner."
+    assert "UnsandboxedWorkflowRunner" in str(user_warnings[0].message)
+
+    assert any(
+        "UnsandboxedWorkflowRunner" in rec.getMessage()
+        for rec in caplog.records
+    ), "A tenuo.temporal logger warning must also be emitted."
 
 
 def test_lazy_export_from_tenuo_temporal() -> None:
