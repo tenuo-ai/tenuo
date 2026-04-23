@@ -83,36 +83,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Temporal plugin no longer mutates user-owned config.** `TenuoTemporalPlugin`
-  now works on a shallow copy of the supplied `TenuoPluginConfig`, so two
-  workers that share a single config object cannot leak activity registries
-  or trigger each other's "duplicate plugin registration" guard.
-- **`TenuoTemporalPlugin` registers Tenuo exceptions as Temporal workflow
-  failures.** `TenuoContextError`, `PopVerificationError`,
-  `TemporalConstraintViolation`, `WarrantExpired`, `ChainValidationError`,
-  `KeyResolutionError`, and `LocalActivityError` are now passed to
-  `SimplePlugin` as `workflow_failure_exception_types` on SDKs that support
-  it, so denied or misconfigured activities fail the workflow cleanly
-  instead of being wrapped as infrastructure errors.
-- **Key preload failures escalate correctly.** `TenuoTemporalPlugin` now logs
-  `preload_all()` failures at `ERROR` (not `WARNING`) with the resolver
-  class name, and raises `ConfigurationError` immediately for
-  `EnvKeyResolver` since `resolve_sync()` cannot fall back to `os.environ`
-  inside the Temporal workflow sandbox.
-- **`ensure_tenuo_workflow_runner` rejects `UnsandboxedWorkflowRunner`.**
-  The helper now raises `ConfigurationError` when an unsandboxed runner is
-  passed and logs a warning for unknown custom runners, so silent loss of
-  `tenuo` / `tenuo_core` passthrough at worker init time is no longer
-  possible.
-- **Clearer guidance on duplicate plugin registration.** The error raised
-  when the same `TenuoTemporalPlugin` instance configures two workers now
-  points at the recommended `Client.connect(plugins=[plugin])` inheritance
-  pattern instead of advising separate instances per worker.
-- **Replay tests now assert verification actually runs.** `test_temporal_replay.py`
-  adds a tampered-history test (flips one PoP byte in a captured history,
-  expects replay failure) and a rotated-trusted-roots test (replays with
-  the recording issuer removed, expects replay failure). `DictKeyResolver`
-  also raises `KeyResolutionError` instead of `ValueError`.
+- **`TenuoTemporalPlugin` hardening** (DABH review follow-ups): no longer
+  mutates the user's `TenuoPluginConfig` (works on a copy so two workers
+  sharing a config stay isolated); registers Tenuo's domain exceptions as
+  `workflow_failure_exception_types` on supporting SDKs; escalates
+  `preload_all()` failures to `ERROR` and raises `ConfigurationError` for
+  `EnvKeyResolver` (no safe `os.environ` fallback in the sandbox);
+  `ensure_tenuo_workflow_runner` now rejects `UnsandboxedWorkflowRunner`
+  outright and warns for unknown custom runners; duplicate-registration
+  error points at the `Client.connect(plugins=[plugin])` inheritance
+  pattern. New replay tests flip a byte in the recorded PoP header and
+  rotate the trusted root set to confirm verification still runs on
+  replay. `DictKeyResolver` now raises `KeyResolutionError` instead of
+  `ValueError`.
 - **MCP PoP parity across config asymmetry.** A client without a
   `CompiledMcpConfig` loaded (or with a different one) can now call a server
   that does have a config; PoP byte parity no longer depends on the
