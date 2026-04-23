@@ -47,7 +47,7 @@ Checklist for moving past local demos (each item stands alone; links go deeper):
 5. **Starting workflows under concurrency** — Prefer `execute_workflow_authorized(...)` so Tenuo headers are bound to `workflow_id` and are not mixed across parallel starts.
 6. **Authorized child workflows** — Use only `tenuo_execute_child_workflow()`; the stock `workflow.execute_child_workflow()` does not propagate warrant headers.
 7. **Replicas and PoP replay** — If more than one worker replica can observe the same first activity attempt, use a shared [`PopDedupStore`](#pop-replay-protection); if Temporal retries span longer than your PoP time window, tune [`retry_pop_max_windows`](#temporal-activity-retries-and-pop-time-drift).
-8. **Issuer rotation without full redeploy** — Use a [`trusted_roots_provider`](#threat-model-trusted-root-rotation) with a short refresh interval so new issuer keys propagate quickly.
+8. **Issuer rotation without full redeploy** — Use a [`trusted_roots_provider`](#trusted-root-rotation) with a short refresh interval so new issuer keys propagate quickly.
 
 ---
 

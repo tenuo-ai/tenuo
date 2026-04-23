@@ -106,20 +106,20 @@ The outbound interceptor:
 - Works with `asyncio.gather()` for parallel activities
 - Uses `workflow.now()` so replay stays deterministic
 
-### Activity registry (`activity_fns`) when you **must** set it
+### Activity registry (`activity_fns`) and PoP argument names
 
 PoP signs a canonical **argument dictionary**. If your warrant uses **named field constraints** (for example `capability("read_file", path=Subpath("/data/..."))`), that dict must use **real parameter names** (`path`), not placeholders (`arg0`, `arg1`, …).
 
 The outbound interceptor learns parameter names from, in order:
 
-1. The Temporal SDK’s `input.fn` (when present)
-2. `tenuo_execute_activity()` (records the function for that call)
-3. **`TenuoPluginConfig.activity_fns`**: pass the **same** callables as `Worker(activities=[...])`
+1. The Temporal SDK's `input.fn` (when present).
+2. `tenuo_execute_activity()` (records the function for that call).
+3. **`TenuoPluginConfig.activity_fns`** (populated automatically by `TenuoTemporalPlugin` from the `Worker(activities=[...])` list; you can also pass it explicitly for manual `TenuoWorkerInterceptor` setups).
 4. Otherwise it falls back to `arg0`, `arg1`, …
 
 If (4) happens while your warrant has field constraints for that tool, verification will not match the warrant. The worker **logs a warning**; with **`strict_mode=True`** it **raises** instead so you fix config before production.
 
-**Rule of thumb:** if the warrant names arguments (`path=`, `message=`, …), set `activity_fns` in `TenuoPluginConfig` (see `demo.py`). Tool-only capabilities without per-field constraints often do not need it.
+**Rule of thumb:** if you use `TenuoTemporalPlugin` (the recommended entry point), auto-discovery from `Worker(activities=[...])` covers this — the examples in this directory rely on that path. If you use `TenuoWorkerInterceptor` manually and your warrants name arguments, pass `activity_fns=[...]` in `TenuoPluginConfig` so PoP signing uses real parameter names.
 
 See also: the **Activity registry (`activity_fns`) and PoP argument names** section in [`docs/temporal-reference.md`](../../../docs/temporal-reference.md) (repository root).
 

@@ -371,19 +371,47 @@ class _TenuoWorkflowInboundInterceptor:
         with _store_lock:
             return _workflow_config_store.get(wf_id)
 
+    def _resolve_warrant_id(self) -> str:
+        """Return the warrant id from stored workflow headers, or a fallback.
+
+        Signal / update denials surface the warrant id so audit consumers can
+        correlate the denial back to the caller's warrant. If no warrant is
+        present (signal-only constraints without a warrant) or decoding fails
+        (malformed header) we return a distinct sentinel so audit logs never
+        fabricate a real-looking id.
+        """
+        from temporalio import workflow  # type: ignore[import-not-found]
+
+        wf_id = workflow.info().workflow_id
+        with _store_lock:
+            headers = _workflow_headers_store.get(wf_id)
+        if not headers:
+            return "<no-warrant>"
+        try:
+            from tenuo.temporal._headers import _extract_warrant_from_headers
+            warrant = _extract_warrant_from_headers(headers)
+        except Exception:
+            return "<undecodable-warrant>"
+        if warrant is None:
+            return "<no-warrant>"
+        return getattr(warrant, "id", "") or "<no-warrant>"
+
     async def handle_signal(self, input: Any) -> None:
         config = self._resolve_config()
         if config and config.authorized_signals is not None:
             signal_name = getattr(input, "signal", None)
             if signal_name not in config.authorized_signals:
+                warrant_id = self._resolve_warrant_id()
                 logger.warning(
-                    f"Signal '{signal_name}' denied: not in authorized_signals"
+                    "Signal '%s' denied (warrant_id=%s): not in authorized_signals",
+                    signal_name,
+                    warrant_id,
                 )
                 raise TemporalConstraintViolation(
                     tool=f"signal:{signal_name}",
                     arguments={},
                     constraint=f"Signal not authorized: {signal_name}",
-                    warrant_id="workflow",
+                    warrant_id=warrant_id,
                 )
         return await self.next.handle_signal(input)
 
@@ -395,15 +423,18 @@ class _TenuoWorkflowInboundInterceptor:
         if config and config.authorized_updates is not None:
             update_name = getattr(input, "update", None)
             if update_name not in config.authorized_updates:
+                warrant_id = self._resolve_warrant_id()
                 logger.warning(
-                    f"Update '{update_name}' rejected at validation: "
-                    "not in authorized_updates"
+                    "Update '%s' rejected at validation (warrant_id=%s): "
+                    "not in authorized_updates",
+                    update_name,
+                    warrant_id,
                 )
                 raise TemporalConstraintViolation(
                     tool=f"update:{update_name}",
                     arguments={},
                     constraint=f"Update not authorized: {update_name}",
-                    warrant_id="workflow",
+                    warrant_id=warrant_id,
                 )
         return self.next.handle_update_validator(input)
 
@@ -416,7 +447,7 @@ class _TenuoWorkflowInboundInterceptor:
                     tool=f"update:{update_name}",
                     arguments={},
                     constraint=f"Update not authorized: {update_name}",
-                    warrant_id="workflow",
+                    warrant_id=self._resolve_warrant_id(),
                 )
         return await self.next.handle_update_handler(input)
 
@@ -446,11 +477,19 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
 
     def __init__(self, config: "TenuoPluginConfig") -> None:
         super().__init__()
-        import dataclasses
 
         if config.control_plane is None:
             from tenuo.control_plane import get_or_create
-            config = dataclasses.replace(config, control_plane=get_or_create())
+            # NB: we deliberately avoid ``dataclasses.replace(config, ...)``
+            # here: ``replace`` re-runs ``__post_init__``, which would fail
+            # for configs built with ``trusted_roots_provider=`` because
+            # the first post-init has already seeded ``trusted_roots`` from
+            # the provider and the second run would see both fields
+            # populated and raise ``ConfigurationError``. A shallow copy
+            # preserves the already-resolved state.
+            import copy as _copy
+            config = _copy.copy(config)
+            config.control_plane = get_or_create()
         self._config = config
         self._version = self._get_version()
         try:
@@ -607,10 +646,20 @@ class TenuoActivityInboundInterceptor:
             try:
                 from tenuo_core import Authorizer
 
-                self._authorizer = Authorizer(trusted_roots=roots)
+                # NB: ``_build_authorizer`` uses its explicit ``trusted_roots``
+                # argument and re-reads ``clearance_requirements`` / the latest
+                # SRL from ``self._config``; we deliberately do not resync
+                # ``self._config.trusted_roots`` because ``dataclasses.replace``
+                # would re-run ``__post_init__`` and fail the either/or check
+                # when ``trusted_roots_provider=`` is set.
+                self._authorizer = self._build_authorizer(
+                    Authorizer, roots, self._config
+                )
                 if self._config.retry_pop_max_windows is not None:
-                    self._retry_authorizer = Authorizer(
-                        trusted_roots=roots,
+                    self._retry_authorizer = self._build_authorizer(
+                        Authorizer,
+                        roots,
+                        self._config,
                         pop_max_windows=self._config.retry_pop_max_windows,
                     )
             except Exception as e:

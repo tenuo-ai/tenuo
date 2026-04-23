@@ -106,6 +106,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `from tenuo.temporal import TenuoWorkerInterceptor`. (Most users use
   `TenuoTemporalPlugin` via `Client.connect(plugins=[plugin])` and are
   unaffected.)
+- **Temporal integration deep-review fixes**: (1) `trusted_roots_provider`
+  refresh in `TenuoActivityInboundInterceptor` was silently dropping
+  `clearance_requirements` and the current SRL because it rebuilt the
+  `Authorizer` with only `trusted_roots=`; it now routes through the same
+  `_build_authorizer` helper used at startup so clearance and SRL survive
+  key rotation. (2) Constructing `TenuoWorkerInterceptor` with
+  `trusted_roots_provider=` and no explicit `control_plane=` raised
+  `ConfigurationError` because the default-control-plane step re-ran
+  `__post_init__` via `dataclasses.replace`; the interceptor now shallow-copies
+  the config instead. (3) Signal/update denial events on
+  `_TenuoWorkflowInboundInterceptor` no longer log a placeholder
+  `warrant_id="workflow"` — they decode the stored warrant and emit the real
+  id (with `<no-warrant>` / `<undecodable-warrant>` sentinels for the
+  legitimate edge cases). (4) `TenuoMetrics._latencies` is now a bounded
+  ring buffer (`_LATENCY_RING_SIZE=1024`) — previously it grew unbounded in
+  long-lived workers; Prometheus histograms remain the production-grade
+  latency store. (5) `examples/temporal/README.md` activity_fns rule-of-thumb
+  now matches `demo.py` (plugin auto-discovers from `Worker(activities=...)`)
+  and a dangling anchor in `docs/temporal-reference.md`
+  (`#threat-model-trusted-root-rotation`) is fixed.
 - **Temporal integration polish** (pre-review sweep): removed placeholder
   config fields that did nothing (`signal_constraints`,
   `update_constraints`, `enable_tracing` — beta, no deprecation cycle);
