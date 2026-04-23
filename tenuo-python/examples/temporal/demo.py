@@ -6,7 +6,7 @@ Demonstrates TRANSPARENT warrant-based authorization for Temporal workflows.
 Two patterns are shown side-by-side:
 
   Pattern A — Standard Temporal API (zero workflow changes):
-    workflow.execute_activity() works exactly as normal. The TenuoPlugin
+    workflow.execute_activity() works exactly as normal. The TenuoWorkerInterceptor
     intercepts each call, computes PoP inline with deterministic timing,
     and injects warrant + signature into activity headers. No Tenuo imports
     needed in the workflow.
@@ -105,7 +105,7 @@ class ResearchWorkflow:
     """Lists and reads all .txt files in the warranted directory.
 
     Uses standard workflow.execute_activity() — no Tenuo imports needed.
-    The TenuoPlugin computes PoP transparently for every activity call.
+    The TenuoWorkerInterceptor computes PoP transparently for every activity call.
     """
 
     @workflow.run

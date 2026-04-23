@@ -4,7 +4,7 @@ Tenuo + Temporal + MCP + IAM: three enforcement layers
 The worker process has broad IAM permissions to read any object in an S3 bucket.
 This example adds **two** Tenuo boundaries before AWS:
 
-1. **Temporal activity** — ``TenuoPlugin`` verifies warrant + PoP for
+1. **Temporal activity** — ``TenuoWorkerInterceptor`` verifies warrant + PoP for
    ``read_s3_via_mcp`` with ``bucket`` / ``key`` before the activity runs.
 2. **MCP tool** — ``MCPVerifier`` on ``cloud_iam_mcp_server.py`` verifies the
    same holder's warrant + PoP for ``s3_get_object`` before ``GetObject``.

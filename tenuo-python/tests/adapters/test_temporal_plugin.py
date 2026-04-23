@@ -16,12 +16,12 @@ from temporalio.worker.workflow_sandbox import (  # noqa: E402
 from tenuo import SigningKey  # noqa: E402
 from tenuo.temporal._client import TenuoClientInterceptor  # noqa: E402
 from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
-from tenuo.temporal._interceptors import TenuoPlugin  # noqa: E402
+from tenuo.temporal._interceptors import TenuoWorkerInterceptor  # noqa: E402
 from tenuo.temporal._resolvers import EnvKeyResolver  # noqa: E402
 from tenuo.temporal_plugin import (  # noqa: E402
     TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME,
     TenuoTemporalPlugin,
-    _simple_plugin_interceptor_kwargs,
+    _simple_plugin_kwargs,
     ensure_tenuo_workflow_runner,
 )
 
@@ -47,11 +47,11 @@ def test_client_interceptor_exposed_and_shared() -> None:
     assert isinstance(p2.client_interceptor, TenuoClientInterceptor)
 
 
-def test_simple_plugin_interceptor_kwargs_match_sdk_signature() -> None:
+def test_simple_plugin_kwargs_match_sdk_signature() -> None:
     """Every key we pass to ``SimplePlugin.__init__`` must exist on the installed SDK."""
     ci = TenuoClientInterceptor()
-    wi = TenuoPlugin(_minimal_config())
-    kw = _simple_plugin_interceptor_kwargs(ci, wi)
+    wi = TenuoWorkerInterceptor(_minimal_config())
+    kw = _simple_plugin_kwargs(ci, wi)
     params = inspect.signature(SimplePlugin.__init__).parameters
     for name in kw:
         assert name in params, f"SimplePlugin.__init__ has no {name!r} (got {sorted(kw)})"
@@ -69,7 +69,7 @@ def test_configure_worker_merges_interceptor_and_runner() -> None:
     out = p.configure_worker(cfg)
     inters = out.get("interceptors") or []
     assert len(inters) == 1
-    assert isinstance(inters[0], TenuoPlugin)
+    assert isinstance(inters[0], TenuoWorkerInterceptor)
     wr = out.get("workflow_runner")
     assert isinstance(wr, SandboxedWorkflowRunner)
 
@@ -94,12 +94,51 @@ def test_ensure_tenuo_workflow_runner_preserves_custom_restrictions() -> None:
     assert wr is not base
 
 
-def test_ensure_tenuo_workflow_runner_non_sandbox_unchanged() -> None:
+def test_ensure_tenuo_workflow_runner_non_sandbox_unchanged(caplog) -> None:
+    """Unknown custom runners are returned unchanged with a warning."""
+
     class _NotSandboxed:
-        """Stand-in for an unsandboxed :class:`WorkflowRunner`."""
+        """Stand-in for an unknown custom :class:`WorkflowRunner`."""
 
     existing = _NotSandboxed()
-    assert ensure_tenuo_workflow_runner(existing) is existing
+    with caplog.at_level("WARNING", logger="tenuo.temporal"):
+        assert ensure_tenuo_workflow_runner(existing) is existing
+    assert any(
+        "passthrough for" in rec.getMessage()
+        for rec in caplog.records
+    ), "Custom runners should log a passthrough warning."
+
+
+def test_ensure_tenuo_workflow_runner_warns_on_unsandboxed(caplog) -> None:
+    """UnsandboxedWorkflowRunner is allowed but warns loudly (both warnings + logging)."""
+    import warnings
+
+    try:
+        from temporalio.worker import UnsandboxedWorkflowRunner
+    except ImportError:
+        pytest.skip("temporalio version does not expose UnsandboxedWorkflowRunner")
+
+    existing = UnsandboxedWorkflowRunner()
+    with warnings.catch_warnings(record=True) as captured_warnings:
+        warnings.simplefilter("always")
+        with caplog.at_level("WARNING", logger="tenuo.temporal"):
+            result = ensure_tenuo_workflow_runner(existing)
+
+    assert result is existing, (
+        "ensure_tenuo_workflow_runner must not replace a user-supplied "
+        "UnsandboxedWorkflowRunner — it should return it unchanged and warn."
+    )
+
+    user_warnings = [
+        w for w in captured_warnings if issubclass(w.category, UserWarning)
+    ]
+    assert user_warnings, "UserWarning must be emitted for UnsandboxedWorkflowRunner."
+    assert "UnsandboxedWorkflowRunner" in str(user_warnings[0].message)
+
+    assert any(
+        "UnsandboxedWorkflowRunner" in rec.getMessage()
+        for rec in caplog.records
+    ), "A tenuo.temporal logger warning must also be emitted."
 
 
 def test_lazy_export_from_tenuo_temporal() -> None:
@@ -130,7 +169,7 @@ def test_internal_mint_activity_registered():
 def test_activity_fns_auto_discovered() -> None:
     """TenuoTemporalPlugin auto-populates activity_fns from worker activities."""
     config = _minimal_config()
-    assert not config.activity_fns  # starts empty
+    assert not config.activity_fns
 
     plugin = TenuoTemporalPlugin(config)
 
@@ -140,18 +179,24 @@ def test_activity_fns_auto_discovered() -> None:
     def mock_activity_b() -> None:
         pass
 
-    # Simulate what SimplePlugin.configure_worker does: call the activities callable
-    # with the existing activities list, then check config.activity_fns is populated.
     result = plugin.activities([mock_activity_a, mock_activity_b])  # type: ignore[operator]
-    assert len(config.activity_fns) == 2  # noqa: PLR2004
-    assert mock_activity_a in config.activity_fns
-    assert mock_activity_b in config.activity_fns
+
+    # The plugin works on a copy; the user's config must never be mutated.
+    assert not config.activity_fns, (
+        "TenuoTemporalPlugin must not mutate the user's config.activity_fns; "
+        "auto-discovery should populate the plugin's private copy instead."
+    )
+    # Auto-discovery is visible on the plugin's private config copy.
+    discovered = plugin._tenuo_config.activity_fns or []
+    assert len(discovered) == 2  # noqa: PLR2004
+    assert mock_activity_a in discovered
+    assert mock_activity_b in discovered
     # The internal mint activity should also be appended to the return value
     assert len(result) >= 2  # noqa: PLR2004
 
 
 def test_activity_fns_not_overwritten_if_already_set() -> None:
-    """If activity_fns is already set, auto-discovery should not overwrite it."""
+    """If activity_fns is already set, auto-discovery does not overwrite it."""
 
     def explicit_fn() -> None:
         pass
@@ -165,8 +210,36 @@ def test_activity_fns_not_overwritten_if_already_set() -> None:
         pass
 
     plugin.activities([other_fn])  # type: ignore[operator]
-    # Should still have only explicit_fn (not replaced by other_fn)
+    # User's config is untouched (we work on a copy).
     assert config.activity_fns == [explicit_fn]
+    # Plugin's private copy also retains the explicit list (no overwrite).
+    assert plugin._tenuo_config.activity_fns == [explicit_fn]
+
+
+def test_config_is_not_mutated_between_plugin_instances() -> None:
+    """Sharing a single TenuoPluginConfig between two plugins stays clean."""
+    config = _minimal_config()
+    assert not config.activity_fns
+
+    plugin_a = TenuoTemporalPlugin(config)
+    plugin_b = TenuoTemporalPlugin(config)
+
+    def fn_a() -> None:
+        pass
+
+    def fn_b() -> None:
+        pass
+
+    plugin_a.activities([fn_a])  # type: ignore[operator]
+    plugin_b.activities([fn_b])  # type: ignore[operator]
+
+    # Each plugin auto-discovered its own activities, without contaminating
+    # the other plugin or the user's shared config.
+    assert not config.activity_fns
+    assert fn_a in (plugin_a._tenuo_config.activity_fns or [])
+    assert fn_b not in (plugin_a._tenuo_config.activity_fns or [])
+    assert fn_b in (plugin_b._tenuo_config.activity_fns or [])
+    assert fn_a not in (plugin_b._tenuo_config.activity_fns or [])
 
 
 # ---------------------------------------------------------------------------
@@ -182,8 +255,12 @@ def test_duplicate_plugin_registration_raises() -> None:
     # First call succeeds
     plugin.activities([])  # type: ignore[operator]
 
-    # Second call on the same instance should raise
-    with pytest.raises(TenuoConfigError, match="duplicate Tenuo plugin registered"):
+    # Second call on the same instance should raise with guidance pointing to
+    # the client-inheritance pattern.
+    with pytest.raises(
+        TenuoConfigError,
+        match=r"Duplicate Tenuo plugin registration.*Client\.connect",
+    ):
         plugin.activities([])  # type: ignore[operator]
 
 
@@ -224,6 +301,81 @@ def test_preload_all_not_called_if_unsupported() -> None:
     plugin = TenuoTemporalPlugin(config)
     # Should not raise even though NoPreloadResolver has no preload_keys()
     plugin.activities([])  # type: ignore[operator]
+
+
+def test_preload_failure_for_custom_resolver_logs_error(caplog) -> None:
+    """Custom resolvers that fail preload log at ERROR, not WARNING."""
+
+    class ExplodingResolver:
+        def resolve_sync(self, key_id: str) -> None:
+            return None
+
+        def preload_all(self) -> int:
+            raise RuntimeError("secrets store offline")
+
+    config = _minimal_config()
+    config.key_resolver = ExplodingResolver()  # type: ignore[assignment]
+    plugin = TenuoTemporalPlugin(config)
+
+    with caplog.at_level("ERROR", logger="tenuo.temporal"):
+        plugin.activities([])  # type: ignore[operator]
+
+    error_records = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert error_records, "Preload failure for a custom resolver must log ERROR."
+    assert any(
+        "ExplodingResolver" in r.getMessage() for r in error_records
+    ), "Error message should name the failing resolver class."
+
+
+def test_preload_failure_for_env_resolver_raises(monkeypatch) -> None:
+    """EnvKeyResolver preload failure is fatal: resolve_sync can't fall back inside the sandbox."""
+    from tenuo.exceptions import ConfigurationError
+
+    config = _minimal_config()
+
+    def _boom(self: EnvKeyResolver) -> int:
+        raise RuntimeError("env scanned badly")
+
+    monkeypatch.setattr(EnvKeyResolver, "preload_all", _boom)
+
+    plugin = TenuoTemporalPlugin(config)
+    with pytest.raises(ConfigurationError, match="EnvKeyResolver.preload_all"):
+        plugin.activities([])  # type: ignore[operator]
+
+
+def test_workflow_failure_exception_types_registered() -> None:
+    """Tenuo domain exceptions are registered as workflow_failure_exception_types."""
+    sdk_params = inspect.signature(SimplePlugin.__init__).parameters
+    if "workflow_failure_exception_types" not in sdk_params:
+        pytest.skip("Installed temporalio does not support workflow_failure_exception_types.")
+
+    from tenuo.temporal.exceptions import (
+        ChainValidationError,
+        KeyResolutionError,
+        LocalActivityError,
+        PopVerificationError,
+        TemporalConstraintViolation,
+        TenuoContextError,
+        WarrantExpired,
+    )
+
+    plugin = TenuoTemporalPlugin(_minimal_config())
+    registered = list(getattr(plugin, "workflow_failure_exception_types", []) or [])
+    # Tenuo must register at minimum the domain-level workflow failure types.
+    expected = {
+        TenuoContextError,
+        PopVerificationError,
+        TemporalConstraintViolation,
+        WarrantExpired,
+        ChainValidationError,
+        KeyResolutionError,
+        LocalActivityError,
+    }
+    missing = expected - set(registered)
+    assert not missing, (
+        f"TenuoTemporalPlugin should register these exceptions as workflow "
+        f"failure types, but they are missing: {sorted(cls.__name__ for cls in missing)}."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -350,3 +502,31 @@ def test_revocation_list_provider_none_by_default() -> None:
     sk = SigningKey.generate()
     config = TenuoPluginConfig(signing_key=sk, trusted_roots=[sk.public_key])
     assert config.revocation_list_provider is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deprecated alias: ``tenuo.temporal.TenuoPlugin`` → ``TenuoWorkerInterceptor``
+#
+# The old name ``TenuoPlugin`` was confusing because the class is a Temporal
+# SDK WorkerInterceptor, not a Temporal SDK Plugin. It was also too similar
+# to ``tenuo.temporal_plugin.TenuoTemporalPlugin``. The alias stays importable
+# for one beta cycle and emits a ``DeprecationWarning``.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_deprecated_tenuo_plugin_alias_warns_and_points_to_worker_interceptor() -> None:
+    """``from tenuo.temporal import TenuoPlugin`` must warn and resolve to the new class."""
+    import warnings
+
+    import tenuo.temporal as tt
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        alias = tt.TenuoPlugin
+
+    assert alias is TenuoWorkerInterceptor
+    dep_warns = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert dep_warns, "expected DeprecationWarning for tenuo.temporal.TenuoPlugin"
+    msg = str(dep_warns[-1].message)
+    assert "TenuoPlugin" in msg and "TenuoWorkerInterceptor" in msg
+    assert "deprecated" in msg.lower()

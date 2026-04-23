@@ -34,7 +34,7 @@ from tenuo.temporal.exceptions import (  # noqa: E402
 )
 from tenuo.temporal._resolvers import EnvKeyResolver, KeyResolver  # noqa: E402
 from tenuo.temporal._observability import TemporalAuditEvent  # noqa: E402
-from tenuo.temporal._interceptors import TenuoPlugin  # noqa: E402
+from tenuo.temporal._interceptors import TenuoWorkerInterceptor  # noqa: E402
 from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
 from tenuo.temporal._pop import _compute_pop_challenge  # noqa: E402
 from tenuo.temporal._headers import _extract_key_id_from_headers, tenuo_headers  # noqa: E402
@@ -744,13 +744,13 @@ class TestExceptions:
 
 
 class TestTenuoPlugin:
-    """Tests for TenuoPlugin."""
+    """Tests for TenuoWorkerInterceptor."""
 
     def test_creates_activity_interceptor(self):
         """Creates activity inbound interceptor."""
         resolver = MagicMock(spec=KeyResolver)
         config = TenuoPluginConfig(key_resolver=resolver, trusted_roots=_TEMPORAL_TRUST_ROOTS)
-        interceptor = TenuoPlugin(config)
+        interceptor = TenuoWorkerInterceptor(config)
 
         next_interceptor = MagicMock()
         activity_interceptor = interceptor.intercept_activity(next_interceptor)
@@ -1599,7 +1599,7 @@ class TestPopDedupStoreHook:
             trusted_roots=[control_key.public_key],
             pop_dedup_store=dedup,
         )
-        ti = TenuoPlugin(cfg)
+        ti = TenuoWorkerInterceptor(cfg)
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="ok")
         nxt.init = MagicMock()
@@ -1759,7 +1759,7 @@ def test_otel_span_emitted_on_allow():
     from tenuo import SigningKey, Warrant
     from tenuo_core import Subpath
     from tenuo.temporal._constants import TENUO_POP_HEADER
-    from tenuo.temporal._interceptors import TenuoPlugin
+    from tenuo.temporal._interceptors import TenuoWorkerInterceptor
     from tenuo.temporal._config import TenuoPluginConfig
     from tenuo.temporal._resolvers import EnvKeyResolver
     from tenuo.temporal._headers import tenuo_headers
@@ -1794,7 +1794,7 @@ def test_otel_span_emitted_on_allow():
         key_resolver=EnvKeyResolver(),
         trusted_roots=[control_key.public_key],
     )
-    ti = TenuoPlugin(cfg)
+    ti = TenuoWorkerInterceptor(cfg)
     nxt = MagicMock()
     nxt.execute_activity = AsyncMock(return_value="ok")
     nxt.init = MagicMock()
@@ -2180,7 +2180,7 @@ class TestConstraintTypesThroughInterceptor:
         import time as _time
 
         from tenuo.temporal._constants import TENUO_POP_HEADER, TENUO_ARG_KEYS_HEADER
-        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
         from tenuo.temporal._config import TenuoPluginConfig
         from tenuo.temporal._resolvers import EnvKeyResolver
         from tenuo.temporal._headers import tenuo_headers
@@ -2191,7 +2191,7 @@ class TestConstraintTypesThroughInterceptor:
             key_resolver=EnvKeyResolver(),
             trusted_roots=[control_key.public_key],
         )
-        plugin = TenuoPlugin(cfg)
+        plugin = TenuoWorkerInterceptor(cfg)
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="ok")
         nxt.init = MagicMock()
@@ -2438,7 +2438,7 @@ class TestMetricsWiring:
         from tenuo import SigningKey, Warrant
         from tenuo_core import Wildcard
         from tenuo.temporal._constants import TENUO_ARG_KEYS_HEADER, TENUO_POP_HEADER
-        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
         from tenuo.temporal._config import TenuoPluginConfig
         from tenuo.temporal._resolvers import EnvKeyResolver
         from tenuo.temporal._headers import tenuo_headers
@@ -2461,7 +2461,7 @@ class TestMetricsWiring:
             trusted_roots=[control_key.public_key],
             metrics=metrics,
         )
-        plugin = TenuoPlugin(cfg)
+        plugin = TenuoWorkerInterceptor(cfg)
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="ok")
         nxt.init = MagicMock()
@@ -2513,7 +2513,7 @@ class TestMetricsWiring:
         from tenuo import SigningKey, Warrant
         from tenuo_core import Subpath
         from tenuo.temporal._constants import TENUO_ARG_KEYS_HEADER, TENUO_POP_HEADER
-        from tenuo.temporal._interceptors import TenuoPlugin
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
         from tenuo.temporal._config import TenuoPluginConfig
         from tenuo.temporal._resolvers import EnvKeyResolver
         from tenuo.temporal._headers import tenuo_headers
@@ -2536,7 +2536,7 @@ class TestMetricsWiring:
             trusted_roots=[control_key.public_key],
             metrics=metrics,
         )
-        plugin = TenuoPlugin(cfg)
+        plugin = TenuoWorkerInterceptor(cfg)
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="ok")
         nxt.init = MagicMock()

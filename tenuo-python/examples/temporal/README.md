@@ -86,7 +86,7 @@ result = await execute_workflow_authorized(
 )
 ```
 
-With `TenuoPlugin` on the worker, you can call normal `workflow.execute_activity(...)`. No Tenuo imports are required inside the workflow for that path. If the warrant uses named field constraints (`path=`, `bucket=`, …), configure `activity_fns` (below).
+With `TenuoWorkerInterceptor` on the worker, you can call normal `workflow.execute_activity(...)`. No Tenuo imports are required inside the workflow for that path. If the warrant uses named field constraints (`path=`, `bucket=`, …), configure `activity_fns` (below).
 
 ```python
 @workflow.defn
@@ -184,7 +184,7 @@ worker = Worker(
 
 > **Important:** Pass the plugin on `Client.connect(plugins=[plugin])` only. Workers created from that client inherit it automatically — do not pass it again on `Worker(plugins=[...])`.
 
-### Advanced: manual `TenuoPlugin` + sandbox runner
+### Advanced: manual `TenuoWorkerInterceptor` + sandbox runner
 
 Use this when you need full control over the sandbox runner or interceptor composition (e.g. combining with other interceptors):
 
@@ -193,12 +193,12 @@ from temporalio.worker.workflow_sandbox import (
     SandboxedWorkflowRunner, SandboxRestrictions,
 )
 
-from tenuo.temporal import EnvKeyResolver, TenuoPlugin, TenuoPluginConfig
+from tenuo.temporal import EnvKeyResolver, TenuoWorkerInterceptor, TenuoPluginConfig
 
 resolver = EnvKeyResolver()
 resolver.preload_all()  # cache all TENUO_KEY_* env vars before Worker starts
 
-interceptor = TenuoPlugin(
+interceptor = TenuoWorkerInterceptor(
     TenuoPluginConfig(
         key_resolver=resolver,
         on_denial="raise",
@@ -275,11 +275,11 @@ pytest tests/e2e/test_temporal_e2e.py -v   # mocked Temporal integration tests (
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `ConfigurationError` … `trusted_roots` | `TenuoPluginConfig` built without roots and no global `configure` | Pass `trusted_roots=[control_key.public_key]` or call `tenuo.configure(trusted_roots=[...])` before constructing the config |
-| `ImportError: PyO3 modules ... initialized once` | Missing passthrough modules | `TenuoTemporalPlugin` handles this automatically. If using manual `TenuoPlugin`, add `with_passthrough_modules("tenuo", "tenuo_core")` to sandbox config |
+| `ImportError: PyO3 modules ... initialized once` | Missing passthrough modules | `TenuoTemporalPlugin` handles this automatically. If using manual `TenuoWorkerInterceptor`, add `with_passthrough_modules("tenuo", "tenuo_core")` to sandbox config |
 | `TenuoContextError: No Tenuo headers in store` | Workflow started without headers | Use `execute_workflow_authorized(...)` or call `set_headers_for_workflow(workflow_id, tenuo_headers(...))` before `execute_workflow` |
 | `TemporalConstraintViolation: No warrant provided` | Headers not reaching worker | Ensure `TenuoTemporalPlugin` is passed to `Client.connect(plugins=[plugin])`, or if using manual setup, that `TenuoClientInterceptor` is in the client's interceptor list |
 | `PopVerificationError: replay detected` | Same activity attempt reached two workers (fleet-wide dedup not configured) | Expected with in-memory dedup and multiple worker pods; configure `pop_dedup_store` with a shared backend for fleet-wide suppression |
-| `KeyResolutionError: Cannot resolve key: <id>` | Signing key not found by `KeyResolver` | For `EnvKeyResolver`: set `TENUO_KEY_<key_id>` env vars before constructing the plugin. `TenuoTemporalPlugin` calls `preload_all()` automatically; if using manual `TenuoPlugin`, call `resolver.preload_all()` before `Worker(...)`. For cloud resolvers: verify secret name, permissions, and region |
+| `KeyResolutionError: Cannot resolve key: <id>` | Signing key not found by `KeyResolver` | For `EnvKeyResolver`: set `TENUO_KEY_<key_id>` env vars before constructing the plugin. `TenuoTemporalPlugin` calls `preload_all()` automatically; if using manual `TenuoWorkerInterceptor`, call `resolver.preload_all()` before `Worker(...)`. For cloud resolvers: verify secret name, permissions, and region |
 | Warning: `PoP signing … uses positional argument keys (arg0, …)` | Warrant uses named field constraints but activity function reference not available | Add `activity_fns=[read_file, ...]` to `TenuoPluginConfig` (same list as `Worker(activities=...)`), or use `tenuo_execute_activity()` |
 | `TenuoContextError` (in `strict_mode`) | Same as above but fail-fast is on | See above; remove `strict_mode=True` temporarily to diagnose, then fix `activity_fns` |
 | Activity denied despite valid warrant | PoP computation failed silently | Check worker logs for WARNING/ERROR messages from outbound interceptor; verify `key_id` matches a key accessible to `KeyResolver` |

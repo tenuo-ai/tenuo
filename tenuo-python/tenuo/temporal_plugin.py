@@ -62,9 +62,19 @@ from tenuo.temporal._config import (
     TenuoPluginConfig,
     _build_activity_registry,
 )
-from tenuo.temporal._interceptors import TenuoPlugin
+from tenuo.temporal._interceptors import TenuoWorkerInterceptor
+from tenuo.temporal._resolvers import EnvKeyResolver
 from tenuo.temporal._state import _set_worker_config
 from tenuo.temporal._workflow import _tenuo_internal_mint_activity
+from tenuo.temporal.exceptions import (
+    ChainValidationError,
+    KeyResolutionError,
+    LocalActivityError,
+    PopVerificationError,
+    TemporalConstraintViolation,
+    TenuoContextError,
+    WarrantExpired,
+)
 
 _logger = logging.getLogger("tenuo.temporal")
 
@@ -73,10 +83,23 @@ if TYPE_CHECKING:
 
 TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME = "tenuo.TenuoTemporalPlugin"
 
+# Tenuo exceptions that should fail the workflow cleanly (non-retryable) rather
+# than being wrapped by ``ActivityError``. Registered on ``SimplePlugin`` so the
+# Temporal SDK treats them as domain-level workflow failures.
+_TENUO_WORKFLOW_FAILURE_EXCEPTION_TYPES: tuple[type[BaseException], ...] = (
+    TenuoContextError,
+    PopVerificationError,
+    TemporalConstraintViolation,
+    WarrantExpired,
+    ChainValidationError,
+    KeyResolutionError,
+    LocalActivityError,
+)
 
-def _simple_plugin_interceptor_kwargs(
+
+def _simple_plugin_kwargs(
     client_interceptor: TenuoClientInterceptor,
-    worker_interceptor: TenuoPlugin,
+    worker_interceptor: TenuoWorkerInterceptor,
 ) -> dict[str, Any]:
     """Build ``super().__init__(..., **kwargs)`` for the installed ``SimplePlugin`` shape."""
     params = inspect.signature(SimplePlugin.__init__).parameters
@@ -85,19 +108,28 @@ def _simple_plugin_interceptor_kwargs(
         "client_interceptors" in params and "worker_interceptors" in params
     )
     if has_unified and not has_split:
-        return {"interceptors": [client_interceptor, worker_interceptor]}
-    if has_split and not has_unified:
-        return {
+        kwargs: dict[str, Any] = {
+            "interceptors": [client_interceptor, worker_interceptor]
+        }
+    elif has_split and not has_unified:
+        kwargs = {
             "client_interceptors": [client_interceptor],
             "worker_interceptors": [worker_interceptor],
         }
-    if has_unified:
-        return {"interceptors": [client_interceptor, worker_interceptor]}
-    raise RuntimeError(
-        "Unsupported temporalio SimplePlugin: expected 'interceptors' or "
-        "('client_interceptors' and 'worker_interceptors') on SimplePlugin.__init__. "
-        "Upgrade temporalio or report this to Tenuo."
-    )
+    elif has_unified:
+        kwargs = {"interceptors": [client_interceptor, worker_interceptor]}
+    else:
+        raise RuntimeError(
+            "Unsupported temporalio SimplePlugin: expected 'interceptors' or "
+            "('client_interceptors' and 'worker_interceptors') on "
+            "SimplePlugin.__init__. Upgrade temporalio or report this to Tenuo."
+        )
+
+    if "workflow_failure_exception_types" in params:
+        kwargs["workflow_failure_exception_types"] = list(
+            _TENUO_WORKFLOW_FAILURE_EXCEPTION_TYPES
+        )
+    return kwargs
 
 
 def ensure_tenuo_workflow_runner(
@@ -106,15 +138,22 @@ def ensure_tenuo_workflow_runner(
     """Return a workflow runner with ``tenuo`` and ``tenuo_core`` sandbox passthrough.
 
     Use when **not** adopting :class:`TenuoTemporalPlugin` — for example if you
-    register ``TenuoPlugin`` manually but still need PyO3 passthrough.
+    register ``TenuoWorkerInterceptor`` manually but still need PyO3 passthrough.
 
     - If ``existing`` is ``None``, returns a :class:`SandboxedWorkflowRunner`
       with default restrictions plus passthrough.
     - If ``existing`` is already a :class:`SandboxedWorkflowRunner`, adds
       passthrough modules (idempotent if already present).
-    - Otherwise returns ``existing`` unchanged (unsandboxed runners cannot load
-      PyO3 in sub-interpreters; prefer sandbox + passthrough for Tenuo).
+    - If ``existing`` is an :class:`UnsandboxedWorkflowRunner`, emits a
+      :class:`UserWarning` (and a logger warning) and returns it unchanged.
+      Tenuo can operate under the unsandboxed runner, but the user loses
+      Temporal's determinism guardrails for their own workflow code, so we
+      make sure the choice is visible rather than silent.
+    - For any other custom runner, returns ``existing`` unchanged and logs a
+      warning so the caller notices passthrough was skipped.
     """
+    import warnings
+
     from temporalio.worker.workflow_sandbox import (
         SandboxedWorkflowRunner,
         SandboxRestrictions,
@@ -132,6 +171,37 @@ def ensure_tenuo_workflow_runner(
             existing,
             restrictions=existing.restrictions.with_passthrough_modules(*passthrough),
         )
+
+    unsandboxed_cls: Optional[type] = None
+    try:
+        from temporalio.worker import UnsandboxedWorkflowRunner
+
+        unsandboxed_cls = UnsandboxedWorkflowRunner
+    except ImportError:  # pragma: no cover - older temporalio without this export
+        pass
+
+    if unsandboxed_cls is not None and isinstance(existing, unsandboxed_cls):
+        msg = (
+            "TenuoTemporalPlugin is running with UnsandboxedWorkflowRunner. "
+            "Tenuo itself still enforces warrant + PoP authorization, but "
+            "you are opting out of Temporal's workflow sandbox, so any "
+            "non-deterministic code in your own workflows (time.time(), "
+            "random, unguarded I/O, module-level state) can cause replay "
+            "divergence. Prefer SandboxedWorkflowRunner in production and "
+            "omit ``workflow_runner`` to let the plugin supply one with "
+            "passthrough for 'tenuo' and 'tenuo_core' configured."
+        )
+        warnings.warn(msg, UserWarning, stacklevel=2)
+        _logger.warning("%s", msg)
+        return existing
+
+    _logger.warning(
+        "TenuoTemporalPlugin: unknown workflow runner %s; passthrough for "
+        "'tenuo' and 'tenuo_core' was not configured. Workflow code may fail to "
+        "import Tenuo modules. Use SandboxedWorkflowRunner or omit "
+        "``workflow_runner`` to get automatic passthrough.",
+        type(existing).__name__,
+    )
     return existing
 
 
@@ -143,7 +213,7 @@ class TenuoTemporalPlugin(SimplePlugin):
     Configures:
 
     - **Client:** :class:`TenuoClientInterceptor` (warrant headers, workflow-ID binding).
-    - **Worker / Replayer:** :class:`TenuoPlugin` with your :class:`TenuoPluginConfig`.
+    - **Worker / Replayer:** :class:`TenuoWorkerInterceptor` with your :class:`TenuoPluginConfig`.
     - **Workflow runner:** sandbox passthrough for ``tenuo`` and ``tenuo_core``.
 
     After construction, :attr:`client_interceptor` is the instance registered
@@ -178,54 +248,70 @@ class TenuoTemporalPlugin(SimplePlugin):
             interceptors and causes subtle, hard-to-diagnose failures. Only pass
             ``plugins=`` on ``Worker`` when the client was created **without**
             this plugin.
+
+        The user's ``config`` is never mutated: the plugin works on a shallow
+        copy so two workers sharing the same config object cannot leak
+        activity registries into each other.
         """
-        worker_interceptor = TenuoPlugin(config)
+        # Work on a copy so we never mutate the user's config object. This
+        # isolates two workers that happen to share a ``TenuoPluginConfig``.
+        self._tenuo_config = dataclasses.replace(config)
+        if self._tenuo_config.activity_fns is not None:
+            self._tenuo_config.activity_fns = list(self._tenuo_config.activity_fns)
+        # The activity registry is rebuilt from our copy; any later auto-discovery
+        # writes only to ``self._tenuo_config``.
+        self._tenuo_config._activity_registry = _build_activity_registry(
+            self._tenuo_config.activity_fns
+        )
+
+        worker_interceptor = TenuoWorkerInterceptor(self._tenuo_config)
         self.client_interceptor = client_interceptor or TenuoClientInterceptor()
         self.context_propagator = TenuoWarrantContextPropagator()
-        self._tenuo_config = config
-        # Item 1.5: guard against duplicate configure_worker calls on same instance
         self._tenuo_worker_configured = False
 
         def _add_activities(
             activities: "Sequence[Callable[..., Any]] | None",
         ) -> "Sequence[Callable[..., Any]]":
-            """Append _tenuo_internal_mint_activity and store worker config.
+            """Append _tenuo_internal_mint_activity and record the worker config.
 
-            Also handles:
-            - Item 1.2: auto-discovers activity_fns from existing activities if unset.
-            - Item 1.5: raises ConfigurationError on duplicate configure_worker calls.
-            - Item 1.6: auto-calls preload_keys() if the resolver supports it.
+            Responsibilities:
+
+            - Detect duplicate ``configure_worker`` calls on the same instance.
+            - Auto-populate ``activity_fns`` on the plugin's private config
+              copy when the user didn't set them explicitly.
+            - Eagerly preload all signing keys so the workflow sandbox never
+              has to touch ``os.environ`` or external secret storage.
             """
-            # Item 1.5: detect duplicate registration
             if self._tenuo_worker_configured:
                 raise ConfigurationError(
-                    "duplicate Tenuo plugin registered: the same TenuoTemporalPlugin "
-                    "instance was used to configure_worker more than once. Create "
-                    "separate TenuoTemporalPlugin instances for each worker."
+                    "Duplicate Tenuo plugin registration: the same "
+                    "TenuoTemporalPlugin instance configured more than one "
+                    "worker. The recommended pattern is to pass the plugin "
+                    "once to Client.connect(plugins=[plugin]) and let workers "
+                    "built from that client inherit it; passing the same "
+                    "plugin to Worker(plugins=[...]) in addition causes this "
+                    "double-registration. For genuinely different worker "
+                    "configurations (different activity_fns, different key "
+                    "resolvers), create one TenuoTemporalPlugin per worker."
                 )
             self._tenuo_worker_configured = True
 
-            _set_worker_config(config)
+            _set_worker_config(self._tenuo_config)
             existing = list(activities or [])
 
-            # Item 1.2: auto-populate activity_fns if not already set
-            if not config.activity_fns and existing:
-                config.activity_fns = list(existing)
-                # Rebuild the activity registry without re-running full __post_init__
-                config._activity_registry = _build_activity_registry(config.activity_fns)
+            # Auto-populate activity_fns on our private copy if not set by the
+            # user. Never touch the user's original ``config`` object.
+            if not self._tenuo_config.activity_fns and existing:
+                self._tenuo_config.activity_fns = list(existing)
+                self._tenuo_config._activity_registry = _build_activity_registry(
+                    self._tenuo_config.activity_fns
+                )
                 _logger.info(
                     "Tenuo: auto-discovered %d activity function(s) from worker config",
-                    len(config.activity_fns),
+                    len(self._tenuo_config.activity_fns),
                 )
 
-            # Auto-preload signing keys so resolve_sync() never touches
-            # os.environ (or external storage) inside the workflow sandbox.
-            _preload_all = getattr(config.key_resolver, "preload_all", None)
-            if _preload_all is not None:
-                try:
-                    _preload_all()
-                except Exception as _exc:
-                    _logger.warning("key preload failed: %s", _exc)
+            self._preload_keys()
 
             if _tenuo_internal_mint_activity is not None:
                 existing.append(_tenuo_internal_mint_activity)
@@ -235,10 +321,43 @@ class TenuoTemporalPlugin(SimplePlugin):
             TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME,
             workflow_runner=ensure_tenuo_workflow_runner,
             activities=_add_activities,
-            **_simple_plugin_interceptor_kwargs(
-                self.client_interceptor, worker_interceptor
-            ),
+            **_simple_plugin_kwargs(self.client_interceptor, worker_interceptor),
         )
+
+    def _preload_keys(self) -> None:
+        """Eagerly preload signing keys from the configured resolver.
+
+        Preloading is best-effort by default, but for :class:`EnvKeyResolver`
+        it is a hard requirement: ``resolve_sync`` falls back to ``os.environ``
+        which is blocked inside the Temporal workflow sandbox. A preload
+        failure for an env resolver will deterministically turn into
+        ``KeyResolutionError`` on every subsequent workflow, so we raise
+        immediately with a clear message instead of logging a warning.
+        """
+        resolver = self._tenuo_config.key_resolver
+        _preload_all = getattr(resolver, "preload_all", None)
+        if _preload_all is None:
+            return
+        resolver_cls = type(resolver).__name__
+        try:
+            _preload_all()
+        except Exception as exc:
+            if isinstance(resolver, EnvKeyResolver):
+                raise ConfigurationError(
+                    f"EnvKeyResolver.preload_all() failed ({exc!r}). Preloading "
+                    "is required for EnvKeyResolver because resolve_sync() "
+                    "falls back to os.environ, which is blocked inside the "
+                    "Temporal workflow sandbox. Fix the environment variables "
+                    "(e.g. TENUO_KEY_* entries must be valid base64/seed) or "
+                    "switch to a resolver that does not rely on process env."
+                ) from exc
+            _logger.error(
+                "Tenuo %s.preload_all() failed: %s. Workflows that resolve "
+                "keys through this resolver at runtime will fail with "
+                "KeyResolutionError.",
+                resolver_cls,
+                exc,
+            )
 
 
 __all__ = [

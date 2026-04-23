@@ -17,10 +17,11 @@ from tenuo.temporal import (
     AuthorizedWorkflow,
     KeyResolver,
     TenuoClientInterceptor,
-    TenuoPlugin,
+    TenuoWorkerInterceptor,
     TenuoPluginConfig,
     tenuo_headers,
 )
+from tenuo.temporal.exceptions import KeyResolutionError
 from tenuo import Warrant
 from tenuo_core import SigningKey
 
@@ -40,7 +41,7 @@ class DictKeyResolver(KeyResolver):
 
     def resolve_sync(self, key_id: str):
         if key_id not in self.keys:
-            raise ValueError(f"Key {key_id} not found")
+            raise KeyResolutionError(key_id=key_id)
         return self.keys[key_id]
 
 
@@ -74,9 +75,14 @@ def _tenuo_sandbox_runner() -> SandboxedWorkflowRunner:
 @pytest.mark.temporal_live
 @pytest.mark.asyncio
 async def test_tenuo_plugin_replay_safety():
-    """TenuoPlugin + AuthorizedWorkflow stay deterministic under Temporal Replayer."""
+    """TenuoWorkerInterceptor + AuthorizedWorkflow stay deterministic under Temporal Replayer."""
     signing_key = SigningKey.generate()
-    key_dict = {KEY_ID: signing_key}
+    config = TenuoPluginConfig(
+        key_resolver=DictKeyResolver({KEY_ID: signing_key}),
+        dry_run=False,
+        trusted_roots=[signing_key.public_key],
+        activity_fns=[write_db_activity],
+    )
 
     warrant = (
         Warrant.mint_builder()
@@ -86,18 +92,10 @@ async def test_tenuo_plugin_replay_safety():
         .mint(signing_key)
     )
 
-    config = TenuoPluginConfig(
-        key_resolver=DictKeyResolver(key_dict),
-        dry_run=False,
-        trusted_roots=[signing_key.public_key],
-        activity_fns=[write_db_activity],
-    )
-
     async with await WorkflowEnvironment.start_local() as env:
         client = env.client
 
         client_interceptor = TenuoClientInterceptor()
-
         client_with_interceptor = Client(
             client.service_client,
             namespace=client.namespace,
@@ -105,21 +103,18 @@ async def test_tenuo_plugin_replay_safety():
             interceptors=[client_interceptor],
         )
 
-        sandbox_runner = _tenuo_sandbox_runner()
-
         async with Worker(
             client_with_interceptor,
             task_queue="replay-task-queue",
             workflows=[ReplayTestWorkflow],
             activities=[write_db_activity],
-            interceptors=[TenuoPlugin(config)],
-            workflow_runner=sandbox_runner,
+            interceptors=[TenuoWorkerInterceptor(config)],
+            workflow_runner=_tenuo_sandbox_runner(),
         ):
             client_interceptor.set_headers_for_workflow(
                 "replay-wf-1",
                 tenuo_headers(warrant, KEY_ID),
             )
-
             result = await client_with_interceptor.execute_workflow(
                 ReplayTestWorkflow.run,
                 "test-data-123",
@@ -133,10 +128,9 @@ async def test_tenuo_plugin_replay_safety():
 
     replayer = Replayer(
         workflows=[ReplayTestWorkflow],
-        interceptors=[TenuoPlugin(config)],
+        interceptors=[TenuoWorkerInterceptor(config)],
         workflow_runner=_tenuo_sandbox_runner(),
     )
-
     replay_results = await replayer.replay_workflow(
         history,
         raise_on_replay_failure=False,

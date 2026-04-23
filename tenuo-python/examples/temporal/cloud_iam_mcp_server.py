@@ -4,7 +4,7 @@ Stdio MCP server for examples/temporal/cloud_iam_layering.py.
 
 Exposes ``s3_get_object`` as an MCP tool. Each ``tools/call`` is verified with
 ``MCPVerifier`` (warrant + PoP in ``params._meta["tenuo"]``) before any AWS
-access. This is the **second** Tenuo boundary after ``TenuoPlugin`` on the
+access. This is the **second** Tenuo boundary after ``TenuoWorkerInterceptor`` on the
 Temporal activity; IAM on the worker remains the third layer at the AWS API.
 
 Environment:

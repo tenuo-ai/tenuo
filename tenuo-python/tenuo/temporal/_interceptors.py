@@ -1,8 +1,9 @@
 """Temporal worker interceptors for Tenuo authorization enforcement.
 
 Contains the outbound workflow interceptor (PoP injection), inbound workflow
-interceptor (header extraction), TenuoPlugin (worker-level interceptor), and
-TenuoActivityInboundInterceptor (activity authorization checks).
+interceptor (header extraction), TenuoWorkerInterceptor (worker-level
+interceptor), and TenuoActivityInboundInterceptor (activity authorization
+checks).
 """
 
 from __future__ import annotations
@@ -420,13 +421,27 @@ class _TenuoWorkflowInboundInterceptor:
         return await self.next.handle_update_handler(input)
 
 
-# ── TenuoPlugin (worker interceptor) ────────────────────────────────────
+# ── TenuoWorkerInterceptor (worker interceptor) ─────────────────────────
 
-class TenuoPlugin(_TemporalWorkerInterceptor):
-    """Temporal Python SDK Plugin: warrant authorization (middleware / security).
+class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
+    """Temporal Python SDK worker interceptor: warrant authorization (middleware / security).
+
+    This is the low-level worker interceptor. Most users should use
+    :class:`tenuo.temporal_plugin.TenuoTemporalPlugin` (a ``SimplePlugin`` that
+    wires this interceptor up for you). Use this class directly only when you
+    are hand-composing your own ``SimplePlugin`` or already have a custom
+    ``Plugin`` and just want Tenuo's authorization interceptor.
 
     Stable identifier: :data:`TENUO_TEMPORAL_PLUGIN_ID` (``tenuo.TenuoTemporalPlugin``)
     for worker logs and Temporal Web activity summaries.
+
+    .. note::
+
+        This class was previously named ``TenuoPlugin``. The old name is still
+        importable from :mod:`tenuo.temporal` as a deprecated alias and will
+        be removed in a future beta. Imports should be updated to
+        ``TenuoWorkerInterceptor`` — the new name correctly reflects that this
+        is a Temporal SDK **interceptor**, not a Temporal SDK **plugin**.
     """
 
     def __init__(self, config: "TenuoPluginConfig") -> None:
@@ -538,7 +553,7 @@ class TenuoActivityInboundInterceptor:
         except ImportError as e:
             from tenuo.exceptions import ConfigurationError
             raise ConfigurationError(
-                "tenuo_core is required for TenuoPlugin (Authorizer). "
+                "tenuo_core is required for TenuoWorkerInterceptor (Authorizer). "
                 "Install tenuo with the native extension, or ensure the "
                 "interpreter can import tenuo_core."
             ) from e
