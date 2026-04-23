@@ -43,6 +43,7 @@ __pycache__/
 .python-version
 uv.lock
 .pytest_cache/
+.hypothesis/
 *.egg-info/
 dist/
 build/

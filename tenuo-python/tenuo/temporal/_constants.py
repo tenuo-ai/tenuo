@@ -21,12 +21,10 @@ TENUO_TEMPORAL_PLUGIN_ID = "tenuo.TenuoTemporalPlugin"
 # ``x-tenuo-warrant`` carries raw CBOR bytes (optionally gzip-compressed).
 _TEMPORAL_WARRANT_ENCODING_VERSION = b"2"
 
-# PoP timestamp validation window (seconds). The scheduled_time must be
-# within this window. This is not configurable — security is non-negotiable.
-# NOTE: this constant is currently unused; the actual PoP window is controlled
-# by the Rust Authorizer (pop_window_secs=30, pop_max_windows=5 → ±60s).
-# Kept for reference; do not use POP_WINDOW_SECONDS in new code.
-POP_WINDOW_SECONDS = 300
+# The actual PoP timestamp validation window is owned by the Rust Authorizer
+# (``pop_window_secs=30``, ``pop_max_windows=5`` → ±60s). We intentionally do
+# not mirror it in Python to avoid drift; see ``tenuo-core`` for the source of
+# truth.
 
 # Hard cap on decompressed warrant bytes — must match tenuo_core.MAX_WARRANT_SIZE
 # (64 KB, enforced again by the Rust deserializer). Capping here prevents gzip

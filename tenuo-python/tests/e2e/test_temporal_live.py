@@ -49,7 +49,6 @@ from tenuo.temporal import (  # noqa: E402
     tenuo_execute_child_workflow,
     tenuo_headers,
 )
-from tenuo.temporal._state import _set_worker_config  # noqa: E402
 from tenuo.temporal._workflow import _tenuo_internal_mint_activity  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -319,8 +318,7 @@ async def _run_workflow(
     if plugin_config:
         cfg_kwargs.update(plugin_config)
     cfg = TenuoPluginConfig(**cfg_kwargs)
-    interceptor = TenuoWorkerInterceptor(cfg)
-    _set_worker_config(cfg)
+    interceptor = TenuoWorkerInterceptor(cfg, task_queue=task_queue)
 
     sandbox_runner = SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(

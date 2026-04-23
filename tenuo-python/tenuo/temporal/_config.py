@@ -145,12 +145,6 @@ class TenuoPluginConfig:
     Pass a TenuoMetrics instance to enable metrics.
     """
 
-    enable_tracing: bool = False
-    """
-    Enable OpenTelemetry tracing spans for authorization.
-    Requires opentelemetry-api to be installed.
-    """
-
     require_warrant: bool = True
     """
     Require a warrant for all activities (fail-closed).
@@ -377,12 +371,6 @@ class TenuoPluginConfig:
     Requires ``revocation_list_provider`` to be set; ignored otherwise.
     """
 
-    signal_constraints: Optional[Dict[str, Dict[str, Any]]] = None
-    """Per-signal payload constraints: {signal_name: {field_name: Constraint}}."""
-
-    update_constraints: Optional[Dict[str, Dict[str, Any]]] = None
-    """Per-update payload constraints: {update_name: {field_name: Constraint}}."""
-
     def __post_init__(self) -> None:
         if self.dry_run:
             logger.warning(
@@ -474,6 +462,27 @@ class TenuoPluginConfig:
                 raise ConfigurationError(
                     "trusted_roots_refresh_interval_secs requires trusted_roots_provider."
                 )
+
+        # ``authorized_signals=[]`` / ``authorized_updates=[]`` would silently
+        # deny every signal / update (the allowlist is enforced iff the field
+        # is not ``None``, and nothing is "in []"). That's a UX footgun for
+        # operators who pass ``[]`` to mean "no restriction" — make the
+        # mistake impossible by rejecting it at config time. Use ``None`` to
+        # disable the allowlist, or list the names you want to accept.
+        if self.authorized_signals is not None and len(self.authorized_signals) == 0:
+            from tenuo.exceptions import ConfigurationError
+            raise ConfigurationError(
+                "authorized_signals=[] would deny every signal. Use "
+                "authorized_signals=None to disable the allowlist, or list "
+                "the signal names to accept."
+            )
+        if self.authorized_updates is not None and len(self.authorized_updates) == 0:
+            from tenuo.exceptions import ConfigurationError
+            raise ConfigurationError(
+                "authorized_updates=[] would deny every update. Use "
+                "authorized_updates=None to disable the allowlist, or list "
+                "the update names to accept."
+            )
 
         self._activity_registry: Dict[str, Callable] = _build_activity_registry(
             self.activity_fns

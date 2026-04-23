@@ -78,10 +78,32 @@ from tenuo.temporal.exceptions import (
 
 _logger = logging.getLogger("tenuo.temporal")
 
+
+def _extract_task_queue(config: Any) -> "Optional[str]":
+    """Return the ``task_queue`` from a Temporal ``WorkerConfig`` or dict.
+
+    Temporal's ``WorkerConfig`` is a :class:`TypedDict` in current SDKs;
+    earlier versions used a dataclass-style object. Handle both by
+    trying mapping-style access first and falling back to
+    :func:`getattr`. Returns ``None`` when the config doesn't expose a
+    task queue (e.g. SDK plumbing passing a partial config, or test
+    fixtures passing a bare dict without ``task_queue``).
+    """
+    if isinstance(config, dict):
+        task_queue = config.get("task_queue")
+    else:
+        task_queue = getattr(config, "task_queue", None)
+    if isinstance(task_queue, str) and task_queue:
+        return task_queue
+    return None
+
 if TYPE_CHECKING:
     from temporalio.worker import WorkflowRunner
 
-TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME = "tenuo.TenuoTemporalPlugin"
+# Alias of :data:`tenuo.temporal._constants.TENUO_TEMPORAL_PLUGIN_ID`, re-exported
+# here so users and tests can import the canonical Temporal plugin name directly
+# from ``tenuo.temporal_plugin``.
+from tenuo.temporal._constants import TENUO_TEMPORAL_PLUGIN_ID as TENUO_TEMPORAL_SIMPLE_PLUGIN_NAME  # noqa: E402
 
 # Tenuo exceptions that should fail the workflow cleanly (non-retryable) rather
 # than being wrapped by ``ActivityError``. Registered on ``SimplePlugin`` so the
@@ -172,6 +194,14 @@ def ensure_tenuo_workflow_runner(
             restrictions=existing.restrictions.with_passthrough_modules(*passthrough),
         )
 
+    # mypy narrowing note: ``unsandboxed_cls`` below is typed as
+    # ``Optional[type]`` (the unparameterized ``type``), so
+    # ``isinstance(existing, unsandboxed_cls)`` narrows ``existing`` to
+    # ``object`` rather than ``WorkflowRunner``. ``runner`` aliases the
+    # non-None, correctly-typed binding so the final ``return runner``
+    # sites stay type-correct without sprinkling ``cast`` at every exit.
+    runner: "WorkflowRunner" = existing
+
     unsandboxed_cls: Optional[type] = None
     try:
         from temporalio.worker import UnsandboxedWorkflowRunner
@@ -180,7 +210,7 @@ def ensure_tenuo_workflow_runner(
     except ImportError:  # pragma: no cover - older temporalio without this export
         pass
 
-    if unsandboxed_cls is not None and isinstance(existing, unsandboxed_cls):
+    if unsandboxed_cls is not None and isinstance(runner, unsandboxed_cls):
         msg = (
             "TenuoTemporalPlugin is running with UnsandboxedWorkflowRunner. "
             "Tenuo itself still enforces warrant + PoP authorization, but "
@@ -193,16 +223,16 @@ def ensure_tenuo_workflow_runner(
         )
         warnings.warn(msg, UserWarning, stacklevel=2)
         _logger.warning("%s", msg)
-        return existing
+        return runner
 
     _logger.warning(
         "TenuoTemporalPlugin: unknown workflow runner %s; passthrough for "
         "'tenuo' and 'tenuo_core' was not configured. Workflow code may fail to "
         "import Tenuo modules. Use SandboxedWorkflowRunner or omit "
         "``workflow_runner`` to get automatic passthrough.",
-        type(existing).__name__,
+        type(runner).__name__,
     )
-    return existing
+    return runner
 
 
 class TenuoTemporalPlugin(SimplePlugin):
@@ -281,6 +311,11 @@ class TenuoTemporalPlugin(SimplePlugin):
               copy when the user didn't set them explicitly.
             - Eagerly preload all signing keys so the workflow sandbox never
               has to touch ``os.environ`` or external secret storage.
+
+            The worker-config registration with ``_set_worker_config`` is
+            handled by :meth:`configure_worker` (below) so that we can key
+            the registry by ``task_queue``; this closure only appends the
+            internal mint activity.
             """
             if self._tenuo_worker_configured:
                 raise ConfigurationError(
@@ -296,7 +331,6 @@ class TenuoTemporalPlugin(SimplePlugin):
                 )
             self._tenuo_worker_configured = True
 
-            _set_worker_config(self._tenuo_config)
             existing = list(activities or [])
 
             # Auto-populate activity_fns on our private copy if not set by the
@@ -323,6 +357,28 @@ class TenuoTemporalPlugin(SimplePlugin):
             activities=_add_activities,
             **_simple_plugin_kwargs(self.client_interceptor, worker_interceptor),
         )
+
+    def configure_worker(self, config: Any) -> Any:  # type: ignore[override]
+        """Register this plugin's :class:`TenuoPluginConfig` under the worker's task queue.
+
+        Keying the worker-config registry by ``task_queue`` is what allows
+        :func:`_tenuo_internal_mint_activity` to resolve the correct
+        key resolver when multiple workers (with different configs) share
+        a single Python process. Without this, the second worker to call
+        ``configure_worker`` would overwrite the first worker's global and
+        the first worker would start minting warrants with the second
+        worker's signing key.
+        """
+        task_queue = _extract_task_queue(config)
+        if task_queue:
+            _set_worker_config(self._tenuo_config, task_queue=task_queue)
+        # Silently skip when no queue is discoverable (e.g. SDK plumbing
+        # that merges runner/interceptor config before the Worker has its
+        # task_queue set, or test fixtures that pass a bare ``{}``). The
+        # mint activity will fire a targeted ``TenuoContextError`` with
+        # remediation steps if delegation is attempted without a
+        # registration, so there's no silent-failure risk.
+        return super().configure_worker(config)
 
     def _preload_keys(self) -> None:
         """Eagerly preload signing keys from the configured resolver.

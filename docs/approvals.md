@@ -311,14 +311,26 @@ tools = guard(
 ### Temporal
 
 ```python
-from tenuo.temporal import TenuoPluginConfig, TenuoWorkerInterceptor
-
-config = TenuoPluginConfig(
-    key_resolver=resolver,
-    trusted_roots=[control_key.public_key],
-    approval_handler=cli_prompt(approver_key=approver_key),
+from temporalio.client import Client
+from tenuo.temporal import (
+    TenuoTemporalPlugin,
+    TenuoPluginConfig,
+    EnvKeyResolver,
 )
-plugin = TenuoWorkerInterceptor(config)
+
+# Use whichever KeyResolver matches your deployment
+# (EnvKeyResolver, AWSSecretsManagerKeyResolver, VaultKeyResolver, ...).
+resolver = EnvKeyResolver()
+
+plugin = TenuoTemporalPlugin(
+    TenuoPluginConfig(
+        key_resolver=resolver,
+        trusted_roots=[control_key.public_key],
+        approval_handler=cli_prompt(approver_key=approver_key),
+    )
+)
+
+client = await Client.connect("localhost:7233", plugins=[plugin])
 ```
 
 ---

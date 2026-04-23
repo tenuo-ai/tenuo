@@ -21,6 +21,7 @@ uv pip install "tenuo[crewai]"        # + CrewAI
 uv pip install "tenuo[fastapi]"       # + FastAPI
 uv pip install "tenuo[mcp]"           # + official MCP SDK, client/server (Python ≥3.10)
 uv pip install "tenuo[fastmcp]"       # + FastMCP (``TenuoMiddleware``, FastMCP servers)
+uv pip install "tenuo[temporal]"      # + Temporal Python SDK (workflow + activity authorization)
 ```
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
@@ -433,6 +434,34 @@ result = await client.send_task(
 
 See [A2A Integration](https://tenuo.ai/a2a) for full documentation.
 
+## Temporal Integration
+
+_(Requires Python ≥3.10 and `temporalio>=1.23.0`)_
+
+Warrant-based authorization for Temporal workflows and activities. The plugin wires the client interceptor, worker interceptor, and sandboxed workflow runner (with PyO3 passthrough) in one step:
+
+```python
+from temporalio.client import Client
+from temporalio.worker import Worker
+from tenuo import SigningKey
+from tenuo.temporal import TenuoPluginConfig, EnvKeyResolver
+from tenuo.temporal_plugin import TenuoTemporalPlugin
+
+control_key = SigningKey.generate()
+
+plugin = TenuoTemporalPlugin(
+    TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[control_key.public_key],
+    )
+)
+
+client = await Client.connect("localhost:7233", plugins=[plugin])
+worker = Worker(client, task_queue="my-queue", workflows=[MyWorkflow], activities=[...])
+```
+
+Every activity invocation is verified against the workflow's warrant + PoP signature; deterministic replay is preserved. See [Temporal Integration](https://tenuo.ai/temporal) for the full guide.
+
 ## LangGraph Integration
 
 ```python
@@ -662,6 +691,7 @@ python examples/mcp/mcp_client_demo.py
 - **[LangChain](https://tenuo.ai/langchain)** - Tool protection
 - **[LangGraph](https://tenuo.ai/langgraph)** - Multi-agent security
 - **[CrewAI](https://tenuo.ai/crewai)** - Multi-agent crew protection
+- **[Temporal](https://tenuo.ai/temporal)** - Workflow + activity authorization (replay-safe)
 - **[Security](https://tenuo.ai/security)** - Threat model, best practices
 - **[API Reference](https://tenuo.ai/api-reference)** - Full SDK docs
 

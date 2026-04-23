@@ -157,30 +157,49 @@ def _assert_non_retryable(exc_info, *, match: str | None = None):
 
 # -- TenuoClientInterceptor -------------------------------------------------
 
-class TestTenuoClientInterceptor:
-    def test_stores_headers_in_module_store(self, headers_dict):
-        ci = TenuoClientInterceptor()
-        ci.set_headers(headers_dict)
-        nxt = MagicMock()
-        nxt.start_workflow = AsyncMock(return_value="h")
-        out = ci.intercept_client(nxt)
-        _run(
-            out.start_workflow(FakeStartWorkflowInput(id="wf-123")))
-        assert "wf-123" in _workflow_headers_store
-        s = _workflow_headers_store["wf-123"]
-        assert TENUO_WARRANT_HEADER in s
-        assert TENUO_KEY_ID_HEADER in s
-        assert "x-tenuo-signing-key" not in s
+def _raw_from_payload_headers(payload_headers):
+    """Extract raw Tenuo header bytes from a dict of (Fake)Payload values."""
+    return {
+        k: v.data
+        for k, v in (payload_headers or {}).items()
+        if k.startswith("x-tenuo-")
+    }
 
-    def test_stored_warrant_roundtrips(self, warrant, headers_dict):
+
+class TestTenuoClientInterceptor:
+    """The client interceptor's contract is ``input.headers`` injection.
+
+    It deliberately does **not** write to ``_workflow_headers_store`` —
+    that store is keyed by ``run_id`` which only exists on the worker
+    once the workflow has been started, and writing on the client would
+    collide across namespaces sharing the same ``workflow_id``.
+    """
+
+    def test_injects_payload_headers_into_start_workflow(self, headers_dict):
         ci = TenuoClientInterceptor()
         ci.set_headers(headers_dict)
         nxt = MagicMock()
         nxt.start_workflow = AsyncMock(return_value="h")
         out = ci.intercept_client(nxt)
-        _run(
-            out.start_workflow(FakeStartWorkflowInput(id="wf-rt")))
-        extracted = _extract_warrant_from_headers(_workflow_headers_store["wf-rt"])
+        inp = FakeStartWorkflowInput(id="wf-123")
+        _run(out.start_workflow(inp))
+        raw = _raw_from_payload_headers(inp.headers)
+        assert TENUO_WARRANT_HEADER in raw
+        assert TENUO_KEY_ID_HEADER in raw
+        assert "x-tenuo-signing-key" not in raw
+        # The module-level store stays run_id-keyed and is populated only by
+        # the worker-side inbound interceptor.
+        assert "wf-123" not in _workflow_headers_store
+
+    def test_injected_warrant_roundtrips(self, warrant, headers_dict):
+        ci = TenuoClientInterceptor()
+        ci.set_headers(headers_dict)
+        nxt = MagicMock()
+        nxt.start_workflow = AsyncMock(return_value="h")
+        out = ci.intercept_client(nxt)
+        inp = FakeStartWorkflowInput(id="wf-rt")
+        _run(out.start_workflow(inp))
+        extracted = _extract_warrant_from_headers(_raw_from_payload_headers(inp.headers))
         assert extracted is not None
         assert extracted.id == warrant.id
         assert set(extracted.tools) == set(warrant.tools)
@@ -192,8 +211,9 @@ class TestTenuoClientInterceptor:
         nxt = MagicMock()
         nxt.start_workflow = AsyncMock(return_value="h")
         out = ci.intercept_client(nxt)
-        _run(
-            out.start_workflow(FakeStartWorkflowInput(id="wf-empty")))
+        inp = FakeStartWorkflowInput(id="wf-empty")
+        _run(out.start_workflow(inp))
+        assert not _raw_from_payload_headers(inp.headers)
         assert "wf-empty" not in _workflow_headers_store
 
     def test_set_headers_is_one_shot(self, headers_dict):
@@ -204,11 +224,13 @@ class TestTenuoClientInterceptor:
         nxt.start_workflow = AsyncMock(return_value="h")
         out = ci.intercept_client(nxt)
 
-        _run(out.start_workflow(FakeStartWorkflowInput(id="wf-once-1")))
-        _run(out.start_workflow(FakeStartWorkflowInput(id="wf-once-2")))
+        first = FakeStartWorkflowInput(id="wf-once-1")
+        second = FakeStartWorkflowInput(id="wf-once-2")
+        _run(out.start_workflow(first))
+        _run(out.start_workflow(second))
 
-        assert "wf-once-1" in _workflow_headers_store
-        assert "wf-once-2" not in _workflow_headers_store
+        assert _raw_from_payload_headers(first.headers)
+        assert not _raw_from_payload_headers(second.headers)
 
     def test_set_headers_emits_deprecation_warning(self, headers_dict):
         ci = TenuoClientInterceptor()
@@ -233,12 +255,16 @@ class TestTenuoClientInterceptor:
         nxt.start_workflow = AsyncMock(return_value="h")
         out = ci.intercept_client(nxt)
 
+        inp_b = FakeStartWorkflowInput(id="wf-b")
+        inp_a = FakeStartWorkflowInput(id="wf-a")
         # Start in reverse order to prove binding is by workflow ID.
-        _run(out.start_workflow(FakeStartWorkflowInput(id="wf-b")))
-        _run(out.start_workflow(FakeStartWorkflowInput(id="wf-a")))
+        _run(out.start_workflow(inp_b))
+        _run(out.start_workflow(inp_a))
 
-        assert _workflow_headers_store["wf-a"][TENUO_KEY_ID_HEADER] == b"agentA"
-        assert _workflow_headers_store["wf-b"][TENUO_KEY_ID_HEADER] == b"agentB"
+        raw_a = _raw_from_payload_headers(inp_a.headers)
+        raw_b = _raw_from_payload_headers(inp_b.headers)
+        assert raw_a[TENUO_KEY_ID_HEADER] == b"agentA"
+        assert raw_b[TENUO_KEY_ID_HEADER] == b"agentB"
 
     def test_execute_workflow_authorized_helper(self, warrant):
         ci = TenuoClientInterceptor()
@@ -1031,9 +1057,20 @@ class FakeExecuteWorkflowInput:
     args: tuple = ()
     headers: Optional[Dict[str, Any]] = None
 
+_FAKE_WF_RUN_ID_SENTINEL = "__unset__"
+
+
 @dataclass
 class FakeWorkflowInfo:
+    # Internal Tenuo stores are keyed by ``run_id``; default it to the same
+    # string as ``workflow_id`` so test assertions that use a single string
+    # as the key (via ``_populate_store(wf_id, ...)``) keep working.
     workflow_id: str = "wf-dist-001"
+    run_id: str = _FAKE_WF_RUN_ID_SENTINEL
+
+    def __post_init__(self) -> None:
+        if self.run_id == _FAKE_WF_RUN_ID_SENTINEL:
+            self.run_id = self.workflow_id
 
 
 class TestDistributedHeaderPropagation:
@@ -1591,10 +1628,15 @@ class TestMintActivityIssueExecution:
     ):
         """If the Warrant type lacks issue_execution(), mint must raise, not fallback."""
         from tenuo.temporal._observability import _MintRequest
-        from tenuo.temporal._state import _pending_mint_capabilities, _set_worker_config
+        from tenuo.temporal._state import (
+            _clear_worker_config,
+            _pending_mint_capabilities,
+            _set_worker_config,
+        )
         from tenuo.temporal._workflow import _tenuo_internal_mint_activity
 
         cap_ref = "test-ref-issue-exec"
+        task_queue = "test-mint-issue-exec"
         with _store_lock:
             _pending_mint_capabilities[cap_ref] = {"read_file": {}}
 
@@ -1613,7 +1655,13 @@ class TestMintActivityIssueExecution:
             key_resolver=fake_resolver,
             trusted_roots=[control_key.public_key],
         )
-        _set_worker_config(cfg)
+        # Register config under a specific task_queue and fake
+        # ``activity.info().task_queue`` to match. Strict routing is
+        # exact-match, so the mint activity only finds the config when
+        # both sides agree on the queue name.
+        _set_worker_config(cfg, task_queue=task_queue)
+        fake_info = MagicMock()
+        fake_info.task_queue = task_queue
 
         req = _MintRequest(
             parent_warrant_bytes=warrant.to_bytes(),
@@ -1625,9 +1673,8 @@ class TestMintActivityIssueExecution:
 
         loop = asyncio.new_event_loop()
         try:
-            with patch(
-                "tenuo.temporal._tenuo_internal_mint_activity.__wrapped__.__globals__"
-                if False else "tenuo_core.Warrant", _FakeWarrantClass
+            with patch("tenuo_core.Warrant", _FakeWarrantClass), patch(
+                "temporalio.activity.info", return_value=fake_info
             ):
                 with pytest.raises(Exception, match="issue_execution.*not available"):
                     loop.run_until_complete(_tenuo_internal_mint_activity(req))
@@ -1635,6 +1682,7 @@ class TestMintActivityIssueExecution:
             loop.close()
             with _store_lock:
                 _pending_mint_capabilities.pop(cap_ref, None)
+            _clear_worker_config(task_queue)
 
 
 # -- Fail-closed outbound interceptor behavior -------------------------------

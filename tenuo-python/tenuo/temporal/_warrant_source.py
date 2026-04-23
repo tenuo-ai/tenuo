@@ -12,16 +12,36 @@ from tenuo.temporal.exceptions import TenuoContextError
 class WarrantSource(ABC):
     """Abstract base for warrant provisioning sources.
 
-    A WarrantSource resolves (warrant, key_id) lazily at workflow-start time.
-    Resolution runs client-side — warrants must be present in workflow start
-    headers before a Temporal worker ever sees the workflow.
+    A WarrantSource resolves ``(warrant, key_id)`` lazily at workflow-start
+    time. Resolution runs client-side — warrants must be present in the
+    workflow start headers before a Temporal worker ever sees the
+    workflow.
 
-    Implementations raise WarrantExpired if the resolved warrant is past expires_at.
+    Error contract
+    ~~~~~~~~~~~~~~
+
+    Implementations **must** raise :class:`~tenuo.temporal.TenuoContextError`
+    when the warrant cannot be obtained or is unusable (missing, malformed,
+    or expired). Both built-in sources (:class:`EnvWarrantSource`,
+    :class:`CloudTriggerWarrantSource`) do this so ``execute_workflow_authorized``
+    surfaces a single, well-known class back to the caller.
+
+    Implementations **may** raise :class:`~tenuo.temporal.WarrantExpired`
+    specifically when expiry is the precise reason, if they want expiry to
+    be distinguishable from other context failures. The Tenuo plugin
+    registers both classes as ``workflow_failure_exception_types`` so
+    either surfaces as a non-retryable workflow failure.
     """
 
     @abstractmethod
     async def resolve(self, *args: Any, **kwargs: Any) -> tuple:
-        """Return (warrant, key_id). Raise WarrantExpired if expired."""
+        """Return ``(warrant, key_id)``.
+
+        Raise :class:`~tenuo.temporal.TenuoContextError` for missing,
+        malformed, or expired warrants; optionally
+        :class:`~tenuo.temporal.WarrantExpired` if expiry should be
+        distinguishable from other context failures.
+        """
 
 
 class LiteralWarrantSource(WarrantSource):

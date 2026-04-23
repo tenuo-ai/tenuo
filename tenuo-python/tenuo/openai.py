@@ -896,8 +896,11 @@ class GuardedCompletions:
         try:
             self._audit_callback(event)
         except Exception as e:
-            # Don't let audit failures break authorization
-            logger.warning(f"Audit callback failed: {e}")
+            # Audit sinks must never crash the caller. Log with exc_info=True
+            # so operators can diagnose the callback bug from the traceback
+            # rather than a one-line mystery. Cross-adapter contract: every
+            # Tenuo audit emission path swallows-and-logs-with-traceback.
+            logger.warning("Audit callback failed: %s", e, exc_info=True)
 
     def _emit_cp(
         self,
@@ -1336,7 +1339,9 @@ class GuardedResponses:
         try:
             self._audit_callback(event)
         except Exception as e:
-            logger.warning(f"Audit callback failed: {e}")
+            # Cross-adapter contract: audit emission never crashes the caller,
+            # always logs exc_info=True so the traceback reaches operators.
+            logger.warning("Audit callback failed: %s", e, exc_info=True)
 
     def _handle_denial(self, error: Exception) -> None:
         """Handle a denial based on on_denial mode using shared handler."""
@@ -2299,8 +2304,9 @@ class TenuoToolGuardrail:
         try:
             self.audit_callback(event)
         except Exception as e:
-            # Don't let audit failures break authorization
-            logger.warning(f"Audit callback failed: {e}")
+            # Cross-adapter contract: audit emission never crashes the caller,
+            # always logs exc_info=True so the traceback reaches operators.
+            logger.warning("Audit callback failed: %s", e, exc_info=True)
 
     def _emit_cp(
         self,

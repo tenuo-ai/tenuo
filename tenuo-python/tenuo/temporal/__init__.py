@@ -30,7 +30,12 @@ For direct imports (preferred in library / internal code)::
                                   set_activity_approvals, tenuo_continue_as_new, …
     tenuo.temporal._client        TenuoClientInterceptor, TenuoWarrantContextPropagator,
                                   tenuo_warrant_context
-    tenuo.temporal._interceptors  TenuoWorkerInterceptor (alias ``TenuoPlugin`` is deprecated)
+    tenuo.temporal._interceptors  TenuoWorkerInterceptor (alias ``TenuoPlugin`` is
+                                  deprecated). The interceptor constructs a
+                                  tenuo_core ``Authorizer(trusted_roots=...)``
+                                  and calls ``authorize_one(...)`` /
+                                  ``check_chain(...)`` on every activity
+                                  invocation.
     tenuo.temporal._dedup         PopDedupStore, InMemoryPopDedupStore
     tenuo.temporal._decorators    tool, unprotected
     tenuo.temporal._observability TemporalAuditEvent, TenuoMetrics
@@ -73,6 +78,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "set_activity_approvals": ("tenuo.temporal._workflow", "set_activity_approvals"),
     "attenuated_headers": ("tenuo.temporal._workflow", "attenuated_headers"),
     "tenuo_continue_as_new": ("tenuo.temporal._workflow", "tenuo_continue_as_new"),
+    # _state — public escape hatch for manual worker setup
+    "register_worker_config": ("tenuo.temporal._state", "register_worker_config"),
     # _client
     "TenuoWarrantContextPropagator": ("tenuo.temporal._client", "TenuoWarrantContextPropagator"),
     "tenuo_warrant_context": ("tenuo.temporal._client", "tenuo_warrant_context"),

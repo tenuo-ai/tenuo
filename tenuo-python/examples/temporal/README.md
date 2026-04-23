@@ -35,11 +35,11 @@ Five examples showing a clean progression from basic transparent authorization t
 
 | Example | Concept | What it demonstrates |
 |---------|---------|---------------------|
-| [`demo.py`](demo.py) | **Transparent authorization** | Standard `workflow.execute_activity()`, zero workflow changes, sequential + parallel reads, unauthorized access denial |
-| [`cloud_iam_layering.py`](cloud_iam_layering.py) | **IAM + MCP layering** | Same pattern as [`temporal_mcp_layering.py`](temporal_mcp_layering.py): activity uses `SecureMCPClient` to call [`cloud_iam_mcp_server.py`](cloud_iam_mcp_server.py) (`s3_get_object`). Two Tenuo boundaries (Temporal + MCP), then IAM at AWS. Per-tenant key prefixes; `TENUO_DEMO_DRY_RUN=1` mocks the MCP server (no boto3 in the activity) |
+| [`demo.py`](demo.py) | **Transparent authorization** | Standard `workflow.execute_activity()` with no Tenuo imports inside the workflow, plus a side-by-side `AuthorizedWorkflow` variant; sequential activity calls and an unauthorized-access denial |
 | [`multi_warrant.py`](multi_warrant.py) | **Multi-tenant isolation** | Identical workflow code for different tenants, isolation via warrant only, cross-access denial |
 | [`delegation.py`](delegation.py) | **Inline attenuation** | Per-stage pipeline authorization with attenuated child workflows via `tenuo_execute_child_workflow()` |
-| [`temporal_mcp_layering.py`](temporal_mcp_layering.py) | **Temporal + MCP** | Abstract pattern: `SecureMCPClient` + [`temporal_mcp_server.py`](temporal_mcp_server.py) (`safe_echo`). [`cloud_iam_layering.py`](cloud_iam_layering.py) is the same shape with S3 (`cloud_iam_mcp_server.py`) |
+| [`temporal_mcp_layering.py`](temporal_mcp_layering.py) | **Temporal + MCP** | Abstract pattern: `SecureMCPClient` + [`temporal_mcp_server.py`](temporal_mcp_server.py) (`safe_echo`) — two Tenuo boundaries, one warrant |
+| [`cloud_iam_layering.py`](cloud_iam_layering.py) | **IAM + MCP layering** | Same shape as `temporal_mcp_layering.py` but with S3 via [`cloud_iam_mcp_server.py`](cloud_iam_mcp_server.py) (`s3_get_object`). Per-tenant key prefixes; `TENUO_DEMO_DRY_RUN=1` mocks the MCP server (no boto3 in the activity) |
 
 ### Quick start
 
@@ -86,7 +86,7 @@ result = await execute_workflow_authorized(
 )
 ```
 
-With `TenuoWorkerInterceptor` on the worker, you can call normal `workflow.execute_activity(...)`. No Tenuo imports are required inside the workflow for that path. If the warrant uses named field constraints (`path=`, `bucket=`, …), configure `activity_fns` (below).
+With `TenuoTemporalPlugin` registered on the client (`Client.connect(plugins=[plugin])`), you can call normal `workflow.execute_activity(...)`. No Tenuo imports are required inside the workflow for that path. If the warrant uses named field constraints (`path=`, `bucket=`, …), configure `activity_fns` (below).
 
 ```python
 @workflow.defn
@@ -106,20 +106,20 @@ The outbound interceptor:
 - Works with `asyncio.gather()` for parallel activities
 - Uses `workflow.now()` so replay stays deterministic
 
-### Activity registry (`activity_fns`) when you **must** set it
+### Activity registry (`activity_fns`) and PoP argument names
 
 PoP signs a canonical **argument dictionary**. If your warrant uses **named field constraints** (for example `capability("read_file", path=Subpath("/data/..."))`), that dict must use **real parameter names** (`path`), not placeholders (`arg0`, `arg1`, …).
 
 The outbound interceptor learns parameter names from, in order:
 
-1. The Temporal SDK’s `input.fn` (when present)
-2. `tenuo_execute_activity()` (records the function for that call)
-3. **`TenuoPluginConfig.activity_fns`**: pass the **same** callables as `Worker(activities=[...])`
+1. The Temporal SDK's `input.fn` (when present).
+2. `tenuo_execute_activity()` (records the function for that call).
+3. **`TenuoPluginConfig.activity_fns`** (populated automatically by `TenuoTemporalPlugin` from the `Worker(activities=[...])` list; you can also pass it explicitly for manual `TenuoWorkerInterceptor` setups).
 4. Otherwise it falls back to `arg0`, `arg1`, …
 
 If (4) happens while your warrant has field constraints for that tool, verification will not match the warrant. The worker **logs a warning**; with **`strict_mode=True`** it **raises** instead so you fix config before production.
 
-**Rule of thumb:** if the warrant names arguments (`path=`, `message=`, …), set `activity_fns` in `TenuoPluginConfig` (see `demo.py`). Tool-only capabilities without per-field constraints often do not need it.
+**Rule of thumb:** if you use `TenuoTemporalPlugin` (the recommended entry point), auto-discovery from `Worker(activities=[...])` covers this — the examples in this directory rely on that path. If you use `TenuoWorkerInterceptor` manually and your warrants name arguments, pass `activity_fns=[...]` in `TenuoPluginConfig` so PoP signing uses real parameter names.
 
 See also: the **Activity registry (`activity_fns`) and PoP argument names** section in [`docs/temporal-reference.md`](../../../docs/temporal-reference.md) (repository root).
 

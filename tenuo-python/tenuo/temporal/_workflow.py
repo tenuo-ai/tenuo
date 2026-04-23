@@ -21,6 +21,7 @@ from tenuo.temporal._headers import (
 )
 from tenuo.temporal._observability import _MintRequest
 from tenuo.temporal._state import (
+    _current_run_key,
     _pending_activity_fn,
     _pending_child_headers,
     _pending_mint_capabilities,
@@ -46,19 +47,19 @@ logger = logging.getLogger("tenuo.temporal")
 def _fail_workflow_non_retryable(exc: Exception) -> Exception:
     """Wrap *exc* as a non-retryable ``ApplicationError``.
 
-    Authorization failures raised in workflow context (not activity context)
-    must be wrapped this way; otherwise Temporal treats them as workflow task
-    failures and retries forever.
+    Authorization failures raised in workflow context (not activity
+    context) must be wrapped this way; otherwise Temporal treats them as
+    workflow task failures and retries forever. Thin wrapper around
+    :func:`tenuo.temporal.exceptions._build_non_retryable_application_error`
+    so every boundary wrapper shares one construction site (and one
+    enforcement point for the three-leg wire contract).
     """
+    from tenuo.temporal.exceptions import _build_non_retryable_application_error
+
     try:
-        from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
+        return _build_non_retryable_application_error(exc)
     except ImportError:
         return exc
-    return ApplicationError(
-        str(exc),
-        type=type(exc).__name__,
-        non_retryable=True,
-    )
 
 
 # ── Context Accessors ────────────────────────────────────────────────────
@@ -148,15 +149,25 @@ class AuthorizedWorkflow:
             current_warrant()
             current_key_id()
         except TenuoContextError as e:
+            # Wrap the raw TenuoContextError with a contextual message, but
+            # route it through the shared builder so the wire contract
+            # (non_retryable + stable error_code + __cause__) is enforced
+            # the same way as every other boundary wrapper. Without this
+            # indirection it's trivially easy to hardcode
+            # ``type="TenuoContextError"`` (the Python class name) instead
+            # of ``e.error_code`` (the stable wire code), which has been
+            # the exact regression pattern in this module historically.
+            contextual = TenuoContextError(
+                f"AuthorizedWorkflow requires Tenuo headers: {e}"
+            )
             try:
-                from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
+                from tenuo.temporal.exceptions import (
+                    _build_non_retryable_application_error,
+                )
+
+                raise _build_non_retryable_application_error(contextual) from e
             except ImportError:
                 raise e
-            raise ApplicationError(
-                f"AuthorizedWorkflow requires Tenuo headers: {e}",
-                type="TenuoContextError",
-                non_retryable=True,
-            ) from e
 
     async def execute_authorized_activity(self, activity: Any, **kwargs: Any) -> Any:
         """Execute activity with automatic Tenuo authorization.
@@ -243,26 +254,48 @@ async def tenuo_execute_activity(
         }.items() if v is not None
     }
 
-    wf_id = workflow.info().workflow_id
+    run_key = _current_run_key()
     with _store_lock:
-        _pending_activity_fn[wf_id] = activity
+        _pending_activity_fn[run_key] = activity
 
     try:
         return await workflow.execute_activity(activity, **activity_kwargs)
     finally:
         with _store_lock:
-            _pending_activity_fn.pop(wf_id, None)
+            _pending_activity_fn.pop(run_key, None)
 
 
 def set_activity_approvals(approvals: List[Any]) -> None:
     """Pre-supply signed approvals for the next activity execution.
 
     Call this from a workflow before ``workflow.execute_activity()`` when
-    the warrant has guards that require approval.  The outbound interceptor
+    the warrant has guards that require approval. The outbound interceptor
     encodes them into activity headers and the inbound interceptor uses
     them to satisfy the guard check.
 
-    Approvals are consumed on the next activity dispatch (one-shot).
+    One-shot semantics
+    ~~~~~~~~~~~~~~~~~~
+
+    Approvals are consumed on the **next** ``start_activity`` call inside
+    the same workflow, then cleared. Two important consequences:
+
+    * **Serial dispatches**: ``set_activity_approvals(...)`` followed by
+      ``await workflow.execute_activity(...)`` works as expected. Each
+      activity that needs approvals must be preceded by its own
+      ``set_activity_approvals`` call.
+
+    * **Parallel dispatches**: if you run multiple activities concurrently
+      with a single ``set_activity_approvals`` call (e.g. via
+      ``asyncio.gather``), only whichever activity happens to be
+      dispatched first receives the approvals. The others dispatch
+      without approvals and the server will deny them with
+      ``ApprovalGateTriggered``. Supply approvals per activity by
+      interleaving ``set_activity_approvals`` + ``execute_activity``
+      pairs, or gather the results after awaiting each one in turn.
+
+    Calling ``set_activity_approvals`` twice without an intervening
+    dispatch overwrites the prior entry; a warning is logged so the
+    second caller can distinguish this from the intended path.
 
     Args:
         approvals: List of ``SignedApproval`` objects.
@@ -282,9 +315,23 @@ def set_activity_approvals(approvals: List[Any]) -> None:
 
     from tenuo.temporal._state import _pending_activity_approvals
 
-    wf_id = workflow.info().workflow_id
+    run_key = _current_run_key()
     with _store_lock:
-        _pending_activity_approvals[wf_id] = list(approvals)
+        if run_key in _pending_activity_approvals:
+            # Catches the "set twice without dispatching" footgun and the
+            # "set_activity_approvals before asyncio.gather" misuse where
+            # the second pre-gather set would silently clobber the first.
+            logger.warning(
+                "set_activity_approvals(): overwriting %d pending approvals "
+                "for run_id=%s (workflow_id=%s) that were never consumed. If "
+                "you are dispatching activities in parallel via asyncio.gather, "
+                "only the first dispatch will receive approvals; interleave "
+                "set_activity_approvals + execute_activity pairs instead.",
+                len(_pending_activity_approvals[run_key]),
+                run_key,
+                workflow.info().workflow_id,
+            )
+        _pending_activity_approvals[run_key] = list(approvals)
 
 
 # ── Internal mint machinery ──────────────────────────────────────────────
@@ -344,21 +391,22 @@ async def _dispatch_mint_activity(
 
 def _workflow_mint_context(purpose: str) -> tuple[str, "TenuoPluginConfig"]:
     """Look up the active workflow's key_id and config for a warrant-mint call."""
-    from temporalio import workflow  # type: ignore[import-not-found]
-
-    wf_id = workflow.info().workflow_id
+    run_key = _current_run_key()
     with _store_lock:
-        raw_headers = _workflow_headers_store.get(wf_id, {})
-        config_store_entry = _workflow_config_store.get(wf_id)
+        raw_headers = _workflow_headers_store.get(run_key, {})
+        config_store_entry = _workflow_config_store.get(run_key)
 
     if not raw_headers:
         raise TenuoContextError(
-            "No Tenuo headers in store. Ensure TenuoTemporalPlugin is "
-            "registered and tenuo_headers() was passed at workflow start."
+            "No Tenuo headers in store. Ensure TenuoTemporalPlugin is registered "
+            "on the Client (or, for manual setup, TenuoClientInterceptor is installed "
+            "and tenuo_headers() was passed at workflow start)."
         )
     if not config_store_entry:
         raise TenuoContextError(
-            "No interceptor config found. Ensure TenuoTemporalPlugin is registered."
+            "No interceptor config found. Ensure TenuoTemporalPlugin is registered "
+            "via Client.connect(plugins=[...]), or that TenuoWorkerInterceptor is "
+            "configured on the Worker with a matching TenuoClientInterceptor on the Client."
         )
 
     key_id = raw_headers.get(TENUO_KEY_ID_HEADER, b"").decode("utf-8")
@@ -427,11 +475,38 @@ try:
         with _store_lock:
             capabilities = _pending_mint_capabilities.get(req.capabilities_ref, {})
 
-        config = _get_worker_config()
-        if config is None or config.key_resolver is None:
+        # Resolve config by the task queue the activity is running on so
+        # multi-worker processes (each with its own TenuoPluginConfig) route
+        # to the correct key resolver instead of whichever worker registered
+        # its config last. ``activity.info().task_queue`` is the authoritative
+        # identifier here.
+        task_queue: Optional[str] = None
+        try:
+            task_queue = _temporal_activity.info().task_queue
+        except Exception:  # pragma: no cover - activity.info() always works in-activity
+            task_queue = None
+
+        config = _get_worker_config(task_queue)
+        if config is None:
             raise TenuoContextError(
-                "_tenuo_internal_mint_activity: no worker config or key_resolver. "
-                "Ensure TenuoTemporalPlugin is registered with a key_resolver."
+                "_tenuo_internal_mint_activity: no TenuoPluginConfig registered "
+                f"for task_queue={task_queue!r}. Register one via any of:\n"
+                "  * TenuoTemporalPlugin(config)  — automatic; recommended.\n"
+                "  * TenuoWorkerInterceptor(config, task_queue=<queue>)  "
+                "— manual setup, self-registers on construction.\n"
+                "  * register_worker_config(config, task_queue=<queue>)  "
+                "— explicit helper for dynamic / test-harness setups.\n"
+                "Registration must happen before Worker(...) starts processing "
+                "tasks. If multiple workers share this process, each must "
+                "register under its own task_queue."
+            )
+        if config.key_resolver is None:
+            raise TenuoContextError(
+                "_tenuo_internal_mint_activity: TenuoPluginConfig for "
+                f"task_queue={task_queue!r} has no key_resolver set. "
+                "Delegation/mint requires a KeyResolver (EnvKeyResolver, "
+                "VaultKeyResolver, etc.) so the internal mint activity can "
+                "sign child warrants with the agent's holder key."
             )
 
         try:
@@ -660,9 +735,9 @@ async def attenuated_headers(
     parent_warrant = current_warrant()
     parent_key_id, _config_entry = _workflow_mint_context("child workflow delegation")
 
-    wf_id = workflow.info().workflow_id
+    run_key = _current_run_key()
     with _store_lock:
-        raw_headers = dict(_workflow_headers_store.get(wf_id, {}))
+        raw_headers = dict(_workflow_headers_store.get(run_key, {}))
 
     parent_tools = set(parent_warrant.tools or [])
     if tools is not None:
@@ -949,8 +1024,15 @@ async def tenuo_complete_async_activity(
     key_id: str,
     *,
     client: Optional["Client"] = None,
+    task_queue: Optional[str] = None,
 ) -> None:
-    """Complete an async activity with Tenuo authorization headers."""
+    """Complete an async activity with Tenuo authorization headers.
+
+    PoP signing is best-effort and is skipped (with a debug log) when
+    no worker config can be located. To enable it, pass *task_queue*
+    to select the registered :class:`TenuoPluginConfig`; otherwise the
+    completion proceeds without a PoP signature.
+    """
     import datetime as _datetime
 
     from tenuo.temporal._state import _get_worker_config
@@ -958,7 +1040,7 @@ async def tenuo_complete_async_activity(
     now = _datetime.datetime.now(_datetime.timezone.utc)
 
     try:
-        worker_cfg = _get_worker_config()
+        worker_cfg = _get_worker_config(task_queue)
         if worker_cfg is not None and worker_cfg.key_resolver is not None:
             key = await worker_cfg.key_resolver.resolve(key_id)
             if key is not None:

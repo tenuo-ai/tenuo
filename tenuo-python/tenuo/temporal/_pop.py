@@ -1,13 +1,18 @@
-"""Proof-of-Possession computation, argument normalization, and pre-validation."""
+"""Proof-of-Possession argument normalization and pre-validation.
+
+The actual PoP signature is computed in the Rust core via ``Warrant.sign``.
+This module provides Python-side helpers that run *before* the FFI boundary:
+argument normalization (so dataclasses / nested dicts don't trip the Rust CBOR
+encoder) and warrant pre-validation (so we surface a clear error instead of a
+cryptic core-side failure).
+"""
 
 from __future__ import annotations
 
 import base64
 import dataclasses as _dataclasses
-import hashlib
 import json
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
 from tenuo.temporal.exceptions import (
@@ -16,29 +21,6 @@ from tenuo.temporal.exceptions import (
 )
 
 logger = logging.getLogger("tenuo.temporal")
-
-
-def _compute_pop_challenge(
-    workflow_id: str,
-    activity_id: str,
-    tool_name: str,
-    args: Dict[str, Any],
-    scheduled_time: datetime,
-) -> bytes:
-    """Compute the PoP challenge bytes for an activity.
-
-    The challenge is a SHA-256 hash of:
-    - workflow_id
-    - activity_id
-    - tool_name
-    - canonical JSON of arguments
-    - scheduled_time (ISO format)
-
-    This ensures the challenge is deterministic and replay-safe.
-    """
-    args_json = json.dumps(args, sort_keys=True, separators=(",", ":"))
-    message = f"{workflow_id}|{activity_id}|{tool_name}|{args_json}|{scheduled_time.isoformat()}"
-    return hashlib.sha256(message.encode()).digest()
 
 
 def _args_dict_uses_only_positional_fallback_keys(args_dict: Dict[str, Any]) -> bool:

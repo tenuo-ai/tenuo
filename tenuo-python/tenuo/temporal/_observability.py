@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import dataclasses as _dataclasses
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Deque, Dict, List, Literal, Optional
 
 logger = logging.getLogger("tenuo.temporal")
 
@@ -82,8 +83,6 @@ class _MintRequest:
     key_id: str
     capabilities_ref: str  # key into _pending_mint_capabilities
     ttl_seconds: Optional[int] = None
-    holder_bytes: Optional[bytes] = None      # PublicKey bytes, if attenuating to a new holder
-    clearance_bytes: Optional[bytes] = None   # Clearance bytes, if restricting clearance
 
 
 class TenuoMetrics:
@@ -110,11 +109,17 @@ class TenuoMetrics:
         # tenuo_temporal_authorization_latency_seconds_bucket{...}
     """
 
+    # Bound on the in-memory rolling latency window used by :meth:`get_stats`.
+    # Prometheus is the real latency store (histogram); this ring is only for
+    # the introspection/debug path and must not grow unbounded in long-lived
+    # workers.
+    _LATENCY_RING_SIZE = 1024
+
     def __init__(self, prefix: str = "tenuo_temporal") -> None:
         self._prefix = prefix
         self._authorized_count: Dict[str, int] = {}
         self._denied_count: Dict[str, int] = {}
-        self._latencies: List[float] = []
+        self._latencies: Deque[float] = deque(maxlen=self._LATENCY_RING_SIZE)
 
         # Try to use prometheus_client if available
         self._prom_authorized: Optional[Any] = None
@@ -178,7 +183,13 @@ class TenuoMetrics:
             self._prom_latency.labels(tool=tool).observe(latency_seconds)
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get current metrics as a dict (for testing/debugging)."""
+        """Get current metrics as a dict (for testing/debugging).
+
+        ``latency_count`` / ``latency_avg`` reflect the last
+        ``_LATENCY_RING_SIZE`` recorded latencies, not the lifetime total.
+        For production latency analysis, use the Prometheus histogram
+        (``<prefix>_authorization_latency_seconds``) instead.
+        """
         return {
             "authorized": dict(self._authorized_count),
             "denied": dict(self._denied_count),
