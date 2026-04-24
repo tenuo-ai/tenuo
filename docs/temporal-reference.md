@@ -722,11 +722,11 @@ Unrecognized signals raise `TemporalConstraintViolation`. When set to `None` (de
 
 ## Nexus Operation Headers
 
-**Not currently propagated.** Tenuo's outbound workflow interceptor does not inject warrant headers into `start_nexus_operation` calls today; the stock Temporal interceptor chain handles Nexus dispatch as a plain passthrough. Cross-namespace / cross-SDK authorization via Nexus is tracked on the roadmap rather than shipped, because the round-trip (outbound encoding → Nexus HTTP transport → inbound decoding in a non-Python handler → verification) needs an end-to-end integration test we don't yet have.
+**Not currently propagated.** Tenuo's outbound workflow interceptor does not inject warrant headers into `start_nexus_operation` calls today; the stock Temporal interceptor chain handles Nexus dispatch as a plain passthrough. The reason is simple: Tenuo does not yet ship an **inbound** Nexus interceptor in any SDK — including Python — so any headers we injected on the outbound side would have no consumer. Injecting them would burn history bytes without actually authorizing the operation. The cross-SDK encoding concern (see below) is real but secondary — the primary gap is the missing inbound half.
 
 ### Intended encoding (when this ships)
 
-The moving pieces are all understood; the following is the shape the previous speculative implementation used and the shape a future revision is expected to keep. Recorded here so it survives the code removal and so cross-SDK handlers have something to implement against when the integration lands:
+Whenever the inbound interceptor lands, the outbound side will need to encode warrant/PoP bytes into Nexus' string-map header channel. The following is the shape the previous speculative implementation used and the shape a future revision is expected to keep — recorded here so handlers in other SDKs have something stable to decode against once the integration is wired:
 
 - Nexus headers are HTTP-shaped (`Mapping[str, str]`), unlike the activity/child-workflow/continue-as-new channels which use `Mapping[str, temporalio.api.common.v1.Payload]`. Raw warrant/PoP bytes must therefore be base64-encoded per-header.
 - Encoding: [RFC 4648 §4 standard base64, padded](https://datatracker.ietf.org/doc/html/rfc4648#section-4), as produced by Python's `base64.b64encode(raw_bytes).decode()`.
