@@ -2113,6 +2113,139 @@ class TestMintActivityDispatchErrorRewrap:
         assert "TENUO_TEMPORAL_ACTIVITIES" not in str(excinfo.value)
 
 
+class TestMalformedWarrantHeadersAtIngress:
+    """Defense-in-depth at the activity-inbound boundary: malformed
+    ``x-tenuo-warrant`` bytes must deterministically surface as a
+    non-retryable ``ApplicationError(type="CHAIN_INVALID")`` — never as a
+    transient retryable error, never as allow-on-fail.
+
+    This is *not* a history-tampering test (that is Temporal's concern,
+    not Tenuo's). It models buggy or malicious clients that put garbage
+    in Tenuo headers: truncated CBOR, non-CBOR payloads, compressed flag
+    pointing at non-gzip bytes. A silent regression here would let
+    arbitrary byte streams bypass warrant validation.
+    """
+
+    def _make_interceptor(self, control_key, events=None):
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            on_denial="raise",
+            trusted_roots=[control_key.public_key],
+            audit_callback=events.append if events is not None else None,
+        )
+        return TenuoWorkerInterceptor(cfg)
+
+    def _invoke_with_headers(self, ti, raw_headers, events=None):
+        headers = {k: FakePayload(data=v) for k, v in raw_headers.items()}
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock()
+        nxt.init = MagicMock()
+        ai = ti.intercept_activity(nxt)
+        info = FakeActivityInfo(
+            activity_type="read_file", workflow_id="wf-malformed"
+        )
+        inp = FakeExecuteActivityInput(
+            fn=lambda path: path,
+            args=("/tmp/demo/f.txt",),
+            headers=headers,
+        )
+        with patch("temporalio.activity.info") as mock_info:
+            mock_info.return_value = info
+            with pytest.raises(ApplicationError) as exc_info:
+                _run(ai.execute_activity(inp))
+        nxt.execute_activity.assert_not_called()
+        return exc_info
+
+    def test_random_bytes_in_warrant_header_uncompressed(
+        self, warrant, agent_key, control_key
+    ):
+        """Non-CBOR bytes with ``compressed=0`` must raise CHAIN_INVALID."""
+        events: list = []
+        ti = self._make_interceptor(control_key, events)
+
+        pop = warrant.sign(
+            agent_key, "read_file", {"path": "/tmp/demo/f.txt"}, int(time.time())
+        )
+        raw_headers = {
+            TENUO_WARRANT_HEADER: b"\x00\x01\x02garbage-not-cbor\xff\xfe",
+            TENUO_COMPRESSED_HEADER: b"0",
+            TENUO_KEY_ID_HEADER: b"agent1",
+            TENUO_POP_HEADER: base64.b64encode(bytes(pop)),
+        }
+
+        exc_info = self._invoke_with_headers(ti, raw_headers, events)
+        _assert_non_retryable(exc_info)
+        assert exc_info.value.type == "CHAIN_INVALID", (
+            f"Malformed warrant must surface as CHAIN_INVALID non-retryable; "
+            f"got type={exc_info.value.type!r}"
+        )
+        deny_events = [e for e in events if e.decision == "DENY"]
+        assert deny_events, (
+            "Malformed-header denial must emit a DENY audit event for triage"
+        )
+        assert any(
+            e.constraint_violated == "malformed_warrant_header" for e in deny_events
+        ), (
+            "Malformed-warrant denials must be labelled so operators can "
+            f"filter them in audit sinks; got: "
+            f"{[e.constraint_violated for e in deny_events]}"
+        )
+        assert any(e.warrant_id == "<malformed>" for e in deny_events), (
+            "Placeholder warrant_id must signal absent warrant context"
+        )
+
+    def test_random_bytes_with_compressed_flag_set(
+        self, warrant, agent_key, control_key
+    ):
+        """Non-gzip bytes with ``compressed=1`` must also raise CHAIN_INVALID —
+        proves the decompression path cannot leak a raw parse fallback."""
+        ti = self._make_interceptor(control_key)
+
+        pop = warrant.sign(
+            agent_key, "read_file", {"path": "/tmp/demo/f.txt"}, int(time.time())
+        )
+        raw_headers = {
+            TENUO_WARRANT_HEADER: b"not-gzip-bytes-at-all",
+            TENUO_COMPRESSED_HEADER: b"1",
+            TENUO_KEY_ID_HEADER: b"agent1",
+            TENUO_POP_HEADER: base64.b64encode(bytes(pop)),
+        }
+
+        exc_info = self._invoke_with_headers(ti, raw_headers)
+        _assert_non_retryable(exc_info)
+        assert exc_info.value.type == "CHAIN_INVALID", (
+            f"Bad compressed payload must surface as CHAIN_INVALID; "
+            f"got type={exc_info.value.type!r}"
+        )
+
+    def test_truncated_warrant_cbor(self, warrant, agent_key, control_key):
+        """Partial CBOR bytes (valid prefix, cut short) must raise CHAIN_INVALID
+        — a regression guard that partial-parse paths cannot admit an
+        under-specified warrant."""
+        ti = self._make_interceptor(control_key)
+
+        valid_bytes = bytes(warrant)
+        assert len(valid_bytes) > 8, (
+            "Test precondition: serialized warrant must be substantial "
+            "enough that a 4-byte prefix is obviously truncated"
+        )
+        truncated = valid_bytes[:4]
+
+        pop = warrant.sign(
+            agent_key, "read_file", {"path": "/tmp/demo/f.txt"}, int(time.time())
+        )
+        raw_headers = {
+            TENUO_WARRANT_HEADER: truncated,
+            TENUO_COMPRESSED_HEADER: b"0",
+            TENUO_KEY_ID_HEADER: b"agent1",
+            TENUO_POP_HEADER: base64.b64encode(bytes(pop)),
+        }
+
+        exc_info = self._invoke_with_headers(ti, raw_headers)
+        _assert_non_retryable(exc_info)
+        assert exc_info.value.type == "CHAIN_INVALID"
+
+
 class TestChainDepthEnforcement:
     """``max_chain_depth`` must reject warrants whose ``depth`` exceeds the
     configured limit, raising ``ChainValidationError`` wrapped non-retryable.

@@ -16,6 +16,7 @@ from tenuo.temporal._constants import (
     _WARRANT_DECOMPRESS_MAX_BYTES,
     _gzip_decompress_limited,
 )
+from tenuo.exceptions import SerializationError as _TenuoCoreSerializationError
 from tenuo.temporal.exceptions import ChainValidationError, TenuoContextError
 
 logger = logging.getLogger("tenuo.temporal")
@@ -121,7 +122,21 @@ def _extract_warrant_from_headers(headers: Dict[str, bytes]) -> Any:
                 )
         return Warrant.from_bytes(cbor_bytes)
 
-    except (ValueError, EOFError, gzip.BadGzipFile, UnicodeDecodeError, binascii.Error) as e:
+    except (
+        ValueError,
+        EOFError,
+        gzip.BadGzipFile,
+        UnicodeDecodeError,
+        binascii.Error,
+        # ``Warrant.from_bytes`` raises ``DeserializationError`` (a subclass of
+        # ``tenuo.exceptions.SerializationError``) when the bytes are valid
+        # CBOR but semantically wrong for a warrant (e.g. wrong type, missing
+        # fields). Without catching it here, malformed warrants at ingress
+        # leak out of the interceptor as an uncaught exception instead of a
+        # non-retryable ``CHAIN_INVALID`` denial — turning an authorization
+        # failure into a retryable worker error.
+        _TenuoCoreSerializationError,
+    ) as e:
         raise ChainValidationError(
             reason=f"Failed to deserialize warrant: {e}",
             depth=0,

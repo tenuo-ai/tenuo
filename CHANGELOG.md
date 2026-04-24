@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Malformed warrant bytes at activity ingress now surface as a
+  non-retryable `CHAIN_INVALID` denial** with a DENY audit event
+  (`constraint_violated="malformed_warrant_header"`). Previously,
+  CBOR-semantic errors from `Warrant.from_bytes` leaked out of
+  `_extract_warrant_from_headers` as an uncaught
+  `DeserializationError`, which could be treated as retryable by
+  Temporal and was invisible to audit sinks.
+
 ### Changed
 
 - **`TenuoPluginConfig.retry_pop_max_windows` default raised from `5` to
