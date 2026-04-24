@@ -38,15 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with an opaque `ActivityError` — the registration path is now a
   single, documented import.
 
-### Removed
-
-- **Warrant propagation into `start_nexus_operation`.** Tenuo does not
-  authorize Nexus operations; `start_nexus_operation` is a plain
-  passthrough. Use activities, child workflows, or continue-as-new for
-  authorized cross-boundary calls. The wire contract for future Nexus
-  support is specified in `docs/temporal-reference.md` → "Nexus
-  Operation Headers".
-
 ### Breaking
 
 - **MCP Proof-of-Possession now always signs raw wire arguments.** Previously,

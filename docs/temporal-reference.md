@@ -720,40 +720,6 @@ Unrecognized signals raise `TemporalConstraintViolation`. When set to `None` (de
 
 ---
 
-## Nexus Operation Headers
-
-**Tenuo does not authorize Nexus operations.** `start_nexus_operation` is a plain passthrough — no outbound injection, no inbound verification, in any SDK. Use activities, child workflows, or continue-as-new for authorized cross-boundary calls.
-
-### Wire contract for future Nexus support
-
-When Nexus authorization ships, it will use the contract below. Published so handler implementations in other SDKs have a stable target.
-
-- Nexus headers are HTTP-shaped (`Mapping[str, str]`); Temporal's activity / child-workflow / continue-as-new channels use `Mapping[str, temporalio.api.common.v1.Payload]`. Warrant and PoP bytes are base64-encoded per-header.
-- Encoding: [RFC 4648 §4 standard base64, padded](https://datatracker.ietf.org/doc/html/rfc4648#section-4) — Python's `base64.b64encode(raw_bytes).decode()`.
-- Header layout:
-
-  | Header key (`tenuo.temporal._constants`) | Wire name            | Payload                                                      |
-  |------------------------------------------|----------------------|--------------------------------------------------------------|
-  | `TENUO_WARRANT_HEADER`                   | `x-tenuo-warrant`    | base64(raw warrant bytes, possibly gzip-compressed — see `TENUO_COMPRESSED_HEADER`) |
-  | `TENUO_KEY_ID_HEADER`                    | `x-tenuo-key-id`     | base64(UTF-8 bytes of the key id)                            |
-  | `TENUO_POP_HEADER`                       | `x-tenuo-pop`        | base64(raw 64-byte Ed25519 signature)                        |
-  | `TENUO_COMPRESSED_HEADER`                | `x-tenuo-compressed` | base64(`b"1"`) when present — warrant bytes are gzip-compressed before base64 |
-
-Handler decoding in Go:
-
-```go
-import "encoding/base64"
-
-warrantBytes, err := base64.StdEncoding.DecodeString(headers["x-tenuo-warrant"])
-keyIdBytes,   err := base64.StdEncoding.DecodeString(headers["x-tenuo-key-id"])
-popBytes,     err := base64.StdEncoding.DecodeString(headers["x-tenuo-pop"])
-// gunzip warrantBytes when x-tenuo-compressed is present.
-```
-
-TypeScript: `Buffer.from(headers["x-tenuo-warrant"], "base64")`.
-
----
-
 ## PoP Replay Protection
 
 The activity interceptor runs dedup after PoP verification. Default: `InMemoryPopDedupStore` (thread-safe, process-local, 10,000-entry cap, ~3-4 MB). Temporal retries with `attempt > 1` bypass dedup.

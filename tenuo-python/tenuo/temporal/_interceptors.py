@@ -296,10 +296,8 @@ class _TenuoWorkflowOutboundInterceptor:
 
         return self._next.continue_as_new(input)
 
-    # Tenuo does not authorize Nexus operations. ``start_nexus_operation``
-    # is a plain passthrough through the stock Temporal interceptor chain.
-    # The wire contract for future Nexus support is specified in
-    # ``docs/temporal-reference.md`` → "Nexus Operation Headers".
+    # ``start_nexus_operation`` is intentionally not overridden: Nexus
+    # operations are out of scope for Tenuo authorization.
 
     def start_local_activity(self, input: Any) -> Any:
         """Block protected local activities unless @unprotected is set."""

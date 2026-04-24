@@ -1579,15 +1579,6 @@ class TestContinueAsNew:
                 tenuo_continue_as_new("some_input", tenuo_attenuation={"path": "/data/"})
 
 
-# -- Nexus operation header propagation --------------------------------------
-#
-# Tenuo does not currently propagate warrant headers into Nexus operations
-# (the ``start_nexus_operation`` outbound hook is a plain passthrough). The
-# encoding we would use when we revisit is documented under
-# ``docs/temporal-reference.md`` → "Nexus Operation Headers". No behavior
-# tests here until we ship an end-to-end path with a non-Python handler.
-
-
 # -- Mint activity: issue_execution absence must be hard error ----------------
 
 class TestMintActivityIssueExecution:
