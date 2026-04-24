@@ -74,8 +74,6 @@ All documented symbols can be imported from the top-level package (`from tenuo.t
 
 ## `TenuoWorkerInterceptor` (manual setup)
 
-> Renamed from `TenuoPlugin` to `TenuoWorkerInterceptor`. The old name is still importable from `tenuo.temporal` but emits a `DeprecationWarning` — it was a Temporal SDK `WorkerInterceptor`, not a Temporal SDK `Plugin`, and the resemblance to `TenuoTemporalPlugin` (the recommended entry point; see [docs/temporal.md](./temporal.md)) caused real misconfiguration.
-
 For cases where you need manual control over interceptors and the sandbox runner (instead of `TenuoTemporalPlugin`):
 
 ```python

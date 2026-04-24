@@ -176,7 +176,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`tenuo.temporal.TenuoPlugin` renamed to `TenuoWorkerInterceptor`**
   — the old name collided with `TenuoTemporalPlugin` and
   `Worker(plugins=[TenuoPlugin(...)])` silently accepted an unusable
-  argument. The old name remains importable as a deprecated alias.
+  argument.
 - **Temporal auth errors now reach the wire with stable codes and
   non-retryable semantics** in both activity and workflow contexts.
   `ApplicationError.type` is the Tenuo `error_code`
