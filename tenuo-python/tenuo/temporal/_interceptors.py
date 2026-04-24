@@ -778,36 +778,9 @@ class TenuoActivityInboundInterceptor:
         import time
         start_ns = time.perf_counter_ns()
         chain_result = None
-
-        is_local = getattr(info, "is_local", False)
         activity_fn = getattr(input, "fn", None)
 
-        if is_local and self._config.block_local_activities:
-            if activity_fn is None:
-                logger.warning(
-                    f"Local activity {info.activity_type} denied: cannot determine protection status (fail-closed)"
-                )
-                raise self._wrap_as_non_retryable(LocalActivityError(info.activity_type))
-
-            if not is_unprotected(activity_fn):
-                raise self._wrap_as_non_retryable(LocalActivityError(info.activity_type))
-
-            return await self._next.execute_activity(input)
-
-        headers: Dict[str, bytes] = {}
-        input_headers = getattr(input, "headers", None) or {}
-        for k, v in input_headers.items():
-            if k.startswith("x-tenuo-"):
-                if isinstance(v, bytes):
-                    headers[k] = v
-                elif hasattr(v, "data") and isinstance(getattr(v, "data", None), bytes):
-                    headers[k] = v.data
-
-        try:
-            warrant = _extract_warrant_from_headers(headers)
-        except ChainValidationError as chain_exc:
-            raise self._wrap_as_non_retryable(chain_exc) from chain_exc
-
+        # -- Helper: shared denial branch (used by phases 4 and 6) --
         async def _deny_or_continue(tool: str, reason: str) -> Optional[Any]:
             if self._config.dry_run:
                 logger.warning(
@@ -823,6 +796,38 @@ class TenuoActivityInboundInterceptor:
                 logger.warning(f"Authorization denied for {tool}: {reason}")
             return None
 
+        # -- 1. Local Activity Protection --
+        is_local = getattr(info, "is_local", False)
+
+        if is_local and self._config.block_local_activities:
+            if activity_fn is None:
+                logger.warning(
+                    f"Local activity {info.activity_type} denied: cannot determine protection status (fail-closed)"
+                )
+                raise self._wrap_as_non_retryable(LocalActivityError(info.activity_type))
+
+            if not is_unprotected(activity_fn):
+                raise self._wrap_as_non_retryable(LocalActivityError(info.activity_type))
+
+            return await self._next.execute_activity(input)
+
+        # -- 2. Header Extraction --
+        headers: Dict[str, bytes] = {}
+        input_headers = getattr(input, "headers", None) or {}
+        for k, v in input_headers.items():
+            if k.startswith("x-tenuo-"):
+                if isinstance(v, bytes):
+                    headers[k] = v
+                elif hasattr(v, "data") and isinstance(getattr(v, "data", None), bytes):
+                    headers[k] = v.data
+
+        # -- 3. Warrant Extraction --
+        try:
+            warrant = _extract_warrant_from_headers(headers)
+        except ChainValidationError as chain_exc:
+            raise self._wrap_as_non_retryable(chain_exc) from chain_exc
+
+        # -- 4. Unauthenticated Execution Handling --
         if warrant is None:
             if self._config.require_warrant:
                 logger.warning(f"No warrant for activity {info.activity_type}, denying (require_warrant=True)")
@@ -846,13 +851,14 @@ class TenuoActivityInboundInterceptor:
                 )
                 return await self._next.execute_activity(input)
 
-        activity_fn = getattr(input, "fn", None)
+        # -- 5. Tool Resolution & Argument Extraction --
         tool_name = _warrant_tool_name_for_activity_type(
             self._config, info.activity_type, activity_fn
         )
 
         args = self._extract_arguments(input, headers)
 
+        # -- 6. Delegation Depth Limit --
         chain_depth = warrant.depth if hasattr(warrant, "depth") else 0
         if chain_depth > self._config.max_chain_depth:
             self._emit_denial_event(
@@ -874,6 +880,7 @@ class TenuoActivityInboundInterceptor:
                 reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
             )
 
+        # -- 7. Trusted-Root & Revocation Refresh --
         self._maybe_refresh_trusted_roots()
         self._maybe_refresh_revocation_list()
 
@@ -888,6 +895,7 @@ class TenuoActivityInboundInterceptor:
                 "use TenuoPluginConfig with trusted_roots."
             ))
 
+        # -- 8. OpenTelemetry Context Setup --
         _span_ctx: Any = None
         if _otel_available and _otel_trace is not None:
             _tracer = _otel_trace.get_tracer("tenuo.temporal")
@@ -900,9 +908,12 @@ class TenuoActivityInboundInterceptor:
         else:
             _active_span = None
 
+        # Phases 9–13 run inside a single try/except so every failure path
+        # funnels into phase 14 for unified fail-closed error mapping.
         try:
             from tenuo_core import decode_warrant_stack_base64 as _decode_stack
 
+            # -- 9. Retry-Aware Authorizer Selection --
             if info.attempt > 1 and self._retry_authorizer is not None:
                 authorizer = self._retry_authorizer
             else:
@@ -915,6 +926,7 @@ class TenuoActivityInboundInterceptor:
                     )
                 authorizer = self._authorizer
 
+            # -- 10. Proof-of-Possession Extraction --
             pop_bytes = None
             pop_header = headers.get(TENUO_POP_HEADER)
             if pop_header:
@@ -929,10 +941,12 @@ class TenuoActivityInboundInterceptor:
                         activity_name=tool_name,
                     ) from _e
 
+            # -- 11. Multi-Sig Approval Resolution --
             gate_approvals = self._resolve_approval_gate_approvals(
                 warrant, tool_name, args, headers,
             )
 
+            # -- 12. Cryptographic Authorization Evaluation --
             chain_header = headers.get(TENUO_CHAIN_HEADER)
             if chain_header:
                 chain = _decode_stack(chain_header.decode("utf-8"))
@@ -948,6 +962,7 @@ class TenuoActivityInboundInterceptor:
                     approvals=gate_approvals,
                 )
 
+            # -- 13. Replay Deduplication --
             if info.attempt <= 1:
                 base_dedup = warrant.dedup_key(tool_name, args)
                 dedup_key = (
@@ -964,6 +979,7 @@ class TenuoActivityInboundInterceptor:
                 _active_span.set_attribute("tenuo.decision", "allow")
                 _active_span.set_attribute("tenuo.constraint_violated", "")
 
+        # -- 14. Fail-Closed Error Mapping & Tracing --
         except (
             TemporalConstraintViolation,
             PopVerificationError,
@@ -1057,6 +1073,7 @@ class TenuoActivityInboundInterceptor:
             if _span_ctx is not None:
                 _span_ctx.__exit__(None, None, None)
 
+        # -- 15. Emit Allow + Dispatch Activity --
         self._emit_allow_event(
             info=info,
             warrant=warrant,
