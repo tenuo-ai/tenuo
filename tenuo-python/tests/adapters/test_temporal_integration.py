@@ -170,6 +170,18 @@ class TestToolDecorator:
 
         assert get_tool_name(my_activity, "my_activity") == "my_activity"
 
+    def test_decorator_can_stack_with_unprotected(self):
+        """@tool() and @unprotected compose: both markers survive stacking."""
+
+        @unprotected
+        @tool("internal_lookup")
+        def lookup_config(key):
+            return f"value_{key}"
+
+        assert get_tool_name(lookup_config, "default") == "internal_lookup"
+        assert is_unprotected(lookup_config) is True
+        assert lookup_config("foo") == "value_foo"
+
 
 # =============================================================================
 # Test: Unprotected Decorator

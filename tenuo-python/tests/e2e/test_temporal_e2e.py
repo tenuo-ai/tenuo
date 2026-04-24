@@ -2113,5 +2113,97 @@ class TestMintActivityDispatchErrorRewrap:
         assert "TENUO_TEMPORAL_ACTIVITIES" not in str(excinfo.value)
 
 
+class TestChainDepthEnforcement:
+    """``max_chain_depth`` must reject warrants whose ``depth`` exceeds the
+    configured limit, raising ``ChainValidationError`` wrapped non-retryable.
+
+    Regression guard for delegation bombs: if depth enforcement silently
+    bypasses in a refactor, an attacker with a root warrant can build an
+    arbitrarily deep chain and bypass depth-based revocation windows.
+    """
+
+    def test_deep_chain_rejected_with_chain_invalid_error_code(
+        self, agent_key, control_key
+    ):
+        sub_agent_key = SigningKey.generate()
+
+        root = (
+            Warrant.mint_builder()
+            .capability("read_file", path=Subpath("/tmp/demo"))
+            .holder(agent_key.public_key)
+            .ttl(3600)
+            .mint(control_key)
+        )
+        # Depth 1: root -> agent delegates to sub_agent
+        child = (
+            root.grant_builder()
+            .capability("read_file", path=Subpath("/tmp/demo"))
+            .holder(sub_agent_key.public_key)
+            .ttl(1800)
+            .grant(agent_key)
+        )
+        # Depth 2: sub_agent delegates downward
+        grandchild = (
+            child.grant_builder()
+            .capability("read_file", path=Subpath("/tmp/demo"))
+            .holder(SigningKey.generate().public_key)
+            .ttl(900)
+            .grant(sub_agent_key)
+        )
+
+        assert grandchild.depth >= 2, (
+            "Test precondition: real chain construction must produce depth>=2"
+        )
+
+        events: list = []
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            on_denial="raise",
+            trusted_roots=[control_key.public_key],
+            audit_callback=events.append,
+            max_chain_depth=1,
+        )
+        ti = TenuoWorkerInterceptor(cfg)
+
+        leaf_headers = tenuo_headers(grandchild, "agent1")
+        act_headers = _make_activity_headers(
+            leaf_headers, grandchild, sub_agent_key,
+            "read_file", {"path": "/tmp/demo/f.txt"},
+        )
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock()
+        nxt.init = MagicMock()
+        ai = ti.intercept_activity(nxt)
+        info = FakeActivityInfo(activity_type="read_file", workflow_id="wf-deep")
+        inp = FakeExecuteActivityInput(
+            fn=lambda path: path,
+            args=("/tmp/demo/f.txt",),
+            headers=act_headers,
+        )
+
+        with patch("temporalio.activity.info") as mock_info:
+            mock_info.return_value = info
+            with pytest.raises(ApplicationError) as exc_info:
+                _run(ai.execute_activity(inp))
+
+        _assert_non_retryable(exc_info)
+        # Wire-type must reach downstream consumers as the stable CHAIN_INVALID
+        # code, not a generic ApplicationError.
+        assert exc_info.value.type == "CHAIN_INVALID", (
+            f"Expected non_retryable type=CHAIN_INVALID, got {exc_info.value.type!r}"
+        )
+
+        deny_events = [e for e in events if e.decision == "DENY"]
+        assert deny_events, "Depth violation must emit a DENY audit event"
+        assert any(
+            e.constraint_violated == "max_chain_depth_exceeded" for e in deny_events
+        ), (
+            "Audit event must name the specific constraint so operators can "
+            f"triage depth-bomb attempts; got constraints: "
+            f"{[e.constraint_violated for e in deny_events]}"
+        )
+        nxt.execute_activity.assert_not_called()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

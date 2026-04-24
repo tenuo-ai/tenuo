@@ -32,7 +32,11 @@ from temporalio import activity, workflow  # noqa: E402
 from temporalio.client import Client, WorkflowFailureError  # noqa: E402
 from temporalio.common import RetryPolicy  # noqa: E402
 from temporalio.testing import WorkflowEnvironment  # noqa: E402
-from temporalio.worker import Worker  # noqa: E402
+from temporalio.worker import (  # noqa: E402
+    ActivityInboundInterceptor,
+    Interceptor,
+    Worker,
+)
 from temporalio.worker.workflow_sandbox import (  # noqa: E402
     SandboxedWorkflowRunner,
     SandboxRestrictions,
@@ -498,3 +502,139 @@ class TestLiveDelegationAndContinuation:
         assert result == "echo:hello:1"
         allow_events = [e for e in events if e.decision == "ALLOW"]
         assert len(allow_events) >= 2
+
+
+# ---------------------------------------------------------------------------
+# User interceptor composition
+# ---------------------------------------------------------------------------
+# Users commonly stack their own observability / instrumentation interceptors
+# alongside Tenuo (OTel, Braintrust, Datadog). The ``Worker(interceptors=[...])``
+# contract is that Temporal composes the chain in declaration order, and each
+# interceptor's ``intercept_activity`` hook receives the next link. These tests
+# verify Tenuo plays that contract cleanly regardless of ordering — neither
+# starving the user interceptor nor being starved by it.
+
+
+class _CountingActivityInbound(ActivityInboundInterceptor):
+    """Minimal user interceptor: records every activity dispatch it sees."""
+
+    def __init__(self, nxt: ActivityInboundInterceptor, seen: list[str]) -> None:
+        super().__init__(nxt)
+        self._seen = seen
+
+    async def execute_activity(self, input):  # type: ignore[override]
+        self._seen.append(input.fn.__name__)
+        return await self.next.execute_activity(input)
+
+
+class _CountingWorkerInterceptor(Interceptor):
+    """Wraps ``_CountingActivityInbound`` as a Temporal ``Interceptor``."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def intercept_activity(
+        self, next_interceptor: ActivityInboundInterceptor
+    ) -> ActivityInboundInterceptor:
+        return _CountingActivityInbound(next_interceptor, self.seen)
+
+
+async def _run_with_composed_interceptors(
+    env: WorkflowEnvironment,
+    keys,
+    warrant,
+    *,
+    user_first: bool,
+):
+    """Drive the authorized happy path with a user interceptor composed beside Tenuo."""
+    control, agent = keys
+    task_queue = f"compose-{uuid.uuid4().hex[:8]}"
+
+    client_interceptor = TenuoClientInterceptor()
+    workflow_id = f"compose-{uuid.uuid4().hex[:8]}"
+    client_interceptor.set_headers_for_workflow(
+        workflow_id, tenuo_headers(warrant, "agent1"),
+    )
+
+    events: list[TemporalAuditEvent] = []
+    cfg = TenuoPluginConfig(
+        key_resolver=DictKeyResolver({"agent1": agent}),
+        on_denial="raise",
+        trusted_roots=[control.public_key],
+        audit_callback=events.append,
+    )
+    tenuo_interceptor = TenuoWorkerInterceptor(cfg, task_queue=task_queue)
+    counting = _CountingWorkerInterceptor()
+    chain = (
+        [counting, tenuo_interceptor] if user_first else [tenuo_interceptor, counting]
+    )
+
+    raw_client = await Client.connect(
+        env.client.service_client.config.target_host,
+        interceptors=[client_interceptor],  # type: ignore[list-item]
+    )
+
+    sandbox_runner = SandboxedWorkflowRunner(
+        restrictions=SandboxRestrictions.default.with_passthrough_modules(
+            "tenuo", "tenuo_core",
+        )
+    )
+
+    worker = Worker(
+        raw_client,
+        task_queue=task_queue,
+        workflows=[AuthorizedFileWorkflow],
+        activities=[echo],
+        interceptors=chain,  # type: ignore[arg-type]
+        workflow_runner=sandbox_runner,
+    )
+
+    async with worker:
+        result = await raw_client.execute_workflow(
+            AuthorizedFileWorkflow.run,
+            "hello",
+            id=workflow_id,
+            task_queue=task_queue,
+            execution_timeout=timedelta(seconds=120),
+        )
+
+    return result, events, counting.seen
+
+
+@pytest.mark.temporal_live
+class TestLiveUserInterceptorComposition:
+    """Tenuo must coexist with user-supplied ``WorkerInterceptor``s in either order.
+
+    Each test asserts the authorized path succeeds end-to-end AND both
+    interceptors observed the activity — regression guard against ordering
+    assumptions that would silently break OTel/Braintrust-style stacks.
+    """
+
+    @pytest.mark.asyncio
+    async def test_user_interceptor_before_tenuo(self, keys, warrant, demo_dir):
+        async with await WorkflowEnvironment.start_local() as env:
+            result, events, seen = await _run_with_composed_interceptors(
+                env, keys, warrant, user_first=True,
+            )
+        assert result == "echo:hello"
+        assert "echo" in seen, (
+            "User interceptor declared first must see the activity dispatch"
+        )
+        assert any(e.decision == "ALLOW" for e in events), (
+            "Tenuo authorization must still fire when a user interceptor "
+            "is declared before TenuoWorkerInterceptor"
+        )
+
+    @pytest.mark.asyncio
+    async def test_user_interceptor_after_tenuo(self, keys, warrant, demo_dir):
+        async with await WorkflowEnvironment.start_local() as env:
+            result, events, seen = await _run_with_composed_interceptors(
+                env, keys, warrant, user_first=False,
+            )
+        assert result == "echo:hello"
+        assert "echo" in seen, (
+            "User interceptor declared after Tenuo must still see allowed "
+            "activity dispatches (Tenuo must not short-circuit the chain "
+            "on the allow path)"
+        )
+        assert any(e.decision == "ALLOW" for e in events)

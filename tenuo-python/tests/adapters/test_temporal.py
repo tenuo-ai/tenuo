@@ -37,7 +37,7 @@ from tenuo.temporal._observability import TemporalAuditEvent  # noqa: E402
 from tenuo.temporal._interceptors import TenuoWorkerInterceptor  # noqa: E402
 from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
 from tenuo.temporal._headers import _extract_key_id_from_headers, tenuo_headers  # noqa: E402
-from tenuo.temporal._decorators import get_tool_name, is_unprotected, tool, unprotected  # noqa: E402
+from tenuo.temporal._decorators import unprotected  # noqa: E402
 
 from tenuo import SigningKey as _TenCfgSigningKey  # noqa: E402
 
@@ -1081,53 +1081,10 @@ class TestTenuoPlugin:
 
 
 # =============================================================================
-# Phase 2: @unprotected Decorator Tests
-# =============================================================================
-
-
-class TestUnprotectedDecorator:
-    """Tests for @unprotected decorator."""
-
-    def test_marks_function_as_unprotected(self):
-        """@unprotected sets the marker attribute."""
-
-        @unprotected
-        def my_activity():
-            pass
-
-        assert hasattr(my_activity, "_tenuo_unprotected")
-        assert my_activity._tenuo_unprotected is True
-
-    def test_is_unprotected_returns_true_for_decorated(self):
-        """is_unprotected returns True for decorated functions."""
-
-        @unprotected
-        def my_activity():
-            pass
-
-        assert is_unprotected(my_activity) is True
-
-    def test_is_unprotected_returns_false_for_regular(self):
-        """is_unprotected returns False for regular functions."""
-
-        def my_activity():
-            pass
-
-        assert is_unprotected(my_activity) is False
-
-    def test_decorator_preserves_function(self):
-        """@unprotected doesn't modify function behavior."""
-
-        @unprotected
-        def add(a, b):
-            return a + b
-
-        assert add(2, 3) == 5
-
-
-# =============================================================================
 # Phase 2: Exception Tests
 # =============================================================================
+# ``TestUnprotectedDecorator`` lives in ``test_temporal_integration.py`` — the
+# decorator-contract tests are consolidated there to avoid duplication.
 
 
 class TestPhase2Exceptions:
@@ -1187,65 +1144,10 @@ class TestPhase2Config:
 
 
 # =============================================================================
-# Phase 3: @tool() Decorator Tests
-# =============================================================================
-
-
-class TestToolDecorator:
-    """Tests for @tool() decorator."""
-
-    def test_marks_function_with_tool_name(self):
-        """@tool() sets the tool name attribute."""
-
-        @tool("read_file")
-        def fetch_document():
-            pass
-
-        assert hasattr(fetch_document, "_tenuo_tool_name")
-        assert fetch_document._tenuo_tool_name == "read_file"
-
-    def test_get_tool_name_returns_decorated_name(self):
-        """get_tool_name returns the @tool() name."""
-
-        @tool("write_file")
-        def save_document():
-            pass
-
-        assert get_tool_name(save_document, "save_document") == "write_file"
-
-    def test_get_tool_name_returns_default_for_undecorated(self):
-        """get_tool_name returns default for undecorated functions."""
-
-        def my_activity():
-            pass
-
-        assert get_tool_name(my_activity, "my_activity") == "my_activity"
-
-    def test_decorator_preserves_function(self):
-        """@tool() doesn't modify function behavior."""
-
-        @tool("calculator")
-        def multiply(a, b):
-            return a * b
-
-        assert multiply(3, 4) == 12
-
-    def test_decorator_can_stack_with_unprotected(self):
-        """@tool() and @unprotected can be stacked."""
-
-        @unprotected
-        @tool("internal_lookup")
-        def lookup_config(key):
-            return f"value_{key}"
-
-        assert get_tool_name(lookup_config, "default") == "internal_lookup"
-        assert is_unprotected(lookup_config) is True
-        assert lookup_config("foo") == "value_foo"
-
-
-# =============================================================================
 # Phase 4: Enterprise Key Resolvers & Metrics Tests
 # =============================================================================
+# ``TestToolDecorator`` lives in ``test_temporal_integration.py`` — see that
+# file for the full @tool()/@unprotected decorator contract coverage.
 
 
 class TestCompositeKeyResolver:
