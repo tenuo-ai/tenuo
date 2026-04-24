@@ -83,7 +83,13 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 from tenuo import SigningKey
-from tenuo.temporal import TenuoWorkerInterceptor, TenuoPluginConfig, TenuoClientInterceptor, EnvKeyResolver
+from tenuo.temporal import (
+    TenuoWorkerInterceptor,
+    TenuoPluginConfig,
+    TenuoClientInterceptor,
+    EnvKeyResolver,
+    TENUO_TEMPORAL_ACTIVITIES,
+)
 
 control = SigningKey.generate()
 
@@ -103,8 +109,18 @@ worker_interceptor = TenuoWorkerInterceptor(config, task_queue="q")
 sandbox_runner = SandboxedWorkflowRunner(
     restrictions=SandboxRestrictions.default.with_passthrough_modules("tenuo", "tenuo_core")
 )
-worker = Worker(client, task_queue="q", workflows=[...], activities=[...],
-                interceptors=[worker_interceptor], workflow_runner=sandbox_runner)
+worker = Worker(
+    client,
+    task_queue="q",
+    workflows=[...],
+    # TENUO_TEMPORAL_ACTIVITIES is required — the plugin path injects it
+    # automatically, manual setups must splat it in by hand. Without it,
+    # workflow_grant() and tenuo_execute_child_workflow(constraints=...)
+    # have no mint activity to dispatch against and fail at runtime.
+    activities=[*my_activities, *TENUO_TEMPORAL_ACTIVITIES],
+    interceptors=[worker_interceptor],
+    workflow_runner=sandbox_runner,
+)
 ```
 
 > **`task_queue=` is required for delegation.** If you omit it, basic
@@ -454,7 +470,7 @@ async with Worker(
     client,
     task_queue="my-queue",
     workflows=[MyWorkflow],
-    activities=activities,
+    activities=[*activities, *TENUO_TEMPORAL_ACTIVITIES],
     interceptors=[interceptor],
     workflow_runner=...,
 ):
@@ -589,12 +605,12 @@ Static `trusted_roots` require a restart to pick up new issuer keys. For rotatio
 
 ### Temporal activity retries and PoP time-drift
 
-PoP is signed at `workflow.now()` when the activity is first scheduled. Temporal retries reuse headers from the original `ACTIVITY_TASK_SCHEDULED` event. With default `pop_max_windows=5` and `pop_window_secs=30`, verification covers ~±60 seconds. Retries beyond ~90 seconds will fail PoP.
+PoP is signed at `workflow.now()` when the activity is first scheduled. Temporal retries reuse headers from the original `ACTIVITY_TASK_SCHEDULED` event. The first-attempt verifier uses `pop_max_windows=5` (~±60 s); retries use the laxer `retry_pop_max_windows`, which defaults to **40** (±20 min) — sized against Temporal's default retry policy (`initial_interval=1s`, `backoff_coefficient=2`, `max_interval=100s`) so ten retries at ~13 min still verify.
 
 | Retry pattern | Recommended approach |
 |---------------|---------------------|
-| Short retries (< 60s) | Default config works |
-| Long retries (minutes) | Set `retry_pop_max_windows` (e.g. `120` for 1 hour) |
+| Default Temporal retry policy | Default `retry_pop_max_windows=40` (±20 min) works |
+| Long retries (> 20 min) | Bump `retry_pop_max_windows` (e.g. `120` for 1 h, `480` for 4 h) |
 | Unbounded retries | Structure as child workflows for fresh PoP per retry |
 | Durable workflows (hours/days) | Long warrant TTL + `retry_pop_max_windows` sized to max backoff + auto-revoke on completion |
 
@@ -940,6 +956,7 @@ Authorization failures are wrapped in `ApplicationError(non_retryable=True)` to 
 | `ImportError: PyO3 modules may only be initialized once...` | Missing passthrough | Add `with_passthrough_modules("tenuo", "tenuo_core")` ([details](#sandbox-passthrough-explained)) |
 | `ConfigurationError: requires trusted_roots` | No `trusted_roots` on config | Pass `trusted_roots=` or call `tenuo.configure(trusted_roots=[...])` first |
 | `TenuoContextError: No Tenuo headers in store` | Workflow started without warrant | Use `execute_workflow_authorized(...)` |
+| `TenuoContextError: no TenuoPluginConfig registered for task_queue=...` | Manual setup; mint activity dispatched but not registered | Pass `task_queue=` to `TenuoWorkerInterceptor(...)` **and** splat `TENUO_TEMPORAL_ACTIVITIES` into `Worker(activities=[...])` |
 | `KeyResolutionError: Cannot resolve key` | Key not found | Check `TENUO_KEY_*` / Vault path; call `preload_keys()` before `Worker(...)` |
 | `TemporalConstraintViolation: No warrant provided` | Client interceptor missing | Verify `client_interceptor` in `Client.connect(interceptors=[...])` |
 | `PopVerificationError: replay detected` | Multi-replica without shared dedup | Configure `pop_dedup_store` for fleet-wide suppression |

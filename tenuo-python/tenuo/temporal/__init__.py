@@ -78,6 +78,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "tenuo_continue_as_new": ("tenuo.temporal._workflow", "tenuo_continue_as_new"),
     # _state — public escape hatch for manual worker setup
     "register_worker_config": ("tenuo.temporal._state", "register_worker_config"),
+    # _workflow — manual-setup helper: Tenuo-owned activities every worker must register
+    "TENUO_TEMPORAL_ACTIVITIES": ("tenuo.temporal._workflow", "TENUO_TEMPORAL_ACTIVITIES"),
     # _client
     "TenuoWarrantContextPropagator": ("tenuo.temporal._client", "TenuoWarrantContextPropagator"),
     "tenuo_warrant_context": ("tenuo.temporal._client", "tenuo_warrant_context"),

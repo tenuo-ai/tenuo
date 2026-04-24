@@ -559,6 +559,42 @@ except ImportError:
     _tenuo_internal_mint_activity = None  # type: ignore
 
 
+# ── Public activity registry (manual-setup helper) ───────────────────────
+
+TENUO_TEMPORAL_ACTIVITIES: tuple = (
+    (_tenuo_internal_mint_activity,) if _tenuo_internal_mint_activity is not None else ()
+)
+"""Tenuo-owned activities every worker **must** register.
+
+When using :class:`~tenuo.temporal_plugin.TenuoTemporalPlugin` this is handled
+automatically — the plugin appends these activities to the worker's registry
+during ``configure_worker``.
+
+When wiring a worker manually with :class:`TenuoWorkerInterceptor`, you **must**
+splat this tuple into the worker's ``activities=[...]`` list. Without it,
+``workflow_grant()``, ``workflow_issue_execution()``, and
+``tenuo_execute_child_workflow(constraints=...)`` silently fail (the internal
+mint activity cannot be dispatched) with confusing ``ActivityError`` /
+``ScheduleToCloseTimeoutError`` failures at runtime.
+
+Example::
+
+    from tenuo.temporal import (
+        TenuoWorkerInterceptor,
+        TENUO_TEMPORAL_ACTIVITIES,
+    )
+
+    worker = Worker(
+        client,
+        task_queue="my-queue",
+        workflows=[MyWorkflow],
+        activities=[*my_activities, *TENUO_TEMPORAL_ACTIVITIES],
+        interceptors=[TenuoWorkerInterceptor(config, task_queue="my-queue")],
+        workflow_runner=sandbox_runner,
+    )
+"""
+
+
 # ── Public workflow functions ────────────────────────────────────────────
 
 def _resolve_client_interceptor(
