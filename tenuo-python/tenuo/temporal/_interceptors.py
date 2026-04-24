@@ -453,14 +453,6 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
     Stable identifier: :data:`TENUO_TEMPORAL_PLUGIN_ID` (``tenuo.TenuoTemporalPlugin``)
     for worker logs and Temporal Web activity summaries.
 
-    .. note::
-
-        This class was previously named ``TenuoPlugin``. The old name is still
-        importable from :mod:`tenuo.temporal` as a deprecated alias and will
-        be removed in a future beta. Imports should be updated to
-        ``TenuoWorkerInterceptor`` — the new name correctly reflects that this
-        is a Temporal SDK **interceptor**, not a Temporal SDK **plugin**.
-
     Parameters
     ----------
     config:
