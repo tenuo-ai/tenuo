@@ -65,7 +65,7 @@ from tenuo.temporal._config import (
 from tenuo.temporal._interceptors import TenuoWorkerInterceptor
 from tenuo.temporal._resolvers import EnvKeyResolver
 from tenuo.temporal._state import _set_worker_config
-from tenuo.temporal._workflow import _tenuo_internal_mint_activity
+from tenuo.temporal._workflow import TENUO_TEMPORAL_ACTIVITIES
 from tenuo.temporal.exceptions import (
     ChainValidationError,
     KeyResolutionError,
@@ -347,8 +347,7 @@ class TenuoTemporalPlugin(SimplePlugin):
 
             self._preload_keys()
 
-            if _tenuo_internal_mint_activity is not None:
-                existing.append(_tenuo_internal_mint_activity)
+            existing.extend(TENUO_TEMPORAL_ACTIVITIES)
             return existing
 
         super().__init__(

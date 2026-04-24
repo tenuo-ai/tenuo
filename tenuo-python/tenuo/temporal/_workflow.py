@@ -374,19 +374,75 @@ async def _dispatch_mint_activity(
     summary = f"[{TENUO_TEMPORAL_PLUGIN_ID}] {kind}({tools_label})"
 
     try:
-        return await workflow.execute_local_activity(
-            _tenuo_internal_mint_activity,
-            req,
-            start_to_close_timeout=timedelta(seconds=10),
-            retry_policy=_RetryPolicy(
-                maximum_attempts=1,
-                non_retryable_error_types=["TenuoContextError", "TemporalConstraintViolation"],
-            ),
-            summary=summary,
-        )
+        try:
+            return await workflow.execute_local_activity(
+                _tenuo_internal_mint_activity,
+                req,
+                start_to_close_timeout=timedelta(seconds=10),
+                retry_policy=_RetryPolicy(
+                    maximum_attempts=1,
+                    non_retryable_error_types=["TenuoContextError", "TemporalConstraintViolation"],
+                ),
+                summary=summary,
+            )
+        except Exception as e:
+            # Pass through structured Tenuo errors from inside the activity —
+            # those messages already name the fix (task-queue registration,
+            # key resolution, etc.). Everything else reaching this path is
+            # almost always a worker-side plumbing problem, the most common
+            # being ``_tenuo_internal_mint_activity`` not registered on the
+            # worker (Temporal SDK reports it as an opaque ``ActivityError``
+            # / ``ScheduleToCloseTimeoutError``). Rewrap with a hint that
+            # names ``TENUO_TEMPORAL_ACTIVITIES`` as the fix. The plugin
+            # path injects this automatically and never hits the rewrap.
+            if _is_structured_tenuo_failure(e):
+                raise
+            raise TenuoContextError(
+                "Tenuo internal mint activity dispatch failed. The most "
+                "common cause is that ``_tenuo_internal_mint_activity`` is "
+                "not registered on the worker — manual (non-plugin) setups "
+                "must include it in ``Worker(activities=[...])``. Add it via:"
+                "\n"
+                "  from tenuo.temporal import TENUO_TEMPORAL_ACTIVITIES\n"
+                "  Worker(..., activities=[*my_activities, "
+                "*TENUO_TEMPORAL_ACTIVITIES])\n"
+                "``TenuoTemporalPlugin`` injects it automatically. "
+                f"Underlying error: {e!r}"
+            ) from e
     finally:
         with _store_lock:
             _pending_mint_capabilities.pop(cap_ref, None)
+
+
+def _is_structured_tenuo_failure(exc: BaseException) -> bool:
+    """Return True when the raised chain already carries a Tenuo wire type.
+
+    Walks the ``__cause__`` chain looking either for a ``TenuoContextError``
+    /``TemporalConstraintViolation`` class instance or for an
+    ``ApplicationError`` whose ``type`` matches one of our stable
+    ``error_code`` values (emitted by :func:`_error_type_for_wire`). The
+    first match means the mint activity ran and produced a structured
+    failure — the caller's existing message is already descriptive and
+    must reach the workflow unaltered.
+    """
+    known_wire_types = {
+        "CONTEXT_MISSING",
+        "CONSTRAINT_VIOLATED",
+        "TenuoContextError",
+        "TemporalConstraintViolation",
+    }
+
+    seen: set[int] = set()
+    cur: Optional[BaseException] = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, (TenuoContextError, TemporalConstraintViolation)):
+            return True
+        app_type = getattr(cur, "type", None)
+        if isinstance(app_type, str) and app_type in known_wire_types:
+            return True
+        cur = cur.__cause__
+    return False
 
 
 def _workflow_mint_context(purpose: str) -> tuple[str, "TenuoPluginConfig"]:
@@ -557,6 +613,42 @@ try:
 
 except ImportError:
     _tenuo_internal_mint_activity = None  # type: ignore
+
+
+# ── Public activity registry (manual-setup helper) ───────────────────────
+
+TENUO_TEMPORAL_ACTIVITIES: tuple = (
+    (_tenuo_internal_mint_activity,) if _tenuo_internal_mint_activity is not None else ()
+)
+"""Tenuo-owned activities every worker **must** register.
+
+When using :class:`~tenuo.temporal_plugin.TenuoTemporalPlugin` this is handled
+automatically — the plugin appends these activities to the worker's registry
+during ``configure_worker``.
+
+When wiring a worker manually with :class:`TenuoWorkerInterceptor`, you **must**
+splat this tuple into the worker's ``activities=[...]`` list. Without it,
+``workflow_grant()``, ``workflow_issue_execution()``, and
+``tenuo_execute_child_workflow(constraints=...)`` silently fail (the internal
+mint activity cannot be dispatched) with confusing ``ActivityError`` /
+``ScheduleToCloseTimeoutError`` failures at runtime.
+
+Example::
+
+    from tenuo.temporal import (
+        TenuoWorkerInterceptor,
+        TENUO_TEMPORAL_ACTIVITIES,
+    )
+
+    worker = Worker(
+        client,
+        task_queue="my-queue",
+        workflows=[MyWorkflow],
+        activities=[*my_activities, *TENUO_TEMPORAL_ACTIVITIES],
+        interceptors=[TenuoWorkerInterceptor(config, task_queue="my-queue")],
+        workflow_runner=sandbox_runner,
+    )
+"""
 
 
 # ── Public workflow functions ────────────────────────────────────────────

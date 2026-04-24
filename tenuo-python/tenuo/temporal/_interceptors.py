@@ -296,19 +296,8 @@ class _TenuoWorkflowOutboundInterceptor:
 
         return self._next.continue_as_new(input)
 
-    def start_nexus_operation(self, input: Any) -> Any:
-        """Propagate Tenuo headers into Nexus cross-namespace operations."""
-        run_key = _current_run_key()
-        with _store_lock:
-            raw_headers = _workflow_headers_store.get(run_key, {})
-
-        if raw_headers:
-            nexus_headers = dict(input.headers or {})
-            for k, v in raw_headers.items():
-                nexus_headers[k] = base64.b64encode(v).decode()
-            input = _replace_field(input, "headers", nexus_headers)
-
-        return self._next.start_nexus_operation(input)
+    # ``start_nexus_operation`` is intentionally not overridden: Nexus
+    # operations are out of scope for Tenuo authorization.
 
     def start_local_activity(self, input: Any) -> Any:
         """Block protected local activities unless @unprotected is set."""
@@ -540,10 +529,14 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
             ) from _e
 
         if config.pop_dedup_store is None:
-            logger.debug(
-                "TenuoPluginConfig: using in-memory PopDedupStore (single-process only). "
-                "In multi-worker deployments, set pop_dedup_store= to a shared backend "
-                "(Redis, Memcached, etc.) for fleet-wide PoP replay prevention."
+            logger.warning(
+                "TenuoPluginConfig: using in-memory PopDedupStore — this is "
+                "single-process only and provides NO replay protection across "
+                "multiple workers or replicas. In any horizontally-deployed "
+                "environment, set pop_dedup_store= to a shared backend "
+                "(Redis, Memcached, etc.) for fleet-wide PoP replay prevention. "
+                "Set pop_dedup_store=InMemoryPopDedupStore() explicitly to "
+                "acknowledge the single-process mode and silence this warning."
             )
 
         logger.debug(

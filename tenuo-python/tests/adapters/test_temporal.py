@@ -594,6 +594,40 @@ class TestTenuoPluginConfig:
         )
         assert cfg.retry_pop_max_windows == 120
 
+    def test_retry_pop_default_covers_temporal_default_backoff(self):
+        """Default ``retry_pop_max_windows`` must survive Temporal's default retry policy.
+
+        Temporal's default exponential backoff (``initial_interval=1s``,
+        ``backoff_coefficient=2``, ``max_interval=100s``) places the Nth retry
+        at roughly ``1 + 2 + 4 + … + min(2^(N-1), 100)`` seconds. Ten retries
+        land at ~800 s and fifteen retries at ~1300 s. With a 30-second
+        window, that maps to ceil(800/30)=27 and ceil(1300/30)=44 windows.
+
+        The default must cover at least ten-retry scenarios to prevent
+        transient backend failures from becoming permanent via
+        ``PopVerificationError(non_retryable=True)``. Fifteen retries is the
+        upper tolerance: beyond ~22 minutes the operator should set the field
+        explicitly.
+        """
+        resolver = MagicMock(spec=KeyResolver)
+        cfg = TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+        )
+        # Simulate a 10-retry horizon under Temporal's default policy.
+        ten_retry_seconds = 1
+        interval = 1
+        for _ in range(10):
+            interval = min(interval * 2, 100)
+            ten_retry_seconds += interval
+        windows_needed = (ten_retry_seconds + 29) // 30  # ceil
+        assert cfg.retry_pop_max_windows is not None
+        assert cfg.retry_pop_max_windows >= windows_needed, (
+            f"Default retry_pop_max_windows={cfg.retry_pop_max_windows} "
+            f"cannot cover a 10-retry horizon (~{ten_retry_seconds} s, "
+            f"~{windows_needed} windows) under Temporal's default policy."
+        )
+
     def test_trusted_approvers_not_accepted_on_config(self):
         """TenuoPluginConfig no longer accepts trusted_approvers — warrant is source of truth."""
         resolver = MagicMock(spec=KeyResolver)
@@ -3947,6 +3981,87 @@ class TestSetActivityApprovalsOverwriteWarning:
         finally:
             with _store_lock:
                 _pending_activity_approvals.pop(wf_id, None)
+
+
+class TestManualSetupActivitiesRegistry:
+    """``TENUO_TEMPORAL_ACTIVITIES`` is the public handle for the
+    Tenuo-owned activities every worker must register.
+
+    The plugin path (``TenuoTemporalPlugin``) injects these automatically;
+    manual setups (``TenuoWorkerInterceptor`` wired directly into
+    ``Worker(...)``) must splat this tuple into ``activities=[...]`` or
+    ``workflow_grant()`` / ``tenuo_execute_child_workflow(constraints=...)``
+    have no mint activity to dispatch against.
+    """
+
+    def test_tuple_contains_mint_activity(self):
+        from tenuo.temporal import TENUO_TEMPORAL_ACTIVITIES
+        from tenuo.temporal._workflow import _tenuo_internal_mint_activity
+
+        # Tuple (immutable) — users splat it with ``*TENUO_TEMPORAL_ACTIVITIES``
+        # and cannot accidentally mutate the shared registry.
+        assert isinstance(TENUO_TEMPORAL_ACTIVITIES, tuple)
+        assert _tenuo_internal_mint_activity is not None
+        assert _tenuo_internal_mint_activity in TENUO_TEMPORAL_ACTIVITIES
+
+    def test_tuple_is_single_source_of_truth_for_plugin(self):
+        """The plugin appends exactly the same set — no duplicate registry to drift."""
+        from tenuo.temporal import TENUO_TEMPORAL_ACTIVITIES
+        from tenuo.temporal_plugin import TENUO_TEMPORAL_ACTIVITIES as PLUGIN_SIDE
+
+        assert TENUO_TEMPORAL_ACTIVITIES is PLUGIN_SIDE
+
+
+class TestInMemoryPopDedupStoreWarning:
+    """Default ``pop_dedup_store`` (``None`` → in-memory) must log loudly.
+
+    Single-process replay protection is close to no replay protection in
+    any horizontally-deployed environment, so the default is logged at
+    ``WARNING``. Operators who consciously accept the single-process mode
+    can pass an explicit ``InMemoryPopDedupStore()`` to silence it.
+    """
+
+    def test_none_default_emits_warning(self, caplog):
+        import logging
+
+        from tenuo import SigningKey
+
+        control_key = SigningKey.generate()
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            # pop_dedup_store left None — this is the footgun path
+        )
+
+        with caplog.at_level(logging.WARNING, logger="tenuo.temporal"):
+            TenuoWorkerInterceptor(cfg)
+
+        messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("in-memory PopDedupStore" in m for m in messages), (
+            f"expected a WARNING about the in-memory dedup store, got: {messages}"
+        )
+
+    def test_explicit_store_is_silent(self, caplog):
+        """Operators who acknowledge the mode explicitly get silence."""
+        import logging
+
+        from tenuo import SigningKey
+        from tenuo.temporal._dedup import InMemoryPopDedupStore
+
+        control_key = SigningKey.generate()
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            pop_dedup_store=InMemoryPopDedupStore(),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="tenuo.temporal"):
+            TenuoWorkerInterceptor(cfg)
+
+        messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not any("in-memory PopDedupStore" in m for m in messages), (
+            f"expected no in-memory-dedup WARNING, got: {messages}"
+        )
 
 
 # =============================================================================

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`TenuoPluginConfig.retry_pop_max_windows` default raised from `5` to
+  `40` (±20 min).** The old default (±150 s) was tight enough that an
+  activity retried more than ~3 times under Temporal's default retry
+  policy (`initial_interval=1s`, `backoff_coefficient=2`,
+  `max_interval=100s`) would fail PoP verification with a
+  `PopVerificationError` marked non-retryable — turning transient
+  backend failures into permanent workflow failures silently. The new
+  default covers a 10-retry horizon (~13 min); the auto-widen for
+  `approval_handler` workflows still kicks in for values at or below
+  the default.
+- **In-memory `PopDedupStore` default now logs at `WARNING`, not
+  `DEBUG`.** Operators in any horizontally-deployed environment must
+  notice that the default (`pop_dedup_store=None`) provides
+  single-process replay protection only. Pass an explicit
+  `InMemoryPopDedupStore()` to acknowledge the mode and silence the
+  warning, or wire a shared backend (Redis, Memcached) for fleet-wide
+  suppression.
+
+### Added
+
+- **`tenuo.temporal.TENUO_TEMPORAL_ACTIVITIES`.** Manual-setup users
+  can now splat this tuple into `Worker(activities=[...])` to register
+  the Tenuo-owned mint/delegation activity the same way
+  `TenuoTemporalPlugin` does automatically. Forgetting it no longer
+  makes `workflow_grant()` /
+  `tenuo_execute_child_workflow(constraints=...)` fail at runtime
+  with an opaque `ActivityError` — the registration path is now a
+  single, documented import.
+
 ### Breaking
 
 - **MCP Proof-of-Possession now always signs raw wire arguments.** Previously,

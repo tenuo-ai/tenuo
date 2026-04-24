@@ -278,7 +278,7 @@ class TenuoPluginConfig:
     for Temporal workers regardless of this flag; see ``trusted_roots``.
     """
 
-    retry_pop_max_windows: Optional[int] = 5
+    retry_pop_max_windows: Optional[int] = 40
     """
     PoP time-window count to use for Temporal activity **retries** (attempt > 1).
 
@@ -286,11 +286,19 @@ class TenuoPluginConfig:
     ``workflow.now()`` (deterministic replay clock). When Temporal retries an
     activity, it reuses the headers from the original scheduling event in
     workflow history — it does **not** re-invoke the outbound interceptor.
-    With the strict ``pop_max_windows=5`` (±60 s), an activity retried more
-    than ~90 s after its first scheduling will fail PoP verification.
+    With the strict ``pop_max_windows=5`` (±60 s at the verifier), an activity
+    retried more than ~90 s after its first scheduling will fail PoP
+    verification.
 
-    Default ``5`` (±150 s ≈ 2.5 min) covers the vast majority of retry
-    policies where the first retry fires within a couple of minutes.
+    **Default ``40`` (±1200 s ≈ ±20 min)** is sized against Temporal's default
+    retry policy (``initial_interval=1s``, ``backoff_coefficient=2``,
+    ``max_interval=100s``), which places the Nth retry at roughly
+    ``1 + 2 + 4 + … + min(2^(N-1), 100)`` seconds. Concretely: ten retries
+    land at ~800 s and fifteen retries at ~1300 s, so 20 min of slack covers
+    the long-tail of flaky-backend scenarios without giving an attacker an
+    hour of replay headroom. A ``PopVerificationError`` on retry becomes
+    non-retryable, so too-tight a window silently turns transient failures
+    into permanent ones — that is precisely what this default prevents.
 
     Set higher to accommodate longer retry windows:
 
@@ -442,7 +450,11 @@ class TenuoPluginConfig:
             )
 
         if self.approval_handler is not None:
-            if self.retry_pop_max_windows is None or self.retry_pop_max_windows <= 5:
+            # Only bump for values at-or-below the field default (currently 40).
+            # Users who explicitly set a larger value are respected. The bound
+            # tracks the default so raising the default in the future does not
+            # silently suppress this auto-widen.
+            if self.retry_pop_max_windows is None or self.retry_pop_max_windows <= 40:
                 logger.info(
                     "TenuoPluginConfig: approval_handler set — retry_pop_max_windows=%s is tight for "
                     "human-in-the-loop; using 240 (~2 h PoP slack on activity retries). "
