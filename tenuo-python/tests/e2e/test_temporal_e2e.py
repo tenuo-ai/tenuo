@@ -1580,42 +1580,12 @@ class TestContinueAsNew:
 
 
 # -- Nexus operation header propagation --------------------------------------
-
-class TestNexusHeaderPropagation:
-    """Tests for _TenuoWorkflowOutboundInterceptor.start_nexus_operation().
-
-    Verifies that warrant headers are base64-encoded and propagated to Nexus
-    cross-namespace operations.
-    """
-
-    def test_nexus_receives_base64_encoded_headers(self, warrant, headers_dict):
-        """start_nexus_operation base64-encodes stored headers for cross-namespace transport."""
-        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
-
-        wf_id = "wf-nexus"
-        _populate_store(wf_id, headers_dict)
-
-        captured = {}
-        class FakeNext:
-            def start_nexus_operation(self, input):
-                captured["headers"] = dict(input.headers or {})
-                return MagicMock()
-
-        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext())
-
-        @dataclass
-        class FakeNexusInput:
-            headers: Optional[Dict[str, Any]] = None
-
-        with patch("temporalio.workflow.info") as mock_info:
-            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
-            outbound.start_nexus_operation(FakeNexusInput())
-
-        assert TENUO_WARRANT_HEADER in captured["headers"]
-        # Nexus headers should be base64-encoded strings, not raw bytes
-        val = captured["headers"][TENUO_WARRANT_HEADER]
-        assert isinstance(val, str)
-        base64.b64decode(val)  # should not raise
+#
+# Tenuo does not currently propagate warrant headers into Nexus operations
+# (the ``start_nexus_operation`` outbound hook is a plain passthrough). The
+# encoding we would use when we revisit is documented under
+# ``docs/temporal-reference.md`` → "Nexus Operation Headers". No behavior
+# tests here until we ship an end-to-end path with a non-Python handler.
 
 
 # -- Mint activity: issue_execution absence must be hard error ----------------

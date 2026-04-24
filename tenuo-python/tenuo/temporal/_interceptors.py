@@ -141,7 +141,6 @@ class _TenuoWorkflowOutboundInterceptor:
     def __init__(self, next_outbound: Any, config: Optional["TenuoPluginConfig"] = None) -> None:
         self._next = next_outbound
         self.__dict__["_config"] = config
-        self.__dict__["_nexus_experimental_warned"] = False
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._next, name)
@@ -297,47 +296,20 @@ class _TenuoWorkflowOutboundInterceptor:
 
         return self._next.continue_as_new(input)
 
-    def start_nexus_operation(self, input: Any) -> Any:
-        """Propagate Tenuo headers into Nexus cross-namespace operations.
-
-        **Experimental.** Nexus uses an HTTP-shaped ``Mapping[str, str]`` for
-        headers, not Temporal's internal ``Mapping[str, Payload]``. We bridge
-        the gap by base64-encoding the raw warrant/PoP bytes and stringifying
-        them. That round-trips with Python Nexus handlers that use the Tenuo
-        inbound interceptor, but handlers implemented in other languages
-        (Go, TypeScript) need a matching base64 decoder on their side.
-
-        End-to-end interop with non-Python Nexus handlers is **not yet
-        covered by tests**; until that changes we emit a one-time
-        ``UserWarning`` at first use so operators know they are on the
-        experimental path.
-        """
-        run_key = _current_run_key()
-        with _store_lock:
-            raw_headers = _workflow_headers_store.get(run_key, {})
-
-        if raw_headers:
-            if not self.__dict__.get("_nexus_experimental_warned"):
-                self.__dict__["_nexus_experimental_warned"] = True
-                import warnings
-                warnings.warn(
-                    "Tenuo: propagating warrant headers through "
-                    "start_nexus_operation is experimental. Header bytes "
-                    "are base64-encoded into the Nexus string-map; Nexus "
-                    "handlers written in non-Python SDKs must base64-decode "
-                    "the TENUO_* headers to recover the original bytes. "
-                    "End-to-end interop is not yet covered by Tenuo tests. "
-                    "Track this path on the Tenuo roadmap before relying on "
-                    "it in production.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-            nexus_headers = dict(input.headers or {})
-            for k, v in raw_headers.items():
-                nexus_headers[k] = base64.b64encode(v).decode()
-            input = _replace_field(input, "headers", nexus_headers)
-
-        return self._next.start_nexus_operation(input)
+    # NB: no ``start_nexus_operation`` override.
+    #
+    # Tenuo does not propagate warrant headers to Nexus operations today.
+    # Nexus uses an HTTP-shaped ``Mapping[str, str]`` header channel rather
+    # than Temporal's ``Mapping[str, Payload]``, which forces a base64
+    # boundary that would need a matching decoder in every non-Python
+    # handler SDK plus an inbound Nexus interceptor on the Tenuo side to
+    # make the round-trip verifiable. Until we have an end-to-end
+    # integration test across SDKs we prefer a cleaner "not handled" story
+    # over a silently-shipped half-implementation; the absence of this
+    # method means the stock Temporal interceptor chain handles
+    # ``start_nexus_operation`` as a plain passthrough. The intended
+    # encoding contract is documented in ``docs/temporal-reference.md``
+    # under "Nexus Operation Headers" for when we revisit.
 
     def start_local_activity(self, input: Any) -> Any:
         """Block protected local activities unless @unprotected is set."""

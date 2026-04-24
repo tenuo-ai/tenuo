@@ -38,17 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with an opaque `ActivityError` — the registration path is now a
   single, documented import.
 
-### Experimental
+### Removed
 
-- **`start_nexus_operation` warrant propagation is marked
-  experimental.** The Nexus outbound interceptor base64-encodes raw
-  warrant/PoP bytes into the Nexus `Mapping[str, str]` header channel,
-  which round-trips with Python Nexus handlers that use Tenuo's
-  inbound interceptor but has no end-to-end test yet with handlers
-  implemented in other SDKs (Go, TypeScript). A one-time
-  `UserWarning` now fires at first dispatch so operators know they are
-  on the experimental path; the encoding will be documented and frozen
-  (or revised) once the cross-SDK interop suite lands.
+- **Warrant propagation into `start_nexus_operation`.** The outbound
+  Nexus interceptor path was never exercised end-to-end against a
+  non-Python handler, so we dropped it rather than ship a half path
+  behind an experimental flag. The intended encoding contract is still
+  documented under `docs/temporal-reference.md` → "Nexus Operation
+  Headers" for when we revisit; today `start_nexus_operation` is a
+  plain passthrough through the stock Temporal interceptor chain.
 
 ### Breaking
 
