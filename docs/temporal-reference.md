@@ -722,14 +722,14 @@ Unrecognized signals raise `TemporalConstraintViolation`. When set to `None` (de
 
 ## Nexus Operation Headers
 
-**Not currently propagated.** Tenuo's outbound workflow interceptor does not inject warrant headers into `start_nexus_operation` calls today; the stock Temporal interceptor chain handles Nexus dispatch as a plain passthrough. The reason is simple: Tenuo does not yet ship an **inbound** Nexus interceptor in any SDK — including Python — so any headers we injected on the outbound side would have no consumer. Injecting them would burn history bytes without actually authorizing the operation. The cross-SDK encoding concern (see below) is real but secondary — the primary gap is the missing inbound half.
+**Tenuo does not authorize Nexus operations.** `start_nexus_operation` is a plain passthrough — no outbound injection, no inbound verification, in any SDK. Use activities, child workflows, or continue-as-new for authorized cross-boundary calls.
 
-### Intended encoding (when this ships)
+### Wire contract for future Nexus support
 
-Whenever the inbound interceptor lands, the outbound side will need to encode warrant/PoP bytes into Nexus' string-map header channel. The following is the shape the previous speculative implementation used and the shape a future revision is expected to keep — recorded here so handlers in other SDKs have something stable to decode against once the integration is wired:
+When Nexus authorization ships, it will use the contract below. Published so handler implementations in other SDKs have a stable target.
 
-- Nexus headers are HTTP-shaped (`Mapping[str, str]`), unlike the activity/child-workflow/continue-as-new channels which use `Mapping[str, temporalio.api.common.v1.Payload]`. Raw warrant/PoP bytes must therefore be base64-encoded per-header.
-- Encoding: [RFC 4648 §4 standard base64, padded](https://datatracker.ietf.org/doc/html/rfc4648#section-4), as produced by Python's `base64.b64encode(raw_bytes).decode()`.
+- Nexus headers are HTTP-shaped (`Mapping[str, str]`); Temporal's activity / child-workflow / continue-as-new channels use `Mapping[str, temporalio.api.common.v1.Payload]`. Warrant and PoP bytes are base64-encoded per-header.
+- Encoding: [RFC 4648 §4 standard base64, padded](https://datatracker.ietf.org/doc/html/rfc4648#section-4) — Python's `base64.b64encode(raw_bytes).decode()`.
 - Header layout:
 
   | Header key (`tenuo.temporal._constants`) | Wire name            | Payload                                                      |
@@ -737,9 +737,9 @@ Whenever the inbound interceptor lands, the outbound side will need to encode wa
   | `TENUO_WARRANT_HEADER`                   | `x-tenuo-warrant`    | base64(raw warrant bytes, possibly gzip-compressed — see `TENUO_COMPRESSED_HEADER`) |
   | `TENUO_KEY_ID_HEADER`                    | `x-tenuo-key-id`     | base64(UTF-8 bytes of the key id)                            |
   | `TENUO_POP_HEADER`                       | `x-tenuo-pop`        | base64(raw 64-byte Ed25519 signature)                        |
-  | `TENUO_COMPRESSED_HEADER`                | `x-tenuo-compressed` | base64(`b"1"`) when present — signals gzip before base64     |
+  | `TENUO_COMPRESSED_HEADER`                | `x-tenuo-compressed` | base64(`b"1"`) when present — warrant bytes are gzip-compressed before base64 |
 
-Handler-side decoding (for reference, when the outbound path ships) in Go:
+Handler decoding in Go:
 
 ```go
 import "encoding/base64"
@@ -747,10 +747,10 @@ import "encoding/base64"
 warrantBytes, err := base64.StdEncoding.DecodeString(headers["x-tenuo-warrant"])
 keyIdBytes,   err := base64.StdEncoding.DecodeString(headers["x-tenuo-key-id"])
 popBytes,     err := base64.StdEncoding.DecodeString(headers["x-tenuo-pop"])
-// If x-tenuo-compressed is present, gunzip warrantBytes before verification.
+// gunzip warrantBytes when x-tenuo-compressed is present.
 ```
 
-TypeScript (`Buffer.from(headers["x-tenuo-warrant"], "base64")`) follows the same pattern.
+TypeScript: `Buffer.from(headers["x-tenuo-warrant"], "base64")`.
 
 ---
 

@@ -296,22 +296,10 @@ class _TenuoWorkflowOutboundInterceptor:
 
         return self._next.continue_as_new(input)
 
-    # NB: no ``start_nexus_operation`` override.
-    #
-    # Tenuo does not propagate warrant headers to Nexus operations today
-    # because the receive side does not exist yet: there is no inbound
-    # Nexus interceptor in Tenuo (for any SDK, including Python), so any
-    # headers we inject here would have no consumer. Injecting them would
-    # cost history bytes and create the false impression that Nexus
-    # authorization is wired. Nexus' HTTP-shaped ``Mapping[str, str]``
-    # header channel (vs Temporal's ``Mapping[str, Payload]``) additionally
-    # forces a base64 encoding step that non-Python handler SDKs would
-    # need to mirror, but that is a downstream concern — the primary gap
-    # is the missing inbound half. Leaving the method off means the stock
-    # Temporal interceptor chain handles ``start_nexus_operation`` as a
-    # plain passthrough. When we wire the inbound half, the outbound
-    # encoding contract is documented in ``docs/temporal-reference.md``
-    # under "Nexus Operation Headers".
+    # Tenuo does not authorize Nexus operations. ``start_nexus_operation``
+    # is a plain passthrough through the stock Temporal interceptor chain.
+    # The wire contract for future Nexus support is specified in
+    # ``docs/temporal-reference.md`` → "Nexus Operation Headers".
 
     def start_local_activity(self, input: Any) -> Any:
         """Block protected local activities unless @unprotected is set."""

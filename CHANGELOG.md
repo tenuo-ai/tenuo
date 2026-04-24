@@ -40,15 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **Warrant propagation into `start_nexus_operation`.** The outbound
-  Nexus hook had no consumer on the receive side — Tenuo does not yet
-  ship an inbound Nexus interceptor in any SDK, including Python — so
-  the injected headers authorized nothing and just cost history bytes.
-  Dropped rather than shipped behind an experimental flag. The
-  intended encoding contract is still documented under
-  `docs/temporal-reference.md` → "Nexus Operation Headers" for when
-  the inbound half lands; today `start_nexus_operation` is a plain
-  passthrough through the stock Temporal interceptor chain.
+- **Warrant propagation into `start_nexus_operation`.** Tenuo does not
+  authorize Nexus operations; `start_nexus_operation` is a plain
+  passthrough. Use activities, child workflows, or continue-as-new for
+  authorized cross-boundary calls. The wire contract for future Nexus
+  support is specified in `docs/temporal-reference.md` → "Nexus
+  Operation Headers".
 
 ### Breaking
 
