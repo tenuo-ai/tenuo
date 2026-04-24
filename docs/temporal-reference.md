@@ -722,7 +722,55 @@ Unrecognized signals raise `TemporalConstraintViolation`. When set to `None` (de
 
 ## Nexus Operation Headers
 
-The outbound interceptor automatically propagates warrant headers to Nexus operations, base64-encoded into Nexus's string-based header format.
+> **Experimental.** Tenuo emits a one-time `UserWarning` when the outbound Nexus interceptor fires for the first time in a worker. End-to-end interop with non-Python Nexus handlers is not yet covered by Tenuo's own test suite; the encoding contract below is the stable shape we will commit to once that coverage lands.
+
+### Why it's different from activity headers
+
+Temporal's activity, child-workflow, and continue-as-new header channels use `Mapping[str, temporalio.api.common.v1.Payload]` (raw bytes inside a protobuf `Payload`). The Nexus operation header channel is HTTP-shaped: `Mapping[str, str]`. Because the Tenuo warrant and PoP are raw bytes, the outbound interceptor **base64-encodes** them into the Nexus string map using [RFC 4648 §4 standard base64 (padded)](https://datatracker.ietf.org/doc/html/rfc4648#section-4), as produced by Python's `base64.b64encode(raw_bytes).decode()`.
+
+### Header contract
+
+| Header key (`tenuo.temporal._constants`) | Wire name       | Payload                                                      |
+|------------------------------------------|-----------------|--------------------------------------------------------------|
+| `TENUO_WARRANT_HEADER`                   | `x-tenuo-warrant`    | base64(raw warrant bytes, possibly gzip-compressed — see `TENUO_COMPRESSED_HEADER`) |
+| `TENUO_KEY_ID_HEADER`                    | `x-tenuo-key-id`     | base64(UTF-8 bytes of the key id)                            |
+| `TENUO_POP_HEADER`                       | `x-tenuo-pop`        | base64(raw 64-byte Ed25519 signature)                        |
+| `TENUO_COMPRESSED_HEADER`                | `x-tenuo-compressed` | base64(`b"1"`) when present — signals the warrant bytes were gzip-compressed before base64 |
+
+Only the `x-tenuo-warrant` / `x-tenuo-key-id` / `x-tenuo-pop` headers carry data; the rest are stable identifiers that downstream verifiers key on.
+
+### Decoding on the handler side
+
+Any Nexus handler that wants to verify Tenuo authorization must base64-decode these headers back to raw bytes before passing them to `tenuo_core::warrant_verify` / `authorize_one`. A Python handler using the Tenuo inbound interceptor does this automatically. For other languages you need a matching decoder. Go (for reference):
+
+```go
+import (
+    "encoding/base64"
+    "fmt"
+)
+
+// In your Nexus operation handler, extract headers from the HTTP request
+// or Temporal Nexus context (depending on your SDK integration):
+warrantB64 := headers["x-tenuo-warrant"]
+keyIdB64   := headers["x-tenuo-key-id"]
+popB64     := headers["x-tenuo-pop"]
+
+warrantBytes, err := base64.StdEncoding.DecodeString(warrantB64)
+if err != nil { return fmt.Errorf("decode warrant: %w", err) }
+keyIdBytes, err := base64.StdEncoding.DecodeString(keyIdB64)
+if err != nil { return fmt.Errorf("decode key id: %w", err) }
+popBytes, err := base64.StdEncoding.DecodeString(popB64)
+if err != nil { return fmt.Errorf("decode pop: %w", err) }
+
+// If x-tenuo-compressed is present, gunzip warrantBytes before verification.
+// Then hand warrantBytes + keyIdBytes + popBytes to whatever verifier you have.
+```
+
+TypeScript (`Buffer.from(headers["x-tenuo-warrant"], "base64")`) follows the same pattern.
+
+### What's not yet proven
+
+Tenuo currently ships no inbound Nexus interceptor of its own, and no end-to-end test exercises the full round-trip against a non-Python handler. The encoding contract above is what the outbound interceptor emits today and is stable; the surrounding wiring (how you mount the decoder inside a Nexus handler in Go/TypeScript, how errors from a failed verification propagate back) is the piece we have not yet proven and the reason for the experimental warning. Track this path on the Tenuo roadmap before relying on it in production.
 
 ---
 

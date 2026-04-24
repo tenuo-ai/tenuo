@@ -2026,5 +2026,131 @@ class TestMintActivitySummary:
         assert "read_file" in s
 
 
+class TestMintActivityDispatchErrorRewrap:
+    """Plumbing failures from ``execute_local_activity`` get a registration
+    hint naming ``TENUO_TEMPORAL_ACTIVITIES``; structured Tenuo failures
+    from inside the activity pass through unaltered.
+    """
+
+    @pytest.mark.asyncio
+    async def test_generic_activity_error_rewrapped_with_registration_hint(
+        self, warrant, agent_key
+    ):
+        """A plumbing failure (e.g. mint activity not registered) surfaces as a
+        ``TenuoContextError`` that names ``TENUO_TEMPORAL_ACTIVITIES`` and
+        the plugin path as the two documented registration routes."""
+        from tenuo.temporal._workflow import _dispatch_mint_activity
+        from tenuo.temporal.exceptions import TenuoContextError
+
+        class _FakeScheduleToCloseTimeout(Exception):
+            """Stands in for Temporal's opaque ActivityError chain."""
+
+        async def fake_execute_local_activity(fn, req, **kwargs):
+            raise _FakeScheduleToCloseTimeout(
+                "Activity task schedule-to-close timeout"
+            )
+
+        with patch(
+            "temporalio.workflow.execute_local_activity",
+            side_effect=fake_execute_local_activity,
+        ):
+            with patch("temporalio.workflow.uuid4", return_value="rewrap-ref-1"):
+                with pytest.raises(TenuoContextError) as excinfo:
+                    await _dispatch_mint_activity(
+                        kind="attenuate",
+                        parent_warrant=warrant,
+                        key_id="agent1",
+                        capabilities={"read_file": {}},
+                        ttl_seconds=60,
+                    )
+
+        msg = str(excinfo.value)
+        assert "TENUO_TEMPORAL_ACTIVITIES" in msg
+        assert "TenuoTemporalPlugin" in msg
+        # The underlying error must be preserved on the cause chain so
+        # traceback-based debugging still reaches the Temporal error.
+        assert isinstance(excinfo.value.__cause__, _FakeScheduleToCloseTimeout)
+
+    @pytest.mark.asyncio
+    async def test_tenuo_context_error_from_activity_passes_through(
+        self, warrant, agent_key
+    ):
+        """A structured ``TenuoContextError`` from inside the activity (e.g.
+        'no TenuoPluginConfig registered for task_queue=...') must reach the
+        workflow unaltered — its message already names the fix."""
+        from tenuo.temporal._workflow import _dispatch_mint_activity
+        from tenuo.temporal.exceptions import TenuoContextError
+
+        inner_msg = (
+            "_tenuo_internal_mint_activity: no TenuoPluginConfig registered "
+            "for task_queue='test-queue'. Register one via ..."
+        )
+
+        async def fake_execute_local_activity(fn, req, **kwargs):
+            raise TenuoContextError(inner_msg)
+
+        with patch(
+            "temporalio.workflow.execute_local_activity",
+            side_effect=fake_execute_local_activity,
+        ):
+            with patch("temporalio.workflow.uuid4", return_value="rewrap-ref-2"):
+                with pytest.raises(TenuoContextError) as excinfo:
+                    await _dispatch_mint_activity(
+                        kind="attenuate",
+                        parent_warrant=warrant,
+                        key_id="agent1",
+                        capabilities={"read_file": {}},
+                        ttl_seconds=60,
+                    )
+
+        assert str(excinfo.value) == inner_msg
+        assert "TENUO_TEMPORAL_ACTIVITIES" not in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_application_error_with_known_wire_type_passes_through(
+        self, warrant, agent_key
+    ):
+        """When Temporal wraps the inner Tenuo error in an ``ApplicationError``
+        carrying a known wire type (``CONTEXT_MISSING`` / ``CONSTRAINT_VIOLATED``),
+        ``_dispatch_mint_activity`` must NOT rewrap — those messages are
+        already structured."""
+        from tenuo.temporal._workflow import _dispatch_mint_activity
+        from tenuo.temporal.exceptions import TenuoContextError
+
+        class _FakeApplicationError(Exception):
+            def __init__(self, message, type):
+                super().__init__(message)
+                self.type = type  # mirrors temporalio.exceptions.ApplicationError.type
+
+        class _FakeActivityError(Exception):
+            pass
+
+        async def fake_execute_local_activity(fn, req, **kwargs):
+            app = _FakeApplicationError(
+                "_tenuo_internal_mint_activity: ...", type="CONTEXT_MISSING"
+            )
+            outer = _FakeActivityError("activity failed")
+            outer.__cause__ = app
+            raise outer
+
+        with patch(
+            "temporalio.workflow.execute_local_activity",
+            side_effect=fake_execute_local_activity,
+        ):
+            with patch("temporalio.workflow.uuid4", return_value="rewrap-ref-3"):
+                with pytest.raises(_FakeActivityError) as excinfo:
+                    await _dispatch_mint_activity(
+                        kind="attenuate",
+                        parent_warrant=warrant,
+                        key_id="agent1",
+                        capabilities={"read_file": {}},
+                        ttl_seconds=60,
+                    )
+
+        # Original ActivityError chain survived; no Tenuo rewrap inserted.
+        assert not isinstance(excinfo.value, TenuoContextError)
+        assert "TENUO_TEMPORAL_ACTIVITIES" not in str(excinfo.value)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
