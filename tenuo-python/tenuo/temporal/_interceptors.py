@@ -825,6 +825,16 @@ class TenuoActivityInboundInterceptor:
         try:
             warrant = _extract_warrant_from_headers(headers)
         except ChainValidationError as chain_exc:
+            # Emit a DENY audit event before raising: operators routing
+            # audit events to OTel/Datadog/Braintrust would otherwise be
+            # blind to malformed-header ingress attempts (the Temporal
+            # ApplicationError reaches the workflow caller, but doesn't
+            # flow through the authorization audit pipeline).
+            self._emit_malformed_warrant_denial_event(
+                info=info,
+                reason=str(chain_exc),
+                start_ns=start_ns,
+            )
             raise self._wrap_as_non_retryable(chain_exc) from chain_exc
 
         # -- 4. Unauthenticated Execution Handling --
@@ -1261,6 +1271,61 @@ class TenuoActivityInboundInterceptor:
             logger.error(
                 "Audit callback failed for ALLOW event (tool=%s): %s",
                 tool, e, exc_info=True,
+            )
+
+    def _emit_malformed_warrant_denial_event(
+        self,
+        info: Any,
+        reason: str,
+        start_ns: Optional[int] = None,
+    ) -> None:
+        """Emit a DENY audit event for an activity that was rejected before
+        warrant extraction succeeded (e.g. non-CBOR bytes, wrong compressed
+        flag, truncated payload). The warrant object is unavailable, so
+        warrant-derived fields carry explicit ``"<malformed>"`` / ``None``
+        placeholders so operators can filter on this denial class in their
+        audit pipeline.
+        """
+        import time
+        latency_s = (time.perf_counter_ns() - start_ns) / 1e9 if start_ns else 0.0
+
+        if self._config.metrics is not None:
+            wf_type = getattr(info, "workflow_type", "")
+            self._config.metrics.record_denied(
+                tool=info.activity_type,
+                reason=reason,
+                workflow_type=wf_type,
+                latency_seconds=latency_s,
+            )
+
+        if not self._config.audit_deny or not self._config.audit_callback:
+            return
+
+        event = TemporalAuditEvent(
+            workflow_id=info.workflow_id,
+            workflow_type=info.workflow_type,
+            workflow_run_id=info.workflow_run_id,
+            activity_name=info.activity_type,
+            activity_id=info.activity_id,
+            task_queue=info.task_queue,
+            decision="DENY",
+            tool=info.activity_type,
+            arguments={},
+            warrant_id="<malformed>",
+            warrant_expires_at=None,
+            warrant_capabilities=[],
+            denial_reason=reason,
+            constraint_violated="malformed_warrant_header",
+            tenuo_version=self._version,
+        )
+
+        try:
+            self._config.audit_callback(event)
+        except Exception as e:
+            logger.error(
+                "Audit callback failed for malformed-warrant DENY event "
+                "(activity=%s, reason=%s): %s",
+                info.activity_type, reason, e, exc_info=True,
             )
 
     def _emit_denial_event(
