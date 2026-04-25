@@ -339,10 +339,6 @@ def test_preload_failure_for_env_resolver_raises(monkeypatch) -> None:
 
 def test_workflow_failure_exception_types_registered() -> None:
     """Tenuo domain exceptions are registered as workflow_failure_exception_types."""
-    sdk_params = inspect.signature(SimplePlugin.__init__).parameters
-    if "workflow_failure_exception_types" not in sdk_params:
-        pytest.skip("Installed temporalio does not support workflow_failure_exception_types.")
-
     from tenuo.temporal.exceptions import (
         ChainValidationError,
         KeyResolutionError,
