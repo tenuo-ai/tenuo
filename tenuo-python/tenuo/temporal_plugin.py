@@ -4,12 +4,9 @@ Temporal ``SimplePlugin`` integration.
 Registers Tenuo as a first-class plugin: client + worker interceptors and
 workflow sandbox passthrough for ``tenuo`` / ``tenuo_core`` (PyO3).
 
-Requires ``temporalio>=1.23`` (``SimplePlugin`` in ``temporalio.plugin``). SDKs
-differ: some expose a single ``interceptors=`` parameter, others
-``client_interceptors`` / ``worker_interceptors``. This module picks kwargs using
-``inspect.signature(SimplePlugin.__init__)`` so we always match the **installed**
-constructor (version numbers alone can mis-classify or go stale). Subclassing
-Temporal's interceptor bases keeps plugin filtering working on newer SDKs.
+Requires ``temporalio>=1.23`` (``SimplePlugin`` in ``temporalio.plugin``); the
+dependency floor is enforced in ``pyproject.toml``. Subclassing Temporal's
+interceptor bases keeps plugin filtering working on newer SDKs.
 
 Example::
 
@@ -40,7 +37,6 @@ client already had ``plugins=[plugin]`` — see :class:`TenuoTemporalPlugin`.
 from __future__ import annotations
 
 import dataclasses
-import inspect
 import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Optional
@@ -123,35 +119,19 @@ def _simple_plugin_kwargs(
     client_interceptor: TenuoClientInterceptor,
     worker_interceptor: TenuoWorkerInterceptor,
 ) -> dict[str, Any]:
-    """Build ``super().__init__(..., **kwargs)`` for the installed ``SimplePlugin`` shape."""
-    params = inspect.signature(SimplePlugin.__init__).parameters
-    has_unified = "interceptors" in params
-    has_split = (
-        "client_interceptors" in params and "worker_interceptors" in params
-    )
-    if has_unified and not has_split:
-        kwargs: dict[str, Any] = {
-            "interceptors": [client_interceptor, worker_interceptor]
-        }
-    elif has_split and not has_unified:
-        kwargs = {
-            "client_interceptors": [client_interceptor],
-            "worker_interceptors": [worker_interceptor],
-        }
-    elif has_unified:
-        kwargs = {"interceptors": [client_interceptor, worker_interceptor]}
-    else:
-        raise RuntimeError(
-            "Unsupported temporalio SimplePlugin: expected 'interceptors' or "
-            "('client_interceptors' and 'worker_interceptors') on "
-            "SimplePlugin.__init__. Upgrade temporalio or report this to Tenuo."
-        )
+    """Build ``super().__init__(..., **kwargs)`` for ``SimplePlugin`` (>=1.23).
 
-    if "workflow_failure_exception_types" in params:
-        kwargs["workflow_failure_exception_types"] = list(
+    Both ``interceptors`` and ``workflow_failure_exception_types`` are
+    available on the ``SimplePlugin`` constructor for every SDK version
+    we support (the ``temporalio>=1.23`` pin is enforced in
+    ``pyproject.toml`` and at import time in this module).
+    """
+    return {
+        "interceptors": [client_interceptor, worker_interceptor],
+        "workflow_failure_exception_types": list(
             _TENUO_WORKFLOW_FAILURE_EXCEPTION_TYPES
-        )
-    return kwargs
+        ),
+    }
 
 
 def _ensure_tenuo_workflow_runner(

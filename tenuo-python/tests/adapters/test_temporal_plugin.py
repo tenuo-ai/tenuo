@@ -60,12 +60,10 @@ def test_simple_plugin_kwargs_match_sdk_signature() -> None:
 def test_configure_worker_merges_interceptor_and_runner() -> None:
     ci = TenuoClientInterceptor()
     p = TenuoTemporalPlugin(_minimal_config(), client_interceptor=ci)
-    cfg: dict = {}
     # Unified ``interceptors=`` SimplePlugin reads the client's interceptor list when merging.
-    if "interceptors" in inspect.signature(SimplePlugin.__init__).parameters:
-        mock_client = MagicMock()
-        mock_client.config.return_value = {"interceptors": [ci]}
-        cfg["client"] = mock_client
+    mock_client = MagicMock()
+    mock_client.config.return_value = {"interceptors": [ci]}
+    cfg: dict = {"client": mock_client}
     out = p.configure_worker(cfg)
     inters = out.get("interceptors") or []
     assert len(inters) == 1
@@ -341,10 +339,6 @@ def test_preload_failure_for_env_resolver_raises(monkeypatch) -> None:
 
 def test_workflow_failure_exception_types_registered() -> None:
     """Tenuo domain exceptions are registered as workflow_failure_exception_types."""
-    sdk_params = inspect.signature(SimplePlugin.__init__).parameters
-    if "workflow_failure_exception_types" not in sdk_params:
-        pytest.skip("Installed temporalio does not support workflow_failure_exception_types.")
-
     from tenuo.temporal.exceptions import (
         ChainValidationError,
         KeyResolutionError,
