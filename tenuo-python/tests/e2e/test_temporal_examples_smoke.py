@@ -15,6 +15,7 @@ subprocess; see ``test_temporal_mcp_examples_smoke``.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,9 @@ def _load_example_module(script_name: str):
     spec = importlib.util.spec_from_file_location(unique, path)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
+    # Sandboxed workflows import definitions by ``__module__``; the loader name
+    # must exist in ``sys.modules`` or validation raises ModuleNotFoundError.
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 
