@@ -1,7 +1,7 @@
 """
 Validates that all example files stay in sync with the SDK.
 
-Three tiers of checks:
+Checks:
 
 1. **Syntax** - ast.parse() every example, catching broken code early.
 2. **Tenuo imports** - statically resolve every ``from tenuo import X`` and
@@ -10,6 +10,12 @@ Three tiers of checks:
    and mis-spelled symbols.
 3. **Deprecated patterns** - flag uses of retired APIs
    (Warrant.issue, from tenuo_core import, etc.) so they don't silently rot.
+4. **Temporal plugin hygiene** - ``TenuoPluginConfig(strict_mode=True)`` in an
+   example must pass ``activity_fns=`` (see ``test_strict_mode_has_activity_fns``).
+
+Runtime coverage for Temporal scripts lives in
+``tests/e2e/test_temporal_examples_smoke.py`` (``temporal_live`` marker,
+WorkflowEnvironment); this job only does static analysis.
 """
 
 from __future__ import annotations
@@ -166,7 +172,71 @@ def test_no_deprecated_apis(path: Path):
 
 
 # ---------------------------------------------------------------------------
-# 4. Prefer `from tenuo import` over `from tenuo_core import` in examples
+# 4. TenuoPluginConfig with strict_mode=True must include activity_fns
+# ---------------------------------------------------------------------------
+
+
+def _check_strict_mode_without_activity_fns(
+    tree: ast.Module,
+) -> List[Tuple[int, str]]:
+    """Return [(lineno, hint)] for TenuoPluginConfig(strict_mode=True) without activity_fns.
+
+    When strict_mode=True and the warrant has named field constraints, the plugin
+    needs activity_fns to resolve positional argument indices to real parameter names.
+    Omitting it causes a hard runtime error (TenuoContextError: PoP signing uses
+    positional keys arg0, arg1, ...).
+    """
+    hits: List[Tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = (
+            func.id
+            if isinstance(func, ast.Name)
+            else func.attr
+            if isinstance(func, ast.Attribute)
+            else None
+        )
+        if name != "TenuoPluginConfig":
+            continue
+
+        kw_names = {kw.arg for kw in node.keywords}
+        has_strict = any(
+            kw.arg == "strict_mode"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+            for kw in node.keywords
+        )
+        if has_strict and "activity_fns" not in kw_names:
+            hits.append(
+                (
+                    node.lineno,
+                    "TenuoPluginConfig(strict_mode=True) is missing activity_fns=; "
+                    "without it PoP signing falls back to positional arg names (arg0, arg1, ...) "
+                    "which breaks warrant constraint verification at runtime",
+                )
+            )
+    return hits
+
+
+@pytest.mark.parametrize("path", EXAMPLE_FILES, ids=[_rel(p) for p in EXAMPLE_FILES])
+def test_strict_mode_has_activity_fns(path: Path):
+    """TenuoPluginConfig(strict_mode=True) must always pass activity_fns=."""
+    source = path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(source, filename=str(path))
+    except SyntaxError:
+        pytest.skip("syntax error (covered by test_syntax)")
+
+    hits = _check_strict_mode_without_activity_fns(tree)
+    if hits:
+        lines = [f"  L{ln}: {hint}" for ln, hint in hits]
+        pytest.fail(f"{_rel(path)} has misconfigured TenuoPluginConfig:\n" + "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# 5. Prefer `from tenuo import` over `from tenuo_core import` in examples
 # ---------------------------------------------------------------------------
 
 

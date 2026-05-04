@@ -59,7 +59,7 @@ except ImportError:
     MCP_AVAILABLE = False
     SecureMCPClient = None  # type: ignore[misc, assignment]
 
-from tenuo import SigningKey, Subpath, Warrant
+from tenuo import Pattern, SigningKey, Warrant
 from tenuo.decorators import key_scope, warrant_scope
 from tenuo.temporal import (
     EnvKeyResolver,
@@ -86,6 +86,8 @@ logging.getLogger("temporalio.worker").setLevel(logging.ERROR)
 _ACTIVITY_MCP_CONTEXT: Dict[str, Any] = {}
 
 MSG_PREFIX = "demo/"
+# Glob prefix (not filesystem Subpath): ``Subpath`` roots must be absolute.
+_MSG_PATTERN = Pattern(f"{MSG_PREFIX}*")
 
 
 def _register_activity_mcp_context(
@@ -187,8 +189,8 @@ async def main() -> None:
     warrant_both = (
         Warrant.mint_builder()
         .holder(agent_key.public_key)
-        .capability("invoke_mcp_echo", message=Subpath(MSG_PREFIX))
-        .capability("safe_echo", message=Subpath(MSG_PREFIX))
+        .capability("invoke_mcp_echo", message=_MSG_PATTERN)
+        .capability("safe_echo", message=_MSG_PATTERN)
         .ttl(3600)
         .mint(control_key)
     )
@@ -197,7 +199,7 @@ async def main() -> None:
     warrant_temporal_only = (
         Warrant.mint_builder()
         .holder(agent_key.public_key)
-        .capability("invoke_mcp_echo", message=Subpath(MSG_PREFIX))
+        .capability("invoke_mcp_echo", message=_MSG_PATTERN)
         .ttl(3600)
         .mint(control_key)
     )
@@ -210,6 +212,7 @@ async def main() -> None:
             trusted_roots=[control_key.public_key],
             strict_mode=True,
             audit_callback=on_audit,
+            activity_fns=[invoke_mcp_echo],
         )
     )
     client = await Client.connect("localhost:7233", plugins=[plugin])
@@ -271,7 +274,7 @@ async def main() -> None:
         except WorkflowFailureError as e:
             logger.info("Workflow failed: %s", e.cause)
 
-        # --- Temporal denies (message outside Subpath) ---
+        # --- Temporal denies (message outside warrant prefix / Pattern) ---
         _register_activity_mcp_context(
             warrant=warrant_both,
             signing_key=agent_key,

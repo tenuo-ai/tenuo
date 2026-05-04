@@ -67,7 +67,7 @@ except ImportError:
     MCP_AVAILABLE = False
     SecureMCPClient = None  # type: ignore[misc, assignment]
 
-from tenuo import Exact, SigningKey, Subpath, Warrant
+from tenuo import Exact, Pattern, SigningKey, Warrant
 from tenuo.decorators import key_scope, warrant_scope
 from tenuo.temporal import (
     EnvKeyResolver,
@@ -177,6 +177,11 @@ def on_audit(event: TemporalAuditEvent) -> None:
         logger.warning("  DENY   %s: %s", event.tool, event.denial_reason)
 
 
+def _s3_key_prefix_pattern(prefix: str) -> Pattern:
+    """Glob for object keys under an S3 prefix (not a filesystem Subpath root)."""
+    return Pattern(prefix + "*")
+
+
 def _warrant_both(
     *,
     control_key: SigningKey,
@@ -184,18 +189,19 @@ def _warrant_both(
     bucket: str,
     key_prefix: str,
 ) -> Warrant:
+    key_pat = _s3_key_prefix_pattern(key_prefix)
     return (
         Warrant.mint_builder()
         .holder(agent_key.public_key)
         .capability(
             "read_s3_via_mcp",
             bucket=Exact(bucket),
-            key=Subpath(key_prefix),
+            key=key_pat,
         )
         .capability(
             "s3_get_object",
             bucket=Exact(bucket),
-            key=Subpath(key_prefix),
+            key=key_pat,
         )
         .ttl(3600)
         .mint(control_key)
@@ -248,7 +254,7 @@ async def main() -> None:
         .capability(
             "read_s3_via_mcp",
             bucket=Exact(BUCKET),
-            key=Subpath(TENANT_A_PREFIX),
+            key=_s3_key_prefix_pattern(TENANT_A_PREFIX),
         )
         .ttl(3600)
         .mint(control_key)
@@ -270,6 +276,7 @@ async def main() -> None:
             trusted_roots=[control_key.public_key],
             strict_mode=True,
             audit_callback=on_audit,
+            activity_fns=[read_s3_via_mcp],
         )
     )
     client = await Client.connect("localhost:7233", plugins=[plugin])

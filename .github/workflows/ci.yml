@@ -187,8 +187,14 @@ jobs:
           uv pip install --system langchain langchain-core langchain-openai langgraph
           uv pip install --system fastapi uvicorn pydantic PyYAML
           uv pip install --system types-PyYAML types-requests
-          # Install crewai for integration tests (Python 3.10+)
-          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system crewai || echo "Skipping crewai (requires Python 3.10+)"
+          # Install crewai for integration tests (Python 3.10+).
+          # Skip on Python 3.14 (all OS/arch): CrewAI/Chroma pydantic.v1 models raise
+          # ConfigError at import/collection time until upstream supports 3.14.
+          if [ "${{ matrix.python-version }}" = "3.14" ]; then
+            echo "Skipping crewai install on Python 3.14 (upstream collect failure)"
+          else
+            python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system crewai || echo "Skipping crewai (requires Python 3.10+)"
+          fi
           # MCP SDK requires Python 3.10+
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system mcp || echo "Skipping MCP (requires Python 3.10+)"
           # Temporal SDK for live integration tests (Python 3.12+ to match dedicated job).
@@ -215,7 +221,12 @@ jobs:
 
       - name: Test
         working-directory: tenuo-python
-        run: pytest -v -m "not temporal_live"
+        run: |
+          CREWAI_IGNORE=""
+          if [ "${{ matrix.python-version }}" = "3.14" ]; then
+            CREWAI_IGNORE="--ignore=tests/adapters/test_crewai.py --ignore=tests/adapters/test_crewai_adversarial.py --ignore=tests/adapters/test_crewai_integration.py"
+          fi
+          pytest -v -m "not temporal_live" $CREWAI_IGNORE
 
   # ============================================================================
   # MCP END-TO-END SMOKE
@@ -299,14 +310,14 @@ jobs:
           # Use development profile for faster CI builds (still validates correctness)
           maturin build
           uv pip install --system target/wheels/*.whl
-          uv pip install --system pytest pytest-asyncio pytest-timeout temporalio
+          uv pip install --system pytest pytest-asyncio pytest-timeout temporalio mcp
 
       - name: Run Temporal live and replay tests
         working-directory: tenuo-python
         timeout-minutes: 10  # Tests should complete in <5 minutes
         env:
           TEMPORAL_LIVE_TESTS: "1"
-        run: pytest tests/e2e/test_temporal_live.py tests/e2e/test_temporal_replay.py -v -m temporal_live --timeout=300
+        run: pytest tests/e2e/test_temporal_live.py tests/e2e/test_temporal_replay.py tests/e2e/test_temporal_examples_smoke.py -v -m temporal_live --timeout=300
 
   # ============================================================================
   # LANGCHAIN COMPATIBILITY
