@@ -44,6 +44,25 @@ def _load_example_module(script_name: str):
     return mod
 
 
+def _patch_example_client_connect(
+    mod: object,
+    monkeypatch: pytest.MonkeyPatch,
+    target_host: str,
+) -> None:
+    """Redirect ``mod.Client.connect(address, ...)`` to the test server's host.
+
+    ``Client.connect`` is a classmethod; the bound method only accepts
+    ``target_host`` plus keyword args — do not pass ``cls`` through to the real
+    implementation.
+    """
+    real_connect = TemporalClient.connect
+
+    async def _redirect_connect(_cls, _address: str, **kwargs):  # type: ignore[no-untyped-def]
+        return await real_connect(target_host, **kwargs)
+
+    monkeypatch.setattr(mod.Client, "connect", classmethod(_redirect_connect))
+
+
 @pytest.mark.temporal_live
 @pytest.mark.asyncio
 @pytest.mark.parametrize("script", CORE_TEMPORAL_SCRIPTS)
@@ -52,12 +71,7 @@ async def test_core_temporal_example_main_runs(script: str, monkeypatch: pytest.
 
     async with await WorkflowEnvironment.start_local() as env:
         target_host = env.client.service_client.config.target_host
-        real_connect = TemporalClient.connect
-
-        async def _redirect_connect(cls, address: str, *args, **kwargs):  # type: ignore[no-untyped-def]
-            return await real_connect(cls, target_host, *args, **kwargs)
-
-        monkeypatch.setattr(mod.Client, "connect", classmethod(_redirect_connect))
+        _patch_example_client_connect(mod, monkeypatch, target_host)
 
         await mod.main()
 
@@ -76,11 +90,6 @@ async def test_temporal_mcp_examples_smoke(script: str, monkeypatch: pytest.Monk
 
     async with await WorkflowEnvironment.start_local() as env:
         target_host = env.client.service_client.config.target_host
-        real_connect = TemporalClient.connect
-
-        async def _redirect_connect(cls, address: str, *args, **kwargs):  # type: ignore[no-untyped-def]
-            return await real_connect(cls, target_host, *args, **kwargs)
-
-        monkeypatch.setattr(mod.Client, "connect", classmethod(_redirect_connect))
+        _patch_example_client_connect(mod, monkeypatch, target_host)
 
         await mod.main()
