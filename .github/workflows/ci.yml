@@ -187,8 +187,14 @@ jobs:
           uv pip install --system langchain langchain-core langchain-openai langgraph
           uv pip install --system fastapi uvicorn pydantic PyYAML
           uv pip install --system types-PyYAML types-requests
-          # Install crewai for integration tests (Python 3.10+)
-          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system crewai || echo "Skipping crewai (requires Python 3.10+)"
+          # Install crewai for integration tests (Python 3.10+).
+          # Skip on ubuntu-24.04-arm + 3.14: CrewAI/Chroma pulls pydantic.v1 models that
+          # raise ConfigError at import/collection time on that runner (not a Tenuo bug).
+          if [ "${{ matrix.os }}" = "ubuntu-24.04-arm" ] && [ "${{ matrix.python-version }}" = "3.14" ]; then
+            echo "Skipping crewai install on ubuntu-24.04-arm / Python 3.14 (upstream collect failure)"
+          else
+            python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system crewai || echo "Skipping crewai (requires Python 3.10+)"
+          fi
           # MCP SDK requires Python 3.10+
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system mcp || echo "Skipping MCP (requires Python 3.10+)"
           # Temporal SDK for live integration tests (Python 3.12+ to match dedicated job).
@@ -215,7 +221,12 @@ jobs:
 
       - name: Test
         working-directory: tenuo-python
-        run: pytest -v -m "not temporal_live"
+        run: |
+          CREWAI_IGNORE=""
+          if [ "${{ matrix.os }}" = "ubuntu-24.04-arm" ] && [ "${{ matrix.python-version }}" = "3.14" ]; then
+            CREWAI_IGNORE="--ignore=tests/adapters/test_crewai.py --ignore=tests/adapters/test_crewai_adversarial.py --ignore=tests/adapters/test_crewai_integration.py"
+          fi
+          pytest -v -m "not temporal_live" $CREWAI_IGNORE
 
   # ============================================================================
   # MCP END-TO-END SMOKE
