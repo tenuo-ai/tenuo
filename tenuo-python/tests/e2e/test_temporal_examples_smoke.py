@@ -14,8 +14,7 @@ subprocess; see ``test_temporal_mcp_examples_smoke``.
 
 from __future__ import annotations
 
-import importlib.util
-import sys
+import importlib
 from pathlib import Path
 
 import pytest
@@ -34,18 +33,17 @@ MCP_LAYERING_SCRIPTS = ("temporal_mcp_layering.py", "cloud_iam_layering.py")
 
 
 def _load_example_module(script_name: str):
+    """Import ``examples/temporal/<stem>.py`` as a real package module.
+
+    Dynamic ``spec_from_file_location`` names do not survive Temporal's workflow
+    sandbox importer (see ``workflow_sandbox._importer``).  Package imports resolve
+    the same as ``python -m`` / pytest from ``tenuo-python/``.
+    """
     path = EXAMPLES_DIR / script_name
     if not path.is_file():
         pytest.fail(f"missing example script: {path}")
-    unique = f"_tenuo_smoke_example_{path.stem}"
-    spec = importlib.util.spec_from_file_location(unique, path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    # Sandboxed workflows import definitions by ``__module__``; the loader name
-    # must exist in ``sys.modules`` or validation raises ModuleNotFoundError.
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    stem = path.stem
+    return importlib.import_module(f"examples.temporal.{stem}")
 
 
 def _patch_example_client_connect(
