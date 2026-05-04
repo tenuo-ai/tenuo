@@ -270,6 +270,7 @@ async def main() -> None:
             trusted_roots=[control_key.public_key],
             strict_mode=True,
             audit_callback=on_audit,
+            activity_fns=[read_s3_via_mcp],
         )
     )
     client = await Client.connect("localhost:7233", plugins=[plugin])

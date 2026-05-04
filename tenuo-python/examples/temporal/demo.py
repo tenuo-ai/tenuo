@@ -214,6 +214,7 @@ async def main():
             audit_callback=on_audit,
             trusted_roots=[control_key.public_key],
             strict_mode=True,
+            activity_fns=[read_file, write_file, list_directory],
         )
     )
 

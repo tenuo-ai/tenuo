@@ -299,14 +299,14 @@ jobs:
           # Use development profile for faster CI builds (still validates correctness)
           maturin build
           uv pip install --system target/wheels/*.whl
-          uv pip install --system pytest pytest-asyncio pytest-timeout temporalio
+          uv pip install --system pytest pytest-asyncio pytest-timeout temporalio mcp
 
       - name: Run Temporal live and replay tests
         working-directory: tenuo-python
         timeout-minutes: 10  # Tests should complete in <5 minutes
         env:
           TEMPORAL_LIVE_TESTS: "1"
-        run: pytest tests/e2e/test_temporal_live.py tests/e2e/test_temporal_replay.py -v -m temporal_live --timeout=300
+        run: pytest tests/e2e/test_temporal_live.py tests/e2e/test_temporal_replay.py tests/e2e/test_temporal_examples_smoke.py -v -m temporal_live --timeout=300
 
   # ============================================================================
   # LANGCHAIN COMPATIBILITY
