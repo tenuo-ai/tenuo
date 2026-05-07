@@ -5,13 +5,21 @@ description: Warrant-based authorization for Temporal AI agent workflows
 
 # Tenuo integration
 
-Tenuo provides cryptographic authorization for AI agent workflows. Each Activity execution is verified against a signed **warrant** that specifies which tools the agent may call, with what arguments, and under whose delegation. Authorization is enforced transparently by the worker interceptor — activity definitions require no changes.
+## What is Temporal?
+
+[Temporal](https://temporal.io/) is a platform for **durable execution**: you implement **Workflows** (orchestration code whose progress is replayed from event history—surviving process restarts, retries, and long waits) and **Activities** (non-deterministic work such as tool calls, HTTP requests, or model inference). The service assigns tasks from **task queues** to **Workers**, persists workflow state, and gives you a standard way to build reliable, observable automation—including multi-step AI agents—without hand-rolling sagas or bespoke recovery logic.
+
+For a guided introduction, see [Understanding Temporal](https://learn.temporal.io/getting_started/).
+
+## How Tenuo fits
+
+Tenuo provides cryptographic authorization for AI agent workflows on Temporal. Each Activity execution is verified against a signed **warrant** that specifies which tools the agent may call, with what arguments, and under whose delegation. Authorization is enforced transparently by the worker interceptor — activity definitions require no changes.
 
 If you're building agentic systems on Temporal, Tenuo lets you ship agents that are constrained by design: an agent can only do what its warrant allows, and every action is cryptographically attributable to the entity that authorized it. Verification and Proof-of-Possession signing run in-process with no external service dependency at runtime.
 
 ## Prerequisites
 
-- Familiarity with Temporal. If you're new, start with [Understanding Temporal](https://learn.temporal.io/getting_started/) or the Temporal 101 course.
+- Familiarity with Temporal Workflows, Activities, and Workers ([What is Temporal](#what-is-temporal) above, or [Temporal learning resources](https://learn.temporal.io/getting_started/)).
 - A running Temporal cluster (local `temporal server start-dev` or Temporal Cloud).
 - Python 3.10+ (inherited from `temporalio>=1.23.0`, which provides `SimplePlugin`).
 

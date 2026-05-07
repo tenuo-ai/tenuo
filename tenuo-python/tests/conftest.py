@@ -17,12 +17,26 @@ per adapter (see ``test_adapter_audit_invariant.py``).
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable, List
 
 import pytest
 
 _TEMPORAL_E2E_FILES = frozenset({"test_temporal_live.py", "test_temporal_replay.py"})
+
+# CrewAI/Chroma may raise pydantic.v1 ConfigError at import time on Python 3.14
+# until upstream supports that interpreter. Omit these modules during collection
+# so local runs and CI never load them on 3.14 (see also ci.yml --ignore).
+collect_ignore: list[str] = []
+if sys.version_info >= (3, 14):
+    collect_ignore.extend(
+        [
+            "adapters/test_crewai.py",
+            "adapters/test_crewai_adversarial.py",
+            "adapters/test_crewai_integration.py",
+        ]
+    )
 
 
 def pytest_collection_modifyitems(config, items):
