@@ -12,9 +12,9 @@ This is a technical mapping for architects and reviewers, not a claim of formal 
 
 ## Scope and mechanism
 
-Before a tool runs, Tenuo checks a cryptographically signed **warrant**: a task-scoped capability token that names allowed tools, **argument constraints**, and **TTL**. The authorization decision is **offline-verifiable** against configured trust anchors; typical verification is on the order of tens of microseconds for a single check. Each allow, deny, or human approval yields a **signed receipt**, so audit evidence is produced by enforcement rather than by a separate logging pipeline.
+Before a tool runs, Tenuo checks a cryptographically signed **warrant**: a task-scoped capability token that names allowed tools, **argument constraints**, and **TTL**. The authorization decision is **offline-verifiable** against configured trust anchors; typical verification is tens of microseconds per check. Each allow, deny, or human approval yields a **signed receipt**, so audit evidence is produced by enforcement rather than by a separate logging pipeline.
 
-Most concrete harm from OWASP-style failures still appears as **tool calls**. Tenuo constrains *what* executes, not *why* the model proposed it—so prompt injection, poisoned memory, supply-chain influence, and misaligned planning all encounter the same boundary. The sections below highlight which part of the mechanism matters most per risk (constraints, delegation chain, receipts).
+Most concrete harm from OWASP-style failures appears as **tool calls**. Tenuo constrains *what* executes, not *why* the model proposed it—so prompt injection, poisoned memory, supply-chain influence, and misaligned planning all encounter the same boundary. The sections below highlight which part of the mechanism matters most per risk (constraints, delegation chain, receipts).
 
 For a spoken overview of this model, see [Unprompted 2025: cryptographic authorization for AI agents](https://www.youtube.com/watch?v=bw928cFShK4).
 
@@ -75,7 +75,7 @@ The sections below describe what Tenuo prevents or contains. Security reviewers 
 
 **Holder key custody.** Holders' private keys must be stored securely. A compromised holder key allows an attacker to sign valid Proof-of-Possession signatures for any warrant the holder legitimately holds, until those warrants expire. Tenuo recommends standard secret-management practices (enterprise vaults, cloud secret managers, KMS-backed signing) and supports rotation through warrant TTL. Short TTLs bound the impact of an undetected key compromise.
 
-**Integration discipline.** Tenuo enforces at the integration boundary you wire it into. If a tool dispatch happens outside a Tenuo-aware path (raw API call, untracked subprocess, custom client without the wrapper), the warrant is not checked on that path. Tenuo's guarantee is uniform when every tool dispatch flows through a supported integration: OpenAI (`GuardBuilder`), Anthropic, LangChain / LangGraph, CrewAI, MCP (`SecureMCPClient` / `SecureMCPServer`), Temporal (`TenuoTemporalPlugin`), A2A, FastAPI dependency. New integrations should preserve the same enforcement-at-dispatch property.
+**Integration discipline.** Tenuo enforces at the integration boundary you wire it into. If a tool dispatch happens outside a Tenuo-aware path (raw API call, untracked subprocess, custom client without the wrapper), the warrant is not checked on that path. Tenuo's guarantee is uniform when every tool dispatch flows through a supported integration: OpenAI (`GuardBuilder`), LangChain / LangGraph, CrewAI, MCP (`SecureMCPClient` / `SecureMCPServer`), Temporal (`TenuoTemporalPlugin`), A2A, FastAPI dependency. New integrations should preserve the same enforcement-at-dispatch property.
 
 **Fail-closed by default.** If verification cannot proceed (trust anchor unconfigured, signature malformed, warrant deserialization fails), Tenuo refuses to authorize. Misconfiguration produces denials, not silent bypass. The denial is logged with a structured reason so the misconfiguration is observable, not hidden.
 
@@ -99,7 +99,7 @@ Attackers manipulate agent instructions, objectives, or decision pathways throug
 
 A successful prompt injection still has to produce a tool call. The damage from EchoLeak-style exfiltration, unauthorized financial transfers, and forged internal communications flows through tool calls the warrant either authorizes or rejects. The hijack may succeed at the model layer; the damage does not, provided the warrant is task-scoped. Containment does not depend on detecting the attack.
 
-Every enforcement decision is recorded as a cryptographically signed receipt. If a hijack attempts an unauthorized action, the denial is logged with the attempted tool call, the holder identity, and a timestamp—giving incident response a forensic record of what was tried and where it was blocked.
+Every enforcement decision is recorded as a cryptographically signed receipt. If a hijack attempts an unauthorized action, the denial is logged with the attempted tool call, the holder identity, and a timestamp—giving incident responders a forensic record of what was tried and where it was blocked.
 
 ### Example
 
@@ -131,9 +131,9 @@ Agents misuse legitimate tools due to prompt manipulation, misalignment, or unsa
 
 ### How Tenuo helps
 
-Tenuo is most differentiated at the argument layer. RBAC and tool-list approaches authorize tool *names*, leaving argument misuse undefended. The tool is legitimate, the call is authorized at the name level, but the argument turns a benign read into data exfiltration or a benign write into infrastructure deletion. Tenuo enforces at the argument level, with eleven constraint types built around one principle: the constraint evaluator must parse arguments using the same semantics as the target system. Any gap between "constraint parser" and "target parser" is an attack surface.
+Tenuo is most differentiated at the argument layer. RBAC and tool-list approaches authorize tool *names*, leaving argument misuse undefended. The tool is legitimate, the call is authorized at the name level, but the argument turns a benign read into data exfiltration or a benign write into infrastructure deletion. Tenuo enforces at the argument level, with a constraint library built around one principle: the constraint evaluator must parse arguments using the same semantics as the target system. Any gap between "constraint parser" and "target parser" is an attack surface.
 
-Five of the eleven illustrate the principle:
+Five examples illustrate the principle:
 
 - `Subpath(...)`: path containment with normalization for traversal and encoding edge cases.
 - `UrlSafe(...)`: SSRF protection covering IPv6, link-local, and DNS rebinding.
@@ -220,6 +220,10 @@ Traditional enterprise IAM and cloud identity services handle workload identity 
 ### Standards connection
 
 The delegation and attenuation semantics are being standardized as [draft-niyikiza-oauth-attenuating-agent-tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/) in the IETF OAuth Working Group.
+
+### What Tenuo does not do
+
+Tenuo does not manage the issuance or storage of holder credentials; that belongs to your identity provider. A compromised holder key breaks the guarantee until warrants expire — see [Tenuo's own assumptions](#tenuos-own-assumptions) for key custody guidance.
 
 ---
 
@@ -400,7 +404,7 @@ Three properties the deployed baseline lacks:
 
 1. **Forensics by signature.** If a human approves something they shouldn't have, investigators do not reconstruct from logs. They verify the approval signature. The artifact names exactly which tool call was approved, by which key, at which timestamp.
 2. **Per-human accountability.** Approvals are tied to specific keys rather than shared accounts. There is no ambiguity about which human authorized a specific action.
-3. **Non-repudiation:** the cryptographic property that a signer cannot credibly deny having authorized an action. A human cannot disclaim an approval signed by their key.
+3. **Non-repudiation.** The cryptographic property that a signer cannot credibly deny having authorized an action. A human cannot disclaim an approval signed by their key.
 
 ### Comparison
 
@@ -449,7 +453,7 @@ Defense in depth typically stacks prevention controls per failure mode with enfo
 | Human trust exploitation | Output grounding, UI patterns | **Contained:** cryptographic approvals and non-repudiation |
 | Rogue agents | Behavioral monitoring | **Contained:** bounds the resulting action |
 
-Per-layer controls target specific failure modes; authorization at tool dispatch bounds effects when those controls miss. Use row-specific prevention together with enforcement on every tool path this document assumes.
+Per-layer controls target specific failure modes; authorization at tool dispatch bounds effects when those controls miss. Every decision in the table — allow, deny, or approval — also produces a signed receipt, so forensic coverage is a byproduct of enforcement rather than a separate concern.
 
 ---
 
