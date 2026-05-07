@@ -21,8 +21,8 @@ For a spoken overview of this model, see [Unprompted 2025: cryptographic authori
 ## How to read this document
 
 - **Orientation:** [Coverage at a glance](#coverage-at-a-glance) and [Where Tenuo fits in an agent security stack](#where-tenuo-fits-in-an-agent-security-stack).
-- **Per-risk detail:** ASI01–ASI10 use consistent headings (*How Tenuo helps*, *Comparison*, *What Tenuo does not do* where relevant).
-- **Before relying on guarantees:** read [Tenuo's own assumptions](#tenuos-own-assumptions).
+- **Per-risk detail:** ASI01–ASI10 use consistent headings (*How Tenuo helps*, *Comparison*, *Complementary controls* where relevant).
+- **Boundary conditions:** [Tenuo's own assumptions](#tenuos-own-assumptions) lists trust anchors, holder custody, integration discipline, and cryptographic choices.
 
 ## Contents
 
@@ -44,7 +44,7 @@ For a spoken overview of this model, see [Unprompted 2025: cryptographic authori
 
 ## Coverage at a glance
 
-We use three labels in this document. Each is defended by the corresponding section.
+We use three labels in this document. Each is defined in the corresponding section.
 
 - **Prevented:** Tenuo's mechanism rules out the failure mode within its scope.
 - **Contained:** The failure can occur upstream of Tenuo (model, memory, compromised dependency), but Tenuo bounds the resulting damage at the tool boundary.
@@ -69,7 +69,7 @@ We use three labels in this document. Each is defended by the corresponding sect
 
 ## Tenuo's own assumptions
 
-The sections below describe what Tenuo prevents or contains. Security reviewers also need to know what Tenuo itself assumes, requires, and what fails if those assumptions break.
+The sections below describe what Tenuo prevents or contains. These are the **boundary conditions**—what must hold for those guarantees to apply, and what breaks them if violated.
 
 **Trust anchors.** Verification depends on the configured trust anchors: the public keys of authorized warrant issuers (your control plane, Tenuo Cloud, or both). If an issuer's signing key is compromised, all warrants signed by it are forgeable until the trust anchor is rotated. Trust anchor rotation is supported and audit-logged; key custody for issuers is the most important operational responsibility.
 
@@ -85,7 +85,7 @@ The sections below describe what Tenuo prevents or contains. Security reviewers 
 
 **Cryptographic primitives.** Tenuo uses Ed25519 for signing and SHA-256 / BLAKE3 for argument digests. The cryptographic invariants and threat model are documented in [/security](https://tenuo.ai/security).
 
-If your environment requires additional guarantees (FIPS-validated cryptography, hardware-backed key custody, air-gapped issuance), those are deployment-time decisions. The open-source core supports the building blocks; the hardening profile depends on your environment.
+**Hardening profiles.** FIPS-validated cryptography, hardware-backed issuance, or air-gapped control planes layer on the open-source primitives documented in [/security](https://tenuo.ai/security)—they are deployment choices, not gaps in the core threat model.
 
 ---
 
@@ -117,9 +117,9 @@ client = (GuardBuilder(openai.OpenAI())
 
 Commercial prompt-injection detection tools address the manipulation itself, with effectiveness that varies by attack type. Tenuo addresses the action that results. The two are complementary: detection is probabilistic and depends on recognizing the attack; containment at dispatch is deterministic and does not.
 
-### What Tenuo does not do
+### Complementary controls
 
-Tenuo does not detect or block the injection. The model still processes the malicious input. Pair with a detection tool if your threat model requires both prevention and containment.
+Model-layer detection can shrink how often injections fire; **dispatch containment is deterministic either way**. Add detection when your threat model wants both fewer attempts and bounded outcomes.
 
 ---
 
@@ -178,9 +178,9 @@ The same shape applies to shell commands (`Shlex`), URLs (`UrlSafe`), and globs.
 
 Most agent-security tools address tool misuse through prompt-injection detection, hoping to catch it at the input layer. Tenuo addresses it at the tool boundary, which catches misuse regardless of whether it came from injection, hallucination, or misaligned planning.
 
-### What Tenuo does not do
+### Complementary controls
 
-Tenuo does not inspect the *semantics* of a call beyond the warrant constraints. If the warrant authorizes a valid but ultimately harmful action, Tenuo does not detect harm beyond the constraints. The right move is to narrow the warrant, not to ask Tenuo to second-guess it.
+**Semantic risk** inside warrant scope is a policy exercise: narrow capabilities, gate high-impact tools, and review workflows—Tenuo enforces the declaration precisely rather than inferring business intent from arguments.
 
 ---
 
@@ -221,9 +221,9 @@ Traditional enterprise IAM and cloud identity services handle workload identity 
 
 The delegation and attenuation semantics are being standardized as [draft-niyikiza-oauth-attenuating-agent-tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/) in the IETF OAuth Working Group.
 
-### What Tenuo does not do
+### Complementary controls
 
-Tenuo does not manage the issuance or storage of holder credentials; that belongs to your identity provider. A compromised holder key breaks the guarantee until warrants expire — see [Tenuo's own assumptions](#tenuos-own-assumptions) for key custody guidance.
+**Holder lifecycle** (provisioning, rotation, vault storage) stays with your IdP and secret-management stack. TTL and custody practices bound the impact of a stolen holder key—see [Tenuo's own assumptions](#tenuos-own-assumptions).
 
 ---
 
@@ -235,7 +235,7 @@ Compromised tools, descriptors, models, or agent personas influence execution. M
 
 ### How Tenuo helps
 
-Tenuo does not verify the integrity of components. It bounds what a compromised component can accomplish. The [GitHub MCP cross-repository data leakage](https://www.docker.com/blog/mcp-horror-stories-github-prompt-injection/) attack works precisely because the agent's GitHub token has authority over every accessible repository. A poisoned instruction can pivot the agent from reading a public issue to exfiltrating a private one. A warrant scoped to a single repo for a single task breaks the attack chain because the poisoned instruction produces a tool call the warrant did not authorize.
+Even when provenance is uncertain, **damage still flows through tool calls**—and warrants cap what those calls can do. The [GitHub MCP cross-repository data leakage](https://www.docker.com/blog/mcp-horror-stories-github-prompt-injection/) attack works because the agent's GitHub token spans every reachable repo; a poisoned instruction pivots from a public issue read to private-repo exfiltration. Scope the warrant to one repo for one task and the same poisoned instruction hits the enforcement wall instead.
 
 Receipts matter for post-incident work: the audit trail shows which tool calls the compromised component produced and which were denied—in signed evidence rather than reconstructed logs.
 
@@ -256,9 +256,9 @@ client = (GuardBuilder(openai.OpenAI())
 
 Supply-chain tools such as signed registries, descriptor verification, SBOM, Sigstore, in-toto, SLSA, and container/image attestation products address provenance: knowing what component you are running. Tenuo addresses impact: bounding what any component can do once it is running. These are complementary in defense-in-depth.
 
-### What Tenuo does not do
+### Complementary controls
 
-Tenuo does not verify the integrity of a tool's description, its implementation, or its runtime behavior. Pair with supply-chain integrity tools if your threat model requires provenance verification.
+**Provenance stacks**—signed descriptors, SBOM, Sigstore, image attestation—tell you *what* ran. Tenuo tells you what it was **allowed** to do. Combine them when you need both integrity proof and blast-radius caps.
 
 ---
 
@@ -268,7 +268,7 @@ Tenuo does not verify the integrity of a tool's description, its implementation,
 
 Agents generate or execute attacker-controlled code, often through natural-language instructions that unlock dangerous execution paths (AutoGPT-style RCE, MCP server command injection, coding-agent hooks).
 
-Tenuo's coverage here is partial. ASI05 is largely about agent-invoked execution paths: agents generating, modifying, installing, or running code and commands because untrusted instructions, repository content, package metadata, or tool output steered them there. Tenuo can restrict whether the agent may invoke execution-capable tools at all, which commands or wrappers are in scope, and what argument, path, URL, and TTL constraints apply. It does not make authorized code execution safe once execution begins. Runtime isolation still belongs in a sandbox.
+ASI05 spans **invocation policy** (whether and how execution-capable tools fire) and **runtime isolation** once code runs. Tenuo owns the first: agents steered by prompts, repos, packages, or tool output still meet warrants before `run_shell`, `npm_install`, `pytest`, or similar paths execute. Sandboxes, containers, and syscall filtering own safety **inside** an authorized execution.
 
 ### What Tenuo does
 
@@ -284,9 +284,9 @@ client = (GuardBuilder(openai.OpenAI())
 # argument are rejected. Execution outside /workspace/project-a is denied.
 ```
 
-### What Tenuo does not do
+### Complementary controls
 
-Tenuo does not sandbox execution or prove that authorized code is safe. A warrant can allow `run_tests` only in `/workspace/project-a` with a bounded timeout, but a malicious `pytest` plugin, package postinstall script, Makefile, compiler plugin, or sandbox escape can still execute inside that authorized runtime. OS-level sandboxing, container isolation, kernel-level syscall filtering, and microVM-style agent runtimes are the appropriate layer for execution isolation once a call is authorized.
+**After the warrant allows execution**, runtime isolation carries safety against malicious plugins, install hooks, build steps, and escapes. Layer OS sandboxes, containers, syscall filters, or microVM runtimes beneath authorized calls—Tenuo already filtered *whether* and *how* those calls were admitted.
 
 ### Comparison
 
@@ -310,9 +310,9 @@ The forensic angle matters here especially. Memory poisoning is often discovered
 
 Memory-validation and RAG-integrity tooling (including community efforts such as the OWASP AI Exchange) address poisoning at the source; mature commercial coverage is still uneven. Tenuo addresses downstream impact at tool dispatch, which complements source-side detection when it is partial or late.
 
-### What Tenuo does not do
+### Complementary controls
 
-Tenuo does not detect poisoned memory, validate RAG content, or check context integrity. Pair with memory-validation tools if your threat model requires detection of the poisoning itself.
+**Memory and RAG integrity tools** catch poisoning at the source when available. Tenuo caps **downstream actions** either way—poisoned context still has to pass the warrant to do harm.
 
 ---
 
@@ -356,13 +356,13 @@ result = await client.send_task(
 )
 ```
 
-### What Tenuo does not do
+### Complementary controls
 
-TLS secures the transport; Tenuo secures the authority presented over that transport. A misconfigured trust anchor (trusting the wrong issuer) or a compromised holder key breaks the guarantee. See [Tenuo's own assumptions](#tenuos-own-assumptions) for the full list.
+**TLS** protects the channel; **warrants** authenticate the capability payload. Misconfigured trust anchors or compromised holder keys break the chain—see [Tenuo's own assumptions](#tenuos-own-assumptions).
 
 ### Comparison
 
-Most inter-agent protocols rely on TLS for transport security and assume that agents are trustworthy at the application layer. Adjacent capability-token systems include Macaroons, Biscuit, GNAP, RFC 9396 RAR, and SPIFFE/SPIRE for workload identity without attenuation. Combining chained delegation, offline verification at invocation time, argument-level constraints, and semantics aimed at multi-agent workflows is still uncommon in deployed agent stacks.
+Most inter-agent protocols rely on TLS for transport security and assume that agents are trustworthy at the application layer. Adjacent capability-token systems include Macaroons, Biscuit, GNAP, RFC 9396 RAR, and SPIFFE/SPIRE for workload identity without attenuation. Chained delegation with offline verification, argument-level constraints, and multi-agent semantics is **still rare as a single package** in production agent stacks—that gap is what Tenuo targets.
 
 ---
 
@@ -384,9 +384,9 @@ Monotonic attenuation is the structural defense. A derived warrant cannot exceed
 
 Anomaly detection and rate limiting in observability stacks detect cascades after they begin. They do not prevent expansion by themselves. Tenuo limits how far authority can spread, regardless of whether detection fires in time.
 
-### What Tenuo does not do
+### Complementary controls
 
-Tenuo does not detect cascades in real time and does not circuit-break on anomaly signals. Pair with behavioral monitoring for early detection. Tenuo bounds the cascade; observability tells you it is happening.
+**Observability** (rate limits, anomaly detection, circuit breakers) surfaces cascades in flight. **Monotonic attenuation** caps how far authority propagates regardless—detection and structural bounds compose cleanly.
 
 ---
 
@@ -410,9 +410,9 @@ Three properties the deployed baseline lacks:
 
 The usual baseline for ASI09 is presentation-layer controls: output grounding, source attribution, confidence indicators, and UI patterns that highlight high-risk actions in hosted chat and agent products. Those patterns improve decisions but typically produce no cryptographic artifact when the human is deceived. Tenuo adds a verifiable approval binding where integrated, which gives reviewers evidence of exactly what was approved even when judgment was manipulated.
 
-### What Tenuo does not do
+### Complementary controls
 
-Tenuo does not prevent the deception itself. If an agent presents misleading information to a human, Tenuo does not detect the misleading framing. Output grounding and presentation-layer controls are the right complementary layer.
+**Grounding, attribution, and UX patterns** steer humans before approval. Where integration exists, Tenuo adds **cryptographically bound approvals**—reviewers get tamper-evident proof of what they authorized even when framing was misleading.
 
 ---
 
@@ -430,9 +430,9 @@ From Tenuo's perspective, containment does not require knowing *why* the agent d
 
 The realistic baseline for ASI10 is behavioral monitoring, anomaly detection, drift metrics, and alignment research. Behavioral monitoring detects rogue patterns after the agent has already acted; alignment is a long-term prevention approach. Tenuo provides containment at the action boundary, bounding the action before damage rather than after detection.
 
-### What Tenuo does not do
+### Complementary controls
 
-Tenuo does not detect rogue behavior and does not distinguish a rogue tool call from a legitimate one within warrant scope. Pair with behavioral monitoring to identify the divergence; Tenuo bounds what a rogue agent can do while detection works.
+**Behavioral monitoring and drift metrics** flag misalignment early. Within warrant scope, calls look the same to enforcement—by design—while **scoped capabilities** keep rogue agents from expanding blast radius during investigation.
 
 ---
 
@@ -443,12 +443,12 @@ Defense in depth typically stacks prevention controls per failure mode with enfo
 | Failure origin | Per-layer prevention | What Tenuo adds |
 |----------------|---------------------|-----------------|
 | Prompt injection | Prompt-injection detection | **Contained:** bounds the resulting action |
-| Tool misuse | (no comparable layer) | **Prevented** at argument level |
+| Tool misuse | Sparse native argument enforcement | **Prevented** at argument level |
 | Credential abuse | NHI management, IAM, SPIFFE | **Prevented:** attenuation, holder binding |
 | Supply chain | Signed registries, SBOM | **Contained:** bounds the resulting action |
 | Code execution | Sandboxing, containers | **Partial:** execution-tool authorization and argument constraints; no sandboxing |
 | Memory poisoning | Context validation | **Contained:** bounds the resulting action |
-| Inter-agent spoofing | (no comparable layer) | **Prevented:** cryptographic identity + chain |
+| Inter-agent spoofing | TLS + implicit trust at app layer | **Prevented:** cryptographic identity + chain |
 | Cascading failures | Anomaly detection | **Prevented:** monotonic attenuation |
 | Human trust exploitation | Output grounding, UI patterns | **Contained:** cryptographic approvals and non-repudiation |
 | Rogue agents | Behavioral monitoring | **Contained:** bounds the resulting action |

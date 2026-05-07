@@ -2,7 +2,7 @@
 
 Tenuo is a task-scoped authorization layer for AI agents that cryptographically enforces least privilege at the tool boundary. This document analyzes how Tenuo's capabilities address specific articles of the EU Artificial Intelligence Act, particularly for organizations developing high-risk AI systems.
 
-This is a technical analysis, not legal advice. EU AI Act compliance encompasses technical, organizational, and procedural requirements that vary by deployment context. Seek specialized legal counsel for compliance strategy.
+This document is for **engineering and risk teams** mapping controls to EU AI Act articles. Full compliance programs include legal interpretation, governance, and conformity assessment outside our scope here—the focus is what **Tenuo enforces at execution time** and how that maps to the Act.
 
 **Related:** [OWASP Top 10 for Agentic Applications mapping](./owasp.md) · [Thesis / framing](./thesis.md) · [Related work](./related-work.md)
 
@@ -12,7 +12,7 @@ This is a technical analysis, not legal advice. EU AI Act compliance encompasses
 
 - **Compliance officers and risk managers:** start with [EU AI Act compliance framework](#eu-ai-act-compliance-framework) and [Contribution summary](#contribution-summary).
 - **Technical architects integrating Tenuo:** start with [Article 9](#article-9-risk-management-system) and [Implementation scenario](#implementation-scenario-recruitment-ai).
-- **Legal counsel doing gap analysis:** each per-article section has a "What Tenuo does not do" subsection that defines the boundary between what Tenuo provides technically and what requires organizational or procedural measures.
+- **Legal counsel doing gap analysis:** **Beyond execution enforcement** (Articles 9–12, 15, 72) separates governance and adjacent systems from the tool boundary; **Articles 13–14** state the same split inside *How Tenuo helps*.
 
 ## Contents
 
@@ -106,6 +106,10 @@ with mint_sync(
 # and cannot extend its own TTL.
 ```
 
+### Beyond execution enforcement
+
+Risk identification, acceptance criteria, and written policy are **your** program. Tenuo **materializes** that policy as warrants and **enforces** it on every tool call—so once you decide what must be allowed or forbidden, it stays true regardless of model behavior.
+
 ### Compliance mapping
 
 | Article | Addressed |
@@ -113,10 +117,6 @@ with mint_sync(
 | 9(2)(a) | Task scoping identifies which operations pose risks; boundaries are explicit |
 | 9(2)(b) | Warrant constraints prevent foreseeable misuse scenarios by construction |
 | 9(5)(a) | Risk elimination through architectural design rather than post-hoc detection |
-
-### What Tenuo does not do
-
-Tenuo does not substitute for a risk assessment process. An organization must still identify what risks apply to their specific deployment, determine which operations require what constraints, and document those decisions. Tenuo enforces the resulting policy; it does not produce it.
 
 ---
 
@@ -128,11 +128,11 @@ Article 10 mandates that training, validation, and testing datasets meet quality
 
 ### How Tenuo helps
 
-Tenuo's contribution here is operational rather than foundational. `Subpath` constraints limit which data paths an agent can access in production, preventing access to sensitive or irrelevant data. Every data access operation produces a signed receipt, supporting audit of what data was accessed, when, and under which authorization. The `Subpath("/data/training")` pattern from the Article 9 example applies directly: any agent scoped to that path cannot reach production data regardless of what instructions it receives.
+Article 10 is largely **dataset governance**; Tenuo owns **production access**. `Subpath` and related constraints fence which paths and resources an agent can touch at runtime; every access attempt yields a **signed receipt** (who, what path, under which warrant). The `Subpath("/data/training")` pattern from the Article 9 example applies directly: an agent scoped to training data **cannot** pivot into production paths regardless of instructions.
 
-### What Tenuo does not do
+### Beyond execution enforcement
 
-Article 10's core requirements — dataset quality, bias testing, and representativeness — must be addressed through separate data governance frameworks. Tenuo provides operational data access controls and an audit trail; it does not validate dataset properties.
+Dataset quality, bias testing, and representativeness stay in your **ML/data governance** stack. Tenuo makes sure authorized agents **only** touch the data shapes you encoded—and proves it in the receipt log.
 
 ### Compliance mapping
 
@@ -168,9 +168,9 @@ Technical Documentation (Annex IV - Relevant Items)
     Warrant revocation procedures
 ```
 
-### What Tenuo does not do
+### Beyond execution enforcement
 
-Tenuo does not produce the full Annex IV documentation package. Accuracy specifications, intended purpose definitions, data governance records, and conformity assessment evidence must be produced separately.
+Complete Annex IV packs add intended-purpose narratives, accuracy specs, data-governance records, and conformity evidence. Tenuo contributes **machine-readable authorization design** (warrants, chains, TTL)—the security-architecture slice auditors expect alongside those artifacts.
 
 ### Compliance mapping
 
@@ -193,9 +193,9 @@ Every authorization decision is a cryptographically signed receipt: every allow,
 
 This covers the authorization dimension of Article 12 automatically. Unlike a separate audit pipeline, the authorization log cannot be selectively disabled without disabling enforcement — there is no logging path to misconfigure independently.
 
-### What Tenuo does not do
+### Beyond execution enforcement
 
-Article 12 also requires logging of model inputs and outputs, training data references, and accuracy metrics over time. Tenuo does not capture model-layer events. A separate logging pipeline is required for those. Tenuo's records complement that pipeline by providing the authorization layer's audit trail.
+Article 12 also expects **model-layer** telemetry—inputs, outputs, training references, accuracy trends. Run that alongside Tenuo: your authorization ledger is **complete for enforcement**; pipe model observability from your existing ML platform.
 
 ### Compliance mapping
 
@@ -216,7 +216,7 @@ Article 13 requires sufficient transparency for deployers to interpret system ou
 
 Capability specifications document what operations the system can perform and under what constraints. Deployers can inspect the warrant structure to understand what the system is authorized to do before it executes. The delegation chain makes the authority structure explicit: who authorized what, to whom, for how long. Because authorization is a precondition of execution, this transparency is complete — there is no gap between what the warrant declares and what the system can actually do.
 
-**Important:** Full Article 13 compliance requires capability specifications plus comprehensive instructions for use, including intended purpose and prohibited uses, known limitations and failure modes, and human oversight guidance. Tenuo provides the technical transparency substrate; the instructions-for-use document must be produced separately.
+**Instructions for use** (purpose, prohibited uses, limitations, oversight guidance) ship as your deployer-facing docs. Warrant structure gives those claims **teeth**: declared capabilities match what can actually run—no shadow permissions.
 
 ### Compliance mapping
 
@@ -240,7 +240,7 @@ Explicit capability definitions enable overseers to understand precisely what th
 
 For actions requiring human authorization, Tenuo supports cryptographic approval artifacts: a human approval is a signed receipt binding a specific tool call to a specific key, verifiable offline. This gives overseers a reliable record of what they approved and prevents post-hoc repudiation.
 
-**Important:** Full Article 14 compliance requires Tenuo plus organizational measures: operational procedures, alert systems, UI and workflow design, and deployer training. Tenuo provides the technical foundation; oversight requires people and process.
+**Human oversight** still needs runbooks, alerts, UX, and training. Tenuo supplies **hard stops** at the tool layer—revocation, TTL, scoped capabilities, and cryptographically bound approvals—so oversight teams intervene against a deterministic boundary, not a moving ambient credential.
 
 ### Compliance mapping
 
@@ -287,11 +287,11 @@ client = (GuardBuilder(openai.OpenAI())
 
 ### What Tenuo does for 15(1)-(4)
 
-Articles 15(1)-(4) cover general accuracy, robustness, and cybersecurity: the system should perform consistently, degrade gracefully, and resist non-AI-specific attacks. Tenuo contributes indirectly here — bounded operations reduce the blast radius of failures, and fail-closed enforcement prevents silent misbehavior — but the primary compliance mechanisms for 15(1)-(4) are model testing, network security, and infrastructure hardening.
+Articles 15(1)-(4) cover general accuracy, robustness, and cybersecurity: consistent performance, graceful degradation, and resistance to conventional attacks. **Tenuo shrinks blast radius**—every tool path is explicitly authorized and receipts make silent misuse visible—while you continue **model QA, infra hardening, and network controls** as the primary levers for 15(1)-(4).
 
-### What Tenuo does not do
+### Beyond execution enforcement
 
-Tenuo does not improve the model's inherent accuracy or robustness. It does not provide network-level security, infrastructure hardening, or model robustness testing. It does not detect adversarial examples before they reach the model — it contains the damage after the model processes them.
+Model accuracy work, adversarial-input research, perimeter defense, and pentesting remain standard practice. Tenuo ensures that when those layers slip, **effects still hit the warrant wall** instead of silent lateral movement through tools.
 
 ### Compliance mapping
 
@@ -312,9 +312,9 @@ Article 72 mandates providers establish post-market monitoring systems that acti
 
 All warrant delegations and tool executions produce cryptographically recorded receipts: who, when, under what authority, and what operation was attempted or blocked. Attempts to exceed warrant scope are blocked and logged, enabling detection of attack attempts or system misbehavior. This authorization-layer audit trail feeds directly into post-market monitoring analysis.
 
-### What Tenuo does not do
+### Beyond execution enforcement
 
-Tenuo records authorization events, not performance data (accuracy rates, error rates, output quality metrics). A separate collection mechanism is required for model-layer performance monitoring. Tenuo's records are one input to the monitoring system, not the monitoring system itself.
+Product-quality metrics—accuracy drift, error rates, output scoring—flow from your ML observability stack. Tenuo feeds post-market programs **authorization intelligence**: denied escalations, delegation anomalies, and tamper-evident proof of what was attempted under which authority.
 
 ### Compliance mapping
 
@@ -328,23 +328,23 @@ Tenuo records authorization events, not performance data (accuracy rates, error 
 
 ## Contribution summary
 
-| EU AI Act Article | Tenuo contribution | Level | Additional measures required |
+| EU AI Act Article | Tenuo contribution | Level | Typical program complements |
 |-------------------|--------------------|-------|------------------------------|
 | Article 9 (Risk Management) | Task-scoped authority, TTL, deny-by-default | Core | Risk assessment process, testing procedures |
-| Article 10 (Data Governance) | Operational data access control | Complementary | Dataset quality management, bias testing |
-| Article 11 (Technical Documentation) | Security architecture documentation | Supporting | Complete Annex IV documentation |
-| Article 12 (Automatic Logging) | Cryptographic audit trail from enforcement | Supporting | Model input/output logging, performance metrics |
-| Article 13 (Transparency) | Capability specifications, delegation tracking | Supporting | Instructions for use, performance metrics |
-| Article 14 (Human Oversight) | Explicit capabilities, intervention mechanisms | Supporting | UI/workflows, alerts, deployer training |
-| Article 15(5) (AI-specific cybersecurity) | Execution-layer enforcement, prompt injection defense | Core | -- |
-| Article 15(1)-(4) (Robustness/accuracy) | Bounded operations, fail-closed enforcement | Supporting | Model robustness testing, network security |
-| Article 72 (Post-Market Monitoring) | Security event logs, anomaly detection | Supporting | Performance data collection, analysis framework |
+| Article 10 (Data Governance) | Runtime data access control, receipts | Complementary | Dataset quality management, bias testing |
+| Article 11 (Technical Documentation) | Machine-readable authorization design | Supporting | Full Annex IV narrative & conformity package |
+| Article 12 (Automatic Logging) | Cryptographic audit trail from enforcement | Supporting | Model I/O logging, performance metrics |
+| Article 13 (Transparency) | Capability specs tied to execution | Supporting | Instructions for use, performance disclosures |
+| Article 14 (Human Oversight) | Explicit capabilities, cryptographic approvals | Supporting | UI/workflows, alerts, deployer training |
+| Article 15(5) (AI-specific cybersecurity) | Execution-layer enforcement, prompt injection defense | Core | — |
+| Article 15(1)-(4) (Robustness/accuracy) | Bounded blast radius, fail-closed enforcement | Supporting | Model robustness testing, network security |
+| Article 72 (Post-Market Monitoring) | Authorization intelligence for monitoring | Supporting | Performance analytics, incident workflows |
 
 **Levels:**
 
-- **Core:** Tenuo directly addresses the fundamental technical requirement of the article or sub-clause.
-- **Supporting:** Tenuo provides essential technical foundation; organizational measures are required for full compliance.
-- **Complementary:** Tenuo enhances operational controls; primary compliance through other measures.
+- **Core:** Tenuo carries the primary technical control named in the article or sub-clause.
+- **Supporting:** Tenuo supplies hard guarantees at the execution boundary; rolling **full** regulatory packaging still layers governance and documentation around it.
+- **Complementary:** The article’s headline obligations sit elsewhere; Tenuo **strengthens** operational reality where agents touch data and tools.
 
 ---
 
