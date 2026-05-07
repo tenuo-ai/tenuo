@@ -73,7 +73,7 @@ The sections below describe what Tenuo prevents or contains. Security reviewers 
 
 **Trust anchors.** Verification depends on the configured trust anchors: the public keys of authorized warrant issuers (your control plane, Tenuo Cloud, or both). If an issuer's signing key is compromised, all warrants signed by it are forgeable until the trust anchor is rotated. Trust anchor rotation is supported and audit-logged; key custody for issuers is the most important operational responsibility.
 
-**Holder key custody.** Holders' private keys must be stored securely. A compromised holder key allows an attacker to sign valid Proof-of-Possession signatures for any warrant the holder legitimately holds, until those warrants expire. Tenuo recommends standard secret-management practices (HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, KMS-backed signing) and supports rotation through warrant TTL. Short TTLs bound the impact of an undetected key compromise.
+**Holder key custody.** Holders' private keys must be stored securely. A compromised holder key allows an attacker to sign valid Proof-of-Possession signatures for any warrant the holder legitimately holds, until those warrants expire. Tenuo recommends standard secret-management practices (enterprise vaults, cloud secret managers, KMS-backed signing) and supports rotation through warrant TTL. Short TTLs bound the impact of an undetected key compromise.
 
 **Integration discipline.** Tenuo enforces at the integration boundary you wire it into. If a tool dispatch happens outside a Tenuo-aware path (raw API call, untracked subprocess, custom client without the wrapper), the warrant is not checked on that path. Tenuo's guarantee is uniform when every tool dispatch flows through a supported integration: OpenAI (`GuardBuilder`), Anthropic, LangChain / LangGraph, CrewAI, MCP (`SecureMCPClient` / `SecureMCPServer`), Temporal (`TenuoTemporalPlugin`), A2A, FastAPI dependency. New integrations should preserve the same enforcement-at-dispatch property.
 
@@ -115,7 +115,7 @@ client = (GuardBuilder(openai.OpenAI())
 
 ### Comparison
 
-Prompt-injection detection (Lakera, Pillar Security, Prompt Security) addresses the manipulation itself, with detection rates that vary by attack type. Tenuo addresses the action that results. These are complementary: detection is probabilistic and depends on recognizing the attack; containment is deterministic and does not.
+Commercial prompt-injection detection tools address the manipulation itself, with effectiveness that varies by attack type. Tenuo addresses the action that results. The two are complementary: detection is probabilistic and depends on recognizing the attack; containment at dispatch is deterministic and does not.
 
 ### What Tenuo does not do
 
@@ -215,7 +215,7 @@ with mint_sync(
 
 ### Comparison
 
-Traditional IAM (Okta, Auth0, AWS IAM) handles workload identity but not task-level delegation or attenuation. Non-Human Identity vendors (Astrix, Entro, Clutch) track machine credentials but do not bound what the credential holder can do for a specific task. SPIFFE/SPIRE handles workload identity attestation but not capability attenuation. Tenuo is the delegation-and-attenuation layer that identity systems lack.
+Traditional enterprise IAM and cloud identity services handle workload identity but not task-level delegation or attenuation. Non-human identity (NHI) products typically track machine credentials but do not structurally bound what the credential holder may do for a specific task. SPIFFE/SPIRE handles workload identity attestation but not capability attenuation. Tenuo supplies the delegation-and-attenuation layer those stacks omit.
 
 ### Standards connection
 
@@ -250,7 +250,7 @@ client = (GuardBuilder(openai.OpenAI())
 
 ### Comparison
 
-Supply-chain tools such as signed registries, descriptor verification, SBOM, Sigstore, in-toto, SLSA, and Anchore address provenance: knowing what component you are running. Tenuo addresses impact: bounding what any component can do once it is running. These are complementary in defense-in-depth.
+Supply-chain tools such as signed registries, descriptor verification, SBOM, Sigstore, in-toto, SLSA, and container/image attestation products address provenance: knowing what component you are running. Tenuo addresses impact: bounding what any component can do once it is running. These are complementary in defense-in-depth.
 
 ### What Tenuo does not do
 
@@ -282,7 +282,7 @@ client = (GuardBuilder(openai.OpenAI())
 
 ### What Tenuo does not do
 
-Tenuo does not sandbox execution or prove that authorized code is safe. A warrant can allow `run_tests` only in `/workspace/project-a` with a bounded timeout, but a malicious `pytest` plugin, package postinstall script, Makefile, compiler plugin, or sandbox escape can still execute inside that authorized runtime. OS-level sandboxing, container isolation, and kernel-level syscall filtering (Anthropic's Sandbox Runtime Tool, gVisor, Firecracker, microVMs) are the appropriate layer for execution isolation.
+Tenuo does not sandbox execution or prove that authorized code is safe. A warrant can allow `run_tests` only in `/workspace/project-a` with a bounded timeout, but a malicious `pytest` plugin, package postinstall script, Makefile, compiler plugin, or sandbox escape can still execute inside that authorized runtime. OS-level sandboxing, container isolation, kernel-level syscall filtering, and microVM-style agent runtimes are the appropriate layer for execution isolation once a call is authorized.
 
 ### Comparison
 
@@ -304,7 +304,7 @@ The forensic angle matters here especially. Memory poisoning is often discovered
 
 ### Comparison
 
-Memory-validation and RAG-integrity tools (Pillar Security, Lakera, projects in the OWASP AI Exchange) address poisoning at the source. Detection in this category is an emerging vendor area where the threat models are still being refined. Tenuo addresses the impact directly, which complements detection wherever detection is partial or late.
+Memory-validation and RAG-integrity tooling (including community efforts such as the OWASP AI Exchange) address poisoning at the source; mature commercial coverage is still uneven. Tenuo addresses downstream impact at tool dispatch, which complements source-side detection when it is partial or late.
 
 ### What Tenuo does not do
 
@@ -358,7 +358,7 @@ TLS secures the transport; Tenuo secures the authority presented over that trans
 
 ### Comparison
 
-Most inter-agent protocols rely on TLS for transport security and assume that agents are trustworthy at the application layer. Adjacent capability-token systems include Macaroons (Google, 2014), Biscuit (Cloudflare/Tarides), GNAP (IETF), RFC 9396 RAR (IETF, 2023), and SPIFFE/SPIRE for workload identity without attenuation. Combining chained delegation, offline verification at invocation time, argument-level constraints, and semantics aimed at multi-agent workflows is still uncommon in deployed agent stacks.
+Most inter-agent protocols rely on TLS for transport security and assume that agents are trustworthy at the application layer. Adjacent capability-token systems include Macaroons, Biscuit, GNAP, RFC 9396 RAR, and SPIFFE/SPIRE for workload identity without attenuation. Combining chained delegation, offline verification at invocation time, argument-level constraints, and semantics aimed at multi-agent workflows is still uncommon in deployed agent stacks.
 
 ---
 
@@ -378,7 +378,7 @@ Monotonic attenuation is the structural defense. A derived warrant cannot exceed
 
 ### Comparison
 
-Anomaly detection and rate limiting at the observability layer (Datadog, Splunk, Honeycomb) detect cascades after they begin. They do not prevent expansion by themselves. Tenuo limits how far authority can spread, regardless of whether detection fires in time.
+Anomaly detection and rate limiting in observability stacks detect cascades after they begin. They do not prevent expansion by themselves. Tenuo limits how far authority can spread, regardless of whether detection fires in time.
 
 ### What Tenuo does not do
 
@@ -404,7 +404,7 @@ Three properties the deployed baseline lacks:
 
 ### Comparison
 
-The deployed baseline for ASI09 is presentation-layer controls: output grounding, source attribution, confidence indicators, and UI patterns that highlight high-risk actions, such as Anthropic's tool-use UX, OpenAI Operator, and vendor-built approval UIs. These help humans make better decisions but produce no cryptographic artifact when the human is deceived. Tenuo adds that artifact, which gives reviewers evidence of exactly what was approved even when the human judgment was manipulated.
+The usual baseline for ASI09 is presentation-layer controls: output grounding, source attribution, confidence indicators, and UI patterns that highlight high-risk actions in hosted chat and agent products. Those patterns improve decisions but typically produce no cryptographic artifact when the human is deceived. Tenuo adds a verifiable approval binding where integrated, which gives reviewers evidence of exactly what was approved even when judgment was manipulated.
 
 ### What Tenuo does not do
 
