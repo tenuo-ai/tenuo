@@ -2,9 +2,7 @@
 
 Tenuo is a task-scoped authorization layer for AI agents that cryptographically enforces least privilege at the tool boundary. This document analyzes how Tenuo's capabilities address specific articles of the EU Artificial Intelligence Act, particularly for organizations developing high-risk AI systems.
 
-This document is for **engineering and risk teams** mapping controls to EU AI Act articles. Full compliance programs include legal interpretation, governance, and conformity assessment outside our scope here—the focus is what **Tenuo enforces at execution time** and how that maps to the Act.
-
-**Related:** [OWASP Top 10 for Agentic Applications mapping](./owasp.md) · [Thesis / framing](./thesis.md) · [Related work](./related-work.md)
+This document is for **engineering and risk teams** mapping controls to EU AI Act articles. Full compliance programs still cover legal interpretation, governance, and conformity assessment; this page focuses on what **Tenuo enforces at execution time** and how that maps to the Act.
 
 ---
 
