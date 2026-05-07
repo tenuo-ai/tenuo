@@ -5,8 +5,11 @@ Commands:
     tenuo init        - Initialize a new Tenuo project
     tenuo mint        - Create a test warrant
     tenuo decode      - Decode and inspect a warrant
-    tenuo validate    - Check if a tool call would be authorized
+    tenuo validate    - Check if a tool call would be authorized (expiry, tool, constraints)
     tenuo discover    - Analyze logs and generate capability definitions
+    tenuo doctor      - Check installation and optional remote A2A agent
+    tenuo version     - Print package versions
+    tenuo helper      - Quick reference for common commands
 
 Usage:
     tenuo init
@@ -22,6 +25,87 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
+
+
+def _warrant_tools_list(warrant: Any) -> List[str]:
+    """Return authorized tool names; empty if issuer warrant or missing tools."""
+    tools = getattr(warrant, "tools", None)
+    if tools is None:
+        return []
+    return list(tools)
+
+
+def format_cli_version_line() -> str:
+    """Single-line version for ``tenuo -V`` / ``tenuo --version``."""
+    try:
+        import tenuo as tenuo_pkg
+
+        sdk_ver = getattr(tenuo_pkg, "__version__", "?")
+    except ImportError:
+        sdk_ver = "?"
+    try:
+        import tenuo_core
+
+        core_ver = getattr(tenuo_core, "__version__", None)
+        if core_ver:
+            return f"tenuo {sdk_ver} (tenuo-core {core_ver})"
+    except ImportError:
+        pass
+    return f"tenuo {sdk_ver}"
+
+
+def print_cli_version_detail() -> None:
+    """Multi-line versions for ``tenuo version``."""
+    try:
+        import tenuo as tenuo_pkg
+
+        print(f"tenuo (Python SDK): {getattr(tenuo_pkg, '__version__', '?')}")
+    except ImportError:
+        print("tenuo (Python SDK): (not importable)")
+
+    try:
+        import tenuo_core
+
+        cv = getattr(tenuo_core, "__version__", None)
+        print(f"tenuo-core (Rust extension): {cv or '(no __version__ attribute)'}")
+    except ImportError as e:
+        print(f"tenuo-core (Rust extension): not available ({e})")
+
+    try:
+        import temporalio
+
+        print(f"temporalio: {getattr(temporalio, '__version__', '?')}")
+    except ImportError:
+        print("temporalio: (not installed)")
+
+
+def print_cli_helper() -> None:
+    """Short cheat sheet for the CLI."""
+    print(
+        """
+Tenuo CLI — common commands
+===========================
+
+  Project setup
+    tenuo init                        # Dev root key → .env + tenuo_config.py
+
+  Warrants
+    tenuo mint --tool search --ttl 1h # Needs TENUO_ROOT_KEY (from init)
+    tenuo decode <warrant_b64>        # Inspect one warrant or stack
+    tenuo validate <warrant_b64> -t TOOL -a '{"path":"/data/x.txt"}'
+
+  Logs → capability sketch
+    tenuo discover -i audit.jsonl -o caps.yaml
+
+  Environment
+    tenuo doctor                      # Core import, constraints, env vars
+    tenuo doctor --server https://... # A2A agent card + Tenuo extension
+    tenuo version                     # SDK / core / optional temporalio
+
+  Docs: https://tenuo.ai/quickstart
+  Repo: https://github.com/tenuo-ai/tenuo
+""".strip()
+    )
 
 
 def discover_capabilities(
@@ -278,7 +362,9 @@ def verify_warrant(warrant_str: str, tool: str, args: Dict[str, Any]) -> bool:
 
         print(f"Verifying warrant for tool: {tool}")
         print(f"  Warrant ID: {warrant.id}")
-        print(f"  Tools: {', '.join(warrant.tools)}")
+        allowed_tools = _warrant_tools_list(warrant)
+        tools_display = ", ".join(allowed_tools) if allowed_tools else "(none — not an execution warrant)"
+        print(f"  Tools: {tools_display}")
 
         # Check expiry
         if warrant.is_expired():
@@ -286,18 +372,16 @@ def verify_warrant(warrant_str: str, tool: str, args: Dict[str, Any]) -> bool:
             return False
 
         # Check tool in warrant
-        if tool not in warrant.tools:
-            print(f"  ❌ DENIED: Tool '{tool}' not in allowed tools: {warrant.tools}")
+        if tool not in allowed_tools:
+            print(f"  ❌ DENIED: Tool '{tool}' not in allowed tools: {allowed_tools}")
             return False
 
-        # Check allows
-        if hasattr(warrant, "allows"):
-            if not warrant.allows(tool, args):
+        # Constraint check (diagnostic API; PoP / full Authorizer chain not applied here)
+        if hasattr(warrant, "check_constraints"):
+            bad = warrant.check_constraints(tool, args)
+            if bad is not None:
                 print("  ❌ DENIED: Arguments do not satisfy constraints")
-                if hasattr(warrant, "why_denied"):
-                    why = warrant.why_denied(tool, args)
-                    if hasattr(why, "suggestion"):
-                        print(f"  Suggestion: {why.suggestion}")
+                print(f"  {bad}")
                 return False
 
         print("  ✅ AUTHORIZED")
@@ -344,22 +428,25 @@ def print_rich_warrant(warrant) -> bool:
     table.add_column("Tool", style="cyan")
     table.add_column("Constraints", style="green")
 
-    # Try to get capabilities if available (property or manual)
-    capabilities = getattr(warrant, "capabilities", {})
-    if not capabilities and warrant.tools:
-        # Fallback if capabilities property not ready/populated
-        for tool in warrant.tools:
-            table.add_row(tool, "All allowed (or unknown)")
-    else:
-        for tool, constraints in capabilities.items():
+    caps_dict = warrant.capabilities
+    tools_list = _warrant_tools_list(warrant)
+    if caps_dict:
+        for tool_name, constraints in caps_dict.items():
             const_str = ", ".join([f"{k}={v}" for k, v in constraints.items()]) if constraints else "*"
-            table.add_row(tool, const_str)
+            table.add_row(tool_name, const_str)
+    elif tools_list:
+        for tool_name in tools_list:
+            table.add_row(tool_name, "All allowed (or unknown)")
+    else:
+        table.add_row("(none)", "Issuer warrant or no execution tools")
 
     tree.add(table)
 
     # Metadata
     meta = tree.add("Metadata")
-    if hasattr(warrant, "ttl_remaining"):
+    if hasattr(warrant, "ttl_seconds"):
+        meta.add(f"TTL remaining (approx): {warrant.ttl_seconds()}s")
+    elif hasattr(warrant, "ttl_remaining"):
         meta.add(f"TTL: {warrant.ttl_remaining}")
     meta.add(f"Expires: {warrant.expires_at()}")
     if warrant.parent_hash:
@@ -386,7 +473,8 @@ def print_warrant_stack(warrants) -> None:
         status = "❌ EXPIRED" if warrant.is_expired() else "✅ VALID"
         print(f"{prefix}: {warrant.id[:16]}... {status}")
         print(f"  Type: {warrant.warrant_type}")
-        print(f"  Tools: {', '.join(warrant.tools)}")
+        tools_list = _warrant_tools_list(warrant)
+        print(f"  Tools: {', '.join(tools_list) if tools_list else '(none)'}")
 
         if i < len(warrants) - 1:
             print("  ↓ delegates to ↓")
@@ -473,11 +561,14 @@ def inspect_warrant(warrant_str: str) -> None:
         print("=== Warrant Inspection ===")
         print(f"ID: {warrant.id}")
         print(f"Type: {warrant.warrant_type}")
-        print(f"Tools: {', '.join(warrant.tools)}")
+        tools_list = _warrant_tools_list(warrant)
+        print(f"Tools: {', '.join(tools_list) if tools_list else '(none)'}")
         print(f"Expired: {warrant.is_expired()}")
         print(f"Terminal: {warrant.is_terminal()}")
 
-        if hasattr(warrant, "ttl_remaining"):
+        if hasattr(warrant, "ttl_seconds"):
+            print(f"TTL remaining (seconds, approx): {warrant.ttl_seconds()}")
+        elif hasattr(warrant, "ttl_remaining"):
             print(f"TTL Remaining: {warrant.ttl_remaining}")
 
         if hasattr(warrant, "explain"):
@@ -569,6 +660,13 @@ def main():
         description="Tenuo CLI Tools",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=format_cli_version_line(),
+        help="Print tenuo version and exit",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -653,6 +751,16 @@ def main():
         help="Initialize a new Tenuo project",
     )
 
+    subparsers.add_parser(
+        "version",
+        help="Print package and dependency versions",
+    )
+
+    subparsers.add_parser(
+        "helper",
+        help="Quick reference for common commands",
+    )
+
     # doctor command
     doctor_parser = subparsers.add_parser(
         "doctor",
@@ -681,6 +789,11 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.command is None:
+        parser.print_help()
+        print("\nRun `tenuo helper` for a quick command cheat sheet.")
+        sys.exit(1)
 
     if args.command == "discover":
         result = discover_capabilities(
@@ -712,6 +825,12 @@ def main():
     elif args.command == "init":
         init_project()
 
+    elif args.command == "version":
+        print_cli_version_detail()
+
+    elif args.command == "helper":
+        print_cli_helper()
+
     elif args.command == "doctor":
         if args.server:
             doctor_server(args.server)
@@ -723,6 +842,7 @@ def main():
 
     else:
         parser.print_help()
+        print("\nRun `tenuo helper` for a quick command cheat sheet.")
         sys.exit(1)
 
 
@@ -847,7 +967,7 @@ def doctor(verbose: bool = False) -> None:
         print("   • Run `tenuo init` to generate a development key")
     if "Shlex" in constraints_available:
         print("   • Add Shlex constraints to shell-related tools")
-    print("   • Run `tenuo audit` to see recent authorization decisions")
+    print('   • Use `tenuo validate <warrant_b64> --tool TOOL --args "{}"` to sanity-check a warrant')
     print()
 
 
@@ -1136,7 +1256,7 @@ def init_project() -> None:
 
     # 1. Generate Root Key
     key = SigningKey.generate()
-    key_b64 = base64.b64encode(key.to_string()).decode("ascii")
+    key_b64 = base64.b64encode(key.secret_key_bytes()).decode("ascii")
 
     # 2. Create .env
     env_content = f"TENUO_ROOT_KEY={key_b64}\nTENUO_ENV=dev\n"
