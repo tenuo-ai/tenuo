@@ -1,6 +1,8 @@
 # Tenuo against the OWASP Top 10 for Agentic Applications
 
-The [OWASP Top 10 for Agentic Applications (2026)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) defines the most critical risks facing autonomous AI systems. This page maps Tenuo's coverage against each item, with a comparison to what the agent-security category actually ships today.
+**Reference framework:** [OWASP Top 10 for Agentic Applications (2026)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) — Version 2026 (December 2025), OWASP Gen AI Security Project.
+
+That publication defines the most critical risks facing autonomous AI systems. This page maps Tenuo's coverage against each item, with a comparison to what the agent-security category actually ships today.
 
 This is a technical mapping for architects and reviewers, not a claim of formal certification against OWASP.
 
