@@ -59,7 +59,8 @@ We use three labels in this document. Each is defined in the corresponding secti
 | ASI09 | Human-Agent Trust Exploitation | **Contained** | Cryptographic approval artifacts |
 | ASI10 | Rogue Agents | **Contained** | Action-boundary warrant check |
 
-**Prevented** applies to authority and delegation mechanics; **Contained** means upstream failure is still possible but unauthorized tools/arguments are blocked; **Partial** for ASI05 reflects that sandboxing and runtime isolation remain necessary.
+**Prevented** applies to authority and delegation mechanics. 
+**Contained** means upstream failure is still possible but unauthorized tools/arguments are blocked. **Partial** for ASI05 reflects that sandboxing and runtime isolation remain necessary.
 
 ---
 
