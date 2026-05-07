@@ -222,11 +222,14 @@ jobs:
       - name: Test
         working-directory: tenuo-python
         run: |
-          CREWAI_IGNORE=""
           if [ "${{ matrix.python-version }}" = "3.14" ]; then
-            CREWAI_IGNORE="--ignore=tests/adapters/test_crewai.py --ignore=tests/adapters/test_crewai_adversarial.py --ignore=tests/adapters/test_crewai_integration.py"
+            pytest -v -m "not temporal_live" \
+              --ignore=tests/adapters/test_crewai.py \
+              --ignore=tests/adapters/test_crewai_adversarial.py \
+              --ignore=tests/adapters/test_crewai_integration.py
+          else
+            pytest -v -m "not temporal_live"
           fi
-          pytest -v -m "not temporal_live" $CREWAI_IGNORE
 
   # ============================================================================
   # MCP END-TO-END SMOKE
