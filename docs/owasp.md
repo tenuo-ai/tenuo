@@ -10,34 +10,23 @@ This is a technical mapping for architects and reviewers, not a claim of formal 
 
 ---
 
-## Containment philosophy
+## Scope and mechanism
 
-Tenuo's design is **containment through deterministic authorization**. Rather than predicting every way an agent might go wrong, Tenuo defines what an agent is allowed to do for a specific task and enforces that definition at the tool boundary, cryptographically, with offline verification.
+Before a tool runs, Tenuo checks a cryptographically signed **warrant**: a task-scoped capability token that names allowed tools, **argument constraints**, and **TTL**. The authorization decision is **offline-verifiable** against configured trust anchors; typical verification is on the order of tens of microseconds for a single check. Each allow, deny, or human approval yields a **signed receipt**, so audit evidence is produced by enforcement rather than by a separate logging pipeline.
 
-The **valet key** analogy is instructive: a valet key opens the driver's door and starts the engine but does not open the trunk or the glove box. The manufacturer does not trust the valet to interpret instructions correctly; the key itself constrains what the valet can do. A **warrant** is a cryptographic valet key, scoped to a task, and enforcement is whether the key fits the action being attempted.
+Most concrete harm from OWASP-style failures still appears as **tool calls**. Tenuo constrains *what* executes, not *why* the model proposed it—so prompt injection, poisoned memory, supply-chain influence, and misaligned planning all encounter the same boundary. The sections below highlight which part of the mechanism matters most per risk (constraints, delegation chain, receipts).
 
-Every failure mode in the OWASP list produces damage through **agent actions**. Tenuo constrains those actions regardless of *why* they were attempted—hijack, poisoned memory, supply-chain compromise, or rogue behavior—because enforcement operates on **what** the agent does, not on its inferred internal state.
-
-For more on this framing, see the [Unprompted 2025 talk on cryptographic authorization for AI agents](https://www.youtube.com/watch?v=bw928cFShK4).
-
-[Try Tenuo on GitHub](https://github.com/tenuo-ai/tenuo) · [Read the quickstart](https://tenuo.ai/quickstart)
-
----
-
-## Tenuo in 30 seconds
-
-Tenuo is a deterministic authorization layer for AI agents. Before any tool call executes, the agent presents a cryptographically signed warrant: a task-scoped capability token specifying which tools, with which arguments, for how long. The warrant either authorizes the action or rejects it locally, in tens of microseconds, with a signed receipt. Verification is offline.
-
-If your threat model includes prompt injection, agent compromise, or any failure mode that produces damage through unauthorized tool calls, Tenuo bounds the damage at the action boundary, regardless of upstream cause.
+For a spoken overview of this model, see [Unprompted 2025: cryptographic authorization for AI agents](https://www.youtube.com/watch?v=bw928cFShK4).
 
 ## How to read this document
 
-- **Doing a security review or vendor evaluation:** start with [Coverage at a glance](#coverage-at-a-glance) and [Where Tenuo fits in an agent security stack](#where-tenuo-fits-in-an-agent-security-stack).
-- **Building an RFP requirement matrix:** jump to the per-risk sections (each has *How Tenuo helps*, *Comparison*, and *What Tenuo does not do* where applicable).
-- **Threat-modeling your agent deployment:** start with [Why one layer covers many risks](#why-one-layer-covers-many-risks), then [Tenuo's own assumptions](#tenuos-own-assumptions) before per-risk sections.
+- **Orientation:** [Coverage at a glance](#coverage-at-a-glance) and [Where Tenuo fits in an agent security stack](#where-tenuo-fits-in-an-agent-security-stack).
+- **Per-risk detail:** ASI01–ASI10 use consistent headings (*How Tenuo helps*, *Comparison*, *What Tenuo does not do* where relevant).
+- **Before relying on guarantees:** read [Tenuo's own assumptions](#tenuos-own-assumptions).
 
 ## Contents
 
+- [Scope and mechanism](#scope-and-mechanism)
 - [Tenuo's own assumptions](#tenuos-own-assumptions)
 - [ASI01 Agent Goal Hijack](#asi01-agent-goal-hijack)
 - [ASI02 Tool Misuse & Exploitation](#asi02-tool-misuse--exploitation)
@@ -50,16 +39,6 @@ If your threat model includes prompt injection, agent compromise, or any failure
 - [ASI09 Human-Agent Trust Exploitation](#asi09-human-agent-trust-exploitation)
 - [ASI10 Rogue Agents](#asi10-rogue-agents)
 - [Where Tenuo fits in an agent security stack](#where-tenuo-fits-in-an-agent-security-stack)
-
-## Why one layer covers many risks
-
-Every failure mode in the OWASP list produces damage through agent actions. Tenuo constrains agent actions regardless of *why* they were attempted. An agent that has been hijacked, poisoned, supply-chain-compromised, or has gone rogue is bounded by the same mechanism, because the mechanism operates on what the agent does rather than on its inferred state.
-
-That property is what makes Tenuo relevant across the list. The sections below focus on the part of the mechanism that matters most for each risk: a constraint type, a delegation property, or the receipt artifact that gives investigators evidence after the fact.
-
-## Audit as part of enforcement
-
-Every authorization decision is a cryptographically signed receipt: every allow, every deny, every human approval. The audit trail comes from enforcement itself rather than a separate logging system, which keeps it complete and tamper-evident. Each section below highlights the forensic angle that matters for that risk; the underlying mechanism is the same.
 
 ---
 
@@ -84,9 +63,7 @@ We use three labels in this document. Each is defended by the corresponding sect
 | ASI09 | Human-Agent Trust Exploitation | **Contained** | Cryptographic approval artifacts |
 | ASI10 | Rogue Agents | **Contained** | Action-boundary warrant check |
 
-The pattern is consistent: Tenuo prevents failures tied to authority and delegation, contains failures that originate upstream of authorization, and is partial where execution isolation belongs in a sandbox.
-
-> **Marketing shorthand.** Some summaries describe "nine items addressed, one partial (ASI05)." That reading treats **Prevented** and **Contained** as *addressed at the action boundary*: upstream failures may still occur, but unauthorized effects still face enforcement.
+**Prevented** applies to authority and delegation mechanics; **Contained** means upstream failure is still possible but unauthorized tools/arguments are blocked; **Partial** for ASI05 reflects that sandboxing and runtime isolation remain necessary.
 
 ---
 
@@ -381,7 +358,7 @@ TLS secures the transport; Tenuo secures the authority presented over that trans
 
 ### Comparison
 
-Most inter-agent protocols rely on TLS for transport security and assume that agents are trustworthy at the application layer. Adjacent capability-token systems include Macaroons (Google, 2014), Biscuit (Cloudflare/Tarides), GNAP (IETF), RFC 9396 RAR (IETF, 2023), and SPIFFE/SPIRE for workload identity without attenuation. Tenuo's distinct position is cryptographically chained delegation with offline verification at the action boundary, argument-level constraints, and semantics designed for agent topologies. We are not aware of another system that combines all four properties at once.
+Most inter-agent protocols rely on TLS for transport security and assume that agents are trustworthy at the application layer. Adjacent capability-token systems include Macaroons (Google, 2014), Biscuit (Cloudflare/Tarides), GNAP (IETF), RFC 9396 RAR (IETF, 2023), and SPIFFE/SPIRE for workload identity without attenuation. Combining chained delegation, offline verification at invocation time, argument-level constraints, and semantics aimed at multi-agent workflows is still uncommon in deployed agent stacks.
 
 ---
 
@@ -443,9 +420,7 @@ Agents diverge from intended behavior without active attacker control, through m
 
 ### How Tenuo helps
 
-From Tenuo's perspective, containment does not require knowing *why* the agent diverged. The same scoped warrant limits a careless agent, a malicious agent, and a confused one. For rogue behavior, the useful signal is often in the receipt log: repeated denied attempts against capabilities outside the agent's task scope can surface earlier than behavioral monitoring.
-
-Whether the valet is careless, malicious, or confused, the key does not open the trunk: a rogue agent cannot exercise authority beyond its warrant.
+From Tenuo's perspective, containment does not require knowing *why* the agent diverged. The same scoped warrant limits unintended, malicious, or confused behavior at the tool boundary. For rogue behavior, a useful signal is often in the receipt log: repeated denials for capabilities outside the task scope can appear before behavioral analytics flag drift.
 
 ### Comparison
 
@@ -459,7 +434,7 @@ Tenuo does not detect rogue behavior and does not distinguish a rogue tool call 
 
 ## Where Tenuo fits in an agent security stack
 
-Serious deployments need prevention controls at each layer and a containment layer that applies across all of them.
+Defense in depth typically stacks prevention controls per failure mode with enforcement at the tool boundary.
 
 | Failure origin | Per-layer prevention | What Tenuo adds |
 |----------------|---------------------|-----------------|
@@ -474,30 +449,17 @@ Serious deployments need prevention controls at each layer and a containment lay
 | Human trust exploitation | Output grounding, UI patterns | **Contained:** cryptographic approvals and non-repudiation |
 | Rogue agents | Behavioral monitoring | **Contained:** bounds the resulting action |
 
-Tenuo is the authorization layer that sits underneath everything else. Per-layer controls prevent specific failure modes; Tenuo bounds the damage when those controls miss. Agent failures become dangerous through actions; Tenuo constrains actions. Every decision produces a signed audit receipt, giving you forensic coverage across the framework.
-
-Pair Tenuo with row-specific prevention controls.
-
----
-
-## Try Tenuo against your OWASP posture
-
-The open-source core is MIT-licensed and installs with `pip install tenuo`. The framework integrations (OpenAI, LangChain, LangGraph, CrewAI, Temporal, MCP, A2A, and more) use the same warrant semantics.
-
-```bash
-pip install tenuo
-```
-
-[GitHub](https://github.com/tenuo-ai/tenuo) · [Quickstart](https://tenuo.ai/quickstart) · [Try it in Colab](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
-
-Deploying agents in production? Tenuo Cloud adds managed warrant issuance, revocation workflows, multi-tenant isolation, and compliance-grade audit export. [Talk to us](https://tenuo.ai/early-access.html).
+Per-layer controls target specific failure modes; authorization at tool dispatch bounds effects when those controls miss. Use row-specific prevention together with enforcement on every tool path this document assumes.
 
 ---
 
 ## References
 
 - [OWASP Top 10 for Agentic Applications (2026)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/), the authoritative framework this page maps against.
-- [Unprompted 2025 talk on cryptographic authorization for AI agents](https://www.youtube.com/watch?v=bw928cFShK4), background on the containment philosophy.
+- [Tenuo on GitHub](https://github.com/tenuo-ai/tenuo)
+- [Quickstart](https://tenuo.ai/quickstart)
+- [Demo notebook (Colab)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
+- [Unprompted 2025 talk on cryptographic authorization for AI agents](https://www.youtube.com/watch?v=bw928cFShK4)
 - [draft-niyikiza-oauth-attenuating-agent-tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/), delegation and attenuation semantics in the IETF OAuth Working Group.
 - [Tenuo security model](https://tenuo.ai/security), threat model, cryptographic guarantees, and invariants.
 - [Constraint reference](https://tenuo.ai/constraints), constraint types with semantics and examples.
