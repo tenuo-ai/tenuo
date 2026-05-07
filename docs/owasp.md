@@ -80,9 +80,9 @@ The sections below describe what Tenuo prevents or contains. These are the **bou
 
 **Revocation latency is bounded by your refresh cadence.** Tenuo supports revocation through Signed Revocation Lists (SRL). Verifiers fetch the SRL on a configurable cadence; until the next refresh, a revoked warrant remains technically valid. Short warrant TTLs are the primary defense against revocation latency; the SRL is a secondary mechanism for emergencies. Plan TTL and SRL cadence together.
 
-**Cryptographic primitives.** Tenuo uses Ed25519 for signing and SHA-256 / BLAKE3 for argument digests. The cryptographic invariants and threat model are documented in [/security](https://tenuo.ai/security).
+**Cryptographic primitives.** Tenuo uses Ed25519 for signing and SHA-256 / BLAKE3 for argument digests. The cryptographic invariants and threat model are documented in the [Tenuo security model](https://tenuo.ai/security).
 
-**Hardening profiles.** FIPS-validated cryptography, hardware-backed issuance, or air-gapped control planes layer on the open-source primitives documented in [/security](https://tenuo.ai/security)—they are deployment choices, not gaps in the core threat model.
+**Hardening profiles.** FIPS-validated cryptography, hardware-backed issuance, or air-gapped control planes layer on the open-source primitives covered by the [Tenuo security model](https://tenuo.ai/security). Those are deployment choices, not gaps in the core threat model.
 
 ---
 
