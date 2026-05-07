@@ -117,8 +117,7 @@ def test_init_command():
             # Mock SigningKey.generate
             with patch("tenuo_core.SigningKey") as MockKey:
                 mock_k = MagicMock()
-                # to_string returns bytes
-                mock_k.to_string.return_value = b"test_key_bytes"
+                mock_k.secret_key_bytes.return_value = b"test_key_bytes"
                 MockKey.generate.return_value = mock_k
 
                 init_project()
