@@ -1,12 +1,8 @@
 # Tenuo against the OWASP Top 10 for Agentic Applications
 
-**Reference framework:** [OWASP Top 10 for Agentic Applications (2026)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) — Version 2026 (December 2025), OWASP Gen AI Security Project.
+**Reference framework:** [OWASP Top 10 for Agentic Applications (2026)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) (Version 2026, December 2025), OWASP Gen AI Security Project.
 
-That publication defines the most critical risks facing autonomous AI systems. This page maps how **Tenuo addresses each item**—which mechanisms apply and where complementary controls belong—and contrasts that with typical patterns in agent-security tooling.
-
-**Attribution:** Risk IDs and titles follow the OWASP Gen AI Security Project publication (Version 2026, December 2025), licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/legalcode).
-
-**Related:** [Tenuo and the EU AI Act](./eu-act.md) · [Thesis / framing](./thesis.md) · [Related work](./related-work.md)
+This page maps each listed risk to **Tenuo's mechanisms**, notes where complementary controls belong, and contrasts that with typical patterns in agent-security tooling.
 
 ---
 
