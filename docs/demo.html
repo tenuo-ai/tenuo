@@ -14,9 +14,9 @@
             --bg-dark: #0b1220;
             --bg-card: #141d30;
             --bg-card-hover: #1a2540;
-            --accent: #5eb3ff;
-            --accent-strong: #7cc4ff;
-            --accent-soft: rgba(94, 179, 255, 0.14);
+            --accent: #e8e8e8;
+            --accent-strong: #fafafa;
+            --accent-soft: rgba(232, 232, 232, 0.14);
             --warn: #f87171;
             --warn-soft: rgba(248, 113, 113, 0.14);
             --ok: #9cc88a;
@@ -30,7 +30,7 @@
             --accent-green: var(--ok);
             --accent-red: var(--warn);
             --accent-yellow: #d4b45e;
-            --accent-purple: var(--accent);
+            --accent-purple: #a3a3a3;
         }
 
         * {
@@ -60,8 +60,8 @@
             right: 0;
             bottom: 0;
             background:
-                radial-gradient(circle at 20% 20%, rgba(0, 212, 255, 0.05) 0%, transparent 40%),
-                radial-gradient(circle at 80% 80%, rgba(168, 85, 247, 0.05) 0%, transparent 40%);
+                radial-gradient(circle at 20% 20%, rgba(232, 232, 232, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, rgba(115, 115, 115, 0.06) 0%, transparent 40%);
             pointer-events: none;
             z-index: 0;
         }
@@ -325,8 +325,8 @@
 
         /* Key insight box */
         .insight-box {
-            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(168, 85, 247, 0.1));
-            border: 1px solid rgba(0, 212, 255, 0.3);
+            background: linear-gradient(135deg, rgba(232, 232, 232, 0.08), rgba(115, 115, 115, 0.1));
+            border: 1px solid rgba(232, 232, 232, 0.25);
             border-radius: 16px;
             padding: 32px;
             margin-top: 48px;
@@ -380,13 +380,13 @@
         }
 
         .chain-block.root {
-            background: rgba(168, 85, 247, 0.2);
+            background: rgba(163, 163, 163, 0.2);
             border-color: var(--accent-purple);
             color: var(--accent-purple);
         }
 
         .chain-block.child {
-            background: rgba(0, 212, 255, 0.2);
+            background: rgba(232, 232, 232, 0.15);
             border-color: var(--accent-cyan);
             color: var(--accent-cyan);
         }
@@ -861,7 +861,7 @@
 
         <!-- Try It Yourself -->
         <div
-            style="background: linear-gradient(135deg, rgba(168, 85, 247, 0.1), rgba(6, 182, 212, 0.1)); border: 1px solid var(--border); border-radius: 16px; padding: 32px; margin: 48px 0; text-align: center;">
+            style="background: linear-gradient(135deg, rgba(232, 232, 232, 0.08), rgba(115, 115, 115, 0.1)); border: 1px solid var(--border); border-radius: 16px; padding: 32px; margin: 48px 0; text-align: center;">
             <h2 style="font-size: 1.5rem; margin-bottom: 16px;">🚀 Try It Yourself</h2>
             <p
                 style="color: var(--text-secondary); margin-bottom: 24px; max-width: 600px; margin-left: auto; margin-right: auto;">

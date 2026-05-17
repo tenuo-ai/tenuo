@@ -53,13 +53,13 @@
             --bg: #040a0f;
             --surface: #0a1018;
             --surface-2: #0e1620;
-            --border: rgba(56,189,248,0.09);
+            --border: rgba(232,232,232,0.09);
             --text: #c8d8e4;
             --text-bright: #e8e8e8;
             --muted: #7a9aaa;
             --muted-dim: #4a6a7a;
-            --accent: #38bdf8;
-            --accent2: #a855f7;
+            --accent: #e8e8e8;
+            --accent2: #737373;
             --green: #00ff88;
             --red: #ff4466;
             --gold: #c8a96e;
@@ -79,8 +79,8 @@
             position: fixed;
             inset: 0;
             background-image:
-                linear-gradient(rgba(56,189,248,0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(56,189,248,0.03) 1px, transparent 1px);
+                linear-gradient(rgba(232,232,232,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(232,232,232,0.03) 1px, transparent 1px);
             background-size: 48px 48px;
             pointer-events: none;
             z-index: 0;
@@ -93,7 +93,7 @@
             transform: translateX(-50%);
             width: 560px;
             height: 420px;
-            background: radial-gradient(ellipse, rgba(56,189,248,0.07) 0%, transparent 65%);
+            background: radial-gradient(ellipse, rgba(232,232,232,0.07) 0%, transparent 65%);
             pointer-events: none;
             z-index: 0;
         }
@@ -112,7 +112,7 @@
             justify-content: space-between;
             align-items: center;
             padding: 24px 0;
-            border-bottom: 1px solid rgba(56,189,248,0.07);
+            border-bottom: 1px solid rgba(232,232,232,0.07);
         }
 
         .nav-logo {
@@ -152,7 +152,7 @@
             gap: 8px;
             padding: 6px 16px;
             background: transparent;
-            border: 1px solid rgba(56,189,248,0.14);
+            border: 1px solid rgba(232,232,232,0.14);
             border-radius: 100px;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.7rem;
@@ -262,12 +262,12 @@
             letter-spacing: 0.04em;
             background: transparent;
             color: var(--muted);
-            border: 1px solid rgba(56,189,248,0.15);
+            border: 1px solid rgba(232,232,232,0.15);
         }
 
         .btn-secondary:hover {
             color: var(--text);
-            border-color: rgba(56,189,248,0.3);
+            border-color: rgba(232,232,232,0.3);
         }
 
         .signin-hint {
@@ -292,8 +292,8 @@
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 1px;
-            background: rgba(56,189,248,0.07);
-            border: 1px solid rgba(56,189,248,0.09);
+            background: rgba(232,232,232,0.07);
+            border: 1px solid rgba(232,232,232,0.09);
             border-radius: 0;
             overflow: hidden;
             margin: 60px 0;
@@ -332,7 +332,7 @@
         /* Code Example */
         .section {
             padding: 60px 0;
-            border-top: 1px solid rgba(56,189,248,0.07);
+            border-top: 1px solid rgba(232,232,232,0.07);
         }
 
         .section-header {
@@ -386,20 +386,20 @@
 
         .tree-wrap .edge {
             fill: none;
-            stroke: rgba(56,189,248,0.18);
+            stroke: rgba(232,232,232,0.18);
             stroke-width: 1.5;
         }
 
         .tree-wrap .node-rect {
             fill: #0a1018;
-            stroke: rgba(56,189,248,0.15);
+            stroke: rgba(232,232,232,0.15);
             stroke-width: 1;
             rx: 6;
             transition: stroke 0.5s ease;
         }
 
         .tree-wrap .node-dot {
-            fill: #38bdf8;
+            fill: #e8e8e8;
         }
 
         .tree-wrap .node-label {
@@ -427,11 +427,11 @@
 
         /* Pulse dots along edges — opacity handled in SVG */
         .pulse {
-            fill: #38bdf8;
+            fill: #e8e8e8;
         }
 
         .tree-wrap.is-visible .node-rect {
-            stroke: rgba(56,189,248,0.3);
+            stroke: rgba(232,232,232,0.3);
         }
 
         /* SVG element fade-in */
@@ -455,7 +455,7 @@
 
         .enforcement-card {
             background: var(--surface);
-            border: 1px solid rgba(56,189,248,0.1);
+            border: 1px solid rgba(232,232,232,0.1);
             border-radius: 8px;
             padding: 18px 16px;
             opacity: 0;
@@ -476,7 +476,7 @@
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.76rem;
             color: var(--accent);
-            background: rgba(56,189,248,0.06);
+            background: rgba(232,232,232,0.06);
             padding: 6px 10px;
             border-radius: 4px;
             margin-bottom: 14px;
@@ -510,7 +510,7 @@
             align-items: baseline;
             gap: 6px;
             padding: 5px 0;
-            border-top: 1px solid rgba(56,189,248,0.04);
+            border-top: 1px solid rgba(232,232,232,0.04);
             white-space: nowrap;
             overflow: hidden;
         }
@@ -737,7 +737,7 @@
         /* Footer */
         footer {
             padding: 48px 0;
-            border-top: 1px solid rgba(56,189,248,0.07);
+            border-top: 1px solid rgba(232,232,232,0.07);
             text-align: center;
             color: var(--muted);
             font-family: 'JetBrains Mono', monospace;
@@ -790,7 +790,7 @@
                 left: 0;
                 right: 0;
                 background: var(--bg);
-                border-bottom: 1px solid rgba(56,189,248,0.07);
+                border-bottom: 1px solid rgba(232,232,232,0.07);
                 padding: 16px 24px;
                 flex-direction: column;
                 gap: 16px;

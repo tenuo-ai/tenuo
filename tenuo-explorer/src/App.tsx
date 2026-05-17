@@ -2760,7 +2760,7 @@ function App() {
 
                       {/* Chain Detected Banner */}
                       {chainResult && chainResult.is_chain && (
-                        <div style={{ marginBottom: '12px', padding: '12px', borderRadius: '10px', border: '1px solid var(--accent)', background: 'rgba(139, 92, 246, 0.1)' }}>
+                        <div style={{ marginBottom: '12px', padding: '12px', borderRadius: '10px', border: '1px solid var(--accent)', background: 'rgba(232, 232, 232, 0.08)' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <span style={{ fontSize: '16px' }}>⛓️</span>
@@ -2779,7 +2779,7 @@ function App() {
                                 <div style={{
                                   padding: '4px 8px',
                                   borderRadius: '6px',
-                                  background: idx === 0 ? 'rgba(34, 197, 94, 0.15)' : idx === chainResult.warrants.length - 1 ? 'rgba(139, 92, 246, 0.15)' : 'var(--surface-2)',
+                                  background: idx === 0 ? 'rgba(34, 197, 94, 0.15)' : idx === chainResult.warrants.length - 1 ? 'rgba(232, 232, 232, 0.1)' : 'var(--surface-2)',
                                   border: `1px solid ${idx === 0 ? 'var(--green)' : idx === chainResult.warrants.length - 1 ? 'var(--accent)' : 'var(--border)'}`,
                                   fontSize: '11px'
                                 }}>

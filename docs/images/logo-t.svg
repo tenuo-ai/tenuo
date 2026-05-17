@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="tGradient" x1="0" y1="124" x2="0" y2="390" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#5BC4FF"/>
+      <stop offset="100%" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+  <text
+    x="256"
+    y="390"
+    text-anchor="middle"
+    font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif"
+    font-size="380"
+    font-weight="600"
+    letter-spacing="-4"
+    fill="url(#tGradient)"
+  >t</text>
+</svg>
