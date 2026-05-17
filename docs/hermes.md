@@ -148,7 +148,7 @@ See [`examples/hermes/gateway_multiuser.py`](https://github.com/tenuo-ai/hermes-
 
 ## With Tenuo Cloud (optional)
 
-Tenuo Cloud adds a warrant builder that observes your agent's real tool call patterns across sessions and generates tight warrants for you to review and activate. It also provides a dashboard and full audit log.
+Tenuo Cloud adds a warrant builder that observes your agent's real tool call patterns across sessions and generates tight warrants for you to review and activate. It also provides trigger-based warrant issuance, human-approval gates, a dashboard, and full audit log.
 
 ```yaml
 plugins:
@@ -158,7 +158,45 @@ plugins:
       warrant: ~/.hermes/tenuo/warrant   # omit to start in audit-only mode
 ```
 
-With only `connect_token` and no `warrant`, the plugin runs in **audit-only mode** — every tool call is logged to Cloud for pattern learning, nothing is blocked. Add `warrant` to activate enforcement. The `post_tool_call` hook streams every call (authorized and denied) to Cloud with full attribution regardless of whether a warrant is configured.
+With only `connect_token` and no `warrant`, the plugin runs in **audit-only mode** — every tool call is logged to Cloud for pattern learning, nothing is blocked. Add `warrant` to activate enforcement.
+
+### Cloud-backed warrant minting
+
+Fire a Cloud trigger to get a managed warrant instead of generating keys locally:
+
+```bash
+export TENUO_CONNECT_TOKEN=tc_live_...
+hermes-tenuo mint --trigger YOUR_TRIGGER_ID
+```
+
+The output includes `warrant` and `trusted_root` derived directly from the Cloud-signed warrant. No local key management required.
+
+### Approval gates
+
+When a warrant includes approval gates, the plugin automatically submits approval requests to Cloud and polls for a human decision. Configure approval policies in Cloud, then distribute warrants with approval gates — no code changes needed in the plugin.
+
+### Session warrants via triggers (gateway multi-user)
+
+Fire a Cloud trigger per user session from gateway orchestration code:
+
+```python
+# In gateway handler (NOT in agent tool context — orchestration only):
+plugin_guard.fire_session_warrant(session_id, trigger_id="trig_admin_users")
+```
+
+Or configure `trigger_map` in `config.yaml`:
+
+```yaml
+plugins:
+  entries:
+    hermes-tenuo:
+      connect_token: tc_live_...
+      trigger_map:
+        admin: trig_abc123
+        viewer: trig_xyz789
+```
+
+The `post_tool_call` hook streams every call (authorized and denied) to Cloud with full attribution regardless of whether a warrant is configured.
 
 ## Security
 
@@ -238,6 +276,7 @@ All settings fall back to environment variables if not set in `config.yaml`.
 | `child_warrant` | `TENUO_CHILD_WARRANT` | No | Warrant for sub-agent sessions (`delegate_task`) |
 | `signing_key_env` | — | For enforcement | Name of env var holding the signing key (default: `TENUO_SIGNING_KEY`) |
 | `connect_token` | `TENUO_CONNECT_TOKEN` | For Cloud | Quick Connect token from Tenuo Cloud dashboard |
+| `trigger_map` | — | No | Map of role → trigger ID for session warrant delivery via Cloud |
 
 ## Known limitations
 
