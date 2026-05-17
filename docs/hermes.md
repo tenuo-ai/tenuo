@@ -103,7 +103,7 @@ hermes run --task nightly_cleanup
 
 If the job runs over an hour, or tries to touch anything outside its declared scope, the call is blocked — even if the model hallucinates a broader action.
 
-See [`examples/hermes/cron_warrant.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/hermes/cron_warrant.py) for a full runnable example.
+See [`examples/hermes/cron_warrant.py`](https://github.com/tenuo-ai/hermes-tenuo/tree/main/examples/cron_warrant.py) for a full runnable example.
 
 ### 2. Sub-agent scope with `delegate_task`
 
@@ -119,7 +119,7 @@ plugins:
 
 `pre_tool_call` intercepts `delegate_task` calls and pre-registers the `child_warrant` for upcoming child sessions. Child sessions are detected by session ID — the first session seen is the primary (orchestrator); all subsequent different session IDs receive `child_warrant`.
 
-See [`examples/hermes/subagent_scope.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/hermes/subagent_scope.py) for a full runnable example.
+See [`examples/hermes/subagent_scope.py`](https://github.com/tenuo-ai/hermes-tenuo/tree/main/examples/subagent_scope.py) for a full runnable example.
 
 ### 3. Multi-user gateway
 
@@ -143,7 +143,7 @@ def on_session_end(session_id: str):
     guard.clear_session_warrant(session_id)
 ```
 
-See [`examples/hermes/gateway_multiuser.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/hermes/gateway_multiuser.py) for a full runnable example.
+See [`examples/hermes/gateway_multiuser.py`](https://github.com/tenuo-ai/hermes-tenuo/tree/main/examples/gateway_multiuser.py) for a full runnable example.
 
 ## With Tenuo Cloud (optional)
 
@@ -250,4 +250,4 @@ All settings fall back to environment variables if not set in `config.yaml`.
 - [Security Model](./security.md)
 - [Tenuo Cloud](https://cloud.tenuo.ai) — warrant builder, audit dashboard, key management
 - [hermes-tenuo on GitHub](https://github.com/tenuo-ai/hermes-tenuo)
-- [Example code](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/hermes)
+- [Example code](https://github.com/tenuo-ai/hermes-tenuo/tree/main/examples)
