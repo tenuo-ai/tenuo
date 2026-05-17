@@ -25,7 +25,7 @@ uv pip install "tenuo[temporal]"      # + Temporal Python SDK (workflow + activi
 ```
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
-[![Explorer](https://img.shields.io/badge/Explorer-decode_warrants-00d4ff)](https://tenuo.ai/explorer/)
+[![Explorer](https://img.shields.io/badge/Explorer-decode_warrants-1a1a1a)](https://tenuo.ai/explorer/)
 
 ## Development
 

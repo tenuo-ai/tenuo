@@ -17,7 +17,7 @@ TEMPLATE = """<!DOCTYPE html>
 :root {{
   --bg: #0a0a0a; --surface: #111; --surface-2: #1a1a1a;
   --text: #e8e8e8; --text-muted: #888;
-  --accent: #00d4ff; --accent-dim: #0099bb;
+  --accent: #e8e8e8; --accent-dim: #737373;
   --code-bg: #1a1a1a; --border: #2a2a2a;
 }}
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}

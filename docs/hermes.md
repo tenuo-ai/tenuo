@@ -126,7 +126,7 @@ See [`examples/hermes/subagent_scope.py`](https://github.com/tenuo-ai/hermes-ten
 When a Hermes gateway (Telegram, Discord, Slack, etc.) serves multiple users, each user session gets a different warrant from your policy store. Sessions are isolated: one user's warrant cannot influence another's.
 
 ```python
-from tenuo.hermes import HermesGuard
+from hermes_tenuo import HermesGuard
 
 guard = HermesGuard(
     signing_key=gateway_signing_key,
@@ -183,7 +183,7 @@ With only `connect_token` and no `warrant`, the plugin runs in **audit-only mode
 ### `HermesGuard`
 
 ```python
-from tenuo.hermes import HermesGuard
+from hermes_tenuo import HermesGuard
 
 guard = HermesGuard(
     warrant=None,          # Warrant object; None = passthrough

@@ -15,8 +15,8 @@
   --border: #1a1a1a;
   --text: #fafafa;
   --muted: #71717a;
-  --accent: #00d4ff;
-  --accent2: #a855f7;
+  --accent: #e8e8e8;
+  --accent2: #737373;
   --green: #22c55e;
   --red: #ef4444;
   --yellow: #eab308;
@@ -155,13 +155,13 @@ input:focus, textarea:focus, button:focus {
   font-size: 11px;
   font-family: 'JetBrains Mono', monospace;
   border-radius: 6px;
-  background: rgba(0, 212, 255, 0.08);
+  background: rgba(232, 232, 232, 0.08);
   color: var(--accent);
-  border: 1px solid rgba(0, 212, 255, 0.15);
+  border: 1px solid rgba(232, 232, 232, 0.15);
   cursor: pointer;
   transition: all 0.15s;
 }
-.tool-tag:hover { background: rgba(0, 212, 255, 0.15); }
+.tool-tag:hover { background: rgba(232, 232, 232, 0.15); }
 .tool-tag.active {
   background: var(--accent);
   color: black;
@@ -196,8 +196,8 @@ input:focus, textarea:focus, button:focus {
 .explainer {
   margin-top: 14px;
   padding: 14px;
-  background: rgba(0, 212, 255, 0.06);
-  border: 1px solid rgba(0, 212, 255, 0.15);
+  background: rgba(232, 232, 232, 0.06);
+  border: 1px solid rgba(232, 232, 232, 0.15);
   border-radius: 10px;
 }
 .explainer-header {
@@ -214,7 +214,7 @@ input:focus, textarea:focus, button:focus {
 .explainer-content {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid rgba(0, 212, 255, 0.15);
+  border-top: 1px solid rgba(232, 232, 232, 0.15);
   font-size: 13px;
   color: var(--text);
   line-height: 1.7;
@@ -223,7 +223,7 @@ input:focus, textarea:focus, button:focus {
 .explainer-content p { margin-bottom: 4px; }
 .explainer-content strong { color: var(--accent); }
 .explainer-content code { 
-  background: rgba(0, 212, 255, 0.1); 
+  background: rgba(232, 232, 232, 0.1); 
   padding: 2px 6px; 
   border-radius: 4px; 
   font-size: 11px;
@@ -238,7 +238,7 @@ input:focus, textarea:focus, button:focus {
   justify-content: space-between;
   padding: 16px;
   border-radius: 10px;
-  background: linear-gradient(135deg, rgba(0, 212, 255, 0.05), rgba(168, 85, 247, 0.05));
+  background: linear-gradient(135deg, rgba(232, 232, 232, 0.05), rgba(168, 168, 168, 0.05));
   border: 1px solid var(--border);
 }
 .chain-node { text-align: center; }
@@ -521,8 +521,8 @@ input:focus, textarea:focus, button:focus {
   color: var(--yellow);
 }
 .warning-info {
-  background: rgba(0, 212, 255, 0.1);
-  border: 1px solid rgba(0, 212, 255, 0.2);
+  background: rgba(232, 232, 232, 0.1);
+  border: 1px solid rgba(232, 232, 232, 0.2);
   color: var(--accent);
 }
 
@@ -630,7 +630,7 @@ input:focus, textarea:focus, button:focus {
   transition: all 0.15s;
 }
 .chain-tester-node:hover { border-color: var(--accent); }
-.chain-tester-node.selected { border-color: var(--accent); background: rgba(0, 212, 255, 0.05); }
+.chain-tester-node.selected { border-color: var(--accent); background: rgba(232, 232, 232, 0.06); }
 .chain-tester-node.root { border-left: 3px solid var(--accent); }
 
 .chain-node-editor {
@@ -788,7 +788,7 @@ input:focus, textarea:focus, button:focus {
 }
 .preset-item:hover {
   border-color: var(--accent);
-  background: rgba(0, 212, 255, 0.05);
+  background: rgba(232, 232, 232, 0.05);
 }
 .preset-name {
   flex: 1;
