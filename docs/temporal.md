@@ -1,9 +1,9 @@
 ---
-title: Tenuo Integration
+title: Temporal Integration
 description: Warrant-based authorization for Temporal AI agent workflows
 ---
 
-# Tenuo integration
+# Temporal Integration
 
 ## What is Temporal?
 
