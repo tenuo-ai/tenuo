@@ -15,7 +15,7 @@ Hermes already has a human-in-the-loop approval system for interactive use. What
 
 Tenuo provides cryptographic warrant enforcement at Hermes's `pre_tool_call` plugin hook. Every tool call is checked against a signed warrant before execution — specifying exactly which tools the agent may call, with what arguments. If the call is outside the warrant scope, it's blocked before the tool handler runs.
 
-The integration works fully **standalone** — no external service is required at runtime. [Tenuo Cloud](https://cloud.tenuo.ai) is optional: it adds a warrant builder that learns from your agent's real call patterns and generates tight warrants for you to review, plus a dashboard and audit log.
+[Tenuo Cloud](https://cloud.tenuo.ai) is optional: it adds a warrant builder that learns from your agent's real call patterns and generates tight warrants for you to review, plus a dashboard and audit log.
 
 ## Prerequisites
 
