@@ -114,8 +114,13 @@ class ControlPlaneClient:
         if signing_key is None:
             raw = os.environ.get("TENUO_SIGNING_KEY")
             if raw:
+                import base64
                 from tenuo_core import SigningKey
-                signing_key = SigningKey.from_base64(raw)
+                try:
+                    signing_key = SigningKey.from_base64(raw)
+                except AttributeError:
+                    # Older tenuo_core builds lack from_base64 — decode manually
+                    signing_key = SigningKey.from_bytes(base64.b64decode(raw))
 
         meta = kwargs.pop("metadata", {}) or {}
         meta.setdefault("sdk_language", "python")
