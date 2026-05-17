@@ -37,7 +37,8 @@ plugins:
     - hermes-tenuo
   entries:
     hermes-tenuo:
-      warrant: ~/.hermes/tenuo/warrant   # path to warrant file, or base64 string
+      warrant: ~/.hermes/tenuo/warrant      # path to warrant file, or base64 string
+      trusted_root: <base64-issuer-pubkey>  # control plane public key; required for enforcement
       # signing_key_env: TENUO_SIGNING_KEY  # env var holding your Ed25519 signing key
 ```
 
@@ -47,7 +48,7 @@ The plugin logs `hermes-tenuo: active (enforcing)` at startup. To verify:
 hermes-tenuo status
 ```
 
-> **Note:** Enforcement requires both `warrant` and a signing key (`TENUO_SIGNING_KEY`). A warrant without a signing key logs a warning and passes through — it does not silently enforce partial constraints.
+> **Note:** Enforcement requires `warrant`, `trusted_root`, and a signing key (`TENUO_SIGNING_KEY`). Missing any of these causes the plugin to pass through with a warning.
 
 ## Create a warrant
 
@@ -233,6 +234,7 @@ All settings fall back to environment variables if not set in `config.yaml`.
 | `config.yaml` key | Environment variable | Required | Description |
 |---|---|---|---|
 | `warrant` | `TENUO_WARRANT` | For enforcement | Path to warrant file or base64-encoded warrant |
+| `trusted_root` | `TENUO_TRUSTED_ROOT` | For enforcement | Base64 issuer public key(s); comma-separated for multiple roots |
 | `child_warrant` | `TENUO_CHILD_WARRANT` | No | Warrant for sub-agent sessions (`delegate_task`) |
 | `signing_key_env` | — | For enforcement | Name of env var holding the signing key (default: `TENUO_SIGNING_KEY`) |
 | `connect_token` | `TENUO_CONNECT_TOKEN` | For Cloud | Quick Connect token from Tenuo Cloud dashboard |
