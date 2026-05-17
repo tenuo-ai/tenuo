@@ -107,12 +107,6 @@ class HermesGuard:
         on_denial: str = "block",   # "block" | "log"
         audit_callback: Optional[AuditCallback] = None,
     ):
-        if not TENUO_CORE_AVAILABLE:
-            logger.warning(
-                "tenuo_core is not installed. HermesGuard will run in passthrough mode. "
-                "Install tenuo to enable enforcement."
-            )
-
         self._static_warrant = warrant
         self._static_signing_key = signing_key
         self._child_warrant = child_warrant
@@ -123,6 +117,11 @@ class HermesGuard:
         # Session warrant registry: session_id → (warrant, signing_key)
         self._session_warrants: Dict[str, Tuple[Any, Optional[Any]]] = {}
         self._session_lock = threading.Lock()
+
+        # Primary session tracking for child warrant heuristic
+        # (on_session_start is not fired by Hermes — see _resolve_warrant)
+        self._primary_session_id: Optional[str] = None
+        self._primary_lock = threading.Lock()
 
         # Pending child warrants: (parent_session_id, task_index) → warrant
         self._pending_child_warrants: Dict[Tuple[str, int], Any] = {}
@@ -161,11 +160,33 @@ class HermesGuard:
     def _resolve_warrant(
         self, session_id: str
     ) -> Tuple[Optional[Any], Optional[Any]]:
-        """Return (warrant, signing_key) for a session, falling back to static."""
+        """Return (warrant, signing_key) for a session.
+
+        Resolution order:
+        1. Explicit session warrant (set via set_session_warrant — gateway use case)
+        2. Child warrant fallback — if child_warrant is configured and session_id
+           is not the primary session, treat as a subagent session. This works
+           because on_session_start is not currently fired by Hermes (it is in
+           VALID_HOOKS but has no invoke_hook call), so child warrants cannot be
+           pre-injected per-session at start time. Instead we detect child sessions
+           heuristically: the first session_id seen is treated as the primary session;
+           all subsequent different session_ids are child sessions.
+        3. Static warrant from plugin config (fallback for primary session)
+        """
         with self._session_lock:
             entry = self._session_warrants.get(session_id)
         if entry is not None:
             return entry
+
+        if self._child_warrant is not None:
+            with self._primary_lock:
+                if self._primary_session_id is None and session_id:
+                    # First session seen — record as primary
+                    self._primary_session_id = session_id
+                elif self._primary_session_id != session_id and session_id:
+                    # Different session_id → child/subagent session
+                    return self._child_warrant, self._static_signing_key
+
         return self._static_warrant, self._static_signing_key
 
     # ------------------------------------------------------------------
@@ -207,19 +228,17 @@ class HermesGuard:
         parent_session_id: Optional[str] = None,
         task_index: Optional[int] = None,
     ) -> None:
-        if not parent_session_id:
-            return
-        # This is a child session — claim its pre-registered warrant
-        child_warrant = self._claim_child_warrant(parent_session_id)
-        if child_warrant is not None:
-            self.set_session_warrant(session_id, child_warrant, self._static_signing_key)
+        """Called if Hermes fires on_session_start (currently not fired — kept for future compatibility)."""
+        # on_session_start is in VALID_HOOKS but Hermes does not currently fire it.
+        # Child warrant injection uses the heuristic in _resolve_warrant instead.
+        # If a future Hermes version fires this with parent_session_id, the explicit
+        # session warrant registration here will take precedence over the heuristic.
+        if parent_session_id and self._child_warrant:
+            child_warrant = self._claim_child_warrant(parent_session_id)
+            warrant = child_warrant or self._child_warrant
+            self.set_session_warrant(session_id, warrant, self._static_signing_key)
             logger.debug(
-                "hermes-tenuo: child session %s received attenuated warrant (parent=%s)",
-                session_id, parent_session_id,
-            )
-        else:
-            logger.debug(
-                "hermes-tenuo: child session %s has no pre-registered warrant (parent=%s)",
+                "hermes-tenuo: on_session_start fired — child session %s registered (parent=%s)",
                 session_id, parent_session_id,
             )
 
@@ -319,23 +338,21 @@ class HermesGuard:
         duration_ms: int = 0,
     ) -> None:
         """Emit audit event to Cloud. Fires for every tool call, including audit-only mode."""
-        if self._control_plane is None:
-            return
-
         warrant, _ = self._resolve_warrant(session_id)
 
         # In audit-only mode (no warrant), emit a passthrough audit event
         if warrant is None:
-            from tenuo._enforcement import EnforcementResult
-            audit_result = EnforcementResult(
-                allowed=True,
-                tool=tool_name,
-                arguments=args,
-            )
-            try:
-                self._control_plane.emit_for_enforcement(audit_result)
-            except Exception:
-                pass
+            if self._control_plane is not None:
+                from tenuo._enforcement import EnforcementResult
+                audit_result = EnforcementResult(
+                    allowed=True,
+                    tool=tool_name,
+                    arguments=args,
+                )
+                try:
+                    self._control_plane.emit_for_enforcement(audit_result)
+                except Exception:
+                    pass
             self._emit_audit(tool_name, args, True, "audit-only", session_id, task_id, tool_call_id, duration_ms)
             return
 
