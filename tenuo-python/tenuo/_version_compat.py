@@ -154,3 +154,8 @@ def check_langchain_compat():
 def check_langgraph_compat():
     """Check LangGraph version compatibility on import."""
     check_version_compatibility("langchain-core")  # langgraph depends on langchain-core
+
+
+def check_hermes_compat():
+    """Check Hermes Agent version compatibility on import."""
+    check_version_compatibility("hermes-agent")

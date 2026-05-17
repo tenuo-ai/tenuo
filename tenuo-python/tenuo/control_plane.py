@@ -133,6 +133,7 @@ class ControlPlaneClient:
             ("autogen", "framework_autogen"),
             ("fastapi", "framework_fastapi"),
             ("starlette", "framework_starlette"),
+            ("hermes_agent", "framework_hermes"),
         ]:
             try:
                 mod = __import__(mod_name)
