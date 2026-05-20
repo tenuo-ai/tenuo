@@ -34,6 +34,12 @@ def main() -> None:
     async def ping() -> str:
         return "pong"
 
+    @mcp.tool()
+    async def echo(message: str, max_len: int | None = None) -> str:
+        """Echo message, optionally truncated. Tests None-arg PoP canonicalization."""
+        result = message if max_len is None else message[:max_len]
+        return f"echo:{result}"
+
     asyncio.run(mcp.run_stdio_async(show_banner=False, log_level="CRITICAL"))
 
 

@@ -77,6 +77,56 @@ async def test_e2e_middleware_accepts_injected_warrant(e2e_server: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_e2e_none_arg_pop_canonicalization(e2e_server: Path) -> None:
+    """Regression: PoP succeeds when an optional arg is sent as None.
+
+    Reproduces the None-arg verifier rejection bug: client signs
+    strip_none_values(args), server verifies strip_none_values(args).
+    Both sides must produce byte-identical canonicalizations.
+
+    Covers two call shapes:
+    - explicit None value (client sends {"message": "hi", "max_len": null})
+    - absent key (client sends {"message": "hi"})
+    """
+    issuer = SigningKey.generate()
+    pub_hex = issuer.public_key.to_bytes().hex()
+    configure(issuer_key=issuer, dev_mode=True)
+    env = {
+        **os.environ,
+        "TENUO_MCP_E2E_ISSUER_PUB": pub_hex,
+        "PYTHONPATH": _repo_pythonpath(),
+    }
+
+    async with SecureMCPClient(
+        command=sys.executable,
+        args=[str(e2e_server)],
+        env=env,
+        inject_warrant=True,
+    ) as client:
+        async with mint(Capability("echo")):
+            # explicit None: would have crashed the Rust canonicalizer pre-fix
+            raw_explicit = await client.call_tool(
+                "echo",
+                {"message": "hello", "max_len": None},
+                warrant_context=False,
+                inject_warrant=True,
+            )
+            # absent key: FastMCP may expand to None inside the handler; PoP
+            # must still match because middleware sees the pre-handler args
+            raw_absent = await client.call_tool(
+                "echo",
+                {"message": "hello"},
+                warrant_context=False,
+                inject_warrant=True,
+            )
+
+    text_explicit = "".join(getattr(b, "text", str(b)) for b in raw_explicit)
+    text_absent = "".join(getattr(b, "text", str(b)) for b in raw_absent)
+    assert "echo:hello" in text_explicit
+    assert "echo:hello" in text_absent
+
+
+@pytest.mark.asyncio
 async def test_e2e_middleware_denies_without_warrant_structured(e2e_server: Path) -> None:
     """No _meta.tenuo → middleware denies; MCP client surfaces isError + structured tenuo."""
     issuer = SigningKey.generate()
