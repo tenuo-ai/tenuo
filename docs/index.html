@@ -656,6 +656,84 @@
             text-decoration: underline;
         }
 
+        /* In the Wild */
+        .wild-cards {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .wild-card {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: var(--surface);
+            border: 1px solid rgba(56,189,248,0.1);
+            border-radius: 8px;
+            padding: 20px 22px;
+            text-decoration: none;
+            transition: border-color 0.2s, background 0.2s;
+        }
+
+        .wild-card:hover {
+            border-color: rgba(56,189,248,0.25);
+            background: var(--surface-2);
+        }
+
+        .wild-card-type {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.68rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--accent);
+            opacity: 0.7;
+        }
+
+        .wild-card-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-bright);
+            line-height: 1.4;
+        }
+
+        .wild-card-source {
+            font-size: 0.8rem;
+            color: var(--muted-dim);
+        }
+
+        .wild-card-desc {
+            font-size: 0.82rem;
+            color: var(--muted);
+            line-height: 1.6;
+            flex: 1;
+        }
+
+        .wild-more {
+            text-align: center;
+            margin-top: 24px;
+        }
+
+        .wild-more a {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            letter-spacing: 0.04em;
+            color: var(--muted);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .wild-more a:hover {
+            color: var(--accent);
+        }
+
+        @media (max-width: 768px) {
+            .wild-cards {
+                grid-template-columns: 1fr;
+            }
+        }
+
         /* Footer */
         footer {
             padding: 48px 0;
@@ -986,6 +1064,30 @@
             </div>
         </section>
 
+
+        <section class="section">
+            <div class="section-header">
+                <h2>Tenuo in the Wild</h2>
+                <p>External mentions, write-ups, and recognition.</p>
+            </div>
+            <div class="wild-cards">
+                <a class="wild-card" href="https://brooksmcmillin.com/blog/wiring-capability-warrants-autonomous-agents/">
+                    <div class="wild-card-type">Case study</div>
+                    <div class="wild-card-title">Wiring capability warrants into autonomous agents</div>
+                    <div class="wild-card-source">Brooks McMillin · Staff Engineer, Dropbox</div>
+                    <p class="wild-card-desc">Full production walkthrough: scope-gated rollout across 16 agents on Kubernetes, multi-hop delegation at depth 2 and 3, two integration bugs and their fixes, and a live prompt injection the warrant catches.</p>
+                </a>
+                <a class="wild-card" href="https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/">
+                    <div class="wild-card-type">Standards</div>
+                    <div class="wild-card-title">draft-niyikiza-oauth-attenuating-agent-tokens-00</div>
+                    <div class="wild-card-source">IETF OAuth Working Group</div>
+                    <p class="wild-card-desc">Individual Internet-Draft published in the IETF OAuth Working Group defining Attenuating Authorization Tokens for agentic delegation chains. Tenuo is the canonical reference implementation.</p>
+                </a>
+            </div>
+            <div class="wild-more">
+                <a href="in-the-wild">See all mentions →</a>
+            </div>
+        </section>
 
         <section class="production">
             <p>Rust core. Open source. Ready for your pipeline.<br>
