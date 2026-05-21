@@ -124,7 +124,7 @@ description: External writing, talks, and coverage about Tenuo
     <span class="wild-badge wild-badge--case-study">Case study</span>
     <div class="wild-title"><a href="https://brooksmcmillin.com/blog/wiring-capability-warrants-autonomous-agents/">Wiring capability warrants into autonomous agents</a></div>
     <div class="wild-attribution">Brooks McMillin · Staff Engineer, Dropbox</div>
-    <p class="wild-description">Full production walkthrough: scope-gated rollout across 16 agents on Kubernetes, multi-hop delegation at depth 2 and 3, two integration bugs and their fixes, and a live prompt injection the warrant catches.</p>
+    <p class="wild-description">End-to-end warrant gating for MCP tool calls on Kubernetes, with Tenuo Cloud handling trigger minting and cross-cluster audit. Scope-gated rollout across 16 agents, multi-hop delegation at depth 2 and 3, and a live prompt injection the warrant catches.</p>
     <a class="wild-link" href="https://brooksmcmillin.com/blog/wiring-capability-warrants-autonomous-agents/">Read the post →</a>
   </div>
 
