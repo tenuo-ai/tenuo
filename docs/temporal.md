@@ -7,15 +7,15 @@ description: Warrant-based authorization for Temporal AI agent workflows
 
 ## What is Temporal?
 
-[Temporal](https://temporal.io/) is a platform for **durable execution**: you implement **Workflows** (orchestration code whose progress is replayed from event history—surviving process restarts, retries, and long waits) and **Activities** (non-deterministic work such as tool calls, HTTP requests, or model inference). The service assigns tasks from **task queues** to **Workers**, persists workflow state, and gives you a standard way to build reliable, observable automation—including multi-step AI agents—without hand-rolling sagas or bespoke recovery logic.
+[Temporal](https://temporal.io/) is a platform for **durable execution**: you write **Workflows**, deterministic orchestration code whose progress is replayed from event history and survives process restarts, retries, and long waits, and **Activities**, the non-deterministic work such as tool calls, HTTP requests, or model inference. The service assigns tasks from **task queues** to **Workers**, persists workflow state, and gives you reliable, observable automation for multi-step AI agents without hand-rolling sagas or bespoke recovery logic.
 
 For a guided introduction, see [Understanding Temporal](https://learn.temporal.io/getting_started/).
 
 ## How Tenuo fits
 
-Tenuo provides cryptographic authorization for AI agent workflows on Temporal. Each Activity execution is verified against a signed **warrant** that specifies which tools the agent may call, with what arguments, and under whose delegation. Authorization is enforced transparently by the worker interceptor — activity definitions require no changes.
+Access control in Temporal typically relies on worker identity or task queue tokens, which grant the same permissions to every workflow running on that worker. As agents take on more consequential actions, you need finer control: which tools each agent may use for a given task, with what arguments, and on whose authority.
 
-If you're building agentic systems on Temporal, Tenuo lets you ship agents that are constrained by design: an agent can only do what its warrant allows, and every action is cryptographically attributable to the entity that authorized it. Verification and Proof-of-Possession signing run in-process with no external service dependency at runtime.
+Tenuo adds that task-scoped authorization layer. A signed warrant travels with each workflow and is verified by the worker interceptor before every Activity runs. Agents are **constrained by design**: an agent can only execute what its warrant permits, and every action is cryptographically attributable to the entity that authorized it. Activity definitions require no changes, and verification runs in-process with no external service dependency.
 
 ## Prerequisites
 
@@ -89,6 +89,42 @@ export TENUO_KEY_agent1=$(python -c "from tenuo import SigningKey; import base64
 > | `tenuo.temporal_plugin.TenuoTemporalPlugin` | Temporal SDK **`SimplePlugin`** | **Default.** Pass to `Client.connect(plugins=[...])`. Wires the client interceptor, worker interceptor, and sandboxed workflow runner in one step. |
 > | `tenuo.temporal.TenuoWorkerInterceptor` | Temporal SDK **`WorkerInterceptor`** | Advanced only. Use when you are hand-composing your own `Plugin` / `SimplePlugin` and just want Tenuo's authorization interceptor. |
 
+## Define activities and workflows
+
+Activity definitions stay unchanged — no Tenuo imports needed:
+
+```python
+from pathlib import Path
+from temporalio import activity, workflow
+from datetime import timedelta
+
+@activity.defn
+async def read_file(path: str) -> str:
+    return Path(path).read_text()
+
+@activity.defn
+async def write_file(path: str, content: str) -> str:
+    Path(path).write_text(content)
+    return f"Wrote {len(content)} bytes"
+```
+
+Use `AuthorizedWorkflow` to fail fast if warrant headers are missing, or use plain `workflow.execute_activity()` — the interceptor handles authorization either way:
+
+```python
+from tenuo.temporal import AuthorizedWorkflow
+
+@workflow.defn
+class MyWorkflow(AuthorizedWorkflow):
+    @workflow.run
+    async def run(self, input_path: str) -> str:
+        data = await self.execute_authorized_activity(
+            read_file,
+            args=[input_path],
+            start_to_close_timeout=timedelta(seconds=30),
+        )
+        return data.upper()
+```
+
 ## Start an authorized workflow
 
 Pass a warrant and key ID when starting a workflow. The warrant defines what the agent is allowed to do — your control plane or policy layer mints it.
@@ -125,42 +161,6 @@ handle = await start_workflow_authorized(
 # Signal, query, or await later
 await handle.signal(ApprovalWorkflow.approve, decision)
 result = await handle.result()
-```
-
-## Define activities and workflows
-
-Activity definitions stay unchanged — no Tenuo imports needed:
-
-```python
-from pathlib import Path
-from temporalio import activity, workflow
-from datetime import timedelta
-
-@activity.defn
-async def read_file(path: str) -> str:
-    return Path(path).read_text()
-
-@activity.defn
-async def write_file(path: str, content: str) -> str:
-    Path(path).write_text(content)
-    return f"Wrote {len(content)} bytes"
-```
-
-Use `AuthorizedWorkflow` to fail fast if warrant headers are missing, or use plain `workflow.execute_activity()` — the interceptor handles authorization either way:
-
-```python
-from tenuo.temporal import AuthorizedWorkflow
-
-@workflow.defn
-class MyWorkflow(AuthorizedWorkflow):
-    @workflow.run
-    async def run(self, input_path: str) -> str:
-        data = await self.execute_authorized_activity(
-            read_file,
-            args=[input_path],
-            start_to_close_timeout=timedelta(seconds=30),
-        )
-        return data.upper()
 ```
 
 ## Capability constraints
