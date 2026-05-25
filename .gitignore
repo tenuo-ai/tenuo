@@ -91,6 +91,7 @@ verification/aat_constraints/
 
 # Demo/presentation scripts (local only)
 demos/
+temporal-tenuo-demos/
 tenuo-python/examples/unprompted_demo.py
 
 # Local notes and todos (never committed)
