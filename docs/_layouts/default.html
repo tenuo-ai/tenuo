@@ -2,10 +2,22 @@
 <html lang="en">
 
 <head>
+  {% assign og_image = page.og_image | default: '/images/og-image.png' %}
+  {% if page.canonical_url %}
+    {% assign canonical_url = page.canonical_url %}
+  {% else %}
+    {% assign canonical_url = 'https://tenuo.ai' | append: page.url %}
+  {% endif %}
+  {% if og_image contains '://' %}
+    {% assign og_image_url = og_image %}
+  {% else %}
+    {% assign og_image_url = 'https://tenuo.ai' | append: og_image %}
+  {% endif %}
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ page.title }} | Tenuo</title>
   <meta name="description" content="{{ page.description | default: site.description }}">
+  <link rel="canonical" href="{{ canonical_url }}">
   
   <!-- Favicons -->
   <link rel="icon" type="image/svg+xml" href="{{ site.baseurl }}/images/favicon-t.svg">
@@ -15,15 +27,15 @@
   <meta property="og:type" content="website">
   <meta property="og:title" content="{{ page.title }} | Tenuo">
   <meta property="og:description" content="{{ page.description | default: site.description }}">
-  <meta property="og:image" content="https://tenuo.ai/images/og-image.png">
-  <meta property="og:url" content="https://tenuo.ai{{ page.url }}">
+  <meta property="og:image" content="{{ og_image_url }}">
+  <meta property="og:url" content="{{ canonical_url }}">
   <meta property="og:site_name" content="Tenuo">
   
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="{{ page.title }} | Tenuo">
   <meta name="twitter:description" content="{{ page.description | default: site.description }}">
-  <meta name="twitter:image" content="https://tenuo.ai/images/og-image.png">
+  <meta name="twitter:image" content="{{ og_image_url }}">
   <style>
     :root {
       --bg: #0a0a0a;
@@ -237,6 +249,112 @@
       height: auto;
     }
 
+    .content p.blog-image {
+      margin: 1.5rem auto 0.5rem;
+      text-align: center;
+    }
+
+    .content p.blog-image img {
+      display: block;
+      width: min(100%, 680px);
+      max-width: 100%;
+      height: auto;
+      margin: 0 auto;
+      border-radius: 8px;
+    }
+
+    .blog-page .content img:not(.no-zoom) {
+      cursor: zoom-in;
+    }
+
+    .content img.no-zoom {
+      cursor: default;
+    }
+
+    .content .partner-lockup {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 0.5rem 0 1.25rem;
+      opacity: 0.9;
+    }
+
+    .content .partner-lockup .partner-logo-tenuo {
+      height: 18px;
+      width: auto;
+      max-width: 118px;
+    }
+
+    .content .partner-lockup .partner-logo-temporal {
+      height: 30px;
+      width: auto;
+      max-width: 210px;
+    }
+
+    .content .partner-lockup .partner-separator,
+    .content .partner-lockup .partner-name {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      line-height: 1;
+    }
+
+    @media (max-width: 480px) {
+      .content .partner-lockup {
+        justify-content: center;
+        gap: 8px;
+      }
+
+      .content .partner-lockup .partner-logo-temporal {
+        height: 26px;
+        max-width: 180px;
+      }
+
+      .content .partner-lockup .partner-logo-tenuo {
+        height: 16px;
+        max-width: 104px;
+      }
+    }
+
+    .content p.image-caption {
+      margin: 0 auto 1.5rem;
+      max-width: 680px;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .image-lightbox {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.88);
+      backdrop-filter: blur(2px);
+      z-index: 2000;
+      padding: 24px;
+      cursor: zoom-out;
+    }
+
+    body.lightbox-open {
+      overflow: hidden;
+    }
+
+    .image-lightbox.open {
+      display: flex;
+    }
+
+    .image-lightbox img {
+      max-width: min(96vw, 1800px);
+      max-height: 92vh;
+      width: auto;
+      height: auto;
+      border-radius: 8px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+      cursor: zoom-out;
+    }
+
     blockquote {
       border-left: 4px solid var(--accent);
       padding-left: 1rem;
@@ -369,7 +487,7 @@
   </style>
 </head>
 
-<body>
+<body class="{% if page.url contains '/blog/' %}blog-page{% endif %}">
   <nav class="top-nav">
     <a href="{{ site.baseurl }}/" class="brand">tenuo</a>
     <span class="spacer"></span>
@@ -514,6 +632,76 @@
         title.textContent = match[1].charAt(0) + match[1].slice(1).toLowerCase();
         bq.insertBefore(title, bq.firstChild);
         bq.className = 'callout callout-' + kind;
+      });
+    });
+  </script>
+
+  <script>
+    // Click-to-zoom for blog images
+    document.addEventListener('DOMContentLoaded', function () {
+      if (!document.body.classList.contains('blog-page')) return;
+
+      var zoomableImages = document.querySelectorAll('.content img');
+      if (!zoomableImages.length) return;
+
+      var lightbox = document.createElement('div');
+      lightbox.className = 'image-lightbox';
+      lightbox.setAttribute('aria-hidden', 'true');
+      lightbox.setAttribute('role', 'dialog');
+
+      var lightboxImage = document.createElement('img');
+      lightboxImage.alt = '';
+      lightbox.appendChild(lightboxImage);
+      document.body.appendChild(lightbox);
+
+      function closeLightbox() {
+        if (!lightbox.classList.contains('open')) return;
+        lightbox.classList.remove('open');
+        lightbox.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('lightbox-open');
+        lightboxImage.removeAttribute('src');
+      }
+
+      function openLightbox(img) {
+        var nextSrc = img.currentSrc || img.src;
+        var isSameImageOpen = lightbox.classList.contains('open') && lightboxImage.getAttribute('src') === nextSrc;
+        if (isSameImageOpen) {
+          closeLightbox();
+          return;
+        }
+
+        lightboxImage.src = nextSrc;
+        lightboxImage.alt = img.alt || '';
+        lightbox.classList.add('open');
+        lightbox.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('lightbox-open');
+      }
+
+      zoomableImages.forEach(function (img) {
+        img.tabIndex = 0;
+        img.setAttribute('role', 'button');
+        img.setAttribute('aria-label', 'Toggle image zoom view');
+
+        img.addEventListener('click', function () {
+          openLightbox(img);
+        });
+        img.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openLightbox(img);
+          }
+        });
+      });
+
+      lightboxImage.addEventListener('click', closeLightbox);
+      lightbox.addEventListener('click', function (e) {
+        if (e.target === lightbox) closeLightbox();
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && lightbox.classList.contains('open')) {
+          closeLightbox();
+        }
       });
     });
   </script>
