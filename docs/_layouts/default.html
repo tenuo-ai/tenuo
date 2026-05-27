@@ -3,6 +3,13 @@
 
 <head>
   {% assign og_image = page.og_image | default: '/images/og-image.png' %}
+  {% assign og_type = page.og_type | default: 'website' %}
+  {% if page.url contains '/blog/' %}
+    {% assign og_type = 'article' %}
+  {% endif %}
+  {% assign og_image_width = page.og_image_width | default: '1200' %}
+  {% assign og_image_height = page.og_image_height | default: '630' %}
+  {% assign og_image_alt = page.og_image_alt | default: page.title %}
   {% if page.canonical_url %}
     {% assign canonical_url = page.canonical_url %}
   {% else %}
@@ -24,10 +31,13 @@
   <link rel="apple-touch-icon" href="{{ site.baseurl }}/images/apple-touch-icon.png">
   
   <!-- Open Graph / Social Media -->
-  <meta property="og:type" content="website">
+  <meta property="og:type" content="{{ og_type }}">
   <meta property="og:title" content="{{ page.title }} | Tenuo">
   <meta property="og:description" content="{{ page.description | default: site.description }}">
   <meta property="og:image" content="{{ og_image_url }}">
+  <meta property="og:image:width" content="{{ og_image_width }}">
+  <meta property="og:image:height" content="{{ og_image_height }}">
+  <meta property="og:image:alt" content="{{ og_image_alt }}">
   <meta property="og:url" content="{{ canonical_url }}">
   <meta property="og:site_name" content="Tenuo">
   
@@ -36,6 +46,7 @@
   <meta name="twitter:title" content="{{ page.title }} | Tenuo">
   <meta name="twitter:description" content="{{ page.description | default: site.description }}">
   <meta name="twitter:image" content="{{ og_image_url }}">
+  <meta name="twitter:image:alt" content="{{ og_image_alt }}">
   <style>
     :root {
       --bg: #0a0a0a;
