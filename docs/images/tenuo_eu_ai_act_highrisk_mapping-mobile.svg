@@ -1,0 +1,48 @@
+<svg width="420" height="860" viewBox="0 0 420 860" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Mobile map of Tenuo controls to EU AI Act anchors</title>
+<desc>Stacked control-to-article mapping optimized for small screens.</desc>
+
+  <style>
+    .panel { fill: #0b1220; stroke: #1e293b; stroke-width: 1; }
+    .card { fill: #111a2b; stroke: #334155; stroke-width: 1; }
+    .left-card { fill: #0f2a3a; stroke: #38bdf8; stroke-opacity: 0.55; }
+    .right-card { fill: #122334; stroke: #38bdf8; stroke-opacity: 0.5; }
+    .title { fill: #f8fafc; font: 600 18px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .subtitle { fill: #94a3b8; font: 500 12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .text { fill: #e2e8f0; font: 500 13px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .small { fill: #94a3b8; font: 400 12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  </style>
+
+<defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M2 1 L8 5 L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="8" y="8" width="404" height="844" rx="14" class="panel"/>
+<text x="24" y="36" class="title">EU AI Act Mapping (Mobile)</text>
+<text x="24" y="54" class="subtitle">Execution-time controls and corresponding article anchors</text>
+<rect x="20" y="74" width="380" height="66" rx="11" class="left-card"/>
+<text x="210" y="101" text-anchor="middle" class="text" fill="#dbeafe">Attenuating warrants</text>
+<text x="210" y="120" text-anchor="middle" class="small" fill="#93c5fd">task-scoped least privilege</text>
+<line x1="210" y1="140" x2="210" y2="166" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+<rect x="20" y="170" width="380" height="66" rx="11" class="right-card"/>
+<text x="210" y="197" text-anchor="middle" class="text" fill="#bae6fd">Article 9</text>
+<text x="210" y="216" text-anchor="middle" class="small" fill="#7dd3fc">Risk management by design</text>
+<rect x="20" y="264" width="380" height="66" rx="11" class="left-card"/>
+<text x="210" y="291" text-anchor="middle" class="text" fill="#dbeafe">Tool-boundary enforcement</text>
+<text x="210" y="310" text-anchor="middle" class="small" fill="#93c5fd">deterministic, fail-closed</text>
+<line x1="210" y1="330" x2="210" y2="356" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+<rect x="20" y="360" width="380" height="66" rx="11" class="right-card"/>
+<text x="210" y="387" text-anchor="middle" class="text" fill="#bae6fd">Article 15</text>
+<text x="210" y="406" text-anchor="middle" class="small" fill="#7dd3fc">Cybersecurity and robustness</text>
+<rect x="20" y="454" width="380" height="66" rx="11" class="left-card"/>
+<text x="210" y="481" text-anchor="middle" class="text" fill="#dbeafe">Human approvals</text>
+<text x="210" y="500" text-anchor="middle" class="small" fill="#93c5fd">explicit cryptographic sign-off</text>
+<line x1="210" y1="520" x2="210" y2="546" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+<rect x="20" y="550" width="380" height="66" rx="11" class="right-card"/>
+<text x="210" y="577" text-anchor="middle" class="text" fill="#bae6fd">Article 14</text>
+<text x="210" y="596" text-anchor="middle" class="small" fill="#7dd3fc">Human oversight requirements</text>
+<rect x="20" y="644" width="380" height="66" rx="11" class="left-card"/>
+<text x="210" y="671" text-anchor="middle" class="text" fill="#dbeafe">Signed receipts</text>
+<text x="210" y="690" text-anchor="middle" class="small" fill="#93c5fd">tamper-evident operation trail</text>
+<line x1="210" y1="710" x2="210" y2="736" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+<rect x="20" y="740" width="380" height="66" rx="11" class="right-card"/>
+<text x="210" y="767" text-anchor="middle" class="text" fill="#bae6fd">Article 12</text>
+<text x="210" y="786" text-anchor="middle" class="small" fill="#7dd3fc">Automatic logging and records</text>
+</svg>

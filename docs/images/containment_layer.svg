@@ -1,0 +1,44 @@
+<svg width="100%" viewBox="0 0 680 360" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Tenuo as containment beneath per-layer prevention</title>
+<desc>Multiple prevention controls feed into a deterministic authorization layer at the tool boundary, with signed receipts beneath.</desc>
+
+  <style>
+    .panel { fill: #0b1220; stroke: #1e293b; stroke-width: 1; }
+    .card { fill: #111a2b; stroke: #334155; stroke-width: 1; }
+    .left-card { fill: #0f2a3a; stroke: #38bdf8; stroke-opacity: 0.5; }
+    .right-card { fill: #122334; stroke: #38bdf8; stroke-opacity: 0.45; }
+    .title { fill: #f8fafc; font: 600 17px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .subtitle { fill: #94a3b8; font: 500 12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .label { fill: #cbd5e1; font: 500 12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .text { fill: #e2e8f0; font: 500 13px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .small { fill: #94a3b8; font: 400 11px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .line { stroke: #475569; stroke-width: 1; }
+  </style>
+
+<defs><marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M2 1 L8 5 L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="14" y="14" width="652" height="332" rx="14" class="panel"/>
+<text x="34" y="44" class="title">Where Tenuo Sits in the Security Stack</text>
+<text x="34" y="64" class="subtitle">Per-layer prevention remains useful; Tenuo adds deterministic containment at execution</text>
+<rect x="44" y="84" width="124" height="56" rx="9" class="card"/>
+<text x="106" y="106" text-anchor="middle" class="text">Prompt injection</text>
+<text x="106" y="124" text-anchor="middle" class="small">detection / filtering</text>
+<line x1="106" y1="140" x2="334" y2="184" stroke="#64748b" stroke-width="1.4" marker-end="url(#arrow2)" opacity="0.9"/>
+<rect x="200" y="84" width="124" height="56" rx="9" class="card"/>
+<text x="262" y="106" text-anchor="middle" class="text">Identity</text>
+<text x="262" y="124" text-anchor="middle" class="small">IAM / workload auth</text>
+<line x1="262" y1="140" x2="334" y2="184" stroke="#64748b" stroke-width="1.4" marker-end="url(#arrow2)" opacity="0.9"/>
+<rect x="356" y="84" width="124" height="56" rx="9" class="card"/>
+<text x="418" y="106" text-anchor="middle" class="text">Sandboxing</text>
+<text x="418" y="124" text-anchor="middle" class="small">runtime isolation</text>
+<line x1="418" y1="140" x2="334" y2="184" stroke="#64748b" stroke-width="1.4" marker-end="url(#arrow2)" opacity="0.9"/>
+<rect x="512" y="84" width="124" height="56" rx="9" class="card"/>
+<text x="574" y="106" text-anchor="middle" class="text">Monitoring</text>
+<text x="574" y="124" text-anchor="middle" class="small">anomaly detection</text>
+<line x1="574" y1="140" x2="334" y2="184" stroke="#64748b" stroke-width="1.4" marker-end="url(#arrow2)" opacity="0.9"/>
+<rect x="58" y="186" width="552" height="72" rx="12" fill="#0f2a3a" stroke="#38bdf8" stroke-opacity="0.7"/>
+<text x="334" y="214" text-anchor="middle" class="title" style="font-size:15px;">Tenuo: Deterministic Authorization at the Tool Boundary</text>
+<text x="334" y="236" text-anchor="middle" class="subtitle" style="fill:#7dd3fc;">Bounds agent actions even when upstream controls miss</text>
+<line x1="334" y1="258" x2="334" y2="282" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow2)"/>
+<rect x="130" y="286" width="408" height="42" rx="10" fill="#1e1b4b" stroke="#818cf8" stroke-opacity="0.7"/>
+<text x="334" y="311" text-anchor="middle" class="text" fill="#c7d2fe">Signed receipts for forensics and compliance evidence</text>
+</svg>

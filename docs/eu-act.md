@@ -1,3 +1,16 @@
+---
+title: "Tenuo and the EU AI Act"
+description: "How Tenuo's execution-time authorization controls map to key EU AI Act obligations for high-risk AI systems."
+layout: default
+canonical_url: https://tenuo.ai/eu-act
+og_type: article
+og_image: /images/og-eu-ai-act.png
+og_image_alt: "Tenuo and the EU AI Act for high-risk AI systems"
+author: "Tenuo Team"
+date: 2026-05-06
+tags: ["EU AI Act", "compliance", "AI governance", "agentic systems"]
+---
+
 # Tenuo and the EU AI Act
 
 Tenuo is a task-scoped authorization layer for AI agents that cryptographically enforces least privilege at the tool boundary. This document analyzes how Tenuo's capabilities address specific articles of the EU Artificial Intelligence Act, particularly for organizations developing high-risk AI systems.
@@ -64,6 +77,16 @@ Providers of high-risk AI systems must:
 - Design for human oversight (Article 14)
 - Achieve accuracy, robustness, and cybersecurity (Article 15)
 - Implement post-market monitoring (Article 72)
+
+<figure class="diagram-figure">
+  <picture>
+    <source media="(max-width: 720px)" srcset="/images/tenuo_eu_ai_act_highrisk_mapping-mobile.svg">
+    <img src="/images/tenuo_eu_ai_act_highrisk_mapping.svg" alt="Mapping of core Tenuo controls to key EU AI Act high-risk obligations." width="680" height="430" loading="lazy">
+  </picture>
+</figure>
+
+Control-to-obligation map: how execution-time mechanisms align to Articles 9, 12, 14, and 15.
+{: .image-caption}
 
 ---
 

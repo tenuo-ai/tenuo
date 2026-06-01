@@ -24,6 +24,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ page.title }} | Tenuo</title>
   <meta name="description" content="{{ page.description | default: site.description }}">
+  <meta name="robots" content="index,follow">
   <link rel="canonical" href="{{ canonical_url }}">
   
   <!-- Favicons -->
@@ -47,6 +48,60 @@
   <meta name="twitter:description" content="{{ page.description | default: site.description }}">
   <meta name="twitter:image" content="{{ og_image_url }}">
   <meta name="twitter:image:alt" content="{{ og_image_alt }}">
+
+  {% assign schema_title = page.title | default: site.title %}
+  {% assign schema_description = page.description | default: site.description %}
+  {% assign schema_author = page.author | default: 'Tenuo Team' %}
+  {% assign schema_page_type = 'WebPage' %}
+  {% if og_type == 'article' %}
+    {% assign schema_page_type = 'Article' %}
+  {% endif %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://tenuo.ai/#organization",
+        "name": "Tenuo",
+        "url": "https://tenuo.ai",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://tenuo.ai/images/tenuo-logo.png"
+        }
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://tenuo.ai/#website",
+        "url": "https://tenuo.ai",
+        "name": "Tenuo",
+        "publisher": {
+          "@id": "https://tenuo.ai/#organization"
+        }
+      },
+      {
+        "@type": {{ schema_page_type | jsonify }},
+        "@id": {{ canonical_url | append: "#page" | jsonify }},
+        "url": {{ canonical_url | jsonify }},
+        "name": {{ schema_title | jsonify }},
+        "description": {{ schema_description | jsonify }},
+        "isPartOf": {
+          "@id": "https://tenuo.ai/#website"
+        },
+        "image": {{ og_image_url | jsonify }},
+        "publisher": {
+          "@id": "https://tenuo.ai/#organization"
+        },
+        "author": {
+          "@type": "Organization",
+          "name": {{ schema_author | jsonify }}
+        }{% if page.date %},
+        "datePublished": {{ page.date | date_to_xmlschema | jsonify }},
+        "dateModified": {{ page.last_modified_at | default: page.date | date_to_xmlschema | jsonify }}{% endif %}
+      }
+    ]
+  }
+  </script>
   <style>
     :root {
       --bg: #0a0a0a;
@@ -333,6 +388,28 @@
       text-align: center;
       font-size: 0.85rem;
       color: var(--text-muted);
+    }
+
+    .content figure.diagram-figure {
+      margin: 1.5rem auto 0.5rem;
+      width: 680px;
+      max-width: 100%;
+    }
+
+    .content figure.diagram-figure picture,
+    .content figure.diagram-figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin: 0 auto;
+      border-radius: 8px;
+    }
+
+    @media (max-width: 768px) {
+      .content figure.diagram-figure {
+        width: 420px;
+        max-width: 100%;
+      }
     }
 
     .image-lightbox {

@@ -1,0 +1,40 @@
+<svg width="420" height="620" viewBox="0 0 420 620" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Mobile containment-layer architecture with Tenuo</title>
+<desc>Stacked architecture showing prevention controls feeding a Tenuo containment layer and signed receipts.</desc>
+
+  <style>
+    .panel { fill: #0b1220; stroke: #1e293b; stroke-width: 1; }
+    .card { fill: #111a2b; stroke: #334155; stroke-width: 1; }
+    .left-card { fill: #0f2a3a; stroke: #38bdf8; stroke-opacity: 0.55; }
+    .right-card { fill: #122334; stroke: #38bdf8; stroke-opacity: 0.5; }
+    .title { fill: #f8fafc; font: 600 18px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .subtitle { fill: #94a3b8; font: 500 12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .text { fill: #e2e8f0; font: 500 13px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .small { fill: #94a3b8; font: 400 12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  </style>
+
+<defs><marker id="arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M2 1 L8 5 L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="8" y="8" width="404" height="604" rx="14" class="panel"/>
+<text x="24" y="36" class="title">Security Stack Placement (Mobile)</text>
+<text x="24" y="54" class="subtitle">Tenuo contains actions when upstream controls miss</text>
+<rect x="24" y="74" width="372" height="58" rx="10" class="card"/>
+<text x="210" y="98" text-anchor="middle" class="text">Prompt injection</text>
+<text x="210" y="116" text-anchor="middle" class="small">detection/filtering</text>
+<rect x="24" y="146" width="372" height="58" rx="10" class="card"/>
+<text x="210" y="170" text-anchor="middle" class="text">Identity</text>
+<text x="210" y="188" text-anchor="middle" class="small">IAM/workload auth</text>
+<rect x="24" y="218" width="372" height="58" rx="10" class="card"/>
+<text x="210" y="242" text-anchor="middle" class="text">Sandboxing</text>
+<text x="210" y="260" text-anchor="middle" class="small">runtime isolation</text>
+<rect x="24" y="290" width="372" height="58" rx="10" class="card"/>
+<text x="210" y="314" text-anchor="middle" class="text">Monitoring</text>
+<text x="210" y="332" text-anchor="middle" class="small">anomaly detection</text>
+<line x1="210" y1="364" x2="210" y2="388" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr2)"/>
+<rect x="24" y="390" width="372" height="82" rx="12" fill="#0f2a3a" stroke="#38bdf8" stroke-opacity="0.75"/>
+<text x="210" y="422" text-anchor="middle" class="text" fill="#dbeafe">Tenuo: Deterministic Tool-Boundary Authorization</text>
+<text x="210" y="444" text-anchor="middle" class="small" fill="#7dd3fc">Bounds action impact across failure origins</text>
+<line x1="210" y1="472" x2="210" y2="496" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr2)"/>
+<rect x="50" y="500" width="320" height="64" rx="12" fill="#1e1b4b" stroke="#818cf8" stroke-opacity="0.75"/>
+<text x="210" y="529" text-anchor="middle" class="text" fill="#c7d2fe">Signed receipts</text>
+<text x="210" y="548" text-anchor="middle" class="small" fill="#c7d2fe">Forensics and compliance evidence</text>
+</svg>

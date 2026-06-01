@@ -1,3 +1,16 @@
+---
+title: "Tenuo against the OWASP Top 10 for Agentic Applications"
+description: "How Tenuo maps to the OWASP Top 10 for Agentic Applications with enforcement-focused coverage across ASI01-ASI10."
+layout: default
+canonical_url: https://tenuo.ai/owasp
+og_type: article
+og_image: /images/og-owasp-agentic.png
+og_image_alt: "Tenuo against the OWASP Top 10 for Agentic Applications"
+author: "Tenuo Team"
+date: 2026-05-06
+tags: ["OWASP", "AI security", "agentic systems", "authorization"]
+---
+
 # Tenuo against the OWASP Top 10 for Agentic Applications
 
 **Reference framework:** [OWASP Top 10 for Agentic Applications (2026)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) (Version 2026, December 2025), OWASP Gen AI Security Project.
@@ -45,6 +58,16 @@ We use three labels in this document. Each is defined in the corresponding secti
 - **Prevented:** Tenuo's mechanism rules out the failure mode within its scope.
 - **Contained:** The failure can occur upstream of Tenuo (model, memory, compromised dependency), but Tenuo bounds the resulting damage at the tool boundary.
 - **Partial:** Some attack vectors are covered; others belong in a complementary layer (notably sandboxing for ASI05).
+
+<figure class="diagram-figure">
+  <picture>
+    <source media="(max-width: 720px)" srcset="/images/top10_coverage-mobile.svg">
+    <img src="/images/top10_coverage.svg" alt="Visual summary of OWASP ASI01-ASI10 coverage by Tenuo." width="680" height="560" loading="lazy">
+  </picture>
+</figure>
+
+Coverage matrix showing primary Tenuo coverage per OWASP agentic risk (Prevented, Contained, Partial).
+{: .image-caption}
 
 | Risk | Name | Tenuo coverage | Mechanism |
 |------|------|----------------|-----------|
@@ -327,7 +350,7 @@ Warrants are cryptographically signed capability tokens bound to a holder key. I
 - A compromised agent cannot derive a warrant that exceeds what it received (monotonicity fails at signing time).
 - Every hop is verifiable from the trust anchor's public key alone, with no live authority server in the request path.
 
-Verification is local, in tens of microseconds in our benchmarks (a modern x86 core, default warrant size, single-capability check; methodology in [Performance Benchmarks](https://tenuo.ai/api-reference#performance-benchmarks)), with no network call to a central authority at decision time. In multi-agent deployments where agents cross network, organizational, or trust boundaries, this matters because authority can flow across the boundary without the boundary needing to be live or reachable at each decision. See the [A2A integration docs](https://tenuo.ai/integrations/a2a) for the full API.
+Verification is local, in tens of microseconds in our benchmarks (a modern x86 core, default warrant size, single-capability check; methodology in [Performance Benchmarks](https://tenuo.ai/api-reference#performance-benchmarks)), with no network call to a central authority at decision time. In multi-agent deployments where agents cross network, organizational, or trust boundaries, this matters because authority can flow across the boundary without the boundary needing to be live or reachable at each decision. See the [A2A integration docs](https://tenuo.ai/a2a) for the full API.
 
 ### Example
 
@@ -436,6 +459,16 @@ The realistic baseline for ASI10 is behavioral monitoring, anomaly detection, dr
 ## Where Tenuo fits in an agent security stack
 
 Defense in depth typically stacks prevention controls per failure mode with enforcement at the tool boundary.
+
+<figure class="diagram-figure">
+  <picture>
+    <source media="(max-width: 720px)" srcset="/images/containment_layer-mobile.svg">
+    <img src="/images/containment_layer.svg" alt="Diagram showing prevention controls feeding into Tenuo containment at the tool boundary." width="680" height="360" loading="lazy">
+  </picture>
+</figure>
+
+Tenuo acts as the shared containment layer beneath model-, identity-, runtime-, and monitoring-layer controls.
+{: .image-caption}
 
 | Failure origin | Per-layer prevention | What Tenuo adds |
 |----------------|---------------------|-----------------|

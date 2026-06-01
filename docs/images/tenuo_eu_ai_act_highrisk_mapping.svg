@@ -1,0 +1,52 @@
+<svg width="100%" viewBox="0 0 680 430" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Tenuo capabilities mapped to EU AI Act high-risk obligations</title>
+<desc>Four Tenuo controls mapped to core EU AI Act articles for high-risk systems.</desc>
+
+  <style>
+    .panel { fill: #0b1220; stroke: #1e293b; stroke-width: 1; }
+    .card { fill: #111a2b; stroke: #334155; stroke-width: 1; }
+    .left-card { fill: #0f2a3a; stroke: #38bdf8; stroke-opacity: 0.5; }
+    .right-card { fill: #122334; stroke: #38bdf8; stroke-opacity: 0.45; }
+    .title { fill: #f8fafc; font: 600 17px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .subtitle { fill: #94a3b8; font: 500 12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .label { fill: #cbd5e1; font: 500 12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .text { fill: #e2e8f0; font: 500 13px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .small { fill: #94a3b8; font: 400 11px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .line { stroke: #475569; stroke-width: 1; }
+  </style>
+
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M2 1 L8 5 L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="14" y="14" width="652" height="402" rx="14" class="panel"/>
+<text x="34" y="44" class="title">Tenuo x EU AI Act Mapping (High-Risk Systems)</text>
+<text x="34" y="64" class="subtitle">Execution-time controls on the left, obligations they directly support on the right</text>
+<text x="168" y="92" text-anchor="middle" class="subtitle">Tenuo control</text>
+<text x="512" y="92" text-anchor="middle" class="subtitle">EU AI Act anchor</text>
+<rect x="38" y="104" width="260" height="60" rx="10" class="left-card"/>
+<text x="168" y="128" text-anchor="middle" class="text" fill="#dbeafe">Attenuating warrants</text>
+<text x="168" y="146" text-anchor="middle" class="small" fill="#93c5fd">task-scoped least privilege</text>
+<line x1="298" y1="134" x2="382" y2="134" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="386" y="104" width="256" height="60" rx="10" class="right-card"/>
+<text x="514" y="128" text-anchor="middle" class="text" fill="#bae6fd">Article 9</text>
+<text x="514" y="146" text-anchor="middle" class="small" fill="#7dd3fc">Risk management by design</text>
+<rect x="38" y="180" width="260" height="60" rx="10" class="left-card"/>
+<text x="168" y="204" text-anchor="middle" class="text" fill="#dbeafe">Tool-boundary enforcement</text>
+<text x="168" y="222" text-anchor="middle" class="small" fill="#93c5fd">deterministic, fail-closed</text>
+<line x1="298" y1="210" x2="382" y2="210" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="386" y="180" width="256" height="60" rx="10" class="right-card"/>
+<text x="514" y="204" text-anchor="middle" class="text" fill="#bae6fd">Article 15</text>
+<text x="514" y="222" text-anchor="middle" class="small" fill="#7dd3fc">Cybersecurity and robustness controls</text>
+<rect x="38" y="256" width="260" height="60" rx="10" class="left-card"/>
+<text x="168" y="280" text-anchor="middle" class="text" fill="#dbeafe">Human approvals</text>
+<text x="168" y="298" text-anchor="middle" class="small" fill="#93c5fd">explicit cryptographic sign-off</text>
+<line x1="298" y1="286" x2="382" y2="286" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="386" y="256" width="256" height="60" rx="10" class="right-card"/>
+<text x="514" y="280" text-anchor="middle" class="text" fill="#bae6fd">Article 14</text>
+<text x="514" y="298" text-anchor="middle" class="small" fill="#7dd3fc">Human oversight requirements</text>
+<rect x="38" y="332" width="260" height="60" rx="10" class="left-card"/>
+<text x="168" y="356" text-anchor="middle" class="text" fill="#dbeafe">Signed receipts</text>
+<text x="168" y="374" text-anchor="middle" class="small" fill="#93c5fd">tamper-evident operation trail</text>
+<line x1="298" y1="362" x2="382" y2="362" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="386" y="332" width="256" height="60" rx="10" class="right-card"/>
+<text x="514" y="356" text-anchor="middle" class="text" fill="#bae6fd">Article 12</text>
+<text x="514" y="374" text-anchor="middle" class="small" fill="#7dd3fc">Automatic logging and records</text>
+</svg>

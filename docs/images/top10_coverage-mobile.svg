@@ -1,0 +1,70 @@
+<svg width="420" height="700" viewBox="0 0 420 700" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Mobile summary of OWASP Top 10 coverage by Tenuo</title>
+<desc>Compact mobile table of ASI01 to ASI10 with coverage labels.</desc>
+
+  <style>
+    .panel { fill: #0b1220; stroke: #1e293b; stroke-width: 1; }
+    .card { fill: #111a2b; stroke: #334155; stroke-width: 1; }
+    .left-card { fill: #0f2a3a; stroke: #38bdf8; stroke-opacity: 0.55; }
+    .right-card { fill: #122334; stroke: #38bdf8; stroke-opacity: 0.5; }
+    .title { fill: #f8fafc; font: 600 18px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .subtitle { fill: #94a3b8; font: 500 12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .text { fill: #e2e8f0; font: 500 13px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .small { fill: #94a3b8; font: 400 12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  </style>
+
+<rect x="8" y="8" width="404" height="684" rx="14" class="panel"/>
+<text x="24" y="36" class="title">OWASP Coverage (Mobile)</text>
+<text x="24" y="54" class="subtitle">Primary execution-boundary label per risk</text>
+<rect x="18" y="74" width="384" height="50" rx="10" class="card"/>
+<text x="30" y="94" class="small" fill="#cbd5e1">ASI01</text>
+<text x="30" y="112" class="text">Goal hijack</text>
+<rect x="292" y="87" width="98" height="24" rx="12" fill="#102b40" stroke="#38bdf8"/>
+<text x="341" y="103" text-anchor="middle" class="small" fill="#bae6fd">Contained</text>
+<rect x="18" y="130" width="384" height="50" rx="10" class="card"/>
+<text x="30" y="150" class="small" fill="#cbd5e1">ASI02</text>
+<text x="30" y="168" class="text">Tool misuse/exploit</text>
+<rect x="292" y="143" width="98" height="24" rx="12" fill="#0f3c35" stroke="#10b981"/>
+<text x="341" y="159" text-anchor="middle" class="small" fill="#a7f3d0">Prevented</text>
+<rect x="18" y="186" width="384" height="50" rx="10" class="card"/>
+<text x="30" y="206" class="small" fill="#cbd5e1">ASI03</text>
+<text x="30" y="224" class="text">Identity/privilege abuse</text>
+<rect x="292" y="199" width="98" height="24" rx="12" fill="#0f3c35" stroke="#10b981"/>
+<text x="341" y="215" text-anchor="middle" class="small" fill="#a7f3d0">Prevented</text>
+<rect x="18" y="242" width="384" height="50" rx="10" class="card"/>
+<text x="30" y="262" class="small" fill="#cbd5e1">ASI04</text>
+<text x="30" y="280" class="text">Supply-chain vulns</text>
+<rect x="292" y="255" width="98" height="24" rx="12" fill="#102b40" stroke="#38bdf8"/>
+<text x="341" y="271" text-anchor="middle" class="small" fill="#bae6fd">Contained</text>
+<rect x="18" y="298" width="384" height="50" rx="10" class="card"/>
+<text x="30" y="318" class="small" fill="#cbd5e1">ASI05</text>
+<text x="30" y="336" class="text">Unexpected code exec</text>
+<rect x="292" y="311" width="98" height="24" rx="12" fill="#3f2b12" stroke="#f59e0b"/>
+<text x="341" y="327" text-anchor="middle" class="small" fill="#fde68a">Partial</text>
+<rect x="18" y="354" width="384" height="50" rx="10" class="card"/>
+<text x="30" y="374" class="small" fill="#cbd5e1">ASI06</text>
+<text x="30" y="392" class="text">Memory/context poisoning</text>
+<rect x="292" y="367" width="98" height="24" rx="12" fill="#102b40" stroke="#38bdf8"/>
+<text x="341" y="383" text-anchor="middle" class="small" fill="#bae6fd">Contained</text>
+<rect x="18" y="410" width="384" height="50" rx="10" class="card"/>
+<text x="30" y="430" class="small" fill="#cbd5e1">ASI07</text>
+<text x="30" y="448" class="text">Inter-agent comms</text>
+<rect x="292" y="423" width="98" height="24" rx="12" fill="#0f3c35" stroke="#10b981"/>
+<text x="341" y="439" text-anchor="middle" class="small" fill="#a7f3d0">Prevented</text>
+<rect x="18" y="466" width="384" height="50" rx="10" class="card"/>
+<text x="30" y="486" class="small" fill="#cbd5e1">ASI08</text>
+<text x="30" y="504" class="text">Cascading failures</text>
+<rect x="292" y="479" width="98" height="24" rx="12" fill="#0f3c35" stroke="#10b981"/>
+<text x="341" y="495" text-anchor="middle" class="small" fill="#a7f3d0">Prevented</text>
+<rect x="18" y="522" width="384" height="50" rx="10" class="card"/>
+<text x="30" y="542" class="small" fill="#cbd5e1">ASI09</text>
+<text x="30" y="560" class="text">Human trust exploit</text>
+<rect x="292" y="535" width="98" height="24" rx="12" fill="#102b40" stroke="#38bdf8"/>
+<text x="341" y="551" text-anchor="middle" class="small" fill="#bae6fd">Contained</text>
+<rect x="18" y="578" width="384" height="50" rx="10" class="card"/>
+<text x="30" y="598" class="small" fill="#cbd5e1">ASI10</text>
+<text x="30" y="616" class="text">Rogue agents</text>
+<rect x="292" y="591" width="98" height="24" rx="12" fill="#102b40" stroke="#38bdf8"/>
+<text x="341" y="607" text-anchor="middle" class="small" fill="#bae6fd">Contained</text>
+<text x="24" y="678" class="small">ASI02 also has logic-level containment in section detail.</text>
+</svg>
