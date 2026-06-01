@@ -35,12 +35,12 @@
 <text x="552" y="174" text-anchor="middle" class="small" fill="#bae6fd">Contained</text>
 <line x1="30" y1="189" x2="650" y2="189" class="line" opacity="0.45"/>
 <text x="54" y="212" class="text" fill="#cbd5e1">ASI02</text>
-<text x="138" y="212" class="text">Tool Misuse & Exploitation</text>
+<text x="138" y="212" class="text">Tool Misuse &amp; Exploitation</text>
 <rect x="496" y="196" width="112" height="22" rx="11" fill="#0f3c35" stroke="#10b981"/>
 <text x="552" y="211" text-anchor="middle" class="small" fill="#a7f3d0">Prevented</text>
 <line x1="30" y1="226" x2="650" y2="226" class="line" opacity="0.45"/>
 <text x="54" y="249" class="text" fill="#cbd5e1">ASI03</text>
-<text x="138" y="249" class="text">Identity & Privilege Abuse</text>
+<text x="138" y="249" class="text">Identity &amp; Privilege Abuse</text>
 <rect x="496" y="233" width="112" height="22" rx="11" fill="#0f3c35" stroke="#10b981"/>
 <text x="552" y="248" text-anchor="middle" class="small" fill="#a7f3d0">Prevented</text>
 <line x1="30" y1="263" x2="650" y2="263" class="line" opacity="0.45"/>
@@ -55,7 +55,7 @@
 <text x="552" y="322" text-anchor="middle" class="small" fill="#fde68a">Partial</text>
 <line x1="30" y1="337" x2="650" y2="337" class="line" opacity="0.45"/>
 <text x="54" y="360" class="text" fill="#cbd5e1">ASI06</text>
-<text x="138" y="360" class="text">Memory & Context Poisoning</text>
+<text x="138" y="360" class="text">Memory &amp; Context Poisoning</text>
 <rect x="496" y="344" width="112" height="22" rx="11" fill="#102b40" stroke="#38bdf8"/>
 <text x="552" y="359" text-anchor="middle" class="small" fill="#bae6fd">Contained</text>
 <line x1="30" y1="374" x2="650" y2="374" class="line" opacity="0.45"/>
