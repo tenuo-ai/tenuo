@@ -9,18 +9,29 @@ permalink: /sitemap.xml
   </url>
   {% assign sitemap_pages = site.pages | sort: "url" %}
   {% for p in sitemap_pages %}
-    {% if p.url and p.url != "/" and p.url != "/sitemap.xml" and p.url != "/robots.txt" and p.sitemap != false %}
-      {% if p.canonical_url %}
-        {% assign page_loc = p.canonical_url %}
-      {% else %}
-        {% assign page_loc = site.url | append: site.baseurl | append: p.url %}
+    {% if p.url and p.url != "/" and p.url != "/sitemap.xml" and p.url != "/robots.txt" and p.sitemap != false and p.redirect_to == nil %}
+      {% assign page_path = p.path | default: '' %}
+      {% assign is_asset = false %}
+      {% if page_path contains 'assets/' or page_path contains 'images/' or page_path contains 'reference/static.files/' or page_path contains '.css' or page_path contains '.js' or page_path contains '.svg' or page_path contains '.png' or page_path contains '.jpg' or page_path contains '.jpeg' or page_path contains '.webp' or page_path contains '.gif' or page_path contains '.ico' or page_path contains '.txt' %}
+        {% assign is_asset = true %}
       {% endif %}
-      <url>
-        <loc>{{ page_loc | xml_escape }}</loc>
-        {% if p.date %}
-        <lastmod>{{ p.date | date: "%Y-%m-%d" }}</lastmod>
+      {% if is_asset == false %}
+        {% if p.canonical_url %}
+          {% assign page_loc = p.canonical_url %}
+        {% else %}
+          {% assign normalized_url = p.url %}
+          {% if normalized_url != '/' and normalized_url != '/index.html' and normalized_url contains '.html' %}
+            {% assign normalized_url = normalized_url | replace: '.html', '' %}
+          {% endif %}
+          {% assign page_loc = site.url | append: site.baseurl | append: normalized_url %}
         {% endif %}
-      </url>
+        <url>
+          <loc>{{ page_loc | xml_escape }}</loc>
+          {% if p.date %}
+          <lastmod>{{ p.date | date: "%Y-%m-%d" }}</lastmod>
+          {% endif %}
+        </url>
+      {% endif %}
     {% endif %}
   {% endfor %}
 </urlset>

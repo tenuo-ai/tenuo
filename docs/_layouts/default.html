@@ -10,10 +10,20 @@
   {% assign og_image_width = page.og_image_width | default: '1200' %}
   {% assign og_image_height = page.og_image_height | default: '630' %}
   {% assign og_image_alt = page.og_image_alt | default: page.title %}
+  {% assign page_path = page.url | default: '/' %}
+  {% assign canonical_path = page_path %}
+  {% if canonical_path != '/' and canonical_path != '/index.html' and canonical_path contains '.html' %}
+    {% assign canonical_path = canonical_path | replace: '.html', '' %}
+  {% endif %}
   {% if page.canonical_url %}
     {% assign canonical_url = page.canonical_url %}
   {% else %}
-    {% assign canonical_url = 'https://tenuo.ai' | append: page.url %}
+    {% assign canonical_url = 'https://tenuo.ai' | append: canonical_path %}
+  {% endif %}
+  {% assign page_description = page.description | to_s | strip %}
+  {% if page_description == '' %}
+    {% assign inferred_title = page.title | default: site.title %}
+    {% assign page_description = inferred_title | append: ' documentation and implementation guidance for Tenuo warrant-based authorization.' %}
   {% endif %}
   {% if og_image contains '://' %}
     {% assign og_image_url = og_image %}
@@ -23,7 +33,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ page.title }} | Tenuo</title>
-  <meta name="description" content="{{ page.description | default: site.description }}">
+  <meta name="description" content="{{ page_description }}">
   <meta name="robots" content="index,follow">
   <link rel="canonical" href="{{ canonical_url }}">
   
@@ -34,7 +44,7 @@
   <!-- Open Graph / Social Media -->
   <meta property="og:type" content="{{ og_type }}">
   <meta property="og:title" content="{{ page.title }} | Tenuo">
-  <meta property="og:description" content="{{ page.description | default: site.description }}">
+  <meta property="og:description" content="{{ page_description }}">
   <meta property="og:image" content="{{ og_image_url }}">
   <meta property="og:image:width" content="{{ og_image_width }}">
   <meta property="og:image:height" content="{{ og_image_height }}">
@@ -45,12 +55,12 @@
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="{{ page.title }} | Tenuo">
-  <meta name="twitter:description" content="{{ page.description | default: site.description }}">
+  <meta name="twitter:description" content="{{ page_description }}">
   <meta name="twitter:image" content="{{ og_image_url }}">
   <meta name="twitter:image:alt" content="{{ og_image_alt }}">
 
   {% assign schema_title = page.title | default: site.title %}
-  {% assign schema_description = page.description | default: site.description %}
+  {% assign schema_description = page_description %}
   {% assign schema_author = page.author | default: 'Tenuo Team' %}
   {% assign schema_page_type = 'WebPage' %}
   {% if og_type == 'article' %}

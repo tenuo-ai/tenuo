@@ -1,4 +1,10 @@
-## MCP Integration
+---
+title: "MCP Integration"
+description: "Secure Model Context Protocol clients and servers with Tenuo warrants, argument constraints, and offline-verifiable authorization."
+canonical_url: https://tenuo.ai/mcp
+---
+
+# MCP Integration
 
 Tenuo provides full Model Context Protocol (MCP) integration with cryptographic authorization, both **client-side** (protecting outgoing tool calls) and **server-side** (verifying warrants inside tool handlers).
 
