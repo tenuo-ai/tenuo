@@ -43,6 +43,11 @@ informative:
     target: https://doc.biscuitsec.org/reference/specifications.html
     author:
       - org: Eclipse Foundation
+  CEDAR:
+    title: "Cedar Policy Language Reference Guide"
+    target: https://docs.cedarpolicy.com/
+    author:
+      - org: Cedar Policy
   MACAROONS:
     title: "Macaroons: Cookies with Contextual Caveats for Decentralized Authorization in the Cloud"
     author:
@@ -238,8 +243,7 @@ the parent's: scope can only narrow or stay the same, never widen. The
 enforcement point verifies the complete chain using only the root
 token's trust anchor key; no network calls are required. How token
 chains are carried to enforcement points is deployment-specific; this
-document does
-not define a transport binding.
+document does not define a transport binding.
 
 ## Limitations of Existing OAuth Mechanisms for Agentic Delegation
 
@@ -341,8 +345,9 @@ behavior. AATs realize one protocol-layer approach to that goal.
 
 {::boilerplate bcp14-tagged}
 
-**Attenuating Authorization Token (AAT):** A signed JWT as defined in
-this document. An AAT encodes tool-level capability claims and supports
+**Attenuating Authorization Token (AAT):** A signed credential as defined
+in this document. The fully specified encoding in this document is a
+signed JWT. An AAT encodes tool-level capability claims and supports
 offline derivation of derived tokens with authority equal to or narrower
 than the parent's.
 
@@ -484,12 +489,14 @@ sets.
       "tools": {
         "read_file": {
           "path": {
-            "constraint_type": "pattern", "value": "/data/*"
+            "constraint_type": "one_of",
+            "values": ["/data/q3-report.pdf", "/data/q4-report.pdf"]
           }
         },
         "search_index": {
           "query": {
-            "constraint_type": "pattern", "value": "*public*"
+            "constraint_type": "one_of",
+            "values": ["public filings", "public releases"]
           },
           "limit": { "constraint_type": "range", "max": 100 }
         }
@@ -582,54 +589,29 @@ normatively. The `check` predicate and `subsumes` relation for each type
 are normative: two independent implementations MUST produce identical
 results when evaluating either predicate against the same inputs.
 
-For constraint types where this specification does not define a general
-containment algorithm (specifically `pattern`, `regex`, `cel`, `not`,
-and `any`), this specification prescribes a conservative syntactic
-strategy. The strategy is sound: it never incorrectly accepts a
-non-subsuming constraint. It is conservative: it may reject constraints
-that are semantically subsuming but cannot be proven so syntactically.
-Deployments requiring richer policy expressiveness with full subsumption
-support SHOULD use a registered extension constraint type built on a
-language with a decidable containment algorithm (see Section 3.5 and
-Appendix C).
+The core constraint set is intentionally limited to constraint types
+with simple, deterministic, format-independent `check` and `subsumes`
+rules. Domain-specific matchers and policy-language constraints, such as
+path containment, glob patterns, regular expressions, or authorization
+policy expressions, are not core constraint types. To be used
+interoperably in AAT `authorization_details`, they MUST be defined as
+registered extension constraint types (Section 3.5). The registration
+process confirms that the extension defines an unambiguous runtime
+`check` predicate and a decidable, sound, and deterministic `subsumes`
+procedure. Deployments requiring richer policy expressiveness SHOULD use
+a registered extension constraint type (see Appendix C).
 
 | `constraint_type` | Additional Members | Semantics |
 |---|---|---|
 | `exact` | `value` (any scalar) | Argument MUST equal `value` exactly. |
-| `pattern` | `value` (string) | Argument MUST match the glob pattern. See below for syntax. |
 | `range` | `min` (number, optional), `max` (number, optional), `min_inclusive` (boolean, optional, default true), `max_inclusive` (boolean, optional, default true) | Argument MUST be a number satisfying the specified bounds. Both bounds are optional. `min_inclusive` and `max_inclusive` control whether the respective bound is included in the valid range; both default to true (closed interval). |
 | `one_of` | `values` (array) | Argument MUST be a member of `values`. |
 | `not_one_of` | `excluded` (array) | Argument MUST NOT be a member of `excluded`. |
 | `contains` | `required` (array) | Argument, which MUST be an array, MUST contain every element listed in `required`. |
 | `subset` | `allowed` (array) | Argument, which MUST be an array, MUST be a subset of `allowed`. |
-| `regex` | `pattern` (string) | Argument MUST match the regular expression. See below for dialect and subsumption notes. |
-| `cel` | `expression` (string) | Argument MUST satisfy the Common Expression Language (CEL) expression, which MUST return a boolean. See below for subsumption rules. |
 | `wildcard` | (none) | Any value is accepted. |
 | `all` | `constraints` (array) | Logical AND of nested constraints. See Section 4.5 for subsumption rules. |
 | `any` | `constraints` (array) | Logical OR of nested constraints. See Section 4.5 for subsumption rules. |
-| `not` | `constraint` (object) | Logical negation of a nested constraint. See Section 4.5 for subsumption rules. |
-
-**Pattern glob syntax.** The `pattern` constraint uses the following
-glob syntax. `*` matches any sequence of characters not containing a
-path separator. `?` matches any single character. `[abc]` matches any
-single character in the set. `[!abc]` matches any single character not
-in the set. The token `**` (double-star) has no defined semantics in
-this specification and MUST NOT appear in pattern values. Brace
-alternation (e.g., `{a,b}`) has no defined semantics in this
-specification and MUST NOT appear in pattern values; deployments
-requiring alternation SHOULD use `any` with multiple `pattern`
-constraints. See Section 4.5 for subsumption rules.
-
-**Regex dialect and subsumption.** The `regex` constraint does not
-standardize a dialect; implementations MUST document the dialect they
-support. This specification does not define a portable containment
-algorithm for regular expressions; equality of pattern strings is the
-normative conservative subsumption strategy. See Section 4.5.
-
-**CEL check predicate.** The `cel` expression MUST evaluate to a
-boolean. The subsumption strategy for `cel` uses balanced-parentheses
-conjunction; see Section 4.5 for the normative rules and Section 8.13
-for the security rationale.
 
 Enforcement points MUST reject invocations where any argument violates
 its associated constraint. Enforcement points MUST deny authorization if
@@ -639,17 +621,13 @@ behavior). This fail-closed rule applies only to constraint types within
 top-level JWT claims; a token MUST NOT be rejected solely because it
 contains claims outside those defined in this specification.
 
-Composite constraint types (`all`, `any`, `not`) are recursive.
+Composite constraint types (`all`, `any`) are recursive.
 MAX_CONSTRAINT_DEPTH is an implementation-defined finite integer
 specifying the maximum nesting depth of a constraint tree.
 Implementations MUST enforce a finite MAX_CONSTRAINT_DEPTH to prevent
 resource exhaustion from pathologically deep constraint trees. A value
 of 32 is RECOMMENDED. Enforcement points MUST reject any constraint tree
 whose nesting depth exceeds MAX_CONSTRAINT_DEPTH.
-
-Domain-specific constraint types such as path containment, URL safety,
-or IP range matching may be registered in the extension registry
-(Section 3.5).
 
 ## Extension Constraint Registry
 
@@ -841,7 +819,8 @@ parent's `check` predicate. All other cross-type pairs involving
       "tools": {
         "read_file": {
           "path": {
-            "constraint_type": "pattern", "value": "/data/*"
+            "constraint_type": "one_of",
+            "values": ["/data/q3-report.pdf", "/data/q4-report.pdf"]
           }
         },
         "search_index": {}
@@ -889,8 +868,8 @@ Note that the derived token:
 
 - Carries a `par_hash` linking it to its parent.
 - Has `del_depth` incremented to 1.
-- Restricts `read_file` to a single file rather than the full
-  `/data` subtree.
+- Restricts `read_file` to a single file rather than either file
+  authorized by the parent.
 - Omits `search_index`, which the parent permitted. Tool omission
   is valid attenuation.
 - Expires 1800s after its own issuance, versus the parent's 3600s
@@ -1192,43 +1171,12 @@ rules are:
 
 - **exact:** A derived `exact` constraint subsumes a parent
   constraint of the same or different type as follows: it subsumes
-  a parent `exact` if the values are identical; it subsumes a
-  parent `pattern` if the exact value matches the parent
-  pattern; it subsumes a parent `range` if the exact value
-  falls within the parent range; it subsumes a parent `one_of`
-  if the exact value is a member of the parent set; it subsumes
-  a parent `regex` if the exact value matches the parent regex
-  pattern; it subsumes a parent `wildcard` unconditionally.
-  All other parent types are invalid cross-type targets for
-  a derived `exact` constraint.
-
-- **pattern:** This specification does not define a general
-  containment algorithm for glob patterns; therefore it uses a
-  conservative syntactic strategy. Enforcement points MUST apply
-  the following rules, in order:
-
-  1. A derived `exact` constraint subsumes a parent `pattern` if
-     the exact value matches the parent pattern.
-  2. If the parent pattern ends with a single `*` wildcard (a
-     terminal wildcard), a derived `pattern` subsumes it if the
-     derived pattern also ends with a single `*` wildcard and
-     the derived pattern's fixed prefix (the portion before the
-     terminal `*`) is equal to or longer than the parent's fixed
-     prefix, and the derived prefix begins with the parent
-     prefix. For example, a derived pattern `/data/reports/*`
-     subsumes a parent pattern `/data/*` because `/data/reports/`
-     begins with `/data/` and is longer.
-  3. In all other cases, a derived `pattern` subsumes a parent
-     `pattern` if and only if the pattern strings are identical.
-
-  This strategy applies to patterns containing character classes
-  (`[abc]`, `[!abc]`) without exception: a derived pattern with a
-  different character class than its parent MUST be treated as
-  non-subsuming even if semantically narrower. Enforcement
-  points MUST NOT attempt semantic evaluation to determine
-  pattern subsumption.
-  Deployments requiring richer containment analysis SHOULD use a
-  registered extension constraint type (see Appendix C).
+  a parent `exact` if the values are identical; it subsumes a parent
+  `range` if the exact value is a number that falls within the parent
+  range; it subsumes a parent `one_of` if the exact value is a member of
+  the parent set; it subsumes a parent `wildcard` unconditionally. All
+  other parent types are invalid cross-type targets for a derived `exact`
+  constraint.
 
 - **range:** A derived `range` constraint is valid only if its
   bounds are at least as restrictive as the parent's
@@ -1253,54 +1201,6 @@ rules are:
   only if its excluded set is a superset of the parent's excluded
   set (can only add exclusions, never remove them).
 
-- **regex:** This specification does not standardize a regex
-  dialect or portable containment algorithm; equality of pattern
-  strings is the normative conservative subsumption strategy.
-  A derived `regex` constraint is valid attenuation of a
-  parent `regex` constraint if and only if the pattern strings
-  are identical. A derived `exact` constraint subsumes a
-  parent `regex` constraint if and only if the exact value matches the
-  parent regex pattern. All other cross-type pairs involving `regex` are
-  invalid. Deployments requiring richer containment analysis SHOULD use
-  a registered extension constraint type.
-
-- **cel:** This specification does not define a general semantic
-  containment algorithm for CEL expressions. The normative
-  subsumption strategy requires balanced-parentheses
-  conjunction: a derived `cel` constraint subsumes a parent
-  `cel` constraint if and only if the derived expression
-  string is exactly `(parent_expression) &&
-  (additional_clause)`. The parent expression MUST appear
-  verbatim inside the leading parentheses. Each additional
-  clause MUST be individually wrapped in balanced
-  parentheses. Multiple additional
-  clauses are permitted: `(parent) && (clause1) && (clause2)`. No other
-  form is considered subsuming.
-
-  This requirement is a security invariant, not a style guideline. CEL's
-  `&&` operator binds tighter than `||`. Without balanced parentheses
-  around the additional clause, an attacker can append `||
-  evil_predicate` after the conjunction, which CEL parses as `(parent &&
-  clause) || evil_predicate`, a top-level disjunction that widens rather
-  than narrows authority. Wrapping each additional clause in balanced
-  parentheses ensures that any `||` inside the clause is contained
-  within the conjunction and cannot widen authority.
-
-  Enforcement points MUST verify balanced parentheses by bracket
-  counting, not by semantic evaluation. Enforcement points MUST NOT
-  attempt semantic evaluation to determine subsumption.
-
-  Issuers constructing a derived `cel` constraint MUST copy the parent
-  expression string verbatim inside the leading parentheses and MUST
-  wrap each additional clause in balanced parentheses. If the issuer
-  requires a structurally different expression that is semantically
-  narrower, it MUST request a new root token from the root issuer rather
-  than attempting to rewrite the parent clause.
-
-  Deployments requiring richer policy expressiveness with full
-  subsumption support SHOULD use a registered extension type built on a
-  language with a decidable containment algorithm (see Appendix C).
-
 - **wildcard:** A derived `wildcard` is valid only if the parent
   is also `wildcard`. Any other constraint type subsumes a
   parent `wildcard`.
@@ -1314,22 +1214,18 @@ rules are:
   value set. Dropping any parent clause from the derived `all` would
   expand authority and MUST be rejected.
 
-  Clause matching for `all` is subsumption-keyed: for each clause C_p in
+  Clause matching for `all` is subsumption-based: for each clause C_p in
   the parent array, the enforcement point MUST find at least one clause
-  C_d in the derived array with the same `constraint_type` such that C_d
-  subsumes C_p per this section. Each parent clause MUST be matched to a
+  C_d in the derived array such that C_d subsumes C_p per this section.
+  Each parent clause MUST be matched to a
   distinct derived clause (one-to-one assignment); a single derived
   clause MUST NOT be used to satisfy more than one parent clause. If any
   parent clause cannot be matched, the check MUST fail. Unmatched
   additional clauses in the derived array are permitted.
 
   The following pseudocode describes the matching algorithm.
-  Because the one-to-one assignment requirement is order-
-  sensitive when multiple clauses share the same
-  `constraint_type`, the algorithm backtracks when a greedy
-  match leads to a dead end. (When each `constraint_type`
-  appears at most once in the parent, no backtracking occurs
-  and the algorithm reduces to a linear scan.)
+  Because the one-to-one assignment requirement is order-sensitive, the
+  algorithm backtracks when a greedy match leads to a dead end.
 
   ~~~
   function check_all_subsumption(parent_clauses, derived_clauses):
@@ -1341,9 +1237,7 @@ rules are:
       return PASS
     C_p = parents[idx]
     for i, C_d in enumerate(derived):
-      if i not in used and
-         C_d.constraint_type == C_p.constraint_type and
-         subsumes(C_d, C_p):
+      if i not in used and subsumes(C_d, C_p):
         used.add(i)
         if match(parents, idx + 1, derived, used) == PASS:
           return PASS
@@ -1351,11 +1245,9 @@ rules are:
     return FAIL
   ~~~
 
-  The search space is bounded by the number of clauses
-  sharing a `constraint_type`. In typical usage each type
-  appears at most once, giving O(n) behavior. Implementations
-  MAY employ Hopcroft-Karp or similar maximum matching
-  algorithms for the general case.
+  The search space is bounded by the number of parent and derived
+  clauses. Implementations MAY employ Hopcroft-Karp or similar maximum
+  matching algorithms for the general case.
 
 - **any:** A derived `any` constraint subsumes a parent `any`
   constraint if every clause in the derived constraint is
@@ -1369,8 +1261,7 @@ rules are:
   MUST contain at least one clause. Cross-type subsumption
   between clauses is permitted: for example, a derived clause
   of `exact("pdf")` is subsumed by a parent clause of
-  `pattern("*.pdf")` under the cross-type rules in this
-  section.
+  `one_of(["pdf", "csv"])` under the cross-type rules in this section.
 
   Example: a parent token carries
   `any([exact("pdf"), exact("csv"), exact("xlsx")])`. A derived
@@ -1379,44 +1270,6 @@ rules are:
   token MUST NOT carry `any([exact("pdf"), exact("docx")])`
   because `exact("docx")` is not subsumed by any parent
   clause.
-
-- **not:** This specification prescribes a conservative strategy
-  for `not → not` attenuation. A derived `not` constraint is
-  valid attenuation of a parent `not` constraint if and only
-  if the two constraints are structurally identical, compared
-  as JCS-canonical JSON ({{RFC8785}}). Although widening the
-  inner constraint semantically narrows the negation and
-  restricts authority, verifying this direction requires
-  recursive subsumption in reverse, which introduces significant
-  implementation complexity and risk of divergence.
-  Implementations MUST NOT attempt semantic evaluation to
-  determine `not → not` subsumption. Issuers that need to
-  tighten a `not` constraint SHOULD re-issue from the root
-  issuer or use a registered extension type with defined
-  negation semantics. Cross-type pairs involving `not` (for
-  example, `exact → not(X)` or `not(X) → exact`) are not
-  valid attenuations and MUST be rejected.
-
-  Example: a parent token carries `not(one_of(["a", "b"]))`,
-  meaning the argument must not be "a" or "b". A derived token
-  MAY carry an identical `not(one_of(["a", "b"]))` constraint
-  (identity is valid).
-
-  A derived token MUST NOT carry `not(one_of(["a"]))`. That
-  inner set is narrower, so the negation is wider: the derived
-  token accepts "b", which the parent denies. This is a
-  privilege escalation and the JCS-identity check rejects it
-  because the two constraints are not structurally identical.
-
-  Conversely, a derived token MUST NOT carry
-  `not(one_of(["a", "b", "c"]))`. That inner set is wider,
-  so the negation is narrower: the derived token is genuinely more
-  restrictive (it additionally denies "c"). However, verifying
-  this direction requires reversing the subsumption check on
-  the inner constraint, which introduces implementation
-  complexity and risk of divergence. Implementations MUST NOT
-  attempt semantic evaluation to determine `not → not`
-  subsumption. The issuer MUST re-issue from root.
 
 - **contains:** A derived `contains` constraint is valid
   attenuation of a parent `contains` if the derived `required` set
@@ -1685,11 +1538,11 @@ Algorithm:
       implementation's permitted algorithm allowlist and is
       consistent with the verifying trust anchor key's kty and
       crv parameters. If alg is "none", not on the allowlist,
-      or inconsistent with the key type, DENY.       [Sec 8.14]
+      or inconsistent with the key type, DENY.       [Sec 8.13]
    b. Verify the root token signature against a key in
       trust_anchors. After signature verification succeeds,
       parse the root token's claims. All subsequent root
-      checks (3c through 3m) operate on parsed claims.
+      checks (3c through 3n) operate on parsed claims.
    c. Verify root.del_depth == 0.
    d. Verify root.par_hash is absent.
    e. Verify root.exp > now.
@@ -1719,13 +1572,17 @@ Algorithm:
       Steps 3j through 3m ensure that required claims are
       present before step 6 depends on them, closing the
       bypass window that exists when step 4 does not run.
+   n. For each constraint in each constraint map in the root
+      token's attenuating_agent_token entry, verify the
+      constraint tree depth does not exceed MAX_CONSTRAINT_DEPTH.
+      If any constraint tree exceeds this limit, DENY.
 
 4. For each adjacent pair (parent, child) in chain:
    a. Verify child token's JWS alg header is on the
       implementation's permitted algorithm allowlist and is
       consistent with parent.cnf.jwk's kty and crv parameters.
       If alg is "none", not on the allowlist, or inconsistent
-      with the key type, DENY.                       [Sec 8.14]
+      with the key type, DENY.                       [Sec 8.13]
    b. Verify child signature under the key in parent.cnf.jwk. [I1]
       After signature verification, verify required claims are
       present:
@@ -1839,8 +1696,9 @@ Algorithm:
       implementation's permitted algorithm allowlist and is
       consistent with leaf.cnf.jwk's kty and crv parameters.
       If alg is "none", not on the allowlist, or inconsistent
-      with the key type, DENY.                       [Sec 8.14]
-   b. Verify pop_jwt signature under leaf.cnf.jwk.       [I6]
+      with the key type, DENY.                       [Sec 8.13]
+   b. Verify pop_jwt signature under leaf.cnf.jwk. After
+      signature verification succeeds, parse the PoP JWT claims. [I6]
    c. Verify pop_jwt.aat_id == leaf.jti.
    d. If deployment policy requires PoP audience binding, verify
       pop_jwt.aat_aud identifies this enforcement point or resource
@@ -1984,7 +1842,7 @@ and behavioral monitoring are complementary controls for this threat.
 attacker can exercise the full authority encoded in that agent's token
 until the token expires. The blast radius is bounded by the token scope,
 but within that scope the attacker has full authorization. Short token
-lifetimes (Section 8.4) limit the exposure window.
+lifetimes (Appendix B.8) limit the exposure window.
 
 **Model exfiltration and side-channel attacks.** An attacker who
 extracts an agent's model weights, system prompt, or in-context state
@@ -2016,11 +1874,9 @@ cryptographic primitives and validation patterns with substantial prior
 art in deployed systems. I4 is novel. Formal verification of the I4
 subsumption rules is in progress, using bounded model checking
 ({{ALLOY}}) for set-theoretic constraint types and SMT solving ({{Z3}})
-for domain-specific types requiring arithmetic or string reasoning. For
-the remaining constraint types, which use conservative syntactic
-strategies (Section 4.5), model-level verification is ongoing.
-Implementers are encouraged to treat the subsumption logic for those
-types with corresponding caution and to publish independent analyses.
+for numeric and structural constraint types. Implementers are encouraged
+to publish independent analyses of both the core subsumption rules and
+any extension constraint types they deploy.
 
 The Tenuo reference implementation includes a test suite covering monotonicity
 of the attenuation invariants under arbitrary sequences, normalization
@@ -2049,9 +1905,8 @@ short-lived tokens.
 ## Grant-Context Substitution
 
 The `par_hash` invariant (I5) is the primary defense against
-grant-context substitution, as described in Section 8.1.1. Enforcement
-points MUST verify `par_hash` at every chain link per step 4q of the
-verification algorithm (Section 7).
+grant-context substitution. Enforcement points MUST verify `par_hash` at
+every chain link per step 4q of the verification algorithm (Section 7).
 
 ## Replay Attacks
 
@@ -2090,23 +1945,14 @@ application level for high-value operations.
 
 ## Constraint Evaluation
 
-Several constraint types introduce potential for denial-of-service
-through expensive evaluation. `regex` patterns can cause catastrophic
-backtracking. `cel` expressions execute arbitrary logic at argument
-check time. Enforcement points SHOULD impose evaluation timeouts on any
-constraint type whose check predicate is not O(n) in the length of the
-argument value.
-
-The subsumption check for `cel` constraints (the balanced-parentheses
-bracket counting described in Section 4.5) is O(n) in expression length
-and does not evaluate the expression. Only the runtime `check`
-predicate, which evaluates the CEL expression against actual argument
-values at invocation time, carries unbounded cost. These are distinct
-operations; implementations MUST NOT conflate them.
-
-Extension constraint types registered under Section 3.5 MUST document
-their computational complexity and any resource limits implementations
-SHOULD enforce.
+The core constraint types are intended to have predictable evaluation
+cost. Extension constraint types can introduce parser complexity,
+algorithmic cost, normalization requirements, or external policy-engine
+dependencies. Extension constraint types registered under Section 3.5
+MUST document their computational complexity and any resource limits
+implementations SHOULD enforce. Enforcement points SHOULD impose
+evaluation timeouts on any extension constraint type whose `check`
+predicate is not O(n) in the length of the argument value.
 
 ## Depth Limit
 
@@ -2211,28 +2057,6 @@ invariant. Enforcement points implementing this specification verify the
 holder-key chain, attenuation invariants, parent-token linkage, and leaf
 PoP proof; they do not infer agent runtime roles from token claims unless
 a deployment-specific profile defines such claims and verification rules.
-
-## CEL Conjunction Privilege Escalation
-
-The `cel` constraint subsumption strategy (Section 4.5) requires that
-additional clauses in a derived expression be individually wrapped in
-balanced parentheses: `(parent) && (clause)`. This requirement is a
-security invariant.
-
-Without balanced parentheses, an attacker constructing a derived `cel`
-constraint can append a top-level disjunction to widen authority. For
-example, given a parent expression `amount < 10000`, the derived
-expression `(amount < 10000) && true || amount < 1000000` passes a naive
-prefix check but CEL parses it as `((amount < 10000) && true) || (amount
-< 1000000)`, which simplifies to `amount < 1000000`, a 100x privilege
-escalation.
-
-Enforcement points MUST implement the subsumption check using
-balanced-parentheses bracket counting as specified in Section 4.5.
-Implementations MUST reject any derived `cel` expression where the
-additional clause is not wrapped in balanced parentheses, regardless of
-whether the expression appears semantically narrower. Implementations
-MUST NOT attempt semantic evaluation to determine subsumption.
 
 ## Algorithm Confusion
 
@@ -2408,18 +2232,14 @@ subsumption rules and cross-type pairs are defined in Section 4.5.
 | Type Name | Reference |
 |---|---|
 | `exact` | This document (Sections 3.4, 4.5) |
-| `pattern` | This document (Sections 3.4, 4.5) |
 | `range` | This document (Sections 3.4, 4.5) |
 | `one_of` | This document (Sections 3.4, 4.5) |
 | `not_one_of` | This document (Sections 3.4, 4.5) |
 | `contains` | This document (Sections 3.4, 4.5) |
 | `subset` | This document (Sections 3.4, 4.5) |
-| `regex` | This document (Sections 3.4, 4.5) |
-| `cel` | This document (Sections 3.4, 4.5) |
 | `wildcard` | This document (Sections 3.4, 4.5) |
 | `all` | This document (Sections 3.4, 4.5) |
 | `any` | This document (Sections 3.4, 4.5) |
-| `not` | This document (Sections 3.4, 4.5) |
 
 ## OAuth Authorization Server Metadata Registry
 
@@ -2539,11 +2359,11 @@ dependency and non-trivial computational bounds to manage.
 AATs encode authorization as a structured capability map with typed
 argument constraints. The core constraint types are decidable by
 structural analysis, requiring no logic engine. For cases where
-structural constraints are insufficient, CEL expressions provide a
-bounded escape hatch, and a registered extension type mechanism supports
-domain-specific constraint types. This tradeoff favors simplicity and
-predictability at the enforcement point, at the cost of the relational
-expressiveness Datalog provides.
+structural constraints are insufficient, the registered extension type
+mechanism supports domain-specific matchers and policy-language
+constraints with their own defined subsumption procedures. This tradeoff
+favors simplicity and predictability at the enforcement point, at the
+cost of the relational expressiveness Datalog provides.
 
 A second difference is scope. Biscuit is a general-purpose authorization
 token format. It does not natively encode OAuth-oriented delegation-chain
@@ -2567,7 +2387,7 @@ delegation protocol rather than as a sequence of policy blocks.
   providing time-ordered identifiers without central coordination.
 
 The algorithm allowlist requirement is normatively defined in Section 7
-(steps 3a, 4a, and 7a) and discussed in Section 8.14.
+(steps 3a, 4a, and 7a) and discussed in Section 8.13.
 
 Post-quantum migration: the `cnf.jwk` key type is not hardcoded to
 Ed25519. Implementations should be designed to support key type
@@ -2584,9 +2404,8 @@ Ed25519 verification is computationally lightweight; for typical chain
 depths of 3 to 5 links, verification overhead is negligible relative to
 network latency in most deployment contexts. Constraint evaluation for
 `exact`, `one_of`, `range`, and similar structural types is O(n) in the
-number of constraints. For `regex` and `cel`, evaluation cost depends on
-expression complexity and input size; see Section 8.7 for resource limit
-guidance.
+number of constraints. Extension constraint types can have higher
+evaluation cost; see Section 8.7 for resource limit guidance.
 
 ## Recognizing Derived Token `iss` Values in Middleware
 
@@ -2654,10 +2473,9 @@ Deployments should document their enforced limits. Interoperating
 parties should verify that their respective limits are compatible before
 deployment.
 
-Implementations should prefer `exact` and `one_of` constraints over
-`pattern`, `regex`, or `cel` where the policy permits, as these types
-produce significantly more compact tokens and simpler subsumption
-checks.
+Implementations should prefer core structural constraints where the
+policy permits, as these types produce compact tokens and simple
+subsumption checks.
 
 Implementations concerned about parser exposure on unverified
 payloads in step 2c of the chain verification algorithm (Section 7)
@@ -2736,13 +2554,12 @@ This appendix provides non-normative guidance for implementers
 considering extension constraint types that use structured policy
 languages.
 
-The core constraint types `regex` and `cel` use conservative syntactic
-subsumption strategies because this specification does not define
-general containment algorithms for their respective languages. This
-conservatism limits expressiveness: two semantically subsuming
-expressions that do not satisfy the syntactic criteria will be rejected
-by enforcement points applying the normative strategy, even if a human
-reviewer could determine that subsumption holds.
+The core constraint set is intentionally limited to structural
+constraint types with deterministic subsumption rules. This keeps the
+base protocol small and predictable, but it also limits expressiveness:
+domain-specific matchers and richer policy languages need extension
+constraint registrations that define their own `check` and `subsumes`
+procedures.
 
 Implementers requiring richer policy expressiveness without sacrificing
 subsumption decidability should consider languages that were designed
@@ -2752,6 +2569,16 @@ better positioned to provide conforming extension constraint
 registrations under Section 3.5.1, because their containment algorithms
 are decidable and formally verified rather than approximated by
 conservative syntactic rules.
+
+For example, a future extension could profile an analyzable
+authorization policy language such as Cedar {{CEDAR}} as an AAT
+constraint type. Such a profile would need to define the runtime
+`check` predicate, the token encoding of the policy, and a sound,
+deterministic subsumption procedure. The fact that a policy language can
+decide whether an invocation is authorized is not, by itself, sufficient
+for AAT attenuation; the extension must also define how an enforcement
+point determines that a derived policy is no less restrictive than its
+parent.
 
 The key property to look for is whether the language's policy
 containment problem ("does every input permitted by policy A also
@@ -2856,9 +2683,9 @@ or removed prior to WG adoption per IETF norms.
 
 Formal verification of the attenuation algebra is in progress, using
 three complementary techniques: bounded model checking ({{ALLOY}}) for
-set-theoretic constraint types, SMT solving ({{Z3}}) for domain-specific
-types requiring arithmetic or string reasoning, and property-based
-testing against the Rust implementation for all constraint types.
+set-theoretic constraint types, SMT solving ({{Z3}}) for numeric and
+structural constraint types, and property-based testing against the Rust
+implementation for implemented constraint types.
 Bounded model checking has found no counterexamples for scopes up to 8
 constraints and 8 values. The combination is intended to provide
 evidence toward monotonicity of the I4 invariant across the full
