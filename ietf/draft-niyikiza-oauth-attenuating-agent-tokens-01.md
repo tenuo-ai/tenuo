@@ -315,9 +315,9 @@ key signatures and offline attenuation, addressing the
 proof-of-possession gap. Biscuit expresses authorization policies in a
 Datalog variant, requiring a logic engine at verification time. This
 specification uses structured constraint types decidable by structural
-analysis and defines a typed delegation-chain model with explicit token
-roles and chain-position claims. A detailed comparison appears in
-Appendix A.
+analysis and defines an explicit delegation-chain model with
+chain-position claims and attenuation invariants. A detailed comparison
+appears in Appendix A.
 
 The capability-based security model underlying AATs draws on
 {{DENNIS66}}, which introduced capabilities as unforgeable tokens of
@@ -347,14 +347,10 @@ offline derivation of derived tokens with authority equal to or narrower
 than the parent's.
 
 **Root Token:** An AAT with no parent token, `del_depth: 0`, and
-`par_hash` absent. A root token may carry either `aat_type:
-"delegation"` or `aat_type: "execution"`: a root issuer may mint an
-execution token directly when an agent requires immediate tool
-invocation authority without an intermediate delegation step. A root
-token is signed by the private key corresponding to a trust anchor and
-establishes the authority ceiling for all derived tokens. A root token
-is a positional role, not a distinct `aat_type` value: the two
-`aat_type` values are `"delegation"` and `"execution"`.
+`par_hash` absent. A root token is signed by the private key
+corresponding to a trust anchor and establishes the authority ceiling for
+all derived tokens. A root token is a chain position, not a distinct
+token type.
 
 **Root Issuer:** The entity that mints root tokens. The root issuer
 holds the private key corresponding to a trust anchor and is responsible
@@ -362,24 +358,14 @@ for verifying agent identity and requested authority before issuance.
 
 **Token Holder:** The entity that possesses an AAT and the private key
 corresponding to its `cnf.jwk` claim. The token holder is the party
-authorized to present the token, derive further tokens from it, or both,
-depending on the token's `aat_type`.
+authorized to derive further tokens from it, subject to the chain's depth
+limits. The holder of the leaf token is also the party authorized to
+present the chain for tool invocation by signing the PoP JWT.
 
 **Derived Token:** An AAT produced by a token holder from a parent AAT,
 also referred to as a child token. A derived token's authority is a
 subset of its parent's authority (equal or narrower). Derivation does
 not require a round-trip to the root issuer.
-
-**Delegation Token:** An AAT that authorizes its holder to derive
-further tokens for a specified set of tools. The name reflects what the holder
-is authorized to do, not who issued the token. A delegation token does
-not authorize tool invocation. A delegation token may itself be derived
-from a parent token; it is not necessarily produced by the root issuer.
-
-**Execution Token:** An AAT that authorizes its holder to invoke a
-specific set of tools subject to argument constraints. An execution
-token holder may derive tokens with authority equal to or narrower
-than their own, subject to the depth limit of the chain.
 
 **Tool:** An addressable function or API operation that an agent may
 invoke. A tool is identified by a string identifier. Tool identifiers
@@ -404,9 +390,8 @@ Attenuation is the only permitted direction of derivation.
 token was derived from its predecessor.
 
 **Leaf Token:** The last token in a chain. The leaf token is the one
-presented to the enforcement point for authorization. A leaf token MUST
-have `aat_type: "execution"`. The PoP JWT is signed by the private key
-corresponding to the leaf token's `cnf.jwk`.
+presented to the enforcement point for authorization. The PoP JWT is
+signed by the private key corresponding to the leaf token's `cnf.jwk`.
 
 **Enforcement Point:** The component that receives a tool
 invocation request, verifies the presented token chain, evaluates
@@ -423,63 +408,29 @@ token holder presents the chain and signs the PoP JWT using the same
 private key.
 
 
-# Token Types and Structure
+# Token Structure
 
-## Token Types
+## Chain Position and Invocation Semantics
 
-This specification defines two token types, distinguished by the
-`aat_type` claim.
+This specification does not define separate token types for delegation
+and execution. An AAT's role is determined by its position in the
+presented chain.
 
-**Delegation Tokens** (`aat_type: "delegation"`) enumerate the tools for
-which the holder may derive further tokens; they do not authorize tool
-invocation. A delegation token holder MUST NOT present a delegation
-token to an enforcement point to invoke a tool. Root delegation tokens
-are typically issued by a root issuer to orchestrating agents, but
-delegation tokens may also appear at intermediate hops in a chain,
-derived from a parent delegation token with narrower scope. A derived
-token from a delegation token MUST NOT authorize tools absent
-from the delegation token's `authorization_details`. The capability
-monotonicity invariant (I4, Section 4.5) applies at every delegation
-step: derived tokens can only narrow the authorized tool set and
-argument constraints relative to the delegation token.
+The root token establishes the authority ceiling. Intermediate tokens
+record attenuations made by holders along the delegation path. The leaf
+token is the token whose holder presents a PoP JWT and whose capability
+claims are evaluated against the requested tool invocation.
 
-**Execution Tokens** (`aat_type: "execution"`) authorize tool
-invocation. They enumerate specific tools and the argument constraints
-that apply to each. Execution tokens are presented to enforcement points
-at tool invocation boundaries.
-
-The separation between delegation and execution authority is a
-structural property of the token, not a policy decision left to
-enforcement points. This moves the authorization boundary from something
-an enforcement point must judge to something any enforcement point
-can read directly from the chain, and enables type-transition key
-separation (Section 8.12) to be structurally enforced rather than
-left to convention.
-
-Any type transition is permitted, provided `del_depth < del_max_depth`
-in the parent token. A holder of either token type may derive a token
-of either type, narrowing or maintaining the authorized tool set
-and argument constraints. The capability monotonicity invariant (I4,
-Section 4.5) applies at every derivation step regardless of the type
-transition.
-
-A derived token whose `aat_type` differs from its parent's `aat_type`
-MUST have a `cnf.jwk` whose JWK Thumbprint ({{RFC7638}}) differs from
-the parent's `cnf.jwk` thumbprint. This ensures structural separation
-between planning authority and invocation authority: an entity that
-delegates cannot use the same key to invoke, and an entity that invokes
-cannot use the same key to delegate. When `aat_type` is preserved across
-a derivation step, same-key derivation is permitted. The security
-rationale for type-transition key separation is discussed in Section
-8.12.
-
-A root issuer MAY issue an execution token directly, bypassing the
-delegation step, when an agent requires immediate tool invocation
-authority without intermediate planning authority.
+A holder of any AAT MAY derive a child token when `del_depth` is strictly
+less than `del_max_depth`. The derived token MUST carry authority equal
+to or narrower than the parent token, as enforced by the capability
+monotonicity invariant (I4, Section 4.5). A token MUST NOT be accepted
+for a tool invocation except as the leaf of a successfully verified
+chain.
 
 ## Common Claims
 
-The following claims appear in both token types. All claims listed as
+The following claims appear in all AATs. All claims listed as
 REQUIRED MUST be present. Claims listed as OPTIONAL MAY be omitted;
 their absence carries the semantics described in the table.
 
@@ -490,7 +441,6 @@ their absence carries the semantics described in the table.
 | `iat` | NumericDate | REQUIRED | Time at which the token was issued. MUST NOT be more than MAX_IAT_SKEW in the future relative to the enforcement point's clock (see Section 4.4). In a chain, a derived token's `iat` MUST NOT be earlier than its parent's `iat`. |
 | `exp` | NumericDate | REQUIRED | Time at which the token expires. MUST be greater than `iat`. MUST NOT exceed `iat` plus MAX_TOKEN_LIFETIME (see Section 4.4). |
 | `cnf` | object | REQUIRED | Confirmation claim {{RFC7800}}. MUST contain `jwk` with the holder's public key. The `jwk` value MUST be a public key; private key material MUST NOT appear in this field. |
-| `aat_type` | string | REQUIRED | Token type. MUST be `"delegation"` or `"execution"`. |
 | `del_depth` | integer | REQUIRED | Delegation depth. 0 for root tokens. Incremented by exactly 1 at each derivation step (see Section 4.3). |
 | `del_max_depth` | integer | REQUIRED | Maximum delegation depth permitted in this chain. MUST be a non-negative integer not exceeding the implementation's MAX_DELEGATION_DEPTH (Section 4.3). |
 | `par_hash` | string | MUST (derived) / MUST NOT (root) | Base64url-encoded SHA-256 digest of the parent token signing input, using base64url encoding without padding as defined in {{RFC7515}} Appendix C. For JWT/JWS AATs, the parent token signing input is the JWS Signing Input. MUST be absent in root tokens. MUST be present in all derived tokens. |
@@ -868,7 +818,7 @@ parent's `check` predicate. All other cross-type pairs involving
 
 ## Examples
 
-### Root Delegation Token
+### Root Token
 
 ~~~json
 {
@@ -876,7 +826,6 @@ parent's `check` predicate. All other cross-type pairs involving
   "iss": "https://auth.example.com",
   "iat": 1741600000,
   "exp": 1741603600,
-  "aat_type": "delegation",
   "del_depth": 0,
   "del_max_depth": 3,
   "cnf": {
@@ -902,7 +851,7 @@ parent's `check` predicate. All other cross-type pairs involving
 }
 ~~~
 
-### Derived Execution Token
+### Derived Token
 
 ~~~json
 {
@@ -910,7 +859,6 @@ parent's `check` predicate. All other cross-type pairs involving
   "iss": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:KAKnRDlMQVIKCfS5JhHlABCHjAFLdyEVVHdpnGnLLg8",
   "iat": 1741600120,
   "exp": 1741601920,
-  "aat_type": "execution",
   "del_depth": 1,
   "del_max_depth": 3,
   "par_hash": "sha256_base64url_of_parent_token_signing_input",
@@ -1001,20 +949,18 @@ Upon a valid request, the AS constructs and returns a root AAT. The AS:
    a UUIDv7 value per {{RFC9562}}.
 3. Sets `iat` to the current time and `exp` to the token's
    expiry time, subject to the constraints in Section 4.4.
-4. Sets `aat_type` to `"delegation"` or `"execution"` as
-   appropriate for the grant.
-5. Sets `del_depth` to 0, `del_max_depth` to the maximum
+4. Sets `del_depth` to 0, `del_max_depth` to the maximum
    delegation depth permitted for this grant, and `par_hash`
    to absent.
-6. Sets `cnf.jwk` to the public key submitted in the agent's
+5. Sets `cnf.jwk` to the public key submitted in the agent's
    `req_cnf` request parameter. The root issuer MUST validate that
    the submitted key is well-formed and is a public key. The
    root issuer SHOULD require the agent to demonstrate
    possession of the corresponding private key, for example via
    a signed proof-of-possession assertion in the token request.
-7. Sets `authorization_details` to the capability claims
+6. Sets `authorization_details` to the capability claims
    granted, which MAY be a subset of what the agent requested.
-8. For each URI-format tool identifier in the requested
+7. For each URI-format tool identifier in the requested
    `authorization_details`, the root issuer SHOULD verify that
    the requesting agent's identity, as established by the
    agent's client authentication credentials, corresponds to
@@ -1023,7 +969,7 @@ Upon a valid request, the AS constructs and returns a root AAT. The AS:
    The mechanism by which agent identity is mapped to tool URI
    authority is deployment-specific and outside the scope of
    this specification.
-9. Signs the token with the AS's own private key.
+8. Signs the token with the AS's own private key.
 
 The AS returns the token in a standard OAuth 2.0 token endpoint response
 ({{RFC6749}} Section 5.1) with the following field values:
@@ -1150,7 +1096,7 @@ authority through another agent whose key, runtime, and behavior must be
 trusted to maintain the attenuation invariant. Unbounded chains mean
 unbounded trust extensions; the depth limit constrains how far authority
 can propagate before it must be reissued from the root. Second, it is a
-policy expression by the root issuer: a root delegation token with
+policy expression by the root issuer: a root token with
 `del_max_depth: 2` asserts that this grant of authority should pass
 through no more than two intermediate agents, regardless of what those
 agents might prefer. Intermediate token holders can only lower
@@ -1544,7 +1490,7 @@ token's holder.
 
 ## PoP Token Structure
 
-The holder of the leaf execution token produces a PoP JWT for each tool
+The holder of the leaf token produces a PoP JWT for each tool
 invocation. The PoP JWT is a compact serialization signed with the
 holder's private key. It MUST contain the required claims listed below.
 
@@ -1552,9 +1498,9 @@ holder's private key. It MUST contain the required claims listed below.
 |---|---|---|---|
 | `jti` | string | REQUIRED | Fresh random identifier. Issuers MUST NOT generate the same `jti` value for two different PoP JWTs. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 8.6). |
 | `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (see Section 5.3). |
-| `aat_id` | string | REQUIRED | The `jti` of the execution token being presented. |
+| `aat_id` | string | REQUIRED | The `jti` of the leaf token being presented. |
 | `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifiers are compared as byte strings; no Unicode normalization is applied. |
-| `aat_aud` | string | Conditional | Audience identifier for the enforcement point or resource accepting the PoP JWT. REQUIRED when the deployment has more than one enforcement point or resource context that could accept the same AAT chain. |
+| `aat_aud` | string | OPTIONAL | Audience identifier for the enforcement point or resource accepting the PoP JWT. Deployments or profiles that require audience binding MUST require this claim and enforce audience match at verification time. |
 | `hta` | object | REQUIRED | The tool arguments for this invocation. Keys are argument names; values are argument values. |
 
 The PoP JWT payload MUST be serialized as JCS-canonical JSON
@@ -1567,8 +1513,8 @@ so that argument map comparison is unambiguous across implementations
 and languages regardless of JSON serialization choices.
 
 The PoP JWT MUST be signed using the private key corresponding to the
-leaf execution token's `cnf.jwk`. The enforcement point verifies the PoP
-JWT signature against the leaf token's `cnf.jwk`.
+leaf token's `cnf.jwk`. The enforcement point verifies the PoP JWT
+signature against the leaf token's `cnf.jwk`.
 
 ~~~json
 {
@@ -1643,25 +1589,19 @@ A holder of any AAT whose `del_depth` is strictly less than
    of capability scope. TTL is the primary revocation mechanism
    in this specification; see Appendix B.8 for deployment guidance.
 
-3. Select the `aat_type` of the child token. The permitted
-   transitions are defined in Section 3.1. If the child's
-   `aat_type` differs from the parent's, the child MUST use a
-   different `cnf.jwk` than the parent (type-transition key
-   separation).
-
-4. Select the set of tools to authorize. This set MUST be a
+3. Select the set of tools to authorize. This set MUST be a
    subset of the tools authorized by the parent token.
 
-5. For each tool, construct a constraint map with the same
+4. For each tool, construct a constraint map with the same
    argument keys as the parent's constraint map for that tool
    (Section 4.5). For each key, select a constraint that is at
    least as restrictive as the parent's, per the subsumption
    rules in Section 4.5. If the parent's constraint map is
    empty, the derived token MAY introduce constraint keys.
 
-6. Set `del_depth` to `parent.del_depth + 1`.
+5. Set `del_depth` to `parent.del_depth + 1`.
 
-7. Set `del_max_depth` to any integer value greater than or equal
+6. Set `del_max_depth` to any integer value greater than or equal
    to `child.del_depth` and less than or equal to
    `parent.del_max_depth`. Setting `del_max_depth` equal to
    `child.del_depth` produces a terminal token that cannot be
@@ -1669,16 +1609,16 @@ A holder of any AAT whose `del_depth` is strictly less than
    to the parent's ceiling. Both bounds are inclusive; the upper
    bound enforces I2.
 
-8. Set `par_hash` to `base64url(SHA-256(parent token signing
+7. Set `par_hash` to `base64url(SHA-256(parent token signing
    input))`, using base64url encoding without padding
    ({{RFC7515}} Appendix C). For JWT/JWS AATs, the parent
    token signing input is the JWS Signing Input.
 
-9. Set `cnf.jwk` to the intended holder's public key. The
+8. Set `cnf.jwk` to the intended holder's public key. The
    value MUST be a public key; private key material MUST NOT
    appear in this field.
 
-10. Sign the token with the private key corresponding to the
+9. Sign the token with the private key corresponding to the
     parent token's `cnf.jwk`. The `iss` claim MUST be set to the
     JWK Thumbprint URI {{RFC9278}} of that signing key, using the
     SHA-256 hash algorithm.
@@ -1749,32 +1689,34 @@ Algorithm:
    b. Verify the root token signature against a key in
       trust_anchors. After signature verification succeeds,
       parse the root token's claims. All subsequent root
-      checks (3c through 3n) operate on parsed claims.
-   c. Verify root.aat_type is "delegation" or "execution".
-      If any other value, DENY.
-   d. Verify root.del_depth == 0.
-   e. Verify root.par_hash is absent.
-   f. Verify root.exp > now.
-   g. Verify root.iat <= now + MAX_IAT_SKEW.
-   h. Verify root.exp > root.iat.
-   i. Verify root.exp <= root.iat + MAX_TOKEN_LIFETIME.
-   j. Verify root.del_max_depth is a non-negative integer not
+      checks (3c through 3m) operate on parsed claims.
+   c. Verify root.del_depth == 0.
+   d. Verify root.par_hash is absent.
+   e. Verify root.exp > now.
+   f. Verify root.iat <= now + MAX_IAT_SKEW.
+   g. Verify root.exp > root.iat.
+   h. Verify root.exp <= root.iat + MAX_TOKEN_LIFETIME.
+   i. Verify root.del_max_depth is a non-negative integer not
       exceeding MAX_DELEGATION_DEPTH. If absent or invalid, DENY.
-   k. Verify root.jti is present and is a non-empty string.
+   j. Verify root.jti is present and is a non-empty string.
       If absent or not a string, DENY.
-   l. Verify root.iss is present and is a URI. If absent or
+   k. Verify root.iss is present and is a URI. If absent or
       not a URI-formatted string, DENY.
-   m. Verify root.cnf is present, contains a `jwk` member, and
+   l. Verify root.cnf is present, contains a `jwk` member, and
       that the `jwk` encodes a public key (MUST NOT contain a
       private key parameter such as `d` for EC/OKP keys or
       `p`, `q` for RSA keys). If absent or invalid, DENY.
-   n. Verify root.authorization_details is present and is a
+   m. Verify root.authorization_details is present and is a
       non-empty array containing exactly one entry with type
       "attenuating_agent_token". If absent, empty, or if the
       number of such entries is not exactly one, DENY.
-      Note: for single-token chains where root is also the
-      leaf, steps 3 and 6 are the only validation applied.
-      Steps 3k through 3n ensure that required claims are
+      Note: for a single-token chain (root = leaf), step 4 has
+      no adjacent parent-child pair to evaluate. Validation is
+      therefore performed by step 3 (root checks), step 5
+      (chain-length consistency), step 6 (leaf
+      capability/constraint checks), and step 7 (PoP), before
+      permit in step 8.
+      Steps 3j through 3m ensure that required claims are
       present before step 6 depends on them, closing the
       bypass window that exists when step 4 does not run.
 
@@ -1799,75 +1741,78 @@ Algorithm:
       b4. Verify child.del_depth and child.del_max_depth are
           both present and are non-negative integers. If
           absent or not integers, DENY.
-      b5. Verify child.iss, child.iat, child.exp, child.aat_type,
-          and child.par_hash are all present. If any is absent, DENY.
+      b5. Verify child.iss, child.iat, child.exp, and
+          child.par_hash are all present. If any is absent, DENY.
    c. Verify child.iss equals jwk_thumbprint_uri(parent.cnf.jwk). [I1]
-   d. Verify child.aat_type is "delegation" or "execution".
-      If any other value, DENY.
-   e. Verify child.del_depth == parent.del_depth + 1.    [I2]
-   f. Verify child.del_depth <= parent.del_max_depth.    [I2]
-   g. Verify child.del_depth <= MAX_DELEGATION_DEPTH.    [I2]
-   h. Verify child.del_max_depth <= parent.del_max_depth.[I2]
+   d. Verify child.del_depth == parent.del_depth + 1.    [I2]
+   e. Verify child.del_depth <= parent.del_max_depth.    [I2]
+   f. Verify child.del_depth <= MAX_DELEGATION_DEPTH.    [I2]
+   g. Verify child.del_max_depth <= parent.del_max_depth.[I2]
       Note: the requirement that every token's
       del_max_depth <= MAX_DELEGATION_DEPTH is transitively
-      satisfied: step 3j verifies this for the root, and
-      step 4h at each link ensures the value can only
+      satisfied: step 3i verifies this for the root, and
+      step 4g at each link ensures the value can only
       decrease. Implementations MAY add this check
       explicitly as defense in depth.
-   i. Verify child.exp <= parent.exp.                    [I3]
-   j. Verify child.exp > now.                            [I3]
-   k. Verify child.iat >= parent.iat.                    [I3]
-   l. Verify child.iat <= now + MAX_IAT_SKEW.            [I3]
-   m. Verify child.exp > child.iat.                      [I3]
+   h. Verify child.exp <= parent.exp.                    [I3]
+   i. Verify child.exp > now.                            [I3]
+   j. Verify child.iat >= parent.iat.                    [I3]
+   k. Verify child.iat <= now + MAX_IAT_SKEW.            [I3]
+   l. Verify child.exp > child.iat.                      [I3]
       Note: the requirement child.exp <= child.iat +
       MAX_TOKEN_LIFETIME is transitively satisfied: by
-      induction, child.exp <= root.exp (step 4i at each
+      induction, child.exp <= root.exp (step 4h at each
       link), root.exp <= root.iat + MAX_TOKEN_LIFETIME
-      (step 3i), and child.iat >= root.iat (step 4k at
+      (step 3h), and child.iat >= root.iat (step 4j at
       each link), therefore child.exp <= root.iat +
       MAX_TOKEN_LIFETIME <= child.iat + MAX_TOKEN_LIFETIME.
       Implementations MAY add this check explicitly as
       defense in depth.
-   n. Verify child.del_depth <= child.del_max_depth.     [I2]
-   o. Verify child.authorization_details contains at most
+   m. Verify child.del_depth <= child.del_max_depth.     [I2]
+   n. Verify child.authorization_details contains at most
       one entry with type "attenuating_agent_token". If
       more than one such entry is present, DENY. Note: zero
       entries of this type are permitted at this step and
-      represents an empty capability set. Step 4q will verify
+      represent an empty capability set. Step 4p will verify
       this is a valid attenuation of the parent (an empty tool
       set is always a subset). If the child is the leaf token,
       step 6a will reject zero entries.
-   p. For each constraint in child.authorization_details,
+      For the remaining checks in this adjacent-pair step, define
+      child_aat as the child entry with type
+      "attenuating_agent_token" if present, or as an empty capability
+      entry with an empty `tools` map if absent. Define parent_aat
+      the same way for the parent token: the parent entry with type
+      "attenuating_agent_token" if present, or an empty capability
+      entry with an empty `tools` map if absent. Root validation
+      (step 3m) ensures the root parent has such an entry; non-root
+      parents with zero entries represent the empty capability set.
+      Entries of other types in `authorization_details` are ignored
+      by this algorithm.
+   o. For each constraint in each constraint map in child_aat.tools,
       verify the constraint tree depth does not exceed
       MAX_CONSTRAINT_DEPTH. If any constraint tree exceeds
       this limit, DENY.
-   q. Verify capability monotonicity (Section 4.5):   [I4]
-      q1. Verify every tool in child's authorization_details
-          is also present in parent's authorization_details.
+   p. Verify capability monotonicity (Section 4.5):   [I4]
+      p1. Verify every tool in child_aat.tools
+          is also present in parent_aat.tools.
           If any child tool is absent from the parent, DENY.
-      q2. For each tool present in both parent and child: if
-          the parent's constraint map is non-empty, verify the
-          child's constraint map contains exactly the same set
-          of argument keys. If any key is added or removed, DENY.
-      q3. For each tool present in both parent and child: if
-          the parent's constraint map is empty, the child's
-          constraint map MAY contain any set of keys.
-      q4. For each argument key present in both parent and
-          child constraint maps, verify the child's constraint
-          subsumes the parent's per the per-type rules in
-          Section 4.5. If any constraint fails subsumption,
-          DENY.
-   r. Verify child.par_hash equals base64url-nopad(      [I5]
+      p2. For each tool present in both parent_aat.tools and
+          child_aat.tools: if the parent's constraint map is
+          non-empty, verify the child's constraint map contains
+          exactly the same set of argument keys. If any key is
+          added or removed, DENY.
+      p3. For each tool present in both parent_aat.tools and
+          child_aat.tools: if the parent's constraint map is empty,
+          the child's constraint map MAY contain any set of keys.
+      p4. For each argument key present in both constraint maps
+          for a matched tool, verify the child's constraint subsumes
+          the parent's per the per-type rules in Section 4.5. If
+          any constraint fails subsumption, DENY.
+   q. Verify child.par_hash equals base64url-nopad(      [I5]
       SHA-256(parent token signing input)), where
       base64url-nopad denotes base64url encoding without
       padding per {{RFC7515}} Appendix C. For JWT/JWS AATs,
       the parent token signing input is the JWS Signing Input.
-   s. If child.aat_type differs from parent.aat_type, verify
-      that the JWK Thumbprint ({{RFC7638}}) of child.cnf.jwk
-      differs from the JWK Thumbprint of parent.cnf.jwk
-      (type-transition key separation). Implementations MUST
-      compare thumbprints, not raw JWK objects, to prevent
-      bypasses through key serialization variance.
 
 5. (Defense in depth) Verify len(chain) equals
    leaf.del_depth + 1. A mismatch indicates a malformed
@@ -1877,8 +1822,9 @@ Algorithm:
    a. Verify leaf.authorization_details contains exactly one
       entry with type "attenuating_agent_token". If zero or
       more than one such entry is present, DENY.
-   b. If leaf.aat_type is "execution", verify tool is present
-      in leaf.authorization_details. Then, for each argument
+      Define leaf_aat as that entry. Entries of other types in
+      `authorization_details` are ignored by this algorithm.
+   b. Verify tool is present in leaf_aat.tools. Then, for each argument
       in args: if the tool's constraint map is non-empty and
       the argument name is not present in the constraint map,
       DENY (closed-world mode). For each argument name present
@@ -1887,8 +1833,6 @@ Algorithm:
       each argument name present in both the constraint map
       and args, verify the argument value satisfies the
       constraint.
-   c. If leaf.aat_type is "delegation", DENY (delegation
-      tokens do not authorize direct tool invocation).
 
 7. Verify PoP JWT:
    a. Verify the PoP JWT's JWS alg header is on the
@@ -2049,7 +1993,7 @@ of its token constraints. AATs operate at the authorization layer and
 have no visibility into the model layer.
 
 **Social engineering of the root issuer.** An attacker who convinces the
-root issuer to mint a root delegation token with broad scope obtains
+root issuer to mint a root token with broad scope obtains
 broad authority through legitimate token issuance. This is not
 detectable by chain verification.
 
@@ -2078,7 +2022,7 @@ strategies (Section 4.5), model-level verification is ongoing.
 Implementers are encouraged to treat the subsumption logic for those
 types with corresponding caution and to publish independent analyses.
 
-The reference implementation includes a test suite covering monotonicity
+The Tenuo reference implementation includes a test suite covering monotonicity
 of the attenuation invariants under arbitrary sequences, normalization
 idempotence across encode/decode round-trips, and enforcement agreement
 between in-memory and deserialized constraint evaluation. See
@@ -2106,7 +2050,7 @@ short-lived tokens.
 
 The `par_hash` invariant (I5) is the primary defense against
 grant-context substitution, as described in Section 8.1.1. Enforcement
-points MUST verify `par_hash` at every chain link per step 4r of the
+points MUST verify `par_hash` at every chain link per step 4q of the
 verification algorithm (Section 7).
 
 ## Replay Attacks
@@ -2189,10 +2133,10 @@ explicit policy on chain topology. An implementation that ignores
 `del_max_depth` or enforces only a global implementation limit without
 checking per-token values violates this policy. Enforcement points MUST
 check the per-token depth ceilings (`child.del_depth <=
-parent.del_max_depth` in step 4f, `child.del_max_depth <=
-parent.del_max_depth` in step 4h, and `child.del_depth <=
-child.del_max_depth` in step 4n of Section 7) and the global
-MAX_DELEGATION_DEPTH limit (step 4g of Section 7). Neither the per-token
+parent.del_max_depth` in step 4e, `child.del_max_depth <=
+parent.del_max_depth` in step 4g, and `child.del_depth <=
+child.del_max_depth` in step 4m of Section 7) and the global
+MAX_DELEGATION_DEPTH limit (step 4f of Section 7). Neither the per-token
 policy checks nor the global implementation limit is sufficient alone.
 
 ## Unknown Constraint Types
@@ -2211,11 +2155,11 @@ server availability. This is a deliberate design choice, not an
 oversight.
 
 Deployments SHOULD use short token lifetimes as the primary recovery
-mechanism. A short-lived execution token provides a bounded damage
-window that is operationally equivalent to revocation for most threat
-models, without the availability and consistency requirements that a
-revocation list imposes. Root tokens SHOULD be issued with the shortest
-lifetime compatible with the intended delegation chain depth.
+mechanism. A short-lived leaf token provides a bounded damage window that
+is operationally equivalent to revocation for most threat models, without
+the availability and consistency requirements that a revocation list
+imposes. Root tokens SHOULD be issued with the shortest lifetime
+compatible with the intended delegation chain depth.
 
 Root trust anchor rotation (replacing the trust anchor signing key and
 re-issuing root tokens) is the appropriate response to a root key
@@ -2253,26 +2197,20 @@ RECOMMENDED. A value of ±30 seconds is the conservative baseline; the
 ±60 second ceiling is intended only for heterogeneous environments such
 as embedded systems or degraded connectivity scenarios.
 
-## Type-Transition Key Separation
+## Role-Based Key Separation
 
-The requirement that any type transition use a distinct key (Section
-3.1) is not an architectural preference; it closes specific escalation
-paths. In traditional capability systems, same-key self-issuance across
-authority types is often benign because the principal model is static
-and the runtime is trusted. Agentic systems have neither property:
-agents operate autonomously across untrusted environments, may be
-subject to prompt injection or context manipulation, and act on behalf
-of humans without per-action confirmation.
+Deployments that distinguish planning agents from tool-invoking agents
+SHOULD use distinct holder keys for
+those runtime roles and SHOULD derive across that boundary with a fresh
+`cnf.jwk`. This limits the blast radius of a compromised planning
+component and preserves operational accountability between components
+that decide what work should be done and components that invoke tools.
 
-If a single key can move between planning authority and tool invocation
-authority, the delegation/execution boundary collapses under any
-compromise. The restriction ensures that a compromised orchestrator
-holding a delegation token cannot directly invoke tools without
-involving a distinct execution-bound key, and that a compromised
-executor cannot create new delegation branches under the same identity.
-This preserves the accountability boundary between authority types and
-ensures that key separation is enforced structurally rather than by
-policy.
+Role-based key separation is deployment guidance, not a base protocol
+invariant. Enforcement points implementing this specification verify the
+holder-key chain, attenuation invariants, parent-token linkage, and leaf
+PoP proof; they do not infer agent runtime roles from token claims unless
+a deployment-specific profile defines such claims and verification rules.
 
 ## CEL Conjunction Privilege Escalation
 
@@ -2309,10 +2247,10 @@ is not on that list. Implementations MUST reject tokens with `alg:
 "none"` unconditionally and MUST NOT treat the absence of an `alg`
 header as equivalent to any permitted algorithm.
 
-In chains where multiple token types are verified, implementations MUST
-apply the algorithm allowlist independently to each token. Accepting a
-weaker algorithm on an intermediate token because the leaf token used a
-strong algorithm is a verification failure.
+Implementations MUST apply the algorithm allowlist independently to each
+AAT in the chain and to the PoP JWT. Accepting a weaker algorithm on an
+intermediate token because the leaf token used a strong algorithm is a
+verification failure.
 
 The RECOMMENDED algorithm set is the same as for DPoP {{RFC9449}}:
 ES256, ES384, ES512, RS256, RS384, RS512, PS256, PS384, PS512, EdDSA.
@@ -2341,7 +2279,6 @@ JSON Web Token Claims Registry {{RFC7519}}.
 
 | Claim Name | Claim Description | Change Controller | Reference |
 |---|---|---|---|
-| `aat_type` | Attenuating Authorization Token type | IETF | This document |
 | `del_depth` | Delegation chain depth | IETF | This document |
 | `del_max_depth` | Maximum delegation chain depth | IETF | This document |
 | `par_hash` | Parent token signing input hash | IETF | This document |
@@ -2609,12 +2546,11 @@ predictability at the enforcement point, at the cost of the relational
 expressiveness Datalog provides.
 
 A second difference is scope. Biscuit is a general-purpose authorization
-token format. It does not natively encode token roles such as delegation
-versus execution authority, depth-limit claims, or explicit chain
-position declarations. This specification defines a typed
-delegation-chain structure with those properties in the token model
-itself, making the chain independently verifiable as a delegation
-protocol rather than as a sequence of policy blocks.
+token format. It does not natively encode OAuth-oriented delegation-chain
+claims such as depth limits, parent-token linkage, or explicit chain
+position declarations. This specification defines those properties in the
+token model itself, making the chain independently verifiable as a
+delegation protocol rather than as a sequence of policy blocks.
 
 
 # Implementation Notes (Non-Normative)
@@ -2780,16 +2716,16 @@ compromise, token theft, or scope misconfiguration. The operational cost
 of short TTLs is re-issuance frequency; this cost is low when the root
 issuer is available and derivation is offline.
 
-The appropriate TTL for each token role depends on the deployment
-context. Root delegation tokens should be long enough to cover the full
+The appropriate TTL depends on the token's position in the chain and the
+deployment context. Root tokens should be long enough to cover the full
 orchestration and execution window for the task, but no longer. Leaf
-execution tokens should be scoped to the expected duration of a single
-tool invocation. Deployments with intermittent connectivity (edge,
-embedded, or air-gapped) may need longer lifetimes, with the awareness
-that longer lifetimes expand the compromise window.
+tokens should be scoped to the expected duration of a single tool
+invocation. Deployments with intermittent connectivity (edge, embedded,
+or air-gapped) may need longer lifetimes, with the awareness that longer
+lifetimes expand the compromise window.
 
 Deployments should treat TTL as a policy expression rather than a
-convenience parameter. A root delegation token with a 24-hour TTL
+convenience parameter. A root token with a 24-hour TTL
 effectively grants the holder 24 hours of authority regardless of how
 narrowly the capability scope is defined.
 
@@ -2846,6 +2782,9 @@ COSE algorithm requirements, the CWT parent token signing input used for
 `par_hash`, and CWT-specific serialization rules, is deferred to a
 companion document.
 
+This appendix does not define a CWT serialization, CWT claim-key mapping,
+COSE algorithm profile, or CWT `par_hash` signing input.
+
 ## CWT Representation
 
 CBOR Web Tokens {{RFC8392}} and COSE message signing {{RFC9052}} are the
@@ -2883,25 +2822,16 @@ any AAT or PoP token structure.
 
 JWT uses string claim names. CWT uses integer claim keys for registered
 claims to achieve compact encoding. The AAT-specific claims defined in
-Sections 3 and 5 — namely `aat_type`, `del_depth`, `del_max_depth`,
+Sections 3 and 5 — namely `del_depth`, `del_max_depth`,
 `par_hash`, `aat_tool`, `aat_aud`, `hta`, and `aat_id` — require integer key
 assignments in the IANA CWT Claims Registry {{RFC8392}} before
 a normative CWT profile can be published.
 
 Those registrations, along with COSE algorithm guidance and CWT-specific
 serialization rules, are deferred to a companion Internet-Draft. That
-companion document will reference {{RFC8392}} and {{RFC9052}}
-normatively; this document references them informatively. This document
-makes no CWT claim key assignments.
-
-## Companion Document
-
-A normative CWT profile is intended to be published as a companion
-Internet-Draft. That document will define integer CWT claim key
-assignments for all AAT-specific claims, COSE algorithm requirements,
-and any CWT-specific serialization considerations. The protocol defined
-in this document serves as the common specification that both profiles
-reference.
+document will reference {{RFC8392}} and {{RFC9052}} normatively; this
+document references them informatively. This document makes no CWT claim
+key assignments.
 
 # Implementation Status (Non-Normative)
 
@@ -2910,14 +2840,14 @@ at the time of submission, per the practice described in RFC 7942.
 
 ## Reference Implementation
 
-A reference implementation of this protocol exists. The chain
+Tenuo provides a reference implementation of this protocol. The chain
 verification algorithm (Section 7) and token derivation procedure
-(Section 6) are both implemented. The implementation includes an
+(Section 6) are both implemented. Tenuo also includes an
 implementation-specific CBOR/COSE wire representation, with Ed25519
 signatures carried in COSE_Sign1 structures. That implementation
 experience supports the format independence of the core protocol model,
-but does not define a fully interoperable CWT profile; the normative CWT
-profile is deferred as described in Appendix D.
+but does not define a fully interoperable CWT profile; the CWT profile is
+deferred as described in Appendix D.
 
 RFC Editor Note: Implementation attribution will be updated
 or removed prior to WG adoption per IETF norms.
