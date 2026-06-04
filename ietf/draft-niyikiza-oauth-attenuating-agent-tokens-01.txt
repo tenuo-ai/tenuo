@@ -144,7 +144,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
      9.6.  OAuth Parameters Registry . . . . . . . . . . . . . . . .  55
    10. References  . . . . . . . . . . . . . . . . . . . . . . . . .  55
      10.1.  Normative References . . . . . . . . . . . . . . . . . .  55
-     10.2.  Informative References . . . . . . . . . . . . . . . . .  56
+     10.2.  Informative References . . . . . . . . . . . . . . . . .  57
    Appendix A.  Comparison with Related OAuth Mechanisms
            (Non-Normative) . . . . . . . . . . . . . . . . . . . . .  59
      A.1.  Token Exchange (RFC 8693) . . . . . . . . . . . . . . . .  59
@@ -3119,6 +3119,25 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               RFC 9201, DOI 10.17487/RFC9201, August 2022,
               <https://www.rfc-editor.org/info/rfc9201>.
 
+   [RFC8414]  Jones, M., Sakimura, N., and J. Bradley, "OAuth 2.0
+              Authorization Server Metadata", RFC 8414,
+              DOI 10.17487/RFC8414, June 2018,
+              <https://www.rfc-editor.org/info/rfc8414>.
+
+   [RFC8126]  Cotton, M., Leiba, B., and T. Narten, "Guidelines for
+              Writing an IANA Considerations Section in RFCs", BCP 26,
+              RFC 8126, DOI 10.17487/RFC8126, June 2017,
+              <https://www.rfc-editor.org/info/rfc8126>.
+
+
+
+
+
+Niyikiza                 Expires 6 December 2026               [Page 56]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
               Requirement Levels", BCP 14, RFC 2119,
               DOI 10.17487/RFC2119, March 1997,
@@ -3130,23 +3149,10 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 10.2.  Informative References
 
-
-
-
-Niyikiza                 Expires 6 December 2026               [Page 56]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
-
-   [RFC8414]  Jones, M., Sakimura, N., and J. Bradley, "OAuth 2.0
-              Authorization Server Metadata", RFC 8414,
-              DOI 10.17487/RFC8414, June 2018,
-              <https://www.rfc-editor.org/info/rfc8414>.
-
-   [RFC8126]  Cotton, M., Leiba, B., and T. Narten, "Guidelines for
-              Writing an IANA Considerations Section in RFCs", BCP 26,
-              RFC 8126, DOI 10.17487/RFC8126, June 2017,
-              <https://www.rfc-editor.org/info/rfc8126>.
+   [RFC7942]  Sheffer, Y. and A. Farrel, "Improving Awareness of Running
+              Code: The Implementation Status Section", BCP 205,
+              RFC 7942, DOI 10.17487/RFC7942, July 2016,
+              <https://www.rfc-editor.org/info/rfc7942>.
 
    [RFC8949]  Bormann, C. and P. Hoffman, "Concise Binary Object
               Representation (CBOR)", STD 94, RFC 8949,
@@ -3179,12 +3185,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    [CEDAR]    Cedar Policy, "Cedar Policy Language Reference Guide",
               n.d., <https://docs.cedarpolicy.com/>.
 
-   [MACAROONS]
-              Birgisson, A., Politz, J.G., Erlingsson, U., Taly, A.,
-              Vrable, M., and M. Lentczner, "Macaroons: Cookies with
-              Contextual Caveats for Decentralized Authorization in the
-              Cloud", NDSS 2014, 2014,
-              <https://research.google/pubs/pub41892/>.
 
 
 
@@ -3193,6 +3193,13 @@ Niyikiza                 Expires 6 December 2026               [Page 57]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
+
+   [MACAROONS]
+              Birgisson, A., Politz, J.G., Erlingsson, U., Taly, A.,
+              Vrable, M., and M. Lentczner, "Macaroons: Cookies with
+              Contextual Caveats for Decentralized Authorization in the
+              Cloud", NDSS 2014, 2014,
+              <https://research.google/pubs/pub41892/>.
 
    [SALTZER75]
               Saltzer, J.H. and M.D. Schroeder, "The Protection of
@@ -3236,19 +3243,17 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               Dissertation Johns Hopkins University, 2006,
               <http://www.erights.org/talks/thesis/>.
 
-   [ALLOY]    Jackson, D., "Alloy: A Lightweight Object Modelling
-              Notation", ACM Transactions on Software Engineering and
-              Methodology Vol. 11, No. 2, 2002,
-              <https://doi.org/10.1145/505145.505149>.
-
-
-
 
 
 Niyikiza                 Expires 6 December 2026               [Page 58]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
+
+   [ALLOY]    Jackson, D., "Alloy: A Lightweight Object Modelling
+              Notation", ACM Transactions on Software Engineering and
+              Methodology Vol. 11, No. 2, 2002,
+              <https://doi.org/10.1145/505145.505149>.
 
    [Z3]       de Moura, L. and N. Bjørner, "Z3: An Efficient SMT
               Solver", TACAS 2008, LNCS 4963, 2008,
@@ -3289,15 +3294,10 @@ A.3.  DPoP (RFC 9449)
    whatever the access token permits; DPoP adds a cryptographic proof
    that the presenter holds the bound key.
 
-
-
-
-
-
-
-
-
-
+   AATs encode the authorization itself.  The token specifies which
+   tools may be invoked, with what argument constraints, and by which
+   key holder.  Holders can derive tokens with authority equal to or
+   narrower than their own, without contacting the authorization server.
 
 
 
@@ -3306,10 +3306,6 @@ Niyikiza                 Expires 6 December 2026               [Page 59]
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
-   AATs encode the authorization itself.  The token specifies which
-   tools may be invoked, with what argument constraints, and by which
-   key holder.  Holders can derive tokens with authority equal to or
-   narrower than their own, without contacting the authorization server.
    The PoP JWT in Section 5 serves a similar cryptographic role to a
    DPoP proof, binding a specific invocation to the leaf token's holder
    key, but operates in a different context.  Everything else in this
@@ -3354,6 +3350,10 @@ A.4.  Biscuit
    declarations.  This specification defines those properties in the
    token model itself, making the chain independently verifiable as a
    delegation protocol rather than as a sequence of policy blocks.
+
+
+
+
 
 
 
@@ -3590,7 +3590,7 @@ Appendix E.  Implementation Status (Non-Normative)
 
    This appendix describes the implementation status of this
    specification at the time of submission, per the practice described
-   in RFC 7942.
+   in [RFC7942].
 
 E.1.  Reference Implementation
 

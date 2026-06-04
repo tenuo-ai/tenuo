@@ -28,10 +28,11 @@ normative:
   RFC9562:   # Universally Unique IDentifiers (UUIDs)
   RFC6749:   # OAuth 2.0 Authorization Framework
   RFC9201:   # OAuth Parameters for ACE
-
-informative:
   RFC8414:   # OAuth 2.0 Authorization Server Metadata
   RFC8126:   # Guidelines for Writing an IANA Considerations Section
+
+informative:
+  RFC7942:   # Improving Awareness of Running Code: The Implementation Status Section
   RFC8949:   # Concise Binary Object Representation (CBOR)
   RFC8392:   # CBOR Web Token (CWT)
   RFC8693:   # OAuth 2.0 Token Exchange
@@ -2516,7 +2517,7 @@ document.
 # Implementation Status (Non-Normative)
 
 This appendix describes the implementation status of this specification
-at the time of submission, per the practice described in RFC 7942.
+at the time of submission, per the practice described in {{RFC7942}}.
 
 ## Reference Implementation
 
