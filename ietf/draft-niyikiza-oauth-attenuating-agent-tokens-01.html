@@ -1599,7 +1599,7 @@ li > p:last-of-type {
 <p id="section-1-1">AI agent systems increasingly delegate tasks to chains of autonomous
 agents, each invoking tools on behalf of a user or service. Today,
 the tokens that authorize these invocations are typically scoped to
-the principal -- the user or service account -- not to the task the
+the principal (the user or service account), not to the task the
 agent is performing. Even when an OAuth scope narrows the token to a
 subset of APIs, it does not express which tools, with which argument
 values, a particular agent should use for a particular task. The
@@ -3161,8 +3161,8 @@ bucket. This approach <span class="bcp14">MUST NOT</span> be used for tool invoc
 side effects or are not idempotent. For any tool invocation where
 duplicate execution causes unintended side effects, stateful
 <code>jti</code> tracking <span class="bcp14">MUST</span> be used.<a href="#section-5.3-5" class="pilcrow">¶</a></p>
-<p id="section-5.3-6">Full replay prevention -- guaranteeing that a given PoP JWT is accepted
-at most once -- requires stateful tracking of presented <code>jti</code> values
+<p id="section-5.3-6">Full replay prevention, which guarantees that a given PoP JWT is
+accepted at most once, requires stateful tracking of presented <code>jti</code> values
 across all enforcement points in a deployment. The mechanism for that
 state (shared cache, database, token-binding infrastructure) is
 deployment-specific and outside the scope of this specification.
@@ -4607,8 +4607,8 @@ delegation and attenuation mechanism that WIMSE does not standardize.<a href="#a
 MAX_DELEGATION_DEPTH. This appendix provides non-normative guidance for
 selecting an appropriate value.<a href="#appendix-B.4-1" class="pilcrow">¶</a></p>
 <p id="appendix-B.4-2">The appropriate MAX_DELEGATION_DEPTH depends on the deployment topology.
-Linear orchestration chains -- root issuer, one or two planning layers,
-leaf executor -- require few hops. Swarm architectures with dynamic
+Linear orchestration chains (root issuer, one or two planning layers,
+leaf executor) require few hops. Swarm architectures with dynamic
 fan-out, sub-task delegation, or hierarchical agent groups may require
 significantly deeper chains. The implementation ceiling should reflect
 the maximum depth the deployment actually needs, not an arbitrary

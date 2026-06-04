@@ -181,7 +181,7 @@ contact with the root issuer.
 AI agent systems increasingly delegate tasks to chains of autonomous
 agents, each invoking tools on behalf of a user or service. Today,
 the tokens that authorize these invocations are typically scoped to
-the principal — the user or service account — not to the task the
+the principal (the user or service account), not to the task the
 agent is performing. Even when an OAuth scope narrows the token to a
 subset of APIs, it does not express which tools, with which argument
 values, a particular agent should use for a particular task. The
@@ -1384,8 +1384,8 @@ side effects or are not idempotent. For any tool invocation where
 duplicate execution causes unintended side effects, stateful
 `jti` tracking MUST be used.
 
-Full replay prevention — guaranteeing that a given PoP JWT is accepted
-at most once — requires stateful tracking of presented `jti` values
+Full replay prevention, which guarantees that a given PoP JWT is
+accepted at most once, requires stateful tracking of presented `jti` values
 across all enforcement points in a deployment. The mechanism for that
 state (shared cache, database, token-binding infrastructure) is
 deployment-specific and outside the scope of this specification.
@@ -2388,8 +2388,8 @@ MAX_DELEGATION_DEPTH. This appendix provides non-normative guidance for
 selecting an appropriate value.
 
 The appropriate MAX_DELEGATION_DEPTH depends on the deployment topology.
-Linear orchestration chains — root issuer, one or two planning layers,
-leaf executor — require few hops. Swarm architectures with dynamic
+Linear orchestration chains (root issuer, one or two planning layers,
+leaf executor) require few hops. Swarm architectures with dynamic
 fan-out, sub-task delegation, or hierarchical agent groups may require
 significantly deeper chains. The implementation ceiling should reflect
 the maximum depth the deployment actually needs, not an arbitrary
