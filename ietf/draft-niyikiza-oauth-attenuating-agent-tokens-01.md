@@ -159,54 +159,59 @@ informative:
     target: https://github.com/Z3Prover/z3
 ---
 
-This document defines Attenuating Authorization Tokens (AATs), a
-signed credential format for secure delegation in AI agent systems.
-An AAT encodes which tools an agent may invoke and with what
-argument constraints. Any holder can derive a more restrictive token offline
-that narrows or maintains scope but cannot expand it. This
-invariant is cryptographically enforced and verifiable offline by
-any party holding the root token's trust anchor key.
+This document defines Attenuating Authorization Tokens (AATs), a signed
+credential format for task-scoped delegation in AI agent systems. An AAT
+encodes the tools an agent may invoke and the argument constraints that
+apply to those invocations. A token holder authorized to delegate can
+derive a token offline with equal or narrower authority, subject to the
+parent token's depth and lifetime limits. The resulting delegation chain
+is verifiable offline by any enforcement point that has the root issuer's
+trust anchor key.
 
-This specification extends the Rich Authorization Requests format
-(RFC 9396) with delegation-chain semantics and defines a typed
-constraint vocabulary for tool-level argument restrictions. The
-accompanying chain verification algorithm enforces the monotonic
-attenuation invariant at each delegation step and requires no network
+This specification profiles the OAuth Rich Authorization Requests format
+(RFC 9396) for tool-level capability claims, adds delegation-chain
+claims, and defines a core constraint vocabulary for argument
+restrictions. The chain verification algorithm authenticates each
+delegation step and enforces monotonic attenuation without network
 contact with the root issuer.
 
 --- middle
 
 # Introduction
 
-AI agent systems increasingly delegate tasks to chains of autonomous
-agents, each invoking tools on behalf of a user or service. Today,
-the tokens that authorize these invocations are typically scoped to
-the principal (the user or service account), not to the task the
-agent is performing. Even when an OAuth scope narrows the token to a
-subset of APIs, it does not express which tools, with which argument
-values, a particular agent should use for a particular task. The
-token that checks flight availability also authorizes completing a
-purchase and charging a corporate card. A prompt injection attack, a
-model hallucination, or a compromised sub-agent can exploit this
-gap, exercising authority the agent should never have needed. This
-is the confused deputy problem {{HARDY88}} applied to agentic
-delegation.
+AI agent systems increasingly decompose a user request into delegated
+steps performed by multiple agents, services, or tools. Each step may
+need authority derived from the user or an originating service, but
+rarely needs the full authority available to the workflow as a whole.
 
-This problem is compounded by a gap in existing infrastructure. The
-WIMSE architecture {{WIMSE-ARCH}} provides mechanisms for
-establishing workload identity and propagating it across service
-boundaries. OAuth 2.0 {{RFC6749}} provides token issuance and
-scoping. Neither provides a mechanism for a token holder to derive a
-narrower token and pass it downstream. Without delegation-aware
-semantics, the only options are to trust every agent in the chain
-with the full token or to require each delegation step to contact
-the authorization server. The latter is impractical for agentic
-workflows that execute tool invocations in rapid succession, operate
-across trust boundaries, or run in environments with intermittent
+Existing OAuth mechanisms can scope tokens to principals, resources,
+APIs, or authorization details, but they do not define an offline,
+holder-derivable delegation chain in which each downstream holder can
+attenuate authority and any enforcement point can verify that the
+resulting token is no broader than its parent. In particular, OAuth does
+not define a standard way for a token holder to derive a token that
+cryptographically constrains a receiving agent to specific tools and
+argument values for a specific task.
+
+Without such attenuation, a token broad enough to support a multi-step
+workflow may expose more authority than an intermediate agent needs for
+its current step. Prompt injection, model hallucination, or compromise
+of that agent can exploit this excess authority. This is the confused
+deputy problem {{HARDY88}} applied to agentic delegation.
+
+WIMSE {{WIMSE-ARCH}} provides mechanisms for establishing workload
+identity and propagating it across service boundaries. OAuth 2.0
+{{RFC6749}} provides token issuance and scoping. AATs complement these
+mechanisms with delegation-aware attenuation semantics: a holder can
+derive a narrower token and pass it downstream, while enforcement points
+can verify the resulting chain offline. This avoids making the
+authorization server a participant in every delegation hop, which is
+important for agentic workflows that execute tool invocations in rapid
+succession, operate across trust boundaries, or run with intermittent
 connectivity.
 
-Capability-based systems {{DENNIS66}} solve both problems. Authority
-is carried by unforgeable tokens scoped to specific operations; a
+Capability-based systems {{DENNIS66}} provide the underlying model.
+Authority is carried by unforgeable tokens scoped to specific operations; a
 holder can attenuate a capability before passing it on, but cannot
 amplify it {{SALTZER75}}. This document defines such a mechanism for
 OAuth-based agent systems, complementing WIMSE's identity layer with
@@ -257,9 +262,9 @@ authorization server (AS) availability. {{RFC8693}} supports
 representing prior delegation actors via nested `act` claims, but those
 claims are informational for access control decisions rather than a
 cryptographically self-verifiable attenuation chain. The AS mediates
-each grant independently, and no mechanism ensures that downstream
-delegation intent remains consistent with the original authorization
-scope.
+each grant independently, and RFC 8693 does not define a token-local
+mechanism for proving that downstream delegation intent remains
+consistent with the original authorization scope.
 
 Rich Authorization Requests (RAR) {{RFC9396}} extend OAuth tokens with
 structured authorization detail objects, enabling expressive capability
@@ -276,8 +281,8 @@ complementary: they scope authority to specific tools and arguments
 after identity and consent have been established.
 
 To the author's knowledge, no existing OAuth standard defines a
-delegation chain protocol with a cryptographically enforced attenuation
-invariant and offline chain verification.
+delegation chain protocol with token-local chain authentication,
+deterministic attenuation checks, and offline chain verification.
 
 ## Design Goals
 
@@ -293,8 +298,9 @@ invariant and offline chain verification.
    the trust anchor can verify the complete delegation chain without
    network calls.
 
-4. **Cryptographically enforced attenuation.** A derived token cannot
-   grant broader authority than its parent.
+4. **Verifiable attenuation.** A derived token cannot grant broader
+   authority than its parent, and this property can be verified from the
+   signed chain.
 
 5. **JWT/JWS interoperability.** The primary encoding specified in this
    document represents AATs as signed JWTs {{RFC7519}} using JWS {{RFC7515}},
@@ -373,11 +379,7 @@ not require a round-trip to the root issuer.
 
 **Tool:** An addressable function or API operation that an agent may
 invoke. A tool is identified by a string identifier. Tool identifiers
-SHOULD be URIs ({{RFC3986}}); see Section 3.3.1 for requirements. Tool
-identifiers MUST NOT contain characters that are subject to Unicode
-normalization (such as combining characters or characters with multiple
-canonical forms), as normalization-sensitive identifiers can produce
-inconsistent matching behavior across implementations.
+are compared as exact strings; see Section 3.3.1 for requirements.
 
 **Argument Constraint:** A predicate over a tool argument value that the
 argument MUST satisfy for the invocation to be authorized. Constraints
@@ -524,6 +526,9 @@ constraint for it in the constraint map. There is no "optional
 constraint" mechanism; the constraint map is a closed specification of
 the required invocation shape. To authorize an argument without
 restricting its value, use a `wildcard` constraint (see below).
+Optional constrained arguments are outside the core constraint model;
+profiles or extension constraint types that require such behavior must
+define it explicitly.
 
 A token issuer that wishes to allow unconstrained arguments alongside
 constrained ones MUST explicitly include a `wildcard` constraint for
@@ -557,30 +562,26 @@ Tool identifiers MUST be unique within the `tools` map of a single
 token. An `authorization_details` entry containing duplicate tool
 identifier keys is malformed and MUST be rejected.
 
+Tool identifiers are compared as exact strings. Enforcement points MUST
+NOT apply Unicode normalization, URI normalization, case folding, percent
+decoding, or alias resolution when matching tool identifiers in the
+token, the PoP JWT, and the requested invocation. This rule applies only
+to tool identifier matching. Argument values are evaluated according to
+the semantics of their constraint type; a registered constraint type MAY
+define normalization as part of its `check` or `subsumes` procedure.
+
 Tool identifiers SHOULD be URIs ({{RFC3986}}). URI-format identifiers
-provide namespace isolation across agents and prevent semantic collision
-when multiple agents in a deployment expose tools with identical local
-names.
-
-When URI-format identifiers are used, the URI SHOULD be scoped to the
-authority of the agent that exposes the tool. The authority component
-SHOULD correspond to the agent's workload identity or a domain
-controlled by the agent's operator. The URI SHOULD include a version
-component or content hash to ensure that all parties in the chain reason
-about the same tool schema. For example:
-
-    https://billing-agent.example.com/tools/charge/v2
-
-Tool identifiers that are not URIs MAY be used in single-agent
-deployments where namespace collision is not a concern. Deployments
+provide namespace isolation across agents and reduce semantic collision
+when multiple agents expose tools with identical local names. Deployments
 spanning multiple agents or trust domains SHOULD use URI-format
-identifiers.
+identifiers; single-agent deployments MAY use local identifiers where
+collision is not a concern.
 
 A tool identifier carries no inherent authorization semantics beyond
 naming a capability. The root issuer is responsible for verifying that
-the tool identifier is meaningful and that the requesting agent is
-authorized to claim identifiers under the tool URI's authority component
-before minting a root token (Section 3.7.3).
+requested tool identifiers are meaningful in the deployment and that the
+requester is authorized to receive authority for those tools before
+minting a root token (Section 3.7.3).
 
 ## Argument Constraints
 
@@ -723,23 +724,22 @@ constraint registration. It is not defined normatively in this document.
 
 **Type name:** `path_containment`
 
-**Additional members:** `root` (string, required). An absolute path
-prefix.
+**Additional members:** `root` (string, required). An absolute path root.
 
 **`check` predicate:** The argument, after resolving all `.` and `..`
-components and removing redundant separators, must begin with `root`.
-The normalization step is part of the predicate; implementations that
-compare raw argument strings without normalization do not conform to
-this registration.
+components and removing redundant separators, must be equal to `root` or
+lie beneath `root` after path-segment normalization. The normalization
+step is part of the predicate; implementations that compare raw argument
+strings without normalization do not conform to this registration.
 
 **`subsumes` relation:** `subsumes(C_parent, C_child)` is true if and
-only if `C_child.root` is `C_parent.root` or a descendant of
-`C_parent.root` under the normalized path ordering.
+only if `C_child.root` is `C_parent.root` or lies beneath
+`C_parent.root` under the normalized path-segment ordering.
 
 **Cross-type subsumption:** A derived `exact` constraint subsumes a
 parent `path_containment` constraint if and only if the exact value,
-after normalization, begins with the parent's `root`. All other
-cross-type pairs involving `path_containment` are invalid.
+after normalization, is equal to the parent's `root` or lies beneath it.
+All other cross-type pairs involving `path_containment` are invalid.
 
 ## Examples
 
@@ -899,15 +899,13 @@ Upon a valid request, the AS constructs and returns a root AAT. The AS:
    a signed proof-of-possession assertion in the token request.
 6. Sets `authorization_details` to the capability claims
    granted, which MAY be a subset of what the agent requested.
-7. For each URI-format tool identifier in the requested
-   `authorization_details`, the root issuer SHOULD verify that
-   the requesting agent's identity, as established by the
-   agent's client authentication credentials, corresponds to
-   the authority component of each claimed tool URI. If this
-   verification fails, the root issuer MUST reject the request.
-   The mechanism by which agent identity is mapped to tool URI
-   authority is deployment-specific and outside the scope of
-   this specification.
+7. For each tool identifier in the requested `authorization_details`,
+   the root issuer SHOULD verify that the identifier is meaningful in
+   the deployment and that the requester is authorized to receive
+   authority for that tool. If this verification fails, the root issuer
+   MUST reject the request. The mechanism for mapping requester identity
+   to tool authority is deployment-specific and outside the scope of this
+   specification.
 8. Signs the token with the AS's own private key.
 
 The AS returns the token in a standard OAuth 2.0 token endpoint response
@@ -974,17 +972,19 @@ token must preserve the parent's key set exactly (Section 4.5
 explains why closed-world semantics require this).
 
 When the parent's map is empty, the derived token may introduce
-keys, transitioning from open-world to closed-world. Each per-key
-constraint must be at least as restrictive. A derived constraint
-`c_child` subsumes a parent constraint `c_parent` (written
-`c_child ⊑ c_parent`) if every argument value that satisfies
-`c_child` also satisfies `c_parent`.
+keys, transitioning from open-world to closed-world. No per-key parent
+constraint exists in this case; the derived closed-world invocation set
+is a subset of the parent's unrestricted invocation set. When a parent
+constraint exists, a derived constraint `c_child` subsumes a parent
+constraint `c_parent` (written `c_child ⊑ c_parent`) if every argument
+value that satisfies `c_child` also satisfies `c_parent`.
 
 Two boundary cases complete the structure. The empty capability set
 `∅` is the bottom element: a token with no tools authorized is a
-valid but useless terminal token. The root token's capability set is the ceiling
-for the entire chain: no derived token at any depth can exceed what the
-root authorized.
+valid token that cannot authorize tool invocations. If it is not the
+leaf, it can only derive further empty-capability tokens. The root
+token's capability set is the ceiling for the entire chain: no derived
+token at any depth can exceed what the root authorized.
 
 Token lifetime (I3) is a mandatory attenuation dimension orthogonal to
 the capability lattice. A derived token with `C(child) == C(parent)` is
@@ -1190,8 +1190,9 @@ rules are:
   additional clauses in the derived array are permitted.
 
   The following pseudocode describes the matching algorithm.
-  Because the one-to-one assignment requirement is order-sensitive, the
-  algorithm backtracks when a greedy match leads to a dead end.
+  Because a greedy match can lead to a dead end, the algorithm
+  backtracks until it finds a one-to-one assignment or exhausts the
+  search space.
 
   ~~~
   function check_all_subsumption(parent_clauses, derived_clauses):
@@ -1318,7 +1319,7 @@ holder's private key. It MUST contain the required claims listed below.
 | `jti` | string | REQUIRED | Fresh random identifier. Issuers MUST NOT generate the same `jti` value for two different PoP JWTs. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 8.5). |
 | `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (see Section 5.3). |
 | `aat_id` | string | REQUIRED | The `jti` of the leaf token being presented. |
-| `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifiers are compared as byte strings; no Unicode normalization is applied. |
+| `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifier matching follows the exact-string comparison rules in Section 3.3.1. |
 | `aat_aud` | string | OPTIONAL | Audience identifier for the enforcement point or resource accepting the PoP JWT. Deployments or profiles that require audience binding MUST require this claim and enforce audience match at verification time. |
 | `hta` | object | REQUIRED | The tool arguments for this invocation. Keys are argument names; values are argument values. |
 
@@ -1401,12 +1402,13 @@ A holder of any AAT whose `del_depth` is strictly less than
 1. Set `jti` to a fresh unique token identifier, RECOMMENDED to
    be a UUIDv7 value per {{RFC9562}}.
 
-2. Set `iat` to the current time. Set `exp` to any value <=
-   `parent.exp`, subject to the constraints in Section 4.4.
+2. Set `iat` to the current time, but not earlier than `parent.iat`.
+   Set `exp` to any value <= `parent.exp`, subject to the
+   constraints in Section 4.4.
    Token lifetime is a mandatory attenuation dimension. Every
    derived token is temporally bounded by its parent regardless
-   of capability scope. TTL is the primary revocation mechanism
-   in this specification; see Appendix B.7 for deployment guidance.
+   of capability scope. Expiration is the base specification's built-in
+   limit on token lifetime; see Appendix B.7 for deployment guidance.
 
 3. Select the set of tools to authorize. This set MUST be a
    subset of the tools authorized by the parent token.
@@ -1445,14 +1447,15 @@ A holder of any AAT whose `del_depth` is strictly less than
 Derivation is performed locally by the token holder. No authorization
 server communication is required.
 
-A derivation in which none of the above dimensions is strictly
+A derivation in which none of the authority dimensions is strictly
 narrowed (the tool set is identical, all constraints are unchanged,
 `del_max_depth` is unchanged, and `exp` is unchanged) is technically
-valid by the invariants. However, it produces a child token with
-authority identical to its parent, while consuming one delegation
-depth. Such derivations serve no purpose from a least-privilege
-standpoint and SHOULD NOT be issued. Enforcement points
-MAY log same-scope derivations as anomalous.
+valid by the invariants. Such a child has the same capability and
+lifetime authority as its parent while consuming one delegation depth. It
+does not improve least privilege, but deployments may use it for
+holder-key handoff, subprocess delegation, or ephemeral key rotation.
+Enforcement points MAY log same-scope derivations as anomalous according
+to deployment policy.
 
 
 # Chain Verification Algorithm
@@ -1639,7 +1642,7 @@ Algorithm:
    q. Verify child.par_hash equals base64url-nopad(      (I5)
       SHA-256(parent token signing input)), where
       base64url-nopad denotes base64url encoding without
-      padding per RFC 7515 Appendix C. For JWT/JWS AATs,
+      padding as described in JWS Appendix C. For JWT/JWS AATs,
       the parent token signing input is the JWS Signing Input.
 
 5. (Defense in depth) Verify len(chain) equals
@@ -1660,7 +1663,7 @@ Algorithm:
       args, DENY (constrained argument MUST be present). For
       each argument name present in both the constraint map
       and args, verify the argument value satisfies the
-      constraint.
+      constraint. If any constraint check fails, DENY.
 
 7. Verify PoP JWT:
    a. Verify the PoP JWT's JWS alg header is on the
@@ -1674,11 +1677,11 @@ Algorithm:
    d. If deployment policy requires PoP audience binding, verify
       pop_jwt.aat_aud identifies this enforcement point or resource
       context. If absent or mismatched, DENY.
-   e. Verify pop_jwt.aat_tool == tool.
-   f. Verify pop_jwt.hta, when JCS-canonicalized
-      (RFC 8785), equals the JCS-canonical form of the
-      args map for this invocation. If the canonical byte
-      sequences differ, DENY.
+   e. Verify pop_jwt.aat_tool equals tool using the exact-string
+      matching rules in Section 3.3.1.
+   f. Verify pop_jwt.hta, when JCS-canonicalized, equals the
+      JCS-canonical form of the args map for this invocation. If the
+      canonical byte sequences differ, DENY.
    g. Verify pop_jwt.iat is within the clock tolerance
       window. If outside the window, DENY.
 
@@ -1740,10 +1743,10 @@ regardless of the agent's stated rationale.
 
 **Hallucinated tool invocations with out-of-scope arguments.** Even
 when an agent invokes an authorized tool, argument constraints in the
-leaf token
-restrict the argument values the enforcement point will accept. An agent
-that hallucinates an argument value outside the authorized range is
-denied at the enforcement point before the tool executes.
+leaf token restrict the argument values the enforcement point will
+accept. An agent that hallucinates an argument value outside the
+authorized range is denied at the enforcement point before the tool
+executes.
 
 **Confused deputy attacks.** AATs reduce confused deputy risk by
 replacing ambient authority with explicit, task-scoped capability tokens.
@@ -1771,7 +1774,7 @@ derived token to the specific bytes of its parent token. Suppose a
 delegator key holds two parent tokens, `A` and `B`, issued for different
 tasks but authorizing compatible capabilities. The holder derives child
 token `C` from `A`. Without `par_hash`, a presenter could assemble the
-chain `B` then `C`. The link may satisfy delegation authority, depth,
+chain `(B, C)`. The link may satisfy delegation authority, depth,
 lifetime, and capability monotonicity: `C` is signed by the key named in
 `B.cnf.jwk`, has the expected depth, does not outlive `B`, and
 authorizes no capability outside `B`. However, the chain has been
@@ -1872,14 +1875,14 @@ short-lived tokens.
 
 ## Replay Attacks
 
-The PoP JWT binds a specific invocation to a nonce, a timestamp, the
-target tool, the presented arguments, and, when required by deployment
-policy, the enforcement point or resource audience. The timestamp window
-limits the interval during which a captured PoP JWT remains usable to
-approximately twice the clock tolerance (RECOMMENDED: ±30 seconds,
-giving a window of roughly 60 seconds). This provides probabilistic
-replay resistance and is appropriate only for idempotent, read-only tool
-invocations where duplicate execution is harmless.
+The PoP JWT binds a specific invocation to a fresh PoP `jti`, a
+timestamp, the target tool, the presented arguments, and, when required
+by deployment policy, the enforcement point or resource audience. The
+timestamp window limits the interval during which a captured PoP JWT
+remains usable to approximately twice the clock tolerance (RECOMMENDED:
+±30 seconds, giving a window of roughly 60 seconds). This provides
+probabilistic replay resistance and is appropriate only for idempotent,
+read-only tool invocations where duplicate execution is harmless.
 
 For tool invocations that are irreversible or have significant side
 effects, including financial transactions, data deletion, writes to
@@ -1962,11 +1965,10 @@ per-token revocation granularity for verifiability without authorization
 server availability. This is a deliberate design choice, not an
 oversight.
 
-Deployments SHOULD use short token lifetimes as the primary recovery
-mechanism. A short-lived leaf token provides a bounded damage window that
-is operationally equivalent to revocation for most threat models, without
-the availability and consistency requirements that a revocation list
-imposes. Root tokens SHOULD be issued with the shortest lifetime
+Deployments SHOULD use short token lifetimes to bound exposure after key
+compromise, token theft, or scope misconfiguration. A short-lived leaf
+token provides a bounded damage window even when no revocation mechanism
+is deployed. Root tokens SHOULD be issued with the shortest lifetime
 compatible with the intended delegation chain depth.
 
 Root trust anchor rotation (replacing the trust anchor signing key and
@@ -2040,10 +2042,10 @@ a deployment-specific profile defines such claims and verification rules.
 
 ## Algorithm Confusion
 
-AATs are signed JWTs. Implementations are subject to the full class of
-JWT algorithm confusion attacks, including `alg: "none"` acceptance,
-symmetric/asymmetric key confusion (RS256/HS256 key reuse), and
-algorithm substitution across tokens in the same chain.
+JWT/JWS AATs are signed JWTs. Implementations are subject to the full
+class of JWT algorithm confusion attacks, including `alg: "none"`
+acceptance, symmetric/asymmetric key confusion (RS256/HS256 key reuse),
+and algorithm substitution across tokens in the same chain.
 
 Enforcement points MUST maintain an explicit allowlist of permitted
 signature algorithms and MUST reject any token whose `alg` header value
@@ -2068,9 +2070,11 @@ AAT payloads are integrity-protected but not encrypted. Token
 contents, including tool identifiers, argument constraints, and
 delegation chain structure, are visible to any party that observes
 the token in transit or at rest. Deployments SHOULD transmit AAT
-chains over encrypted transport (e.g., TLS) and SHOULD treat stored
-tokens as sensitive material. Token encryption is outside the scope
-of this specification.
+chains over encrypted transport (e.g., TLS) and SHOULD protect stored
+tokens as sensitive authorization metadata. A stored AAT is not usable
+without the corresponding holder private key, but it can disclose
+authorization scope and delegation structure. Token encryption is outside
+the scope of this specification.
 
 # IANA Considerations
 
@@ -2146,9 +2150,8 @@ satisfies all of the following criteria before approving it:
    catch-all rejection rule to handle pairs that deserve explicit
    treatment.
 
-5. The reference is a stable, publicly accessible document.
-   Internet-Drafts that have not yet been published as RFCs
-   are not acceptable as stable references.
+5. The reference is a stable, publicly accessible specification
+   suitable for interoperable implementation.
 
 Designated experts SHOULD request clarification when cross-type rules
 are incomplete, when the subsumption procedure's soundness is not
@@ -2166,7 +2169,7 @@ Type name:
 Additional members:
   (List each JSON member name, its JSON type, whether it is required
   or optional, its default value if optional, and its semantics.
-  Example: "root (string, required): An absolute path prefix.")
+  Example: "root (string, required): An absolute path root.")
 
 check predicate:
   (A complete, unambiguous specification of the boolean predicate
@@ -2254,7 +2257,7 @@ token issuance uses the existing `req_cnf` token request parameter.
 
 --- back
 
-# Comparison with Related OAuth Mechanisms (Non-Normative)
+# Comparison with Related Authorization Mechanisms (Non-Normative)
 
 ## Token Exchange (RFC 8693)
 
@@ -2303,7 +2306,7 @@ Structurally, DPoP is a two-party protocol between a client and a
 resource server. There is no delegation model, no parent-child chain,
 and no attenuation invariant. The chain model of this specification
 (`del_depth`, `par_hash`, `del_max_depth`, and the six attenuation
-invariants) has no DPoP analog.
+invariants) is not defined by DPoP.
 
 At the proof level, DPoP binds to an HTTP method (`htm`) and URI
 (`htu`). AAT PoP JWTs bind to a tool name (`aat_tool`) and a structured
@@ -2313,7 +2316,7 @@ argument-level constraint evaluation. This is why `aat_tool` and `hta`
 differ structurally from `htm` and `htu`: (1) `hta` carries the full
 argument map required for constraint evaluation at the enforcement
 point; (2) `aat_id` binds the proof to a specific leaf token `jti` and
-chain position, for which DPoP has no equivalent.
+chain position, which DPoP does not define.
 
 The cryptographic mechanism is the same: an asymmetric key in `cnf.jwk`,
 compact JWT serialization, verified against the leaf token's bound key.
@@ -2324,11 +2327,11 @@ this specification.
 ## Biscuit
 
 Biscuit {{BISCUIT}} and AATs both support offline attenuation and
-decentralized verification. Biscuit is a compact bearer authorization
-token with Datalog-based policy checks. AAT is an OAuth-shaped,
-holder-bound delegation-chain protocol with tool-and-argument
-constraints, cryptographic chain invariants, and invocation-time proof
-of possession.
+decentralized verification. Biscuit is a compact authorization token
+with Datalog-based policy checks and is commonly used as a bearer
+credential. AAT is an OAuth-shaped, holder-bound delegation-chain
+protocol with tool-and-argument constraints, cryptographic chain
+invariants, and invocation-time proof of possession.
 
 Biscuit is a general-purpose authorization token format. It does not
 natively encode OAuth-oriented delegation-chain claims such as depth
@@ -2460,12 +2463,12 @@ their parents and that token lifetime does not exceed MAX_TOKEN_LIFETIME
 (Section 4.4). This appendix provides non-normative guidance for
 selecting appropriate TTL values.
 
-TTL is the primary revocation mechanism in this specification. A token
-that has expired cannot be used regardless of whether a revocation list
-exists. Short lifetimes reduce the window of exposure from key
-compromise, token theft, or scope misconfiguration. The operational cost
-of short TTLs is re-issuance frequency; this cost is low when the root
-issuer is available and derivation is offline.
+Expiration is the base specification's built-in limit on token lifetime.
+A token that has expired cannot be used regardless of whether a
+revocation mechanism is deployed. Short lifetimes reduce the window of
+exposure from key compromise, token theft, or scope misconfiguration.
+The operational cost of short TTLs is re-issuance frequency; this cost
+is low when the root issuer is available and derivation is offline.
 
 The appropriate TTL depends on the token's position in the chain and the
 deployment context. Root tokens should be long enough to cover the full
@@ -2530,8 +2533,8 @@ experience supports the format independence of the core protocol model,
 but does not define a fully interoperable CWT profile; the CWT profile is
 deferred as described in Appendix D.
 
-RFC Editor Note: Implementation attribution will be updated
-or removed prior to WG adoption per IETF norms.
+RFC Editor Note: This section will be updated or removed before
+publication.
 
 ## Formal Verification
 
@@ -2545,5 +2548,5 @@ constraints and 8 values. The combination is intended to provide
 evidence toward monotonicity of the I4 invariant across the full
 constraint attenuation matrix.
 
-RFC Editor Note: Implementation details will be updated or
-removed per IETF norms prior to publication.
+RFC Editor Note: This section will be updated or removed before
+publication.

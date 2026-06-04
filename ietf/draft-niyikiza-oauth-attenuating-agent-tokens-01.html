@@ -8,18 +8,19 @@
 <meta content="Niki Aimable Niyikiza" name="author">
 <meta content="
        This document defines Attenuating Authorization Tokens (AATs), a
-      signed credential format for secure delegation in AI agent systems.
-      An AAT encodes which tools an agent may invoke and with what
-      argument constraints. Any holder can derive a more restrictive token
-      offline that narrows or maintains scope but cannot expand it. This
-      invariant is cryptographically enforced and verifiable offline by
-      any party holding the root token's trust anchor key. 
-       This specification extends the Rich Authorization Requests format
-      (RFC 9396) with delegation-chain semantics and defines a typed
-      constraint vocabulary for tool-level argument restrictions. The
-      accompanying chain verification algorithm enforces the monotonic
-      attenuation invariant at each delegation step and requires no network
-      contact with the root issuer. 
+      signed credential format for task-scoped delegation in AI agent
+      systems. An AAT encodes the tools an agent may invoke and the
+      argument constraints that apply to those invocations. A token holder
+      authorized to delegate can derive a token offline with equal or
+      narrower authority, subject to the parent token's depth and lifetime
+      limits. The resulting delegation chain is verifiable offline by any
+      enforcement point that has the root issuer's trust anchor key. 
+       This specification profiles the OAuth Rich Authorization Requests
+      format (RFC 9396) for tool-level capability claims, adds
+      delegation-chain claims, and defines a core constraint vocabulary for
+      argument restrictions. The chain verification algorithm authenticates
+      each delegation step and enforces monotonic attenuation without
+      network contact with the root issuer. 
     " name="description">
 <meta content="xml2rfc 3.12.0" name="generator">
 <meta content="draft-niyikiza-oauth-attenuating-agent-tokens-01" name="ietf.draft">
@@ -1234,18 +1235,19 @@ li > p:last-of-type {
 <section id="section-abstract">
       <h2 id="abstract"><a href="#abstract" class="selfRef">Abstract</a></h2>
 <p id="section-abstract-1">This document defines Attenuating Authorization Tokens (AATs), a
-      signed credential format for secure delegation in AI agent systems.
-      An AAT encodes which tools an agent may invoke and with what
-      argument constraints. Any holder can derive a more restrictive token
-      offline that narrows or maintains scope but cannot expand it. This
-      invariant is cryptographically enforced and verifiable offline by
-      any party holding the root token's trust anchor key.<a href="#section-abstract-1" class="pilcrow">¶</a></p>
-<p id="section-abstract-2">This specification extends the Rich Authorization Requests format
-      (RFC 9396) with delegation-chain semantics and defines a typed
-      constraint vocabulary for tool-level argument restrictions. The
-      accompanying chain verification algorithm enforces the monotonic
-      attenuation invariant at each delegation step and requires no network
-      contact with the root issuer.<a href="#section-abstract-2" class="pilcrow">¶</a></p>
+      signed credential format for task-scoped delegation in AI agent
+      systems. An AAT encodes the tools an agent may invoke and the
+      argument constraints that apply to those invocations. A token holder
+      authorized to delegate can derive a token offline with equal or
+      narrower authority, subject to the parent token's depth and lifetime
+      limits. The resulting delegation chain is verifiable offline by any
+      enforcement point that has the root issuer's trust anchor key.<a href="#section-abstract-1" class="pilcrow">¶</a></p>
+<p id="section-abstract-2">This specification profiles the OAuth Rich Authorization Requests
+      format (RFC 9396) for tool-level capability claims, adds
+      delegation-chain claims, and defines a core constraint vocabulary for
+      argument restrictions. The chain verification algorithm authenticates
+      each delegation step and enforces monotonic attenuation without
+      network contact with the root issuer.<a href="#section-abstract-2" class="pilcrow">¶</a></p>
 </section>
 <div id="status-of-memo">
 <section id="section-boilerplate.1">
@@ -1525,7 +1527,7 @@ li > p:last-of-type {
             </ul>
 </li>
           <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.11">
-            <p id="section-toc.1-1.11.1"><a href="#appendix-A" class="xref">Appendix A</a>.  <a href="#name-comparison-with-related-oaut" class="xref">Comparison with Related OAuth Mechanisms (Non-Normative)</a></p>
+            <p id="section-toc.1-1.11.1"><a href="#appendix-A" class="xref">Appendix A</a>.  <a href="#name-comparison-with-related-auth" class="xref">Comparison with Related Authorization Mechanisms (Non-Normative)</a></p>
 <ul class="compact toc ulBare ulEmpty">
 <li class="compact toc ulBare ulEmpty" id="section-toc.1-1.11.2.1">
                 <p id="section-toc.1-1.11.2.1.1"><a href="#appendix-A.1" class="xref">A.1</a>.  <a href="#name-token-exchange-rfc-8693-2" class="xref">Token Exchange (RFC 8693)</a></p>
@@ -1596,42 +1598,44 @@ li > p:last-of-type {
       <h2 id="name-introduction-2">
 <a href="#section-1" class="section-number selfRef">1. </a><a href="#name-introduction-2" class="section-name selfRef">Introduction</a>
       </h2>
-<p id="section-1-1">AI agent systems increasingly delegate tasks to chains of autonomous
-agents, each invoking tools on behalf of a user or service. Today,
-the tokens that authorize these invocations are typically scoped to
-the principal (the user or service account), not to the task the
-agent is performing. Even when an OAuth scope narrows the token to a
-subset of APIs, it does not express which tools, with which argument
-values, a particular agent should use for a particular task. The
-token that checks flight availability also authorizes completing a
-purchase and charging a corporate card. A prompt injection attack, a
-model hallucination, or a compromised sub-agent can exploit this
-gap, exercising authority the agent should never have needed. This
-is the confused deputy problem <span>[<a href="#HARDY88" class="xref">HARDY88</a>]</span> applied to agentic
-delegation.<a href="#section-1-1" class="pilcrow">¶</a></p>
-<p id="section-1-2">This problem is compounded by a gap in existing infrastructure. The
-WIMSE architecture <span>[<a href="#WIMSE-ARCH" class="xref">WIMSE-ARCH</a>]</span> provides mechanisms for
-establishing workload identity and propagating it across service
-boundaries. OAuth 2.0 <span>[<a href="#RFC6749" class="xref">RFC6749</a>]</span> provides token issuance and
-scoping. Neither provides a mechanism for a token holder to derive a
-narrower token and pass it downstream. Without delegation-aware
-semantics, the only options are to trust every agent in the chain
-with the full token or to require each delegation step to contact
-the authorization server. The latter is impractical for agentic
-workflows that execute tool invocations in rapid succession, operate
-across trust boundaries, or run in environments with intermittent
-connectivity.<a href="#section-1-2" class="pilcrow">¶</a></p>
-<p id="section-1-3">Capability-based systems <span>[<a href="#DENNIS66" class="xref">DENNIS66</a>]</span> solve both problems. Authority
-is carried by unforgeable tokens scoped to specific operations; a
+<p id="section-1-1">AI agent systems increasingly decompose a user request into delegated
+steps performed by multiple agents, services, or tools. Each step may
+need authority derived from the user or an originating service, but
+rarely needs the full authority available to the workflow as a whole.<a href="#section-1-1" class="pilcrow">¶</a></p>
+<p id="section-1-2">Existing OAuth mechanisms can scope tokens to principals, resources,
+APIs, or authorization details, but they do not define an offline,
+holder-derivable delegation chain in which each downstream holder can
+attenuate authority and any enforcement point can verify that the
+resulting token is no broader than its parent. In particular, OAuth does
+not define a standard way for a token holder to derive a token that
+cryptographically constrains a receiving agent to specific tools and
+argument values for a specific task.<a href="#section-1-2" class="pilcrow">¶</a></p>
+<p id="section-1-3">Without such attenuation, a token broad enough to support a multi-step
+workflow may expose more authority than an intermediate agent needs for
+its current step. Prompt injection, model hallucination, or compromise
+of that agent can exploit this excess authority. This is the confused
+deputy problem <span>[<a href="#HARDY88" class="xref">HARDY88</a>]</span> applied to agentic delegation.<a href="#section-1-3" class="pilcrow">¶</a></p>
+<p id="section-1-4">WIMSE <span>[<a href="#WIMSE-ARCH" class="xref">WIMSE-ARCH</a>]</span> provides mechanisms for establishing workload
+identity and propagating it across service boundaries. OAuth 2.0
+<span>[<a href="#RFC6749" class="xref">RFC6749</a>]</span> provides token issuance and scoping. AATs complement these
+mechanisms with delegation-aware attenuation semantics: a holder can
+derive a narrower token and pass it downstream, while enforcement points
+can verify the resulting chain offline. This avoids making the
+authorization server a participant in every delegation hop, which is
+important for agentic workflows that execute tool invocations in rapid
+succession, operate across trust boundaries, or run with intermittent
+connectivity.<a href="#section-1-4" class="pilcrow">¶</a></p>
+<p id="section-1-5">Capability-based systems <span>[<a href="#DENNIS66" class="xref">DENNIS66</a>]</span> provide the underlying model.
+Authority is carried by unforgeable tokens scoped to specific operations; a
 holder can attenuate a capability before passing it on, but cannot
 amplify it <span>[<a href="#SALTZER75" class="xref">SALTZER75</a>]</span>. This document defines such a mechanism for
 OAuth-based agent systems, complementing WIMSE's identity layer with
 a delegation and attenuation layer. The resulting chain lets
 enforcement points evaluate both the leaf token and the delegation path
-that produced it.<a href="#section-1-3" class="pilcrow">¶</a></p>
-<p id="section-1-4">The following diagram shows the delegation flow this specification
-enables:<a href="#section-1-4" class="pilcrow">¶</a></p>
-<div class="alignLeft art-text artwork" id="section-1-5">
+that produced it.<a href="#section-1-5" class="pilcrow">¶</a></p>
+<p id="section-1-6">The following diagram shows the delegation flow this specification
+enables:<a href="#section-1-6" class="pilcrow">¶</a></p>
+<div class="alignLeft art-text artwork" id="section-1-7">
 <pre>
 Root Issuer
        |
@@ -1651,14 +1655,14 @@ Tool-Invoking Agent
        v
 Enforcement Point
   (verifies chain offline, Section 7)
-</pre><a href="#section-1-5" class="pilcrow">¶</a>
+</pre><a href="#section-1-7" class="pilcrow">¶</a>
 </div>
-<p id="section-1-6">At each derivation step, the derived token's scope is a subset of
+<p id="section-1-8">At each derivation step, the derived token's scope is a subset of
 the parent's: scope can only narrow or stay the same, never widen. The
 enforcement point verifies the complete chain using only the root
 token's trust anchor key; no network calls are required. How token
 chains are carried to enforcement points is deployment-specific; this
-document does not define a transport binding.<a href="#section-1-6" class="pilcrow">¶</a></p>
+document does not define a transport binding.<a href="#section-1-8" class="pilcrow">¶</a></p>
 <div id="limitations-of-existing-oauth-mechanisms-for-agentic-delegation">
 <section id="section-1.1">
         <h3 id="name-limitations-of-existing-oaut">
@@ -1674,9 +1678,9 @@ authorization server (AS) availability. <span>[<a href="#RFC8693" class="xref">R
 representing prior delegation actors via nested <code>act</code> claims, but those
 claims are informational for access control decisions rather than a
 cryptographically self-verifiable attenuation chain. The AS mediates
-each grant independently, and no mechanism ensures that downstream
-delegation intent remains consistent with the original authorization
-scope.<a href="#section-1.1-1" class="pilcrow">¶</a></p>
+each grant independently, and RFC 8693 does not define a token-local
+mechanism for proving that downstream delegation intent remains
+consistent with the original authorization scope.<a href="#section-1.1-1" class="pilcrow">¶</a></p>
 <p id="section-1.1-2">Rich Authorization Requests (RAR) <span>[<a href="#RFC9396" class="xref">RFC9396</a>]</span> extend OAuth tokens with
 structured authorization detail objects, enabling expressive capability
 descriptions. RAR addresses the expressiveness problem. It does not
@@ -1690,8 +1694,8 @@ agent may invoke or with what argument values. AATs are
 complementary: they scope authority to specific tools and arguments
 after identity and consent have been established.<a href="#section-1.1-3" class="pilcrow">¶</a></p>
 <p id="section-1.1-4">To the author's knowledge, no existing OAuth standard defines a
-delegation chain protocol with a cryptographically enforced attenuation
-invariant and offline chain verification.<a href="#section-1.1-4" class="pilcrow">¶</a></p>
+delegation chain protocol with token-local chain authentication,
+deterministic attenuation checks, and offline chain verification.<a href="#section-1.1-4" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="design-goals">
@@ -1716,8 +1720,9 @@ the trust anchor can verify the complete delegation chain without
 network calls.<a href="#section-1.2-1.3" class="pilcrow">¶</a>
 </li>
           <li id="section-1.2-1.4">
-            <strong>Cryptographically enforced attenuation.</strong> A derived token cannot
-grant broader authority than its parent.<a href="#section-1.2-1.4" class="pilcrow">¶</a>
+            <strong>Verifiable attenuation.</strong> A derived token cannot grant broader
+authority than its parent, and this property can be verified from the
+signed chain.<a href="#section-1.2-1.4" class="pilcrow">¶</a>
 </li>
           <li id="section-1.2-1.5">
             <strong>JWT/JWS interoperability.</strong> The primary encoding specified in this
@@ -1802,11 +1807,7 @@ subset of its parent's authority (equal or narrower). Derivation does
 not require a round-trip to the root issuer.<a href="#section-2-6" class="pilcrow">¶</a></p>
 <p id="section-2-7"><strong>Tool:</strong> An addressable function or API operation that an agent may
 invoke. A tool is identified by a string identifier. Tool identifiers
-<span class="bcp14">SHOULD</span> be URIs (<span>[<a href="#RFC3986" class="xref">RFC3986</a>]</span>); see Section 3.3.1 for requirements. Tool
-identifiers <span class="bcp14">MUST NOT</span> contain characters that are subject to Unicode
-normalization (such as combining characters or characters with multiple
-canonical forms), as normalization-sensitive identifiers can produce
-inconsistent matching behavior across implementations.<a href="#section-2-7" class="pilcrow">¶</a></p>
+are compared as exact strings; see Section 3.3.1 for requirements.<a href="#section-2-7" class="pilcrow">¶</a></p>
 <p id="section-2-8"><strong>Argument Constraint:</strong> A predicate over a tool argument value that the
 argument <span class="bcp14">MUST</span> satisfy for the invocation to be authorized. Constraints
 are evaluated at the enforcement point before invocation.<a href="#section-2-8" class="pilcrow">¶</a></p>
@@ -2041,7 +2042,10 @@ security property, not a configuration option.<a href="#section-3.3-4" class="pi
 constraint for it in the constraint map. There is no "optional
 constraint" mechanism; the constraint map is a closed specification of
 the required invocation shape. To authorize an argument without
-restricting its value, use a <code>wildcard</code> constraint (see below).<a href="#section-3.3-5" class="pilcrow">¶</a></p>
+restricting its value, use a <code>wildcard</code> constraint (see below).
+Optional constrained arguments are outside the core constraint model;
+profiles or extension constraint types that require such behavior must
+define it explicitly.<a href="#section-3.3-5" class="pilcrow">¶</a></p>
 <p id="section-3.3-6">A token issuer that wishes to allow unconstrained arguments alongside
 constrained ones <span class="bcp14">MUST</span> explicitly include a <code>wildcard</code> constraint for
 each argument that should be unrestricted. A <code>wildcard</code> constraint
@@ -2072,30 +2076,23 @@ derived token <span class="bcp14">MAY</span> carry an empty <code>authorization_
 <p id="section-3.3.1-2">Tool identifiers <span class="bcp14">MUST</span> be unique within the <code>tools</code> map of a single
 token. An <code>authorization_details</code> entry containing duplicate tool
 identifier keys is malformed and <span class="bcp14">MUST</span> be rejected.<a href="#section-3.3.1-2" class="pilcrow">¶</a></p>
-<p id="section-3.3.1-3">Tool identifiers <span class="bcp14">SHOULD</span> be URIs (<span>[<a href="#RFC3986" class="xref">RFC3986</a>]</span>). URI-format identifiers
-provide namespace isolation across agents and prevent semantic collision
-when multiple agents in a deployment expose tools with identical local
-names.<a href="#section-3.3.1-3" class="pilcrow">¶</a></p>
-<p id="section-3.3.1-4">When URI-format identifiers are used, the URI <span class="bcp14">SHOULD</span> be scoped to the
-authority of the agent that exposes the tool. The authority component
-<span class="bcp14">SHOULD</span> correspond to the agent's workload identity or a domain
-controlled by the agent's operator. The URI <span class="bcp14">SHOULD</span> include a version
-component or content hash to ensure that all parties in the chain reason
-about the same tool schema. For example:<a href="#section-3.3.1-4" class="pilcrow">¶</a></p>
-<div class="alignLeft art-text artwork" id="section-3.3.1-5">
-<pre>
-https://billing-agent.example.com/tools/charge/v2
-</pre><a href="#section-3.3.1-5" class="pilcrow">¶</a>
-</div>
-<p id="section-3.3.1-6">Tool identifiers that are not URIs <span class="bcp14">MAY</span> be used in single-agent
-deployments where namespace collision is not a concern. Deployments
+<p id="section-3.3.1-3">Tool identifiers are compared as exact strings. Enforcement points <span class="bcp14">MUST NOT</span> apply Unicode normalization, URI normalization, case folding, percent
+decoding, or alias resolution when matching tool identifiers in the
+token, the PoP JWT, and the requested invocation. This rule applies only
+to tool identifier matching. Argument values are evaluated according to
+the semantics of their constraint type; a registered constraint type <span class="bcp14">MAY</span>
+define normalization as part of its <code>check</code> or <code>subsumes</code> procedure.<a href="#section-3.3.1-3" class="pilcrow">¶</a></p>
+<p id="section-3.3.1-4">Tool identifiers <span class="bcp14">SHOULD</span> be URIs (<span>[<a href="#RFC3986" class="xref">RFC3986</a>]</span>). URI-format identifiers
+provide namespace isolation across agents and reduce semantic collision
+when multiple agents expose tools with identical local names. Deployments
 spanning multiple agents or trust domains <span class="bcp14">SHOULD</span> use URI-format
-identifiers.<a href="#section-3.3.1-6" class="pilcrow">¶</a></p>
-<p id="section-3.3.1-7">A tool identifier carries no inherent authorization semantics beyond
+identifiers; single-agent deployments <span class="bcp14">MAY</span> use local identifiers where
+collision is not a concern.<a href="#section-3.3.1-4" class="pilcrow">¶</a></p>
+<p id="section-3.3.1-5">A tool identifier carries no inherent authorization semantics beyond
 naming a capability. The root issuer is responsible for verifying that
-the tool identifier is meaningful and that the requesting agent is
-authorized to claim identifiers under the tool URI's authority component
-before minting a root token (Section 3.7.3).<a href="#section-3.3.1-7" class="pilcrow">¶</a></p>
+requested tool identifiers are meaningful in the deployment and that the
+requester is authorized to receive authority for those tools before
+minting a root token (Section 3.7.3).<a href="#section-3.3.1-5" class="pilcrow">¶</a></p>
 </section>
 </div>
 </section>
@@ -2327,20 +2324,19 @@ would violate the attenuation guarantee.<a href="#section-3.5.2-3" class="pilcro
 <p id="section-3.5.3-1">The following is an illustrative example of a conforming extension
 constraint registration. It is not defined normatively in this document.<a href="#section-3.5.3-1" class="pilcrow">¶</a></p>
 <p id="section-3.5.3-2"><strong>Type name:</strong> <code>path_containment</code><a href="#section-3.5.3-2" class="pilcrow">¶</a></p>
-<p id="section-3.5.3-3"><strong>Additional members:</strong> <code>root</code> (string, required). An absolute path
-prefix.<a href="#section-3.5.3-3" class="pilcrow">¶</a></p>
+<p id="section-3.5.3-3"><strong>Additional members:</strong> <code>root</code> (string, required). An absolute path root.<a href="#section-3.5.3-3" class="pilcrow">¶</a></p>
 <p id="section-3.5.3-4"><strong><code>check</code> predicate:</strong> The argument, after resolving all <code>.</code> and <code>..</code>
-components and removing redundant separators, must begin with <code>root</code>.
-The normalization step is part of the predicate; implementations that
-compare raw argument strings without normalization do not conform to
-this registration.<a href="#section-3.5.3-4" class="pilcrow">¶</a></p>
+components and removing redundant separators, must be equal to <code>root</code> or
+lie beneath <code>root</code> after path-segment normalization. The normalization
+step is part of the predicate; implementations that compare raw argument
+strings without normalization do not conform to this registration.<a href="#section-3.5.3-4" class="pilcrow">¶</a></p>
 <p id="section-3.5.3-5"><strong><code>subsumes</code> relation:</strong> <code>subsumes(C_parent, C_child)</code> is true if and
-only if <code>C_child.root</code> is <code>C_parent.root</code> or a descendant of
-<code>C_parent.root</code> under the normalized path ordering.<a href="#section-3.5.3-5" class="pilcrow">¶</a></p>
+only if <code>C_child.root</code> is <code>C_parent.root</code> or lies beneath
+<code>C_parent.root</code> under the normalized path-segment ordering.<a href="#section-3.5.3-5" class="pilcrow">¶</a></p>
 <p id="section-3.5.3-6"><strong>Cross-type subsumption:</strong> A derived <code>exact</code> constraint subsumes a
 parent <code>path_containment</code> constraint if and only if the exact value,
-after normalization, begins with the parent's <code>root</code>. All other
-cross-type pairs involving <code>path_containment</code> are invalid.<a href="#section-3.5.3-6" class="pilcrow">¶</a></p>
+after normalization, is equal to the parent's <code>root</code> or lies beneath it.
+All other cross-type pairs involving <code>path_containment</code> are invalid.<a href="#section-3.5.3-6" class="pilcrow">¶</a></p>
 </section>
 </div>
 </section>
@@ -2555,15 +2551,13 @@ a signed proof-of-possession assertion in the token request.<a href="#section-3.
             <li id="section-3.7.3-2.6">Sets <code>authorization_details</code> to the capability claims
 granted, which <span class="bcp14">MAY</span> be a subset of what the agent requested.<a href="#section-3.7.3-2.6" class="pilcrow">¶</a>
 </li>
-            <li id="section-3.7.3-2.7">For each URI-format tool identifier in the requested
-<code>authorization_details</code>, the root issuer <span class="bcp14">SHOULD</span> verify that
-the requesting agent's identity, as established by the
-agent's client authentication credentials, corresponds to
-the authority component of each claimed tool URI. If this
-verification fails, the root issuer <span class="bcp14">MUST</span> reject the request.
-The mechanism by which agent identity is mapped to tool URI
-authority is deployment-specific and outside the scope of
-this specification.<a href="#section-3.7.3-2.7" class="pilcrow">¶</a>
+            <li id="section-3.7.3-2.7">For each tool identifier in the requested <code>authorization_details</code>,
+the root issuer <span class="bcp14">SHOULD</span> verify that the identifier is meaningful in
+the deployment and that the requester is authorized to receive
+authority for that tool. If this verification fails, the root issuer
+<span class="bcp14">MUST</span> reject the request. The mechanism for mapping requester identity
+to tool authority is deployment-specific and outside the scope of this
+specification.<a href="#section-3.7.3-2.7" class="pilcrow">¶</a>
 </li>
             <li id="section-3.7.3-2.8">Signs the token with the AS's own private key.<a href="#section-3.7.3-2.8" class="pilcrow">¶</a>
 </li>
@@ -2636,16 +2630,18 @@ level, when the parent's constraint map is non-empty, the derived
 token must preserve the parent's key set exactly (Section 4.5
 explains why closed-world semantics require this).<a href="#section-4.1-5" class="pilcrow">¶</a></p>
 <p id="section-4.1-6">When the parent's map is empty, the derived token may introduce
-keys, transitioning from open-world to closed-world. Each per-key
-constraint must be at least as restrictive. A derived constraint
-<code>c_child</code> subsumes a parent constraint <code>c_parent</code> (written
-<code>c_child &amp;#8849; c_parent</code>) if every argument value that satisfies
-<code>c_child</code> also satisfies <code>c_parent</code>.<a href="#section-4.1-6" class="pilcrow">¶</a></p>
+keys, transitioning from open-world to closed-world. No per-key parent
+constraint exists in this case; the derived closed-world invocation set
+is a subset of the parent's unrestricted invocation set. When a parent
+constraint exists, a derived constraint <code>c_child</code> subsumes a parent
+constraint <code>c_parent</code> (written <code>c_child &amp;#8849; c_parent</code>) if every argument
+value that satisfies <code>c_child</code> also satisfies <code>c_parent</code>.<a href="#section-4.1-6" class="pilcrow">¶</a></p>
 <p id="section-4.1-7">Two boundary cases complete the structure. The empty capability set
 <code>&amp;#8709;</code> is the bottom element: a token with no tools authorized is a
-valid but useless terminal token. The root token's capability set is the ceiling
-for the entire chain: no derived token at any depth can exceed what the
-root authorized.<a href="#section-4.1-7" class="pilcrow">¶</a></p>
+valid token that cannot authorize tool invocations. If it is not the
+leaf, it can only derive further empty-capability tokens. The root
+token's capability set is the ceiling for the entire chain: no derived
+token at any depth can exceed what the root authorized.<a href="#section-4.1-7" class="pilcrow">¶</a></p>
 <p id="section-4.1-8">Token lifetime (I3) is a mandatory attenuation dimension orthogonal to
 the capability lattice. A derived token with <code>C(child) == C(parent)</code> is
 still strictly more constrained if its <code>exp</code> is earlier than its
@@ -2872,8 +2868,9 @@ parent clause cannot be matched, the check <span class="bcp14">MUST</span> fail.
 additional clauses in the derived array are permitted.<a href="#section-4.5-6.6.2" class="pilcrow">¶</a></p>
 <p id="section-4.5-6.6.3">
 The following pseudocode describes the matching algorithm.
-Because the one-to-one assignment requirement is order-sensitive, the
-algorithm backtracks when a greedy match leads to a dead end.<a href="#section-4.5-6.6.3" class="pilcrow">¶</a></p>
+Because a greedy match can lead to a dead end, the algorithm
+backtracks until it finds a one-to-one assignment or exhausts the
+search space.<a href="#section-4.5-6.6.3" class="pilcrow">¶</a></p>
 <div class="alignLeft art-text artwork" id="section-4.5-6.6.4">
 <pre>
 function check_all_subsumption(parent_clauses, derived_clauses):
@@ -3068,7 +3065,7 @@ holder's private key. It <span class="bcp14">MUST</span> contain the required cl
               <td class="text-left" rowspan="1" colspan="1">
                 <span class="bcp14">REQUIRED</span>
 </td>
-              <td class="text-left" rowspan="1" colspan="1">The tool identifier being invoked. <span class="bcp14">MUST</span> exactly match a key in the <code>tools</code> map of the leaf token's <code>authorization_details</code>. Tool identifiers are compared as byte strings; no Unicode normalization is applied.</td>
+              <td class="text-left" rowspan="1" colspan="1">The tool identifier being invoked. <span class="bcp14">MUST</span> exactly match a key in the <code>tools</code> map of the leaf token's <code>authorization_details</code>. Tool identifier matching follows the exact-string comparison rules in Section 3.3.1.</td>
             </tr>
             <tr>
               <td class="text-left" rowspan="1" colspan="1">
@@ -3183,12 +3180,13 @@ the security considerations in Section 8.5.<a href="#section-5.3-6" class="pilcr
 <li id="section-6-2.1">Set <code>jti</code> to a fresh unique token identifier, <span class="bcp14">RECOMMENDED</span> to
 be a UUIDv7 value per <span>[<a href="#RFC9562" class="xref">RFC9562</a>]</span>.<a href="#section-6-2.1" class="pilcrow">¶</a>
 </li>
-        <li id="section-6-2.2">Set <code>iat</code> to the current time. Set <code>exp</code> to any value &lt;=
-<code>parent.exp</code>, subject to the constraints in Section 4.4.
+        <li id="section-6-2.2">Set <code>iat</code> to the current time, but not earlier than <code>parent.iat</code>.
+Set <code>exp</code> to any value &lt;= <code>parent.exp</code>, subject to the
+constraints in Section 4.4.
 Token lifetime is a mandatory attenuation dimension. Every
 derived token is temporally bounded by its parent regardless
-of capability scope. TTL is the primary revocation mechanism
-in this specification; see Appendix B.7 for deployment guidance.<a href="#section-6-2.2" class="pilcrow">¶</a>
+of capability scope. Expiration is the base specification's built-in
+limit on token lifetime; see Appendix B.7 for deployment guidance.<a href="#section-6-2.2" class="pilcrow">¶</a>
 </li>
         <li id="section-6-2.3">Select the set of tools to authorize. This set <span class="bcp14">MUST</span> be a
 subset of the tools authorized by the parent token.<a href="#section-6-2.3" class="pilcrow">¶</a>
@@ -3227,14 +3225,15 @@ appear in this field.<a href="#section-6-2.8" class="pilcrow">¶</a>
       </ol>
 <p id="section-6-3">Derivation is performed locally by the token holder. No authorization
 server communication is required.<a href="#section-6-3" class="pilcrow">¶</a></p>
-<p id="section-6-4">A derivation in which none of the above dimensions is strictly
+<p id="section-6-4">A derivation in which none of the authority dimensions is strictly
 narrowed (the tool set is identical, all constraints are unchanged,
 <code>del_max_depth</code> is unchanged, and <code>exp</code> is unchanged) is technically
-valid by the invariants. However, it produces a child token with
-authority identical to its parent, while consuming one delegation
-depth. Such derivations serve no purpose from a least-privilege
-standpoint and <span class="bcp14">SHOULD NOT</span> be issued. Enforcement points
-<span class="bcp14">MAY</span> log same-scope derivations as anomalous.<a href="#section-6-4" class="pilcrow">¶</a></p>
+valid by the invariants. Such a child has the same capability and
+lifetime authority as its parent while consuming one delegation depth. It
+does not improve least privilege, but deployments may use it for
+holder-key handoff, subprocess delegation, or ephemeral key rotation.
+Enforcement points <span class="bcp14">MAY</span> log same-scope derivations as anomalous according
+to deployment policy.<a href="#section-6-4" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="chain-verification-algorithm">
@@ -3423,7 +3422,7 @@ Algorithm:
    q. Verify child.par_hash equals base64url-nopad(      (I5)
       SHA-256(parent token signing input)), where
       base64url-nopad denotes base64url encoding without
-      padding per RFC 7515 Appendix C. For JWT/JWS AATs,
+      padding as described in JWS Appendix C. For JWT/JWS AATs,
       the parent token signing input is the JWS Signing Input.
 
 5. (Defense in depth) Verify len(chain) equals
@@ -3444,7 +3443,7 @@ Algorithm:
       args, DENY (constrained argument MUST be present). For
       each argument name present in both the constraint map
       and args, verify the argument value satisfies the
-      constraint.
+      constraint. If any constraint check fails, DENY.
 
 7. Verify PoP JWT:
    a. Verify the PoP JWT's JWS alg header is on the
@@ -3458,11 +3457,11 @@ Algorithm:
    d. If deployment policy requires PoP audience binding, verify
       pop_jwt.aat_aud identifies this enforcement point or resource
       context. If absent or mismatched, DENY.
-   e. Verify pop_jwt.aat_tool == tool.
-   f. Verify pop_jwt.hta, when JCS-canonicalized
-      (RFC 8785), equals the JCS-canonical form of the
-      args map for this invocation. If the canonical byte
-      sequences differ, DENY.
+   e. Verify pop_jwt.aat_tool equals tool using the exact-string
+      matching rules in Section 3.3.1.
+   f. Verify pop_jwt.hta, when JCS-canonicalized, equals the
+      JCS-canonical form of the args map for this invocation. If the
+      canonical byte sequences differ, DENY.
    g. Verify pop_jwt.iat is within the clock tolerance
       window. If outside the window, DENY.
 
@@ -3529,10 +3528,10 @@ enforcement point rejects any invocation of an unauthorized tool
 regardless of the agent's stated rationale.<a href="#section-8.1.1-1" class="pilcrow">¶</a></p>
 <p id="section-8.1.1-2"><strong>Hallucinated tool invocations with out-of-scope arguments.</strong> Even
 when an agent invokes an authorized tool, argument constraints in the
-leaf token
-restrict the argument values the enforcement point will accept. An agent
-that hallucinates an argument value outside the authorized range is
-denied at the enforcement point before the tool executes.<a href="#section-8.1.1-2" class="pilcrow">¶</a></p>
+leaf token restrict the argument values the enforcement point will
+accept. An agent that hallucinates an argument value outside the
+authorized range is denied at the enforcement point before the tool
+executes.<a href="#section-8.1.1-2" class="pilcrow">¶</a></p>
 <p id="section-8.1.1-3"><strong>Confused deputy attacks.</strong> AATs reduce confused deputy risk by
 replacing ambient authority with explicit, task-scoped capability tokens.
 When a token holder derives a narrowed token before delegating to another
@@ -3556,7 +3555,7 @@ derived token to the specific bytes of its parent token. Suppose a
 delegator key holds two parent tokens, <code>A</code> and <code>B</code>, issued for different
 tasks but authorizing compatible capabilities. The holder derives child
 token <code>C</code> from <code>A</code>. Without <code>par_hash</code>, a presenter could assemble the
-chain <code>B</code> then <code>C</code>. The link may satisfy delegation authority, depth,
+chain <code>(B, C)</code>. The link may satisfy delegation authority, depth,
 lifetime, and capability monotonicity: <code>C</code> is signed by the key named in
 <code>B.cnf.jwk</code>, has the expected depth, does not outlive <code>B</code>, and
 authorizes no capability outside <code>B</code>. However, the chain has been
@@ -3672,14 +3671,14 @@ short-lived tokens.<a href="#section-8.4-1" class="pilcrow">¶</a></p>
         <h3 id="name-replay-attacks-2">
 <a href="#section-8.5" class="section-number selfRef">8.5. </a><a href="#name-replay-attacks-2" class="section-name selfRef">Replay Attacks</a>
         </h3>
-<p id="section-8.5-1">The PoP JWT binds a specific invocation to a nonce, a timestamp, the
-target tool, the presented arguments, and, when required by deployment
-policy, the enforcement point or resource audience. The timestamp window
-limits the interval during which a captured PoP JWT remains usable to
-approximately twice the clock tolerance (<span class="bcp14">RECOMMENDED</span>: +/-30 seconds,
-giving a window of roughly 60 seconds). This provides probabilistic
-replay resistance and is appropriate only for idempotent, read-only tool
-invocations where duplicate execution is harmless.<a href="#section-8.5-1" class="pilcrow">¶</a></p>
+<p id="section-8.5-1">The PoP JWT binds a specific invocation to a fresh PoP <code>jti</code>, a
+timestamp, the target tool, the presented arguments, and, when required
+by deployment policy, the enforcement point or resource audience. The
+timestamp window limits the interval during which a captured PoP JWT
+remains usable to approximately twice the clock tolerance (<span class="bcp14">RECOMMENDED</span>:
++/-30 seconds, giving a window of roughly 60 seconds). This provides
+probabilistic replay resistance and is appropriate only for idempotent,
+read-only tool invocations where duplicate execution is harmless.<a href="#section-8.5-1" class="pilcrow">¶</a></p>
 <p id="section-8.5-2">For tool invocations that are irreversible or have significant side
 effects, including financial transactions, data deletion, writes to
 external systems, and any operation that cannot be undone: enforcement
@@ -3772,11 +3771,10 @@ scope of this specification. The offline delegation model trades
 per-token revocation granularity for verifiability without authorization
 server availability. This is a deliberate design choice, not an
 oversight.<a href="#section-8.9-1" class="pilcrow">¶</a></p>
-<p id="section-8.9-2">Deployments <span class="bcp14">SHOULD</span> use short token lifetimes as the primary recovery
-mechanism. A short-lived leaf token provides a bounded damage window that
-is operationally equivalent to revocation for most threat models, without
-the availability and consistency requirements that a revocation list
-imposes. Root tokens <span class="bcp14">SHOULD</span> be issued with the shortest lifetime
+<p id="section-8.9-2">Deployments <span class="bcp14">SHOULD</span> use short token lifetimes to bound exposure after key
+compromise, token theft, or scope misconfiguration. A short-lived leaf
+token provides a bounded damage window even when no revocation mechanism
+is deployed. Root tokens <span class="bcp14">SHOULD</span> be issued with the shortest lifetime
 compatible with the intended delegation chain depth.<a href="#section-8.9-2" class="pilcrow">¶</a></p>
 <p id="section-8.9-3">Root trust anchor rotation (replacing the trust anchor signing key and
 re-issuing root tokens) is the appropriate response to a root key
@@ -3860,10 +3858,10 @@ a deployment-specific profile defines such claims and verification rules.<a href
         <h3 id="name-algorithm-confusion-2">
 <a href="#section-8.13" class="section-number selfRef">8.13. </a><a href="#name-algorithm-confusion-2" class="section-name selfRef">Algorithm Confusion</a>
         </h3>
-<p id="section-8.13-1">AATs are signed JWTs. Implementations are subject to the full class of
-JWT algorithm confusion attacks, including <code>alg: "none"</code> acceptance,
-symmetric/asymmetric key confusion (RS256/HS256 key reuse), and
-algorithm substitution across tokens in the same chain.<a href="#section-8.13-1" class="pilcrow">¶</a></p>
+<p id="section-8.13-1">JWT/JWS AATs are signed JWTs. Implementations are subject to the full
+class of JWT algorithm confusion attacks, including <code>alg: "none"</code>
+acceptance, symmetric/asymmetric key confusion (RS256/HS256 key reuse),
+and algorithm substitution across tokens in the same chain.<a href="#section-8.13-1" class="pilcrow">¶</a></p>
 <p id="section-8.13-2">Enforcement points <span class="bcp14">MUST</span> maintain an explicit allowlist of permitted
 signature algorithms and <span class="bcp14">MUST</span> reject any token whose <code>alg</code> header value
 is not on that list. Implementations <span class="bcp14">MUST</span> reject tokens with <code>alg:
@@ -3889,9 +3887,11 @@ that PoP requires.<a href="#section-8.13-4" class="pilcrow">¶</a></p>
 contents, including tool identifiers, argument constraints, and
 delegation chain structure, are visible to any party that observes
 the token in transit or at rest. Deployments <span class="bcp14">SHOULD</span> transmit AAT
-chains over encrypted transport (e.g., TLS) and <span class="bcp14">SHOULD</span> treat stored
-tokens as sensitive material. Token encryption is outside the scope
-of this specification.<a href="#section-8.14-1" class="pilcrow">¶</a></p>
+chains over encrypted transport (e.g., TLS) and <span class="bcp14">SHOULD</span> protect stored
+tokens as sensitive authorization metadata. A stored AAT is not usable
+without the corresponding holder private key, but it can disclose
+authorization scope and delegation structure. Token encryption is outside
+the scope of this specification.<a href="#section-8.14-1" class="pilcrow">¶</a></p>
 </section>
 </div>
 </section>
@@ -4065,9 +4065,8 @@ pairs are implicitly invalid; the registration <span class="bcp14">MUST NOT</spa
 catch-all rejection rule to handle pairs that deserve explicit
 treatment.<a href="#section-9.3.1-2.4" class="pilcrow">¶</a>
 </li>
-            <li id="section-9.3.1-2.5">The reference is a stable, publicly accessible document.
-Internet-Drafts that have not yet been published as RFCs
-are not acceptable as stable references.<a href="#section-9.3.1-2.5" class="pilcrow">¶</a>
+            <li id="section-9.3.1-2.5">The reference is a stable, publicly accessible specification
+suitable for interoperable implementation.<a href="#section-9.3.1-2.5" class="pilcrow">¶</a>
 </li>
           </ol>
 <p id="section-9.3.1-3">Designated experts <span class="bcp14">SHOULD</span> request clarification when cross-type rules
@@ -4090,7 +4089,7 @@ Type name:
 Additional members:
   (List each JSON member name, its JSON type, whether it is required
   or optional, its default value if optional, and its semantics.
-  Example: "root (string, required): An absolute path prefix.")
+  Example: "root (string, required): An absolute path root.")
 
 check predicate:
   (A complete, unambiguous specification of the boolean predicate
@@ -4436,10 +4435,10 @@ token issuance uses the existing <code>req_cnf</code> token request parameter.<a
 </dl>
 </section>
 </section>
-<div id="comparison-with-related-oauth-mechanisms-non-normative">
+<div id="comparison-with-related-authorization-mechanisms-non-normative">
 <section id="appendix-A">
-      <h2 id="name-comparison-with-related-oaut">
-<a href="#appendix-A" class="section-number selfRef">Appendix A. </a><a href="#name-comparison-with-related-oaut" class="section-name selfRef">Comparison with Related OAuth Mechanisms (Non-Normative)</a>
+      <h2 id="name-comparison-with-related-auth">
+<a href="#appendix-A" class="section-number selfRef">Appendix A. </a><a href="#name-comparison-with-related-auth" class="section-name selfRef">Comparison with Related Authorization Mechanisms (Non-Normative)</a>
       </h2>
 <div id="token-exchange-rfc-8693">
 <section id="appendix-A.1">
@@ -4496,7 +4495,7 @@ subsumption matrix) addresses questions outside DPoP's scope.<a href="#appendix-
 resource server. There is no delegation model, no parent-child chain,
 and no attenuation invariant. The chain model of this specification
 (<code>del_depth</code>, <code>par_hash</code>, <code>del_max_depth</code>, and the six attenuation
-invariants) has no DPoP analog.<a href="#appendix-A.3-3" class="pilcrow">¶</a></p>
+invariants) is not defined by DPoP.<a href="#appendix-A.3-3" class="pilcrow">¶</a></p>
 <p id="appendix-A.3-4">At the proof level, DPoP binds to an HTTP method (<code>htm</code>) and URI
 (<code>htu</code>). AAT PoP JWTs bind to a tool name (<code>aat_tool</code>) and a structured
 argument map (<code>hta</code>). Tool invocations are function calls, not HTTP
@@ -4505,7 +4504,7 @@ argument-level constraint evaluation. This is why <code>aat_tool</code> and <cod
 differ structurally from <code>htm</code> and <code>htu</code>: (1) <code>hta</code> carries the full
 argument map required for constraint evaluation at the enforcement
 point; (2) <code>aat_id</code> binds the proof to a specific leaf token <code>jti</code> and
-chain position, for which DPoP has no equivalent.<a href="#appendix-A.3-4" class="pilcrow">¶</a></p>
+chain position, which DPoP does not define.<a href="#appendix-A.3-4" class="pilcrow">¶</a></p>
 <p id="appendix-A.3-5">The cryptographic mechanism is the same: an asymmetric key in <code>cnf.jwk</code>,
 compact JWT serialization, verified against the leaf token's bound key.
 DPoP could in principle be layered alongside AATs as a transport-level
@@ -4519,11 +4518,11 @@ this specification.<a href="#appendix-A.3-5" class="pilcrow">¶</a></p>
 <a href="#appendix-A.4" class="section-number selfRef">A.4. </a><a href="#name-biscuit-2" class="section-name selfRef">Biscuit</a>
         </h3>
 <p id="appendix-A.4-1">Biscuit <span>[<a href="#BISCUIT" class="xref">BISCUIT</a>]</span> and AATs both support offline attenuation and
-decentralized verification. Biscuit is a compact bearer authorization
-token with Datalog-based policy checks. AAT is an OAuth-shaped,
-holder-bound delegation-chain protocol with tool-and-argument
-constraints, cryptographic chain invariants, and invocation-time proof
-of possession.<a href="#appendix-A.4-1" class="pilcrow">¶</a></p>
+decentralized verification. Biscuit is a compact authorization token
+with Datalog-based policy checks and is commonly used as a bearer
+credential. AAT is an OAuth-shaped, holder-bound delegation-chain
+protocol with tool-and-argument constraints, cryptographic chain
+invariants, and invocation-time proof of possession.<a href="#appendix-A.4-1" class="pilcrow">¶</a></p>
 <p id="appendix-A.4-2">Biscuit is a general-purpose authorization token format. It does not
 natively encode OAuth-oriented delegation-chain claims such as depth
 limits, parent-token linkage, or explicit chain position declarations.
@@ -4714,12 +4713,12 @@ rules, either through deployment-specific policy or a companion profile.<a href=
 their parents and that token lifetime does not exceed MAX_TOKEN_LIFETIME
 (Section 4.4). This appendix provides non-normative guidance for
 selecting appropriate TTL values.<a href="#appendix-B.7-1" class="pilcrow">¶</a></p>
-<p id="appendix-B.7-2">TTL is the primary revocation mechanism in this specification. A token
-that has expired cannot be used regardless of whether a revocation list
-exists. Short lifetimes reduce the window of exposure from key
-compromise, token theft, or scope misconfiguration. The operational cost
-of short TTLs is re-issuance frequency; this cost is low when the root
-issuer is available and derivation is offline.<a href="#appendix-B.7-2" class="pilcrow">¶</a></p>
+<p id="appendix-B.7-2">Expiration is the base specification's built-in limit on token lifetime.
+A token that has expired cannot be used regardless of whether a
+revocation mechanism is deployed. Short lifetimes reduce the window of
+exposure from key compromise, token theft, or scope misconfiguration.
+The operational cost of short TTLs is re-issuance frequency; this cost
+is low when the root issuer is available and derivation is offline.<a href="#appendix-B.7-2" class="pilcrow">¶</a></p>
 <p id="appendix-B.7-3">The appropriate TTL depends on the token's position in the chain and the
 deployment context. Root tokens should be long enough to cover the full
 orchestration and execution window for the task, but no longer. Leaf
@@ -4795,8 +4794,8 @@ signatures carried in COSE_Sign1 structures. That implementation
 experience supports the format independence of the core protocol model,
 but does not define a fully interoperable CWT profile; the CWT profile is
 deferred as described in Appendix D.<a href="#appendix-E.1-1" class="pilcrow">¶</a></p>
-<p id="appendix-E.1-2">RFC Editor Note: Implementation attribution will be updated
-or removed prior to WG adoption per IETF norms.<a href="#appendix-E.1-2" class="pilcrow">¶</a></p>
+<p id="appendix-E.1-2">RFC Editor Note: This section will be updated or removed before
+publication.<a href="#appendix-E.1-2" class="pilcrow">¶</a></p>
 </section>
 </div>
 <div id="formal-verification">
@@ -4813,8 +4812,8 @@ Bounded model checking has found no counterexamples for scopes up to 8
 constraints and 8 values. The combination is intended to provide
 evidence toward monotonicity of the I4 invariant across the full
 constraint attenuation matrix.<a href="#appendix-E.2-1" class="pilcrow">¶</a></p>
-<p id="appendix-E.2-2">RFC Editor Note: Implementation details will be updated or
-removed per IETF norms prior to publication.<a href="#appendix-E.2-2" class="pilcrow">¶</a></p>
+<p id="appendix-E.2-2">RFC Editor Note: This section will be updated or removed before
+publication.<a href="#appendix-E.2-2" class="pilcrow">¶</a></p>
 </section>
 </div>
 </section>
