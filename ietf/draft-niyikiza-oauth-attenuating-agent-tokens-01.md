@@ -38,6 +38,25 @@ informative:
   RFC8693:   # OAuth 2.0 Token Exchange
   RFC9052:   # CBOR Object Signing and Encryption (COSE)
   RFC9449:   # DPoP
+  OAUTH-TXN-TOKENS:
+    title: "Transaction Tokens"
+    target: https://datatracker.ietf.org/doc/draft-ietf-oauth-transaction-tokens/
+    author:
+      - name: Atul Tulshibagwale
+      - name: George Fletcher
+      - name: Pieter Kasselman
+    date: 2026-03
+  OAUTH-ID-CHAINING:
+    title: "OAuth Identity and Authorization Chaining Across Domains"
+    target: https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-chaining/
+    author:
+      - name: Arndt Schwenkschuster
+      - name: Pieter Kasselman
+      - name: David Burgin
+      - name: Mike Jenkins
+      - name: Brian Campbell
+      - name: Aaron Parecki
+    date: 2026-05
   BISCUIT:
     title: "Biscuit: Distributed Authorization Tokens"
     target: https://doc.biscuitsec.org/reference/specifications.html
@@ -327,6 +346,14 @@ time. This specification uses structured constraint types decidable by
 structural analysis and defines an explicit delegation-chain model with
 holder-bound invocation-time proof of possession, chain-position claims,
 and attenuation invariants. A detailed comparison appears in Appendix A.
+
+Recent OAuth work on transaction tokens {{OAUTH-TXN-TOKENS}} and
+identity and authorization chaining {{OAUTH-ID-CHAINING}} addresses the
+propagation of identity, actor, transaction, and authorization context
+across service and trust-domain boundaries. AATs are complementary: they
+define token-local, holder-derivable attenuation of concrete
+tool-and-argument authority within a delegation chain, with offline
+verification by the enforcement point.
 
 The capability-based security model underlying AATs draws on
 {{DENNIS66}}, which introduced capabilities as unforgeable tokens of
