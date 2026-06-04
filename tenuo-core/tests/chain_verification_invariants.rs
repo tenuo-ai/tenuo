@@ -141,7 +141,7 @@ fn test_verify_chain_rejects_i1_violation_wrong_issuer() {
         err
     );
 
-    println!("✅ I1 violation correctly rejected: {}", err);
+    println!("I1 violation correctly rejected: {}", err);
 }
 
 // =============================================================================
@@ -215,7 +215,7 @@ fn test_verify_chain_rejects_i3_violation_ttl_extended() {
         err
     );
 
-    println!("✅ I3 violation correctly rejected: {}", err);
+    println!("I3 violation correctly rejected: {}", err);
 }
 
 // =============================================================================
@@ -299,7 +299,7 @@ fn test_verify_chain_rejects_i4_violation_tool_escalation() {
         err
     );
 
-    println!("✅ I4 violation correctly rejected: {}", err);
+    println!("I4 violation correctly rejected: {}", err);
 }
 
 /// Test: Verifier rejects chain where child has wider constraint (I4 violation)
@@ -366,7 +366,7 @@ fn test_verify_chain_rejects_i4_violation_constraint_widening() {
     );
     let err = result.unwrap_err().to_string();
 
-    println!("✅ I4 constraint widening correctly rejected: {}", err);
+    println!("I4 constraint widening correctly rejected: {}", err);
 }
 
 // =============================================================================
@@ -432,7 +432,7 @@ fn test_verify_chain_rejects_i2_violation_depth_not_incremented() {
     );
 
     println!(
-        "✅ I2 violation (depth not incremented) correctly rejected: {}",
+        "I2 violation (depth not incremented) correctly rejected: {}",
         err
     );
 }
@@ -499,7 +499,7 @@ fn test_verify_chain_rejects_i2_violation_depth_exceeds_max() {
     );
 
     println!(
-        "✅ I2 violation (depth exceeds max) correctly rejected: {}",
+        "I2 violation (depth exceeds max) correctly rejected: {}",
         err
     );
 }
@@ -562,7 +562,7 @@ fn test_verify_chain_rejects_i5_violation_bad_signature() {
     let err = result.unwrap_err().to_string();
 
     println!(
-        "✅ I5 violation (bad signature) correctly rejected: {}",
+        "I5 violation (bad signature) correctly rejected: {}",
         err
     );
 }
@@ -626,7 +626,7 @@ fn test_verify_chain_rejects_i5_violation_wrong_parent_hash() {
     );
 
     println!(
-        "✅ I5 violation (wrong parent_hash) correctly rejected: {}",
+        "I5 violation (wrong parent_hash) correctly rejected: {}",
         err
     );
 }
@@ -720,7 +720,7 @@ fn test_verify_chain_rejects_spliced_parent_even_when_i1_i4_compatible() {
     );
 
     println!(
-        "✅ Spliced parent rejected by I5 linkage even when I1-I4 are compatible: {}",
+        "Spliced parent rejected by I5 linkage even when I1-I4 are compatible: {}",
         err
     );
 }
@@ -799,5 +799,5 @@ fn test_sophisticated_i1_attack() {
         "Sophisticated I1 attack must be rejected! Attacker cannot delegate others' authority."
     );
 
-    println!("✅ Sophisticated I1 attack correctly rejected");
+    println!("Sophisticated I1 attack correctly rejected");
 }
