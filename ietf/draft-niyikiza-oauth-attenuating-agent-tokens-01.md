@@ -470,7 +470,7 @@ possession of the private key corresponding to `cnf.jwk`. Including a
 cryptographically enforced by this specification and could be set
 arbitrarily by any delegating party. Implementations that require a
 human-readable subject identifier MAY convey one in additional JWT
-claims outside this specification (see Appendix B.7).
+claims outside this specification (see Appendix B.6).
 
 ## Capability Claims via `authorization_details`
 
@@ -738,60 +738,6 @@ only if `C_child.root` is `C_parent.root` or a descendant of
 parent `path_containment` constraint if and only if the exact value,
 after normalization, begins with the parent's `root`. All other
 cross-type pairs involving `path_containment` are invalid.
-
-The following additional examples illustrate conforming extension
-registrations for network-oriented constraint types. Neither is defined
-normatively in this document.
-
-**Type name:** `cidr`
-
-**Additional members:** `network` (string, required). An IPv4 or IPv6
-network in CIDR notation.
-
-**`check` predicate:** The argument must be a valid IPv4 or IPv6 address
-string that falls within `network` after normalization of IPv6-mapped
-IPv4 addresses, octal notation, and URL-encoded hostnames.
-Implementations must normalize address representations before comparison
-to prevent encoding bypasses.
-
-**`subsumes` relation:** `subsumes(C_parent, C_child)` is true if and
-only if `C_child.network` is a subnet of `C_parent.network`.
-
-**Cross-type subsumption:** A derived `exact` constraint subsumes a
-parent `cidr` constraint if and only if the exact value, after
-normalization, is an address within the parent's network. All other
-cross-type pairs involving `cidr` are invalid.
-
-**Type name:** `url_safe`
-
-**Additional members:** `allow_schemes` (array of strings, optional,
-default `["http", "https"]`); `allow_domains` (array of strings,
-optional); `deny_domains` (array of strings, optional); `block_private`
-(boolean, optional, default true); `block_loopback` (boolean, optional,
-default true); `block_metadata` (boolean, optional, default true).
-
-**`check` predicate:** The argument must be a URL whose scheme appears
-in `allow_schemes`. If `block_private`, `block_loopback`, or
-`block_metadata` are true, the resolved host must not be a private,
-loopback, or cloud metadata address respectively, after normalization of
-all known IP encoding forms (decimal, hex, octal, IPv6-mapped,
-URL-encoded). If `allow_domains` is non-empty, the host must match at
-least one entry. If `deny_domains` is non-empty, the host must not match
-any entry. `deny_domains` takes precedence over `allow_domains` on
-overlap.
-
-**`subsumes` relation:** `subsumes(C_parent, C_child)` is true if and
-only if `C_child` is at least as restrictive as `C_parent` on every
-field: `allow_schemes` is a subset of parent's; `block_private`,
-`block_loopback`, and `block_metadata` are each equal to or more
-restrictive than the parent's corresponding flag; `allow_domains` is a
-subset of parent's (or parent has none); `deny_domains` is a superset of
-parent's.
-
-**Cross-type subsumption:** A derived `exact` constraint subsumes a
-parent `url_safe` constraint if and only if the exact value passes the
-parent's `check` predicate. All other cross-type pairs involving
-`url_safe` are invalid.
 
 ## Examples
 
@@ -1106,7 +1052,7 @@ MUST enforce a finite maximum delegation depth to prevent resource
 exhaustion from pathologically deep chains. The appropriate value
 depends on the deployment topology; swarm architectures with deep
 fan-out may require significantly larger values than linear delegation
-chains. See Appendix B.5 for guidance.
+chains. See Appendix B.4 for guidance.
 
 The `del_max_depth` claim in any token in the chain MUST NOT exceed the
 implementation's MAX_DELEGATION_DEPTH.
@@ -1143,7 +1089,7 @@ specifying the maximum permitted duration in seconds between a token's
 `iat` and `exp`. Implementations MUST enforce a finite
 MAX_TOKEN_LIFETIME. A value of 90 days is RECOMMENDED as an upper bound;
 deployments SHOULD use significantly shorter lifetimes in practice (see
-Appendix B.8).
+Appendix B.7).
 
 A derived token cannot outlive its parent. Authority cannot extend
 beyond the lifetime of the token that granted it. A derived token's
@@ -1367,7 +1313,7 @@ holder's private key. It MUST contain the required claims listed below.
 
 | Claim | Type | Required | Description |
 |---|---|---|---|
-| `jti` | string | REQUIRED | Fresh random identifier. Issuers MUST NOT generate the same `jti` value for two different PoP JWTs. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 8.6). |
+| `jti` | string | REQUIRED | Fresh random identifier. Issuers MUST NOT generate the same `jti` value for two different PoP JWTs. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 8.5). |
 | `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (see Section 5.3). |
 | `aat_id` | string | REQUIRED | The `jti` of the leaf token being presented. |
 | `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifiers are compared as byte strings; no Unicode normalization is applied. |
@@ -1442,7 +1388,7 @@ across all enforcement points in a deployment. The mechanism for that
 state (shared cache, database, token-binding infrastructure) is
 deployment-specific and outside the scope of this specification.
 Deployments with strong replay prevention requirements SHOULD consult
-the security considerations in Section 8.6.
+the security considerations in Section 8.5.
 
 
 # Token Derivation
@@ -1458,7 +1404,7 @@ A holder of any AAT whose `del_depth` is strictly less than
    Token lifetime is a mandatory attenuation dimension. Every
    derived token is temporally bounded by its parent regardless
    of capability scope. TTL is the primary revocation mechanism
-   in this specification; see Appendix B.8 for deployment guidance.
+   in this specification; see Appendix B.7 for deployment guidance.
 
 3. Select the set of tools to authorize. This set MUST be a
    subset of the tools authorized by the parent token.
@@ -1517,7 +1463,7 @@ Verification requires only the token chain and the trust anchor public
 key. No network calls or authorization server availability are required.
 Chain verification itself is fully offline. Strong replay protection for
 side-effecting tool invocations may additionally require stateful `jti`
-tracking as described in Section 8.6; that state is outside the inputs
+tracking as described in Section 8.5; that state is outside the inputs
 of this algorithm.
 
 ~~~
@@ -1561,7 +1507,7 @@ Algorithm:
       implementation's permitted algorithm allowlist and is
       consistent with the verifying trust anchor key's kty and
       crv parameters. If alg is "none", not on the allowlist,
-      or inconsistent with the key type, DENY.       [Sec 8.14]
+      or inconsistent with the key type, DENY.       [Sec 8.13]
    b. Verify the root token signature against a key in
       trust_anchors. After signature verification succeeds,
       parse the root token's claims. All subsequent root
@@ -1605,7 +1551,7 @@ Algorithm:
       implementation's permitted algorithm allowlist and is
       consistent with parent.cnf.jwk's kty and crv parameters.
       If alg is "none", not on the allowlist, or inconsistent
-      with the key type, DENY.                       [Sec 8.14]
+      with the key type, DENY.                       [Sec 8.13]
    b. Verify child signature under the key in parent.cnf.jwk. [I1]
       After signature verification, verify required claims are
       present:
@@ -1719,7 +1665,7 @@ Algorithm:
       implementation's permitted algorithm allowlist and is
       consistent with leaf.cnf.jwk's kty and crv parameters.
       If alg is "none", not on the allowlist, or inconsistent
-      with the key type, DENY.                       [Sec 8.14]
+      with the key type, DENY.                       [Sec 8.13]
    b. Verify pop_jwt signature under leaf.cnf.jwk. After
       signature verification succeeds, parse the PoP JWT claims. [I6]
    c. Verify pop_jwt.aat_id == leaf.jti.
@@ -1797,12 +1743,12 @@ restrict the argument values the enforcement point will accept. An agent
 that hallucinates an argument value outside the authorized range is
 denied at the enforcement point before the tool executes.
 
-**Confused deputy attacks.** AATs mitigate
-confused deputy attacks by replacing ambient authority with explicit,
-task-scoped capability tokens. A sub-agent that receives a derived token
-cannot invoke tools or argument values outside the authority explicitly
-encoded in that token, even when invoked by a more privileged
-orchestrator.
+**Confused deputy attacks.** AATs reduce confused deputy risk by
+replacing ambient authority with explicit, task-scoped capability tokens.
+When a token holder derives a narrowed token before delegating to another
+agent, the receiving agent cannot invoke tools or argument values outside
+that narrower scope, even though the delegating holder may hold broader
+authority.
 
 **Privilege escalation across delegation hops.** The capability
 monotonicity invariant (I4) ensures that authority can only narrow at
@@ -1833,7 +1779,7 @@ rejects this because `C` commits to the signing input of `A`, not
 
 **Token replay for irreversible operations.** For irreversible or
 side-effecting tool invocations, stateful `jti` tracking at the
-enforcement point enables prevention of PoP JWT replay. See Section 8.6
+enforcement point enables prevention of PoP JWT replay. See Section 8.5
 for the distinction between stateful and probabilistic replay controls
 and the deployment requirements for each.
 
@@ -1867,18 +1813,13 @@ and behavioral monitoring are complementary controls for this threat.
 attacker can exercise the full authority encoded in that agent's token
 until the token expires. The blast radius is bounded by the token scope,
 but within that scope the attacker has full authorization. Short token
-lifetimes (Appendix B.8) limit the exposure window.
+lifetimes (Appendix B.7) limit the exposure window.
 
 **Model exfiltration and side-channel attacks.** An attacker who
 extracts an agent's model weights, system prompt, or in-context state
 may be able to predict or manipulate the agent's behavior independently
 of its token constraints. AATs operate at the authorization layer and
 have no visibility into the model layer.
-
-**Social engineering of the root issuer.** An attacker who convinces the
-root issuer to mint a root token with broad scope obtains
-broad authority through legitimate token issuance. This is not
-detectable by chain verification.
 
 ## Attenuation as the Security Invariant
 
@@ -1926,12 +1867,6 @@ issued to that holder. The attacker cannot derive tokens with broader
 scope than the compromised token grants. Mitigation is revocation of
 tokens bound to the compromised key, or expiry-based recovery for
 short-lived tokens.
-
-## Grant-Context Substitution
-
-The `par_hash` invariant (I5) is the primary defense against
-grant-context substitution. Enforcement points MUST verify `par_hash` at
-every chain link per step 4q of the verification algorithm (Section 7).
 
 ## Replay Attacks
 
@@ -1987,7 +1922,7 @@ is deployment-specific: linear orchestration chains require far fewer
 hops than swarm architectures with deep fan-out delegation.
 Implementations SHOULD choose a value that reflects the maximum chain
 depth their deployment topology requires, without imposing an artificial
-ceiling on legitimate use cases. See Appendix B.5 for guidance on
+ceiling on legitimate use cases. See Appendix B.4 for guidance on
 selecting an appropriate value.
 
 The security rationale for depth limiting goes beyond resource
@@ -2415,25 +2350,11 @@ than as a sequence of policy blocks.
   providing time-ordered identifiers without central coordination.
 
 The algorithm allowlist requirement is normatively defined in Section 7
-(steps 3a, 4a, and 7a) and discussed in Section 8.14.
+(steps 3a, 4a, and 7a) and discussed in Section 8.13.
 
-Post-quantum migration: the `cnf.jwk` key type is not hardcoded to
-Ed25519. Implementations should be designed to support key type
-migration. NIST finalized ML-DSA (FIPS 204, formerly Dilithium) in 2024
-as a post-quantum digital signature standard. Deployments with long-term
-security requirements should design their key management infrastructure
-to support algorithm migration without requiring changes to token
-structure.
-
-## Performance
-
-Chain verification requires one signature verification per chain link.
-Ed25519 verification is computationally lightweight; for typical chain
-depths of 3 to 5 links, verification overhead is negligible relative to
-network latency in most deployment contexts. Constraint evaluation for
-`exact`, `one_of`, `range`, and similar structural types is O(n) in the
-number of constraints. Extension constraint types can have higher
-evaluation cost; see Section 8.7 for resource limit guidance.
+The `cnf.jwk` key type is not hardcoded to Ed25519. Implementations
+should be designed to support algorithm migration without requiring
+changes to token structure.
 
 ## Recognizing Derived Token `iss` Values in Middleware
 
@@ -2515,38 +2436,20 @@ A single AAT is typically 1-4 KB when base64url-encoded. Chains
 of two or more tokens will commonly exceed the 4-8 KB header size
 limits enforced by common reverse proxies and load balancers,
 resulting in 431 errors. Deployments should transmit AAT chains
-in a request body field rather than an HTTP header. For
-size-constrained environments, the CBOR/CWT considerations in Appendix D
-describe representations that can reduce chain size by 30-50% and are
-recommended when HTTP header transport is required.
+in a request body field rather than an HTTP header. For size-constrained
+environments, Appendix D notes considerations for a future CBOR/CWT
+profile.
 
 ## Signed Passthrough Metadata
 
-Deployments may need to convey additional signed metadata through the
-delegation chain, such as a request trace identifier, a tenant context
-used for logging or routing, or a human-readable subject identifier.
-This specification does not define a mechanism for such metadata, but
-the JWT format accommodates it naturally.
-
 Implementations may include additional JWT claims in AATs beyond those
-defined in Section 3. Claims used for passthrough metadata should use
-collision-resistant names (e.g., reverse domain notation such as
-`com.example.trace_id`) and should not encode tool permissions or
-argument constraints that this specification models in
-`authorization_details`.
-
-Because additional claims are included in the token's JWS signature,
-they are integrity-protected within each individual token. However,
-this specification's chain verification algorithm (Section 7) does not
-enforce preservation of unrecognized claims across derivation steps.
-Per Section 3.4, enforcement points ignore unrecognized top-level JWT
-claims; the fail-closed rule applies only to constraint types within
-`authorization_details`. A token carrying a `com.example.trace_id`
-claim will not be rejected solely for containing that claim.
-Deployments that require chain-wide preservation of passthrough
-metadata must define and enforce their own derivation and verification
-rules for those claims, either through deployment-specific policy or
-in a companion profile.
+defined in Section 3, using collision-resistant names for passthrough
+metadata such as request trace identifiers or tenant context. Such claims
+are integrity-protected within each token, but the base chain
+verification algorithm does not preserve or interpret them across
+derivation steps. Deployments that require chain-wide preservation of
+passthrough metadata must define their own derivation and verification
+rules, either through deployment-specific policy or a companion profile.
 
 ## TTL Guidance
 
@@ -2578,115 +2481,36 @@ narrowly the capability scope is defined.
 
 # Policy Languages with Decidable Containment (Non-Normative)
 
-This appendix provides non-normative guidance for implementers
-considering extension constraint types that use structured policy
-languages.
-
 The core constraint set is intentionally limited to structural
-constraint types with deterministic subsumption rules. This keeps the
-base protocol small and predictable, but it also limits expressiveness:
-domain-specific matchers and richer policy languages need extension
-constraint registrations that define their own `check` and `subsumes`
-procedures.
-
-Implementers requiring richer policy expressiveness without sacrificing
-subsumption decidability should consider languages that were designed
-specifically for authorization use cases and that provide formal
-containment algorithms as a first-class operation. Such languages are
-better positioned to provide conforming extension constraint
-registrations under Section 3.5.1, because their containment algorithms
-are decidable and formally verified rather than approximated by
-conservative syntactic rules.
-
-For example, a future extension could profile an analyzable
-authorization policy language such as Cedar {{CEDAR}} as an AAT
-constraint type. Such a profile would need to define the runtime
-`check` predicate, the token encoding of the policy, and a sound,
-deterministic subsumption procedure. The fact that a policy language can
-decide whether an invocation is authorized is not, by itself, sufficient
-for AAT attenuation; the extension must also define how an enforcement
-point determines that a derived policy is no less restrictive than its
-parent.
-
-The key property to look for is whether the language's policy
-containment problem ("does every input permitted by policy A also
-satisfy policy B?") is decidable and implemented in available tooling.
-Languages with this property allow a registration to specify a
-subsumption verification procedure that is both decidable and
-non-conservative: it returns true for all semantically subsuming pairs,
-not just syntactically obvious ones.
-
-This document takes no position on which specific policy language
-implementers should choose. The choice depends on the deployment
-environment, existing infrastructure, tooling availability, and the
-specific authorization semantics required. The normative requirement is
-only that whatever language is used, the resulting extension constraint
-registration satisfies the three properties defined in Section 3.5.1:
-decidable, sound, and deterministic.
+constraint types with deterministic subsumption rules. Implementers that
+need richer expressiveness can define extension constraint types backed
+by analyzable authorization policy languages, such as Cedar {{CEDAR}}.
+Such an extension must define the runtime `check` predicate, the token
+encoding of the policy, and a sound, deterministic subsumption procedure.
+The fact that a policy language can decide whether an invocation is
+authorized is not, by itself, sufficient for AAT attenuation; the
+extension must also define how an enforcement point determines that a
+derived policy is no less restrictive than its parent. This document does
+not recommend a specific policy language. The normative requirement is
+that every extension registration satisfy the decidable, sound, and
+deterministic properties defined in Section 3.5.1.
 
 # CBOR/CWT Considerations (Non-Normative)
 
 The claim semantics, attenuation invariants, constraint subsumption
 rules, and chain verification algorithm defined in this document are
 format-agnostic. They describe a protocol, not an encoding. JWT/JWS is
-the only fully specified token encoding in this document. This appendix
-notes the relationship to CBOR-based token formats for implementers
-operating in constrained or throughput-sensitive environments. A fully
-interoperable CWT/COSE encoding, including CWT claim key assignments,
-COSE algorithm requirements, the CWT parent token signing input used for
-`par_hash`, and CWT-specific serialization rules, is deferred to a
-companion document.
+the only fully specified token encoding in this document.
 
-This appendix does not define a CWT serialization, CWT claim-key mapping,
-COSE algorithm profile, or CWT `par_hash` signing input.
-
-## CWT Representation
-
-CBOR Web Tokens {{RFC8392}} and COSE message signing {{RFC9052}} are the
-IETF-native binary analogs of JWT and JOSE respectively. A future CWT
-profile could represent the semantic content of an AAT without changing
-the attenuation model. The attenuation invariants in Section 4 apply at
-the semantic level. A CWT profile would apply the chain verification
-algorithm in Section 7 by substituting COSE_Sign1 verification for JWS
-signature verification and by defining the CWT parent token signing input
-used for `par_hash` computation.
-
-CBOR encoding offers meaningful size advantages over base64url-encoded
-JSON for token payloads. In typical AAT payloads with several constraint
-entries, CBOR encoding reduces token size by 30-50% relative to compact
-JWT serialization. For high-throughput agent pipelines or
-resource-constrained edge deployments, this difference is operationally
-significant.
-
-## Deterministic Encoding
-
-A future CWT profile will need deterministic CBOR encoding as defined in
-{{RFC8949}} Section 4.2. Deterministic encoding requires that integer
-keys be used for all map entries where assignments exist, that map keys
-be sorted in length-first, bytewise lexicographic order, and that the
-shortest-form encoding be used for all values. This ensures that two
-interoperating implementations produce identical byte sequences for the
-same AAT payload, which is required for correct `par_hash` computation
-and cross-implementation chain verification.
-
-The `hta` map within a CWT PoP token likewise needs deterministic CBOR
-encoding. A CWT profile should prohibit indefinite-length encoding for
-any AAT or PoP token structure.
-
-## Claim Key Assignments
-
-JWT uses string claim names. CWT uses integer claim keys for registered
-claims to achieve compact encoding. The AAT-specific claims defined in
-Sections 3 and 5 — namely `del_depth`, `del_max_depth`,
-`par_hash`, `aat_tool`, `aat_aud`, `hta`, and `aat_id` — require integer key
-assignments in the IANA CWT Claims Registry {{RFC8392}} before
-a normative CWT profile can be published.
-
-Those registrations, along with COSE algorithm guidance and CWT-specific
-serialization rules, are deferred to a companion Internet-Draft. That
-document will reference {{RFC8392}} and {{RFC9052}} normatively; this
-document references them informatively. This document makes no CWT claim
-key assignments.
+A future CWT/COSE profile could represent the same semantic content using
+CBOR Web Tokens {{RFC8392}} and COSE message signing {{RFC9052}}. Such a
+profile would need to define CWT claim-key assignments, COSE algorithm
+requirements, deterministic CBOR serialization rules per {{RFC8949}},
+the CWT parent token signing input used for `par_hash`, and the
+deterministic encoding of PoP `hta` values. This appendix does not define
+a CWT serialization, CWT claim-key mapping, COSE algorithm profile, or
+CWT `par_hash` signing input. Those details are deferred to a companion
+document.
 
 # Implementation Status (Non-Normative)
 
