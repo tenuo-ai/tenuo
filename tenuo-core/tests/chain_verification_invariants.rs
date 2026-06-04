@@ -561,10 +561,7 @@ fn test_verify_chain_rejects_i5_violation_bad_signature() {
     );
     let err = result.unwrap_err().to_string();
 
-    println!(
-        "I5 violation (bad signature) correctly rejected: {}",
-        err
-    );
+    println!("I5 violation (bad signature) correctly rejected: {}", err);
 }
 
 /// Test: Verifier rejects chain with wrong parent_hash (I5 violation)
