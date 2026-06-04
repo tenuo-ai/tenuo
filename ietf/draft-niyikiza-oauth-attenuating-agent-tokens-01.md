@@ -6,7 +6,6 @@ category: std
 consensus: true
 submissiontype: IETF
 ipr: trust200902
-date: 2026-03-16
 area: Security
 workgroup: Web Authorization Protocol (OAuth)
 
@@ -441,7 +440,7 @@ their absence carries the semantics described in the table.
 | Claim | Type | Required | Description |
 |---|---|---|---|
 | `jti` | string | REQUIRED | Unique token identifier. SHOULD be a UUIDv7 value. When a UUID is used, it MUST be encoded as a lowercase hyphenated string in the form `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` per {{RFC9562}}. |
-| `iss` | string | REQUIRED | Identifier of the entity that signed this token. For root tokens, MUST be a URI identifying the root issuer. For derived tokens, MUST be a JWK Thumbprint URI as defined in {{RFC9278}}, using the SHA-256 hash algorithm: `urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>`, where `<thumbprint>` is computed per {{RFC7638}}. |
+| `iss` | string | REQUIRED | Identifier of the entity that signed this token. For root tokens, MUST be a URI identifying the root issuer. For derived tokens, MUST be a JWK Thumbprint URI ({{RFC9278}}) over the signing key using SHA-256; the exact URI form is given after this table. |
 | `iat` | NumericDate | REQUIRED | Time at which the token was issued. MUST NOT be more than MAX_IAT_SKEW in the future relative to the enforcement point's clock (see Section 4.4). In a chain, a derived token's `iat` MUST NOT be earlier than its parent's `iat`. |
 | `exp` | NumericDate | REQUIRED | Time at which the token expires. MUST be greater than `iat`. MUST NOT exceed `iat` plus MAX_TOKEN_LIFETIME (see Section 4.4). |
 | `cnf` | object | REQUIRED | Confirmation claim {{RFC7800}}. MUST contain `jwk` with the holder's public key. The `jwk` value MUST be a public key; private key material MUST NOT appear in this field. |
@@ -456,8 +455,10 @@ verification. Implementations MAY support additional algorithms.
 In both root and derived tokens, `iss` is a URI. For root tokens,
 `iss` is a URI identifying the root issuer, consistent with
 conventional OAuth usage. For derived tokens, `iss` is a JWK
-Thumbprint URI {{RFC9278}} that encodes the SHA-256 thumbprint of
-the signing key. This makes I1 verifiable offline: the enforcement
+Thumbprint URI {{RFC9278}} of the form
+`urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>`, where
+`<thumbprint>` is the SHA-256 JWK thumbprint ({{RFC7638}}) of the
+signing key. This makes I1 verifiable offline: the enforcement
 point can confirm that the thumbprint embedded in `derived.iss`
 matches `parent.cnf.jwk` without any external lookup.
 
@@ -780,7 +781,7 @@ cross-type pairs involving `path_containment` are invalid.
 ~~~json
 {
   "jti": "01957a41-0081-7c20-bf3a-00a0c91e1234",
-  "iss": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:KAKnRDlMQVIKCfS5JhHlABCHjAFLdyEVVHdpnGnLLg8",
+  "iss": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:KAKn...",
   "iat": 1741600120,
   "exp": 1741601920,
   "del_depth": 1,
@@ -1507,7 +1508,7 @@ Algorithm:
       implementation's permitted algorithm allowlist and is
       consistent with the verifying trust anchor key's kty and
       crv parameters. If alg is "none", not on the allowlist,
-      or inconsistent with the key type, DENY.       [Sec 8.13]
+      or inconsistent with the key type, DENY.       (Sec 8.13)
    b. Verify the root token signature against a key in
       trust_anchors. After signature verification succeeds,
       parse the root token's claims. All subsequent root
@@ -1551,8 +1552,8 @@ Algorithm:
       implementation's permitted algorithm allowlist and is
       consistent with parent.cnf.jwk's kty and crv parameters.
       If alg is "none", not on the allowlist, or inconsistent
-      with the key type, DENY.                       [Sec 8.13]
-   b. Verify child signature under the key in parent.cnf.jwk. [I1]
+      with the key type, DENY.                       (Sec 8.13)
+   b. Verify child signature under the key in parent.cnf.jwk. (I1)
       After signature verification, verify required claims are
       present:
       b1. Verify child.jti is present and is a non-empty
@@ -1569,22 +1570,22 @@ Algorithm:
           absent or not integers, DENY.
       b5. Verify child.iss, child.iat, child.exp, and
           child.par_hash are all present. If any is absent, DENY.
-   c. Verify child.iss equals jwk_thumbprint_uri(parent.cnf.jwk). [I1]
-   d. Verify child.del_depth == parent.del_depth + 1.    [I2]
-   e. Verify child.del_depth <= parent.del_max_depth.    [I2]
-   f. Verify child.del_depth <= MAX_DELEGATION_DEPTH.    [I2]
-   g. Verify child.del_max_depth <= parent.del_max_depth.[I2]
+   c. Verify child.iss equals jwk_thumbprint_uri(parent.cnf.jwk). (I1)
+   d. Verify child.del_depth == parent.del_depth + 1.    (I2)
+   e. Verify child.del_depth <= parent.del_max_depth.    (I2)
+   f. Verify child.del_depth <= MAX_DELEGATION_DEPTH.    (I2)
+   g. Verify child.del_max_depth <= parent.del_max_depth.(I2)
       Note: the requirement that every token's
       del_max_depth <= MAX_DELEGATION_DEPTH is transitively
       satisfied: step 3i verifies this for the root, and
       step 4g at each link ensures the value can only
       decrease. Implementations MAY add this check
       explicitly as defense in depth.
-   h. Verify child.exp <= parent.exp.                    [I3]
-   i. Verify child.exp > now.                            [I3]
-   j. Verify child.iat >= parent.iat.                    [I3]
-   k. Verify child.iat <= now + MAX_IAT_SKEW.            [I3]
-   l. Verify child.exp > child.iat.                      [I3]
+   h. Verify child.exp <= parent.exp.                    (I3)
+   i. Verify child.exp > now.                            (I3)
+   j. Verify child.iat >= parent.iat.                    (I3)
+   k. Verify child.iat <= now + MAX_IAT_SKEW.            (I3)
+   l. Verify child.exp > child.iat.                      (I3)
       Note: the requirement child.exp <= child.iat +
       MAX_TOKEN_LIFETIME is transitively satisfied: by
       induction, child.exp <= root.exp (step 4h at each
@@ -1594,7 +1595,7 @@ Algorithm:
       MAX_TOKEN_LIFETIME <= child.iat + MAX_TOKEN_LIFETIME.
       Implementations MAY add this check explicitly as
       defense in depth.
-   m. Verify child.del_depth <= child.del_max_depth.     [I2]
+   m. Verify child.del_depth <= child.del_max_depth.     (I2)
    n. Verify child.authorization_details contains at most
       one entry with type "attenuating_agent_token". If
       more than one such entry is present, DENY. Note: zero
@@ -1618,7 +1619,7 @@ Algorithm:
       verify the constraint tree depth does not exceed
       MAX_CONSTRAINT_DEPTH. If any constraint tree exceeds
       this limit, DENY.
-   p. Verify capability monotonicity (Section 4.5):   [I4]
+   p. Verify capability monotonicity (Section 4.5):   (I4)
       p1. Verify every tool in child_aat.tools
           is also present in parent_aat.tools.
           If any child tool is absent from the parent, DENY.
@@ -1634,7 +1635,7 @@ Algorithm:
           for a matched tool, verify the child's constraint subsumes
           the parent's per the per-type rules in Section 4.5. If
           any constraint fails subsumption, DENY.
-   q. Verify child.par_hash equals base64url-nopad(      [I5]
+   q. Verify child.par_hash equals base64url-nopad(      (I5)
       SHA-256(parent token signing input)), where
       base64url-nopad denotes base64url encoding without
       padding per {{RFC7515}} Appendix C. For JWT/JWS AATs,
@@ -1665,9 +1666,9 @@ Algorithm:
       implementation's permitted algorithm allowlist and is
       consistent with leaf.cnf.jwk's kty and crv parameters.
       If alg is "none", not on the allowlist, or inconsistent
-      with the key type, DENY.                       [Sec 8.13]
+      with the key type, DENY.                       (Sec 8.13)
    b. Verify pop_jwt signature under leaf.cnf.jwk. After
-      signature verification succeeds, parse the PoP JWT claims. [I6]
+      signature verification succeeds, parse the PoP JWT claims. (I6)
    c. Verify pop_jwt.aat_id == leaf.jti.
    d. If deployment policy requires PoP audience binding, verify
       pop_jwt.aat_aud identifies this enforcement point or resource
@@ -1769,7 +1770,7 @@ derived token to the specific bytes of its parent token. Suppose a
 delegator key holds two parent tokens, `A` and `B`, issued for different
 tasks but authorizing compatible capabilities. The holder derives child
 token `C` from `A`. Without `par_hash`, a presenter could assemble the
-chain `[B, C]`. The link may satisfy delegation authority, depth,
+chain `B` then `C`. The link may satisfy delegation authority, depth,
 lifetime, and capability monotonicity: `C` is signed by the key named in
 `B.cnf.jwk`, has the expected depth, does not outlive `B`, and
 authorizes no capability outside `B`. However, the chain has been
