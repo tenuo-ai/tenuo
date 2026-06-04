@@ -296,8 +296,8 @@ invariant and offline chain verification.
 4. **Cryptographically enforced attenuation.** A derived token cannot
    grant broader authority than its parent.
 
-5. **JWT/JWS interoperability.** The primary encoding specified by this
-   document is a signed JWT {{RFC7519}} using JWS {{RFC7515}},
+5. **JWT/JWS interoperability.** The primary encoding specified in this
+   document represents AATs as signed JWTs {{RFC7519}} using JWS {{RFC7515}},
    allowing deployments to verify chains using existing JSON Object
    Signing and Encryption (JOSE) infrastructure without new
    cryptographic dependencies.
@@ -314,14 +314,13 @@ It defines a normative subsumption relation, enabling any party
 holding the chain to verify monotonicity structurally, without
 predicate evaluation at a central service.
 
-Biscuit {{BISCUIT}} extends the Macaroons model with asymmetric public
-key signatures and offline attenuation, addressing the
-proof-of-possession gap. Biscuit expresses authorization policies in a
-Datalog variant, requiring a logic engine at verification time. This
-specification uses structured constraint types decidable by structural
-analysis and defines an explicit delegation-chain model with
-chain-position claims and attenuation invariants. A detailed comparison
-appears in Appendix A.
+Biscuit {{BISCUIT}} extends the Macaroons model with public-key
+signatures and offline attenuation. Biscuit expresses authorization
+policies in a Datalog variant, requiring a logic engine at verification
+time. This specification uses structured constraint types decidable by
+structural analysis and defines an explicit delegation-chain model with
+holder-bound invocation-time proof of possession, chain-position claims,
+and attenuation invariants. A detailed comparison appears in Appendix A.
 
 The capability-based security model underlying AATs draws on
 {{DENNIS66}}, which introduced capabilities as unforgeable tokens of
@@ -592,10 +591,10 @@ results when evaluating either predicate against the same inputs.
 The core constraint set is intentionally limited to constraint types
 with simple, deterministic, format-independent `check` and `subsumes`
 rules. Domain-specific matchers and policy-language constraints, such as
-path containment, glob patterns, regular expressions, or authorization
-policy expressions, are not core constraint types. To be used
-interoperably in AAT `authorization_details`, they MUST be defined as
-registered extension constraint types (Section 3.5). The registration
+resource-identifier matchers, URI or path normalization rules, or
+authorization policy expressions, are not core constraint types. To be
+used interoperably in AAT `authorization_details`, they MUST be defined
+as registered extension constraint types (Section 3.5). The registration
 process confirms that the extension defines an unambiguous runtime
 `check` predicate and a decidable, sound, and deterministic `subsumes`
 procedure. Deployments requiring richer policy expressiveness SHOULD use
@@ -877,6 +876,11 @@ Note that the derived token:
 
 ## Root Issuer Support and Root Token Issuance
 
+The token endpoint is used only for root AAT issuance. Derived tokens are
+created locally by token holders as described in Section 6 and do not
+require token endpoint interaction. Enforcement points verify presented
+chains offline as described in Section 7.
+
 ### Root Issuer Discovery
 
 A root issuer that supports AAT issuance SHOULD advertise this
@@ -902,6 +906,14 @@ not define a new OAuth token endpoint key-confirmation parameter. The
 value MUST be a JSON object containing a `jwk` member with the agent's
 public key in JWK format {{RFC7517}}. This is the key that the root
 issuer will bind into the root token's `cnf.jwk` claim.
+
+The key submitted in `req_cnf` is the AAT holder key that will be
+embedded in the root token's `cnf.jwk`. This key is distinct from any
+credential the client uses to authenticate to the token endpoint. Client
+authentication establishes which OAuth client is requesting issuance;
+`req_cnf` establishes which key will hold the issued AAT and derive or
+present downstream tokens. Deployments MAY require these credentials to
+be controlled by the same workload or agent.
 
 ~~~
 POST /token HTTP/1.1
@@ -1049,8 +1061,9 @@ where `jwk_thumbprint_uri` constructs the {{RFC9278}} URI from the
 key's SHA-256 thumbprint. The entity that signed the derived token
 MUST be the holder of the parent token. Authority flows from parent
 holder to derived token issuer. This invariant establishes an
-unambiguous audit trail: each link
-in the chain was signed by the party that held the preceding token.
+cryptographic holder-key trail: each link in the chain was signed by the
+party that held the preceding token. Attributing that key to a human,
+service, organization, or control plane is a deployment responsibility.
 
 ## I2: Depth Monotonicity
 
@@ -1062,25 +1075,30 @@ derived.del_depth <= MAX_DELEGATION_DEPTH
 derived.del_max_depth <= parent.del_max_depth
 ~~~
 
-Delegation depth increments exactly by one at each link. The chain
-cannot skip depths, branch, or exceed the maximum depth established in
-the root token. `del_max_depth` is an absolute ceiling, not a remaining
-count. A token is terminal (its holder cannot derive further tokens)
-when `del_depth == del_max_depth`. A root token with `del_max_depth: 0`
-is therefore immediately terminal and cannot produce any derived tokens.
+Delegation depth increments exactly by one at each link. A presented
+chain is a single linear path: it cannot skip depths or contain the same
+token instance more than once. Broader delegation activity may form a
+graph across multiple derived tokens and chains, but each invocation is
+verified against one ordered root-to-leaf path. `del_max_depth` is an
+absolute ceiling, not a remaining count. A token is terminal (its holder
+cannot derive further tokens) when `del_depth == del_max_depth`. A root
+token with `del_max_depth: 0` is therefore immediately terminal and
+cannot produce any derived tokens.
 
-The `del_max_depth` claim serves two related purposes. First, it is a
-security boundary: each delegation hop is a trust extension, delegating
-authority through another agent whose key, runtime, and behavior must be
-trusted to maintain the attenuation invariant. Unbounded chains mean
-unbounded trust extensions; the depth limit constrains how far authority
-can propagate before it must be reissued from the root. Second, it is a
-policy expression by the root issuer: a root token with
-`del_max_depth: 2` asserts that this grant of authority should pass
-through no more than two intermediate agents, regardless of what those
-agents might prefer. Intermediate token holders can only lower
-`del_max_depth`, never raise it (I2), so the root issuer's topology
-constraint is cryptographically enforced across the entire chain.
+The `del_max_depth` claim is an issuer-imposed bound on chain growth. It
+limits resource exhaustion and bounds the number of offline trust
+extensions that can occur under one root grant. Issuers use this value
+to express the maximum delegation depth they are willing to authorize
+for the grant. Intermediate token holders can only lower
+`del_max_depth`, never raise it (I2), so the root issuer's depth bound is
+cryptographically enforced across the entire chain.
+
+Issuers SHOULD set `del_max_depth` high enough to permit expected
+subprocess delegation, operational handoffs, and key rotation. Values
+that are too low can prevent downstream holders from representing
+legitimate attenuation steps within the chain. Such deployments SHOULD
+request a new root token with a larger `del_max_depth` rather than
+bypassing attenuation.
 
 MAX_DELEGATION_DEPTH is an implementation-defined finite integer
 specifying the maximum permitted delegation chain depth. Implementations
@@ -1524,7 +1542,12 @@ Algorithm:
       If the payload is not valid JSON or does not contain a
       string-valued `jti` field, DENY. Collect all extracted
       `jti` values; if any value appears more than once in the
-      chain, DENY (cycle detection). This limited extraction
+      presented chain, DENY (token-instance cycle detection). This check
+      does not forbid the same actor, holder key, or organizational
+      component from appearing more than once in a delegation graph,
+      provided each occurrence is represented by a distinct token and
+      every adjacent link in the presented chain satisfies this
+      algorithm. This limited extraction
       prior to signature verification is permitted and required
       for this structural check; it does not constitute the
       application-layer claim deserialization prohibited by the
@@ -1538,7 +1561,7 @@ Algorithm:
       implementation's permitted algorithm allowlist and is
       consistent with the verifying trust anchor key's kty and
       crv parameters. If alg is "none", not on the allowlist,
-      or inconsistent with the key type, DENY.       [Sec 8.13]
+      or inconsistent with the key type, DENY.       [Sec 8.14]
    b. Verify the root token signature against a key in
       trust_anchors. After signature verification succeeds,
       parse the root token's claims. All subsequent root
@@ -1582,7 +1605,7 @@ Algorithm:
       implementation's permitted algorithm allowlist and is
       consistent with parent.cnf.jwk's kty and crv parameters.
       If alg is "none", not on the allowlist, or inconsistent
-      with the key type, DENY.                       [Sec 8.13]
+      with the key type, DENY.                       [Sec 8.14]
    b. Verify child signature under the key in parent.cnf.jwk. [I1]
       After signature verification, verify required claims are
       present:
@@ -1696,7 +1719,7 @@ Algorithm:
       implementation's permitted algorithm allowlist and is
       consistent with leaf.cnf.jwk's kty and crv parameters.
       If alg is "none", not on the allowlist, or inconsistent
-      with the key type, DENY.                       [Sec 8.13]
+      with the key type, DENY.                       [Sec 8.14]
    b. Verify pop_jwt signature under leaf.cnf.jwk. After
       signature verification succeeds, parse the PoP JWT claims. [I6]
    c. Verify pop_jwt.aat_id == leaf.jti.
@@ -1774,10 +1797,12 @@ restrict the argument values the enforcement point will accept. An agent
 that hallucinates an argument value outside the authorized range is
 denied at the enforcement point before the tool executes.
 
-**Confused deputy attacks.** A sub-agent that receives a derived token
-cannot exercise authority beyond what its token encodes, even if it is
-invoked by a trusted orchestrator. The token carries its own
-authorization ceiling. There is no ambient authority to confuse.
+**Confused deputy attacks.** AATs mitigate
+confused deputy attacks by replacing ambient authority with explicit,
+task-scoped capability tokens. A sub-agent that receives a derived token
+cannot invoke tools or argument values outside the authority explicitly
+encoded in that token, even when invoked by a more privileged
+orchestrator.
 
 **Privilege escalation across delegation hops.** The capability
 monotonicity invariant (I4) ensures that authority can only narrow at
@@ -2012,8 +2037,26 @@ re-issuing root tokens) is the appropriate response to a root key
 compromise. Enforcement points SHOULD support configurable trust anchor
 sets to enable rotation without downtime.
 
-Revocation list distribution, token status list integration, and
-per-token introspection mechanisms are deferred to a companion document.
+A companion document can define lineage-scoped cascading revocation. In
+such a model, revocation is enforced by the enforcement point that
+accepts the affected chain, not by requiring the root AS to track derived
+tokens. Revoking a token invalidates that token and its descendants in
+the same lineage, but does not invalidate unrelated tokens or
+independent delegations held by the same agent, subject, or holder key.
+Revocation transport, storage, distribution, consistency, token-status,
+and introspection mechanisms are deployment and control-plane concerns
+outside the scope of this document.
+
+## Approval Gates
+
+Deployments may require signed approvals before accepting particular
+tool invocations. Such approvals are outside the base chain verification
+algorithm unless defined by a profile or extension. A profile that
+defines approval gates should specify how approval requirements are
+encoded, how they are preserved or attenuated during derivation, what
+request data an approval signs, how approval freshness is checked, and
+which approval identities or keys are trusted, including any threshold
+or quorum requirements.
 
 ## Clock Skew
 
@@ -2343,34 +2386,19 @@ this specification.
 
 ## Biscuit
 
-Biscuit {{BISCUIT}} is a capability-based authorization token format
-that combines asymmetric public key signatures with offline attenuation,
-building on the Macaroons model. Like AATs, Biscuit tokens support
-offline derivation and monotonic attenuation: a holder can produce a
-more restricted token without contacting the original issuer, and the
-resulting token cannot exceed the authority of its parent.
+Biscuit {{BISCUIT}} and AATs both support offline attenuation and
+decentralized verification. Biscuit is a compact bearer authorization
+token with Datalog-based policy checks. AAT is an OAuth-shaped,
+holder-bound delegation-chain protocol with tool-and-argument
+constraints, cryptographic chain invariants, and invocation-time proof
+of possession.
 
-The primary structural difference is the policy language. Biscuit
-encodes authorization logic in a Datalog variant that is evaluated at
-verification time, requiring a logic engine at the enforcement point.
-This enables expressive relational policies but introduces a runtime
-dependency and non-trivial computational bounds to manage.
-
-AATs encode authorization as a structured capability map with typed
-argument constraints. The core constraint types are decidable by
-structural analysis, requiring no logic engine. For cases where
-structural constraints are insufficient, the registered extension type
-mechanism supports domain-specific matchers and policy-language
-constraints with their own defined subsumption procedures. This tradeoff
-favors simplicity and predictability at the enforcement point, at the
-cost of the relational expressiveness Datalog provides.
-
-A second difference is scope. Biscuit is a general-purpose authorization
-token format. It does not natively encode OAuth-oriented delegation-chain
-claims such as depth limits, parent-token linkage, or explicit chain
-position declarations. This specification defines those properties in the
-token model itself, making the chain independently verifiable as a
-delegation protocol rather than as a sequence of policy blocks.
+Biscuit is a general-purpose authorization token format. It does not
+natively encode OAuth-oriented delegation-chain claims such as depth
+limits, parent-token linkage, or explicit chain position declarations.
+This specification defines those properties in the token model itself,
+making the chain independently verifiable as a delegation protocol rather
+than as a sequence of policy blocks.
 
 
 # Implementation Notes (Non-Normative)
@@ -2387,7 +2415,7 @@ delegation protocol rather than as a sequence of policy blocks.
   providing time-ordered identifiers without central coordination.
 
 The algorithm allowlist requirement is normatively defined in Section 7
-(steps 3a, 4a, and 7a) and discussed in Section 8.13.
+(steps 3a, 4a, and 7a) and discussed in Section 8.14.
 
 Post-quantum migration: the `cnf.jwk` key type is not hardcoded to
 Ed25519. Implementations should be designed to support key type
