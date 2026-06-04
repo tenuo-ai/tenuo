@@ -1638,7 +1638,7 @@ Algorithm:
    q. Verify child.par_hash equals base64url-nopad(      (I5)
       SHA-256(parent token signing input)), where
       base64url-nopad denotes base64url encoding without
-      padding per {{RFC7515}} Appendix C. For JWT/JWS AATs,
+      padding per RFC 7515 Appendix C. For JWT/JWS AATs,
       the parent token signing input is the JWS Signing Input.
 
 5. (Defense in depth) Verify len(chain) equals
@@ -1675,7 +1675,7 @@ Algorithm:
       context. If absent or mismatched, DENY.
    e. Verify pop_jwt.aat_tool == tool.
    f. Verify pop_jwt.hta, when JCS-canonicalized
-      ({{RFC8785}}), equals the JCS-canonical form of the
+      (RFC 8785), equals the JCS-canonical form of the
       args map for this invocation. If the canonical byte
       sequences differ, DENY.
    g. Verify pop_jwt.iat is within the clock tolerance
