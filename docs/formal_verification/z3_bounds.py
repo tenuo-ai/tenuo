@@ -2,6 +2,7 @@ from z3 import *
 
 def prove_theorem(theorem_name, hypothesis, child_accepts, parent_accepts):
     s = Solver()
+    s.set("timeout", 15000)  # ms; report UNKNOWN instead of hanging on undecidable fragments
     
     # To prove `hypothesis => (child_accepts => parent_accepts)` globally,
     # we search for ANY assignment (a counterexample) where the hypothesis holds,
@@ -108,68 +109,53 @@ def run_cel_proofs():
 
 def run_url_proofs():
     print("\n--- UrlPattern String Parsing Algebra ---")
+    # UrlPattern subsumption is the conjunction of two independent dimensions:
+    # domain-suffix and path-prefix. Z3's sequence theory has no complete
+    # decision procedure for SuffixOf AND PrefixOf asserted over the *same*
+    # string (it returns unknown/timeout). Subsumption decomposes per
+    # dimension, so each dimension is proved separately; both discharge.
     v_url = String('v_url')
     parent_domain, child_domain = Strings('parent_domain child_domain')
     parent_path, child_path = Strings('parent_path child_path')
-    
-    # Real URL verification asserts the Domain matches as a suffix (e.g. `api.example.com` ends with `example.com`)
-    # AND Path matches as prefix.
-    # Tenuo validates that parent domain is suffix of child domain, AND parent path is prefix of child path.
-    hyp_url = And(
-        Length(v_url) < 100,
-        Length(parent_domain) < 20,
-        Length(child_domain) < 20,
-        Length(parent_path) < 20,
-        Length(child_path) < 20,
-        SuffixOf(parent_domain, child_domain),
-        PrefixOf(parent_path, child_path)
-    )
-    
-    child_accepts = And(
-        SuffixOf(child_domain, v_url),
-        PrefixOf(child_path, v_url)
-    )
-    
-    parent_accepts = And(
-        SuffixOf(parent_domain, v_url),
-        PrefixOf(parent_path, v_url)
-    )
-    
-    prove_theorem("UrlPattern Suffix/Prefix Transitivity", hyp_url, child_accepts, parent_accepts)
 
-def run_string_proofs():
-    print("\n--- Subpath, Regex, Pattern String Bounding ---")
+    # Dimension 1: domain suffix transitivity.
+    prove_theorem(
+        "UrlPattern Domain-Suffix Transitivity",
+        SuffixOf(parent_domain, child_domain),
+        SuffixOf(child_domain, v_url),
+        SuffixOf(parent_domain, v_url),
+    )
+
+    # Dimension 2: path prefix transitivity.
+    prove_theorem(
+        "UrlPattern Path-Prefix Transitivity",
+        PrefixOf(parent_path, child_path),
+        PrefixOf(child_path, v_url),
+        PrefixOf(parent_path, v_url),
+    )
+
+def run_subpath_proofs():
+    print("\n--- Subpath (path_containment extension) ---")
+    # Subpath / path_containment subsumption: a child path that extends the
+    # parent path accepts only values that also start with the parent path.
     v_str = String('v_str')
     parent_str, child_str = Strings('parent_str child_str')
-    
-    # Subpath attenuation in Tenuo verifies that the child path starts with the parent path.
-    # Therefore, the child acceptable values must all start with the child's configured string.
-    hyp_subpath = And(
-        Length(v_str) < 100,
-        Length(parent_str) < 50,
-        Length(child_str) < 50,
-        PrefixOf(parent_str, child_str)
+
+    prove_theorem(
+        "Subpath Prefix Transitivity",
+        PrefixOf(parent_str, child_str),
+        PrefixOf(child_str, v_str),
+        PrefixOf(parent_str, v_str),
     )
-    child_accept_subpath = PrefixOf(child_str, v_str)
-    parent_accept_subpath = PrefixOf(parent_str, v_str)
-    
-    prove_theorem("Subpath Prefix Transitivity", hyp_subpath, child_accept_subpath, parent_accept_subpath)
-    
-    # Pattern / Regex bounds can be abstractly mapped to substring subsetting limits 
-    # to complete coverage without full regex engine modeling.
-    hyp_pattern = And(
-        Length(v_str) < 100,
-        Length(parent_str) < 50,
-        Length(child_str) < 50,
-        Contains(child_str, parent_str)  # Simulating a more restrictive regex
-    )
-    child_accept_pattern = Contains(v_str, child_str)
-    parent_accept_pattern = Contains(v_str, parent_str)
-    prove_theorem("Pattern / Regex Substring Monotonicity", hyp_pattern, child_accept_pattern, parent_accept_pattern)
+
+    # NOTE: regex and glob `pattern` subsumption are intentionally NOT modeled
+    # here. They are not core constraint types (see draft Section 3.4), and a
+    # substring-containment approximation of regex subsumption is unsound, so
+    # it is omitted rather than presented as a proof.
 
 if __name__ == '__main__':
     run_range_proofs()
     run_cidr_proofs()
     run_cel_proofs()
     run_url_proofs()
-    run_string_proofs()
+    run_subpath_proofs()
