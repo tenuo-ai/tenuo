@@ -631,6 +631,100 @@ fn test_verify_chain_rejects_i5_violation_wrong_parent_hash() {
     );
 }
 
+/// Test: verifier rejects parent substitution even when I1-I4 all look valid.
+///
+/// This models a chain-splicing attack where an attacker presents a legitimate
+/// child warrant with a different signed parent that is still "compatible"
+/// under issuer/depth/TTL/capability checks. Only parent_hash should catch it.
+#[test]
+fn test_verify_chain_rejects_spliced_parent_even_when_i1_i4_compatible() {
+    let root_keypair = SigningKey::generate();
+    let delegator_keypair = SigningKey::generate();
+    let recipient_keypair = SigningKey::generate();
+
+    // Build two different parent warrants with the same holder/capabilities.
+    // They are both valid and signed by the same trusted root.
+    let parent_a = Warrant::builder()
+        .capability("read", ConstraintSet::new())
+        .ttl(Duration::from_secs(7200))
+        .holder(delegator_keypair.public_key())
+        .build(&root_keypair)
+        .unwrap();
+
+    let parent_b = Warrant::builder()
+        .capability("read", ConstraintSet::new())
+        .ttl(Duration::from_secs(7200))
+        .holder(delegator_keypair.public_key())
+        .build(&root_keypair)
+        .unwrap();
+
+    // Legitimate child derived from parent_a.
+    let child_from_a = parent_a
+        .attenuate()
+        .inherit_all()
+        .ttl(Duration::from_secs(1800))
+        .holder(recipient_keypair.public_key())
+        .build(&delegator_keypair)
+        .unwrap();
+
+    // I1 precondition against substituted parent_b: child.issuer == parent_b.holder
+    assert_eq!(
+        child_from_a.issuer(),
+        parent_b.authorized_holder(),
+        "Setup failure: I1 must pass for substituted parent"
+    );
+
+    // I2 precondition against substituted parent_b: depth increments by one
+    assert_eq!(
+        child_from_a.depth(),
+        parent_b.depth() + 1,
+        "Setup failure: I2 must pass for substituted parent"
+    );
+
+    // I3 precondition against substituted parent_b: child does not outlive parent
+    assert!(
+        expires_at_secs(&child_from_a) <= expires_at_secs(&parent_b),
+        "Setup failure: I3 must pass for substituted parent"
+    );
+
+    // I4 precondition against substituted parent_b: capabilities are not expanded
+    assert_eq!(
+        child_from_a.payload.tools, parent_b.payload.tools,
+        "Setup failure: I4 must pass for substituted parent"
+    );
+
+    // But the child is cryptographically bound to parent_a, not parent_b.
+    let parent_a_hash = hash_payload(&parent_a);
+    let parent_b_hash = hash_payload(&parent_b);
+    assert_eq!(child_from_a.parent_hash(), Some(&parent_a_hash));
+    assert_ne!(
+        child_from_a.parent_hash(),
+        Some(&parent_b_hash),
+        "Setup failure: parent_a and parent_b hashes must differ"
+    );
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", root_keypair.public_key());
+
+    // Attack: splice chain by substituting parent_b for parent_a.
+    let result = data_plane.verify_chain(&[parent_b, child_from_a]);
+    assert!(
+        result.is_err(),
+        "Spliced parent chain must be rejected despite I1-I4 compatibility"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("I5") || err.contains("parent_hash") || err.contains("chain broken"),
+        "Expected I5/parent_hash error for spliced parent, got: {}",
+        err
+    );
+
+    println!(
+        "✅ Spliced parent rejected by I5 linkage even when I1-I4 are compatible: {}",
+        err
+    );
+}
+
 // =============================================================================
 // Combined attack scenarios
 // =============================================================================
