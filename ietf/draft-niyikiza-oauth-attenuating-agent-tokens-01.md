@@ -1035,7 +1035,7 @@ derived.iss == jwk_thumbprint_uri(parent.cnf.jwk)
 where `jwk_thumbprint_uri` constructs the {{RFC9278}} URI from the
 key's SHA-256 thumbprint. The entity that signed the derived token
 MUST be the holder of the parent token. Authority flows from parent
-holder to derived token issuer. This invariant establishes an
+holder to derived token issuer. This invariant establishes a
 cryptographic holder-key trail: each link in the chain was signed by the
 party that held the preceding token. Attributing that key to a human,
 service, organization, or control plane is a deployment responsibility.
@@ -1066,7 +1066,7 @@ extensions that can occur under one root grant. Issuers use this value
 to express the maximum delegation depth they are willing to authorize
 for the grant. Intermediate token holders can only lower
 `del_max_depth`, never raise it (I2), so the root issuer's depth bound is
-cryptographically enforced across the entire chain.
+enforced by chain verification across the entire chain.
 
 Issuers SHOULD set `del_max_depth` high enough to permit expected
 subprocess delegation, operational handoffs, and key rotation. Values
@@ -1343,7 +1343,7 @@ holder's private key. It MUST contain the required claims listed below.
 
 | Claim | Type | Required | Description |
 |---|---|---|---|
-| `jti` | string | REQUIRED | Fresh random identifier. Issuers MUST NOT generate the same `jti` value for two different PoP JWTs. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 8.5). |
+| `jti` | string | REQUIRED | Fresh random identifier. The holder MUST NOT reuse a `jti` value across PoP JWTs it produces. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 8.5). |
 | `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (see Section 5.3). |
 | `aat_id` | string | REQUIRED | The `jti` of the leaf token being presented. |
 | `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifier matching follows the exact-string comparison rules in Section 3.3.1. |
@@ -1730,10 +1730,11 @@ header is `"none"`. The `"none"` algorithm provides no cryptographic
 protection and MUST NOT be used in any AAT or PoP JWT.
 
 The `hta` comparison in step 7f requires both the enforcement point and
-the PoP JWT issuer to use JCS canonicalization ({{RFC8785}}). The
-enforcement point MUST canonicalize the `args` map independently and
-compare the resulting byte sequence against the canonical form committed
-to by the PoP JWT signature. Implementations MUST NOT compare raw JSON
+the holder producing the PoP JWT to use JCS canonicalization
+({{RFC8785}}). The enforcement point MUST canonicalize the `args` map
+independently and compare the resulting byte sequence against the
+canonical form committed to by the PoP JWT signature. Implementations
+MUST NOT compare raw JSON
 strings; surface differences such as key ordering or numeric
 representation (e.g., 1.0 vs 1) are resolved by canonicalization before
 comparison.
@@ -2003,7 +2004,7 @@ re-issuing root tokens) is the appropriate response to a root key
 compromise. Enforcement points SHOULD support configurable trust anchor
 sets to enable rotation without downtime.
 
-A companion document can define lineage-scoped cascading revocation. In
+A companion document may define lineage-scoped cascading revocation. In
 such a model, revocation is enforced by the enforcement point that
 accepts the affected chain, not by requiring the root AS to track derived
 tokens. Revoking a token invalidates that token and its descendants in
