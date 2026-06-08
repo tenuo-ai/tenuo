@@ -2326,6 +2326,10 @@ capability-system semantics, confused deputy framing, delegation depth,
 revocation, and the relationship between AATs and prior capability
 systems.
 
+The author thanks Antoine Fressancourt for review and discussion of
+cross-domain privacy, transport binding, remote attestation, and
+constraint expressiveness.
+
 --- back
 
 # Comparison with Related Authorization Mechanisms (Non-Normative)

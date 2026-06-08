@@ -148,7 +148,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
      11.2.  Informative References . . . . . . . . . . . . . . . . .  57
    Appendix A.  Comparison with Related Authorization Mechanisms
            (Non-Normative) . . . . . . . . . . . . . . . . . . . . .  59
-     A.1.  Token Exchange (RFC 8693) . . . . . . . . . . . . . . . .  59
+     A.1.  Token Exchange (RFC 8693) . . . . . . . . . . . . . . . .  60
      A.2.  Rich Authorization Requests (RFC 9396)  . . . . . . . . .  60
      A.3.  DPoP (RFC 9449) . . . . . . . . . . . . . . . . . . . . .  60
      A.4.  Biscuit . . . . . . . . . . . . . . . . . . . . . . . . .  61
@@ -161,7 +161,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
      B.6.  Signed Passthrough Metadata . . . . . . . . . . . . . . .  64
      B.7.  TTL Guidance  . . . . . . . . . . . . . . . . . . . . . .  64
    Appendix C.  Policy Languages with Decidable Containment
-           (Non-Normative) . . . . . . . . . . . . . . . . . . . . .  64
+           (Non-Normative) . . . . . . . . . . . . . . . . . . . . .  65
 
 
 
@@ -172,7 +172,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
    Appendix D.  CBOR/CWT Considerations (Non-Normative)  . . . . . .  65
    Appendix E.  Implementation Status (Non-Normative)  . . . . . . .  65
-     E.1.  Reference Implementation  . . . . . . . . . . . . . . . .  65
+     E.1.  Reference Implementation  . . . . . . . . . . . . . . . .  66
      E.2.  Formal Verification . . . . . . . . . . . . . . . . . . .  66
    Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  66
 
@@ -3054,6 +3054,10 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    depth, revocation, and the relationship between AATs and prior
    capability systems.
 
+   The author thanks Antoine Fressancourt for review and discussion of
+   cross-domain privacy, transport binding, remote attestation, and
+   constraint expressiveness.
+
 11.  References
 
 11.1.  Normative References
@@ -3071,16 +3075,16 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               DOI 10.17487/RFC7517, May 2015,
               <https://www.rfc-editor.org/info/rfc7517>.
 
-   [RFC7519]  Jones, M., Bradley, J., and N. Sakimura, "JSON Web Token
-              (JWT)", RFC 7519, DOI 10.17487/RFC7519, May 2015,
-              <https://www.rfc-editor.org/info/rfc7519>.
-
 
 
 Niyikiza                Expires 10 December 2026               [Page 55]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
+
+   [RFC7519]  Jones, M., Bradley, J., and N. Sakimura, "JSON Web Token
+              (JWT)", RFC 7519, DOI 10.17487/RFC7519, May 2015,
+              <https://www.rfc-editor.org/info/rfc7519>.
 
    [RFC7638]  Jones, M. and N. Sakimura, "JSON Web Key (JWK)
               Thumbprint", RFC 7638, DOI 10.17487/RFC7638, September
@@ -3123,10 +3127,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               RFC 9201, DOI 10.17487/RFC9201, August 2022,
               <https://www.rfc-editor.org/info/rfc9201>.
 
-   [RFC8414]  Jones, M., Sakimura, N., and J. Bradley, "OAuth 2.0
-              Authorization Server Metadata", RFC 8414,
-              DOI 10.17487/RFC8414, June 2018,
-              <https://www.rfc-editor.org/info/rfc8414>.
 
 
 
@@ -3137,6 +3137,11 @@ Niyikiza                Expires 10 December 2026               [Page 56]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
+
+   [RFC8414]  Jones, M., Sakimura, N., and J. Bradley, "OAuth 2.0
+              Authorization Server Metadata", RFC 8414,
+              DOI 10.17487/RFC8414, June 2018,
+              <https://www.rfc-editor.org/info/rfc8414>.
 
    [RFC8126]  Cotton, M., Leiba, B., and T. Narten, "Guidelines for
               Writing an IANA Considerations Section in RFCs", BCP 26,
@@ -3178,11 +3183,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               DOI 10.17487/RFC9052, August 2022,
               <https://www.rfc-editor.org/info/rfc9052>.
 
-   [RFC9334]  Birkholz, H., Thaler, D., Richardson, M., Smith, N., and
-              W. Pan, "Remote ATtestation procedureS (RATS)
-              Architecture", RFC 9334, DOI 10.17487/RFC9334, January
-              2023, <https://www.rfc-editor.org/info/rfc9334>.
-
 
 
 
@@ -3193,6 +3193,11 @@ Niyikiza                Expires 10 December 2026               [Page 57]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
+
+   [RFC9334]  Birkholz, H., Thaler, D., Richardson, M., Smith, N., and
+              W. Pan, "Remote ATtestation procedureS (RATS)
+              Architecture", RFC 9334, DOI 10.17487/RFC9334, January
+              2023, <https://www.rfc-editor.org/info/rfc9334>.
 
    [RFC9449]  Fett, D., Campbell, B., Bradley, J., Lodderstedt, T.,
               Jones, M., and D. Waite, "OAuth 2.0 Demonstrating Proof of
@@ -3237,11 +3242,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               Review Vol. 22, No. 4, 1988,
               <https://dl.acm.org/doi/10.1145/54289.871709>.
 
-   [CAMEL25]  Debenedetti, E., Shumailov, I., Fan, T., Hayes, J.,
-              Carlini, N., Fabian, D., Kern, C., Shi, C., Terzis, A.,
-              and F. Tramèr, "Defeating Prompt Injections by Design",
-              2025, <https://arxiv.org/abs/2503.18813>.
-
 
 
 
@@ -3249,6 +3249,11 @@ Niyikiza                Expires 10 December 2026               [Page 58]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
+
+   [CAMEL25]  Debenedetti, E., Shumailov, I., Fan, T., Hayes, J.,
+              Carlini, N., Fabian, D., Kern, C., Shi, C., Terzis, A.,
+              and F. Tramèr, "Defeating Prompt Injections by Design",
+              2025, <https://arxiv.org/abs/2503.18813>.
 
    [DEEPMIND26]
               Tomašev, N., Franklin, M., and S. Osindero, "Intelligent
@@ -3288,13 +3293,8 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 Appendix A.  Comparison with Related Authorization Mechanisms (Non-
              Normative)
 
-A.1.  Token Exchange (RFC 8693)
 
-   RFC 8693 allows a client to exchange one token for another,
-   potentially with reduced scope, by contacting the authorization
-   server.  The server enforces scope reduction.  This requires network
-   connectivity to the authorization server at each delegation hop and
-   cannot be performed offline.
+
 
 
 
@@ -3305,6 +3305,14 @@ Niyikiza                Expires 10 December 2026               [Page 59]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
+
+A.1.  Token Exchange (RFC 8693)
+
+   RFC 8693 allows a client to exchange one token for another,
+   potentially with reduced scope, by contacting the authorization
+   server.  The server enforces scope reduction.  This requires network
+   connectivity to the authorization server at each delegation hop and
+   cannot be performed offline.
 
    This specification allows a token holder to derive a new token
    locally, without contacting the authorization server.  The
@@ -3342,6 +3350,18 @@ A.3.  DPoP (RFC 9449)
    constraint type registry, the subsumption matrix) addresses questions
    outside DPoP's scope.
 
+
+
+
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 60]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    Structurally, DPoP is a two-party protocol between a client and a
    resource server.  There is no delegation model, no parent-child
    chain, and no attenuation invariant.  The chain model of this
@@ -3354,14 +3374,6 @@ A.3.  DPoP (RFC 9449)
    and a URI alone carries insufficient information for argument-level
    constraint evaluation.  This is why aat_tool and hta differ
    structurally from htm and htu: (1) hta carries the full argument map
-
-
-
-Niyikiza                Expires 10 December 2026               [Page 60]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
-
    required for constraint evaluation at the enforcement point; (2)
    aat_id binds the proof to a specific leaf token jti and chain
    position, which DPoP does not define.
@@ -3397,6 +3409,15 @@ B.1.  Algorithm Recommendations
       suitable for constrained agent environments.  The JWS alg header
       value for Ed25519 is "EdDSA".
 
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 61]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    *  *Key representation:* JWK [RFC7517] with "kty": "OKP" and "crv":
       "Ed25519".
 
@@ -3409,14 +3430,6 @@ B.1.  Algorithm Recommendations
    The cnf.jwk key type is not hardcoded to Ed25519.  Implementations
    should be designed to support algorithm migration without requiring
    changes to token structure.
-
-
-
-
-Niyikiza                Expires 10 December 2026               [Page 61]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
 B.2.  Recognizing Derived Token iss Values in Middleware
 
@@ -3447,6 +3460,20 @@ B.4.  Delegation Depth Guidance
    finite MAX_DELEGATION_DEPTH.  This appendix provides non-normative
    guidance for selecting an appropriate value.
 
+
+
+
+
+
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 62]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    The appropriate MAX_DELEGATION_DEPTH depends on the deployment
    topology.  Linear orchestration chains (root issuer, one or two
    planning layers, leaf executor) require few hops.  Swarm
@@ -3462,17 +3489,6 @@ B.4.  Delegation Depth Guidance
    steps under a grant, but overly tight values can suppress attenuation
    and encourage broader token reuse.  The security value comes from
    deliberate per-chain policy, not from an arbitrarily low ceiling.
-
-
-
-
-
-
-
-Niyikiza                Expires 10 December 2026               [Page 62]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
 B.5.  Implementation Size Limits
 
@@ -3506,6 +3522,14 @@ B.5.  Implementation Size Limits
    parties should verify that their respective limits are compatible
    before deployment.
 
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 63]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    Implementations should prefer core structural constraints where the
    policy permits, as these types produce compact tokens and simple
    subsumption checks.
@@ -3522,13 +3546,6 @@ B.5.  Implementation Size Limits
    431 errors.  Deployments should transmit AAT chains in a request body
    field rather than an HTTP header.  For size-constrained environments,
    Appendix D notes considerations for a future CBOR/CWT profile.
-
-
-
-Niyikiza                Expires 10 December 2026               [Page 63]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
 B.6.  Signed Passthrough Metadata
 
@@ -3561,6 +3578,14 @@ B.7.  TTL Guidance
    the deployment context.  Root tokens should be long enough to cover
    the full orchestration and execution window for the task, but no
    longer.  Leaf tokens should be scoped to the expected duration of a
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 64]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    single tool invocation.  Deployments with intermittent connectivity
    (edge, embedded, or air-gapped) may need longer lifetimes, with the
    awareness that longer lifetimes expand the compromise window.
@@ -3578,14 +3603,6 @@ Appendix C.  Policy Languages with Decidable Containment (Non-Normative)
    backed by analyzable authorization policy languages, such as Cedar
    [CEDAR].  Such an extension must define the runtime check predicate,
    the token encoding of the policy, and a sound, deterministic
-
-
-
-Niyikiza                Expires 10 December 2026               [Page 64]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
-
    subsumption procedure.  The fact that a policy language can decide
    whether an invocation is authorized is not, by itself, sufficient for
    AAT attenuation; the extension must also define how an enforcement
@@ -3618,6 +3635,13 @@ Appendix E.  Implementation Status (Non-Normative)
    specification at the time of submission, per the practice described
    in [RFC7942].
 
+
+
+Niyikiza                Expires 10 December 2026               [Page 65]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
 E.1.  Reference Implementation
 
    Tenuo provides a reference implementation of this protocol.  The
@@ -3631,16 +3655,6 @@ E.1.  Reference Implementation
 
    RFC Editor Note: This section will be updated or removed before
    publication.
-
-
-
-
-
-
-Niyikiza                Expires 10 December 2026               [Page 65]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
 E.2.  Formal Verification
 
@@ -3663,20 +3677,6 @@ Author's Address
    Tenuo
 
    Email: niki@tenuo.ai
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
