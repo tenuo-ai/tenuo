@@ -4,8 +4,8 @@
 
 Web Authorization Protocol (OAuth)                        N. A. Niyikiza
 Internet-Draft                                                     Tenuo
-Intended status: Standards Track                             6 June 2026
-Expires: 8 December 2026
+Intended status: Standards Track                             8 June 2026
+Expires: 10 December 2026
 
 
      Attenuating Authorization Tokens for Agentic Delegation Chains
@@ -44,7 +44,7 @@ Status of This Memo
    time.  It is inappropriate to use Internet-Drafts as reference
    material or to cite them other than as "work in progress."
 
-   This Internet-Draft will expire on 8 December 2026.
+   This Internet-Draft will expire on 10 December 2026.
 
 Copyright Notice
 
@@ -53,7 +53,7 @@ Copyright Notice
 
 
 
-Niyikiza                 Expires 8 December 2026                [Page 1]
+Niyikiza                Expires 10 December 2026                [Page 1]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -71,14 +71,14 @@ Table of Contents
 
    1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   4
      1.1.  Limitations of Existing OAuth Mechanisms for Agentic
-           Delegation  . . . . . . . . . . . . . . . . . . . . . . .   5
+           Delegation  . . . . . . . . . . . . . . . . . . . . . . .   6
      1.2.  Design Goals  . . . . . . . . . . . . . . . . . . . . . .   6
      1.3.  Relationship to Prior Work  . . . . . . . . . . . . . . .   7
    2.  Terminology . . . . . . . . . . . . . . . . . . . . . . . . .   8
    3.  Token Structure . . . . . . . . . . . . . . . . . . . . . . .   9
      3.1.  Chain Position and Invocation Semantics . . . . . . . . .   9
      3.2.  Common Claims . . . . . . . . . . . . . . . . . . . . . .  10
-     3.3.  Capability Claims via authorization_details . . . . . . .  12
+     3.3.  Capability Claims via authorization_details . . . . . . .  13
        3.3.1.  Tool Identifier Requirements  . . . . . . . . . . . .  14
      3.4.  Argument Constraints  . . . . . . . . . . . . . . . . . .  15
      3.5.  Extension Constraint Registry . . . . . . . . . . . . . .  17
@@ -98,7 +98,7 @@ Table of Contents
      4.3.  I2: Depth Monotonicity  . . . . . . . . . . . . . . . . .  26
        4.3.1.  Implementation Resource Limits  . . . . . . . . . . .  27
      4.4.  I3: TTL Monotonicity  . . . . . . . . . . . . . . . . . .  27
-     4.5.  I4: Capability Monotonicity . . . . . . . . . . . . . . .  27
+     4.5.  I4: Capability Monotonicity . . . . . . . . . . . . . . .  28
      4.6.  I5: Cryptographic Linkage . . . . . . . . . . . . . . . .  31
      4.7.  I6: Proof of Possession . . . . . . . . . . . . . . . . .  31
    5.  Proof of Possession . . . . . . . . . . . . . . . . . . . . .  32
@@ -109,7 +109,7 @@ Table of Contents
 
 
 
-Niyikiza                 Expires 8 December 2026                [Page 2]
+Niyikiza                Expires 10 December 2026                [Page 2]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -120,20 +120,20 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
        8.1.1.  Threats Mitigated . . . . . . . . . . . . . . . . . .  42
        8.1.2.  Threats Not Mitigated . . . . . . . . . . . . . . . .  43
      8.2.  Attenuation as the Security Invariant . . . . . . . . . .  44
-     8.3.  Root Key Compromise . . . . . . . . . . . . . . . . . . .  44
+     8.3.  Root Key Compromise . . . . . . . . . . . . . . . . . . .  45
      8.4.  Holder Key Compromise . . . . . . . . . . . . . . . . . .  45
      8.5.  Replay Attacks  . . . . . . . . . . . . . . . . . . . . .  45
      8.6.  Constraint Evaluation . . . . . . . . . . . . . . . . . .  46
      8.7.  Depth Limit . . . . . . . . . . . . . . . . . . . . . . .  46
      8.8.  Unknown Constraint Types  . . . . . . . . . . . . . . . .  47
      8.9.  Token Revocation  . . . . . . . . . . . . . . . . . . . .  47
-     8.10. Approval Gates  . . . . . . . . . . . . . . . . . . . . .  47
+     8.10. Approval Gates  . . . . . . . . . . . . . . . . . . . . .  48
      8.11. Clock Skew  . . . . . . . . . . . . . . . . . . . . . . .  48
-     8.12. Role-Based Key Separation . . . . . . . . . . . . . . . .  48
+     8.12. Role-Based Key Separation . . . . . . . . . . . . . . . .  49
      8.13. Algorithm Confusion . . . . . . . . . . . . . . . . . . .  49
-     8.14. Token Content Visibility  . . . . . . . . . . . . . . . .  49
-   9.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .  49
-     9.1.  JWT Claims Registry . . . . . . . . . . . . . . . . . . .  49
+     8.14. Token Content Visibility  . . . . . . . . . . . . . . . .  50
+   9.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .  50
+     9.1.  JWT Claims Registry . . . . . . . . . . . . . . . . . . .  50
      9.2.  OAuth Authorization Details Types Registry  . . . . . . .  51
      9.3.  AAT Constraint Type Registry  . . . . . . . . . . . . . .  51
        9.3.1.  Designated Expert Instructions  . . . . . . . . . . .  51
@@ -142,9 +142,10 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
      9.4.  OAuth Authorization Server Metadata Registry  . . . . . .  54
      9.5.  OAuth Token Type Registration . . . . . . . . . . . . . .  55
      9.6.  OAuth Parameters Registry . . . . . . . . . . . . . . . .  55
-   10. References  . . . . . . . . . . . . . . . . . . . . . . . . .  55
-     10.1.  Normative References . . . . . . . . . . . . . . . . . .  55
-     10.2.  Informative References . . . . . . . . . . . . . . . . .  57
+   10. Acknowledgments . . . . . . . . . . . . . . . . . . . . . . .  55
+   11. References  . . . . . . . . . . . . . . . . . . . . . . . . .  55
+     11.1.  Normative References . . . . . . . . . . . . . . . . . .  55
+     11.2.  Informative References . . . . . . . . . . . . . . . . .  57
    Appendix A.  Comparison with Related Authorization Mechanisms
            (Non-Normative) . . . . . . . . . . . . . . . . . . . . .  59
      A.1.  Token Exchange (RFC 8693) . . . . . . . . . . . . . . . .  59
@@ -161,15 +162,15 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
      B.7.  TTL Guidance  . . . . . . . . . . . . . . . . . . . . . .  64
    Appendix C.  Policy Languages with Decidable Containment
            (Non-Normative) . . . . . . . . . . . . . . . . . . . . .  64
-   Appendix D.  CBOR/CWT Considerations (Non-Normative)  . . . . . .  65
 
 
 
-Niyikiza                 Expires 8 December 2026                [Page 3]
+Niyikiza                Expires 10 December 2026                [Page 3]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
+   Appendix D.  CBOR/CWT Considerations (Non-Normative)  . . . . . .  65
    Appendix E.  Implementation Status (Non-Normative)  . . . . . . .  65
      E.1.  Reference Implementation  . . . . . . . . . . . . . . . .  65
      E.2.  Formal Verification . . . . . . . . . . . . . . . . . . .  66
@@ -193,11 +194,22 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    and argument values for a specific task.
 
    Without such attenuation, a token broad enough to support a multi-
-   step workflow may expose more authority than an intermediate agent
+   step workflow can carry more authority than an intermediate agent
    needs for its current step.  Prompt injection, model hallucination,
-   or compromise of that agent can exploit this excess authority.  This
-   is the confused deputy problem [HARDY88] applied to agentic
-   delegation.
+   or compromise can then exercise that excess authority.  Attenuation
+   limits this exposure by letting each delegation step pass onward only
+   the authority needed for the next step.
+
+   A distinct problem is the confused deputy [HARDY88]: a deputy that
+   combines a caller-supplied resource designation with the deputy's own
+   standing authority can be induced to perform an action the caller
+   could not perform directly.  Capability systems address this by
+   carrying designation and authority together in an unforgeable
+   artifact.  AATs apply that pattern to agentic delegation: the invoker
+   can derive a token whose tool and argument constraints designate the
+   task's resource and authority, and the agent acts under that received
+   token rather than under ambient authority of its own.  Section 8
+   describes the resulting guarantees and limits.
 
    WIMSE [WIMSE-ARCH] provides mechanisms for establishing workload
    identity and propagating it across service boundaries.  OAuth 2.0
@@ -206,6 +218,14 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    derive a narrower token and pass it downstream, while enforcement
    points can verify the resulting chain offline.  This avoids making
    the authorization server a participant in every delegation hop, which
+
+
+
+Niyikiza                Expires 10 December 2026                [Page 4]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    is important for agentic workflows that execute tool invocations in
    rapid succession, operate across trust boundaries, or run with
    intermittent connectivity.
@@ -218,13 +238,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    identity layer with a delegation and attenuation layer.  The
    resulting chain lets enforcement points evaluate both the leaf token
    and the delegation path that produced it.
-
-
-
-Niyikiza                 Expires 8 December 2026                [Page 4]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    The following diagram shows the delegation flow this specification
    enables:
@@ -255,6 +268,20 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    chains are carried to enforcement points is deployment-specific; this
    document does not define a transport binding.
 
+
+
+
+
+
+
+
+
+
+Niyikiza                Expires 10 December 2026                [Page 5]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
 1.1.  Limitations of Existing OAuth Mechanisms for Agentic Delegation
 
    OAuth 2.0 Token Exchange [RFC8693] enables a principal to obtain a
@@ -270,17 +297,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    each grant independently, and RFC 8693 does not define a token-local
    mechanism for proving that downstream delegation intent remains
    consistent with the original authorization scope.
-
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026                [Page 5]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    Rich Authorization Requests (RAR) [RFC9396] extend OAuth tokens with
    structured authorization detail objects, enabling expressive
@@ -314,6 +330,14 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
        the trust anchor can verify the complete delegation chain without
        network calls.
 
+
+
+
+Niyikiza                Expires 10 December 2026                [Page 6]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    4.  *Verifiable attenuation.* A derived token cannot grant broader
        authority than its parent, and this property can be verified from
        the signed chain.
@@ -323,20 +347,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
        [RFC7515], allowing deployments to verify chains using existing
        JSON Object Signing and Encryption (JOSE) infrastructure without
        new cryptographic dependencies.
-
-
-
-
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026                [Page 6]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
 1.3.  Relationship to Prior Work
 
@@ -376,6 +386,14 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    derivation can only attenuate, never amplify, the authority it
    carries.
 
+
+
+
+Niyikiza                Expires 10 December 2026                [Page 7]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    [DEEPMIND26] argues that safe multi-agent delegation requires
    explicit transfer of authority, responsibility, and trust at each
    delegation step, with bounded operational scope.  [CAMEL25] shows
@@ -385,14 +403,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    scope in verifiable credential artifacts enforced independently of
    model behavior.  AATs realize one protocol-layer approach to that
    goal.
-
-
-
-
-Niyikiza                 Expires 8 December 2026                [Page 7]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
 2.  Terminology
 
@@ -430,6 +440,16 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    subset of its parent's authority (equal or narrower).  Derivation
    does not require a round-trip to the root issuer.
 
+
+
+
+
+
+Niyikiza                Expires 10 December 2026                [Page 8]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    *Tool:* An addressable function or API operation that an agent may
    invoke.  A tool is identified by a string identifier.  Tool
    identifiers are compared as exact strings; see Section 3.3.1 for
@@ -441,14 +461,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
    *Capability Claim:* The set of (tool, argument constraints) pairs
    encoded in an AAT's authorization_details claim.
-
-
-
-
-Niyikiza                 Expires 8 December 2026                [Page 8]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    *Attenuation:* The process of deriving a token with a capability
    claim that is a subset of the parent token's capability claim.
@@ -483,6 +495,17 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    delegation and execution.  An AAT's role is determined by its
    position in the presented chain.
 
+
+
+
+
+
+
+Niyikiza                Expires 10 December 2026                [Page 9]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    The root token establishes the authority ceiling.  Intermediate
    tokens record attenuations made by holders along the delegation path.
    The leaf token is the token whose holder presents a PoP JWT and whose
@@ -495,16 +518,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    the capability monotonicity invariant (I4, Section 4.5).  A token
    MUST NOT be accepted for a tool invocation except as the leaf of a
    successfully verified chain.
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026                [Page 9]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
 3.2.  Common Claims
 
@@ -541,6 +554,14 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    |                       |           |         |URI form is given    |
    |                       |           |         |after this table.    |
    +-----------------------+-----------+---------+---------------------+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 10]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    | iat                   |NumericDate|REQUIRED |Time at which the    |
    |                       |           |         |token was issued.    |
    |                       |           |         |MUST NOT be more than|
@@ -554,14 +575,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    |                       |           |         |be earlier than its  |
    |                       |           |         |parent's iat.        |
    +-----------------------+-----------+---------+---------------------+
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 10]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
-
    | exp                   |NumericDate|REQUIRED |Time at which the    |
    |                       |           |         |token expires.  MUST |
    |                       |           |         |be greater than iat. |
@@ -597,6 +610,14 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    +-----------------------+-----------+---------+---------------------+
    | par_hash              |string     |MUST     |Base64url-encoded    |
    |                       |           |(derived)|SHA-256 digest of the|
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 11]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    |                       |           |/ MUST   |parent token signing |
    |                       |           |NOT      |input, using         |
    |                       |           |(root)   |base64url encoding   |
@@ -610,14 +631,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    |                       |           |         |absent in root       |
    |                       |           |         |tokens.  MUST be     |
    |                       |           |         |present in all       |
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 11]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
-
    |                       |           |         |derived tokens.      |
    +-----------------------+-----------+---------+---------------------+
    | authorization_details |array      |REQUIRED |Tool capability      |
@@ -652,6 +665,15 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    identifier MAY convey one in additional JWT claims outside this
    specification (see Appendix B.6).
 
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 12]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
 3.3.  Capability Claims via authorization_details
 
    This specification profiles [RFC9396] for tool-level capability
@@ -659,20 +681,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    whose type is set to "attenuating_agent_token".  Such an entry MUST
    include a tools member that maps tool names to argument constraint
    sets.
-
-
-
-
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 12]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    {
      "authorization_details": [
@@ -714,6 +722,14 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    constraint" mechanism; the constraint map is a closed specification
    of the required invocation shape.  To authorize an argument without
    restricting its value, use a wildcard constraint (see below).
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 13]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    Optional constrained arguments are outside the core constraint model;
    profiles or extension constraint types that require such behavior
    must define it explicitly.
@@ -722,14 +738,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    constrained ones MUST explicitly include a wildcard constraint for
    each argument that should be unrestricted.  A wildcard constraint
    satisfies closed-world mode while permitting any value for that
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 13]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
-
    argument (see Section 3.4).  Enforcement points MUST enforce closed-
    world mode and MUST NOT permit unconstrained arguments when any
    constraint is present for the tool (see Section 7, step 6b).
@@ -768,23 +776,22 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    registered constraint type MAY define normalization as part of its
    check or subsumes procedure.
 
+
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 14]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    Tool identifiers SHOULD be URIs ([RFC3986]).  URI-format identifiers
    provide namespace isolation across agents and reduce semantic
    collision when multiple agents expose tools with identical local
    names.  Deployments spanning multiple agents or trust domains SHOULD
    use URI-format identifiers; single-agent deployments MAY use local
    identifiers where collision is not a concern.
-
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 14]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    A tool identifier carries no inherent authorization semantics beyond
    naming a capability.  The root issuer is responsible for verifying
@@ -830,14 +837,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 15]
+Niyikiza                Expires 10 December 2026               [Page 15]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -893,7 +893,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 16]
+Niyikiza                Expires 10 December 2026               [Page 16]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -949,7 +949,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 17]
+Niyikiza                Expires 10 December 2026               [Page 17]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1005,7 +1005,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 18]
+Niyikiza                Expires 10 December 2026               [Page 18]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1061,7 +1061,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 19]
+Niyikiza                Expires 10 December 2026               [Page 19]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1117,7 +1117,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 20]
+Niyikiza                Expires 10 December 2026               [Page 20]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1173,7 +1173,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 21]
+Niyikiza                Expires 10 December 2026               [Page 21]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1229,7 +1229,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 22]
+Niyikiza                Expires 10 December 2026               [Page 22]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1285,7 +1285,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 23]
+Niyikiza                Expires 10 December 2026               [Page 23]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1341,7 +1341,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 24]
+Niyikiza                Expires 10 December 2026               [Page 24]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1397,7 +1397,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 25]
+Niyikiza                Expires 10 December 2026               [Page 25]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1436,12 +1436,27 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    del_max_depth, never raise it (I2), so the root issuer's depth bound
    is enforced by chain verification across the entire chain.
 
-   Issuers SHOULD set del_max_depth high enough to permit expected
-   subprocess delegation, operational handoffs, and key rotation.
-   Values that are too low can prevent downstream holders from
-   representing legitimate attenuation steps within the chain.  Such
-   deployments SHOULD request a new root token with a larger
-   del_max_depth rather than bypassing attenuation.
+   Issuers SHOULD set del_max_depth to accommodate the expected
+   delegation topology, including subprocess delegation, operational
+   handoffs, and holder-key handoff.  A value that is too low can
+   prevent downstream holders from expressing legitimate attenuation,
+   increasing pressure to reuse broader tokens directly.  Once a chain
+   reaches del_max_depth, no descendant can extend it further; this
+   specification defines no in-chain mechanism for increasing that
+   ceiling.
+
+
+
+
+
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 26]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
 
    MAX_DELEGATION_DEPTH is an implementation-defined finite integer
    specifying the maximum permitted delegation chain depth.
@@ -1450,13 +1465,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    appropriate value depends on the deployment topology; swarm
    architectures with deep fan-out may require significantly larger
    values than linear delegation chains.  See Appendix B.4 for guidance.
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 26]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    The del_max_depth claim in any token in the chain MUST NOT exceed the
    implementation's MAX_DELEGATION_DEPTH.
@@ -1498,21 +1506,20 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    A derived token cannot outlive its parent.  Authority cannot extend
    beyond the lifetime of the token that granted it.  A derived token's
    issuance time MUST NOT precede its parent's issuance time.  A token
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 27]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    with an earlier iat indicates clock manipulation or chain forgery.
    Tokens with iat more than MAX_IAT_SKEW in the future relative to the
    enforcement point's clock MUST be rejected.  A token's lifetime MUST
    NOT exceed MAX_TOKEN_LIFETIME.
 
 4.5.  I4: Capability Monotonicity
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 27]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    tools(derived) ⊆ tools(parent)
    ∀ tool ∈ tools(derived):
@@ -1558,14 +1565,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 28]
+Niyikiza                Expires 10 December 2026               [Page 28]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1621,7 +1621,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 29]
+Niyikiza                Expires 10 December 2026               [Page 29]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1677,7 +1677,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 30]
+Niyikiza                Expires 10 December 2026               [Page 30]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1733,7 +1733,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 31]
+Niyikiza                Expires 10 December 2026               [Page 31]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1789,7 +1789,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 32]
+Niyikiza                Expires 10 December 2026               [Page 32]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1845,7 +1845,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 33]
+Niyikiza                Expires 10 December 2026               [Page 33]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1901,7 +1901,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 34]
+Niyikiza                Expires 10 December 2026               [Page 34]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1957,7 +1957,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 35]
+Niyikiza                Expires 10 December 2026               [Page 35]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -1980,9 +1980,9 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    valid by the invariants.  Such a child has the same capability and
    lifetime authority as its parent while consuming one delegation
    depth.  It does not improve least privilege, but deployments may use
-   it for holder-key handoff, subprocess delegation, or ephemeral key
-   rotation.  Enforcement points MAY log same-scope derivations as
-   anomalous according to deployment policy.
+   it for holder-key handoff or subprocess delegation.  Enforcement
+   points MAY log same-scope derivations as anomalous according to
+   deployment policy.
 
 7.  Chain Verification Algorithm
 
@@ -2013,7 +2013,7 @@ Algorithm:
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 36]
+Niyikiza                Expires 10 December 2026               [Page 36]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -2069,7 +2069,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 37]
+Niyikiza                Expires 10 December 2026               [Page 37]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -2125,7 +2125,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 38]
+Niyikiza                Expires 10 December 2026               [Page 38]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -2181,7 +2181,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 39]
+Niyikiza                Expires 10 December 2026               [Page 39]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -2237,7 +2237,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 40]
+Niyikiza                Expires 10 December 2026               [Page 40]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -2293,7 +2293,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 41]
+Niyikiza                Expires 10 December 2026               [Page 41]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -2323,12 +2323,36 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    authorized range is denied at the enforcement point before the tool
    executes.
 
-   *Confused deputy attacks.* AATs reduce confused deputy risk by
-   replacing ambient authority with explicit, task-scoped capability
-   tokens.  When a token holder derives a narrowed token before
-   delegating to another agent, the receiving agent cannot invoke tools
-   or argument values outside that narrower scope, even though the
-   delegating holder may hold broader authority.
+   *Confused deputy attacks.* In the classic form, a deputy is induced
+   to use its own authority on a resource designated by another party.
+   In agentic systems, that designation can come from an invoking
+   principal, prompt injection, tool output, or model error.  AATs avoid
+   relying on the standing authority the classic form exploits: an agent
+   acts under a token presented for the current invocation.  When the
+   invoker derives that token to designate the task's resource,
+   designation and authority travel together, and the agent cannot be
+   steered outside the authority carried by the token.  A token
+   authorizing more than one resource can still be steered within its
+   scope, so issuers SHOULD scope leaf tokens as narrowly as the task
+   permits.  The delegation chain verifies provenance and attenuation,
+   and the enforcement point checks the presented invocation against the
+   leaf token's constraints.  How a constraint value maps to the
+   resource the tool ultimately acts upon is defined by the tool
+   contract and implemented by the tool: the protocol authorizes the
+   presented invocation, and the tool remains responsible for resolving
+   that invocation to the correct resource.
+
+
+
+
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 42]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
 
    *Privilege escalation across delegation hops.* The capability
    monotonicity invariant (I4) ensures that authority can only narrow at
@@ -2346,14 +2370,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    *Grant-context substitution.* The par_hash claim (I5) binds each
    derived token to the specific bytes of its parent token.  Suppose a
    delegator key holds two parent tokens, A and B, issued for different
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 42]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
-
    tasks but authorizing compatible capabilities.  The holder derives
    child token C from A.  Without par_hash, a presenter could assemble
    the chain (B, C).  The link may satisfy delegation authority, depth,
@@ -2387,6 +2403,13 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    verification algorithm in Section 7 correctly.  Enforcement point
    integrity is a deployment concern.
 
+
+
+Niyikiza                Expires 10 December 2026               [Page 43]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    *Actions within authorized argument constraints.* AATs restrict which
    tools an agent may invoke and what argument values are permitted.
    They do not restrict which authorized invocations an agent chooses to
@@ -2402,13 +2425,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    token scope, but within that scope the attacker has full
    authorization.  Short token lifetimes (Appendix B.7) limit the
    exposure window.
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 43]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    *Model exfiltration and side-channel attacks.* An attacker who
    extracts an agent's model weights, system prompt, or in-context state
@@ -2438,6 +2454,18 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    encouraged to publish independent analyses of both the core
    subsumption rules and any extension constraint types they deploy.
 
+
+
+
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 44]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    The Tenuo reference implementation includes a test suite covering
    monotonicity of the attenuation invariants under arbitrary sequences,
    normalization idempotence across encode/decode round-trips, and
@@ -2448,23 +2476,20 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
    A compromised trust anchor key allows an attacker to issue arbitrary
    root tokens.  This breaks the security guarantees of all chains
-   anchored to that key.  Deployments SHOULD implement key rotation
-   procedures and revocation mechanisms appropriate to their risk model.
-   The specific mechanism for root key revocation, including revocation
-   list formats, distribution protocols, and enforcement point update
-   procedures, is outside the scope of this specification.
+   anchored to that key.
 
+   In the base chain verification algorithm, configured trust anchors
+   are used to verify root tokens.  Establishing, rotating, or revoking
+   those trust anchors is outside the scope of this specification.
+   Remote attestation mechanisms, such as the RATS architecture
+   [RFC9334], can complement AAT deployments by providing evidence about
+   root issuer or enforcement point environments.
 
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 44]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
+   Deployments SHOULD implement key rotation procedures and revocation
+   mechanisms appropriate to their risk model.  The specific mechanism
+   for root key revocation, including revocation list formats,
+   distribution protocols, and enforcement point update procedures, is
+   outside the scope of this specification.
 
 8.4.  Holder Key Compromise
 
@@ -2489,6 +2514,14 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    For tool invocations that are irreversible or have significant side
    effects, including financial transactions, data deletion, writes to
    external systems, and any operation that cannot be undone:
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 45]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    enforcement points MUST implement stateful jti tracking for PoP JWTs
    and MUST NOT rely solely on the timestamp window for replay
    protection.
@@ -2511,16 +2544,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    windowed PoP as a probabilistic control and layer additional
    idempotency mechanisms at the application level for high-value
    operations.
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 45]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
 8.6.  Constraint Evaluation
 
@@ -2545,6 +2568,16 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    imposing an artificial ceiling on legitimate use cases.  See
    Appendix B.4 for guidance on selecting an appropriate value.
 
+
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 46]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    The security rationale for depth limiting goes beyond resource
    exhaustion.  Each delegation hop introduces an additional agent into
    the trust chain: the enforcement point necessarily trusts not only
@@ -2566,17 +2599,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    MAX_DELEGATION_DEPTH limit (step 4f of Section 7).  Neither the per-
    token policy checks nor the global implementation limit is sufficient
    alone.
-
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 46]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
 8.8.  Unknown Constraint Types
 
@@ -2605,6 +2627,13 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    compromise.  Enforcement points SHOULD support configurable trust
    anchor sets to enable rotation without downtime.
 
+
+
+Niyikiza                Expires 10 December 2026               [Page 47]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    A companion document may define lineage-scoped cascading revocation.
    In such a model, revocation is enforced by the enforcement point that
    accepts the affected chain, not by requiring the root AS to track
@@ -2627,13 +2656,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    freshness is checked, and which approval identities or keys are
    trusted, including any threshold or quorum requirements.
 
-
-
-Niyikiza                 Expires 8 December 2026               [Page 47]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
-
 8.11.  Clock Skew
 
    This specification uses clock-based checks in two distinct contexts
@@ -2654,6 +2676,19 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    guaranteed NTP synchronization SHOULD target +/-5 to +/-10 seconds.
    Deployments with stricter security requirements MAY reduce this
    window further.
+
+
+
+
+
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 48]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
 
    Implementations MUST enforce a finite maximum tolerance window.
    Values beyond +/-60 seconds provide negligible additional clock skew
@@ -2679,17 +2714,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    claims unless a deployment-specific profile defines such claims and
    verification rules.
 
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 48]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
-
 8.13.  Algorithm Confusion
 
    JWT/JWS AATs are signed JWTs.  Implementations are subject to the
@@ -2714,17 +2738,27 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    signatures; symmetric keys cannot provide the per-holder key binding
    that PoP requires.
 
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 49]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
 8.14.  Token Content Visibility
 
-   AAT payloads are integrity-protected but not encrypted.  Token
-   contents, including tool identifiers, argument constraints, and
-   delegation chain structure, are visible to any party that observes
-   the token in transit or at rest.  Deployments SHOULD transmit AAT
-   chains over encrypted transport (e.g., TLS) and SHOULD protect stored
-   tokens as sensitive authorization metadata.  A stored AAT is not
-   usable without the corresponding holder private key, but it can
-   disclose authorization scope and delegation structure.  Token
-   encryption is outside the scope of this specification.
+   AAT payloads are integrity-protected but not encrypted.  In cross-
+   domain deployments, an AAT chain can reveal delegation topology, task
+   context, tool identifiers, argument constraints, and holder-key
+   correlation information.  Deployments SHOULD minimize disclosure of
+   AAT chains to parties that do not perform chain verification or
+   invocation authorization.  Deployments SHOULD transmit AAT chains
+   over encrypted transport (e.g., TLS) and SHOULD protect stored tokens
+   as sensitive authorization metadata.  A stored AAT is not usable
+   without the corresponding holder private key, but it can disclose
+   authorization scope and delegation structure.  Token encryption is
+   outside the scope of this specification.
 
 9.  IANA Considerations
 
@@ -2734,17 +2768,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    IANA JSON Web Token Claims Registry [RFC7519].
 
    *AAT claims:*
-
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 49]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
       +===============+====================+============+===========+
       | Claim Name    | Claim Description  | Change     | Reference |
@@ -2771,6 +2794,14 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
    *PoP JWT claims:*
 
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 50]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    +==========+===============================+============+===========+
    | Claim    | Claim Description             | Change     | Reference |
    | Name     |                               | Controller |           |
@@ -2790,17 +2821,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    +----------+-------------------------------+------------+-----------+
 
                                   Table 6
-
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 50]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
 9.2.  OAuth Authorization Details Types Registry
 
@@ -2830,6 +2850,14 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
        digits, and underscores, and does not conflict with an existing
        registered type name.
 
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 51]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    2.  The check predicate is fully specified: given any argument value,
        an independent implementer can determine without ambiguity
        whether the predicate returns true or false.
@@ -2849,14 +2877,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
    5.  The reference is a stable, publicly accessible specification
        suitable for interoperable implementation.
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 51]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    Designated experts SHOULD request clarification when cross-type rules
    are incomplete, when the subsumption procedure's soundness is not
@@ -2889,27 +2909,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 52]
+Niyikiza                Expires 10 December 2026               [Page 52]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -2965,7 +2965,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 53]
+Niyikiza                Expires 10 December 2026               [Page 53]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -3021,7 +3021,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 54]
+Niyikiza                Expires 10 December 2026               [Page 54]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -3047,9 +3047,16 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
    Root token issuance uses the existing req_cnf token request
    parameter.
 
-10.  References
+10.  Acknowledgments
 
-10.1.  Normative References
+   The author thanks Alan Karp for detailed review and discussion of
+   capability-system semantics, confused deputy framing, delegation
+   depth, revocation, and the relationship between AATs and prior
+   capability systems.
+
+11.  References
+
+11.1.  Normative References
 
    [RFC3986]  Berners-Lee, T., Fielding, R., and L. Masinter, "Uniform
               Resource Identifier (URI): Generic Syntax", STD 66,
@@ -3068,19 +3075,16 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               (JWT)", RFC 7519, DOI 10.17487/RFC7519, May 2015,
               <https://www.rfc-editor.org/info/rfc7519>.
 
-   [RFC7638]  Jones, M. and N. Sakimura, "JSON Web Key (JWK)
-              Thumbprint", RFC 7638, DOI 10.17487/RFC7638, September
-              2015, <https://www.rfc-editor.org/info/rfc7638>.
 
 
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 55]
+Niyikiza                Expires 10 December 2026               [Page 55]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
+
+   [RFC7638]  Jones, M. and N. Sakimura, "JSON Web Key (JWK)
+              Thumbprint", RFC 7638, DOI 10.17487/RFC7638, September
+              2015, <https://www.rfc-editor.org/info/rfc7638>.
 
    [RFC7800]  Jones, M., Bradley, J., and H. Tschofenig, "Proof-of-
               Possession Key Semantics for JSON Web Tokens (JWTs)",
@@ -3124,19 +3128,20 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               DOI 10.17487/RFC8414, June 2018,
               <https://www.rfc-editor.org/info/rfc8414>.
 
+
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 56]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    [RFC8126]  Cotton, M., Leiba, B., and T. Narten, "Guidelines for
               Writing an IANA Considerations Section in RFCs", BCP 26,
               RFC 8126, DOI 10.17487/RFC8126, June 2017,
               <https://www.rfc-editor.org/info/rfc8126>.
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 56]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
               Requirement Levels", BCP 14, RFC 2119,
@@ -3147,7 +3152,7 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
               May 2017, <https://www.rfc-editor.org/info/rfc8174>.
 
-10.2.  Informative References
+11.2.  Informative References
 
    [RFC7942]  Sheffer, Y. and A. Farrel, "Improving Awareness of Running
               Code: The Implementation Status Section", BCP 205,
@@ -3173,6 +3178,22 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               DOI 10.17487/RFC9052, August 2022,
               <https://www.rfc-editor.org/info/rfc9052>.
 
+   [RFC9334]  Birkholz, H., Thaler, D., Richardson, M., Smith, N., and
+              W. Pan, "Remote ATtestation procedureS (RATS)
+              Architecture", RFC 9334, DOI 10.17487/RFC9334, January
+              2023, <https://www.rfc-editor.org/info/rfc9334>.
+
+
+
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 57]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    [RFC9449]  Fett, D., Campbell, B., Bradley, J., Lodderstedt, T.,
               Jones, M., and D. Waite, "OAuth 2.0 Demonstrating Proof of
               Possession (DPoP)", RFC 9449, DOI 10.17487/RFC9449,
@@ -3183,16 +3204,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               "Transaction Tokens", March 2026,
               <https://datatracker.ietf.org/doc/draft-ietf-oauth-
               transaction-tokens/>.
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 57]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    [OAUTH-ID-CHAINING]
               Schwenkschuster, A., Kasselman, P., Burgin, D., Jenkins,
@@ -3231,6 +3242,14 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               and F. Tramèr, "Defeating Prompt Injections by Design",
               2025, <https://arxiv.org/abs/2503.18813>.
 
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 58]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    [DEEPMIND26]
               Tomašev, N., Franklin, M., and S. Osindero, "Intelligent
               AI Delegation", 2026, <https://arxiv.org/abs/2602.11865>.
@@ -3240,15 +3259,6 @@ Internet-Draft          Attenuating Agent Tokens               June 2026
               Identity in a Multi System Environment (WIMSE)
               Architecture", March 2026,
               <https://datatracker.ietf.org/doc/draft-ietf-wimse-arch/>.
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 58]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
    [WIMSE-S2S]
               Campbell, B., Salowey, J.A., Schwenkschuster, A., and Y.
@@ -3286,25 +3296,20 @@ A.1.  Token Exchange (RFC 8693)
    connectivity to the authorization server at each delegation hop and
    cannot be performed offline.
 
+
+
+
+
+
+Niyikiza                Expires 10 December 2026               [Page 59]
+
+Internet-Draft          Attenuating Agent Tokens               June 2026
+
+
    This specification allows a token holder to derive a new token
    locally, without contacting the authorization server.  The
    attenuation invariant is enforced by the chain verification
    algorithm, not by a server-side policy check.
-
-
-
-
-
-
-
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 59]
-
-Internet-Draft          Attenuating Agent Tokens               June 2026
-
 
 A.2.  Rich Authorization Requests (RFC 9396)
 
@@ -3349,18 +3354,17 @@ A.3.  DPoP (RFC 9449)
    and a URI alone carries insufficient information for argument-level
    constraint evaluation.  This is why aat_tool and hta differ
    structurally from htm and htu: (1) hta carries the full argument map
-   required for constraint evaluation at the enforcement point; (2)
-   aat_id binds the proof to a specific leaf token jti and chain
-   position, which DPoP does not define.
 
 
 
-
-
-Niyikiza                 Expires 8 December 2026               [Page 60]
+Niyikiza                Expires 10 December 2026               [Page 60]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
+
+   required for constraint evaluation at the enforcement point; (2)
+   aat_id binds the proof to a specific leaf token jti and chain
+   position, which DPoP does not define.
 
    The cryptographic mechanism is the same: an asymmetric key in
    cnf.jwk, compact JWT serialization, verified against the leaf token's
@@ -3409,11 +3413,7 @@ B.1.  Algorithm Recommendations
 
 
 
-
-
-
-
-Niyikiza                 Expires 8 December 2026               [Page 61]
+Niyikiza                Expires 10 December 2026               [Page 61]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -3456,11 +3456,12 @@ B.4.  Delegation Depth Guidance
    deployment actually needs, not an arbitrary conservative default.
 
    Regardless of the implementation ceiling, issuers should set
-   del_max_depth in individual tokens to the minimum depth the specific
-   workflow requires.  A grant with a lower del_max_depth than the
-   implementation ceiling is always permitted and limits blast radius if
-   a token is misused.  The security value comes from tight per-chain
-   policy, not from a low implementation ceiling.
+   del_max_depth to the depth required by the expected workflow, with
+   margin for subprocess delegation, operational handoffs, and holder-
+   key handoff.  Lower values reduce the number of offline delegation
+   steps under a grant, but overly tight values can suppress attenuation
+   and encourage broader token reuse.  The security value comes from
+   deliberate per-chain policy, not from an arbitrarily low ceiling.
 
 
 
@@ -3468,8 +3469,7 @@ B.4.  Delegation Depth Guidance
 
 
 
-
-Niyikiza                 Expires 8 December 2026               [Page 62]
+Niyikiza                Expires 10 December 2026               [Page 62]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -3525,7 +3525,7 @@ B.5.  Implementation Size Limits
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 63]
+Niyikiza                Expires 10 December 2026               [Page 63]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -3581,7 +3581,7 @@ Appendix C.  Policy Languages with Decidable Containment (Non-Normative)
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 64]
+Niyikiza                Expires 10 December 2026               [Page 64]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -3637,7 +3637,7 @@ E.1.  Reference Implementation
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 65]
+Niyikiza                Expires 10 December 2026               [Page 65]
 
 Internet-Draft          Attenuating Agent Tokens               June 2026
 
@@ -3693,4 +3693,4 @@ Author's Address
 
 
 
-Niyikiza                 Expires 8 December 2026               [Page 66]
+Niyikiza                Expires 10 December 2026               [Page 66]

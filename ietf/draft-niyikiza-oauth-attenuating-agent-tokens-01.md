@@ -37,6 +37,7 @@ informative:
   RFC8392:   # CBOR Web Token (CWT)
   RFC8693:   # OAuth 2.0 Token Exchange
   RFC9052:   # CBOR Object Signing and Encryption (COSE)
+  RFC9334:   # Remote ATtestation procedureS (RATS) Architecture
   RFC9449:   # DPoP
   OAUTH-TXN-TOKENS:
     title: "Transaction Tokens"
@@ -213,10 +214,22 @@ cryptographically constrains a receiving agent to specific tools and
 argument values for a specific task.
 
 Without such attenuation, a token broad enough to support a multi-step
-workflow may expose more authority than an intermediate agent needs for
+workflow can carry more authority than an intermediate agent needs for
 its current step. Prompt injection, model hallucination, or compromise
-of that agent can exploit this excess authority. This is the confused
-deputy problem {{HARDY88}} applied to agentic delegation.
+can then exercise that excess authority. Attenuation limits this exposure
+by letting each delegation step pass onward only the authority needed for
+the next step.
+
+A distinct problem is the confused deputy {{HARDY88}}: a deputy that
+combines a caller-supplied resource designation with the deputy's own
+standing authority can be induced to perform an action the caller could
+not perform directly. Capability systems address this by carrying
+designation and authority together in an unforgeable artifact. AATs apply
+that pattern to agentic delegation: the invoker can derive a token whose
+tool and argument constraints designate the task's resource and
+authority, and the agent acts under that received token rather than under
+ambient authority of its own. Section 8 describes the resulting
+guarantees and limits.
 
 WIMSE {{WIMSE-ARCH}} provides mechanisms for establishing workload
 identity and propagating it across service boundaries. OAuth 2.0
@@ -1068,12 +1081,13 @@ for the grant. Intermediate token holders can only lower
 `del_max_depth`, never raise it (I2), so the root issuer's depth bound is
 enforced by chain verification across the entire chain.
 
-Issuers SHOULD set `del_max_depth` high enough to permit expected
-subprocess delegation, operational handoffs, and key rotation. Values
-that are too low can prevent downstream holders from representing
-legitimate attenuation steps within the chain. Such deployments SHOULD
-request a new root token with a larger `del_max_depth` rather than
-bypassing attenuation.
+Issuers SHOULD set `del_max_depth` to accommodate the expected
+delegation topology, including subprocess delegation, operational
+handoffs, and holder-key handoff. A value that is too low can prevent
+downstream holders from expressing legitimate attenuation, increasing
+pressure to reuse broader tokens directly. Once a chain reaches
+`del_max_depth`, no descendant can extend it further; this specification
+defines no in-chain mechanism for increasing that ceiling.
 
 MAX_DELEGATION_DEPTH is an implementation-defined finite integer
 specifying the maximum permitted delegation chain depth. Implementations
@@ -1480,7 +1494,7 @@ narrowed (the tool set is identical, all constraints are unchanged,
 valid by the invariants. Such a child has the same capability and
 lifetime authority as its parent while consuming one delegation depth. It
 does not improve least privilege, but deployments may use it for
-holder-key handoff, subprocess delegation, or ephemeral key rotation.
+holder-key handoff or subprocess delegation.
 Enforcement points MAY log same-scope derivations as anomalous according
 to deployment policy.
 
@@ -1776,12 +1790,23 @@ accept. An agent that hallucinates an argument value outside the
 authorized range is denied at the enforcement point before the tool
 executes.
 
-**Confused deputy attacks.** AATs reduce confused deputy risk by
-replacing ambient authority with explicit, task-scoped capability tokens.
-When a token holder derives a narrowed token before delegating to another
-agent, the receiving agent cannot invoke tools or argument values outside
-that narrower scope, even though the delegating holder may hold broader
-authority.
+**Confused deputy attacks.** In the classic form, a deputy is induced to
+use its own authority on a resource designated by another party. In
+agentic systems, that designation can come from an invoking principal,
+prompt injection, tool output, or model error. AATs avoid relying on the
+standing authority the classic form exploits: an agent acts under a token
+presented for the current invocation. When the invoker derives that token
+to designate the task's resource, designation and authority travel
+together, and the agent cannot be steered outside the authority carried
+by the token. A token authorizing more than one resource can still be
+steered within its scope, so issuers SHOULD scope leaf tokens as narrowly
+as the task permits. The delegation chain verifies provenance and
+attenuation, and the enforcement point checks the presented invocation
+against the leaf token's constraints. How a constraint value maps to the
+resource the tool ultimately acts upon is defined by the tool contract
+and implemented by the tool: the protocol authorizes the presented
+invocation, and the tool remains responsible for resolving that
+invocation to the correct resource.
 
 **Privilege escalation across delegation hops.** The capability
 monotonicity invariant (I4) ensures that authority can only narrow at
@@ -1887,11 +1912,20 @@ Appendix E for implementation status.
 
 A compromised trust anchor key allows an attacker to issue arbitrary
 root tokens. This breaks the security guarantees of all chains anchored
-to that key. Deployments SHOULD implement key rotation procedures and
-revocation mechanisms appropriate to their risk model. The specific
-mechanism for root key revocation, including revocation list formats,
-distribution protocols, and enforcement point update procedures, is
-outside the scope of this specification.
+to that key.
+
+In the base chain verification algorithm, configured trust anchors are
+used to verify root tokens. Establishing, rotating, or revoking those
+trust anchors is outside the scope of this specification. Remote
+attestation mechanisms, such as the RATS architecture {{RFC9334}}, can
+complement AAT deployments by providing evidence about root issuer or
+enforcement point environments.
+
+Deployments SHOULD implement key rotation procedures and revocation
+mechanisms appropriate to their risk model. The specific mechanism for
+root key revocation, including revocation list formats, distribution
+protocols, and enforcement point update procedures, is outside the scope
+of this specification.
 
 ## Holder Key Compromise
 
@@ -2094,15 +2128,17 @@ that PoP requires.
 
 ## Token Content Visibility
 
-AAT payloads are integrity-protected but not encrypted. Token
-contents, including tool identifiers, argument constraints, and
-delegation chain structure, are visible to any party that observes
-the token in transit or at rest. Deployments SHOULD transmit AAT
-chains over encrypted transport (e.g., TLS) and SHOULD protect stored
-tokens as sensitive authorization metadata. A stored AAT is not usable
-without the corresponding holder private key, but it can disclose
-authorization scope and delegation structure. Token encryption is outside
-the scope of this specification.
+AAT payloads are integrity-protected but not encrypted. In cross-domain
+deployments, an AAT chain can reveal delegation topology, task context,
+tool identifiers, argument constraints, and holder-key correlation
+information. Deployments SHOULD minimize disclosure of AAT chains to
+parties that do not perform chain verification or invocation
+authorization. Deployments SHOULD transmit AAT chains over encrypted
+transport (e.g., TLS) and SHOULD protect stored tokens as sensitive
+authorization metadata. A stored AAT is not usable without the
+corresponding holder private key, but it can disclose authorization
+scope and delegation structure. Token encryption is outside the scope of
+this specification.
 
 # IANA Considerations
 
@@ -2283,6 +2319,13 @@ OAuth Token Type Registry ({{RFC6749}} Section 11.1):
 This document makes no request to the OAuth Parameters Registry. Root
 token issuance uses the existing `req_cnf` token request parameter.
 
+# Acknowledgments
+
+The author thanks Alan Karp for detailed review and discussion of
+capability-system semantics, confused deputy framing, delegation depth,
+revocation, and the relationship between AATs and prior capability
+systems.
+
 --- back
 
 # Comparison with Related Authorization Mechanisms (Non-Normative)
@@ -2427,11 +2470,12 @@ the maximum depth the deployment actually needs, not an arbitrary
 conservative default.
 
 Regardless of the implementation ceiling, issuers should set
-`del_max_depth` in individual tokens to the minimum depth the specific
-workflow requires. A grant with a lower `del_max_depth` than the
-implementation ceiling is always permitted and limits blast radius if a
-token is misused. The security value comes from tight per-chain policy,
-not from a low implementation ceiling.
+`del_max_depth` to the depth required by the expected workflow, with
+margin for subprocess delegation, operational handoffs, and holder-key
+handoff. Lower values reduce the number of offline delegation steps under
+a grant, but overly tight values can suppress attenuation and encourage
+broader token reuse. The security value comes from deliberate per-chain
+policy, not from an arbitrarily low ceiling.
 
 ## Implementation Size Limits
 
