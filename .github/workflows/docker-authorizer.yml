@@ -13,6 +13,9 @@ on:
     branches: [main]
     paths:
       - 'tenuo-core/src/bin/authorizer.rs'
+      - 'tenuo-core/src/approval_gate.rs'
+      - 'tenuo-core/src/planes.rs'
+      - 'tenuo-core/src/warrant.rs'
       - 'tenuo-core/src/heartbeat.rs'
       - 'tenuo-core/deploy/docker/Dockerfile.authorizer'
 

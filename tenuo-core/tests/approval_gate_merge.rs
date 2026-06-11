@@ -1,9 +1,7 @@
 //! Integration tests for approval gate merge semantics.
 //!
-//! Approval gates are strictly monotonic: children can only add gates, never remove them.
-//! When a child sets approval gates during attenuation or issuance, the result is the union
-//! of inherited parent gates and the explicitly added gates, scoped to the child's
-//! tool set.
+//! Approval gates are monotonic for tools the child retains: inherited gates must
+//! not be weakened. When a child drops a gated tool entirely, the gate may drop too.
 
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
@@ -871,4 +869,51 @@ fn test_exempt_gate_inherited_by_second_attenuation() {
         ),
         "Exempt gate must survive second attenuation hop"
     );
+}
+
+#[test]
+fn test_subagent_attenuation_drops_gated_tool_and_gate() {
+    // Session has web_fetch + approval gate; researcher subagent keeps read/search only.
+    use tenuo::planes::Authorizer;
+    use tenuo::APPROVAL_GATE_EXTENSION_KEY;
+
+    let root_kp = SigningKey::generate();
+    let holder_kp = SigningKey::generate();
+
+    let mut parent_gates = ApprovalGateMap::new();
+    parent_gates.insert("web_fetch".into(), ToolApprovalGate::whole_tool());
+    let gate_bytes = encode_approval_gate_map(&parent_gates).unwrap();
+
+    let parent = Warrant::builder()
+        .capability("read_file", ConstraintSet::new())
+        .capability("grep", ConstraintSet::new())
+        .capability("glob", ConstraintSet::new())
+        .capability("web_fetch", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .holder(holder_kp.public_key())
+        .extension(APPROVAL_GATE_EXTENSION_KEY, gate_bytes)
+        .build(&root_kp)
+        .unwrap();
+
+    let mut attn = OwnedAttenuationBuilder::new(parent.clone());
+    attn.inherit_all();
+    attn.retain_capabilities(&[
+        "read_file".to_string(),
+        "grep".to_string(),
+        "glob".to_string(),
+    ]);
+    attn.set_holder(holder_kp.public_key());
+    let child = attn.build(&holder_kp).expect("researcher subwarrant should build");
+
+    assert!(
+        parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))
+            .unwrap()
+            .is_none(),
+        "child without web_fetch should carry no approval gate extension"
+    );
+
+    let authorizer = Authorizer::new().with_trusted_root(root_kp.public_key());
+    authorizer
+        .verify_chain(&[parent, child])
+        .expect("parent->researcher chain should verify");
 }

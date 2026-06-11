@@ -487,7 +487,7 @@ fn take_stricter_approval_gate(a: &ToolApprovalGate, b: &ToolApprovalGate) -> To
 /// Errors specific to approval gate monotonicity violations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ApprovalGateError {
-    /// Parent had approval gates but child stripped them entirely.
+    /// Parent had approval gates but child stripped them while still holding a gated tool.
     GatesStripped,
     /// A specific tool's gate was removed in the child.
     ToolApprovalGateRemoved(String),
@@ -558,7 +558,17 @@ pub(crate) fn verify_approval_gate_monotonicity(
     };
 
     let child_gates = match child_gates {
-        None => return Err(ApprovalGateError::GatesStripped),
+        None => {
+            // Dropping the extension is safe when the child no longer holds any of
+            // the parent's gated tools (capability + gate removed together).
+            if parent_gates
+                .iter()
+                .any(|(tool, _)| child_tools.contains_key(tool))
+            {
+                return Err(ApprovalGateError::GatesStripped);
+            }
+            return Ok(());
+        }
         Some(g) => g,
     };
 
@@ -924,6 +934,21 @@ mod tests {
         assert_eq!(
             verify_approval_gate_monotonicity(Some(&parent), None, &child_tools),
             Err(ApprovalGateError::GatesStripped)
+        );
+    }
+
+    #[test]
+    fn test_monotonicity_gates_dropped_when_gated_tools_removed_ok() {
+        let mut parent = ApprovalGateMap::new();
+        parent.insert("web_fetch".into(), ToolApprovalGate::whole_tool());
+
+        let mut child_tools = BTreeMap::new();
+        child_tools.insert("read_file".into(), crate::constraints::ConstraintSet::new());
+        child_tools.insert("grep".into(), crate::constraints::ConstraintSet::new());
+
+        assert!(
+            verify_approval_gate_monotonicity(Some(&parent), None, &child_tools).is_ok(),
+            "subagent without web_fetch may drop the parent's web_fetch gate"
         );
     }
 
