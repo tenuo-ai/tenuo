@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Approval gate monotonicity when attenuating to subagents without gated tools.**
+  A child warrant that drops a parent's gated capability (e.g. session has
+  `web_fetch` + approval gate, researcher subagent has only `read_file`) may now
+  drop the gate extension too. Previously this was rejected as
+  `GatesStripped` even though the bypass was impossible.
+
 ## [0.1.0-beta.23] - 2026-04-24
 
 ### Fixed
