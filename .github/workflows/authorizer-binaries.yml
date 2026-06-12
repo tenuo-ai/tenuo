@@ -77,6 +77,9 @@ jobs:
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           workspaces: tenuo-core
+          # Isolate from main CI cache (different features/profile); shared linux x86_64
+          # cache otherwise restores incomplete artifacts and breaks release builds.
+          shared-key: authorizer-${{ matrix.triple }}
 
       - name: Install mold linker (Linux)
         if: runner.os == 'Linux'

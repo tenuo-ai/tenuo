@@ -903,7 +903,9 @@ fn test_subagent_attenuation_drops_gated_tool_and_gate() {
         "glob".to_string(),
     ]);
     attn.set_holder(holder_kp.public_key());
-    let child = attn.build(&holder_kp).expect("researcher subwarrant should build");
+    let child = attn
+        .build(&holder_kp)
+        .expect("researcher subwarrant should build");
 
     assert!(
         parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))

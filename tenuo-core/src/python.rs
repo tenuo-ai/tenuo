@@ -2292,58 +2292,58 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<Py<PyAn
 /// retrieved from dicts (e.g. approval gate `{"exempt": OneOf([...])}`) convert
 /// reliably under PyO3 0.24 with the abi3 extension module.
 fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
-    if let Ok(b) = obj.downcast::<PyPattern>() {
+    if let Ok(b) = obj.cast::<PyPattern>() {
         return Ok(Constraint::Pattern(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyExact>() {
+    if let Ok(b) = obj.cast::<PyExact>() {
         return Ok(Constraint::Exact(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyOneOf>() {
+    if let Ok(b) = obj.cast::<PyOneOf>() {
         return Ok(Constraint::OneOf(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyNotOneOf>() {
+    if let Ok(b) = obj.cast::<PyNotOneOf>() {
         return Ok(Constraint::NotOneOf(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyRange>() {
+    if let Ok(b) = obj.cast::<PyRange>() {
         return Ok(Constraint::Range(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyCidr>() {
+    if let Ok(b) = obj.cast::<PyCidr>() {
         return Ok(Constraint::Cidr(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyUrlPattern>() {
+    if let Ok(b) = obj.cast::<PyUrlPattern>() {
         return Ok(Constraint::UrlPattern(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyContains>() {
+    if let Ok(b) = obj.cast::<PyContains>() {
         return Ok(Constraint::Contains(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PySubset>() {
+    if let Ok(b) = obj.cast::<PySubset>() {
         return Ok(Constraint::Subset(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyAll>() {
+    if let Ok(b) = obj.cast::<PyAll>() {
         return Ok(Constraint::All(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyAnyOf>() {
+    if let Ok(b) = obj.cast::<PyAnyOf>() {
         return Ok(Constraint::Any(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyNot>() {
+    if let Ok(b) = obj.cast::<PyNot>() {
         return Ok(Constraint::Not(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyCel>() {
+    if let Ok(b) = obj.cast::<PyCel>() {
         return Ok(Constraint::Cel(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyRegex>() {
+    if let Ok(b) = obj.cast::<PyRegex>() {
         return Ok(Constraint::Regex(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyWildcard>() {
+    if let Ok(b) = obj.cast::<PyWildcard>() {
         return Ok(Constraint::Wildcard(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PySubpath>() {
+    if let Ok(b) = obj.cast::<PySubpath>() {
         return Ok(Constraint::Subpath(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyUrlSafe>() {
+    if let Ok(b) = obj.cast::<PyUrlSafe>() {
         return Ok(Constraint::UrlSafe(b.borrow().inner.clone()));
     }
-    if let Ok(b) = obj.downcast::<PyShlex>() {
+    if let Ok(b) = obj.cast::<PyShlex>() {
         return Ok(Constraint::Shlex(b.borrow().inner.clone()));
     }
     Err(py_validation_err(
@@ -2472,7 +2472,7 @@ fn py_to_arg_approval_gate(
     }
 
     // {"exempt": <constraint>} form — plain Python dict with a single "exempt" key.
-    if let Ok(d) = av.downcast::<PyDict>() {
+    if let Ok(d) = av.cast::<PyDict>() {
         if d.len() != 1 {
             return Err(py_validation_err(format!(
                 "arg gate '{}': approval gate dict must have exactly one key ('exempt')",
@@ -2526,7 +2526,7 @@ fn py_dict_to_approval_gate_map(
         let tool: String = key.extract()?;
         if value.is_none() {
             gm.insert(tool, ToolApprovalGate::whole_tool());
-        } else if let Ok(args_dict) = value.downcast::<PyDict>() {
+        } else if let Ok(args_dict) = value.cast::<PyDict>() {
             let mut args = std::collections::BTreeMap::new();
             for (ak, av) in args_dict.iter() {
                 let arg_name: String = ak.extract()?;
@@ -3528,7 +3528,7 @@ impl PyIssuanceBuilder {
 
     /// Set required approvers.
     fn with_required_approvers(&mut self, approvers: &Bound<'_, PyAny>) -> PyResult<()> {
-        let py_list = approvers.downcast::<pyo3::types::PyList>()?;
+        let py_list = approvers.cast::<pyo3::types::PyList>()?;
         let mut rust_approvers = Vec::new();
         for item in py_list.iter() {
             let pk: PyPublicKey = item.extract()?;
@@ -3692,7 +3692,7 @@ impl PyWarrant {
                 let tool_name: String = tool_key.extract()?;
 
                 let constraints_dict: &Bound<'_, PyDict> = constraints_val
-                    .downcast()
+                    .cast()
                     .map_err(|_| py_validation_err("capabilities values must be dicts"))?;
 
                 let constraint_set = py_dict_to_constraint_set(constraints_dict)?;
@@ -4028,7 +4028,7 @@ impl PyWarrant {
             let tool_name: String = tool_key.extract()?;
 
             let constraints_dict: &Bound<'_, PyDict> = constraints_val
-                .downcast()
+                .cast()
                 .map_err(|_| py_validation_err("capabilities values must be dicts"))?;
 
             let constraint_set = py_dict_to_constraint_set(constraints_dict)?;
@@ -5619,7 +5619,7 @@ impl PyAuthorizer {
         let mut warrants = Vec::with_capacity(len);
         for i in 0..len {
             let item = chain.get_item(i)?;
-            let warrant_bound = item.downcast::<PyWarrant>()?;
+            let warrant_bound = item.cast::<PyWarrant>()?;
             let warrant = warrant_bound.borrow();
             warrants.push(warrant.inner.clone());
         }
@@ -5659,7 +5659,7 @@ impl PyAuthorizer {
         let mut warrants = Vec::with_capacity(len);
         for i in 0..len {
             let item = chain.get_item(i)?;
-            let warrant_bound = item.downcast::<PyWarrant>()?;
+            let warrant_bound = item.cast::<PyWarrant>()?;
             let warrant = warrant_bound.borrow();
             warrants.push(warrant.inner.clone());
         }
@@ -5790,7 +5790,7 @@ impl PyAuthorizer {
         let mut warrants = Vec::with_capacity(len);
         for i in 0..len {
             let item = chain.get_item(i)?;
-            let warrant_bound = item.downcast::<PyWarrant>()?;
+            let warrant_bound = item.cast::<PyWarrant>()?;
             let warrant = warrant_bound.borrow();
             warrants.push(warrant.inner.clone());
         }
