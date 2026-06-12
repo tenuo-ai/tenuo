@@ -182,6 +182,8 @@ jobs:
       - name: Upload binaries and checksums to GitHub release
         shell: bash
         run: |
-          gh release upload "${{ steps.meta.outputs.tag }}" dist/tenuo-authorizer-* dist/SHA256SUMS --clobber
+          gh release upload "${{ steps.meta.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            dist/tenuo-authorizer-* dist/SHA256SUMS --clobber
         env:
           GH_TOKEN: ${{ github.token }}
