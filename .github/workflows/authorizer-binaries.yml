@@ -175,8 +175,6 @@ jobs:
             exit 1
           fi
           sha256sum "${files[@]}" | tee SHA256SUMS
-          echo "checksum_count=${#files[@]}" >> "$GITHUB_OUTPUT"
-        id: sums
 
       - name: Upload binaries and checksums to GitHub release
         shell: bash
