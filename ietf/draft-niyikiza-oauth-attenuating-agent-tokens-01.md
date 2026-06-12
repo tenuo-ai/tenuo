@@ -8,6 +8,7 @@ submissiontype: IETF
 ipr: trust200902
 area: Security
 workgroup: Web Authorization Protocol (OAuth)
+date: 2026-06-12
 
 author:
   - fullname: Niki Aimable Niyikiza
@@ -178,6 +179,8 @@ informative:
       "TACAS 2008, LNCS": "4963"
     target: https://github.com/Z3Prover/z3
 ---
+
+--- abstract
 
 This document defines Attenuating Authorization Tokens (AATs), a signed
 credential format for task-scoped delegation in AI agent systems. An AAT
@@ -2126,7 +2129,7 @@ Symmetric algorithms (HS256, HS384, HS512) MUST NOT be used for AAT
 signatures; symmetric keys cannot provide the per-holder key binding
 that PoP requires.
 
-## Token Content Visibility
+# Privacy Considerations
 
 AAT payloads are integrity-protected but not encrypted. In cross-domain
 deployments, an AAT chain can reveal delegation topology, task context,
