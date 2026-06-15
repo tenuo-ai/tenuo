@@ -146,10 +146,10 @@ description: External writing, talks, and coverage about Tenuo
 
   <div class="wild-card">
     <span class="wild-badge wild-badge--standards">Standards</span>
-    <div class="wild-title"><a href="https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/">draft-niyikiza-oauth-attenuating-agent-tokens-00</a></div>
+    <div class="wild-title"><a href="https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/01/">draft-niyikiza-oauth-attenuating-agent-tokens-01</a></div>
     <div class="wild-attribution">IETF OAuth Working Group</div>
     <p class="wild-description">Individual Internet-Draft published in the IETF OAuth Working Group defining Attenuating Authorization Tokens for agentic delegation chains. Tenuo is the canonical reference implementation.</p>
-    <a class="wild-link" href="https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/">View on IETF Datatracker →</a>
+    <a class="wild-link" href="https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/01/">View on IETF Datatracker →</a>
   </div>
 
   <div class="wild-card">

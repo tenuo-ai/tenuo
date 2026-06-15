@@ -239,7 +239,7 @@ Traditional enterprise IAM and cloud identity services handle workload identity 
 
 ### Standards connection
 
-The delegation and attenuation semantics are being standardized as [draft-niyikiza-oauth-attenuating-agent-tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/) in the IETF OAuth Working Group.
+The delegation and attenuation semantics are being standardized as [draft-niyikiza-oauth-attenuating-agent-tokens-01](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/01/) in the IETF OAuth Working Group.
 
 ### Complementary controls
 
@@ -494,7 +494,7 @@ Per-layer controls target specific failure modes; authorization at tool dispatch
 - [Quickstart](https://tenuo.ai/quickstart)
 - [Demo notebook (Colab)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
 - [Unprompted 2025 talk on cryptographic authorization for AI agents](https://www.youtube.com/watch?v=bw928cFShK4)
-- [draft-niyikiza-oauth-attenuating-agent-tokens](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/), delegation and attenuation semantics in the IETF OAuth Working Group.
+- [draft-niyikiza-oauth-attenuating-agent-tokens-01](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/01/), delegation and attenuation semantics in the IETF OAuth Working Group.
 - [Tenuo security model](https://tenuo.ai/security), threat model, cryptographic guarantees, and invariants.
 - [Constraint reference](https://tenuo.ai/constraints), constraint types with semantics and examples.
 - [Claude Code CVE-2025-66032: Why Allowlists Aren't Enough](https://niyikiza.com/posts/cve-2025-66032/), parser differentials and command execution.

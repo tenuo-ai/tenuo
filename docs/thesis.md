@@ -349,7 +349,7 @@ Regulatory and industry guidance increasingly requires auditable, attributable a
 
 Tenuo is designed as a standards-aligned extension to existing OAuth ecosystems, not a replacement for identity infrastructure. Authentication and session establishment remain with IdPs, OAuth servers, and workload identity systems. The missing layer is delegation-safe, execution-time authorization across multi-agent chains.
 
-That direction is informed by the IETF Internet-Draft **Attenuating Authorization Tokens for Agentic Delegation Chains** ([draft-niyikiza-oauth-attenuating-agent-tokens-00](https://www.ietf.org/archive/id/draft-niyikiza-oauth-attenuating-agent-tokens-00.txt)). The draft defines OAuth-compatible attenuation semantics for multi-hop delegation. Tenuo's implementation aligns with these principles, but it is not presented as full conformance to the draft while the specification is still evolving.
+That direction is informed by the IETF Internet-Draft **Attenuating Authorization Tokens for Agentic Delegation Chains** ([draft-niyikiza-oauth-attenuating-agent-tokens-01](https://www.ietf.org/archive/id/draft-niyikiza-oauth-attenuating-agent-tokens-01.txt)). The draft defines OAuth-compatible attenuation semantics for multi-hop delegation. Tenuo's implementation aligns with these principles, but it is not presented as full conformance to the draft while the specification is still evolving.
 
 The draft is accompanied by formal verification and implementation test work focused on attenuation monotonicity and chain-validation correctness, which helps make the security claims auditable rather than purely conceptual.
 

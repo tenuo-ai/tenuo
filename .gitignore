@@ -104,3 +104,8 @@ internal/
 # PoC experiments and internal planning docs (never committed to public repo)
 poc/
 docs/plans/
+
+# IETF draft tooling scratch (xml2rfc / idnits / kramdown-rfc)
+/.cache/
+/.idnits/
+/.wget-hsts
