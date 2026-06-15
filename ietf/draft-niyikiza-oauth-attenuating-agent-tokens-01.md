@@ -8,7 +8,7 @@ submissiontype: IETF
 ipr: trust200902
 area: Security
 workgroup: Web Authorization Protocol (OAuth)
-date: 2026-06-12
+date: 2026-06-15
 
 author:
   - fullname: Niki Aimable Niyikiza
@@ -278,8 +278,8 @@ Enforcement Point
   (verifies chain offline, Section 7)
 ~~~
 
-At each derivation step, the derived token's scope is a subset of
-the parent's: scope can only narrow or stay the same, never widen. The
+At each derivation step, the derived token's authorized capabilities are a
+subset of the parent's: capability can only narrow or stay the same, never widen. The
 enforcement point verifies the complete chain using only the root
 token's trust anchor key; no network calls are required. How token
 chains are carried to enforcement points is deployment-specific; this
@@ -678,7 +678,7 @@ whose nesting depth exceeds MAX_CONSTRAINT_DEPTH.
 
 Implementations MAY define extension constraint types beyond those
 listed in Section 3.4. Extension constraint types MUST be registered in
-the IANA AAT Constraint Type Registry defined in Section 9.3. The
+the IANA AAT Constraint Type Registry defined in Section 10.3. The
 registry exists to preserve security and interoperability in the
 presence of domain-specific constraints; it is not a requirement that
 all implementations support arbitrary extensions. An enforcement point
@@ -883,7 +883,7 @@ authorization server metadata document {{RFC8414}}, if supported.
 | `aat_issuer` | Boolean. `true` if the AS can issue AAT root tokens. |
 
 This document requests registration of `aat_issuer` in the IANA OAuth
-Authorization Server Metadata registry (Section 9.4).
+Authorization Server Metadata registry (Section 10.4).
 
 ### Agent Token Request
 
@@ -962,7 +962,7 @@ The AS returns the token in a standard OAuth 2.0 token endpoint response
 }
 ~~~
 
-The `token_type` value `"aat"` is registered in Section 9.5. Clients
+The `token_type` value `"aat"` is registered in Section 10.5. Clients
 MUST NOT treat the returned token as a bearer token for use with
 arbitrary resource servers. Its only valid use is as the root of an AAT
 delegation chain presented to an enforcement point per Section 7.
@@ -1333,7 +1333,7 @@ approval context, or policy snapshot would change.
 ## I6: Proof of Possession
 
 ~~~
-pop_signature verifies under derived.cnf.jwk
+pop_signature verifies under leaf.cnf.jwk
 ~~~
 
 The presenter of a token chain MUST demonstrate control of the private
@@ -1978,7 +1978,8 @@ application level for high-value operations.
 The core constraint types are intended to have predictable evaluation
 cost. Extension constraint types can introduce parser complexity,
 algorithmic cost, normalization requirements, or external policy-engine
-dependencies. Extension constraint types registered under Section 3.5
+dependencies. Extension constraint types defined in Section 3.5 and
+registered in the IANA AAT Constraint Type Registry (Section 10.3)
 MUST document their computational complexity and any resource limits
 implementations SHOULD enforce. Enforcement points SHOULD impose
 evaluation timeouts on any extension constraint type whose `check`
@@ -2161,7 +2162,7 @@ JSON Web Token Claims Registry {{RFC7519}}.
 The `tools` map is not a top-level JWT claim; it is a member nested
 inside the `authorization_details` array entry with `type:
 "attenuating_agent_token"`, as defined in Section 3.3. Its structure and
-semantics are governed by the AAT Constraint Type Registry (Section 9.3)
+semantics are governed by the AAT Constraint Type Registry (Section 10.3)
 and the RAR profile defined in this document, not by the JWT Claims
 Registry.
 
