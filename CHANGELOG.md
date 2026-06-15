@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **IETF Draft**: Published `draft-niyikiza-oauth-attenuating-agent-tokens-01`.
+
 ## [0.1.0-beta.23] - 2026-04-24
 
 ### Fixed

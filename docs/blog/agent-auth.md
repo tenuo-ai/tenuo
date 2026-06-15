@@ -193,7 +193,7 @@ expiration. Signed at every hop, verified locally in microseconds, no callback t
 a server. You can't forge a wider warrant, you can't extend its lifetime, and a
 stolen warrant is bound to the holder's cryptographic key and expires in minutes.
 We've formalized this delegation model as an
-[Internet-Draft in the IETF OAuth Working Group](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/).
+[Internet-Draft in the IETF OAuth Working Group](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/01/).
 
 | Identity-based | Warrant-based (capability security) |
 |---|---|

@@ -7,7 +7,7 @@ layout: default
 # Attenuating Authorization Tokens (AATs)
 
 > [!NOTE]
-> This page is a **non-normative summary** for readers learning the problem space. The **Internet-Draft** is the only authoritative specification; section numbers (§) refer to [draft-niyikiza-oauth-attenuating-agent-tokens-00](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens-00/) and may change in later revisions.
+> This page is a **non-normative summary** for readers learning the problem space. The **Internet-Draft** is the only authoritative specification; section numbers (§) refer to [draft-niyikiza-oauth-attenuating-agent-tokens-01](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/01/) and may change in later revisions.
 
 [Tenuo](https://tenuo.ai) ships **warrants** today: task-scoped capability tokens with monotonic attenuation, delegation chains, and proof-of-possession at enforcement. The AAT work standardizes a closely related OAuth-shaped design for agent delegation; we track the draft and publish this summary so teams can compare terminology and properties.
 
@@ -223,4 +223,4 @@ for?
 
 ---
 
-Full text (HTML): [draft-niyikiza-oauth-attenuating-agent-tokens-00](https://www.ietf.org/archive/id/draft-niyikiza-oauth-attenuating-agent-tokens-00.html)
+Full text (HTML): [draft-niyikiza-oauth-attenuating-agent-tokens-01](https://www.ietf.org/archive/id/draft-niyikiza-oauth-attenuating-agent-tokens-01.html)
