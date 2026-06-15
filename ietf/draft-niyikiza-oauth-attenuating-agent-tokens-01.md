@@ -279,7 +279,7 @@ Enforcement Point
 ~~~
 
 At each derivation step, the derived token's authorized capabilities are a
-subset of the parent's: capability can only narrow or stay the same, never widen. The
+subset of the parent's: authority can stay the same or narrow, but never widen. The
 enforcement point verifies the complete chain using only the root
 token's trust anchor key; no network calls are required. How token
 chains are carried to enforcement points is deployment-specific; this
@@ -1774,9 +1774,8 @@ alternate interpretation.
 
 This section characterizes the threats that AATs mitigate and the
 threats that are outside the scope of this mechanism. Implementations
-SHOULD use this characterization to evaluate whether AATs are sufficient
-for their threat environment and to identify what complementary controls
-are required.
+SHOULD use this characterization to identify required
+complementary controls for their threat environment.
 
 ### Threats Mitigated
 
@@ -2028,8 +2027,7 @@ intended to enforce.
 Revocation of individual AATs, including derived tokens, is outside the
 scope of this specification. The offline delegation model trades
 per-token revocation granularity for verifiability without authorization
-server availability. This is a deliberate design choice, not an
-oversight.
+server availability. This tradeoff is inherent in the verification model.
 
 Deployments SHOULD use short token lifetimes to bound exposure after key
 compromise, token theft, or scope misconfiguration. A short-lived leaf

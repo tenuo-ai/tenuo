@@ -1701,7 +1701,7 @@ Enforcement Point
 </pre><a href="#section-1-8" class="pilcrow">¶</a>
 </div>
 <p id="section-1-9">At each derivation step, the derived token's authorized capabilities are a
-subset of the parent's: capability can only narrow or stay the same, never widen. The
+subset of the parent's: authority can stay the same or narrow, but never widen. The
 enforcement point verifies the complete chain using only the root
 token's trust anchor key; no network calls are required. How token
 chains are carried to enforcement points is deployment-specific; this
@@ -3598,9 +3598,8 @@ alternate interpretation.<a href="#section-7-6" class="pilcrow">¶</a></p>
         </h3>
 <p id="section-8.1-1">This section characterizes the threats that AATs mitigate and the
 threats that are outside the scope of this mechanism. Implementations
-<span class="bcp14">SHOULD</span> use this characterization to evaluate whether AATs are sufficient
-for their threat environment and to identify what complementary controls
-are required.<a href="#section-8.1-1" class="pilcrow">¶</a></p>
+<span class="bcp14">SHOULD</span> use this characterization to identify required
+complementary controls for their threat environment.<a href="#section-8.1-1" class="pilcrow">¶</a></p>
 <div id="threats-mitigated">
 <section id="section-8.1.1">
           <h4 id="name-threats-mitigated">
@@ -3873,8 +3872,7 @@ intended to enforce.<a href="#section-8.8-1" class="pilcrow">¶</a></p>
 <p id="section-8.9-1">Revocation of individual AATs, including derived tokens, is outside the
 scope of this specification. The offline delegation model trades
 per-token revocation granularity for verifiability without authorization
-server availability. This is a deliberate design choice, not an
-oversight.<a href="#section-8.9-1" class="pilcrow">¶</a></p>
+server availability. This tradeoff is inherent in the verification model.<a href="#section-8.9-1" class="pilcrow">¶</a></p>
 <p id="section-8.9-2">Deployments <span class="bcp14">SHOULD</span> use short token lifetimes to bound exposure after key
 compromise, token theft, or scope misconfiguration. A short-lived leaf
 token provides a bounded damage window even when no revocation mechanism
