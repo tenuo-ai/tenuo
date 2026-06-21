@@ -179,7 +179,7 @@ Based on the chosen source and detected framework, generate the integration code
 
 **Open-source example:**
 
-> **Development only** — `SigningKey.generate()` creates a fresh, untrusted key pair. In production, load `issuer_key` from secure storage and configure the verifier/authorizer to trust that issuer's public key. A warrant minted by an unregistered issuer will be rejected at verification time.
+> **Development only** — `SigningKey.generate()` creates ephemeral keys. In production, load `issuer_key` from secure storage. `trusted_roots` tells the authorizer which issuers to trust — a warrant signed by a key not in `trusted_roots` will be rejected at verification time.
 
 ```python
 from tenuo import (
@@ -191,8 +191,12 @@ from tenuo import (
 issuer_key = SigningKey.generate()
 agent_key = SigningKey.generate()
 
-# Register the issuer so the authorizer trusts warrants it signs
-configure(issuer_key=issuer_key)
+# issuer_key=  → used to sign warrants
+# trusted_roots= → tells the authorizer which issuers to accept
+configure(
+    issuer_key=issuer_key,
+    trusted_roots=[issuer_key.public_key],
+)
 
 # Mint the warrant
 warrant = (Warrant.mint_builder()
