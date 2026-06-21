@@ -150,6 +150,28 @@ Combine with Kubernetes Network Policies for complete coverage: Tenuo prevents u
 
 ---
 
+## Production Hardening
+
+### `TENUO_REQUIRE_EXTENSION=1`
+
+The tenuo Python SDK depends on a native Rust extension (`tenuo_core`) compiled for each platform. If the extension wheel is missing — for example, after a Docker image rebuild with the wrong `manylinux` tag or a missing `arm64` wheel — enforcement silently degrades: tool calls succeed unconditionally with no warrant attached and no error logged.
+
+Set `TENUO_REQUIRE_EXTENSION=1` in production to make this a hard failure at process startup instead:
+
+```bash
+# In your Dockerfile or deployment environment
+ENV TENUO_REQUIRE_EXTENSION=1
+```
+
+With this flag, if `tenuo_core` cannot be imported, the process exits immediately with a clear error message that identifies the missing wheel as the cause. Without the flag, the missing extension is logged as a warning but does not halt the process.
+
+**Verify the extension is present in your container:**
+```bash
+python -c "import tenuo_core; print('ok')"
+```
+
+---
+
 ## Security Architecture
 
 ### What's in the Rust Core (the Security Boundary)

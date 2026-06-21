@@ -387,6 +387,12 @@ configure(
 > completely disable authorization checks. Tenuo will emit warnings if this is detected,
 > but for defense-in-depth, ensure your production manifests (Helm, Terraform) strictly avoid this variable.
 
+> [!IMPORTANT]
+> **`TENUO_REQUIRE_EXTENSION=1`**: Set this in all production deployments.
+> If the native Rust extension (`tenuo_core`) is missing — for example, after a Docker image rebuild
+> that drops the wheel — warrant enforcement silently degrades to a no-op without this flag.
+> With it, the process exits at startup with a clear error instead. See [Enforcement Architecture: Production Hardening](./enforcement#production-hardening).
+
 ### Mode Comparison
 
 | Mode | Missing Warrant Behavior | Use Case |

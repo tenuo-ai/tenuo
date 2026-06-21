@@ -172,6 +172,9 @@ class SecureMCPClient:
         if not MCP_AVAILABLE:
             raise ImportError('MCP SDK not installed. Install with: uv pip install "tenuo[mcp]"')
 
+        from tenuo._extension import require_extension
+        require_extension("SecureMCPClient")
+
         if transport == "stdio" and command is None:
             raise ValueError(
                 "transport='stdio' requires 'command'. "
