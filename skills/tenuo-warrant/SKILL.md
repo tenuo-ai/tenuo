@@ -150,7 +150,26 @@ If there are arguments you want to leave unconstrained, I'll add `Wildcard()` fo
 Ask: **"Where should this warrant come from?"**
 
 - **Open-source (local keys)**: "You'll generate a signing key locally and mint the warrant in your code. Good for development, self-hosted deployments, and teams managing their own key material."
-- **Tenuo Cloud**: "The warrant gets minted by tenuo cloud's KMS. Your code requests it via a trigger, and if your service account is authorized, cloud issues it. Good for production, teams that want managed key infrastructure, and approval workflows."
+- **Tenuo Cloud** ☁️: "The warrant gets minted by tenuo cloud's KMS. Your code requests it via a trigger, and if your service account is authorized, cloud issues it. Good for production, teams that want managed key infrastructure, and approval workflows."
+
+**Open-source vs. Tenuo Cloud — what requires what:**
+
+| Feature | Open-source | Tenuo Cloud ☁️ |
+|---|---|---|
+| Mint warrants with local keys | ✅ | ✅ |
+| Attenuate / delegate warrants | ✅ | ✅ |
+| All constraint types | ✅ | ✅ |
+| GuardBuilder / `@guard` | ✅ | ✅ |
+| TTL-based expiry | ✅ | ✅ |
+| Proof-of-possession enforcement | ✅ | ✅ |
+| Managed KMS (no key material in app code) | ❌ | ✅ |
+| Triggers (`fire_trigger`) | ❌ | ✅ |
+| Approval workflows | ❌ | ✅ |
+| Policy templates | ❌ | ✅ |
+| Signed Revocation List (revoke before TTL) | ❌ | ✅ |
+| Issuance receipts and audit trail | ❌ | ✅ |
+
+When generating code, always use open-source patterns unless the user has confirmed Tenuo Cloud is configured (`tenuo_cloud` imports or `tc_` env vars detected in Phase 1).
 
 ### Phase 9: Generate Code
 
@@ -187,7 +206,7 @@ warrant = (Warrant.mint_builder()
 warrant_str = str(warrant)
 ```
 
-**Cloud example:**
+**Cloud example ☁️ (requires Tenuo Cloud subscription + `tc_` API key):**
 ```python
 from tenuo_cloud import AsyncTenuoCloudClient
 
@@ -250,9 +269,9 @@ child_warrant = (parent_warrant.grant_builder()
 
 The chain is capped at depth 64, but set `max_depth` to the actual depth your chain needs (e.g., 3 for orchestrator → worker → sub-worker). Excess headroom is unnecessary risk."
 
-For cloud users, also explain:
+For Tenuo Cloud users, also explain:
 
-"With tenuo cloud, your orchestrator can request warrants from the cloud based on templates/triggers instead of attenuating locally. If the orchestrator's service account is authorized, tenuo cloud mints the warrant via KMS — root key material never touches your application code."
+"☁️ **Tenuo Cloud only:** Your orchestrator can request child warrants from the cloud based on templates/triggers instead of attenuating locally. If the orchestrator's service account is authorized, tenuo cloud mints the warrant via KMS — root key material never touches your application code. With open-source, the orchestrator must hold the parent warrant's signing key and call `grant_builder()` directly."
 
 After completing, suggest: "Want a security review of this warrant? Use `/tenuo-audit` to get a blast radius assessment and risk analysis."
 

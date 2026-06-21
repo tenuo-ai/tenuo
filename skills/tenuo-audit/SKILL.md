@@ -50,7 +50,7 @@ Ask: **"What would you like to audit?"**
 - **a) A warrant string** — they'll paste a base64-encoded warrant for you to decode and explain
 - **b) Warrants in the codebase** — find all `mint_builder`, `grant_builder`, `GuardBuilder`, `mint()`, `grant()` calls and analyze them
 - **c) A delegation chain** — multiple warrants showing parent → child relationships
-- **d) Cloud audit trail** — connect to tenuo cloud API for issuance receipts, approval history, revocation status
+- **d) Cloud audit trail ☁️** *(Tenuo Cloud only)* — connect to tenuo cloud API for issuance receipts, approval history, revocation status
 
 ### Phase 4: Decode and Analyze
 
@@ -200,9 +200,9 @@ LOW ℹ️  Capability "read_file" not narrowed from parent to child
               Subpath("/data/reports") for tighter least-privilege
 ```
 
-### Phase 9: Cloud Audit Trail
+### Phase 9: Cloud Audit Trail ☁️ (Tenuo Cloud only)
 
-If tenuo cloud is configured (`tenuo_cloud` imports or `tc_` API keys detected):
+> This phase only applies if Tenuo Cloud is configured — look for `tenuo_cloud` imports or `tc_` env vars. Skip entirely for open-source deployments.
 
 Ask: "Want me to pull the audit trail from tenuo cloud for this warrant?"
 
@@ -234,4 +234,19 @@ After completing, suggest: "Want to create a tighter replacement warrant? Use `/
 
 **MAX_DELEGATION_DEPTH = 64**: Hard cap on delegation chain length (defined in tenuo-core). This prevents unbounded trust propagation. In practice, most chains are 2-4 hops. A `max_depth` of 64 on a warrant with a 3-hop chain is unnecessary headroom.
 
-**Signed Revocation List (SRL)**: Cloud-only feature. Warrants can be explicitly revoked before TTL expiry. SRL propagates to authorizer sidecars within ~10 seconds. For open-source deployments, TTL is the only expiration mechanism.
+**Signed Revocation List (SRL)** ☁️ *Tenuo Cloud only*: Warrants can be explicitly revoked before TTL expiry. SRL propagates to authorizer sidecars within ~10 seconds. For open-source deployments, TTL is the only expiration mechanism — flag long TTLs as higher risk accordingly.
+
+**Open-source vs. Tenuo Cloud — what to check for:**
+
+| Capability | Open-source | Tenuo Cloud ☁️ |
+|---|---|---|
+| Warrant chain verification | ✅ | ✅ |
+| Constraint analysis | ✅ | ✅ |
+| Proof-of-possession enforcement | ✅ | ✅ |
+| TTL expiry | ✅ | ✅ |
+| Revocation before TTL (SRL) | ❌ | ✅ |
+| Issuance receipts | ❌ | ✅ |
+| Approval gate history | ❌ | ✅ |
+| Policy template traceability | ❌ | ✅ |
+
+When auditing open-source deployments, TTL and PoP are the only runtime security controls. Treat any TTL > 1 hour as MEDIUM risk (no out-of-band revocation available).
