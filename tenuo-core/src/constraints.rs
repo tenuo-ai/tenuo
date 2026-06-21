@@ -857,6 +857,47 @@ pub enum ConstraintValue {
     Null,
 }
 
+impl Eq for ConstraintValue {}
+
+/// Discriminant ordering: Null < Boolean < Integer < Float < String < List < Object.
+fn constraint_value_discriminant(v: &ConstraintValue) -> u8 {
+    match v {
+        ConstraintValue::Null => 0,
+        ConstraintValue::Boolean(_) => 1,
+        ConstraintValue::Integer(_) => 2,
+        ConstraintValue::Float(_) => 3,
+        ConstraintValue::String(_) => 4,
+        ConstraintValue::List(_) => 5,
+        ConstraintValue::Object(_) => 6,
+    }
+}
+
+impl PartialOrd for ConstraintValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ConstraintValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        use ConstraintValue::*;
+
+        match (self, other) {
+            (Null, Null) => Ordering::Equal,
+            (Boolean(a), Boolean(b)) => a.cmp(b),
+            (Integer(a), Integer(b)) => a.cmp(b),
+            // NaN canonicalised to +∞ so it sorts last within Float.
+            (Float(a), Float(b)) => a.total_cmp(b),
+            (String(a), String(b)) => a.cmp(b),
+            (List(a), List(b)) => a.cmp(b),
+            (Object(a), Object(b)) => a.iter().cmp(b.iter()),
+            // Different variants: order by discriminant.
+            _ => constraint_value_discriminant(self).cmp(&constraint_value_discriminant(other)),
+        }
+    }
+}
+
 impl ConstraintValue {
     /// Get as string if this is a String variant.
     pub fn as_str(&self) -> Option<&str> {

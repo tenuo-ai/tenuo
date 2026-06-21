@@ -153,12 +153,11 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 PyTuple::new(py, [field.as_str(), reason.as_str()]),
             ),
 
-            // Syntax
-            // Python InvalidPattern(pattern, reason)
-            // Rust InvalidPattern(msg) -> We only have msg. Pass msg as pattern? Or split?
-            // Let's pass msg as pattern for now, reason empty.
+            // Python InvalidPattern(pattern, reason="") — pass full message as pattern
+            // since the Rust error carries a single combined string. The reason field
+            // defaults to empty so callers testing `exc.details["pattern"]` still work.
             crate::error::Error::InvalidPattern(m) => {
-                ("InvalidPattern", PyTuple::new(py, [m.as_str()]))
+                ("InvalidPattern", PyTuple::new(py, [m.as_str(), ""]))
             }
             crate::error::Error::InvalidRange(m) => {
                 ("InvalidRange", PyTuple::new(py, [m.as_str()]))
