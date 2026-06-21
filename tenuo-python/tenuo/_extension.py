@@ -33,6 +33,8 @@ Usage in enforcement code
             ...
 """
 
+from __future__ import annotations
+
 import logging
 import os
 
