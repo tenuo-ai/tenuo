@@ -29,8 +29,13 @@ Thank you for your interest in contributing to Tenuo! We welcome contributions f
 
 3.  Build the project:
     ```bash
-    maturin develop
+    .venv/bin/python -m maturin develop
     ```
+
+    > **Note:** Use `.venv/bin/python -m maturin develop`, not bare `maturin develop`.
+    > The bare command resolves `maturin` from your `PATH` which may target a different
+    > Python interpreter (e.g. system Python 3.9) and produce a wheel that is not
+    > installed into the project virtualenv.
 
 ## Running Tests
 
