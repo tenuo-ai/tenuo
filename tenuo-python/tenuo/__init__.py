@@ -26,6 +26,13 @@ For advanced usage, import from submodules:
 """
 
 # =============================================================================
+# Extension guard — must run before any tenuo_core import so that
+# TENUO_REQUIRE_EXTENSION=1 fails at process start, not later.
+# =============================================================================
+from tenuo._extension import EXTENSION_AVAILABLE as _EXTENSION_AVAILABLE  # noqa: F401
+
+
+# =============================================================================
 # Helpers
 # =============================================================================
 

@@ -382,6 +382,9 @@ class MCPVerifier:
                 ``NonceStore(backend=RedisNonceBackend(...))`` for distributed
                 deployments.
         """
+        from tenuo._extension import require_extension
+        require_extension("MCPVerifier")
+
         self._authorizer = authorizer
         self._config = config
         self._require_warrant = require_warrant
