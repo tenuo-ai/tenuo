@@ -889,8 +889,8 @@ AnyOf([
 > - `AnyOf([...])` - OR composite: at least one constraint must match
 > - `Any()` - Alias for `Wildcard()`: allows any value for a specific field in zero-trust mode
 
-> [!WARNING]
-> **Attenuation not supported.** `AnyOf -> AnyOf` attenuation is rejected because subset checking for disjunctions is not provably sound without full evaluation. `AnyOf` can only appear in root warrants or be attenuated from `Wildcard`. To narrow alternatives, restructure using `All` with typed constraints.
+> [!NOTE]
+> **Attenuation rule: every child branch must be covered by a parent branch.** `AnyOf -> AnyOf` attenuation is valid when the child's set of alternatives is a subset of the parent's: each child branch must be a valid attenuation of at least one parent branch. For example, `AnyOf([Subpath("/var"), Subpath("/srv")]) -> AnyOf([Subpath("/var/log")])` is valid; adding a new branch not in the parent is rejected.
 
 ---
 
@@ -905,8 +905,8 @@ from tenuo import Not, Exact
 Not(Exact("production"))
 ```
 
-> [!WARNING]
-> **Attenuation not supported.** `Not -> Not` attenuation is rejected because negation reverses the subset direction: `Not(B) ⊆ Not(A)` requires `A ⊆ B` (the inner must widen, not narrow), making safe attenuation infeasible. Use positive constraints (OneOf, Pattern) instead.
+> [!NOTE]
+> **Attenuation rule: the inner constraint direction is inverted.** `Not(child_inner)` is a valid attenuation of `Not(parent_inner)` when the **child inner is at least as permissive as the parent inner** (the opposite of the usual direction). Because `Not` flips accepted/rejected sets, a wider inner produces a narrower outer. For example, `Not(Exact("admin")) -> Not(OneOf(["admin","root"]))` is valid (child inner is wider, so the child `Not` accepts fewer values). Attempting to narrow the inner (`Not(OneOf([...])) -> Not(Exact(...))`) is rejected because it widens the outer accepted set.
 
 ---
 
@@ -1156,8 +1156,8 @@ When attenuating a warrant, child constraints must be **contained** within paren
 | `Contains()` | Contains (more required values) |
 | `Subset()` | Subset (fewer allowed values) |
 | `All()` | All (more constraints) |
-| `AnyOf()` | Not supported (use `All` or restructure) |
-| `Not()` | Not supported (use positive constraints) |
+| `AnyOf()` | AnyOf (child branches ⊆ parent branches) |
+| `Not()` | Not (child inner must be >= as permissive as parent inner; direction inverted) |
 | `CEL()` | CEL (parenthesized conjunction with parent) |
 | `Subpath()` | Subpath (narrower root), Exact (if path contained) |
 | `UrlSafe()` | UrlSafe (more restrictive), Exact (if URL is safe) |
@@ -1168,8 +1168,8 @@ When attenuating a warrant, child constraints must be **contained** within paren
 - **Exact**: Cannot change value at all
 - **Range**: If parent bound is exclusive, child cannot make it inclusive at the same value (would widen)
 - **No attenuation TO Wildcard** (from non-Wildcard parents): Would re-widen authority
-- **Not**: Attenuation not supported. Negation reverses the subset direction (`Not(B) ⊆ Not(A)` requires `A ⊆ B`, not `B ⊆ A`), making safe attenuation infeasible. Use positive constraints (OneOf, Pattern) instead.
-- **AnyOf (OR)**: Attenuation not supported. Subset checking for disjunctions requires full evaluation. Use `All` with structured constraints instead.
+- **Not**: Attenuation direction is inverted. `Not(parent_inner) -> Not(child_inner)` is valid only when the child inner is **at least as permissive** as the parent inner (i.e. `child_inner.validate_attenuation(parent_inner)` succeeds). Narrowing the inner widens the outer accepted set, which is rejected.
+- **AnyOf (OR)**: Every child branch must be covered by at least one parent branch. Adding a new branch not present in the parent is rejected as privilege escalation.
 - **CEL**: Child must be `(parent) && (extra)`. The extra predicate must be parenthesized to prevent `||` precedence bypass.
 
 ### Cross-Type Containment

@@ -123,7 +123,7 @@ fn verify_approvals_with_tolerance(
             continue;
         }
 
-        if payload.expires_at + tolerance_secs < now {
+        if payload.expires_at.saturating_add(tolerance_secs) < now {
             rejections.push(Rejection::Expired);
             continue;
         }
@@ -1212,13 +1212,32 @@ impl DataPlane {
             }
 
             let auth_result = leaf.authorize(tool, args, signature).and_then(|_| {
-                verify_approvals_with_tolerance(
-                    leaf,
-                    tool,
-                    args,
-                    approvals,
-                    chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-                )
+                // Evaluate approval gates before running multi-sig verification.
+                // If the warrant has gate configuration, only require approvals when
+                // a gate fires for this specific tool+args combination. Without this
+                // check, any call on a warrant with required_approvers would require
+                // approval even for ungated tools, contradicting the selective-gate model.
+                let gate_map = crate::approval_gate::parse_approval_gate_map(
+                    leaf.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+                )?;
+                let needs_approval = if gate_map.is_some() {
+                    crate::approval_gate::evaluate_approval_gates(gate_map.as_ref(), tool, args)?
+                } else {
+                    // No gate configuration: require approval whenever required_approvers is set.
+                    leaf.requires_multisig()
+                };
+
+                if needs_approval {
+                    verify_approvals_with_tolerance(
+                        leaf,
+                        tool,
+                        args,
+                        approvals,
+                        chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+                    )
+                } else {
+                    Ok(Vec::new())
+                }
             });
 
             match &auth_result {

@@ -2628,3 +2628,54 @@ constraint attenuation matrix.
 
 RFC Editor Note: This section will be updated or removed before
 publication.
+
+# Changes from Previous Versions
+
+## Changes from -00 to -01
+
+**Core constraint vocabulary reduced.** The `pattern` (glob), `regex`,
+`cel` (CEL expression), and `not` (logical negation) constraint types
+have been removed from the normative core constraint set. In
+draft-niyikiza-oauth-attenuating-agent-tokens-00, these types were
+specified as core types with varying subsumption rules. This revision
+moves them out of the core for the following reasons:
+
+- **`pattern` and `regex`:** Containment analysis for arbitrary glob and
+  regular expression patterns is not decidable in the general case.
+  Draft -00 prescribed conservative syntactic rules (prefix extension for
+  single-wildcard globs; structural identity for regex), but these rules
+  are difficult to specify precisely enough for independent
+  interoperability. These types are better defined as registered
+  extensions where the registration can document the precise syntactic
+  subset and sound containment procedure.
+
+- **`not` (logical negation):** Draft -00 permitted only structurally
+  identical `not` constraints to subsume each other (identity rule via
+  JCS-canonical comparison). This was an explicitly conservative choice
+  to avoid requiring implementations to evaluate negation subsumption in
+  reverse. The type is removed from the core in this revision; the
+  extension registry process allows negation semantics to be specified
+  with a precise and implementable directional subsumption procedure for
+  deployments that require it.
+
+- **`cel` (CEL expression):** Policy expression subsumption is not
+  decidable for CEL in general. Removed from core; suitable for
+  extension registration with an appropriate syntactic conjunction
+  strategy.
+
+The core constraint set in this revision is: `exact`, `range`,
+`one_of`, `not_one_of`, `contains`, `subset`, `wildcard`, `all`, `any`.
+Each type has a decidable, sound, and deterministic subsumption
+procedure defined in Section 4.5. All removed types remain usable in
+AAT deployments as registered extension types under Section 3.5.
+
+**`any` subsumption rule unchanged.** The subsumption rule for the
+`any` (logical OR) constraint type is retained from draft -00 without
+modification: every clause in the derived constraint must be subsumed
+by at least one clause in the parent constraint.
+
+**Non-normative material added.** The following non-normative sections
+are new in this revision: approval gates, clock skew guidance,
+role-based key separation, algorithm confusion considerations,
+implementation notes on middleware integration and delegation depth,
+and TTL guidance.

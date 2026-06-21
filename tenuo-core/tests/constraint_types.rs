@@ -1,14 +1,16 @@
 //! Tests for constraint types that were missing coverage.
 //!
 //! These tests ensure all 16 constraint types from protocol-spec-v1.md
-//! are properly tested in the Rust core.
+//! are properly tested in the Rust core, covering both:
+//! - `matches()` (authorization-time enforcement)
+//! - `validate_attenuation()` (delegation-time monotonicity) via Warrant chains
 
 use std::time::Duration;
 use tenuo::{
-    constraints::{Cidr, ConstraintSet, UrlPattern},
+    constraints::{Cidr, ConstraintSet, Subpath, UrlPattern, UrlSafe},
     crypto::SigningKey,
     warrant::Warrant,
-    wire, Any, Constraint, Exact, Pattern, Range,
+    wire, All, Any, Constraint, Contains, Exact, Not, NotOneOf, OneOf, Pattern, Range, Subset,
 };
 
 // =============================================================================
@@ -308,17 +310,87 @@ fn test_any_attenuation() {
         .holder(child_keypair.public_key())
         .build(&keypair);
 
-    // Note: Any constraint attenuation (removing options) may not be supported
-    // in all implementations. This test documents the current behavior.
-    // Per spec (wire-format-v1.md): "Any: child may remove clauses"
-    // If this fails, it indicates the attenuation logic doesn't support
-    // removing options from Any constraints.
-    if child_result.is_err() {
-        eprintln!(
-            "Note: Any constraint narrowing not supported: {:?}",
-            child_result.err()
-        );
-    }
+    assert!(
+        child_result.is_ok(),
+        "Any narrowing (subset of branches) must be a valid attenuation: {:?}",
+        child_result.err()
+    );
+}
+
+#[test]
+fn test_any_attenuation_identity() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let env_any = Any::new([
+        Constraint::Exact(Exact::new("dev")),
+        Constraint::Exact(Exact::new("staging")),
+    ]);
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("env", env_any.clone());
+
+    let parent = Warrant::builder()
+        .capability("deploy", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("env", env_any);
+
+    let child_result = parent
+        .attenuate()
+        .capability("deploy", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        child_result.is_ok(),
+        "Any identity pass-through must be valid: {:?}",
+        child_result.err()
+    );
+}
+
+#[test]
+fn test_any_attenuation_escalation_rejected() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert(
+        "env",
+        Any::new([Constraint::Exact(Exact::new("dev"))]),
+    );
+
+    let parent = Warrant::builder()
+        .capability("deploy", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child tries to add "prod" which parent never allowed
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert(
+        "env",
+        Any::new([
+            Constraint::Exact(Exact::new("dev")),
+            Constraint::Exact(Exact::new("prod")),
+        ]),
+    );
+
+    let child_result = parent
+        .attenuate()
+        .capability("deploy", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        child_result.is_err(),
+        "Any escalation (adding a new branch) must be rejected"
+    );
 }
 
 // =============================================================================
@@ -412,6 +484,686 @@ fn test_any_wire_roundtrip() {
     assert!(status_constraint.matches(&"pending".into()).unwrap());
     assert!(status_constraint.matches(&"approved".into()).unwrap());
     assert!(!status_constraint.matches(&"rejected".into()).unwrap());
+}
+
+// =============================================================================
+// Not Constraint Attenuation Tests (Type ID: 14)
+// =============================================================================
+
+#[test]
+fn test_not_attenuation_identity() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let inner = Not::new(Constraint::Exact(Exact::new("admin")));
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("role", inner.clone());
+
+    let parent = Warrant::builder()
+        .capability("admin_panel", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("role", inner);
+
+    let result = parent
+        .attenuate()
+        .capability("admin_panel", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_ok(),
+        "Not identity pass-through must be valid: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_not_attenuation_wider_inner_valid() {
+    // Parent: Not(Exact("admin")) — excludes only "admin"
+    // Child:  Not(OneOf(["admin","root"])) — excludes more, so child is MORE restrictive
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("role", Not::new(Constraint::Exact(Exact::new("admin"))));
+
+    let parent = Warrant::builder()
+        .capability("access", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert(
+        "role",
+        Not::new(Constraint::OneOf(OneOf::new(vec!["admin", "root"]))),
+    );
+
+    let result = parent
+        .attenuate()
+        .capability("access", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_ok(),
+        "Not(Exact) -> Not(OneOf[superset]) must be valid attenuation: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_not_attenuation_narrower_inner_rejected() {
+    // Parent: Not(OneOf(["admin","root"])) — excludes two values
+    // Child:  Not(Exact("admin")) — excludes only one, accepts more values → escalation
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert(
+        "role",
+        Not::new(Constraint::OneOf(OneOf::new(vec!["admin", "root"]))),
+    );
+
+    let parent = Warrant::builder()
+        .capability("access", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("role", Not::new(Constraint::Exact(Exact::new("admin"))));
+
+    let result = parent
+        .attenuate()
+        .capability("access", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_err(),
+        "Not(OneOf[wide]) -> Not(Exact) must be rejected (child accepts more values)"
+    );
+}
+
+// =============================================================================
+// UrlSafe Constraint Attenuation Tests (allow_ports gap)
+// =============================================================================
+
+#[test]
+fn test_urlsafe_attenuation_port_narrowing_valid() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let parent_safe = {
+        let mut u = UrlSafe::new();
+        u.allow_ports = Some(vec![443, 8443]);
+        u
+    };
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("url", parent_safe);
+
+    let parent = Warrant::builder()
+        .capability("fetch", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child narrows to only port 443
+    let child_safe = {
+        let mut u = UrlSafe::new();
+        u.allow_ports = Some(vec![443]);
+        u
+    };
+
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("url", child_safe);
+
+    let result = parent
+        .attenuate()
+        .capability("fetch", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_ok(),
+        "UrlSafe port subset must be valid attenuation: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_urlsafe_attenuation_port_escalation_rejected() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let parent_safe = {
+        let mut u = UrlSafe::new();
+        u.allow_ports = Some(vec![443]);
+        u
+    };
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("url", parent_safe);
+
+    let parent = Warrant::builder()
+        .capability("fetch", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child drops the port allowlist entirely (allows any port — widening)
+    let child_safe = UrlSafe::new();
+
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("url", child_safe);
+
+    let result = parent
+        .attenuate()
+        .capability("fetch", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_err(),
+        "Dropping allow_ports from parent must be rejected (privilege escalation)"
+    );
+}
+
+#[test]
+fn test_urlsafe_attenuation_port_new_port_rejected() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let parent_safe = {
+        let mut u = UrlSafe::new();
+        u.allow_ports = Some(vec![443]);
+        u
+    };
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("url", parent_safe);
+
+    let parent = Warrant::builder()
+        .capability("fetch", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child adds port 80 which parent never allowed
+    let child_safe = {
+        let mut u = UrlSafe::new();
+        u.allow_ports = Some(vec![443, 80]);
+        u
+    };
+
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("url", child_safe);
+
+    let result = parent
+        .attenuate()
+        .capability("fetch", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_err(),
+        "Adding a new port not in parent allow_ports must be rejected"
+    );
+}
+
+// =============================================================================
+// Subpath Case-Sensitivity Attenuation Tests
+// =============================================================================
+
+#[test]
+fn test_subpath_case_sensitive_to_insensitive_rejected() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let parent_path = Subpath::with_options("/data", true, true).unwrap();
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("path", parent_path);
+
+    let parent = Warrant::builder()
+        .capability("read_file", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child switches to case-insensitive — WIDER (accepts paths differing only by case)
+    let child_path = Subpath::with_options("/data", false, true).unwrap();
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("path", child_path);
+
+    let result = parent
+        .attenuate()
+        .capability("read_file", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_err(),
+        "case-sensitive parent -> case-insensitive child must be rejected (child accepts more paths)"
+    );
+}
+
+#[test]
+fn test_subpath_case_insensitive_to_sensitive_valid() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let parent_path = Subpath::with_options("/data", false, true).unwrap();
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("path", parent_path);
+
+    let parent = Warrant::builder()
+        .capability("read_file", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child switches to case-sensitive — NARROWER (accepts fewer paths)
+    let child_path = Subpath::with_options("/data", true, true).unwrap();
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("path", child_path);
+
+    let result = parent
+        .attenuate()
+        .capability("read_file", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_ok(),
+        "case-insensitive parent -> case-sensitive child must be valid (child is more restrictive): {:?}",
+        result.err()
+    );
+}
+
+// =============================================================================
+// NotOneOf Attenuation Tests (Type ID: 6)
+// =============================================================================
+
+#[test]
+fn test_notoneof_attenuation_adding_exclusions_valid() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    // Parent excludes only "admin"
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("role", NotOneOf::new(vec!["admin"]));
+
+    let parent = Warrant::builder()
+        .capability("action", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child excludes "admin" AND "root" — more restrictive
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("role", NotOneOf::new(vec!["admin", "root"]));
+
+    let result = parent
+        .attenuate()
+        .capability("action", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_ok(),
+        "NotOneOf adding more exclusions must be valid attenuation: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_notoneof_attenuation_removing_exclusion_rejected() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    // Parent excludes "admin" AND "root"
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("role", NotOneOf::new(vec!["admin", "root"]));
+
+    let parent = Warrant::builder()
+        .capability("action", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child only excludes "admin" — drops "root", accepting more values
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("role", NotOneOf::new(vec!["admin"]));
+
+    let result = parent
+        .attenuate()
+        .capability("action", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_err(),
+        "NotOneOf removing an exclusion must be rejected (child accepts more values)"
+    );
+}
+
+// =============================================================================
+// Contains Attenuation Tests (Type ID: 11)
+// =============================================================================
+
+#[test]
+fn test_contains_attenuation_adding_required_valid() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    // Parent requires "read" scope
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("scopes", Contains::new(["read"]));
+
+    let parent = Warrant::builder()
+        .capability("api_call", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child requires "read" AND "audit" — more restrictive
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("scopes", Contains::new(["read", "audit"]));
+
+    let result = parent
+        .attenuate()
+        .capability("api_call", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_ok(),
+        "Contains adding more required values must be valid attenuation: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_contains_attenuation_removing_required_rejected() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    // Parent requires "read" AND "audit"
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("scopes", Contains::new(["read", "audit"]));
+
+    let parent = Warrant::builder()
+        .capability("api_call", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child drops "audit" requirement — less restrictive
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("scopes", Contains::new(["read"]));
+
+    let result = parent
+        .attenuate()
+        .capability("api_call", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_err(),
+        "Contains removing a required value must be rejected"
+    );
+}
+
+// =============================================================================
+// Subset Attenuation Tests (Type ID: 12)
+// =============================================================================
+
+#[test]
+fn test_subset_attenuation_narrowing_valid() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("methods", Subset::new(["GET", "POST", "PUT"]));
+
+    let parent = Warrant::builder()
+        .capability("api_call", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child restricts to read-only
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("methods", Subset::new(["GET"]));
+
+    let result = parent
+        .attenuate()
+        .capability("api_call", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_ok(),
+        "Subset narrowing must be valid attenuation: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_subset_attenuation_adding_value_rejected() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("methods", Subset::new(["GET"]));
+
+    let parent = Warrant::builder()
+        .capability("api_call", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child adds DELETE — not in parent
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("methods", Subset::new(["GET", "DELETE"]));
+
+    let result = parent
+        .attenuate()
+        .capability("api_call", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_err(),
+        "Subset adding a value not in parent must be rejected"
+    );
+}
+
+// =============================================================================
+// All Constraint Attenuation Tests (Type ID: 12)
+// =============================================================================
+
+#[test]
+fn test_all_attenuation_adding_clause_valid() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    // Parent: All([OneOf(["read","write"])])
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert(
+        "op",
+        All::new([Constraint::OneOf(OneOf::new(vec!["read", "write"]))]),
+    );
+
+    let parent = Warrant::builder()
+        .capability("storage", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child: All([OneOf(["read","write"]), Exact("read")]) — more restrictive (AND narrows)
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert(
+        "op",
+        All::new([
+            Constraint::OneOf(OneOf::new(vec!["read", "write"])),
+            Constraint::Exact(Exact::new("read")),
+        ]),
+    );
+
+    let result = parent
+        .attenuate()
+        .capability("storage", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_ok(),
+        "All adding a clause must be valid attenuation: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_all_attenuation_dropping_clause_rejected() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    // Parent: All([OneOf(["read","write"]), Pattern("log-*")])
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert(
+        "op",
+        All::new([
+            Constraint::OneOf(OneOf::new(vec!["read", "write"])),
+            Constraint::Pattern(Pattern::new("log-*").unwrap()),
+        ]),
+    );
+
+    let parent = Warrant::builder()
+        .capability("storage", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Child drops the Pattern clause — less restrictive
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert(
+        "op",
+        All::new([Constraint::OneOf(OneOf::new(vec!["read", "write"]))]),
+    );
+
+    let result = parent
+        .attenuate()
+        .capability("storage", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_err(),
+        "All dropping a clause must be rejected (less restrictive than parent)"
+    );
+}
+
+// =============================================================================
+// Range Constraint Attenuation Tests (Type ID: 7)
+// =============================================================================
+
+#[test]
+fn test_range_attenuation_narrowing_valid() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert(
+        "size_bytes",
+        Range::new(Some(0.0), Some(10_000_000.0)).unwrap(),
+    );
+
+    let parent = Warrant::builder()
+        .capability("upload", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert(
+        "size_bytes",
+        Range::new(Some(0.0), Some(1_000_000.0)).unwrap(),
+    );
+
+    let result = parent
+        .attenuate()
+        .capability("upload", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_ok(),
+        "Range narrowing must be valid attenuation: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_range_attenuation_widening_rejected() {
+    let keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
+
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert(
+        "size_bytes",
+        Range::new(Some(0.0), Some(1_000_000.0)).unwrap(),
+    );
+
+    let parent = Warrant::builder()
+        .capability("upload", parent_constraints)
+        .ttl(Duration::from_secs(3600))
+        .holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert(
+        "size_bytes",
+        Range::new(Some(0.0), Some(10_000_000.0)).unwrap(),
+    );
+
+    let result = parent
+        .attenuate()
+        .capability("upload", child_constraints)
+        .holder(child_keypair.public_key())
+        .build(&keypair);
+
+    assert!(
+        result.is_err(),
+        "Range widening must be rejected"
+    );
 }
 
 // =============================================================================
