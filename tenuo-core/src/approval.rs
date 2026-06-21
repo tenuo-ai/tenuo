@@ -410,6 +410,12 @@ pub fn canonical_tool_args_cbor(
 /// This ensures an approval is bound to a specific (warrant, tool, args, holder) tuple.
 /// Including the holder prevents approval theft: even if an attacker intercepts an
 /// approval, they can't use it because the hash won't match their holder key.
+///
+/// Preimage encoding: CBOR array `[warrant_id, tool, args_cbor_bytes, holder_bytes]`.
+/// Using a CBOR array provides unambiguous length-framing so that no value can bleed
+/// into an adjacent field (unlike a `|`-joined string). `args_cbor_bytes` is the
+/// canonical CBOR encoding of the sorted args map, embedded as a CBOR byte string
+/// so that it is self-delimiting within the outer array.
 pub fn compute_request_hash(
     warrant_id: &str,
     tool: &str,
@@ -418,23 +424,30 @@ pub fn compute_request_hash(
 ) -> [u8; 32] {
     use sha2::{Digest, Sha256};
 
-    let mut hasher = Sha256::new();
-    hasher.update(warrant_id.as_bytes());
-    hasher.update(b"|");
-    hasher.update(tool.as_bytes());
-    hasher.update(b"|");
+    let args_cbor = canonical_tool_args_cbor(args).unwrap_or_default();
+    let holder_bytes: Vec<u8> = authorized_holder
+        .map(|h| h.to_bytes().to_vec())
+        .unwrap_or_default();
 
-    if let Some(buf) = canonical_tool_args_cbor(args) {
-        hasher.update(&buf);
-    }
+    // Encode the four fields as a CBOR 4-element array.  The args map is wrapped
+    // as a CBOR byte string so that its internal structure is opaque to the outer
+    // array encoder and the boundary is always unambiguous.
+    let tuple: (
+        ciborium::Value,
+        ciborium::Value,
+        ciborium::Value,
+        ciborium::Value,
+    ) = (
+        ciborium::Value::Text(warrant_id.to_owned()),
+        ciborium::Value::Text(tool.to_owned()),
+        ciborium::Value::Bytes(args_cbor),
+        ciborium::Value::Bytes(holder_bytes),
+    );
+    let mut preimage = Vec::new();
+    // Infallible for well-formed in-memory values; fall back to empty on error.
+    let _ = ciborium::into_writer(&tuple, &mut preimage);
 
-    // Bind to authorized holder (prevents approval theft)
-    hasher.update(b"|");
-    if let Some(holder) = authorized_holder {
-        hasher.update(holder.to_bytes());
-    }
-
-    hasher.finalize().into()
+    Sha256::digest(&preimage).into()
 }
 
 /// Build the signed preimage for an approval-context attestation (version 1).

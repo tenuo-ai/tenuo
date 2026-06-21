@@ -752,6 +752,29 @@ impl Warrant {
             // Informational
         }
 
+        // Validate multi-sig configuration consistency.
+        // min_approvals must not exceed the number of eligible approvers.
+        // A warrant claiming "3-of-1" would silently degrade to "1-of-1" during
+        // verification via the approval_threshold() cap, which violates the issuer's
+        // stated intent. Reject at validation time to surface the misconfiguration.
+        if let (Some(approvers), Some(min)) = (
+            &self.payload.required_approvers,
+            self.payload.min_approvals,
+        ) {
+            let len = approvers.len() as u32;
+            if min > len {
+                return Err(Error::Validation(format!(
+                    "min_approvals ({}) exceeds number of required_approvers ({})",
+                    min, len
+                )));
+            }
+            if min == 0 {
+                return Err(Error::Validation(
+                    "min_approvals must be at least 1 when required_approvers is set".to_string(),
+                ));
+            }
+        }
+
         Ok(())
     }
 

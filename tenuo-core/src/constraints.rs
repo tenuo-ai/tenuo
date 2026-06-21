@@ -722,6 +722,12 @@ impl Constraint {
             // All can add more constraints
             (Constraint::All(parent), Constraint::All(child)) => parent.validate_attenuation(child),
 
+            // Any: every child branch must be covered by some parent branch
+            (Constraint::Any(parent), Constraint::Any(child)) => parent.validate_attenuation(child),
+
+            // Not: direction is inverted — child inner must be at least as permissive as parent inner
+            (Constraint::Not(parent), Constraint::Not(child)) => parent.validate_attenuation(child),
+
             // CEL follows conjunction rule
             (Constraint::Cel(parent), Constraint::Cel(child)) => parent.validate_attenuation(child),
 
@@ -2397,11 +2403,12 @@ impl Subpath {
             });
         }
 
-        // Child cannot be less restrictive on case sensitivity
-        // (case-insensitive parent can narrow to case-sensitive child, but not vice versa)
-        if !self.case_sensitive && child.case_sensitive {
+        // Child cannot be less restrictive on case sensitivity.
+        // A case-sensitive parent accepts fewer values than a case-insensitive one.
+        // Allowing the child to become case-insensitive would widen acceptance.
+        if self.case_sensitive && !child.case_sensitive {
             return Err(Error::MonotonicityViolation(
-                "cannot attenuate case-insensitive to case-sensitive".to_string(),
+                "cannot attenuate case-sensitive to case-insensitive".to_string(),
             ));
         }
 
@@ -3004,6 +3011,29 @@ impl UrlSafe {
             ));
         }
 
+        // If parent has port allowlist, child must have it too (and be a subset).
+        // A child with allow_ports: None is unrestricted — it must not widen a parent
+        // that is restricted to specific ports.
+        if let Some(ref parent_ports) = self.allow_ports {
+            match &child.allow_ports {
+                None => {
+                    return Err(Error::MonotonicityViolation(
+                        "child must have port allowlist if parent does".to_string(),
+                    ));
+                }
+                Some(child_ports) => {
+                    for cp in child_ports {
+                        if !parent_ports.contains(cp) {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "child port {} not in parent port allowlist",
+                                cp
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
         // If parent has domain allowlist, child must have it too (and be subset)
         if let Some(ref parent_domains) = self.allow_domains {
             match &child.allow_domains {
@@ -3430,6 +3460,28 @@ impl Any {
         }
         Ok(false)
     }
+
+    /// Validate attenuation: child's allowed set must be a subset of parent's.
+    ///
+    /// Every child branch must be coverable by at least one parent branch.
+    /// This is the dual of `All::validate_attenuation`: `All` requires the
+    /// child to preserve (and optionally add) all parent constraints, whereas
+    /// `Any` requires the child to only retain alternatives the parent already
+    /// permits.
+    pub fn validate_attenuation(&self, child: &Any) -> Result<()> {
+        for child_c in &child.constraints {
+            let covered = self
+                .constraints
+                .iter()
+                .any(|parent_c| parent_c.validate_attenuation(child_c).is_ok());
+            if !covered {
+                return Err(Error::MonotonicityViolation(
+                    "each Any branch in child must be a valid attenuation of some Any branch in parent".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl From<Any> for Constraint {
@@ -3455,6 +3507,42 @@ impl Not {
     /// Check if the inner constraint does NOT match.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
         Ok(!self.constraint.matches(value)?)
+    }
+
+    /// Validate attenuation for `Not` constraints.
+    ///
+    /// `Not(child_inner)` is a valid attenuation of `Not(parent_inner)` when the
+    /// child's accepted set is a subset of the parent's:
+    ///
+    ///   accepted(Not(X)) = universe \ accepted(X)
+    ///
+    /// So child ⊆ parent iff:
+    ///
+    ///   (U \ accepted(child_inner)) ⊆ (U \ accepted(parent_inner))
+    ///   ⟺ accepted(parent_inner) ⊆ accepted(child_inner)
+    ///   ⟺ child_inner is a valid attenuation of parent_inner… reversed:
+    ///       parent_inner.validate_attenuation(child_inner) would check parent ⊆ child
+    ///       but we need parent ⊆ child, so we call child_inner.validate_attenuation(&parent_inner).
+    ///
+    /// In plain terms: the child inner constraint must be *looser* (accept more values)
+    /// than the parent inner, because the `Not` flips the direction.
+    ///
+    /// Examples:
+    ///   Not(Exact("admin")) → Not(Exact("admin"))           — identity, valid
+    ///   Not(Exact("admin")) → Not(OneOf(["admin","root"]))  — child inner is wider → valid
+    ///   Not(OneOf(["admin","root"])) → Not(Exact("admin"))  — child inner is narrower → invalid
+    pub fn validate_attenuation(&self, child: &Not) -> Result<()> {
+        // Direction is inverted: child_inner must be at least as permissive as parent_inner.
+        child
+            .constraint
+            .validate_attenuation(&self.constraint)
+            .map_err(|_| {
+                Error::MonotonicityViolation(
+                    "Not attenuation requires child inner constraint to be at least as permissive \
+                     as parent inner (direction is inverted for negation)"
+                        .to_string(),
+                )
+            })
     }
 }
 
@@ -6109,29 +6197,103 @@ mod tests {
     }
 
     // ========================================================================
-    // Not / Any attenuation rejection tests
+    // Not / Any attenuation tests
     // ========================================================================
 
     #[test]
-    fn test_not_attenuation_rejected() {
+    fn test_not_attenuation_identity() {
         let parent = Constraint::Not(Not::new(Constraint::Exact(Exact::new("admin"))));
         let child = Constraint::Not(Not::new(Constraint::Exact(Exact::new("admin"))));
         assert!(
-            parent.validate_attenuation(&child).is_err(),
-            "Not -> Not attenuation must be rejected (direction is unsound)"
+            parent.validate_attenuation(&child).is_ok(),
+            "Not -> Not identity must be valid"
         );
     }
 
     #[test]
-    fn test_any_attenuation_rejected() {
+    fn test_not_attenuation_wider_inner_valid() {
+        // Parent excludes only "admin"; child excludes "admin" AND "root".
+        // child accepted set ⊂ parent accepted set → valid attenuation.
+        let parent = Constraint::Not(Not::new(Constraint::Exact(Exact::new("admin"))));
+        let child = Constraint::Not(Not::new(Constraint::OneOf(OneOf::new(vec![
+            "admin", "root",
+        ]))));
+        assert!(
+            parent.validate_attenuation(&child).is_ok(),
+            "Not(Exact) -> Not(OneOf[superset]) must be valid"
+        );
+    }
+
+    #[test]
+    fn test_not_attenuation_narrower_inner_rejected() {
+        // Parent excludes "admin" AND "root"; child only excludes "admin".
+        // child accepted set ⊃ parent accepted set → privilege escalation, must reject.
+        let parent = Constraint::Not(Not::new(Constraint::OneOf(OneOf::new(vec![
+            "admin", "root",
+        ]))));
+        let child = Constraint::Not(Not::new(Constraint::Exact(Exact::new("admin"))));
+        assert!(
+            parent.validate_attenuation(&child).is_err(),
+            "Not(OneOf[wider]) -> Not(Exact) must be rejected (child accepts more values)"
+        );
+    }
+
+    #[test]
+    fn test_any_attenuation_identity() {
+        let parent = Constraint::Any(Any::new(vec![
+            Constraint::Exact(Exact::new("a")),
+            Constraint::Exact(Exact::new("b")),
+        ]));
+        let child = Constraint::Any(Any::new(vec![
+            Constraint::Exact(Exact::new("a")),
+            Constraint::Exact(Exact::new("b")),
+        ]));
+        assert!(
+            parent.validate_attenuation(&child).is_ok(),
+            "Any -> Any identity pass-through must be valid"
+        );
+    }
+
+    #[test]
+    fn test_any_attenuation_subset() {
         let parent = Constraint::Any(Any::new(vec![
             Constraint::Exact(Exact::new("a")),
             Constraint::Exact(Exact::new("b")),
         ]));
         let child = Constraint::Any(Any::new(vec![Constraint::Exact(Exact::new("a"))]));
         assert!(
+            parent.validate_attenuation(&child).is_ok(),
+            "Any -> Any with subset of branches must be valid"
+        );
+    }
+
+    #[test]
+    fn test_any_attenuation_new_branch_rejected() {
+        let parent = Constraint::Any(Any::new(vec![
+            Constraint::Exact(Exact::new("a")),
+            Constraint::Exact(Exact::new("b")),
+        ]));
+        // "c" is not in parent — this would expand permissions
+        let child = Constraint::Any(Any::new(vec![
+            Constraint::Exact(Exact::new("a")),
+            Constraint::Exact(Exact::new("c")),
+        ]));
+        assert!(
             parent.validate_attenuation(&child).is_err(),
-            "Any -> Any attenuation must be rejected (not implemented)"
+            "Any -> Any with a new branch not in parent must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_any_attenuation_superset_rejected() {
+        let parent = Constraint::Any(Any::new(vec![Constraint::Exact(Exact::new("a"))]));
+        let child = Constraint::Any(Any::new(vec![
+            Constraint::Exact(Exact::new("a")),
+            Constraint::Exact(Exact::new("b")),
+        ]));
+        assert!(
+            parent.validate_attenuation(&child).is_err(),
+            "Any -> Any with superset of branches must be rejected (privilege escalation)"
         );
     }
 }
