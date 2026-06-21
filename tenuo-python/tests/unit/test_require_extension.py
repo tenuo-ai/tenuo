@@ -10,10 +10,6 @@ These tests verify that:
   fail loudly when the extension is missing.
 """
 
-import sys
-import types
-from unittest.mock import patch
-
 import pytest
 
 
