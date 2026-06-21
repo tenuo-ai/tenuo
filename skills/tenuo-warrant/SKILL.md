@@ -43,16 +43,26 @@ Infer persona from context first — if the codebase scan, the user's language, 
 ### Phase 3: Natural Language Intake
 
 Ask the developer to describe what their agent needs to do in plain language. Encourage them to be specific about:
-- What tools/actions the agent should have
+- What tools/actions the agent needs **for this specific task** (not what it might ever need)
 - What data or systems it accesses
 - Any boundaries (file paths, URLs, environments)
 - How long it should be valid
 
 **Example prompt:** "Describe what your agent needs to be authorized to do. Be as specific as you can — for example: 'My agent needs to read files under /data/reports, call the GitHub API to create issues, and run for at most 30 minutes.'"
 
+**TTL guidance:** Always ask about task duration and push for the shortest plausible TTL. If the user gives a long TTL (> 1 hour), push back:
+
+> "You said 24 hours — that means if this warrant or key is compromised, it's valid for a full day with no revocation path (open-source) or until manually added to the SRL (cloud). Could this task complete in 15–30 minutes? A short TTL with re-issuance is safer than a long-lived credential."
+
+Default to task-duration + a small buffer (e.g., 5 minutes for a 2-minute task). Only accept long TTLs if the user explicitly understands the trade-off.
+
 ### Phase 4: Draft the Warrant
 
-Take the natural language description and produce a draft warrant spec. For each capability and constraint, explain what you chose and why using this mapping:
+Take the natural language description and produce a draft warrant spec. Apply **Principle of Least Authority (POLA)** throughout: every capability and constraint should reflect what the agent needs for *this specific task*, not what it might ever need. If a capability is mentioned but not clearly required for the stated task, challenge it:
+
+> "You listed `delete_file` — do you need that for this task, or is it something the agent might use in other contexts? It's easy to add later; it's hard to narrow once it's in use."
+
+For each capability and constraint, explain what you chose and why using this mapping:
 
 | What they said | Constraint you pick | Why this one |
 |---|---|---|
@@ -69,6 +79,8 @@ Take the natural language description and produce a draft warrant spec. For each
 | "files matching *.json" | `Pattern("*.json")` | Glob pattern matching. Supports delegation narrowing (unlike Regex). |
 | "exactly this value" | `Exact("value")` | Literal match only. Like an enum with one option. |
 | "match pattern [regex]" | `Regex("pattern")` | Regex match. **Cannot be narrowed during delegation** — prefer `Pattern` if the warrant will be delegated further. |
+| "anything except X" | `Not(Exact("X"))` or `Not(OneOf([...]))` | Negation — rejects values matching the inner constraint. Attenuation direction reverses: child's inner must be *wider* than parent's inner. |
+| "any one of these patterns / either A or B" | `AnyOf([c1, c2])` | OR composite — passes if any inner constraint matches. Useful for allowlisting multiple valid formats or values. |
 
 **Present the draft like this:**
 
@@ -143,7 +155,9 @@ If any constraints were added, explain the trust cliff:
 
 "Because you added constraints, tenuo is now in **closed-world mode** for those capabilities. This means any argument you *didn't* explicitly constrain will be **rejected by default**. This is a security feature — it prevents unexpected argument values from slipping through.
 
-If there are arguments you want to leave unconstrained, I'll add `Wildcard()` for those. You can also opt out of closed-world entirely with `_allow_unknown=True`, but that's not recommended for production."
+If there are arguments you want to leave unconstrained, I'll add `Wildcard()` for those explicitly.
+
+⚠️ **`_allow_unknown=True` disables closed-world mode entirely** — any argument value passes through unchecked, which voids the main constraint safety property. This is a security override, not a convenience flag. Treat any request to use it like a request to disable input validation globally: require an explicit justification and document it in a code comment."
 
 ### Phase 8: Choose Minting Source
 
@@ -281,7 +295,9 @@ child_warrant = (parent_warrant.grant_builder()
     .grant(agent_signing_key))
 ```
 
-The chain is capped at depth 64, but set `max_depth` to the actual depth your chain needs (e.g., 3 for orchestrator → worker → sub-worker). Excess headroom is unnecessary risk."
+The chain is capped at depth 64, but set `max_depth` to the actual depth your chain needs (e.g., 3 for orchestrator → worker → sub-worker). Excess headroom is unnecessary risk.
+
+**`terminal()` rule:** Any agent that won't spawn sub-agents should always call `.terminal()`. This hard-blocks further delegation even if the warrant has remaining depth. Ask: 'Will this agent ever delegate to another agent?' If no, always add `.terminal()`."
 
 For Tenuo Cloud users, also explain:
 
