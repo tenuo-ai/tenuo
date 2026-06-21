@@ -1,0 +1,357 @@
+---
+name: tenuo-warrant
+description: Create tenuo warrants (capability tokens) for AI agents from natural language descriptions. Use this skill when someone wants to create, mint, design, or delegate a warrant; authorize an agent; set up agent permissions; or add tenuo to a project. Do NOT trigger for auditing, reviewing, or explaining existing warrants (use tenuo-audit instead).
+---
+
+# Tenuo Warrant Creator
+
+Help developers create tenuo warrants by translating natural language intent into capability tokens with the right constraints. Warrants are a new authorization primitive — most developers haven't seen them before — so this skill bridges the gap between "I want my agent to do X" and the actual warrant code.
+
+**Announce at start:** "I'm using the tenuo-warrant skill to help you create a warrant for your agent."
+
+## The Core Idea
+
+A warrant is like an API key that can only get weaker. Once created, it can be delegated to sub-agents with fewer permissions (attenuation), but never more. Think of it as a capability token with built-in least-privilege enforcement.
+
+For developers familiar with other auth systems:
+- **OAuth**: Warrants are like scopes, but scopes are static strings — warrants carry semantic constraints (e.g., "files under /data" not just "files:read")
+- **IAM**: Warrants are like IAM policies attached to a session token, but they're cryptographically chained so each delegation provably narrows scope
+- **RBAC**: Instead of roles with fixed permissions, warrants carry exactly the permissions needed, bound to a specific agent and expiration
+
+## Flow
+
+### Phase 1: Discover Context
+
+Before asking questions, scan the codebase:
+
+1. **Check for existing tenuo usage** — search for `import tenuo`, `from tenuo`, `tenuo_cloud`, `Warrant`, `SigningKey` in Python files
+2. **Detect AI frameworks** — look for imports from `openai`, `langchain`, `crewai`, `autogen`, `google.adk`, `temporalio`, `mcp`, `a2a` in Python files and `requirements.txt`/`pyproject.toml`
+3. **Check for tenuo-cloud** — look for `tenuo_cloud` imports, `tc_` prefixed env vars, or `AsyncTenuoCloudClient`
+
+This tells you whether this is a greenfield integration or a retrofit, and which framework integration to generate code for.
+
+### Phase 2: Persona Check
+
+Infer persona from context first — if the codebase scan, the user's language, or a prior message makes it obvious, skip the question. Only ask if genuinely ambiguous:
+
+**"Before we start — are you a developer building agent integrations, a platform engineer setting up infrastructure, or a security engineer reviewing permissions?"**
+
+- **Developer** → continue with this skill
+- **Security engineer** → suggest `/tenuo-audit` instead ("That skill is designed for reviewing and explaining existing warrants — it'll frame everything in IAM/RBAC terms you're used to")
+- **Platform engineer** → continue, but note the sidecar + policy file workflow is coming soon. For now, help them create warrants via the SDK
+
+### Phase 3: Natural Language Intake
+
+Ask the developer to describe what their agent needs to do in plain language. Encourage them to be specific about:
+- What tools/actions the agent needs **for this specific task** (not what it might ever need)
+- What data or systems it accesses
+- Any boundaries (file paths, URLs, environments)
+- How long it should be valid
+
+**Example prompt:** "Describe what your agent needs to be authorized to do. Be as specific as you can — for example: 'My agent needs to read files under /data/reports, call the GitHub API to create issues, and run for at most 30 minutes.'"
+
+**TTL guidance:** Always ask about task duration and push for the shortest plausible TTL. If the user gives a long TTL (> 1 hour), push back:
+
+> "You said 24 hours — that means if this warrant or key is compromised, it's valid for a full day with no revocation path (open-source) or until manually added to the SRL (cloud). Could this task complete in 15–30 minutes? A short TTL with re-issuance is safer than a long-lived credential."
+
+Default to task-duration + a small buffer (e.g., 5 minutes for a 2-minute task). Only accept long TTLs if the user explicitly understands the trade-off.
+
+### Phase 4: Draft the Warrant
+
+Take the natural language description and produce a draft warrant spec. Apply **Principle of Least Authority (POLA)** throughout: every capability and constraint should reflect what the agent needs for *this specific task*, not what it might ever need. If a capability is mentioned but not clearly required for the stated task, challenge it:
+
+> "You listed `delete_file` — do you need that for this task, or is it something the agent might use in other contexts? It's easy to add later; it's hard to narrow once it's in use."
+
+For each capability and constraint, explain what you chose and why using this mapping:
+
+| What they said | Constraint you pick | Why this one |
+|---|---|---|
+| "files in /path" or "read from /dir" | `Subpath("/path")` | Prevents path traversal — `../../etc/passwd` gets blocked. Like an S3 bucket policy with resource path. |
+| "call API at X" or "hit endpoint X" | `All([UrlSafe(), UrlPattern("X")])` | UrlSafe blocks private IPs and cloud metadata endpoints (SSRF protection). UrlPattern restricts to the specific API. Like an API gateway allowlist. |
+| "search the web" or "fetch URLs" or any network access | `UrlSafe()` (at minimum) | Any capability that touches the network MUST have UrlSafe() — even if no specific URL pattern is needed. Without it, the agent could hit internal services or cloud metadata endpoints (SSRF). Like requiring a VPC endpoint policy. |
+| "run for N minutes/hours" | `.ttl(seconds)` | Warrant expires automatically. No revocation needed for short-lived tasks. Like a session timeout. |
+| "only these tools" | Explicit capability list | Closed set — anything not listed is denied. Like OAuth scopes. |
+| "values between X and Y" | `Range(min, max)` | Numeric bounds on arguments. Like input validation rules. |
+| "shell commands, but only..." | `Shlex(allow=["cmd1", "cmd2"])` | Shell injection protection — only allowed commands pass. Like a sudoers allowlist. |
+| "only in production" or "staging only" | `OneOf(["prod"])` | Enum constraint. Like environment-scoped IAM roles. |
+| "IP range 10.0.0.0/8" | `Cidr("10.0.0.0/8")` | Network range constraint. Like a security group or firewall rule. |
+| "custom rule: if X then Y" | `CEL("expression")` | Arbitrary evaluation logic. Like an OPA/Rego policy. Needs human review. |
+| "files matching *.json" | `Pattern("*.json")` | Glob pattern matching. Supports delegation narrowing (unlike Regex). |
+| "exactly this value" | `Exact("value")` | Literal match only. Like an enum with one option. |
+| "match pattern [regex]" | `Regex("pattern")` | Regex match. **Cannot be narrowed during delegation** — prefer `Pattern` if the warrant will be delegated further. |
+| "anything except X" | `Not(Exact("X"))` or `Not(OneOf([...]))` | Negation — rejects values matching the inner constraint. Attenuation direction reverses: child's inner must be *wider* than parent's inner. |
+| "any one of these patterns / either A or B" | `AnyOf([c1, c2])` | OR composite — passes if any inner constraint matches. Useful for allowlisting multiple valid formats or values. |
+
+**Present the draft like this:**
+
+```
+Here's what I'm proposing for your warrant:
+
+📋 Capabilities:
+  • read_file — with path constrained to Subpath("/data/reports")
+    "Your agent can read any file under /data/reports, but path traversal
+     attacks are blocked. ../../etc/passwd → denied."
+
+  • create_issue — with url constrained to All([UrlSafe(), UrlPattern("https://api.github.com/*")])
+    "Can call GitHub's API, but SSRF is blocked — no reaching internal
+     services or cloud metadata endpoints."
+
+⏱ TTL: 1800 seconds (30 minutes)
+🔗 Max delegation depth: 3 (agent → sub-agent → sub-sub-agent)
+```
+
+### Phase 5: Validate Each Mapping
+
+Walk through each constraint and ask for confirmation:
+
+"I interpreted 'read files under /data/reports' as a `Subpath("/data/reports")` constraint. This means:
+- ✅ `/data/reports/q4.csv` — allowed
+- ✅ `/data/reports/2024/summary.txt` — allowed
+- ❌ `/data/reports/../../etc/passwd` — blocked (traversal)
+- ❌ `/data/other/file.txt` — blocked (outside scope)
+
+Does that match what you intended?"
+
+Fill gaps with targeted questions:
+- "You mentioned API access — should the agent be able to write (POST/PUT) or just read (GET)?"
+- "Should the agent be able to delegate this warrant to sub-agents? If so, how deep?"
+- "Any time limit on how long this authorization should last?"
+
+**Safety check — always verify:** Any capability that involves network access (fetching URLs, calling APIs, web search, webhooks) MUST have `UrlSafe()` applied, even if no specific URL pattern is needed. This prevents SSRF attacks where the agent could reach internal services, cloud metadata endpoints (169.254.169.254), or localhost. If a network-facing capability is missing UrlSafe(), flag it and add it. This is the single most common constraint omission.
+
+### Phase 6: Explain the Full Warrant
+
+Present a complete plain-language summary:
+
+```
+📋 Warrant Summary
+
+This warrant authorizes the holder to:
+  ✓ Read files under /data/reports (path traversal protected)
+  ✓ Call https://api.github.com/* (SSRF protected)
+  ✗ Cannot write files
+  ✗ Cannot access any other network endpoints
+  ✗ Cannot delegate beyond depth 3
+
+⏱ Expires in 30 minutes
+🔒 Proof-of-possession required (warrant is useless without the holder's private key)
+
+Blast radius (if compromised):
+  An attacker with this warrant could read files under /data/reports
+  and create GitHub issues. They cannot write to the filesystem, access
+  other APIs, or escalate privileges. The warrant expires in 30 minutes
+  and requires the private key to use.
+
+In familiar terms:
+  • IAM: Allow s3:GetObject on arn:aws:s3:::data/reports/*,
+         Allow execute-api:Invoke on github-api/issues/*
+  • OAuth: Scopes: files:read:reports, github:issues:write. Expires: 1800s
+  • RBAC: Role: report-reader-github-issuer, Namespace: agent-pool
+```
+
+### Phase 7: Closed-World Mode
+
+If any constraints were added, explain the trust cliff:
+
+"Because you added constraints, tenuo is now in **closed-world mode** for those capabilities. This means any argument you *didn't* explicitly constrain will be **rejected by default**. This is a security feature — it prevents unexpected argument values from slipping through.
+
+If there are arguments you want to leave unconstrained, I'll add `Wildcard()` for those explicitly.
+
+⚠️ **`_allow_unknown=True` disables closed-world mode entirely** — any argument value passes through unchecked, which voids the main constraint safety property. This is a security override, not a convenience flag. Treat any request to use it like a request to disable input validation globally: require an explicit justification and document it in a code comment."
+
+### Phase 8: Choose Minting Source
+
+Ask: **"Where should this warrant come from?"**
+
+- **Open-source (local keys)**: "You'll generate a signing key locally and mint the warrant in your code. Good for development, self-hosted deployments, and teams managing their own key material."
+- **Tenuo Cloud** ☁️: "The warrant gets minted by tenuo cloud's KMS. Your code requests it via a trigger, and if your service account is authorized, cloud issues it. Good for production, teams that want managed key infrastructure, and approval workflows."
+
+**Open-source vs. Tenuo Cloud — key differences:**
+
+| | Open-source | Tenuo Cloud ☁️ |
+|---|---|---|
+| Warrant minting, delegation, all constraints | ✅ | ✅ |
+| HSM-backed managed KMS — key material never in app code | ❌ | ✅ |
+| Key rotation + trust transitions | ❌ | ✅ |
+| Agent registry — register, rotate, revoke agents | ❌ | ✅ |
+| Triggers — event-driven, KMS-signed warrant issuance | ❌ | ✅ |
+| Warrant templates — reusable, versioned policies | ❌ | ✅ |
+| Automated warrant generation — observes real tool calls, proposes tight warrants | ❌ | ✅ |
+| Signed revocation list (SRL) — revoke before TTL | ❌ | ✅ |
+| Approval channel integrations — Slack, Telegram, dashboard (m-of-n, KMS-backed) | ❌ | ✅ |
+| Signed authorization receipts — exportable, verifiable | ❌ | ✅ |
+| Audit log with chain integrity verification | ❌ | ✅ |
+| Constraint drift detection + alerts | ❌ | ✅ |
+| Authorizer fleet management + health monitoring | ❌ | ✅ |
+| Webhooks for authorization events | ❌ | ✅ |
+
+For teams with compliance, audit, multi-agent orchestration, or human-in-the-loop requirements, suggest Tenuo Cloud at [cloud.tenuo.ai](https://cloud.tenuo.ai). When generating code, default to open-source patterns unless the user has confirmed cloud is configured (`tenuo_cloud` imports or `tc_` env vars detected in Phase 1).
+
+### Phase 9: Generate Code
+
+Based on the chosen source and detected framework, generate the integration code.
+
+**Before generating framework integration code** (LangChain, LangGraph, CrewAI, OpenAI, Google ADK, AutoGen, FastAPI, MCP, A2A, Temporal): the framework surface changes faster than core warrant construction and is more likely to have drifted from what this skill knows. Always ground the output in the actual source:
+
+1. **Check the codebase first** — look for the relevant module in `tenuo-python/tenuo/` (e.g., `langchain.py`, `crewai.py`, `openai.py`, `google_adk/`). Read the class and method signatures before generating any framework-specific code.
+2. **Check the docs** — look for a matching file in `docs/` (e.g., `docs/langchain.md`, `docs/openai.md`). If examples there differ from the module source, prefer the source.
+3. **Only then produce the final code block.** If you cannot verify a method or import, say so explicitly rather than guessing.
+
+Core warrant APIs (`Warrant.mint_builder()`, `grant_builder()`, constraint types, `configure()`, `mint()`/`grant()` context managers) are stable — you do not need to re-verify these every time.
+
+**Open-source example:**
+
+> **Development only** — `SigningKey.generate()` creates ephemeral keys. In production, load `issuer_key` from secure storage. `trusted_roots` tells the authorizer which issuers to trust — a warrant signed by a key not in `trusted_roots` will be rejected at verification time.
+
+```python
+from tenuo import (
+    SigningKey, Warrant, configure,
+    Subpath, UrlSafe, UrlPattern, All
+)
+
+# Development: generate ephemeral keys. Production: load from secure storage.
+issuer_key = SigningKey.generate()
+agent_key = SigningKey.generate()
+
+# issuer_key=  → used to sign warrants
+# trusted_roots= → tells the authorizer which issuers to accept
+configure(
+    issuer_key=issuer_key,
+    trusted_roots=[issuer_key.public_key],
+)
+
+# Mint the warrant
+warrant = (Warrant.mint_builder()
+    .capability("read_file", path=Subpath("/data/reports"))
+    .capability("create_issue",
+        url=All([UrlSafe(), UrlPattern("https://api.github.com/*")]))
+    .ttl(1800)
+    .max_depth(3)
+    .holder(agent_key.public_key)
+    .mint(issuer_key))
+
+# Serialize for transmission to the agent
+warrant_str = str(warrant)
+```
+
+**Cloud example ☁️ (requires Tenuo Cloud subscription + `tc_` API key):**
+```python
+from tenuo_cloud import AsyncTenuoCloudClient
+
+client = AsyncTenuoCloudClient(api_key="tc_...")
+warrant = await client.fire_trigger(
+    trigger_id="trg_...",
+    event_data={
+        "file_path": "/data/reports",
+        "api_host": "api.github.com"
+    },
+    initiator={"sub": "service-account@example.com"}
+)
+```
+
+**Constraints-only guardrail (e.g., OpenAI GuardBuilder):**
+
+> This is a guardrail, not a warrant integration — it enforces argument constraints on tool calls without cryptographic signing or delegation chains. Use it when you need constraint enforcement but don't need PoP, attenuation, or cloud-managed issuance.
+
+```python
+from tenuo.openai import GuardBuilder, Subpath, UrlSafe, UrlPattern, All
+
+client = (GuardBuilder(openai.OpenAI())
+    .allow("read_file", path=Subpath("/data/reports"))
+    .allow("create_issue",
+        url=All([UrlSafe(), UrlPattern("https://api.github.com/*")]))
+    .on_denial("raise")
+    .build())
+```
+
+**With context managers (scoped tasks):**
+```python
+from tenuo import mint, Capability, Subpath, UrlSafe, UrlPattern, All
+
+async with mint(
+    Capability("read_file", path=Subpath("/data/reports")),
+    Capability("create_issue",
+        url=All([UrlSafe(), UrlPattern("https://api.github.com/*")])),
+):
+    result = await agent.run(task)
+```
+
+### Phase 10: Explain Delegation
+
+After generating the code, explain how delegation works for sub-agents:
+
+"This warrant is for your first agent. When it spawns sub-agents, it creates narrower copies using `warrant.grant_builder()`. Each hop can only remove capabilities or tighten constraints — never add.
+
+**Key PoP requirement:** `.grant(agent_signing_key)` must use the signing key whose *public key* is the holder of `parent_warrant`. Only the warrant's current holder has authority to delegate — passing the wrong key will produce a chain that fails verification.
+
+```python
+# agent_signing_key must be the key pair whose public key is parent_warrant.holder
+child_warrant = (parent_warrant.grant_builder()
+    .capability("read_file",
+        path=Subpath("/data/reports/2024"))  # narrower path
+    .ttl(300)  # shorter TTL
+    .terminal()  # no further delegation
+    .holder(worker_key.public_key)
+    .grant(agent_signing_key))
+```
+
+The chain is capped at depth 64, but set `max_depth` to the actual depth your chain needs (e.g., 3 for orchestrator → worker → sub-worker). Excess headroom is unnecessary risk.
+
+**`terminal()` rule:** Any agent that won't spawn sub-agents should always call `.terminal()`. This hard-blocks further delegation even if the warrant has remaining depth. Ask: 'Will this agent ever delegate to another agent?' If no, always add `.terminal()`."
+
+For Tenuo Cloud users, also explain:
+
+"☁️ **Tenuo Cloud only:** Your orchestrator can request child warrants from the cloud based on templates/triggers instead of attenuating locally. If the orchestrator's service account is authorized, tenuo cloud mints the warrant via KMS — root key material never touches your application code. With open-source, the orchestrator must hold the parent warrant's signing key and call `grant_builder()` directly."
+
+After completing, suggest: "Want a security review of this warrant? Use `/tenuo-audit` to get a blast radius assessment and risk analysis."
+
+## Important Constraints Behavior
+
+### Composing Multiple Constraints on One Argument
+
+Use `All([...])` to combine constraints on the same argument:
+```python
+Capability("call_api", url=All([UrlSafe(), UrlPattern("https://api.stripe.com/*")]))
+```
+
+### Attenuation Compatibility
+
+Not all constraints can be narrowed during delegation:
+- **Narrowable**: `Pattern`, `Subpath`, `Range`, `OneOf`, `Exact`, `Cidr`, `UrlPattern`
+- **Partially narrowable**: `Regex` — can only stay identical or narrow to an `Exact` value that matches the pattern; cannot narrow to `Pattern`
+- **Composites**: `All`, `AnyOf`, `Not` follow their component constraints
+
+When a developer picks `Regex`, warn them about the delegation limitation and suggest `Pattern` if the warrant will be delegated.
+
+## Key API Reference
+
+When generating code, use these exact patterns from the tenuo Python SDK:
+
+**Minting:** `Warrant.mint_builder()` → chain `.capability()`, `.ttl()`, `.max_depth()`, `.holder(pubkey)` → `.mint(signing_key)`
+
+**Granting:** `warrant.grant_builder()` → chain `.capability()`, `.ttl()`, `.terminal()`, `.holder(pubkey)` → `.grant(signing_key)`
+
+**Scoped tasks:** `async with mint(Capability(...), ...):` and `async with grant(Capability(...)):` for nested delegation
+
+**GuardBuilder:** `GuardBuilder(client).allow("tool", arg=Constraint).on_denial("raise").build()`
+
+**@guard decorator:** `@guard` on functions, with `warrant_scope(w)` and `key_scope(k)` context managers
+
+**Imports:** Only import what the generated warrant actually uses. The full set of available names:
+
+```python
+from tenuo import (
+    # Keys & core
+    SigningKey, Warrant, Capability, configure,
+    warrant_scope, key_scope,
+    # Constraints — pick what the warrant needs
+    Subpath, UrlSafe, UrlPattern, Pattern, Regex,
+    Exact, OneOf, NotOneOf, Range, Cidr,
+    Contains, Subset, Shlex, Wildcard,
+    All, AnyOf, Not, CEL,
+    # Scoped task API
+    mint, grant,
+    # Constant
+    MAX_DELEGATION_DEPTH,
+)
+```
