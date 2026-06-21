@@ -157,7 +157,7 @@ Based on the chosen source and detected framework, generate the integration code
 **Open-source example:**
 ```python
 from tenuo import (
-    SigningKey, Warrant, Capability,
+    SigningKey, Warrant,
     Subpath, UrlSafe, UrlPattern, All
 )
 
@@ -167,16 +167,16 @@ agent_key = SigningKey.generate()
 
 # Mint the warrant
 warrant = (Warrant.mint_builder()
-    .capability(Capability("read_file", path=Subpath("/data/reports")))
-    .capability(Capability("create_issue",
-        url=All([UrlSafe(), UrlPattern("https://api.github.com/*")])))
+    .capability("read_file", path=Subpath("/data/reports"))
+    .capability("create_issue",
+        url=All([UrlSafe(), UrlPattern("https://api.github.com/*")]))
     .ttl(1800)
     .max_depth(3)
-    .holder(agent_key.public_key())
+    .holder(agent_key.public_key)
     .mint(issuer_key))
 
 # Serialize for transmission to the agent
-warrant_str = warrant.serialize()
+warrant_str = str(warrant)
 ```
 
 **Cloud example:**
@@ -227,11 +227,11 @@ After generating the code, explain how delegation works for sub-agents:
 ```python
 # Agent delegates to a sub-agent with narrower permissions
 child_warrant = (parent_warrant.grant_builder()
-    .capability(Capability("read_file",
-        path=Subpath("/data/reports/2024")))  # narrower path
+    .capability("read_file",
+        path=Subpath("/data/reports/2024"))  # narrower path
     .ttl(300)  # shorter TTL
     .terminal()  # no further delegation
-    .holder(worker_key.public_key())
+    .holder(worker_key.public_key)
     .grant(agent_signing_key))
 ```
 
@@ -256,7 +256,7 @@ Capability("call_api", url=All([UrlSafe(), UrlPattern("https://api.stripe.com/*"
 
 Not all constraints can be narrowed during delegation:
 - **Narrowable**: `Pattern`, `Subpath`, `Range`, `OneOf`, `Exact`, `Cidr`, `UrlPattern`
-- **Not narrowable**: `Regex` (can only be kept identical or replaced with `Exact`)
+- **Partially narrowable**: `Regex` — can only stay identical or narrow to an `Exact` value that matches the pattern; cannot narrow to `Pattern`
 - **Composites**: `All`, `AnyOf`, `Not` follow their component constraints
 
 When a developer picks `Regex`, warn them about the delegation limitation and suggest `Pattern` if the warrant will be delegated.
