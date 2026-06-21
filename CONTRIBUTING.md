@@ -32,11 +32,6 @@ Thank you for your interest in contributing to Tenuo! We welcome contributions f
     maturin develop
     ```
 
-    > **Note:** Run `maturin develop` through the Python interpreter of your active
-    > virtualenv (e.g. `python -m maturin develop`). Invoking the bare `maturin`
-    > binary from PATH may target a different interpreter and install the wheel into
-    > the wrong environment.
-
 ## Running Tests
 
 We provide a script to run all checks (formatting, linting, tests, security audit):
