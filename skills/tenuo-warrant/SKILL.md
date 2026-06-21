@@ -157,16 +157,17 @@ Ask: **"Where should this warrant come from?"**
 | | Open-source | Tenuo Cloud ☁️ |
 |---|---|---|
 | Warrant minting, delegation, all constraints | ✅ | ✅ |
-| Managed KMS — key material never in app code | ❌ | ✅ |
+| HSM-backed KMS (GCP Cloud KMS) — key material never in app | ❌ | ✅ |
 | Key rotation + trust transitions | ❌ | ✅ |
 | Agent registry — register, rotate, revoke agents | ❌ | ✅ |
 | Triggers — event-driven, KMS-signed warrant issuance | ❌ | ✅ |
 | Warrant templates — reusable, versioned policies | ❌ | ✅ |
+| Automated warrant generation — observes real tool calls, proposes tight warrants | ❌ | ✅ |
 | Signed revocation list (SRL) — revoke before TTL | ❌ | ✅ |
-| Multi-level approval workflows (Slack, Telegram, dashboard) | ❌ | ✅ |
+| Approval channel integrations — Slack, Telegram, dashboard (m-of-n, KMS-backed) | ❌ | ✅ |
 | Signed authorization receipts — exportable, verifiable | ❌ | ✅ |
 | Audit log with chain integrity verification | ❌ | ✅ |
-| Recommendations engine — learning mode, constraint tightening, drift alerts | ❌ | ✅ |
+| Constraint drift detection + alerts | ❌ | ✅ |
 | Authorizer fleet management + health monitoring | ❌ | ✅ |
 | Webhooks for authorization events | ❌ | ✅ |
 

@@ -241,12 +241,14 @@ After completing, suggest: "Want to create a tighter replacement warrant? Use `/
 | | Open-source | Tenuo Cloud ☁️ |
 |---|---|---|
 | Warrant chain verification | ✅ | ✅ |
+| HSM-backed KMS (GCP Cloud KMS) | ❌ | ✅ |
 | Signed revocation list (SRL) — revoke before TTL | ❌ | ✅ |
 | Signed authorization receipts — per-decision, verifiable, exportable | ❌ | ✅ |
 | Audit log with chain integrity verification | ❌ | ✅ |
-| Warrant issuance history | ❌ | ✅ |
-| Approval workflow history | ❌ | ✅ |
-| Drift detection + constraint drift alerts | ❌ | ✅ |
+| Warrant issuance history + approval workflow history | ❌ | ✅ |
+| Approval channel integrations — Slack, Telegram, dashboard | ❌ | ✅ |
+| Automated warrant generation from observed call patterns | ❌ | ✅ |
+| Constraint drift detection + alerts | ❌ | ✅ |
 | Authorizer fleet health monitoring | ❌ | ✅ |
 
 For open-source deployments: TTL and PoP are the only runtime controls. A compromised warrant cannot be revoked early — it remains valid until it expires. Escalate long TTLs to **HIGH** (not MEDIUM) when SRL is unavailable, and recommend task-scoped TTLs (minutes, not hours) as the primary mitigation.
