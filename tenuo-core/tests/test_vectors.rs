@@ -3144,3 +3144,411 @@ fn test_vector_a25_5_urlpattern_constraint() {
         "A.25.5 UrlPattern should reject wrong path"
     );
 }
+
+// =============================================================================
+// A.26: Constraint enforcement through the full chain (via check_chain)
+//
+// The A.25.x tests call .matches() directly on constraint structs.
+// These tests verify constraints are enforced correctly when the full
+// warrant → wire encode → decode → check_chain pipeline is used.
+// A serialization or constraint-lookup bug would be caught here but not in A.25.
+// =============================================================================
+
+/// Test Vector A.26.1: AnyOf constraint enforced through full check_chain
+///
+/// Covers the AnyOf constraint that was previously undelegable (fixed bug).
+#[test]
+fn test_vector_a26_1_anyof_constraint_check_chain() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use tenuo::constraints::UrlSafe;
+
+    let issuer = control_plane_key();
+    let holder = worker_key();
+
+    let mut cs = ConstraintSet::new();
+    cs.insert(
+        "env",
+        constraints::Any::new([
+            Constraint::Exact(Exact::new("staging")),
+            Constraint::Exact(Exact::new("production")),
+        ]),
+    );
+
+    let warrant = Warrant::builder()
+        .capability("deploy", cs)
+        .ttl(Duration::from_secs(3600))
+        .holder(holder.public_key())
+        .build(&issuer)
+        .expect("A.26.1 should build warrant");
+
+    // Encode → decode to exercise the wire path
+    let encoded = wire::encode(&warrant).expect("A.26.1 encode");
+    let decoded = wire::decode(&encoded).expect("A.26.1 decode");
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", issuer.public_key());
+
+    // Accepted value
+    let mut args: HashMap<String, ConstraintValue> = HashMap::new();
+    args.insert(
+        "env".to_string(),
+        ConstraintValue::String("staging".to_string()),
+    );
+    let pop = decoded.sign(&holder, "deploy", &args).unwrap();
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "deploy",
+        &args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_ok(),
+        "A.26.1 AnyOf should accept 'staging': {:?}",
+        result.err()
+    );
+
+    // Rejected value (not in Any)
+    let mut bad_args: HashMap<String, ConstraintValue> = HashMap::new();
+    bad_args.insert(
+        "env".to_string(),
+        ConstraintValue::String("dev".to_string()),
+    );
+    let pop = decoded.sign(&holder, "deploy", &bad_args).unwrap();
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "deploy",
+        &bad_args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_err(),
+        "A.26.1 AnyOf should reject 'dev' (not in set)"
+    );
+
+    let _ = UrlSafe::new(); // suppress unused import warning
+}
+
+/// Test Vector A.26.2: Not constraint enforced through full check_chain
+#[test]
+fn test_vector_a26_2_not_constraint_check_chain() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    let issuer = control_plane_key();
+    let holder = worker_key();
+
+    let mut cs = ConstraintSet::new();
+    cs.insert(
+        "role",
+        constraints::Not::new(Constraint::OneOf(OneOf::new(vec!["admin", "root"]))),
+    );
+
+    let warrant = Warrant::builder()
+        .capability("action", cs)
+        .ttl(Duration::from_secs(3600))
+        .holder(holder.public_key())
+        .build(&issuer)
+        .expect("A.26.2 should build warrant");
+
+    let encoded = wire::encode(&warrant).expect("A.26.2 encode");
+    let decoded = wire::decode(&encoded).expect("A.26.2 decode");
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", issuer.public_key());
+
+    // Accepted: "user" is not in the exclusion list
+    let mut args: HashMap<String, ConstraintValue> = HashMap::new();
+    args.insert(
+        "role".to_string(),
+        ConstraintValue::String("user".to_string()),
+    );
+    let pop = decoded.sign(&holder, "action", &args).unwrap();
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "action",
+        &args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_ok(),
+        "A.26.2 Not should accept 'user': {:?}",
+        result.err()
+    );
+
+    // Rejected: "admin" is in the exclusion list
+    let mut bad_args: HashMap<String, ConstraintValue> = HashMap::new();
+    bad_args.insert(
+        "role".to_string(),
+        ConstraintValue::String("admin".to_string()),
+    );
+    let pop = decoded.sign(&holder, "action", &bad_args).unwrap();
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "action",
+        &bad_args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_err(),
+        "A.26.2 Not should reject 'admin' (in exclusion list)"
+    );
+}
+
+/// Test Vector A.26.3: UrlSafe constraint enforced through full check_chain
+///
+/// Counterpart to A.25.1 but exercises the full warrant + wire pipeline.
+#[test]
+fn test_vector_a26_3_urlsafe_check_chain() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use tenuo::constraints::UrlSafe;
+
+    let issuer = control_plane_key();
+    let holder = worker_key();
+
+    let mut cs = ConstraintSet::new();
+    cs.insert("url", UrlSafe::new());
+
+    let warrant = Warrant::builder()
+        .capability("fetch", cs)
+        .ttl(Duration::from_secs(3600))
+        .holder(holder.public_key())
+        .build(&issuer)
+        .expect("A.26.3 build");
+
+    let encoded = wire::encode(&warrant).expect("A.26.3 encode");
+    let decoded = wire::decode(&encoded).expect("A.26.3 decode");
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", issuer.public_key());
+
+    // External URL: accepted
+    let mut args: HashMap<String, ConstraintValue> = HashMap::new();
+    args.insert(
+        "url".to_string(),
+        ConstraintValue::String("https://api.example.com/data".to_string()),
+    );
+    let pop = decoded.sign(&holder, "fetch", &args).unwrap();
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "fetch",
+        &args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_ok(),
+        "A.26.3 UrlSafe should accept external URL: {:?}",
+        result.err()
+    );
+
+    // AWS metadata SSRF attempt: rejected
+    let mut bad_args: HashMap<String, ConstraintValue> = HashMap::new();
+    bad_args.insert(
+        "url".to_string(),
+        ConstraintValue::String("http://169.254.169.254/latest/meta-data/".to_string()),
+    );
+    let pop = decoded.sign(&holder, "fetch", &bad_args).unwrap();
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "fetch",
+        &bad_args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_err(),
+        "A.26.3 UrlSafe should reject SSRF metadata URL"
+    );
+}
+
+// =============================================================================
+// A.27: Capability escalation — child claims capability parent never granted
+//
+// Tests the I4 invariant from the other direction: A.11 tests that a constraint
+// can't be widened on an existing capability. A.27 tests that a child can't
+// *add* a brand new capability that the parent never held.
+// =============================================================================
+
+/// Test Vector A.27: Child warrant cannot introduce a new capability
+#[test]
+fn test_vector_a27_child_cannot_add_capability() {
+    use std::time::Duration;
+
+    let issuer = control_plane_key();
+    let orchestrator = orchestrator_key();
+    let worker = worker_key();
+
+    // Parent grants only "read_file"
+    let mut parent_cs = ConstraintSet::new();
+    parent_cs.insert(
+        "path",
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    let parent = Warrant::builder()
+        .capability("read_file", parent_cs)
+        .ttl(Duration::from_secs(3600))
+        .holder(orchestrator.public_key())
+        .build(&issuer)
+        .expect("A.27 parent build");
+
+    // Child attempts to grant "write_file" which parent never had
+    let mut child_cs = ConstraintSet::new();
+    child_cs.insert(
+        "path",
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+
+    let result = parent
+        .attenuate()
+        .capability("write_file", child_cs)
+        .holder(worker.public_key())
+        .build(&orchestrator);
+
+    assert!(
+        result.is_err(),
+        "A.27 child must not be able to grant a capability the parent never held"
+    );
+}
+
+// =============================================================================
+// A.28: Multi-hop attenuation + constraint enforcement
+//
+// A.3 builds a 3-level chain but only calls verify_chain. This test verifies
+// that a constraint attenuated across multiple hops is correctly enforced at
+// authorization time against actual call arguments.
+// =============================================================================
+
+/// Test Vector A.28: Attenuated constraint enforced at the leaf of a multi-hop chain
+#[test]
+fn test_vector_a28_multihop_attenuation_enforced() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    let issuer = control_plane_key();
+    let orchestrator = orchestrator_key();
+    let worker = worker_key();
+
+    // Level 0: broad Pattern — any file under /data/
+    let mut cs0 = ConstraintSet::new();
+    cs0.insert(
+        "path",
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    let root = Warrant::builder()
+        .capability("read_file", cs0)
+        .ttl(Duration::from_secs(3600))
+        .holder(orchestrator.public_key())
+        .build(&issuer)
+        .expect("A.28 root build");
+
+    // Level 1: narrow to /data/reports/
+    let mut cs1 = ConstraintSet::new();
+    cs1.insert(
+        "path",
+        Constraint::Pattern(Pattern::new("/data/reports/*").unwrap()),
+    );
+    let mid = root
+        .attenuate()
+        .capability("read_file", cs1)
+        .holder(worker.public_key())
+        .build(&orchestrator)
+        .expect("A.28 mid build");
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", issuer.public_key());
+
+    // Valid at leaf: path within /data/reports/
+    let mut valid_args: HashMap<String, ConstraintValue> = HashMap::new();
+    valid_args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/reports/q3.pdf".to_string()),
+    );
+    let pop = mid.sign(&worker, "read_file", &valid_args).unwrap();
+    let result = data_plane.check_chain(
+        &[root.clone(), mid.clone()],
+        "read_file",
+        &valid_args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_ok(),
+        "A.28 path within attenuated range must be accepted: {:?}",
+        result.err()
+    );
+
+    // Invalid at leaf: path within /data/ but NOT /data/reports/ — rejected by mid's constraint
+    let mut bad_args: HashMap<String, ConstraintValue> = HashMap::new();
+    bad_args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/logs/app.log".to_string()),
+    );
+    let pop = mid.sign(&worker, "read_file", &bad_args).unwrap();
+    let result = data_plane.check_chain(
+        &[root.clone(), mid.clone()],
+        "read_file",
+        &bad_args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_err(),
+        "A.28 path outside attenuated range must be rejected even if it satisfies root"
+    );
+}
+
+// =============================================================================
+// A.29: Missing constrained field at authorization time
+//
+// If a warrant requires field "path" (with Subpath constraint) but the caller
+// provides no "path" argument, the check must fail — the field is effectively
+// unconstrained from the caller's perspective but the warrant demands it.
+// =============================================================================
+
+/// Test Vector A.29: Authorization fails when a constrained field is absent from call arguments
+#[test]
+fn test_vector_a29_missing_constrained_field_rejected() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use tenuo::constraints::Subpath;
+
+    let issuer = control_plane_key();
+    let holder = worker_key();
+
+    let mut cs = ConstraintSet::new();
+    cs.insert("path", Subpath::new("/data").expect("valid subpath"));
+
+    let warrant = Warrant::builder()
+        .capability("read_file", cs)
+        .ttl(Duration::from_secs(3600))
+        .holder(holder.public_key())
+        .build(&issuer)
+        .expect("A.29 build");
+
+    let encoded = wire::encode(&warrant).expect("A.29 encode");
+    let decoded = wire::decode(&encoded).expect("A.29 decode");
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", issuer.public_key());
+
+    // Caller provides no arguments at all (missing the required "path" field)
+    let empty_args: HashMap<String, ConstraintValue> = HashMap::new();
+    let pop = decoded.sign(&holder, "read_file", &empty_args).unwrap();
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "read_file",
+        &empty_args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_err(),
+        "A.29 constrained field absent from call arguments must be rejected"
+    );
+}

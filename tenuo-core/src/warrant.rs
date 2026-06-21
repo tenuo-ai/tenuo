@@ -752,6 +752,131 @@ impl Warrant {
             // Informational
         }
 
+        // Validate multi-sig configuration consistency.
+        // min_approvals must not exceed the number of eligible approvers.
+        // A warrant claiming "3-of-1" would silently degrade to "1-of-1" during
+        // verification via the approval_threshold() cap, which violates the issuer's
+        // stated intent. Reject at validation time to surface the misconfiguration.
+        if let (Some(approvers), Some(min)) =
+            (&self.payload.required_approvers, self.payload.min_approvals)
+        {
+            let len = approvers.len() as u32;
+            if min > len {
+                return Err(Error::Validation(format!(
+                    "min_approvals ({}) exceeds number of required_approvers ({})",
+                    min, len
+                )));
+            }
+            if min == 0 {
+                return Err(Error::Validation(
+                    "min_approvals must be at least 1 when required_approvers is set".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate structural invariants that are safe to check without a wall-clock.
+    ///
+    /// This is a subset of [`Warrant::validate`] covering version, type consistency,
+    /// depth bounds, extension sizes, and multi-sig configuration. Temporal checks
+    /// (clock-skew, expiry) are intentionally excluded so that this method can be
+    /// called inside chain verifiers without rejecting warrants whose timestamps
+    /// were set to a fixed future value in tests or offline contexts.
+    pub fn validate_structural(&self) -> Result<()> {
+        if self.payload.version != WARRANT_VERSION as u8 {
+            return Err(Error::Validation(format!(
+                "unsupported warrant version: {} (expected {})",
+                self.payload.version, WARRANT_VERSION
+            )));
+        }
+
+        if self.payload.expires_at <= self.payload.issued_at {
+            return Err(Error::Validation(
+                "warrant expires_at must be strictly greater than issued_at".to_string(),
+            ));
+        }
+
+        match self.payload.warrant_type {
+            WarrantType::Execution => {
+                if self.payload.issuable_tools.is_some() {
+                    return Err(Error::InvalidWarrantType {
+                        message: "execution warrant cannot have issuable_tools".to_string(),
+                    });
+                }
+                if self.payload.max_issue_depth.is_some() {
+                    return Err(Error::InvalidWarrantType {
+                        message: "execution warrant cannot have max_issue_depth".to_string(),
+                    });
+                }
+            }
+            WarrantType::Issuer => {
+                if !self.payload.tools.is_empty() {
+                    return Err(Error::InvalidWarrantType {
+                        message: "issuer warrant cannot have tools".to_string(),
+                    });
+                }
+                if self
+                    .payload
+                    .issuable_tools
+                    .as_ref()
+                    .is_none_or(|t| t.is_empty())
+                {
+                    return Err(Error::InvalidWarrantType {
+                        message: "issuer warrant requires at least one issuable_tool".to_string(),
+                    });
+                }
+            }
+        }
+
+        if let Some(max_issue) = self.payload.max_issue_depth {
+            let effective_max = self.effective_max_depth();
+            if max_issue > effective_max {
+                return Err(Error::IssueDepthExceeded {
+                    depth: max_issue,
+                    max: effective_max,
+                });
+            }
+        }
+
+        self.validate_constraint_depth()?;
+
+        if self.payload.extensions.len() > MAX_EXTENSION_KEYS {
+            return Err(Error::Validation(format!(
+                "extensions count {} exceeds limit {}",
+                self.payload.extensions.len(),
+                MAX_EXTENSION_KEYS
+            )));
+        }
+        for (key, val) in &self.payload.extensions {
+            if val.len() > MAX_EXTENSION_VALUE_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension '{}' value size {} exceeds limit {}",
+                    key,
+                    val.len(),
+                    MAX_EXTENSION_VALUE_SIZE
+                )));
+            }
+        }
+
+        if let (Some(approvers), Some(min)) =
+            (&self.payload.required_approvers, self.payload.min_approvals)
+        {
+            let len = approvers.len() as u32;
+            if min > len {
+                return Err(Error::Validation(format!(
+                    "min_approvals ({}) exceeds number of required_approvers ({})",
+                    min, len
+                )));
+            }
+            if min == 0 {
+                return Err(Error::Validation(
+                    "min_approvals must be at least 1 when required_approvers is set".to_string(),
+                ));
+            }
+        }
+
         Ok(())
     }
 

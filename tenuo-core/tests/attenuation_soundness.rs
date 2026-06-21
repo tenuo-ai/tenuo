@@ -544,42 +544,88 @@ fn exhaustive_contains_contains_soundness() {
     eprintln!("exhaustive_contains_contains: checked {} triples", checked);
 }
 
-/// Verify that Not -> Not attenuation is always rejected (code is sound,
-/// spec was wrong before we fixed it).
+/// Exhaustively verify Not -> Not attenuation soundness over all subset pairs.
+///
+/// Not(X) accepts (universe \ accepted(X)). So child ⊆ parent iff
+/// accepted(parent_inner) ⊆ accepted(child_inner) — the inner direction is inverted.
+///
+/// For OneOf inners this means: Not(OneOf(P)) → Not(OneOf(C)) is valid iff P ⊆ C
+/// (child inner excludes at least everything parent inner excludes, plus possibly more).
 #[test]
-fn exhaustive_not_not_always_rejected() {
+fn exhaustive_not_not_soundness() {
+    let subsets = all_subsets();
+    let non_empty: Vec<_> = subsets.iter().filter(|s| !s.is_empty()).collect();
+
+    for parent_inner_vals in &non_empty {
+        let parent_inner = Constraint::OneOf(OneOf::new(parent_inner_vals.to_vec()));
+        let parent = Constraint::Not(Not::new(parent_inner.clone()));
+
+        for child_inner_vals in &non_empty {
+            let child_inner = Constraint::OneOf(OneOf::new(child_inner_vals.to_vec()));
+            let child = Constraint::Not(Not::new(child_inner.clone()));
+
+            // Not(P) → Not(C) is valid iff P ⊆ C (inner direction inverted)
+            let parent_is_subset_of_child = parent_inner_vals
+                .iter()
+                .all(|v| child_inner_vals.contains(v));
+
+            if parent_is_subset_of_child {
+                assert!(
+                    parent.validate_attenuation(&child).is_ok(),
+                    "Not(OneOf({:?})) -> Not(OneOf({:?})) must be valid (P ⊆ C)",
+                    parent_inner_vals,
+                    child_inner_vals
+                );
+                // Monotonicity: every value accepted by Not(child_inner) must be accepted by Not(parent_inner).
+                // Not(X) accepts v iff X does NOT match v.
+                for atom in ATOMS {
+                    let v = ConstraintValue::String(atom.to_string());
+                    let child_accepts = !child_inner.matches(&v).unwrap_or(true);
+                    if child_accepts {
+                        let parent_accepts = !parent_inner.matches(&v).unwrap_or(true);
+                        assert!(
+                            parent_accepts,
+                            "Monotonicity violated: Not child accepts '{}' but Not parent does not \
+                             (parent_inner={:?}, child_inner={:?})",
+                            atom, parent_inner_vals, child_inner_vals
+                        );
+                    }
+                }
+            } else {
+                assert!(
+                    parent.validate_attenuation(&child).is_err(),
+                    "Not(OneOf({:?})) -> Not(OneOf({:?})) must be rejected (P ⊄ C)",
+                    parent_inner_vals,
+                    child_inner_vals
+                );
+            }
+        }
+    }
+
+    // Identity case: Not(Exact(x)) -> Not(Exact(x)) must always be valid
     for atom in ATOMS {
         let inner = Constraint::Exact(Exact::new(*atom));
         let parent = Constraint::Not(Not::new(inner.clone()));
         let child = Constraint::Not(Not::new(inner));
         assert!(
-            parent.validate_attenuation(&child).is_err(),
-            "Not -> Not must always be rejected"
-        );
-    }
-
-    // Also test with OneOf inners
-    let subsets = all_subsets();
-    for s in subsets.iter().filter(|s| !s.is_empty()) {
-        let inner = Constraint::OneOf(OneOf::new(s.to_vec()));
-        let parent = Constraint::Not(Not::new(inner.clone()));
-        let child = Constraint::Not(Not::new(inner));
-        assert!(
-            parent.validate_attenuation(&child).is_err(),
-            "Not -> Not must always be rejected"
+            parent.validate_attenuation(&child).is_ok(),
+            "Not(Exact) -> Not(Exact) identity must be valid"
         );
     }
 }
 
-/// Verify that AnyOf -> AnyOf attenuation is always rejected.
+/// Exhaustively verify AnyOf -> AnyOf attenuation soundness over all subset pairs.
+///
+/// A child `Any` is a valid attenuation of a parent `Any` iff every child branch
+/// is covered by some parent branch (child's allowed set ⊆ parent's allowed set).
+/// The complement — any child branch not in the parent — must be rejected.
 #[test]
-fn exhaustive_anyof_anyof_always_rejected() {
+fn exhaustive_anyof_anyof_soundness() {
     let constraints: Vec<Constraint> = ATOMS
         .iter()
         .map(|a| Constraint::Exact(Exact::new(*a)))
         .collect();
 
-    // Try all pairs of non-empty subsets of these constraints
     let n = constraints.len();
     for pmask in 1..(1u32 << n) {
         let parent_clauses: Vec<_> = (0..n)
@@ -593,12 +639,37 @@ fn exhaustive_anyof_anyof_always_rejected() {
                 .filter(|i| cmask & (1 << i) != 0)
                 .map(|i| constraints[i].clone())
                 .collect();
-            let child = Constraint::Any(Any::new(child_clauses));
+            let child = Constraint::Any(Any::new(child_clauses.clone()));
 
-            assert!(
-                parent.validate_attenuation(&child).is_err(),
-                "AnyOf -> AnyOf must always be rejected"
-            );
+            // child is valid iff its branches are a subset of parent's (cmask ⊆ pmask)
+            let is_subset = (cmask & pmask) == cmask;
+
+            if is_subset {
+                assert!(
+                    parent.validate_attenuation(&child).is_ok(),
+                    "AnyOf -> AnyOf must be accepted when child branches are a subset of parent \
+                     (pmask={pmask:#b}, cmask={cmask:#b})"
+                );
+                // Monotonicity: every value accepted by child must also be accepted by parent
+                for atom in ATOMS {
+                    let v = ConstraintValue::String(atom.to_string());
+                    let child_accepts =
+                        child_clauses.iter().any(|c| c.matches(&v).unwrap_or(false));
+                    if child_accepts {
+                        assert!(
+                            parent.matches(&v).unwrap_or(false),
+                            "Monotonicity violated: child accepts '{atom}' but parent does not \
+                             (pmask={pmask:#b}, cmask={cmask:#b})"
+                        );
+                    }
+                }
+            } else {
+                assert!(
+                    parent.validate_attenuation(&child).is_err(),
+                    "AnyOf -> AnyOf must be rejected when child has branches outside parent \
+                     (pmask={pmask:#b}, cmask={cmask:#b})"
+                );
+            }
         }
     }
 }

@@ -622,7 +622,7 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 - `Subset`: child’s allowed set must be ⊆ parent’s allowed set.
 - `All`: child may add more clauses; existing clauses must not be weakened.
 - `Any`: child may remove clauses; remaining clauses must not be weakened.
-- `Not`: negation of a stricter constraint remains stricter only if the inner constraint is stricter.
+- `Not`: direction is inverted. `Not(child_inner)` is stricter than `Not(parent_inner)` only when the child inner is **at least as permissive** as the parent inner (wider inner produces a narrower outer, because `Not` flips accepted/rejected sets).
 - `Cel`: child must conjoin with parent (logical AND); never replace/loosen parent expression.
 
 ### Constraint Attenuation Matrix (Normative)
@@ -670,8 +670,10 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 
 | Parent Pattern | Child Pattern | Valid | Rule |
 |----------------|---------------|-------|------|
-| `"*"` | `"*"` | YES | Single wildcard, equal |
-| `"*"` | Any other | IFF | Equal only (single wildcard is conservative) |
+| `"*"` | `"*"` | YES | Identity |
+| `"*"` | `"prefix-*"` | YES | Treated as `Prefix("")`; any non-empty prefix is a valid extension |
+| `"*"` | Exact `"v"` | YES | Any exact value satisfies an empty prefix |
+| `"*"` | `"*-suffix"` | NO | Cross-type (prefix to suffix) is not supported; use `"prefix-*"` narrowing instead |
 | `"prefix-*"` | `"prefix-more-*"` | YES | Child prefix extends parent |
 | `"prefix-*"` | `"prefix-exact"` | YES | Exact value starts with prefix |
 | `"*-suffix"` | `"*-more-suffix"` | YES | Child suffix extends parent |

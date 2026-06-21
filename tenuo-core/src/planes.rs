@@ -123,7 +123,7 @@ fn verify_approvals_with_tolerance(
             continue;
         }
 
-        if payload.expires_at + tolerance_secs < now {
+        if payload.expires_at.saturating_add(tolerance_secs) < now {
             rejections.push(Rejection::Expired);
             continue;
         }
@@ -882,6 +882,22 @@ impl DataPlane {
             }
         }
 
+        // STRUCTURAL INVARIANT CHECK: Validate each warrant's structural consistency
+        // (version, type constraints, min_approvals, etc.) without clock-based checks.
+        // This catches malformed deserialized warrants that bypass builder-level checks.
+        // Temporal checks (expiry, clock-skew) are omitted here; they are either
+        // handled separately by the chain verifier or intentionally relaxed in
+        // offline/test contexts that use fixed future timestamps.
+        for warrant in chain {
+            warrant.validate_structural().map_err(|e| {
+                Error::ChainVerificationFailed(format!(
+                    "warrant '{}' failed structural validation: {}",
+                    warrant.id(),
+                    e
+                ))
+            })?;
+        }
+
         let mut result = ChainVerificationResult {
             root_issuer: None,
             chain_length: chain.len(),
@@ -1212,13 +1228,29 @@ impl DataPlane {
             }
 
             let auth_result = leaf.authorize(tool, args, signature).and_then(|_| {
-                verify_approvals_with_tolerance(
-                    leaf,
-                    tool,
-                    args,
-                    approvals,
-                    chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-                )
+                // Evaluate approval gates before running multi-sig verification.
+                // Only require approvals when a gate fires for this tool+args. Absent a
+                // gate map evaluate_approval_gates returns false, matching Authorizer's
+                // semantics: required_approvers without any gate configuration means no
+                // call is gated (the builder rejects this state; legacy warrants see it
+                // as fully ungated rather than fully gated).
+                let gate_map = crate::approval_gate::parse_approval_gate_map(
+                    leaf.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+                )?;
+                let needs_approval =
+                    crate::approval_gate::evaluate_approval_gates(gate_map.as_ref(), tool, args)?;
+
+                if needs_approval {
+                    verify_approvals_with_tolerance(
+                        leaf,
+                        tool,
+                        args,
+                        approvals,
+                        chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+                    )
+                } else {
+                    Ok(Vec::new())
+                }
             });
 
             match &auth_result {
@@ -2015,6 +2047,22 @@ impl Authorizer {
                     )));
                 }
             }
+        }
+
+        // STRUCTURAL INVARIANT CHECK: Validate each warrant's structural consistency
+        // (version, type constraints, min_approvals, etc.) without clock-based checks.
+        // This catches malformed deserialized warrants that bypass builder-level checks.
+        // Temporal checks (expiry, clock-skew) are omitted here; they are either
+        // handled separately by the chain verifier or intentionally relaxed in
+        // offline/test contexts that use fixed future timestamps.
+        for warrant in chain {
+            warrant.validate_structural().map_err(|e| {
+                Error::ChainVerificationFailed(format!(
+                    "warrant '{}' failed structural validation: {}",
+                    warrant.id(),
+                    e
+                ))
+            })?;
         }
 
         let root = &chain[0];

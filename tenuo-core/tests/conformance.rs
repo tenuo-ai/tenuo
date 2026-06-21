@@ -14,15 +14,20 @@ fn test_alloy_all_and_any_conformance() {
         Constraint::Exact(Exact::new("req2")),
     ]);
 
-    // Child drops req2 (valid attenuation for Any)
+    // Child drops req2: valid attenuation because child's allowed set ⊆ parent's allowed set.
     let child_any_valid = Any::new(vec![Constraint::Exact(Exact::new("req1"))]);
-    // The current spec actually expects a strict subset, though Rust might throw IncompatibleConstraintTypes
-    // due to the catch-all. The conformance oracle asserts the exact current Rust behavior.
-    assert!(
-        Constraint::Any(parent_any.clone())
-            .validate_attenuation(&Constraint::Any(child_any_valid))
-            .is_err() // Matches the Rust code's conservative fallback discussed in Alloy issue 1
-    );
+    assert!(Constraint::Any(parent_any.clone())
+        .validate_attenuation(&Constraint::Any(child_any_valid))
+        .is_ok());
+
+    // Child adds a branch not in parent: must be rejected (privilege escalation).
+    let child_any_invalid = Any::new(vec![
+        Constraint::Exact(Exact::new("req1")),
+        Constraint::Exact(Exact::new("req3")), // not in parent
+    ]);
+    assert!(Constraint::Any(parent_any.clone())
+        .validate_attenuation(&Constraint::Any(child_any_invalid))
+        .is_err());
 
     // Alloy Theorem: All -> All permits adding clauses
     let parent_all = All::new(vec![Constraint::Exact(Exact::new("A"))]);
