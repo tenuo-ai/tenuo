@@ -3191,17 +3191,42 @@ fn test_vector_a26_1_anyof_constraint_check_chain() {
 
     // Accepted value
     let mut args: HashMap<String, ConstraintValue> = HashMap::new();
-    args.insert("env".to_string(), ConstraintValue::String("staging".to_string()));
+    args.insert(
+        "env".to_string(),
+        ConstraintValue::String("staging".to_string()),
+    );
     let pop = decoded.sign(&holder, "deploy", &args).unwrap();
-    let result = data_plane.check_chain(std::slice::from_ref(&decoded), "deploy", &args, Some(&pop), &[]);
-    assert!(result.is_ok(), "A.26.1 AnyOf should accept 'staging': {:?}", result.err());
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "deploy",
+        &args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_ok(),
+        "A.26.1 AnyOf should accept 'staging': {:?}",
+        result.err()
+    );
 
     // Rejected value (not in Any)
     let mut bad_args: HashMap<String, ConstraintValue> = HashMap::new();
-    bad_args.insert("env".to_string(), ConstraintValue::String("dev".to_string()));
+    bad_args.insert(
+        "env".to_string(),
+        ConstraintValue::String("dev".to_string()),
+    );
     let pop = decoded.sign(&holder, "deploy", &bad_args).unwrap();
-    let result = data_plane.check_chain(std::slice::from_ref(&decoded), "deploy", &bad_args, Some(&pop), &[]);
-    assert!(result.is_err(), "A.26.1 AnyOf should reject 'dev' (not in set)");
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "deploy",
+        &bad_args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_err(),
+        "A.26.1 AnyOf should reject 'dev' (not in set)"
+    );
 
     let _ = UrlSafe::new(); // suppress unused import warning
 }
@@ -3236,17 +3261,42 @@ fn test_vector_a26_2_not_constraint_check_chain() {
 
     // Accepted: "user" is not in the exclusion list
     let mut args: HashMap<String, ConstraintValue> = HashMap::new();
-    args.insert("role".to_string(), ConstraintValue::String("user".to_string()));
+    args.insert(
+        "role".to_string(),
+        ConstraintValue::String("user".to_string()),
+    );
     let pop = decoded.sign(&holder, "action", &args).unwrap();
-    let result = data_plane.check_chain(std::slice::from_ref(&decoded), "action", &args, Some(&pop), &[]);
-    assert!(result.is_ok(), "A.26.2 Not should accept 'user': {:?}", result.err());
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "action",
+        &args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_ok(),
+        "A.26.2 Not should accept 'user': {:?}",
+        result.err()
+    );
 
     // Rejected: "admin" is in the exclusion list
     let mut bad_args: HashMap<String, ConstraintValue> = HashMap::new();
-    bad_args.insert("role".to_string(), ConstraintValue::String("admin".to_string()));
+    bad_args.insert(
+        "role".to_string(),
+        ConstraintValue::String("admin".to_string()),
+    );
     let pop = decoded.sign(&holder, "action", &bad_args).unwrap();
-    let result = data_plane.check_chain(std::slice::from_ref(&decoded), "action", &bad_args, Some(&pop), &[]);
-    assert!(result.is_err(), "A.26.2 Not should reject 'admin' (in exclusion list)");
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "action",
+        &bad_args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_err(),
+        "A.26.2 Not should reject 'admin' (in exclusion list)"
+    );
 }
 
 /// Test Vector A.26.3: UrlSafe constraint enforced through full check_chain
@@ -3279,17 +3329,42 @@ fn test_vector_a26_3_urlsafe_check_chain() {
 
     // External URL: accepted
     let mut args: HashMap<String, ConstraintValue> = HashMap::new();
-    args.insert("url".to_string(), ConstraintValue::String("https://api.example.com/data".to_string()));
+    args.insert(
+        "url".to_string(),
+        ConstraintValue::String("https://api.example.com/data".to_string()),
+    );
     let pop = decoded.sign(&holder, "fetch", &args).unwrap();
-    let result = data_plane.check_chain(std::slice::from_ref(&decoded), "fetch", &args, Some(&pop), &[]);
-    assert!(result.is_ok(), "A.26.3 UrlSafe should accept external URL: {:?}", result.err());
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "fetch",
+        &args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_ok(),
+        "A.26.3 UrlSafe should accept external URL: {:?}",
+        result.err()
+    );
 
     // AWS metadata SSRF attempt: rejected
     let mut bad_args: HashMap<String, ConstraintValue> = HashMap::new();
-    bad_args.insert("url".to_string(), ConstraintValue::String("http://169.254.169.254/latest/meta-data/".to_string()));
+    bad_args.insert(
+        "url".to_string(),
+        ConstraintValue::String("http://169.254.169.254/latest/meta-data/".to_string()),
+    );
     let pop = decoded.sign(&holder, "fetch", &bad_args).unwrap();
-    let result = data_plane.check_chain(std::slice::from_ref(&decoded), "fetch", &bad_args, Some(&pop), &[]);
-    assert!(result.is_err(), "A.26.3 UrlSafe should reject SSRF metadata URL");
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&decoded),
+        "fetch",
+        &bad_args,
+        Some(&pop),
+        &[],
+    );
+    assert!(
+        result.is_err(),
+        "A.26.3 UrlSafe should reject SSRF metadata URL"
+    );
 }
 
 // =============================================================================
@@ -3311,7 +3386,10 @@ fn test_vector_a27_child_cannot_add_capability() {
 
     // Parent grants only "read_file"
     let mut parent_cs = ConstraintSet::new();
-    parent_cs.insert("path", Constraint::Pattern(Pattern::new("/data/*").unwrap()));
+    parent_cs.insert(
+        "path",
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
     let parent = Warrant::builder()
         .capability("read_file", parent_cs)
         .ttl(Duration::from_secs(3600))
@@ -3321,7 +3399,10 @@ fn test_vector_a27_child_cannot_add_capability() {
 
     // Child attempts to grant "write_file" which parent never had
     let mut child_cs = ConstraintSet::new();
-    child_cs.insert("path", Constraint::Pattern(Pattern::new("/data/*").unwrap()));
+    child_cs.insert(
+        "path",
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
 
     let result = parent
         .attenuate()
@@ -3355,7 +3436,10 @@ fn test_vector_a28_multihop_attenuation_enforced() {
 
     // Level 0: broad Pattern — any file under /data/
     let mut cs0 = ConstraintSet::new();
-    cs0.insert("path", Constraint::Pattern(Pattern::new("/data/*").unwrap()));
+    cs0.insert(
+        "path",
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
     let root = Warrant::builder()
         .capability("read_file", cs0)
         .ttl(Duration::from_secs(3600))
@@ -3365,7 +3449,10 @@ fn test_vector_a28_multihop_attenuation_enforced() {
 
     // Level 1: narrow to /data/reports/
     let mut cs1 = ConstraintSet::new();
-    cs1.insert("path", Constraint::Pattern(Pattern::new("/data/reports/*").unwrap()));
+    cs1.insert(
+        "path",
+        Constraint::Pattern(Pattern::new("/data/reports/*").unwrap()),
+    );
     let mid = root
         .attenuate()
         .capability("read_file", cs1)
@@ -3378,9 +3465,18 @@ fn test_vector_a28_multihop_attenuation_enforced() {
 
     // Valid at leaf: path within /data/reports/
     let mut valid_args: HashMap<String, ConstraintValue> = HashMap::new();
-    valid_args.insert("path".to_string(), ConstraintValue::String("/data/reports/q3.pdf".to_string()));
+    valid_args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/reports/q3.pdf".to_string()),
+    );
     let pop = mid.sign(&worker, "read_file", &valid_args).unwrap();
-    let result = data_plane.check_chain(&[root.clone(), mid.clone()], "read_file", &valid_args, Some(&pop), &[]);
+    let result = data_plane.check_chain(
+        &[root.clone(), mid.clone()],
+        "read_file",
+        &valid_args,
+        Some(&pop),
+        &[],
+    );
     assert!(
         result.is_ok(),
         "A.28 path within attenuated range must be accepted: {:?}",
@@ -3389,9 +3485,18 @@ fn test_vector_a28_multihop_attenuation_enforced() {
 
     // Invalid at leaf: path within /data/ but NOT /data/reports/ — rejected by mid's constraint
     let mut bad_args: HashMap<String, ConstraintValue> = HashMap::new();
-    bad_args.insert("path".to_string(), ConstraintValue::String("/data/logs/app.log".to_string()));
+    bad_args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/logs/app.log".to_string()),
+    );
     let pop = mid.sign(&worker, "read_file", &bad_args).unwrap();
-    let result = data_plane.check_chain(&[root.clone(), mid.clone()], "read_file", &bad_args, Some(&pop), &[]);
+    let result = data_plane.check_chain(
+        &[root.clone(), mid.clone()],
+        "read_file",
+        &bad_args,
+        Some(&pop),
+        &[],
+    );
     assert!(
         result.is_err(),
         "A.28 path outside attenuated range must be rejected even if it satisfies root"

@@ -359,10 +359,7 @@ fn test_any_attenuation_escalation_rejected() {
     let child_keypair = SigningKey::generate();
 
     let mut parent_constraints = ConstraintSet::new();
-    parent_constraints.insert(
-        "env",
-        Any::new([Constraint::Exact(Exact::new("dev"))]),
-    );
+    parent_constraints.insert("env", Any::new([Constraint::Exact(Exact::new("dev"))]));
 
     let parent = Warrant::builder()
         .capability("deploy", parent_constraints)
@@ -1160,10 +1157,7 @@ fn test_range_attenuation_widening_rejected() {
         .holder(child_keypair.public_key())
         .build(&keypair);
 
-    assert!(
-        result.is_err(),
-        "Range widening must be rejected"
-    );
+    assert!(result.is_err(), "Range widening must be rejected");
 }
 
 // =============================================================================

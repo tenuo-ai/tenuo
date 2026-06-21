@@ -653,9 +653,8 @@ fn exhaustive_anyof_anyof_soundness() {
                 // Monotonicity: every value accepted by child must also be accepted by parent
                 for atom in ATOMS {
                     let v = ConstraintValue::String(atom.to_string());
-                    let child_accepts = child_clauses
-                        .iter()
-                        .any(|c| c.matches(&v).unwrap_or(false));
+                    let child_accepts =
+                        child_clauses.iter().any(|c| c.matches(&v).unwrap_or(false));
                     if child_accepts {
                         assert!(
                             parent.matches(&v).unwrap_or(false),

@@ -1237,11 +1237,8 @@ impl DataPlane {
                 let gate_map = crate::approval_gate::parse_approval_gate_map(
                     leaf.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
                 )?;
-                let needs_approval = crate::approval_gate::evaluate_approval_gates(
-                    gate_map.as_ref(),
-                    tool,
-                    args,
-                )?;
+                let needs_approval =
+                    crate::approval_gate::evaluate_approval_gates(gate_map.as_ref(), tool, args)?;
 
                 if needs_approval {
                     verify_approvals_with_tolerance(

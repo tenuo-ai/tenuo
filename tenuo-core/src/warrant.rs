@@ -757,10 +757,9 @@ impl Warrant {
         // A warrant claiming "3-of-1" would silently degrade to "1-of-1" during
         // verification via the approval_threshold() cap, which violates the issuer's
         // stated intent. Reject at validation time to surface the misconfiguration.
-        if let (Some(approvers), Some(min)) = (
-            &self.payload.required_approvers,
-            self.payload.min_approvals,
-        ) {
+        if let (Some(approvers), Some(min)) =
+            (&self.payload.required_approvers, self.payload.min_approvals)
+        {
             let len = approvers.len() as u32;
             if min > len {
                 return Err(Error::Validation(format!(
@@ -861,10 +860,9 @@ impl Warrant {
             }
         }
 
-        if let (Some(approvers), Some(min)) = (
-            &self.payload.required_approvers,
-            self.payload.min_approvals,
-        ) {
+        if let (Some(approvers), Some(min)) =
+            (&self.payload.required_approvers, self.payload.min_approvals)
+        {
             let len = approvers.len() as u32;
             if min > len {
                 return Err(Error::Validation(format!(
