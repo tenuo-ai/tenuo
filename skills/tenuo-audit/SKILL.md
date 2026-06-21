@@ -249,4 +249,4 @@ After completing, suggest: "Want to create a tighter replacement warrant? Use `/
 | Approval gate history | ❌ | ✅ |
 | Policy template traceability | ❌ | ✅ |
 
-When auditing open-source deployments, TTL and PoP are the only runtime security controls. Treat any TTL > 1 hour as MEDIUM risk (no out-of-band revocation available).
+For open-source deployments: TTL and PoP are the only runtime controls. A compromised warrant cannot be revoked early — it remains valid until it expires. Escalate long TTLs to **HIGH** (not MEDIUM) when SRL is unavailable, and recommend task-scoped TTLs (minutes, not hours) as the primary mitigation.
