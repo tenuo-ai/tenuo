@@ -685,19 +685,58 @@ fn validate_arg_approval_gate_monotonic(
 ///
 /// ## Sorting strategy
 ///
-/// `ConstraintValue` implements `Ord` with a stable total order:
-/// `Null < Boolean < Integer < Float < String < List < Object`.
-/// Within `Float`, NaN is canonicalized to `+∞` via `f64::total_cmp` so it
-/// sorts last. This gives a deterministic canonical ordering that is safe for
-/// B-tree storage and cross-process comparison.
+/// `ConstraintValue` does not implement `Ord` globally because `f64` has no
+/// reflexive equality under IEEE 754 (NaN ≠ NaN), which would make `Eq`
+/// non-reflexive and `Ord` inconsistent with `PartialEq`. Instead we use a
+/// local total-order comparator here, only for the purpose of producing a
+/// canonical element ordering before equality comparison.
+///
+/// The local order is: `Null < Boolean < Integer < Float < String < List < Object`.
+/// Within `Float`, NaN is placed last via `f64::total_cmp`.
 fn normalize_for_gate_comparison(c: &Constraint) -> Constraint {
-    use crate::constraints::{Contains, NotOneOf, OneOf, Subset};
+    use crate::constraints::{ConstraintValue, Contains, NotOneOf, OneOf, Subset};
+    use std::cmp::Ordering;
+
+    fn cv_discriminant(v: &ConstraintValue) -> u8 {
+        match v {
+            ConstraintValue::Null => 0,
+            ConstraintValue::Boolean(_) => 1,
+            ConstraintValue::Integer(_) => 2,
+            ConstraintValue::Float(_) => 3,
+            ConstraintValue::String(_) => 4,
+            ConstraintValue::List(_) => 5,
+            ConstraintValue::Object(_) => 6,
+        }
+    }
+
+    fn cmp_cv(a: &ConstraintValue, b: &ConstraintValue) -> Ordering {
+        match (a, b) {
+            (ConstraintValue::Null, ConstraintValue::Null) => Ordering::Equal,
+            (ConstraintValue::Boolean(x), ConstraintValue::Boolean(y)) => x.cmp(y),
+            (ConstraintValue::Integer(x), ConstraintValue::Integer(y)) => x.cmp(y),
+            (ConstraintValue::Float(x), ConstraintValue::Float(y)) => x.total_cmp(y),
+            (ConstraintValue::String(x), ConstraintValue::String(y)) => x.cmp(y),
+            (ConstraintValue::List(x), ConstraintValue::List(y)) => x
+                .iter()
+                .zip(y.iter())
+                .map(|(a, b)| cmp_cv(a, b))
+                .find(|o| *o != Ordering::Equal)
+                .unwrap_or_else(|| x.len().cmp(&y.len())),
+            (ConstraintValue::Object(x), ConstraintValue::Object(y)) => x
+                .iter()
+                .zip(y.iter())
+                .map(|((ka, va), (kb, vb))| ka.cmp(kb).then_with(|| cmp_cv(va, vb)))
+                .find(|o| *o != Ordering::Equal)
+                .unwrap_or_else(|| x.len().cmp(&y.len())),
+            _ => cv_discriminant(a).cmp(&cv_discriminant(b)),
+        }
+    }
 
     fn sorted(
         vals: &[crate::constraints::ConstraintValue],
     ) -> Vec<crate::constraints::ConstraintValue> {
         let mut v = vals.to_vec();
-        v.sort_unstable();
+        v.sort_unstable_by(cmp_cv);
         v
     }
 
