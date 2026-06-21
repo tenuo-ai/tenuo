@@ -370,4 +370,4 @@ __all__ = [
     "get_default_nonce_store",
 ]
 
-__version__ = "0.1.0b24"
+__version__ = "0.2.0"

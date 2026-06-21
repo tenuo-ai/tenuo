@@ -697,4 +697,4 @@ python examples/mcp/mcp_client_demo.py
 
 ## License
 
-MIT OR Apache-2.0
+Apache-2.0. See [LICENSE](../LICENSE) for details.
