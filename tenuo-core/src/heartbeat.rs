@@ -27,6 +27,9 @@
 //! - The control plane verifies the signature and stores as a receipt
 //! - This provides non-repudiation: the authorizer (witness) signed the event
 
+#[cfg(target_os = "macos")]
+extern crate libc;
+
 use crate::crypto::SigningKey;
 use crate::planes::Authorizer;
 use crate::revocation::SignedRevocationList;
@@ -677,9 +680,16 @@ fn get_memory_usage() -> Option<u64> {
 
     #[cfg(target_os = "macos")]
     {
-        // On macOS, we'd need mach APIs which are complex
-        // Return None for now; could add via libc later
-        None
+        // getrusage(RUSAGE_SELF) ru_maxrss is in bytes on macOS (unlike Linux
+        // where it is kilobytes). This gives the process peak RSS, which is
+        // the closest equivalent to Linux's VmRSS available without mach APIs.
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        let ret = unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        if ret == 0 && usage.ru_maxrss > 0 {
+            Some(usage.ru_maxrss as u64)
+        } else {
+            None
+        }
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -842,8 +852,7 @@ struct HeartbeatRequest {
 /// Response from heartbeat endpoint.
 #[derive(Deserialize)]
 struct HeartbeatResponse {
-    /// Status of the authorizer (e.g., "active")
-    #[allow(dead_code)]
+    /// Status of the authorizer (e.g., "active"). Logged on each heartbeat cycle.
     status: String,
     /// Latest SRL version available on the control plane
     #[serde(default)]
@@ -1001,6 +1010,7 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
             Ok(response) => {
                 debug!(
                     authorizer_id = %authorizer_id,
+                    status = %response.status,
                     "Heartbeat sent successfully"
                 );
 

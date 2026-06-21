@@ -497,7 +497,7 @@ pub enum ApprovalGateError {
     ArgApprovalGateRemoved(String, String),
     /// A per-argument gate constraint was weakened.
     ArgApprovalGateWeakened,
-    /// A per-argument gate constraint changed (Phase 1: exact equality required).
+    /// A per-argument gate constraint was widened (child must be at least as strict as parent).
     ArgApprovalGateConstraintChanged,
     /// Inner constraint type not permitted inside `Exempt`.
     ExemptInnerConstraintInvalid { reason: &'static str },
@@ -523,7 +523,7 @@ impl fmt::Display for ApprovalGateError {
             Self::ArgApprovalGateConstraintChanged => {
                 write!(
                     f,
-                    "arg gate constraint changed (Phase 1: exact equality required)"
+                    "arg gate constraint widened: child must be at least as strict as parent"
                 )
             }
             Self::ExemptInnerConstraintInvalid { reason } => {
@@ -542,8 +542,8 @@ impl std::error::Error for ApprovalGateError {}
 
 /// Verify that child approval gates are monotonically narrower than parent gates.
 ///
-/// This is **optional defense-in-depth** for Phase 1. The structured
-/// delegation API is the primary enforcement mechanism.
+/// This is **optional defense-in-depth**; the structured delegation API is the
+/// primary enforcement mechanism.
 ///
 /// Returns `Ok(())` if the child gates are valid, `Err(ApprovalGateError)` if
 /// they violate monotonicity.
@@ -614,7 +614,8 @@ pub(crate) fn verify_approval_gate_monotonicity(
 /// Validate that a child arg gate is monotonically at least as strict as the parent.
 ///
 /// "At least as strict" means the child gates a superset of values: child ≥ parent.
-/// Phase 1: constraint-based gates require exact equality.
+/// `Constraint↔Constraint` gates use `validate_attenuation` for semantic narrowing:
+/// the child constraint must be a valid attenuation of the parent (equal or stricter).
 fn validate_arg_approval_gate_monotonic(
     child: &ArgApprovalGate,
     parent: &ArgApprovalGate,
@@ -657,13 +658,18 @@ fn validate_arg_approval_gate_monotonic(
             Err(ApprovalGateError::ArgApprovalGateIncomparableVariants)
         }
 
-        // Constraint↔Constraint: Phase 1 exact equality
+        // Constraint↔Constraint: child must be a valid attenuation of the parent
+        // (i.e. at least as strict — it gates at least the same values the parent does).
+        // Identity is the fast path; then we fall back to validate_attenuation which
+        // checks the full monotonicity rules including normalization for set-typed constraints.
         (ArgApprovalGate::Constraint(c_child), ArgApprovalGate::Constraint(c_parent)) => {
-            if c_child == c_parent {
-                Ok(())
-            } else {
-                Err(ApprovalGateError::ArgApprovalGateConstraintChanged)
+            let nc = normalize_for_gate_comparison(c_child);
+            let np = normalize_for_gate_comparison(c_parent);
+            if nc == np {
+                return Ok(());
             }
+            np.validate_attenuation(&nc)
+                .map_err(|_| ApprovalGateError::ArgApprovalGateConstraintChanged)
         }
     }
 }
@@ -680,29 +686,58 @@ fn validate_arg_approval_gate_monotonic(
 ///
 /// ## Sorting strategy
 ///
-/// `ConstraintValue` does not implement `Ord` because the `Float` variant
-/// holds `f64`, which has no total order (NaN). Rather than writing a
-/// bespoke `Ord` impl now, we sort by the `Debug` representation.
+/// `ConstraintValue` does not implement `Ord` globally because `f64` has no
+/// reflexive equality under IEEE 754 (NaN ≠ NaN), which would make `Eq`
+/// non-reflexive and `Ord` inconsistent with `PartialEq`. Instead we use a
+/// local total-order comparator here, only for the purpose of producing a
+/// canonical element ordering before equality comparison.
 ///
-/// This is correct for equality comparison: two elements that have the
-/// same debug string are semantically identical, and the induced ordering
-/// is stable within a single binary. It is, however, an internal
-/// implementation detail and not a stable canonical form.
-///
-/// **Future work**: if `ConstraintValue` ever needs a true total order
-/// (e.g. for B-tree storage or cross-process canonical encoding), implement
-/// `Ord` manually with NaN canonicalization (`NaN → f64::MAX`) instead of
-/// using this debug-string proxy.
+/// The local order is: `Null < Boolean < Integer < Float < String < List < Object`.
+/// Within `Float`, NaN is placed last via `f64::total_cmp`.
 fn normalize_for_gate_comparison(c: &Constraint) -> Constraint {
-    use crate::constraints::{Contains, NotOneOf, OneOf, Subset};
+    use crate::constraints::{ConstraintValue, Contains, NotOneOf, OneOf, Subset};
+    use std::cmp::Ordering;
+
+    fn cv_discriminant(v: &ConstraintValue) -> u8 {
+        match v {
+            ConstraintValue::Null => 0,
+            ConstraintValue::Boolean(_) => 1,
+            ConstraintValue::Integer(_) => 2,
+            ConstraintValue::Float(_) => 3,
+            ConstraintValue::String(_) => 4,
+            ConstraintValue::List(_) => 5,
+            ConstraintValue::Object(_) => 6,
+        }
+    }
+
+    fn cmp_cv(a: &ConstraintValue, b: &ConstraintValue) -> Ordering {
+        match (a, b) {
+            (ConstraintValue::Null, ConstraintValue::Null) => Ordering::Equal,
+            (ConstraintValue::Boolean(x), ConstraintValue::Boolean(y)) => x.cmp(y),
+            (ConstraintValue::Integer(x), ConstraintValue::Integer(y)) => x.cmp(y),
+            (ConstraintValue::Float(x), ConstraintValue::Float(y)) => x.total_cmp(y),
+            (ConstraintValue::String(x), ConstraintValue::String(y)) => x.cmp(y),
+            (ConstraintValue::List(x), ConstraintValue::List(y)) => x
+                .iter()
+                .zip(y.iter())
+                .map(|(a, b)| cmp_cv(a, b))
+                .find(|o| *o != Ordering::Equal)
+                .unwrap_or_else(|| x.len().cmp(&y.len())),
+            (ConstraintValue::Object(x), ConstraintValue::Object(y)) => x
+                .iter()
+                .zip(y.iter())
+                .map(|((ka, va), (kb, vb))| ka.cmp(kb).then_with(|| cmp_cv(va, vb)))
+                .find(|o| *o != Ordering::Equal)
+                .unwrap_or_else(|| x.len().cmp(&y.len())),
+            _ => cv_discriminant(a).cmp(&cv_discriminant(b)),
+        }
+    }
 
     fn sorted(
         vals: &[crate::constraints::ConstraintValue],
     ) -> Vec<crate::constraints::ConstraintValue> {
         let mut v = vals.to_vec();
-        // ConstraintValue doesn't implement Ord; sort by debug representation
-        // for a canonical, deterministic ordering of equal sets.
-        v.sort_unstable_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        v.sort_unstable_by(cmp_cv);
         v
     }
 
@@ -1537,15 +1572,26 @@ mod tests {
     }
 
     #[test]
-    fn test_constraint_constraint_monotonicity_unchanged() {
+    fn test_constraint_constraint_monotonicity_semantic_narrowing() {
         use crate::constraints::OneOf;
+
+        // Narrowing subset: child OneOf(["a"]) ⊂ parent OneOf(["a","b"]) — accepted
         let child = ArgApprovalGate::Constraint(Constraint::OneOf(OneOf::new(["a"])));
         let parent = ArgApprovalGate::Constraint(Constraint::OneOf(OneOf::new(["a", "b"])));
-        // Phase 1: Constraint↔Constraint requires exact equality — different constraints rejected
         assert_eq!(
             verify_arg_gates(child, parent),
+            Ok(()),
+            "Constraint↔Constraint: narrower subset must be accepted"
+        );
+
+        // Widening: child adds value not in parent — rejected
+        let child_wide =
+            ArgApprovalGate::Constraint(Constraint::OneOf(OneOf::new(["a", "b", "c"])));
+        let parent2 = ArgApprovalGate::Constraint(Constraint::OneOf(OneOf::new(["a", "b"])));
+        assert_eq!(
+            verify_arg_gates(child_wide, parent2),
             Err(ApprovalGateError::ArgApprovalGateConstraintChanged),
-            "Constraint↔Constraint with different constraints — unchanged Phase 1 behaviour"
+            "Constraint↔Constraint: widening must be rejected"
         );
     }
 }

@@ -777,9 +777,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// - `X-Tenuo-Chain`: Base64-encoded WarrantStack (CBOR array of warrants)
 /// - `X-Tenuo-PoP`: Base64-encoded signature proving holder possession
 ///
-/// # TODO (Production)
-/// - Add retry with exponential backoff for transient failures
-/// - Parse structured error responses from authorizer
 #[cfg(feature = "http-client")]
 fn remote_check(
     client: &Client,
@@ -791,51 +788,89 @@ fn remote_check(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let url = format!("{}/verify/{}", base_url.trim_end_matches('/'), tool);
 
-    // 1. Encode full chain as WarrantStack (best practice: authorizer verifies independently)
+    // 1. Encode full chain as WarrantStack
     let stack = tenuo::wire::WarrantStack::new(chain.to_vec());
     let stack_bytes = tenuo::wire::encode_stack(&stack)?;
     let chain_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&stack_bytes);
 
-    // 2. Encode PoP signature as base64 (consistent with SDK conventions)
+    // 2. Encode PoP signature as base64
     let pop_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signature.to_bytes());
 
-    // 3. Send POST request with full chain
-    let resp = match client
-        .post(&url)
-        .header("X-Tenuo-Warrant", chain_b64) // Use standard header (auto-detects single vs chain)
-        .header("X-Tenuo-PoP", pop_b64)
-        .header("Content-Type", "application/json")
-        .json(args)
-        .send()
-    {
-        Ok(r) => r,
-        Err(e) => {
-            // Connection error (Gateway down, network issue, timeout)
-            // This is NOT an authorization denial - it's an infrastructure failure
-            eprintln!("\n  ╔════════════════════════════════════════════════════════════╗");
-            eprintln!("  ║  ⚠️  GATEWAY CONNECTION ERROR                              ║");
-            eprintln!("  ╠════════════════════════════════════════════════════════════╣");
-            eprintln!("  ║  Cannot reach the Authorizer service at:                   ║");
-            eprintln!("  ║    {}                                    ", url);
-            eprintln!("  ║                                                            ║");
-            eprintln!(
-                "  ║  Error: {:50}║",
-                e.to_string().chars().take(50).collect::<String>()
-            );
-            eprintln!("  ║                                                            ║");
-            eprintln!("  ║  Did you start the authorizer?                             ║");
-            eprintln!("  ║    docker compose up authorizer                            ║");
-            eprintln!("  ╚════════════════════════════════════════════════════════════╝\n");
-            std::process::exit(1);
-        }
-    };
+    // 3. Send with exponential backoff retry for transient failures.
+    // Only network errors and 5xx responses are retried; 4xx are definitive denials.
+    const MAX_ATTEMPTS: u32 = 3;
+    const BASE_DELAY_MS: u64 = 100;
 
-    if resp.status().is_success() {
-        Ok(())
-    } else {
-        // Authorization denial (401, 403, etc.) - this IS a valid test result
+    let mut last_err: Box<dyn std::error::Error> = "no attempts made".into();
+
+    for attempt in 0..MAX_ATTEMPTS {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(
+                BASE_DELAY_MS * (1 << (attempt - 1)),
+            ));
+        }
+
+        let resp = match client
+            .post(&url)
+            .header("X-Tenuo-Warrant", &chain_b64)
+            .header("X-Tenuo-PoP", &pop_b64)
+            .header("Content-Type", "application/json")
+            .json(args)
+            .send()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                if attempt + 1 == MAX_ATTEMPTS {
+                    // Final attempt — print the connection error banner and exit
+                    eprintln!("\n  ╔════════════════════════════════════════════════════════════╗");
+                    eprintln!("  ║  ⚠️  GATEWAY CONNECTION ERROR                              ║");
+                    eprintln!("  ╠════════════════════════════════════════════════════════════╣");
+                    eprintln!("  ║  Cannot reach the Authorizer service at:                   ║");
+                    eprintln!("  ║    {}                                    ", url);
+                    eprintln!("  ║                                                            ║");
+                    eprintln!(
+                        "  ║  Error: {:50}║",
+                        e.to_string().chars().take(50).collect::<String>()
+                    );
+                    eprintln!("  ║                                                            ║");
+                    eprintln!("  ║  Did you start the authorizer?                             ║");
+                    eprintln!("  ║    docker compose up authorizer                            ║");
+                    eprintln!("  ╚════════════════════════════════════════════════════════════╝\n");
+                    std::process::exit(1);
+                }
+                last_err = e.into();
+                continue;
+            }
+        };
+
         let status = resp.status();
-        let text = resp.text().unwrap_or_default();
-        Err(format!("Remote denial: {} - {}", status, text).into())
+
+        if status.is_success() {
+            return Ok(());
+        }
+
+        // Parse structured error response if available.
+        let body = resp.text().unwrap_or_default();
+        let denial_msg = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| {
+                v.get("error")
+                    .or_else(|| v.get("message"))
+                    .or_else(|| v.get("detail"))
+                    .and_then(|m| m.as_str())
+                    .map(String::from)
+            })
+            .unwrap_or_else(|| body.clone());
+
+        if status.is_server_error() && attempt + 1 < MAX_ATTEMPTS {
+            // Transient server error — retry
+            last_err = format!("server error {}: {}", status, denial_msg).into();
+            continue;
+        }
+
+        // 4xx or final 5xx — definitive result
+        return Err(format!("Remote denial: {} - {}", status, denial_msg).into());
     }
+
+    Err(last_err)
 }

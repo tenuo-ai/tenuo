@@ -1302,18 +1302,23 @@ impl DataPlane {
         Ok(result)
     }
 
-    /// Attenuate a warrant for a sub-agent.
+    /// Attenuate a warrant for a sub-agent, targeting a specific tool.
     ///
     /// Requires this data plane to have its own keypair.
     ///
     /// # Arguments
     ///
     /// * `parent` - The parent warrant to attenuate from
-    /// * `constraints` - Constraints to apply to the child warrant
+    /// * `tool` - The tool capability to constrain. Must be present in the parent
+    ///   warrant. Pass `"*"` to apply the same constraint set to every tool the
+    ///   parent grants — useful when all tools share a common field (e.g. `path`).
+    /// * `constraints` - Field-level constraints to narrow for the specified tool.
+    ///   Each entry is `(field_name, constraint)`.
     /// * `holder_keypair` - The keypair of the parent warrant holder (who is delegating)
     pub fn attenuate(
         &self,
         parent: &Warrant,
+        tool: &str,
         constraints: &[(&str, Constraint)],
         holder_keypair: &SigningKey,
     ) -> Result<Warrant> {
@@ -1321,37 +1326,22 @@ impl DataPlane {
             Error::CryptoError("data plane has no keypair for attenuation".to_string())
         })?;
 
-        // Group constraints by tool (from prefix) or default to "*" ?
-        // OLD logic: parent.attenuate() -> OwnedAttenuationBuilder. Not specific tool?
-        // Wait, OwnedAttenuationBuilder adds capabilities?
-        // How does attenuate work now?
-        // OwnedAttenuationBuilder has `capability(tool, constraints)`.
-
-        let mut builder = parent.attenuate();
-
-        // We need to map constraint list to capability map.
-        // Assuming constraints are global? No, accessors were removed.
-        // If constraints have tool prefixes?
-        // For now, assume single tool if parent has single tool?
-        // Or if simple constraints, map to "*"?
-
-        // Let's assume the callers pass tool-specific constraints?
-        // Wait, the API `constraints: &[(&str, Constraint)]` is generic.
-        // The `example` usage earlier had `tool`.
-        // `attenuate` does NOT take `tool` arg.
-        // So it must inherit tools?
-        // `OwnedAttenuationBuilder` needs specific capability updates.
-
         let mut constraint_set = ConstraintSet::new();
         for (field, constraint) in constraints {
             constraint_set.insert(field.to_string(), constraint.clone());
         }
 
-        // Apply to ALL tools in parent?
-        if let Some(caps) = parent.capabilities() {
-            for tool in caps.keys() {
-                builder = builder.capability(tool, constraint_set.clone());
+        let mut builder = parent.attenuate();
+
+        if tool == "*" {
+            // Apply to every tool the parent grants.
+            if let Some(caps) = parent.capabilities() {
+                for t in caps.keys() {
+                    builder = builder.capability(t, constraint_set.clone());
+                }
             }
+        } else {
+            builder = builder.capability(tool, constraint_set);
         }
 
         builder.build(holder_keypair)
@@ -2603,8 +2593,9 @@ mod tests {
         let worker_warrant = orchestrator
             .attenuate(
                 &root_warrant,
+                "*",
                 &[("table", Pattern::new("public_*").unwrap().into())],
-                &control_plane.keypair, // Parent issuer keypair
+                &control_plane.keypair,
             )
             .unwrap();
 

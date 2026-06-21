@@ -1535,7 +1535,7 @@ pub struct SignedApproval {
 /// Inner payload (deserialized from SignedApproval.payload)
 pub struct ApprovalPayload {
     pub version: u8,
-    pub request_hash: [u8; 32],      // H(warrant_id || tool || sorted(args) || holder)
+    pub request_hash: [u8; 32],      // SHA-256(CBOR([warrant_id, tool, args_cbor_bytes, holder_bytes]))
     pub nonce: [u8; 16],             // Random, replay protection
     pub external_id: String,         // e.g., "arn:aws:iam::123:user/admin"
     pub approved_at: u64,            // Unix seconds

@@ -120,7 +120,7 @@
 //! │  1. Domain Separation    "tenuo-approval-v1" context prefix        │
 //! │  2. Nonce                128-bit random, makes each approval unique│
 //! │  3. TTL                  Short expiration window (default 5 min)   │
-//! │  4. Request Binding      H(warrant_id || tool || args || holder)   │
+//! │  4. Request Binding      H(CBOR([warrant_id, tool, args, holder]))  │
 //! │  5. Holder Binding       Approval bound to specific agent's key    │
 //! │  6. PoP Required         Attacker also needs holder's private key  │
 //! └─────────────────────────────────────────────────────────────────────┘
@@ -174,7 +174,7 @@ pub struct ApprovalPayload {
     /// Payload version (currently 1)
     pub version: u8,
 
-    /// Hash of what was approved: H(warrant_id || tool || sorted(args) || holder)
+    /// Hash of what was approved: SHA-256(CBOR([warrant_id, tool, args_cbor_bytes, holder_bytes]))
     pub request_hash: [u8; 32],
 
     /// Random nonce for replay protection (128 bits)
@@ -587,7 +587,7 @@ pub struct ApprovalRequest {
     pub args: std::collections::BTreeMap<String, crate::constraints::ConstraintValue>,
 
     /// Precomputed request_hash the approval must match.
-    /// `H(warrant_id || tool || sorted(args) || holder)`
+    /// `SHA-256(CBOR([warrant_id, tool, args_cbor_bytes, holder_bytes]))`
     pub request_hash: [u8; 32],
 
     /// Keys authorized to approve (from `warrant.required_approvers`).
