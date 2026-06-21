@@ -1,6 +1,6 @@
 ---
 name: tenuo-warrant
-description: Create tenuo warrants (capability tokens) for AI agents from natural language descriptions. Use this skill whenever someone wants to authorize an agent, create a warrant, set up agent permissions, add tenuo to a project, or describe what an AI agent should be allowed to do. Also trigger when you see tenuo imports, warrant-related code, or the user mentions capabilities, constraints, delegation, or attenuation in the context of agent authorization.
+description: Create tenuo warrants (capability tokens) for AI agents from natural language descriptions. Use this skill when someone wants to create, mint, design, or delegate a warrant; authorize an agent; set up agent permissions; or add tenuo to a project. Do NOT trigger for auditing, reviewing, or explaining existing warrants (use tenuo-audit instead).
 ---
 
 # Tenuo Warrant Creator
@@ -32,7 +32,9 @@ This tells you whether this is a greenfield integration or a retrofit, and which
 
 ### Phase 2: Persona Check
 
-Ask: **"Before we start — are you a developer building agent integrations, a platform engineer setting up infrastructure, or a security engineer reviewing permissions?"**
+Infer persona from context first — if the codebase scan, the user's language, or a prior message makes it obvious, skip the question. Only ask if genuinely ambiguous:
+
+**"Before we start — are you a developer building agent integrations, a platform engineer setting up infrastructure, or a security engineer reviewing permissions?"**
 
 - **Developer** → continue with this skill
 - **Security engineer** → suggest `/tenuo-audit` instead ("That skill is designed for reviewing and explaining existing warrants — it'll frame everything in IAM/RBAC terms you're used to")
@@ -155,15 +157,21 @@ Ask: **"Where should this warrant come from?"**
 Based on the chosen source and detected framework, generate the integration code.
 
 **Open-source example:**
+
+> **Development only** — `SigningKey.generate()` creates a fresh, untrusted key pair. In production, load `issuer_key` from secure storage and configure the verifier/authorizer to trust that issuer's public key. A warrant minted by an unregistered issuer will be rejected at verification time.
+
 ```python
 from tenuo import (
-    SigningKey, Warrant,
+    SigningKey, Warrant, configure,
     Subpath, UrlSafe, UrlPattern, All
 )
 
-# Generate keys (in production, load from secure storage)
+# Development: generate ephemeral keys. Production: load from secure storage.
 issuer_key = SigningKey.generate()
 agent_key = SigningKey.generate()
+
+# Register the issuer so the authorizer trusts warrants it signs
+configure(issuer_key=issuer_key)
 
 # Mint the warrant
 warrant = (Warrant.mint_builder()
@@ -194,7 +202,10 @@ warrant = await client.fire_trigger(
 )
 ```
 
-**With framework integration (e.g., OpenAI GuardBuilder):**
+**Constraints-only guardrail (e.g., OpenAI GuardBuilder):**
+
+> This is a guardrail, not a warrant integration — it enforces argument constraints on tool calls without cryptographic signing or delegation chains. Use it when you need constraint enforcement but don't need PoP, attenuation, or cloud-managed issuance.
+
 ```python
 from tenuo.openai import GuardBuilder, Subpath, UrlSafe, UrlPattern, All
 
@@ -224,8 +235,10 @@ After generating the code, explain how delegation works for sub-agents:
 
 "This warrant is for your first agent. When it spawns sub-agents, it creates narrower copies using `warrant.grant_builder()`. Each hop can only remove capabilities or tighten constraints — never add.
 
+**Key PoP requirement:** `.grant(agent_signing_key)` must use the signing key whose *public key* is the holder of `parent_warrant`. Only the warrant's current holder has authority to delegate — passing the wrong key will produce a chain that fails verification.
+
 ```python
-# Agent delegates to a sub-agent with narrower permissions
+# agent_signing_key must be the key pair whose public key is parent_warrant.holder
 child_warrant = (parent_warrant.grant_builder()
     .capability("read_file",
         path=Subpath("/data/reports/2024"))  # narrower path
@@ -275,4 +288,21 @@ When generating code, use these exact patterns from the tenuo Python SDK:
 
 **@guard decorator:** `@guard` on functions, with `warrant_scope(w)` and `key_scope(k)` context managers
 
-**Imports:** `from tenuo import SigningKey, Warrant, Capability, Subpath, UrlSafe, UrlPattern, Pattern, Range, OneOf, Exact, Shlex, Cidr, All, Wildcard`
+**Imports:** Only import what the generated warrant actually uses. The full set of available names:
+
+```python
+from tenuo import (
+    # Keys & core
+    SigningKey, Warrant, Capability, configure,
+    warrant_scope, key_scope,
+    # Constraints — pick what the warrant needs
+    Subpath, UrlSafe, UrlPattern, Pattern, Regex,
+    Exact, OneOf, NotOneOf, Range, Cidr,
+    Contains, Subset, Shlex, Wildcard,
+    All, AnyOf, Not, CEL,
+    # Scoped task API
+    mint, grant,
+    # Constant
+    MAX_DELEGATION_DEPTH,
+)
+```
