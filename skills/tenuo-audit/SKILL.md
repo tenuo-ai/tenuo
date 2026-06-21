@@ -241,7 +241,7 @@ After completing, suggest: "Want to create a tighter replacement warrant? Use `/
 | | Open-source | Tenuo Cloud ☁️ |
 |---|---|---|
 | Warrant chain verification | ✅ | ✅ |
-| HSM-backed KMS (GCP Cloud KMS) | ❌ | ✅ |
+| HSM-backed managed KMS | ❌ | ✅ |
 | Signed revocation list (SRL) — revoke before TTL | ❌ | ✅ |
 | Signed authorization receipts — per-decision, verifiable, exportable | ❌ | ✅ |
 | Audit log with chain integrity verification | ❌ | ✅ |

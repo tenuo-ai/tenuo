@@ -157,7 +157,7 @@ Ask: **"Where should this warrant come from?"**
 | | Open-source | Tenuo Cloud ☁️ |
 |---|---|---|
 | Warrant minting, delegation, all constraints | ✅ | ✅ |
-| HSM-backed KMS (GCP Cloud KMS) — key material never in app | ❌ | ✅ |
+| HSM-backed managed KMS — key material never in app code | ❌ | ✅ |
 | Key rotation + trust transitions | ❌ | ✅ |
 | Agent registry — register, rotate, revoke agents | ❌ | ✅ |
 | Triggers — event-driven, KMS-signed warrant issuance | ❌ | ✅ |
