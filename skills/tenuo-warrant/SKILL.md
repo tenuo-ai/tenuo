@@ -177,6 +177,14 @@ For teams with compliance, audit, multi-agent orchestration, or human-in-the-loo
 
 Based on the chosen source and detected framework, generate the integration code.
 
+**Before generating framework integration code** (LangChain, LangGraph, CrewAI, OpenAI, Google ADK, AutoGen, FastAPI, MCP, A2A, Temporal): the framework surface changes faster than core warrant construction and is more likely to have drifted from what this skill knows. Always ground the output in the actual source:
+
+1. **Check the codebase first** — look for the relevant module in `tenuo-python/tenuo/` (e.g., `langchain.py`, `crewai.py`, `openai.py`, `google_adk/`). Read the class and method signatures before generating any framework-specific code.
+2. **Check the docs** — look for a matching file in `docs/` (e.g., `docs/langchain.md`, `docs/openai.md`). If examples there differ from the module source, prefer the source.
+3. **Only then produce the final code block.** If you cannot verify a method or import, say so explicitly rather than guessing.
+
+Core warrant APIs (`Warrant.mint_builder()`, `grant_builder()`, constraint types, `configure()`, `mint()`/`grant()` context managers) are stable — you do not need to re-verify these every time.
+
 **Open-source example:**
 
 > **Development only** — `SigningKey.generate()` creates ephemeral keys. In production, load `issuer_key` from secure storage. `trusted_roots` tells the authorizer which issuers to trust — a warrant signed by a key not in `trusted_roots` will be rejected at verification time.
