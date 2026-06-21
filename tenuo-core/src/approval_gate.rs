@@ -542,8 +542,8 @@ impl std::error::Error for ApprovalGateError {}
 
 /// Verify that child approval gates are monotonically narrower than parent gates.
 ///
-/// This is **optional defense-in-depth** for Phase 1. The structured
-/// delegation API is the primary enforcement mechanism.
+/// This is **optional defense-in-depth**; the structured delegation API is the
+/// primary enforcement mechanism.
 ///
 /// Returns `Ok(())` if the child gates are valid, `Err(ApprovalGateError)` if
 /// they violate monotonicity.
@@ -614,7 +614,8 @@ pub(crate) fn verify_approval_gate_monotonicity(
 /// Validate that a child arg gate is monotonically at least as strict as the parent.
 ///
 /// "At least as strict" means the child gates a superset of values: child ≥ parent.
-/// Phase 1: constraint-based gates require exact equality.
+/// `Constraint↔Constraint` gates use `validate_attenuation` for semantic narrowing:
+/// the child constraint must be a valid attenuation of the parent (equal or stricter).
 fn validate_arg_approval_gate_monotonic(
     child: &ArgApprovalGate,
     parent: &ArgApprovalGate,
