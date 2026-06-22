@@ -130,18 +130,18 @@ description: External writing, talks, and coverage about Tenuo
 
   <div class="wild-card">
     <span class="wild-badge wild-badge--mention">Mention</span>
-    <div class="wild-title"><a href="#">OAuth multi-hop delegation for AI agents</a></div>
+    <div class="wild-title"><a href="https://workos.com/blog/oauth-multi-hop-delegation-ai-agents">OAuth multi-hop delegation for AI agents</a></div>
     <div class="wild-attribution">WorkOS Engineering</div>
     <p class="wild-description">Survey of emerging standards for multi-hop agent delegation. The AAT Internet-Draft is cited as a standards-track approach to offline-verifiable attenuation chains.</p>
-    <a class="wild-link" href="#">Read the post →</a>
+    <a class="wild-link" href="https://workos.com/blog/oauth-multi-hop-delegation-ai-agents">Read the post →</a>
   </div>
 
   <div class="wild-card">
     <span class="wild-badge wild-badge--mention">Mention</span>
-    <div class="wild-title"><a href="#">AAC Construction Specification: Non-Human Identity Series</a></div>
-    <div class="wild-attribution">Mohamad Amin Hasbini · Independent researcher, Paris</div>
-    <p class="wild-description">Technical paper on privacy-preserving authorization for AI agents. The AAT Internet-Draft is surveyed as the primary prior art on delegation-chain attenuation, with an accurate technical comparison of the disclosure models.</p>
-    <a class="wild-link" href="#">Read the paper →</a>
+    <div class="wild-title"><a href="https://www.windley.com/archives/2026/06/internet_identity_workshop_xlii_report.shtml">Internet Identity Workshop XLII Report</a></div>
+    <div class="wild-attribution">Phil Windley · IIW Organizer</div>
+    <p class="wild-description">Report from IIW 42 at the Computer History Museum. Covers the Demo Hour where Niki Niyikiza showed Tenuo's attenuating authorization tokens that cryptographically narrow an agent's capabilities at each delegation hop.</p>
+    <a class="wild-link" href="https://www.windley.com/archives/2026/06/internet_identity_workshop_xlii_report.shtml#:~:text=This%20time%2C%20the%20demo%20tables,capabilities%20at%20each%20delegation%20hop.">Read the report →</a>
   </div>
 
   <div class="wild-card">
