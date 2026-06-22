@@ -2982,7 +2982,7 @@ function App() {
               <span>·</span>
               <a href="https://tenuo.ai/quickstart" style={{ color: 'var(--muted)', textDecoration: 'none' }}>Docs</a>
               <span>·</span>
-              <span>MIT / Apache-2.0</span>
+              <span>Apache-2.0</span>
             </div>
           </div>
         </footer>
