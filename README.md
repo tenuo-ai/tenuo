@@ -12,7 +12,7 @@
   <a href="https://pypi.org/project/tenuo/"><img src="https://img.shields.io/pypi/v/tenuo.svg" alt="PyPI"></a>
   <a href="https://hub.docker.com/r/tenuo/authorizer"><img src="https://img.shields.io/docker/v/tenuo/authorizer?label=docker" alt="Docker"></a>
   <a href="https://tenuo.ai"><img src="https://img.shields.io/badge/docs-tenuo.ai-blue" alt="Docs"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
 </p>
 
 > **Tenuo Cloud: Early Access**
@@ -330,8 +330,8 @@ This runs the [orchestrator -> worker -> authorizer demo](https://tenuo.ai/demo.
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
 ```bash
-docker pull tenuo/authorizer:0.1.0-beta.24  # Sidecar for warrant verification
-docker pull tenuo/control:0.1.0-beta.24     # Control plane (demo/reference)
+docker pull tenuo/authorizer:0.2.0  # Sidecar for warrant verification
+docker pull tenuo/control:0.2.0     # Control plane (demo/reference)
 ```
 
 **Helm Chart**:
@@ -377,7 +377,7 @@ What you get in Rust:
 
 ```toml
 [dependencies]
-tenuo = "0.1.0-beta.24"
+tenuo = "0.2.0"
 ```
 
 Use the Rust API when you need a language-native enforcement boundary
@@ -425,7 +425,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### TypeScript SDK (Help Wanted)
 
-We're planning a TypeScript/Node SDK for v0.2. If you're interested in leading or contributing to this effort, open an issue or email us at [dev@tenuo.ai](mailto:dev@tenuo.ai).
+We're planning a TypeScript/Node SDK. If you're interested in leading or contributing to this effort, open an issue or email us at [dev@tenuo.ai](mailto:dev@tenuo.ai).
 
 **Security issues**: Email security@tenuo.ai with PGP ([key](./SECURITY_PUBKEY.asc), not public issues).
 
@@ -433,4 +433,4 @@ We're planning a TypeScript/Node SDK for v0.2. If you're interested in leading o
 
 ## License
 
-MIT OR Apache-2.0, at your option.
+Apache-2.0. See [LICENSE](LICENSE) for details.
