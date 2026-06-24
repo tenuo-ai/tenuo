@@ -75,7 +75,7 @@ use tenuo::{
 /// Authorizer-specific build number for independent release cycles.
 /// Increment this when shipping authorizer-only changes without bumping tenuo crate version.
 /// Full version string: `{CARGO_PKG_VERSION}+authz.{AUTHORIZER_BUILD}`
-pub const AUTHORIZER_BUILD: u32 = 1;
+pub const AUTHORIZER_BUILD: u32 = 2;
 
 /// Get the full authorizer version string with build metadata.
 pub fn authorizer_version() -> String {
