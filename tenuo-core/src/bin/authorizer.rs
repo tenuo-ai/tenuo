@@ -734,7 +734,7 @@ fn build_router(state: Arc<AppState>) -> Router {
 /// Print the shared portion of the startup banner.
 fn print_banner_shared(
     transport_line: &str,
-    config_path: &PathBuf,
+    config_path: &std::path::Path,
     debug_mode: bool,
     initial_srl_version: Option<u64>,
     control_plane_enabled: bool,
