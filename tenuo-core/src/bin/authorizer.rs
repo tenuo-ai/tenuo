@@ -229,7 +229,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             serve_unix(authorizer, initial_srl_version, config, socket_path, &cli).await?;
         }
-        Commands::Serve { port, config, bind, .. } => {
+        Commands::Serve {
+            port, config, bind, ..
+        } => {
             serve_http(authorizer, initial_srl_version, config, bind, *port, &cli).await?;
         }
 
@@ -732,7 +734,7 @@ fn build_router(state: Arc<AppState>) -> Router {
 /// Print the shared portion of the startup banner.
 fn print_banner_shared(
     transport_line: &str,
-    config_path: &PathBuf,
+    config_path: &std::path::Path,
     debug_mode: bool,
     initial_srl_version: Option<u64>,
     control_plane_enabled: bool,
@@ -826,13 +828,8 @@ fn prepare_unix_socket(path: &std::path::Path) -> Result<(), Box<dyn std::error:
         //    replace the socket and answer authorization requests themselves.
         //    Mirrors the client's `dst.st_mode & 0o022` invariant so server and
         //    client agree on what counts as a safe location.
-        let dir_meta = std::fs::metadata(parent).map_err(|e| {
-            format!(
-                "cannot stat socket directory '{}': {}",
-                parent.display(),
-                e
-            )
-        })?;
+        let dir_meta = std::fs::metadata(parent)
+            .map_err(|e| format!("cannot stat socket directory '{}': {}", parent.display(), e))?;
         let mode = dir_meta.permissions().mode();
         if mode & 0o022 != 0 {
             return Err(format!(
@@ -862,7 +859,11 @@ fn prepare_unix_socket(path: &std::path::Path) -> Result<(), Box<dyn std::error:
                 return Err(format!(
                     "refusing to remove '{}': path exists but is not a socket (is a {})",
                     path.display(),
-                    if ft.is_dir() { "directory" } else { "regular file" },
+                    if ft.is_dir() {
+                        "directory"
+                    } else {
+                        "regular file"
+                    },
                 )
                 .into());
             }
@@ -2272,8 +2273,7 @@ mod unix_socket_tests {
 
         std::os::unix::fs::symlink(&target, &socket_path).unwrap();
 
-        let err = prepare_unix_socket(&socket_path)
-            .expect_err("symlink should be refused");
+        let err = prepare_unix_socket(&socket_path).expect_err("symlink should be refused");
         assert!(
             err.to_string().contains("symlink"),
             "error message should mention symlink: {err}"
@@ -2291,8 +2291,7 @@ mod unix_socket_tests {
 
         std::fs::write(&socket_path, b"not a socket").unwrap();
 
-        let err = prepare_unix_socket(&socket_path)
-            .expect_err("regular file should be refused");
+        let err = prepare_unix_socket(&socket_path).expect_err("regular file should be refused");
         let msg = err.to_string();
         assert!(
             msg.contains("regular file") || msg.contains("not a socket"),
@@ -2411,9 +2410,7 @@ routes:
         // Connect via the socket and issue a raw HTTP/1.1 GET /health request.
         let mut stream = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
         stream
-            .write_all(
-                b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-            )
+            .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
             .await
             .unwrap();
 
