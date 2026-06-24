@@ -167,6 +167,25 @@ enum Commands {
         #[cfg(unix)]
         #[arg(long, conflicts_with_all = ["port", "bind"])]
         socket: Option<PathBuf>,
+
+        /// Permission bits for the Unix socket, octal (socket mode only).
+        ///
+        /// Controls who may *connect*. The default 0660 allows the owner and the
+        /// socket's group; pair it with --socket-group so a non-root client can
+        /// reach a root-owned authorizer. Use 0666 to allow any local user, or
+        /// 0600 to restrict to the owner.
+        #[cfg(unix)]
+        #[arg(long, default_value = "0660")]
+        socket_mode: String,
+
+        /// Group for the Unix socket — name or numeric gid (socket mode only).
+        ///
+        /// After binding, the socket is chgrp'd to this group. Combine with the
+        /// default 0660 mode so members of the group (e.g. developers in a
+        /// `tenuo` group) can connect to an authorizer running as root.
+        #[cfg(unix)]
+        #[arg(long)]
+        socket_group: Option<String>,
     },
 
     /// Verify and authorize a single warrant (for scripting)
@@ -225,9 +244,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Serve {
             config,
             socket: Some(socket_path),
+            socket_mode,
+            socket_group,
             ..
         } => {
-            serve_unix(authorizer, initial_srl_version, config, socket_path, &cli).await?;
+            serve_unix(
+                authorizer,
+                initial_srl_version,
+                config,
+                socket_path,
+                socket_mode,
+                socket_group.as_deref(),
+                &cli,
+            )
+            .await?;
         }
         Commands::Serve {
             port, config, bind, ..
@@ -888,14 +918,25 @@ fn prepare_unix_socket(path: &std::path::Path) -> Result<(), Box<dyn std::error:
 /// `/verify/{tool}`, etc. — but over `AF_UNIX` instead of `AF_INET`.
 /// No TCP listener is created.
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
 async fn serve_unix(
     authorizer: Authorizer,
     initial_srl_version: Option<u64>,
     config_path: &PathBuf,
     socket_path: &PathBuf,
+    socket_mode: &str,
+    socket_group: Option<&str>,
     cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt as _;
+
+    // Parse/resolve before binding so a misconfiguration fails fast without
+    // leaving a socket file behind.
+    let mode = parse_socket_mode(socket_mode)?;
+    let gid = match socket_group {
+        Some(group) => Some(resolve_gid(group)?),
+        None => None,
+    };
 
     let ready = prepare_serve(authorizer, initial_srl_version, config_path, cli).await?;
 
@@ -912,14 +953,35 @@ async fn serve_unix(
 
     let listener = tokio::net::UnixListener::bind(socket_path)?;
 
-    // Set socket permissions intentionally: 0660 allows owner + group access,
-    // which is the right default for managed deployments where both the
-    // authorizer service and the calling process share a dedicated group.
-    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
+    // chgrp first (if requested), then set the final mode. The mode controls who
+    // may *connect*: 0660 + a shared group lets a non-root client reach a
+    // root-owned authorizer; 0666 allows any local user; 0600 is owner-only.
+    if let Some(gid) = gid {
+        std::os::unix::fs::chown(socket_path, None, Some(gid)).map_err(|e| {
+            format!(
+                "failed to set socket group (gid {}) on '{}': {}",
+                gid,
+                socket_path.display(),
+                e
+            )
+        })?;
+    }
+    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(mode))?;
+
+    // A socket that any local user can connect to is a wider inbound surface
+    // (requests still require a valid warrant + PoP, but it's worth surfacing).
+    if mode & 0o002 != 0 {
+        warn!(
+            socket = %socket_path.display(),
+            mode = format!("{:04o}", mode),
+            "Unix socket is world-connectable (any local user can send requests)"
+        );
+    }
 
     info!(
         socket = %socket_path.display(),
-        mode = "0660",
+        mode = format!("{:04o}", mode),
+        group = socket_group.unwrap_or("(unchanged)"),
         "Unix socket ready"
     );
 
@@ -927,6 +989,51 @@ async fn serve_unix(
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Parse an octal socket-mode string (e.g. "0660", "660", "0o600") into bits.
+#[cfg(unix)]
+fn parse_socket_mode(s: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    let trimmed = s.trim();
+    let digits = trimmed
+        .strip_prefix("0o")
+        .or_else(|| trimmed.strip_prefix("0O"))
+        .unwrap_or(trimmed);
+    if digits.is_empty() {
+        return Err(format!("invalid --socket-mode '{}': empty", s).into());
+    }
+    let mode = u32::from_str_radix(digits, 8)
+        .map_err(|_| format!("invalid --socket-mode '{}': expected octal like 0660", s))?;
+    if mode > 0o7777 {
+        return Err(format!("invalid --socket-mode '{}': out of range", s).into());
+    }
+    Ok(mode)
+}
+
+/// Resolve a group spec (numeric gid or group name) to a gid.
+#[cfg(unix)]
+fn resolve_gid(group: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    let group = group.trim();
+    if group.is_empty() {
+        return Err("invalid --socket-group: empty".into());
+    }
+    // Numeric gid takes the fast path and avoids an NSS lookup.
+    if let Ok(gid) = group.parse::<u32>() {
+        return Ok(gid);
+    }
+    // Group name → gid via getgrnam. Runs once at startup before serving.
+    let cname = std::ffi::CString::new(group)
+        .map_err(|_| format!("invalid --socket-group '{}': contains NUL", group))?;
+    // SAFETY: getgrnam returns a pointer into a static buffer; we copy gr_gid out
+    // immediately and do not retain the pointer. Called once at startup.
+    let gid = unsafe {
+        let grp = libc::getgrnam(cname.as_ptr());
+        if grp.is_null() {
+            return Err(format!("unknown --socket-group '{}': no such group", group).into());
+        }
+        (*grp).gr_gid
+    };
+    Ok(gid)
 }
 
 /// Health check endpoint for Kubernetes probes
@@ -2349,6 +2456,76 @@ mod unix_socket_tests {
 
         let socket_path = safe.join("auth.sock");
         prepare_unix_socket(&socket_path).expect("0755 parent dir should be accepted");
+    }
+
+    // ----------------------------------------------------------------
+    // parse_socket_mode
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn parse_socket_mode_accepts_common_forms() {
+        assert_eq!(parse_socket_mode("0660").unwrap(), 0o660);
+        assert_eq!(parse_socket_mode("660").unwrap(), 0o660);
+        assert_eq!(parse_socket_mode("0666").unwrap(), 0o666);
+        assert_eq!(parse_socket_mode("0600").unwrap(), 0o600);
+        assert_eq!(parse_socket_mode("0o640").unwrap(), 0o640);
+        assert_eq!(parse_socket_mode(" 0660 ").unwrap(), 0o660);
+    }
+
+    #[test]
+    fn parse_socket_mode_rejects_invalid() {
+        assert!(parse_socket_mode("").is_err());
+        assert!(parse_socket_mode("rwx").is_err());
+        assert!(parse_socket_mode("0899").is_err()); // 8,9 not octal
+        assert!(parse_socket_mode("77777").is_err()); // out of range
+    }
+
+    // ----------------------------------------------------------------
+    // resolve_gid: numeric gid fast path + known group
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn resolve_gid_numeric() {
+        assert_eq!(resolve_gid("0").unwrap(), 0);
+        assert_eq!(resolve_gid("1000").unwrap(), 1000);
+        assert_eq!(resolve_gid(" 42 ").unwrap(), 42);
+    }
+
+    #[test]
+    fn resolve_gid_unknown_group_errors() {
+        let err = resolve_gid("definitely_no_such_group_xyz123").expect_err("should fail");
+        assert!(err.to_string().contains("no such group"));
+    }
+
+    #[test]
+    fn resolve_gid_empty_errors() {
+        assert!(resolve_gid("   ").is_err());
+    }
+
+    // ----------------------------------------------------------------
+    // socket mode is actually applied to the bound socket
+    // ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn socket_mode_is_applied_on_bind() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("auth.sock");
+
+        let mode = parse_socket_mode("0666").unwrap();
+        let _listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(mode)).unwrap();
+
+        let got = std::fs::metadata(&socket_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            got, 0o666,
+            "socket should be world-connectable when 0666 requested"
+        );
     }
 
     // ----------------------------------------------------------------

@@ -161,7 +161,8 @@ getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # getrandom 0.4 — pulled in by rand 0.10 / rand_core 0.10 on WASM targets
 getrandom4 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(unix)'.dependencies]
+# macOS: used by heartbeat.rs; all Unix: socket group/gid resolution in the authorizer
 libc = "0.2.186"
 
 [dev-dependencies]
