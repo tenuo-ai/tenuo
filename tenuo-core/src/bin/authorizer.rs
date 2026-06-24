@@ -789,14 +789,65 @@ async fn serve_http(
 
 /// Validate and clean up the socket path before binding.
 ///
+/// The security of Unix-socket mode rests entirely on the *parent directory*:
+/// because connecting to (and creating/replacing) the socket requires write
+/// access to that directory, a directory that no untrusted user can write to is
+/// what lets a client authenticate the responder by ownership instead of a
+/// shared secret (see `_safe_managed_socket` on the client side). This function
+/// enforces that invariant on the server and refuses path-confusion tricks:
+///
+/// - The parent directory must exist (created if missing) and must NOT be
+///   group- or world-writable. We refuse otherwise — a writable directory would
+///   let an attacker pre-position or replace the socket and impersonate the
+///   authorizer, defeating the whole point of socket mode.
 /// - Symlinks at `path` are refused (could redirect to a different socket).
 /// - Regular files and directories at `path` are refused.
 /// - A stale socket (left by a previous crash) is removed.
-/// - The parent directory is created if it does not exist.
 #[cfg(unix)]
 fn prepare_unix_socket(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    use std::os::unix::fs::FileTypeExt as _;
+    use std::os::unix::fs::{FileTypeExt as _, PermissionsExt as _};
 
+    // 1. Ensure the parent directory exists, creating it if necessary. Under a
+    //    normal umask (>= 022) create_dir_all yields a 0755 directory, which
+    //    passes the writability check below.
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "failed to create socket directory '{}': {}",
+                    parent.display(),
+                    e
+                )
+            })?;
+        }
+
+        // 2. Refuse a group/world-writable parent dir. This is the load-bearing
+        //    check: if anyone outside the trusted set can write here, they can
+        //    replace the socket and answer authorization requests themselves.
+        //    Mirrors the client's `dst.st_mode & 0o022` invariant so server and
+        //    client agree on what counts as a safe location.
+        let dir_meta = std::fs::metadata(parent).map_err(|e| {
+            format!(
+                "cannot stat socket directory '{}': {}",
+                parent.display(),
+                e
+            )
+        })?;
+        let mode = dir_meta.permissions().mode();
+        if mode & 0o022 != 0 {
+            return Err(format!(
+                "refusing to bind socket in '{}': directory is group/world-writable \
+                 (mode {:o}). An attacker who can write here could impersonate the \
+                 authorizer. Use a directory writable only by the service user (e.g. \
+                 a systemd RuntimeDirectory).",
+                parent.display(),
+                mode & 0o777,
+            )
+            .into());
+        }
+    }
+
+    // 3. Inspect anything already at the socket path itself.
     match std::fs::symlink_metadata(path) {
         Ok(meta) => {
             let ft = meta.file_type();
@@ -815,7 +866,9 @@ fn prepare_unix_socket(path: &std::path::Path) -> Result<(), Box<dyn std::error:
                 )
                 .into());
             }
-            // Stale socket from a previous crash — safe to remove.
+            // Stale socket from a previous crash — safe to remove. Because the
+            // parent dir is not untrusted-writable (checked above), nothing can
+            // race in between this unlink and the subsequent bind.
             info!(socket = %path.display(), "Removing stale Unix socket");
             std::fs::remove_file(path)?;
         }
@@ -823,19 +876,6 @@ fn prepare_unix_socket(path: &std::path::Path) -> Result<(), Box<dyn std::error:
             // Nothing at the path — proceed to bind.
         }
         Err(e) => return Err(e.into()),
-    }
-
-    // Ensure the parent directory exists; create it if it doesn't.
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                format!(
-                    "failed to create socket directory '{}': {}",
-                    parent.display(),
-                    e
-                )
-            })?;
-        }
     }
 
     Ok(())
@@ -2258,6 +2298,58 @@ mod unix_socket_tests {
             msg.contains("regular file") || msg.contains("not a socket"),
             "error message should describe the file type: {msg}"
         );
+    }
+
+    // ----------------------------------------------------------------
+    // prepare_unix_socket: group/world-writable parent dir is refused
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn world_writable_parent_dir_is_refused() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let writable = dir.path().join("open");
+        std::fs::create_dir(&writable).unwrap();
+        // 0777 — world-writable: an attacker could replace the socket here.
+        std::fs::set_permissions(&writable, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+        let socket_path = writable.join("auth.sock");
+        let err = prepare_unix_socket(&socket_path)
+            .expect_err("world-writable parent dir should be refused");
+        assert!(
+            err.to_string().contains("group/world-writable"),
+            "error should mention writability: {err}"
+        );
+    }
+
+    #[test]
+    fn group_writable_parent_dir_is_refused() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let writable = dir.path().join("grp");
+        std::fs::create_dir(&writable).unwrap();
+        // 0775 — group-writable.
+        std::fs::set_permissions(&writable, std::fs::Permissions::from_mode(0o775)).unwrap();
+
+        let socket_path = writable.join("auth.sock");
+        let err = prepare_unix_socket(&socket_path)
+            .expect_err("group-writable parent dir should be refused");
+        assert!(err.to_string().contains("group/world-writable"));
+    }
+
+    #[test]
+    fn safe_parent_dir_is_accepted() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let safe = dir.path().join("safe");
+        std::fs::create_dir(&safe).unwrap();
+        std::fs::set_permissions(&safe, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let socket_path = safe.join("auth.sock");
+        prepare_unix_socket(&socket_path).expect("0755 parent dir should be accepted");
     }
 
     // ----------------------------------------------------------------
