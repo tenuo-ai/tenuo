@@ -5,7 +5,7 @@ Cryptographic authorization primitive for AI agents.
 [![Crates.io](https://img.shields.io/crates/v/tenuo.svg)](https://crates.io/crates/tenuo)
 [![docs.rs](https://docs.rs/tenuo/badge.svg)](https://docs.rs/tenuo)
 
-> **Status: v0.1 Beta** — Core semantics are stable. See [CHANGELOG](../CHANGELOG.md).
+> **Status: v0.2 — Production/Stable.** Core semantics are stable. See [CHANGELOG](../CHANGELOG.md).
 
 ## Overview
 

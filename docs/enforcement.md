@@ -78,7 +78,7 @@ Tenuo runs as a separate container in the same Kubernetes pod. All tool traffic 
 spec:
   containers:
     - name: tenuo-authorizer
-      image: tenuo/authorizer:0.1
+      image: tenuo/authorizer:0.2.0
       ports: [{ containerPort: 9090 }]
     - name: tool-api
       image: your-tool:latest
@@ -422,7 +422,7 @@ services:
       - tenuo-authorizer
 
   tenuo-authorizer:
-    image: tenuo/authorizer:0.1
+    image: tenuo/authorizer:0.2.0
     ports:
       - "9090:9090"
     environment:
