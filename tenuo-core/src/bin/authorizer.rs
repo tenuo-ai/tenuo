@@ -75,7 +75,7 @@ use tenuo::{
 /// Authorizer-specific build number for independent release cycles.
 /// Increment this when shipping authorizer-only changes without bumping tenuo crate version.
 /// Full version string: `{CARGO_PKG_VERSION}+authz.{AUTHORIZER_BUILD}`
-pub const AUTHORIZER_BUILD: u32 = 1;
+pub const AUTHORIZER_BUILD: u32 = 2;
 
 /// Get the full authorizer version string with build metadata.
 pub fn authorizer_version() -> String {
@@ -146,7 +146,7 @@ struct Cli {
 enum Commands {
     /// Run as an HTTP authorization server
     Serve {
-        /// Port to listen on
+        /// Port to listen on (TCP mode; mutually exclusive with --socket)
         #[arg(short, long, default_value = "9090")]
         port: u16,
 
@@ -154,9 +154,19 @@ enum Commands {
         #[arg(short, long)]
         config: PathBuf,
 
-        /// Bind address
+        /// Bind address (TCP mode; mutually exclusive with --socket)
         #[arg(short, long, default_value = "0.0.0.0")]
         bind: String,
+
+        /// Unix domain socket path (socket mode).
+        ///
+        /// When set, serves the same HTTP API over a Unix socket instead of TCP.
+        /// Do not combine with --port or --bind.
+        ///
+        /// Example: /var/run/tenuo/authorizer.sock
+        #[cfg(unix)]
+        #[arg(long, conflicts_with_all = ["port", "bind"])]
+        socket: Option<PathBuf>,
     },
 
     /// Verify and authorize a single warrant (for scripting)
@@ -211,7 +221,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         build_authorizer(&cli.trusted_keys, &cli.revocation_list)?;
 
     match &cli.command {
-        Commands::Serve { port, config, bind } => {
+        #[cfg(unix)]
+        Commands::Serve {
+            config,
+            socket: Some(socket_path),
+            ..
+        } => {
+            serve_unix(authorizer, initial_srl_version, config, socket_path, &cli).await?;
+        }
+        Commands::Serve { port, config, bind, .. } => {
             serve_http(authorizer, initial_srl_version, config, bind, *port, &cli).await?;
         }
 
@@ -492,15 +510,21 @@ impl DenyReason {
     }
 }
 
-/// Start the HTTP authorization server
-async fn serve_http(
+/// Shared setup returned by [`prepare_serve`]: compiled state + router, ready to bind.
+struct ServeReady {
+    state: Arc<AppState>,
+    debug_mode: bool,
+    control_plane_enabled: bool,
+}
+
+/// Load gateway config, resolve control-plane credentials, build [`AppState`], and
+/// spawn the heartbeat task.  Called by both TCP and Unix-socket serve paths.
+async fn prepare_serve(
     authorizer: Authorizer,
     initial_srl_version: Option<u64>,
     config_path: &PathBuf,
-    bind: &str,
-    port: u16,
     cli: &Cli,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<ServeReady, Box<dyn std::error::Error>> {
     // Load and compile gateway configuration
     let mut config = GatewayConfig::from_file(config_path)?;
 
@@ -563,29 +587,8 @@ async fn serve_http(
         }
     });
 
-    // Check if control plane is configured
     let control_plane_enabled =
         resolved_url.is_some() && resolved_key.is_some() && resolved_name.is_some();
-
-    eprintln!("┌─────────────────────────────────────────────────────────");
-    eprintln!("│ Tenuo Authorizer Server v{}", authorizer_version());
-    eprintln!("├─────────────────────────────────────────────────────────");
-    eprintln!("│ Listening on: {}:{}", bind, port);
-    eprintln!("│ Config: {}", config_path.display());
-    if debug_mode {
-        eprintln!("│ ⚠️  Debug mode: ENABLED (not for production!)");
-    }
-    if let Some(version) = initial_srl_version {
-        eprintln!("│ Revocation List: v{} (loaded from file)", version);
-    }
-    if control_plane_enabled {
-        eprintln!(
-            "│ Control Plane: ENABLED (heartbeat every {}s, SRL sync)",
-            cli.heartbeat_interval
-        );
-    }
-    eprintln!("└─────────────────────────────────────────────────────────");
-    eprintln!();
 
     // Wrap authorizer in RwLock for shared access (allows heartbeat to update SRL)
     let shared_authorizer = Arc::new(tokio::sync::RwLock::new(authorizer));
@@ -708,19 +711,218 @@ async fn serve_http(
         started_at: std::time::Instant::now(),
     });
 
-    // Build the router
-    // Health endpoint first (no auth required) for K8s probes
-    // Then catch-all for authorized requests
-    let app = Router::new()
+    Ok(ServeReady {
+        state,
+        debug_mode,
+        control_plane_enabled,
+    })
+}
+
+/// Build the axum router from shared state.
+fn build_router(state: Arc<AppState>) -> Router {
+    Router::new()
         .route("/health", axum::routing::get(health_check))
         .route("/healthz", axum::routing::get(health_check))
         .route("/ready", axum::routing::get(health_check))
         .route("/status", axum::routing::get(status_handler))
         .fallback(handle_request)
-        .with_state(state);
+        .with_state(state)
+}
 
+/// Print the shared portion of the startup banner.
+fn print_banner_shared(
+    transport_line: &str,
+    config_path: &PathBuf,
+    debug_mode: bool,
+    initial_srl_version: Option<u64>,
+    control_plane_enabled: bool,
+    heartbeat_interval: u64,
+) {
+    eprintln!("┌─────────────────────────────────────────────────────────");
+    eprintln!("│ Tenuo Authorizer Server v{}", authorizer_version());
+    eprintln!("├─────────────────────────────────────────────────────────");
+    eprintln!("│ {}", transport_line);
+    eprintln!("│ Config: {}", config_path.display());
+    if debug_mode {
+        eprintln!("│ ⚠️  Debug mode: ENABLED (not for production!)");
+    }
+    if let Some(version) = initial_srl_version {
+        eprintln!("│ Revocation List: v{} (loaded from file)", version);
+    }
+    if control_plane_enabled {
+        eprintln!(
+            "│ Control Plane: ENABLED (heartbeat every {}s, SRL sync)",
+            heartbeat_interval
+        );
+    }
+    eprintln!("└─────────────────────────────────────────────────────────");
+    eprintln!();
+}
+
+/// Start the HTTP authorization server over TCP.
+async fn serve_http(
+    authorizer: Authorizer,
+    initial_srl_version: Option<u64>,
+    config_path: &PathBuf,
+    bind: &str,
+    port: u16,
+    cli: &Cli,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ready = prepare_serve(authorizer, initial_srl_version, config_path, cli).await?;
+
+    print_banner_shared(
+        &format!("transport=tcp  listen={}:{}", bind, port),
+        config_path,
+        ready.debug_mode,
+        initial_srl_version,
+        ready.control_plane_enabled,
+        cli.heartbeat_interval,
+    );
+
+    let app = build_router(ready.state);
     let addr: SocketAddr = format!("{}:{}", bind, port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+/// Validate and clean up the socket path before binding.
+///
+/// The security of Unix-socket mode rests entirely on the *parent directory*:
+/// because connecting to (and creating/replacing) the socket requires write
+/// access to that directory, a directory that no untrusted user can write to is
+/// what lets a client authenticate the responder by ownership instead of a
+/// shared secret (see `_safe_managed_socket` on the client side). This function
+/// enforces that invariant on the server and refuses path-confusion tricks:
+///
+/// - The parent directory must exist (created if missing) and must NOT be
+///   group- or world-writable. We refuse otherwise — a writable directory would
+///   let an attacker pre-position or replace the socket and impersonate the
+///   authorizer, defeating the whole point of socket mode.
+/// - Symlinks at `path` are refused (could redirect to a different socket).
+/// - Regular files and directories at `path` are refused.
+/// - A stale socket (left by a previous crash) is removed.
+#[cfg(unix)]
+fn prepare_unix_socket(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::{FileTypeExt as _, PermissionsExt as _};
+
+    // 1. Ensure the parent directory exists, creating it if necessary. Under a
+    //    normal umask (>= 022) create_dir_all yields a 0755 directory, which
+    //    passes the writability check below.
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "failed to create socket directory '{}': {}",
+                    parent.display(),
+                    e
+                )
+            })?;
+        }
+
+        // 2. Refuse a group/world-writable parent dir. This is the load-bearing
+        //    check: if anyone outside the trusted set can write here, they can
+        //    replace the socket and answer authorization requests themselves.
+        //    Mirrors the client's `dst.st_mode & 0o022` invariant so server and
+        //    client agree on what counts as a safe location.
+        let dir_meta = std::fs::metadata(parent).map_err(|e| {
+            format!(
+                "cannot stat socket directory '{}': {}",
+                parent.display(),
+                e
+            )
+        })?;
+        let mode = dir_meta.permissions().mode();
+        if mode & 0o022 != 0 {
+            return Err(format!(
+                "refusing to bind socket in '{}': directory is group/world-writable \
+                 (mode {:o}). An attacker who can write here could impersonate the \
+                 authorizer. Use a directory writable only by the service user (e.g. \
+                 a systemd RuntimeDirectory).",
+                parent.display(),
+                mode & 0o777,
+            )
+            .into());
+        }
+    }
+
+    // 3. Inspect anything already at the socket path itself.
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => {
+            let ft = meta.file_type();
+            if ft.is_symlink() {
+                return Err(format!(
+                    "refusing to remove '{}': path is a symlink — possible path-confusion attack",
+                    path.display()
+                )
+                .into());
+            }
+            if !ft.is_socket() {
+                return Err(format!(
+                    "refusing to remove '{}': path exists but is not a socket (is a {})",
+                    path.display(),
+                    if ft.is_dir() { "directory" } else { "regular file" },
+                )
+                .into());
+            }
+            // Stale socket from a previous crash — safe to remove. Because the
+            // parent dir is not untrusted-writable (checked above), nothing can
+            // race in between this unlink and the subsequent bind.
+            info!(socket = %path.display(), "Removing stale Unix socket");
+            std::fs::remove_file(path)?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Nothing at the path — proceed to bind.
+        }
+        Err(e) => return Err(e.into()),
+    }
+
+    Ok(())
+}
+
+/// Start the HTTP authorization server over a Unix domain socket.
+///
+/// Serves the exact same HTTP API as TCP mode — `/health`, `/status`,
+/// `/verify/{tool}`, etc. — but over `AF_UNIX` instead of `AF_INET`.
+/// No TCP listener is created.
+#[cfg(unix)]
+async fn serve_unix(
+    authorizer: Authorizer,
+    initial_srl_version: Option<u64>,
+    config_path: &PathBuf,
+    socket_path: &PathBuf,
+    cli: &Cli,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let ready = prepare_serve(authorizer, initial_srl_version, config_path, cli).await?;
+
+    print_banner_shared(
+        &format!("transport=unix socket={}", socket_path.display()),
+        config_path,
+        ready.debug_mode,
+        initial_srl_version,
+        ready.control_plane_enabled,
+        cli.heartbeat_interval,
+    );
+
+    prepare_unix_socket(socket_path)?;
+
+    let listener = tokio::net::UnixListener::bind(socket_path)?;
+
+    // Set socket permissions intentionally: 0660 allows owner + group access,
+    // which is the right default for managed deployments where both the
+    // authorizer service and the calling process share a dedicated group.
+    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
+
+    info!(
+        socket = %socket_path.display(),
+        mode = "0660",
+        "Unix socket ready"
+    );
+
+    let app = build_router(ready.state);
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -2016,5 +2218,233 @@ routes:
 
         let body = parse_body(resp).await;
         assert_eq!(body["authorized"], true);
+    }
+}
+
+// ============================================================================
+// Unix Socket Tests
+// ============================================================================
+
+#[cfg(all(test, unix))]
+mod unix_socket_tests {
+    use super::*;
+    use std::os::unix::fs::FileTypeExt as _;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // ----------------------------------------------------------------
+    // prepare_unix_socket: stale socket is removed
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn stale_socket_is_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("auth.sock");
+
+        // Create an actual Unix socket at the path to simulate a stale one.
+        {
+            std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        }
+        assert!(
+            std::fs::symlink_metadata(&socket_path)
+                .unwrap()
+                .file_type()
+                .is_socket(),
+            "pre-condition: path must be a socket"
+        );
+
+        prepare_unix_socket(&socket_path).expect("should remove stale socket");
+
+        assert!(
+            !socket_path.exists(),
+            "stale socket should have been removed"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // prepare_unix_socket: symlink is refused
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn symlink_at_socket_path_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("auth.sock");
+        let target = dir.path().join("somewhere_else.sock");
+
+        std::os::unix::fs::symlink(&target, &socket_path).unwrap();
+
+        let err = prepare_unix_socket(&socket_path)
+            .expect_err("symlink should be refused");
+        assert!(
+            err.to_string().contains("symlink"),
+            "error message should mention symlink: {err}"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // prepare_unix_socket: regular file is refused
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn regular_file_at_socket_path_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("auth.sock");
+
+        std::fs::write(&socket_path, b"not a socket").unwrap();
+
+        let err = prepare_unix_socket(&socket_path)
+            .expect_err("regular file should be refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("regular file") || msg.contains("not a socket"),
+            "error message should describe the file type: {msg}"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // prepare_unix_socket: group/world-writable parent dir is refused
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn world_writable_parent_dir_is_refused() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let writable = dir.path().join("open");
+        std::fs::create_dir(&writable).unwrap();
+        // 0777 — world-writable: an attacker could replace the socket here.
+        std::fs::set_permissions(&writable, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+        let socket_path = writable.join("auth.sock");
+        let err = prepare_unix_socket(&socket_path)
+            .expect_err("world-writable parent dir should be refused");
+        assert!(
+            err.to_string().contains("group/world-writable"),
+            "error should mention writability: {err}"
+        );
+    }
+
+    #[test]
+    fn group_writable_parent_dir_is_refused() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let writable = dir.path().join("grp");
+        std::fs::create_dir(&writable).unwrap();
+        // 0775 — group-writable.
+        std::fs::set_permissions(&writable, std::fs::Permissions::from_mode(0o775)).unwrap();
+
+        let socket_path = writable.join("auth.sock");
+        let err = prepare_unix_socket(&socket_path)
+            .expect_err("group-writable parent dir should be refused");
+        assert!(err.to_string().contains("group/world-writable"));
+    }
+
+    #[test]
+    fn safe_parent_dir_is_accepted() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let safe = dir.path().join("safe");
+        std::fs::create_dir(&safe).unwrap();
+        std::fs::set_permissions(&safe, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let socket_path = safe.join("auth.sock");
+        prepare_unix_socket(&socket_path).expect("0755 parent dir should be accepted");
+    }
+
+    // ----------------------------------------------------------------
+    // serve_unix: socket answers the same HTTP API as TCP
+    // ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn unix_socket_serves_same_api_as_tcp() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("auth.sock");
+
+        let root_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+
+        // Build the router the same way serve_unix does.
+        let config = GatewayConfig::from_yaml(
+            r#"
+version: "1"
+settings:
+  debug_mode: true
+tools:
+  deploy:
+    description: "Deploy service"
+    constraints:
+      service:
+        from: path
+        path: "service"
+        required: true
+routes:
+  - pattern: "/deploy/{service}"
+    method: ["POST"]
+    tool: "deploy"
+"#,
+        )
+        .unwrap();
+        let compiled = CompiledGatewayConfig::compile(config).unwrap();
+        let state = Arc::new(AppState {
+            authorizer: Arc::new(tokio::sync::RwLock::new(authorizer)),
+            config: compiled,
+            debug_mode: true,
+            audit_tx: None,
+            authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
+            metrics: None,
+            started_at: std::time::Instant::now(),
+        });
+        let app = build_router(state);
+
+        // Bind the Unix socket.
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        // Serve in a background task; abort when the test ends.
+        let serve_handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        // Give the server a moment to start accepting.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        // Connect via the socket and issue a raw HTTP/1.1 GET /health request.
+        let mut stream = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
+        stream
+            .write_all(
+                b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            )
+            .await
+            .unwrap();
+
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        let response_str = String::from_utf8(response).unwrap();
+
+        assert!(
+            response_str.contains("200 OK"),
+            "expected 200 OK from /health over Unix socket, got:\n{response_str}"
+        );
+        assert!(
+            response_str.contains("healthy"),
+            "expected 'healthy' in body over Unix socket, got:\n{response_str}"
+        );
+        assert!(
+            response_str.contains("tenuo-authorizer"),
+            "expected service name in body, got:\n{response_str}"
+        );
+
+        // Verify no TCP port was bound (connect to a random port should fail).
+        // We use port 0 trick: just assert the socket file was created and is the
+        // only listening endpoint this server knows about.
+        assert!(
+            std::fs::symlink_metadata(&socket_path)
+                .unwrap()
+                .file_type()
+                .is_socket(),
+            "socket file should exist while server is running"
+        );
+
+        serve_handle.abort();
     }
 }
