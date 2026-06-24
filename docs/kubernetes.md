@@ -183,7 +183,7 @@ env:
 ```yaml
 containers:
 - name: tenuo-authorizer
-  image: tenuo/authorizer:0.1
+  image: tenuo/authorizer:0.2.0
   args: ["serve", "--config", "/etc/tenuo/gateway.yaml"]
   ports:
   - name: http

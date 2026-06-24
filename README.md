@@ -29,7 +29,7 @@ Tenuo is designed for teams running tool-calling and multi-agent workflows where
 
 It can be deployed in-process or at boundary enforcement points (sidecar/gateway), with the same warrant semantics and enforcement behavior.
 
-> **Status: v0.1 Beta** - Core semantics are stable. APIs may evolve. See [CHANGELOG](./CHANGELOG.md).
+> **Status: v0.2 — Production/Stable.** Core semantics are stable. See [CHANGELOG](./CHANGELOG.md).
 
 ```bash
 # Using uv (recommended)

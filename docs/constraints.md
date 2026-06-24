@@ -917,7 +917,7 @@ Complex logic using CEL expressions for advanced authorization rules.
 > [!NOTE]
 > **Optional Feature (Rust)**: CEL support requires the `cel` feature flag:
 > ```toml
-> tenuo = { version = "0.1.0-beta.1", features = ["cel"] }
+> tenuo = { version = "0.2", features = ["cel"] }
 > ```
 > This reduces dependencies for users who don't need CEL. Without the feature, CEL
 > constraints can still be deserialized (for wire format interoperability), but 

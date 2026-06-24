@@ -10,7 +10,7 @@ assignees: ''
 
 **Integration**: (e.g., OpenAI, CrewAI, LangChain)
 **Version**: (e.g., 1.9.4)
-**Tenuo Version**: (e.g., 0.1.0b7)
+**Tenuo Version**: (e.g., 0.2.0)
 **Python Version**: (e.g., 3.11.5)
 
 ## Issue Description
