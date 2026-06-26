@@ -109,3 +109,6 @@ docs/plans/
 /.cache/
 /.idnits/
 /.wget-hsts
+
+# Internal/working artifacts — not for the public repo
+/outputs/
