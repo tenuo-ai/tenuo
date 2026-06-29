@@ -23,6 +23,7 @@ from tenuo import (
 )
 from tenuo.constraints import Constraints
 from tenuo._enforcement import enforce_tool_call
+from tenuo.exceptions import InvalidApproval
 from tenuo.approval import (
     ApprovalDenied,
     ApprovalRequest,
@@ -344,7 +345,7 @@ class TestTamperResistance:
             )
             return SignedApproval.create(payload, approver_key)
 
-        with pytest.raises(ApprovalVerificationError, match="request hash mismatch"):
+        with pytest.raises(InvalidApproval, match="request hash mismatch"):
             enforce_tool_call(
                 "transfer",
                 {"amount": 50_000},
@@ -355,7 +356,7 @@ class TestTamperResistance:
     def test_untrusted_key_rejected(self, agent_key, approver_key):
         bound = _bound_gated(agent_key, approver_key, gates={"transfer": None})
         rogue = SigningKey.generate()
-        with pytest.raises(ApprovalVerificationError, match="approver not in trusted set"):
+        with pytest.raises(InvalidApproval, match="approver not in trusted set"):
             enforce_tool_call(
                 "transfer",
                 {"amount": 50_000},
@@ -418,7 +419,7 @@ class TestMultiApprover:
             approval_gates={"transfer": None},
         )
         bound = w.bind(agent_key, trusted_roots=[agent_key.public_key])
-        with pytest.raises(ApprovalVerificationError, match="approver not in trusted set"):
+        with pytest.raises(InvalidApproval, match="approver not in trusted set"):
             enforce_tool_call(
                 "transfer",
                 {"amount": 100},
@@ -467,7 +468,7 @@ class TestRequestHashBinding:
         def replay_handler(_request):
             return captured[0]
 
-        with pytest.raises(ApprovalVerificationError, match="request hash mismatch"):
+        with pytest.raises(InvalidApproval, match="request hash mismatch"):
             enforce_tool_call(
                 "transfer",
                 {"amount": 100},

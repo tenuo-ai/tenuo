@@ -407,14 +407,8 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 PyTuple::new(py, [msg.as_str()]),
             ),
             crate::error::Error::FeatureNotEnabled { feature } => (
-                "RuntimeError",
-                PyTuple::new(
-                    py,
-                    [&format!(
-                        "{} requires the '{}' feature. Enable with: tenuo = {{ features = [\"{}\"] }}",
-                        feature, feature, feature
-                    )],
-                ),
+                "FeatureNotEnabled",
+                PyTuple::new(py, [feature.as_str()]),
             ),
             crate::error::Error::PathNotContained { path, root } => (
                 "ConstraintViolation",

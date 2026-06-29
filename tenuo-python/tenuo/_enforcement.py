@@ -51,10 +51,12 @@ if TYPE_CHECKING:
 
 from .bound_warrant import BoundWarrant
 from .exceptions import (
+    ApprovalExpired,
     ConfigurationError,
     ConstraintViolation,
     ExpiredError,
     InsufficientApprovals,
+    InvalidApproval,
     TenuoError,
     ToolNotAuthorized,
 )
@@ -248,6 +250,93 @@ def handle_denial(
 # =============================================================================
 
 
+def _constraint_field_from_exception(exc: BaseException) -> Optional[str]:
+    """Extract the violated constraint field from a Tenuo exception."""
+    field = getattr(exc, "field", None)
+    if field:
+        return field
+    details = getattr(exc, "details", None)
+    if isinstance(details, dict):
+        field = details.get("field")
+        if field:
+            return field
+    return _extract_violated_field(str(exc))
+
+
+def _enforcement_result_from_chain_error(
+    exc: BaseException,
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    warrant_id: Optional[str],
+    *,
+    constraint_auth_args: Optional[Dict[str, Any]] = None,
+    warrant: Optional[Any] = None,
+) -> EnforcementResult:
+    """Map a Rust/core authorization exception to an ``EnforcementResult``."""
+    if isinstance(exc, InsufficientApprovals):
+        details = getattr(exc, "details", {}) or {}
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            error_type="insufficient_approvals",
+            warrant_id=warrant_id,
+            approval_metadata={
+                "got": details.get("received", 0),
+                "need": details.get("required", 0),
+            },
+        )
+    if isinstance(exc, ExpiredError):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            error_type="expired",
+            warrant_id=warrant_id,
+        )
+    if isinstance(exc, ToolNotAuthorized):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            error_type="tool_not_allowed",
+            warrant_id=warrant_id,
+        )
+    if isinstance(exc, ConstraintViolation):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            constraint_violated=_constraint_field_from_exception(exc),
+            error_type="constraint_violation",
+            warrant_id=warrant_id,
+        )
+
+    violated_field = None
+    if warrant is not None and constraint_auth_args is not None:
+        try:
+            _why = warrant.why_denied(tool_name, constraint_auth_args)
+            violated_field = getattr(_why, "field", None)
+        except Exception:
+            violated_field = None
+    if violated_field is None:
+        violated_field = _constraint_field_from_exception(exc)
+
+    return EnforcementResult(
+        allowed=False,
+        tool=tool_name,
+        arguments=tool_args,
+        denial_reason=str(exc) or "Authorization failed",
+        constraint_violated=violated_field,
+        error_type="authorization_failed",
+        warrant_id=warrant_id,
+    )
+
+
 def _extract_violated_field(reason: Optional[str]) -> Optional[str]:
     """
     Extract the violated constraint field name from a validation reason.
@@ -399,12 +488,17 @@ def _collect_approvals_for_approval_gate(
     if not collected:
         raise ApprovalRequired(request)
 
+    from tenuo.exceptions import ApprovalExpired, InvalidApproval
+
     try:
         _verify_approvals(request_hash, collected, trusted_approvers, threshold)
     except InsufficientApprovals:
         # Re-raise directly so the enforcement layer can surface it as a
         # distinct "insufficient_approvals" signal rather than collapsing it
         # into the generic ApprovalVerificationError bucket.
+        raise
+    except (ApprovalExpired, InvalidApproval):
+        # Preserve typed approval failures for integration-specific handlers.
         raise
     except Exception as e:
         raise ApprovalVerificationError(request, reason=str(e)) from e
@@ -466,9 +560,13 @@ async def _collect_approvals_for_approval_gate_async(
     if not collected:
         raise ApprovalRequired(request)
 
+    from tenuo.exceptions import ApprovalExpired, InvalidApproval
+
     try:
         _verify_approvals(request_hash, collected, trusted_approvers, threshold)
     except InsufficientApprovals:
+        raise
+    except (ApprovalExpired, InvalidApproval):
         raise
     except Exception as e:
         raise ApprovalVerificationError(request, reason=str(e)) from e
@@ -837,42 +935,14 @@ def enforce_tool_call(
                 from tenuo.exceptions import SignatureInvalid as _SignatureInvalid
                 if isinstance(_exc, (_ExpiredError, _SignatureInvalid, _MissingSignature)):
                     raise
-                # Insufficient approvals is structurally different from a scope
-                # denial — the caller can satisfy it by resubmitting with more
-                # approval signatures.  Preserve the got/need counts so
-                # integrations can emit the correct protocol signal (-32002, 409,
-                # etc.) without having to parse the human-readable message.
-                if isinstance(_exc, InsufficientApprovals):
-                    logger.debug(f"Insufficient approvals for {tool_name}: {_exc}")
-                    return EnforcementResult(
-                        allowed=False,
-                        tool=tool_name,
-                        arguments=tool_args,
-                        denial_reason=str(_exc),
-                        error_type="insufficient_approvals",
-                        warrant_id=warrant_id,
-                        approval_metadata={
-                            "got": _exc.details.get("received", 0) if hasattr(_exc, "details") else 0,
-                            "need": _exc.details.get("required", 0) if hasattr(_exc, "details") else 0,
-                        },
-                    )
-                # Use why_denied() to get the structured field name instead of
-                # regexing the error string — why_denied is available even when
-                # authorize_one raises because it interrogates the warrant directly.
-                try:
-                    _why = _warrant.why_denied(tool_name, _constraint_auth_args)
-                    violated_field = getattr(_why, "field", None)
-                except Exception:
-                    violated_field = None
                 logger.debug(f"Authorization denied for {tool_name}: {_exc}")
-                return EnforcementResult(
-                    allowed=False,
-                    tool=tool_name,
-                    arguments=tool_args,
-                    denial_reason=str(_exc) or "Authorization failed",
-                    constraint_violated=violated_field,
-                    error_type="authorization_failed",
-                    warrant_id=warrant_id,
+                return _enforcement_result_from_chain_error(
+                    _exc,
+                    tool_name,
+                    tool_args,
+                    warrant_id,
+                    constraint_auth_args=_constraint_auth_args,
+                    warrant=_warrant,
                 )
         else:
             # verify_mode == "verify"
@@ -922,16 +992,14 @@ def enforce_tool_call(
                         approvals=_gate_approvals or [],
                     )
             except Exception as chain_err:
-                denial_reason = str(chain_err)
-                error_type = "authorization_failed"
-                return EnforcementResult(
-                    allowed=False,
-                    tool=tool_name,
-                    arguments=tool_args,
-                    denial_reason=denial_reason,
-                    constraint_violated=None,
-                    error_type=error_type,
-                    warrant_id=warrant_id,
+                logger.debug(f"Authorization denied for {tool_name}: {chain_err}")
+                return _enforcement_result_from_chain_error(
+                    chain_err,
+                    tool_name,
+                    tool_args,
+                    warrant_id,
+                    constraint_auth_args=_constraint_auth_args,
+                    warrant=bound_warrant.warrant,
                 )
 
         # Success - log for audit trail
@@ -968,6 +1036,8 @@ def enforce_tool_call(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
+    except (InvalidApproval, ApprovalExpired):
+        raise
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:
         # Known authorization failures - expected behavior
         logger.debug(f"Authorization denied for {tool_name}: {e}")
@@ -987,7 +1057,7 @@ def enforce_tool_call(
             tool=tool_name,
             arguments=tool_args,
             denial_reason=str(e),
-            constraint_violated=getattr(e, "field", None) or _extract_violated_field(str(e)),
+            constraint_violated=_constraint_field_from_exception(e),
             error_type=err_type,
             warrant_id=warrant_id,
         )
@@ -1226,29 +1296,14 @@ async def enforce_tool_call_async(
                 from tenuo.exceptions import SignatureInvalid as _SignatureInvalid
                 if isinstance(_exc, (_ExpiredError, _SignatureInvalid, _MissingSignature)):
                     raise
-                if isinstance(_exc, InsufficientApprovals):
-                    logger.debug(f"Insufficient approvals for {tool_name}: {_exc}")
-                    return EnforcementResult(
-                        allowed=False, tool=tool_name, arguments=tool_args,
-                        denial_reason=str(_exc),
-                        error_type="insufficient_approvals",
-                        warrant_id=warrant_id,
-                        approval_metadata={
-                            "got": _exc.details.get("received", 0) if hasattr(_exc, "details") else 0,
-                            "need": _exc.details.get("required", 0) if hasattr(_exc, "details") else 0,
-                        },
-                    )
-                try:
-                    _why = _warrant.why_denied(tool_name, _constraint_auth_args)
-                    violated_field = getattr(_why, "field", None)
-                except Exception:
-                    violated_field = None
                 logger.debug(f"Authorization denied for {tool_name}: {_exc}")
-                return EnforcementResult(
-                    allowed=False, tool=tool_name, arguments=tool_args,
-                    denial_reason=str(_exc) or "Authorization failed",
-                    constraint_violated=violated_field,
-                    error_type="authorization_failed", warrant_id=warrant_id,
+                return _enforcement_result_from_chain_error(
+                    _exc,
+                    tool_name,
+                    tool_args,
+                    warrant_id,
+                    constraint_auth_args=_constraint_auth_args,
+                    warrant=_warrant,
                 )
         else:
             if authorizer is None:
@@ -1286,12 +1341,14 @@ async def enforce_tool_call_async(
                         approvals=_gate_approvals or [],
                     )
             except Exception as chain_err:
-                denial_reason = str(chain_err)
-                error_type = "authorization_failed"
-                return EnforcementResult(
-                    allowed=False, tool=tool_name, arguments=tool_args,
-                    denial_reason=denial_reason, constraint_violated=None,
-                    error_type=error_type, warrant_id=warrant_id,
+                logger.debug(f"Authorization denied for {tool_name}: {chain_err}")
+                return _enforcement_result_from_chain_error(
+                    chain_err,
+                    tool_name,
+                    tool_args,
+                    warrant_id,
+                    constraint_auth_args=_constraint_auth_args,
+                    warrant=bound_warrant.warrant,
                 )
 
         logger.info(
@@ -1315,6 +1372,8 @@ async def enforce_tool_call_async(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
+    except (InvalidApproval, ApprovalExpired):
+        raise
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:
         logger.debug(f"Authorization denied for {tool_name}: {e}")
         if isinstance(e, ExpiredError):
@@ -1328,7 +1387,7 @@ async def enforce_tool_call_async(
         return EnforcementResult(
             allowed=False, tool=tool_name, arguments=tool_args,
             denial_reason=str(e),
-            constraint_violated=getattr(e, "field", None) or _extract_violated_field(str(e)),
+            constraint_violated=_constraint_field_from_exception(e),
             error_type=err_type, warrant_id=warrant_id,
         )
     except TenuoError as e:

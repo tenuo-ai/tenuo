@@ -546,6 +546,19 @@ class TenuoGuard:
             expose_details = _config.get("expose_error_details", False)
 
             # Map specific errors to HTTP codes
+            if enforcement.error_type == "insufficient_approvals":
+                meta = enforcement.approval_metadata or {}
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "insufficient_approvals",
+                        "message": reason,
+                        "got": meta.get("got", 0),
+                        "need": meta.get("need", 0),
+                        "request_id": request_id,
+                    },
+                )
+
             if enforcement.error_type == "expired" or (
                 "expired" in reason.lower() and "proof-of-possession" not in reason.lower()
             ):

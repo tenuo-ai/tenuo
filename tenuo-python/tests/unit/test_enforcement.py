@@ -897,4 +897,5 @@ class TestEnforceToolCallWithAuthorizer:
             authorizer=authorizer,
         )
         assert result.allowed is False
-        assert result.error_type == "authorization_failed"
+        assert result.error_type == "constraint_violation"
+        assert result.constraint_violated == "tool"

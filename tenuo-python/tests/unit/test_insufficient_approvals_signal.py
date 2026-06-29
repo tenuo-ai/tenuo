@@ -169,6 +169,61 @@ class TestEnforcementResult:
         assert result.error_type != "insufficient_approvals"
         assert result.approval_metadata is None
 
+    def test_constraint_violation_populates_constraint_field(self):
+        """ConstraintViolation.field lives in details — must surface in result."""
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo import Pattern
+
+        issuer = SigningKey.generate()
+        holder = SigningKey.generate()
+        warrant = Warrant.issue(
+            issuer,
+            capabilities={"read_file": {"path": Pattern("/data/*")}},
+            holder=holder.public_key,
+        )
+        bound = warrant.bind(holder)
+
+        result = enforce_tool_call(
+            "read_file",
+            {"path": "/etc/passwd"},
+            bound,
+            trusted_roots=[issuer.public_key],
+        )
+
+        assert not result.allowed
+        assert result.error_type == "constraint_violation"
+        assert result.constraint_violated == "path"
+
+    def test_verify_path_maps_insufficient_approvals(self):
+        """verify_mode='verify' must preserve insufficient_approvals error_type."""
+        from tenuo._enforcement import enforce_tool_call
+        from tenuo import Authorizer
+
+        issuer = SigningKey.generate()
+        holder = SigningKey.generate()
+        warrant = Warrant.issue(
+            issuer,
+            capabilities={"transfer": {}},
+            holder=holder.public_key,
+        )
+        bound = warrant.bind(holder)
+        authorizer = Authorizer(trusted_roots=[issuer.public_key])
+
+        exc = InsufficientApprovals(required=2, received=1)
+        with patch.object(Authorizer, "check_chain", side_effect=exc):
+            result = enforce_tool_call(
+                "transfer",
+                {},
+                bound,
+                verify_mode="verify",
+                precomputed_signature=b"\x00" * 64,
+                authorizer=authorizer,
+            )
+
+        assert not result.allowed
+        assert result.error_type == "insufficient_approvals"
+        assert result.approval_metadata == {"got": 1, "need": 2}
+
     def test_outer_catch_handles_insufficient_approvals(self):
         """The outer InsufficientApprovals except block in enforce_tool_call
         produces the correct EnforcementResult even when the exception escapes
@@ -408,6 +463,22 @@ class TestFastAPIInsufficientApprovals:
         assert exc.details["received"] == 1
 
 
+class TestA2AInsufficientApprovalsMapping:
+    def test_insufficient_approvals_maps_details_to_a2a_error(self):
+        from tenuo.exceptions import InsufficientApprovals
+        from tenuo.a2a.errors import InsufficientApprovalsError
+
+        core_exc = InsufficientApprovals(required=3, received=1)
+        a2a_exc = InsufficientApprovalsError(
+            str(core_exc),
+            required=core_exc.details.get("required", 0),
+            received=core_exc.details.get("received", 0),
+        )
+        rpc = a2a_exc.to_jsonrpc_error()
+        assert rpc["data"]["required"] == 3
+        assert rpc["data"]["received"] == 1
+
+
 # ---------------------------------------------------------------------------
 # temporal/exceptions.py  (_error_type_for_wire)
 # ---------------------------------------------------------------------------
@@ -447,7 +518,6 @@ class TestTemporalErrorTypeForWire:
         source = inspect.getsource(_interceptors)
         tree = ast.parse(source)
 
-        # Find the except clause that includes ApprovalGateTriggered
         found_in_same_clause = False
         for node in ast.walk(tree):
             if isinstance(node, ast.ExceptHandler):
@@ -462,11 +532,19 @@ class TestTemporalErrorTypeForWire:
 
                 has_gate = any("ApprovalGateTriggered" in n for n in names)
                 has_insuf = any("InsufficientApprovals" in n for n in names)
-                if has_gate and has_insuf:
+                has_tool = any("ToolNotAuthorized" in n for n in names)
+                if has_gate and has_insuf and has_tool:
                     found_in_same_clause = True
                     break
 
         assert found_in_same_clause, (
-            "InsufficientApprovals must be in the same except clause as "
-            "ApprovalGateTriggered in temporal/_interceptors.py"
+            "InsufficientApprovals and ToolNotAuthorized must be in the same "
+            "except clause as ApprovalGateTriggered in temporal/_interceptors.py"
         )
+
+    def test_error_type_for_wire_tool_not_authorized(self):
+        from tenuo.temporal.exceptions import _error_type_for_wire
+        from tenuo.exceptions import ToolNotAuthorized
+
+        exc = ToolNotAuthorized(tool="delete_file")
+        assert _error_type_for_wire(exc) == "tool_not_authorized"
