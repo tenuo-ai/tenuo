@@ -513,16 +513,13 @@ class TenuoGuard:
             )
         except ApprovalRequired as approval_required:
             req = approval_required.request
-            _rh = req.request_hash
-            if isinstance(_rh, (bytes, bytearray)):
-                _rh = _rh.hex()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "error": "approval_required",
                     "message": str(approval_required),
                     "tool": req.tool,
-                    "request_hash": _rh,
+                    "request_hash": req.request_hash.hex(),
                     "min_approvals": req.min_approvals or 1,
                 },
             )
