@@ -337,7 +337,9 @@ class TestEnforcementObservability:
                 records.append(record)
 
         log = logging.getLogger("tenuo.enforcement")
-        log.addHandler(_H())
+        handler = _H()
+        prev_level = log.level
+        log.addHandler(handler)
         log.setLevel(logging.DEBUG)
         try:
             result = enforce_tool_call(
@@ -347,7 +349,8 @@ class TestEnforcementObservability:
                 trusted_roots=[untrusted.public_key],
             )
         finally:
-            log.removeHandler(_H())
+            log.removeHandler(handler)
+            log.setLevel(prev_level)
 
         assert not result.allowed
         assert result.error_type == "invalid_pop"

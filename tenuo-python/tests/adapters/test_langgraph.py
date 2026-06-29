@@ -1055,7 +1055,10 @@ class TestPhilosophyAndDesign:
 
         assert not result.allowed
 
-        # Tool-scope denials log at DEBUG on tenuo.enforcement (not WARNING).
+        # The warrant is bound against an untrusted root, so this denies as a
+        # trust/signature failure (invalid_pop) which logs at WARNING. Assert at
+        # DEBUG+ so the test stays robust regardless of which denial path fires —
+        # the contract is only that denials are logged for security monitoring.
         denial_records = [
             r for r in caplog.records
             if r.levelno >= logging.DEBUG and "denied" in r.getMessage().lower()
