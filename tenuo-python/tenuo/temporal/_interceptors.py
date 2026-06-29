@@ -1036,7 +1036,14 @@ class TenuoActivityInboundInterceptor:
                 if _span_ctx is not None:
                     _span_ctx.__exit__(None, None, None)
                     _span_ctx = None
-            raise self._wrap_as_non_retryable(auth_exc) from auth_exc
+            # Honor dry_run / on_denial like the generic branch below, but keep
+            # raising ``auth_exc`` itself so it reaches the wire with its own
+            # ``ApplicationError.type`` rather than a generic
+            # ``TemporalConstraintViolation``. In dry-run mode the activity still
+            # executes (shadow); in ``log`` mode it is denied without raising.
+            if self._config.on_denial == "raise" and not self._config.dry_run:
+                raise self._wrap_as_non_retryable(auth_exc) from auth_exc
+            return await _deny_or_continue(tool=tool_name, reason=str(auth_exc))
         except Exception as e:
             try:
                 from tenuo.exceptions import TenuoError as _TenuoError
