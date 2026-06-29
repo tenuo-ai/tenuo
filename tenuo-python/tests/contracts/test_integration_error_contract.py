@@ -357,3 +357,265 @@ class TestEnforcementObservability:
         assert any(r.levelno >= logging.WARNING for r in records), (
             "Signature/trust denials must log at WARNING for operator visibility"
         )
+
+
+# ---------------------------------------------------------------------------
+# Temporal: typed auth branch observability + denial modes
+# ---------------------------------------------------------------------------
+
+
+class TestTemporalExplicitDenialContract:
+    """Guard the explicit auth-denial path added for typed wire errors."""
+
+    def test_typed_auth_branch_emits_before_wrap_or_continue(self) -> None:
+        import inspect
+
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+
+        source = inspect.getsource(TenuoActivityInboundInterceptor.execute_activity)
+        anchor = source.index(") as auth_exc:")
+        block = source[anchor : anchor + 2500]
+        emit_at = block.index("_emit_denial_event")
+        next_action = min(
+            i for i in (
+                block.find("_wrap_as_non_retryable(auth_exc)"),
+                block.find("_deny_or_continue"),
+            )
+            if i >= 0
+        )
+        assert emit_at < next_action, (
+            "Typed auth denials must emit metrics/audit before wrap or continue"
+        )
+
+    def test_typed_auth_branch_honors_dry_run_and_log_mode(self) -> None:
+        import inspect
+
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+
+        source = inspect.getsource(TenuoActivityInboundInterceptor.execute_activity)
+        anchor = source.index(") as auth_exc:")
+        block = source[anchor : anchor + 2500]
+        assert 'on_denial == "raise"' in block and "dry_run" in block
+        assert "_deny_or_continue" in block
+
+    @pytest.mark.asyncio
+    async def test_typed_constraint_denial_records_metrics(self) -> None:
+        pytest.importorskip("temporalio")
+        import base64
+        import time as _time
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import Subpath
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._constants import TENUO_ARG_KEYS_HEADER, TENUO_POP_HEADER
+        from tenuo.temporal._headers import tenuo_headers
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
+        from tenuo.temporal._observability import TenuoMetrics
+        from tenuo.temporal._resolvers import EnvKeyResolver
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("read_file", path=Subpath("/tmp/safe"))
+            .ttl(3600)
+            .mint(control_key)
+        )
+        metrics = TenuoMetrics()
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            metrics=metrics,
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="ok")
+        nxt.init = MagicMock()
+        ai = plugin.intercept_activity(nxt)
+
+        h = tenuo_headers(warrant, "agent1")
+        pop = warrant.sign(
+            agent_key, "read_file", {"path": "/etc/passwd"}, int(_time.time())
+        )
+        act_headers = {
+            k: (v if isinstance(v, bytes) else str(v).encode("utf-8"))
+            for k, v in h.items()
+            if k.startswith("x-tenuo-")
+        }
+        act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+        act_headers[TENUO_ARG_KEYS_HEADER] = b"path"
+
+        class FakePayload:
+            def __init__(self, data: bytes) -> None:
+                self.data = data
+
+        info = MagicMock(
+            activity_type="read_file",
+            activity_id="1",
+            workflow_id="wf-contract-deny",
+            workflow_run_id="run-1",
+            workflow_type="ContractDenyWF",
+            task_queue="test-q",
+            attempt=1,
+            is_local=False,
+        )
+        inp = MagicMock(
+            fn=None,
+            args=("/etc/passwd",),
+            headers={k: FakePayload(v) for k, v in act_headers.items()},
+        )
+
+        with patch("temporalio.activity.info", return_value=info):
+            with pytest.raises(Exception):
+                await ai.execute_activity(inp)
+
+        assert metrics.get_stats()["latency_count"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_typed_denial_dry_run_executes_activity(self) -> None:
+        pytest.importorskip("temporalio")
+        import base64
+        import time as _time
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import Subpath
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._constants import TENUO_ARG_KEYS_HEADER, TENUO_POP_HEADER
+        from tenuo.temporal._headers import tenuo_headers
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
+        from tenuo.temporal._resolvers import EnvKeyResolver
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("read_file", path=Subpath("/tmp/safe"))
+            .ttl(3600)
+            .mint(control_key)
+        )
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            on_denial="raise",
+            dry_run=True,
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="executed")
+        nxt.init = MagicMock()
+        ai = plugin.intercept_activity(nxt)
+
+        h = tenuo_headers(warrant, "agent1")
+        pop = warrant.sign(
+            agent_key, "read_file", {"path": "/etc/passwd"}, int(_time.time())
+        )
+        act_headers = {
+            k: (v if isinstance(v, bytes) else str(v).encode("utf-8"))
+            for k, v in h.items()
+            if k.startswith("x-tenuo-")
+        }
+        act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+        act_headers[TENUO_ARG_KEYS_HEADER] = b"path"
+
+        class FakePayload:
+            def __init__(self, data: bytes) -> None:
+                self.data = data
+
+        info = MagicMock(
+            activity_type="read_file",
+            activity_id="1",
+            workflow_id="wf-dry",
+            workflow_run_id="run-1",
+            workflow_type="DryWF",
+            task_queue="test-q",
+            attempt=1,
+            is_local=False,
+        )
+        inp = MagicMock(
+            fn=None,
+            args=("/etc/passwd",),
+            headers={k: FakePayload(v) for k, v in act_headers.items()},
+        )
+
+        with patch("temporalio.activity.info", return_value=info):
+            result = await ai.execute_activity(inp)
+
+        assert result == "executed"
+        nxt.execute_activity.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_typed_denial_log_mode_skips_activity(self) -> None:
+        pytest.importorskip("temporalio")
+        import base64
+        import time as _time
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from tenuo import SigningKey, Warrant
+        from tenuo_core import Subpath
+        from tenuo.temporal._config import TenuoPluginConfig
+        from tenuo.temporal._constants import TENUO_ARG_KEYS_HEADER, TENUO_POP_HEADER
+        from tenuo.temporal._headers import tenuo_headers
+        from tenuo.temporal._interceptors import TenuoWorkerInterceptor
+        from tenuo.temporal._resolvers import EnvKeyResolver
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("read_file", path=Subpath("/tmp/safe"))
+            .ttl(3600)
+            .mint(control_key)
+        )
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            on_denial="log",
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        nxt = MagicMock()
+        nxt.execute_activity = AsyncMock(return_value="real")
+        nxt.init = MagicMock()
+        ai = plugin.intercept_activity(nxt)
+
+        h = tenuo_headers(warrant, "agent1")
+        pop = warrant.sign(
+            agent_key, "read_file", {"path": "/etc/passwd"}, int(_time.time())
+        )
+        act_headers = {
+            k: (v if isinstance(v, bytes) else str(v).encode("utf-8"))
+            for k, v in h.items()
+            if k.startswith("x-tenuo-")
+        }
+        act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+        act_headers[TENUO_ARG_KEYS_HEADER] = b"path"
+
+        class FakePayload:
+            def __init__(self, data: bytes) -> None:
+                self.data = data
+
+        info = MagicMock(
+            activity_type="read_file",
+            activity_id="1",
+            workflow_id="wf-log",
+            workflow_run_id="run-1",
+            workflow_type="LogWF",
+            task_queue="test-q",
+            attempt=1,
+            is_local=False,
+        )
+        inp = MagicMock(
+            fn=None,
+            args=("/etc/passwd",),
+            headers={k: FakePayload(v) for k, v in act_headers.items()},
+        )
+
+        with patch("temporalio.activity.info", return_value=info):
+            result = await ai.execute_activity(inp)
+
+        nxt.execute_activity.assert_not_called()
+        assert result != "real"

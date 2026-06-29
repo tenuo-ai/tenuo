@@ -1047,23 +1047,23 @@ class TestPhilosophyAndDesign:
         key = SigningKey.generate()
         registry.register("audit-denial-key", key)
 
-        warrant, _ = Warrant.quick_mint(tools=["search"], ttl=3600)
-        bound = warrant.bind(key, trusted_roots=[key.public_key])
+        warrant, mint_key = Warrant.quick_mint(tools=["search"], ttl=3600)
+        bound = warrant.bind(mint_key, trusted_roots=[mint_key.public_key])
 
         with caplog.at_level(logging.DEBUG, logger="tenuo.enforcement"):
             result = enforce_tool_call("delete_file", {"path": "/"}, bound)
 
         assert not result.allowed
+        assert result.error_type == "constraint_violation"
 
-        # The warrant is bound against an untrusted root, so this denies as a
-        # trust/signature failure (invalid_pop) which logs at WARNING. Assert at
-        # DEBUG+ so the test stays robust regardless of which denial path fires —
-        # the contract is only that denials are logged for security monitoring.
+        # Tool not in warrant — expected denial logged at DEBUG on tenuo.enforcement.
         denial_records = [
             r for r in caplog.records
-            if r.levelno >= logging.DEBUG and "denied" in r.getMessage().lower()
+            if r.name == "tenuo.enforcement"
+            and r.levelno >= logging.DEBUG
+            and "denied" in r.getMessage().lower()
         ]
-        assert len(denial_records) >= 1, "Denied auth must be logged for security monitoring"
+        assert denial_records, "Denied auth must be logged for security monitoring"
 
     def test_opaque_errors_dont_leak_constraint_details(self, registry):
         """
