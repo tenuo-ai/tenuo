@@ -30,7 +30,7 @@ from typing import Any, Callable, Dict, List, Optional
 from tenuo_core import PublicKey, Warrant  # type: ignore[import-untyped]
 
 from tenuo._enforcement import EnforcementResult
-from tenuo.exceptions import ApprovalGateTriggered, DeserializationError, TenuoError
+from tenuo.exceptions import ApprovalGateTriggered, DeserializationError, InsufficientApprovals, TenuoError
 
 logger = logging.getLogger("tenuo.fastapi")
 
@@ -509,6 +509,19 @@ class TenuoGuard:
                     "request_id": gate.request_id,
                     "request_hash": gate.request_hash,
                     "min_approvals": gate.min_approvals,
+                },
+            )
+        except InsufficientApprovals as insuf:
+            # Multi-sig threshold not met — distinct from a scope denial.
+            # 409 Conflict mirrors the ApprovalGateTriggered shape so callers
+            # can use the same retry-with-approval branch for both flows.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "insufficient_approvals",
+                    "message": str(insuf),
+                    "got": insuf.details.get("received", 0) if hasattr(insuf, "details") else 0,
+                    "need": insuf.details.get("required", 0) if hasattr(insuf, "details") else 0,
                 },
             )
 

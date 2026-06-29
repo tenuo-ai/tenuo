@@ -17,7 +17,7 @@ import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from tenuo.exceptions import ApprovalGateTriggered
+from tenuo.exceptions import ApprovalGateTriggered, InsufficientApprovals
 from tenuo.temporal._constants import (
     TENUO_APPROVALS_HEADER,
     TENUO_ARG_KEYS_HEADER,
@@ -988,13 +988,15 @@ class TenuoActivityInboundInterceptor:
             ChainValidationError,
             WarrantExpired,
             ApprovalGateTriggered,
+            InsufficientApprovals,
         ) as auth_exc:
-            # ``ApprovalGateTriggered`` is listed explicitly so it reaches the
-            # wire with its own ``ApplicationError.type`` (``approval_required``
-            # via ``_error_type_for_wire``) rather than being collapsed into a
-            # generic ``TemporalConstraintViolation`` by the fallback branch
-            # below. Clients can then distinguish "needs approval" from
-            # "denied" without string-matching the message.
+            # ``ApprovalGateTriggered`` and ``InsufficientApprovals`` are listed
+            # explicitly so they reach the wire with their own
+            # ``ApplicationError.type`` (``approval_required`` /
+            # ``insufficient_approvals`` via ``_error_type_for_wire``) rather
+            # than being collapsed into a generic ``TemporalConstraintViolation``
+            # by the fallback branch below.  Clients can then distinguish
+            # "needs approval" from "denied" without string-matching the message.
             if _active_span is not None:
                 _active_span.set_attribute("tenuo.decision", "deny")
                 _active_span.set_attribute("tenuo.constraint_violated", "")

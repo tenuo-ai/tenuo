@@ -613,14 +613,24 @@ class TestMofN:
         assert result.allowed
 
     def test_two_of_three_insufficient(self):
+        from tenuo.exceptions import InsufficientApprovals
+        from tenuo._enforcement import EnforcementResult
+
         agent_key = SigningKey.generate()
         k1, k2, k3 = SigningKey.generate(), SigningKey.generate(), SigningKey.generate()
         bound = self._bound_mn(agent_key, [k1, k2, k3], m=2)
         warrant_id = bound.id or ""
         rh = compute_request_hash(warrant_id, "deploy", {}, agent_key.public_key)
         a1 = self._sign_for_request(k1, rh)
-        with pytest.raises(ApprovalVerificationError, match="Insufficient approvals"):
-            enforce_tool_call("deploy", {}, bound, approvals=[a1])
+        # InsufficientApprovals is now surfaced as a distinct EnforcementResult
+        # (error_type="insufficient_approvals") rather than being wrapped in
+        # ApprovalVerificationError — callers can build retry-with-approval loops.
+        result = enforce_tool_call("deploy", {}, bound, approvals=[a1])
+        assert not result.allowed
+        assert result.error_type == "insufficient_approvals"
+        assert result.approval_metadata is not None
+        assert result.approval_metadata["need"] == 2
+        assert result.approval_metadata["got"] == 1
 
 
 class TestCrewAIApproval:

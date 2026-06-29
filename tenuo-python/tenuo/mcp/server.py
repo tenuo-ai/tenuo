@@ -112,6 +112,7 @@ from ..exceptions import (
     ApprovalGateTriggered,
     ConstraintViolation,
     ExpiredError,
+    InsufficientApprovals,
     MissingSignature,
     SignatureInvalid,
     SignatureMismatch,
@@ -739,6 +740,34 @@ class MCPVerifier:
                 denial_reason=(
                     f"Approval required for '{tool_name}'. "
                     "Re-submit the call with approvals in _meta.tenuo.approvals."
+                ),
+                jsonrpc_error_code=-32002,
+            )
+        except InsufficientApprovals as insuf_exc:
+            # Multi-sig threshold not met — the warrant does authorise this tool
+            # but not enough approval signatures were supplied.  Use -32002 (same
+            # as ApprovalGateTriggered) so callers can build a single
+            # retry-with-approval branch for both approval-gate and multi-sig
+            # flows, rather than treating this as a flat access denial (-32001).
+            _got = insuf_exc.details.get("received", 0) if hasattr(insuf_exc, "details") else 0
+            _need = insuf_exc.details.get("required", 0) if hasattr(insuf_exc, "details") else 0
+            logger.info(
+                "Insufficient approvals for '%s' (warrant=%s): got %d, need %d",
+                tool_name,
+                warrant_id,
+                _got,
+                _need,
+            )
+            result = MCPVerificationResult(
+                allowed=False,
+                tool=tool_name,
+                clean_arguments=clean_arguments,
+                constraints=constraints,
+                warrant_id=warrant_id,
+                denial_reason=(
+                    f"Insufficient approvals for '{tool_name}': "
+                    f"got {_got}, need {_need}. "
+                    "Re-submit with additional approvals in _meta.tenuo.approvals."
                 ),
                 jsonrpc_error_code=-32002,
             )
