@@ -308,3 +308,49 @@ def test_contract_covers_all_distinct_error_types() -> None:
 def test_canonical_error_types_include_contract_rows() -> None:
     contract_types = {row.error_type for row in CONTRACT_ROWS}
     assert contract_types <= set(CANONICAL_ERROR_TYPES)
+
+
+class TestEnforcementObservability:
+    def test_signature_trust_denial_logs_warning_and_invalid_pop(self):
+        """Trust/signature failures stay typed as invalid_pop and log at WARNING."""
+        import logging
+
+        from tenuo import SigningKey, Warrant
+        from tenuo._enforcement import enforce_tool_call
+
+        issuer = SigningKey.generate()
+        holder = SigningKey.generate()
+        untrusted = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search")
+            .holder(holder.public_key)
+            .ttl(3600)
+            .mint(issuer)
+        )
+        bound = warrant.bind(holder)
+
+        records: list[logging.LogRecord] = []
+
+        class _H(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        log = logging.getLogger("tenuo.enforcement")
+        log.addHandler(_H())
+        log.setLevel(logging.DEBUG)
+        try:
+            result = enforce_tool_call(
+                "search",
+                {},
+                bound,
+                trusted_roots=[untrusted.public_key],
+            )
+        finally:
+            log.removeHandler(_H())
+
+        assert not result.allowed
+        assert result.error_type == "invalid_pop"
+        assert any(r.levelno >= logging.WARNING for r in records), (
+            "Signature/trust denials must log at WARNING for operator visibility"
+        )

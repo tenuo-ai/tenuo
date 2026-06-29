@@ -387,6 +387,40 @@ def _enforcement_result_from_chain_error(
     )
 
 
+def _log_chain_enforcement_denial(
+    tool_name: str,
+    exc: BaseException,
+    error_type: Optional[str],
+) -> None:
+    """Log authorization denials from chain/sign paths at the right severity."""
+    msg = f"Authorization denied for {tool_name}: {exc}"
+    if error_type in ("invalid_pop", "revoked"):
+        logger.warning(msg)
+    else:
+        logger.debug(msg)
+
+
+def _enforcement_result_from_chain_error_with_logging(
+    exc: BaseException,
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    warrant_id: Optional[str],
+    *,
+    constraint_auth_args: Optional[Dict[str, Any]] = None,
+    warrant: Optional[Any] = None,
+) -> EnforcementResult:
+    result = _enforcement_result_from_chain_error(
+        exc,
+        tool_name,
+        tool_args,
+        warrant_id,
+        constraint_auth_args=constraint_auth_args,
+        warrant=warrant,
+    )
+    _log_chain_enforcement_denial(tool_name, exc, result.error_type)
+    return result
+
+
 def _extract_violated_field(reason: Optional[str]) -> Optional[str]:
     """
     Extract the violated constraint field name from a validation reason.
@@ -980,8 +1014,7 @@ def enforce_tool_call(
                         warrant_id=warrant_id,
                     )
             except Exception as _exc:
-                logger.debug(f"Authorization denied for {tool_name}: {_exc}")
-                return _enforcement_result_from_chain_error(
+                return _enforcement_result_from_chain_error_with_logging(
                     _exc,
                     tool_name,
                     tool_args,
@@ -1037,8 +1070,7 @@ def enforce_tool_call(
                         approvals=_gate_approvals or [],
                     )
             except Exception as chain_err:
-                logger.debug(f"Authorization denied for {tool_name}: {chain_err}")
-                return _enforcement_result_from_chain_error(
+                return _enforcement_result_from_chain_error_with_logging(
                     chain_err,
                     tool_name,
                     tool_args,
@@ -1336,8 +1368,7 @@ async def enforce_tool_call_async(
                         error_type="invalid_pop", warrant_id=warrant_id,
                     )
             except Exception as _exc:
-                logger.debug(f"Authorization denied for {tool_name}: {_exc}")
-                return _enforcement_result_from_chain_error(
+                return _enforcement_result_from_chain_error_with_logging(
                     _exc,
                     tool_name,
                     tool_args,
@@ -1381,8 +1412,7 @@ async def enforce_tool_call_async(
                         approvals=_gate_approvals or [],
                     )
             except Exception as chain_err:
-                logger.debug(f"Authorization denied for {tool_name}: {chain_err}")
-                return _enforcement_result_from_chain_error(
+                return _enforcement_result_from_chain_error_with_logging(
                     chain_err,
                     tool_name,
                     tool_args,

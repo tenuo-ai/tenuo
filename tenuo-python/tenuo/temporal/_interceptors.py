@@ -583,6 +583,20 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
 
 # ── Activity Inbound Interceptor ─────────────────────────────────────────
 
+
+def _constraint_label_from_auth_exc(auth_exc: Exception) -> Optional[str]:
+    """Extract a constraint label for denial metrics/audit from an auth exception."""
+    from tenuo.exceptions import ConstraintViolation as CoreConstraintViolation
+
+    if isinstance(auth_exc, TemporalConstraintViolation):
+        return auth_exc.constraint
+    if isinstance(auth_exc, CoreConstraintViolation):
+        from tenuo._enforcement import _constraint_field_from_exception
+
+        return _constraint_field_from_exception(auth_exc)
+    return None
+
+
 class TenuoActivityInboundInterceptor:
     """Activity-level interceptor that performs authorization checks."""
 
@@ -1007,6 +1021,15 @@ class TenuoActivityInboundInterceptor:
             # explicitly so they reach the wire with their own
             # ``ApplicationError.type`` via ``_error_type_for_wire`` rather than
             # being collapsed into a generic ``TemporalConstraintViolation``.
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason=str(auth_exc),
+                constraint=_constraint_label_from_auth_exc(auth_exc),
+                start_ns=start_ns,
+            )
             if _active_span is not None:
                 _active_span.set_attribute("tenuo.decision", "deny")
                 _active_span.set_attribute("tenuo.constraint_violated", "")
