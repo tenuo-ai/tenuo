@@ -614,8 +614,6 @@ class TestMofN:
         assert result.allowed
 
     def test_two_of_three_insufficient(self):
-        from tenuo.exceptions import InsufficientApprovals
-        from tenuo._enforcement import EnforcementResult
 
         agent_key = SigningKey.generate()
         k1, k2, k3 = SigningKey.generate(), SigningKey.generate(), SigningKey.generate()

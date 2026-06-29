@@ -224,20 +224,16 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                     Ok(v) => v,
                     Err(e) => return py_validation_err(e.to_string()),
                 };
-                let elements = vec![
-                    req,
-                    rec,
-                    det,
-                ];
-                (
-                    "InsufficientApprovals",
-                    PyTuple::new(py, elements),
-                )
+                let elements = vec![req, rec, det];
+                ("InsufficientApprovals", PyTuple::new(py, elements))
             }
             crate::error::Error::InvalidApproval(m) => {
                 ("InvalidApproval", PyTuple::new(py, [m.as_str()]))
             }
-            crate::error::Error::ApprovalRequired { ref tool, ref request } => {
+            crate::error::Error::ApprovalRequired {
+                ref tool,
+                ref request,
+            } => {
                 let request_hash_hex = hex::encode(request.request_hash);
                 let request_id_hex = hex::encode(request.request_id);
                 (
@@ -402,14 +398,12 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                     )],
                 ),
             ),
-            crate::error::Error::ConfigurationError(msg) => (
-                "ConfigurationError",
-                PyTuple::new(py, [msg.as_str()]),
-            ),
-            crate::error::Error::FeatureNotEnabled { feature } => (
-                "FeatureNotEnabled",
-                PyTuple::new(py, [feature]),
-            ),
+            crate::error::Error::ConfigurationError(msg) => {
+                ("ConfigurationError", PyTuple::new(py, [msg.as_str()]))
+            }
+            crate::error::Error::FeatureNotEnabled { feature } => {
+                ("FeatureNotEnabled", PyTuple::new(py, [feature]))
+            }
             crate::error::Error::PathNotContained { path, root } => (
                 "ConstraintViolation",
                 PyTuple::new(
@@ -426,13 +420,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             }
             crate::error::Error::UrlNotSafe { url, reason } => (
                 "ConstraintViolation",
-                PyTuple::new(
-                    py,
-                    [
-                        "url",
-                        &format!("URL '{}' blocked: {}", url, reason),
-                    ],
-                ),
+                PyTuple::new(py, ["url", &format!("URL '{}' blocked: {}", url, reason)]),
             ),
         };
 

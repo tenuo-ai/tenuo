@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -92,7 +92,7 @@ class TestEnforcementResult:
             issuer, holder, [approver1, approver2], min_approvals=2
         )
         bound = warrant.bind(holder)
-        authorizer = Authorizer(trusted_roots=[issuer.public_key])
+        Authorizer(trusted_roots=[issuer.public_key])
 
         tool_args = {"amount": 100}
         # Provide only one approval — threshold is 2
@@ -113,7 +113,6 @@ class TestEnforcementResult:
         )
 
     def test_insufficient_approvals_populates_approval_metadata(self):
-        from tenuo import Authorizer
         from tenuo._enforcement import enforce_tool_call
 
         issuer = SigningKey.generate()
@@ -281,7 +280,8 @@ class TestMCPInsufficientApprovals:
 
     @staticmethod
     def _make_meta(warrant: Warrant, agent_key: SigningKey, tool: str, tool_args: dict, approvals=None):
-        import base64, time as _time
+        import base64
+        import time as _time
 
         sig = bytes(warrant.sign(agent_key, tool, tool_args, int(_time.time())))
         entry: dict = {
@@ -344,7 +344,8 @@ class TestMCPInsufficientApprovals:
 
     def test_scope_denial_still_returns_minus_32001(self, issuer_key, agent_key):
         """Regression guard: plain tool-not-allowed must stay -32001."""
-        import base64, time as _time
+        import base64
+        import time as _time
         from tenuo_core import Authorizer
         from tenuo.mcp.server import MCPVerifier
 
@@ -373,7 +374,8 @@ class TestMCPInsufficientApprovals:
     def test_insufficient_approvals_catch_block_emits_minus_32002(self, issuer_key, agent_key):
         """Inject InsufficientApprovals at the Rust authorizer boundary and confirm
         the MCP catch block maps it to -32002, not -32001."""
-        import base64, time as _time
+        import base64
+        import time as _time
         from tenuo_core import Authorizer
         from tenuo.mcp.server import MCPVerifier
 
