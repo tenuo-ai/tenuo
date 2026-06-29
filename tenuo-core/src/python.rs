@@ -408,7 +408,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             ),
             crate::error::Error::FeatureNotEnabled { feature } => (
                 "FeatureNotEnabled",
-                PyTuple::new(py, [feature.as_str()]),
+                PyTuple::new(py, [feature]),
             ),
             crate::error::Error::PathNotContained { path, root } => (
                 "ConstraintViolation",
