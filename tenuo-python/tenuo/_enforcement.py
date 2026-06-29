@@ -57,6 +57,10 @@ from .exceptions import (
     ExpiredError,
     InsufficientApprovals,
     InvalidApproval,
+    MissingSignature,
+    RevokedError,
+    SignatureInvalid,
+    SignatureMismatch,
     TenuoError,
     ToolNotAuthorized,
 )
@@ -109,21 +113,49 @@ class EnforcementResult:
 
     def raise_if_denied(self) -> None:
         """
-        Raise appropriate exception if authorization was denied.
+        Raise a typed exception matching ``error_type``.
 
         Raises:
-            ConstraintViolation: If a specific constraint was violated
-            ToolNotAuthorized: If tool is not in warrant or general denial
+            InsufficientApprovals: Multi-sig threshold not met (retry with approvals)
+            ExpiredError: Warrant or approval expired
+            ConstraintViolation: Argument violates a warrant constraint
+            ToolNotAuthorized: Tool not granted by the warrant
+            SignatureInvalid: PoP / signature verification failed
+            ToolNotAuthorized: Generic authorization denial fallback
         """
-        if not self.allowed:
-            if self.constraint_violated:
-                raise ConstraintViolation(
-                    field=self.constraint_violated,
-                    reason=self.denial_reason or "Constraint violation",
-                    value=None,
-                )
-            else:
+        if self.allowed:
+            return
+
+        error_type = self.error_type or "authorization_failed"
+
+        if error_type == "insufficient_approvals":
+            meta = self.approval_metadata or {}
+            raise InsufficientApprovals(
+                required=meta.get("need", 0),
+                received=meta.get("got", 0),
+                detail=self.denial_reason or "",
+            )
+
+        if error_type == "expired":
+            raise ExpiredError(self.denial_reason or "Warrant expired")
+
+        if error_type == "tool_not_allowed":
+            raise ToolNotAuthorized(tool=self.tool)
+
+        if error_type == "invalid_pop":
+            raise SignatureInvalid(self.denial_reason or "Invalid proof-of-possession")
+
+        if error_type == "constraint_violation" or self.constraint_violated:
+            # Rust maps missing tool scope to constraint_violation on field "tool".
+            if self.constraint_violated == "tool":
                 raise ToolNotAuthorized(tool=self.tool)
+            raise ConstraintViolation(
+                field=self.constraint_violated or "unknown",
+                reason=self.denial_reason or "Constraint violation",
+                value=None,
+            )
+
+        raise ToolNotAuthorized(tool=self.tool)
 
 
 # =============================================================================
@@ -303,6 +335,24 @@ def _enforcement_result_from_chain_error(
             arguments=tool_args,
             denial_reason=str(exc),
             error_type="tool_not_allowed",
+            warrant_id=warrant_id,
+        )
+    if isinstance(exc, (SignatureInvalid, MissingSignature, SignatureMismatch)):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            error_type="invalid_pop",
+            warrant_id=warrant_id,
+        )
+    if isinstance(exc, RevokedError):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            error_type="revoked",
             warrant_id=warrant_id,
         )
     if isinstance(exc, ConstraintViolation):
@@ -930,11 +980,6 @@ def enforce_tool_call(
                         warrant_id=warrant_id,
                     )
             except Exception as _exc:
-                from tenuo.exceptions import ExpiredError as _ExpiredError
-                from tenuo.exceptions import MissingSignature as _MissingSignature
-                from tenuo.exceptions import SignatureInvalid as _SignatureInvalid
-                if isinstance(_exc, (_ExpiredError, _SignatureInvalid, _MissingSignature)):
-                    raise
                 logger.debug(f"Authorization denied for {tool_name}: {_exc}")
                 return _enforcement_result_from_chain_error(
                     _exc,
@@ -1291,11 +1336,6 @@ async def enforce_tool_call_async(
                         error_type="invalid_pop", warrant_id=warrant_id,
                     )
             except Exception as _exc:
-                from tenuo.exceptions import ExpiredError as _ExpiredError
-                from tenuo.exceptions import MissingSignature as _MissingSignature
-                from tenuo.exceptions import SignatureInvalid as _SignatureInvalid
-                if isinstance(_exc, (_ExpiredError, _SignatureInvalid, _MissingSignature)):
-                    raise
                 logger.debug(f"Authorization denied for {tool_name}: {_exc}")
                 return _enforcement_result_from_chain_error(
                     _exc,

@@ -1167,6 +1167,7 @@ class A2AServer:
                 logger.debug(f"PoP verified for skill '{skill_id}'")
             except Exception as e:
                 from tenuo.exceptions import (
+                    ApprovalExpired as _ApprovalExpired,
                     ApprovalGateTriggered as _ApprovalGate,
                     InsufficientApprovals as _InsufficientApprovals,
                     InvalidApproval as _InvalidApproval,
@@ -1185,6 +1186,8 @@ class A2AServer:
                         received=_details.get("received", 0),
                     ) from e
                 if isinstance(e, _InvalidApproval):
+                    raise InvalidApprovalError(str(e)) from e
+                if isinstance(e, _ApprovalExpired):
                     raise InvalidApprovalError(str(e)) from e
                 # Map PoP errors
                 error_msg = str(e)

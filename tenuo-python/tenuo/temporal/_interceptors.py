@@ -17,7 +17,15 @@ import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from tenuo.exceptions import ApprovalGateTriggered, InsufficientApprovals, ToolNotAuthorized
+from tenuo.exceptions import (
+    ApprovalGateTriggered,
+    ApprovalExpired,
+    ConstraintViolation,
+    InsufficientApprovals,
+    InvalidApproval,
+    RevokedError,
+    ToolNotAuthorized,
+)
 from tenuo.temporal._constants import (
     TENUO_APPROVALS_HEADER,
     TENUO_ARG_KEYS_HEADER,
@@ -990,15 +998,15 @@ class TenuoActivityInboundInterceptor:
             ApprovalGateTriggered,
             InsufficientApprovals,
             ToolNotAuthorized,
+            ConstraintViolation,
+            InvalidApproval,
+            ApprovalExpired,
+            RevokedError,
         ) as auth_exc:
-            # ``ApprovalGateTriggered``, ``InsufficientApprovals``, and
-            # ``ToolNotAuthorized`` are listed explicitly so they reach the wire
-            # with their own ``ApplicationError.type`` (``approval_required`` /
-            # ``insufficient_approvals`` / ``tool_not_authorized`` via
-            # ``_error_type_for_wire``) rather than being collapsed into a
-            # generic ``TemporalConstraintViolation`` by the fallback branch
-            # below.  Clients can then distinguish "needs approval", "wrong
-            # tool", and "constraint violated" without string-matching.
+            # Approval, tool, constraint, and revocation errors are listed
+            # explicitly so they reach the wire with their own
+            # ``ApplicationError.type`` via ``_error_type_for_wire`` rather than
+            # being collapsed into a generic ``TemporalConstraintViolation``.
             if _active_span is not None:
                 _active_span.set_attribute("tenuo.decision", "deny")
                 _active_span.set_attribute("tenuo.constraint_violated", "")

@@ -109,10 +109,12 @@ from typing import Any, Dict, List, Optional
 
 from .._pop_canonicalize import strip_none_values
 from ..exceptions import (
+    ApprovalExpired,
     ApprovalGateTriggered,
     ConstraintViolation,
     ExpiredError,
     InsufficientApprovals,
+    InvalidApproval,
     MissingSignature,
     SignatureInvalid,
     SignatureMismatch,
@@ -197,6 +199,9 @@ class MCPVerificationResult:
     re-deriving it from ``(warrant_id, tool, args, holder_key)``.
     """
 
+    approval_metadata: Optional[Dict[str, Any]] = field(default=None)
+    """Structured approval counts for ``-32002`` responses (``got`` / ``need``)."""
+
     @property
     def is_approval_required(self) -> bool:
         """``True`` when an approval gate fired and approvals must be supplied."""
@@ -227,8 +232,16 @@ class MCPVerificationResult:
             "code": self.jsonrpc_error_code or -32001,
             "message": self.denial_reason or "Authorization denied",
         }
+        data: Dict[str, Any] = {}
         if self.request_hash:
-            error["data"] = {"request_hash": self.request_hash}
+            data["request_hash"] = self.request_hash
+        if self.approval_metadata:
+            if "got" in self.approval_metadata:
+                data["got"] = self.approval_metadata["got"]
+            if "need" in self.approval_metadata:
+                data["need"] = self.approval_metadata["need"]
+        if data:
+            error["data"] = data
         return error
 
 
@@ -770,6 +783,23 @@ class MCPVerifier:
                     "Re-submit with additional approvals in _meta.tenuo.approvals."
                 ),
                 jsonrpc_error_code=-32002,
+                approval_metadata={"got": _got, "need": _need},
+            )
+        except (InvalidApproval, ApprovalExpired) as approval_exc:
+            logger.info(
+                "MCP call denied for '%s' (warrant=%s): %s",
+                tool_name,
+                warrant_id,
+                approval_exc,
+            )
+            result = MCPVerificationResult(
+                allowed=False,
+                tool=tool_name,
+                clean_arguments=clean_arguments,
+                constraints=constraints,
+                warrant_id=warrant_id,
+                denial_reason=_access_denial_reason(approval_exc),
+                jsonrpc_error_code=-32001,
             )
         except (
             ConstraintViolation,

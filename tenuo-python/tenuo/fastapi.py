@@ -30,7 +30,14 @@ from typing import Any, Callable, Dict, List, Optional
 from tenuo_core import PublicKey, Warrant  # type: ignore[import-untyped]
 
 from tenuo._enforcement import EnforcementResult
-from tenuo.exceptions import ApprovalGateTriggered, DeserializationError, InsufficientApprovals, TenuoError
+from tenuo.approval import ApprovalRequired
+from tenuo.exceptions import (
+    ApprovalGateTriggered,
+    DeserializationError,
+    ErrorCode,
+    InsufficientApprovals,
+    TenuoError,
+)
 
 logger = logging.getLogger("tenuo.fastapi")
 
@@ -153,11 +160,16 @@ def configure_tenuo(
     @app.exception_handler(TenuoError)
     async def tenuo_error_handler(request: Request, exc: TenuoError):
         """Handle TenuoError exceptions with canonical wire codes."""
+        wire_code = exc.get_wire_code()
+        if wire_code in (ErrorCode.INSUFFICIENT_APPROVALS, ErrorCode.APPROVAL_GATE_TRIGGERED):
+            http_status = status.HTTP_409_CONFLICT
+        else:
+            http_status = exc.get_http_status()
         return JSONResponse(
-            status_code=exc.get_http_status(),
+            status_code=http_status,
             content={
                 "error": exc.get_wire_name(),
-                "error_code": exc.get_wire_code(),
+                "error_code": wire_code,
                 "message": str(exc),
                 "details": exc.details if expose_error_details else {},
             },
@@ -498,6 +510,21 @@ class TenuoGuard:
                 pop_signature=pop_sig_bytes,
                 parents=parents,
                 approvals=decoded_approvals,
+            )
+        except ApprovalRequired as approval_required:
+            req = approval_required.request
+            _rh = req.request_hash
+            if isinstance(_rh, (bytes, bytearray)):
+                _rh = _rh.hex()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "approval_required",
+                    "message": str(approval_required),
+                    "tool": req.tool,
+                    "request_hash": _rh,
+                    "min_approvals": req.min_approvals or 1,
+                },
             )
         except ApprovalGateTriggered as gate:
             raise HTTPException(

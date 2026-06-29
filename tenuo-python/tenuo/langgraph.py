@@ -90,7 +90,7 @@ from ._enforcement import enforce_tool_call, enforce_tool_call_async, filter_too
 from .bound_warrant import BoundWarrant
 from .config import resolve_trusted_roots
 from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
-from .exceptions import ApprovalGateTriggered, ConfigurationError
+from .exceptions import ApprovalGateTriggered, ConfigurationError, InsufficientApprovals
 from .keys import KeyRegistry, load_signing_key_from_env
 
 check_langgraph_compat()
@@ -237,6 +237,13 @@ def _authorize_tool_request(
             logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
     if not result.allowed:
+        if result.error_type == "insufficient_approvals":
+            meta = result.approval_metadata or {}
+            raise InsufficientApprovals(
+                required=meta.get("need", 0),
+                received=meta.get("got", 0),
+                detail=result.denial_reason or "",
+            )
         logger.warning(f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}")
         error_msg = (
             f"Authorization denied: {result.denial_reason}" if debug
@@ -312,6 +319,13 @@ async def _authorize_tool_request_async(
             logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
     if not result.allowed:
+        if result.error_type == "insufficient_approvals":
+            meta = result.approval_metadata or {}
+            raise InsufficientApprovals(
+                required=meta.get("need", 0),
+                received=meta.get("got", 0),
+                detail=result.denial_reason or "",
+            )
         logger.warning(f"[{request_id}] Tool '{tool_name}' denied: {result.denial_reason}")
         error_msg = (
             f"Authorization denied: {result.denial_reason}" if debug

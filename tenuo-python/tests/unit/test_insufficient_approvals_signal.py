@@ -477,6 +477,97 @@ class TestA2AInsufficientApprovalsMapping:
         rpc = a2a_exc.to_jsonrpc_error()
         assert rpc["data"]["required"] == 3
         assert rpc["data"]["received"] == 1
+        assert rpc["data"]["tenuo_code"] == 1700
+
+
+class TestRaiseIfDenied:
+    def test_insufficient_approvals_raises_typed_exception(self):
+        from tenuo._enforcement import EnforcementResult
+        from tenuo.exceptions import InsufficientApprovals
+
+        result = EnforcementResult(
+            allowed=False,
+            tool="transfer",
+            arguments={},
+            error_type="insufficient_approvals",
+            approval_metadata={"got": 1, "need": 2},
+        )
+        with pytest.raises(InsufficientApprovals) as exc_info:
+            result.raise_if_denied()
+        assert exc_info.value.details["required"] == 2
+        assert exc_info.value.details["received"] == 1
+
+    def test_invalid_pop_raises_signature_invalid(self):
+        from tenuo._enforcement import EnforcementResult
+        from tenuo.exceptions import SignatureInvalid
+
+        result = EnforcementResult(
+            allowed=False,
+            tool="transfer",
+            arguments={},
+            error_type="invalid_pop",
+            denial_reason="bad signature",
+        )
+        with pytest.raises(SignatureInvalid):
+            result.raise_if_denied()
+
+
+class TestOpenAIEnforcementMapping:
+    def test_insufficient_approvals_raises_typed_exception(self):
+        from tenuo._enforcement import EnforcementResult
+        from tenuo.exceptions import InsufficientApprovals
+        from tenuo.openai import _raise_for_enforcement_denial
+
+        result = EnforcementResult(
+            allowed=False,
+            tool="transfer",
+            arguments={},
+            error_type="insufficient_approvals",
+            approval_metadata={"got": 0, "need": 2},
+        )
+        with pytest.raises(InsufficientApprovals):
+            _raise_for_enforcement_denial("transfer", result)
+
+
+class TestCrewAIEnforcementMapping:
+    def test_insufficient_approvals_maps_to_dedicated_exception(self):
+        from tenuo._enforcement import EnforcementResult
+        from tenuo.crewai import CrewAIGuard, InsufficientApprovalsDenied
+
+        guard = CrewAIGuard.__new__(CrewAIGuard)
+        guard._warrant = None
+        guard._signing_key = None
+        result = EnforcementResult(
+            allowed=False,
+            tool="transfer",
+            arguments={},
+            error_type="insufficient_approvals",
+            approval_metadata={"got": 1, "need": 3},
+            denial_reason="need more",
+        )
+        err = guard._map_enforcement_error(result, "transfer", {}, "need more")
+        assert isinstance(err, InsufficientApprovalsDenied)
+        assert err.got == 1
+        assert err.need == 3
+
+
+class TestMCPJsonRpcPayload:
+    def test_minus_32002_includes_got_and_need(self):
+        from tenuo.mcp.server import MCPVerificationResult
+
+        result = MCPVerificationResult(
+            allowed=False,
+            tool="transfer",
+            clean_arguments={},
+            constraints={},
+            denial_reason="need more approvals",
+            jsonrpc_error_code=-32002,
+            approval_metadata={"got": 1, "need": 2},
+        )
+        err = result.to_jsonrpc_error()
+        assert err["code"] == -32002
+        assert err["data"]["got"] == 1
+        assert err["data"]["need"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -533,13 +624,14 @@ class TestTemporalErrorTypeForWire:
                 has_gate = any("ApprovalGateTriggered" in n for n in names)
                 has_insuf = any("InsufficientApprovals" in n for n in names)
                 has_tool = any("ToolNotAuthorized" in n for n in names)
-                if has_gate and has_insuf and has_tool:
+                has_constraint = any("ConstraintViolation" in n for n in names)
+                if has_gate and has_insuf and has_tool and has_constraint:
                     found_in_same_clause = True
                     break
 
         assert found_in_same_clause, (
-            "InsufficientApprovals and ToolNotAuthorized must be in the same "
-            "except clause as ApprovalGateTriggered in temporal/_interceptors.py"
+            "Approval, tool, and constraint errors must be in the explicit "
+            "auth catch list in temporal/_interceptors.py"
         )
 
     def test_error_type_for_wire_tool_not_authorized(self):
