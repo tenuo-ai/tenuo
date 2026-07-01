@@ -68,6 +68,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from tenuo._enforcement import EnforcementResult, enforce_tool_call, enforce_tool_call_async
 from tenuo.config import resolve_trusted_roots
+from tenuo.exceptions import InsufficientApprovals
 
 if TYPE_CHECKING:
     from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
@@ -426,18 +427,22 @@ class TenuoGuard:
                     if result.error_type == "expired":
                         return self._deny("Warrant expired", tool.name, args,
                                           start_ns=start_ns, _cp_already_emitted=True)
-                    else:
-                        # Get detailed reason for other denial types
-                        reason, constraint_param, constraint = self._get_denial_info(warrant, skill_name, validation_args)
-                        return self._deny(
-                            f"Authorization failed: {reason}",
-                            tool.name,
-                            args,
-                            constraint_param=constraint_param,
-                            constraint=constraint,
-                            start_ns=start_ns,
-                            _cp_already_emitted=True,
+                    if result.error_type == "insufficient_approvals":
+                        return self._deny_insufficient_approvals(
+                            result, tool.name, args,
+                            start_ns=start_ns, _cp_already_emitted=True,
                         )
+                    # Get detailed reason for other denial types
+                    reason, constraint_param, constraint = self._get_denial_info(warrant, skill_name, validation_args)
+                    return self._deny(
+                        f"Authorization failed: {reason}",
+                        tool.name,
+                        args,
+                        constraint_param=constraint_param,
+                        constraint=constraint,
+                        start_ns=start_ns,
+                        _cp_already_emitted=True,
+                    )
 
                 # PoP authorized - tool call is allowed
                 self._audit("tool_allowed", tool.name, args, warrant)
@@ -620,17 +625,21 @@ class TenuoGuard:
                     if result.error_type == "expired":
                         return self._deny("Warrant expired", tool.name, args,
                                           start_ns=start_ns, _cp_already_emitted=True)
-                    else:
-                        reason, constraint_param, constraint = self._get_denial_info(warrant, skill_name, validation_args)
-                        return self._deny(
-                            f"Authorization failed: {reason}",
-                            tool.name,
-                            args,
-                            constraint_param=constraint_param,
-                            constraint=constraint,
-                            start_ns=start_ns,
-                            _cp_already_emitted=True,
+                    if result.error_type == "insufficient_approvals":
+                        return self._deny_insufficient_approvals(
+                            result, tool.name, args,
+                            start_ns=start_ns, _cp_already_emitted=True,
                         )
+                    reason, constraint_param, constraint = self._get_denial_info(warrant, skill_name, validation_args)
+                    return self._deny(
+                        f"Authorization failed: {reason}",
+                        tool.name,
+                        args,
+                        constraint_param=constraint_param,
+                        constraint=constraint,
+                        start_ns=start_ns,
+                        _cp_already_emitted=True,
+                    )
 
                 self._audit("tool_allowed", tool.name, args, warrant)
                 return None
@@ -777,6 +786,44 @@ class TenuoGuard:
         except Exception as e:
             logger.debug(f"why_denied() failed: {e}")
         return "not authorized", None, None
+
+    def _deny_insufficient_approvals(
+        self,
+        result: EnforcementResult,
+        tool_name: str,
+        args: Dict[str, Any],
+        *,
+        start_ns: Optional[int] = None,
+        _cp_already_emitted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Handle partial multi-sig with structured got/need for retry loops."""
+        meta = result.approval_metadata or {}
+        got = meta.get("got", 0)
+        need = meta.get("need", 0)
+        reason = result.denial_reason or f"Insufficient approvals: got {got}, need {need}"
+
+        if self._dry_run:
+            logger.warning(f"DRY RUN: Would deny {tool_name} - {reason}")
+            self._audit("tool_dry_run_denied", tool_name, args, reason=reason)
+            return None
+
+        self._audit("tool_denied", tool_name, args, reason=reason)
+
+        if self._on_denial == "raise":
+            raise InsufficientApprovals(
+                required=need,
+                received=got,
+                detail=reason,
+            )
+
+        message = reason if self._denial_detail == "full" else "Insufficient approvals."
+        return {
+            "error": "insufficient_approvals",
+            "message": message,
+            "got": got,
+            "need": need,
+            "details": reason if self._denial_detail == "full" else None,
+        }
 
     def _deny(
         self,

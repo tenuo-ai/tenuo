@@ -642,3 +642,134 @@ class TestTemporalErrorTypeForWire:
 
         exc = ToolNotAuthorized(tool="delete_file")
         assert _error_type_for_wire(exc) == "tool_not_authorized"
+
+
+# ---------------------------------------------------------------------------
+# mcp/fastmcp_middleware.py
+# ---------------------------------------------------------------------------
+
+
+class TestFastMCPMiddlewareDenialPayload:
+    def test_structured_content_includes_got_and_need(self):
+        pytest.importorskip("fastmcp")
+        from tenuo.mcp.fastmcp_middleware import _denial_tool_return
+        from tenuo.mcp.server import MCPVerificationResult
+
+        result = MCPVerificationResult(
+            allowed=False,
+            tool="transfer",
+            clean_arguments={},
+            constraints={},
+            denial_reason="Insufficient approvals for 'transfer': got 1, need 2",
+            jsonrpc_error_code=-32002,
+            approval_metadata={"got": 1, "need": 2},
+        )
+        mcp_result = _denial_tool_return(result).to_mcp_result()
+        tenuo = mcp_result.structuredContent["tenuo"]
+        assert tenuo["code"] == -32002
+        assert tenuo["got"] == 1
+        assert tenuo["need"] == 2
+
+
+# ---------------------------------------------------------------------------
+# autogen.py
+# ---------------------------------------------------------------------------
+
+
+class TestAutoGenInsufficientApprovals:
+    def test_guard_raises_insufficient_approvals(self):
+        issuer = SigningKey.generate()
+        agent = SigningKey.generate()
+        approver1 = SigningKey.generate()
+        approver2 = SigningKey.generate()
+        warrant = _make_multi_sig_warrant(issuer, agent, [approver1, approver2], 2)
+        tool_args = {"amount": 500}
+        approval = _make_signed_approval(warrant, "transfer", tool_args, agent, approver1)
+
+        from tenuo.autogen import GuardBuilder
+
+        def transfer(amount: int) -> str:
+            return str(amount)
+
+        guard = (
+            GuardBuilder()
+            .with_warrant(warrant, agent)
+            .with_trusted_roots([issuer.public_key])
+            .with_approvals([approval])
+            .build()
+        )
+        guarded = guard.guard_tool(transfer, tool_name="transfer")
+
+        with pytest.raises(InsufficientApprovals) as exc_info:
+            guarded(amount=500)
+
+        assert exc_info.value.details["required"] == 2
+        assert exc_info.value.details["received"] == 1
+
+
+# ---------------------------------------------------------------------------
+# google_adk/guard.py
+# ---------------------------------------------------------------------------
+
+
+class TestGoogleADKInsufficientApprovals:
+    def test_before_tool_returns_structured_insufficient_approvals(self):
+        pytest.importorskip("google.adk")
+        issuer = SigningKey.generate()
+        agent = SigningKey.generate()
+        approver1 = SigningKey.generate()
+        approver2 = SigningKey.generate()
+        warrant = _make_multi_sig_warrant(issuer, agent, [approver1, approver2], 2)
+        tool_args = {"amount": 500}
+        approval = _make_signed_approval(warrant, "transfer", tool_args, agent, approver1)
+
+        from unittest.mock import MagicMock
+
+        from tenuo.google_adk.guard import TenuoGuard
+
+        guard = TenuoGuard(
+            warrant=warrant,
+            signing_key=agent,
+            trusted_roots=[issuer.public_key],
+            require_pop=True,
+            approvals=[approval],
+        )
+        tool = MagicMock()
+        tool.name = "transfer"
+        context = MagicMock()
+
+        result = guard.before_tool(tool, tool_args, context)
+
+        assert isinstance(result, dict)
+        assert result["error"] == "insufficient_approvals"
+        assert result["got"] == 1
+        assert result["need"] == 2
+
+    def test_before_tool_raises_insufficient_approvals_when_configured(self):
+        pytest.importorskip("google.adk")
+        issuer = SigningKey.generate()
+        agent = SigningKey.generate()
+        approver1 = SigningKey.generate()
+        approver2 = SigningKey.generate()
+        warrant = _make_multi_sig_warrant(issuer, agent, [approver1, approver2], 2)
+        tool_args = {"amount": 500}
+        approval = _make_signed_approval(warrant, "transfer", tool_args, agent, approver1)
+
+        from unittest.mock import MagicMock
+
+        from tenuo.google_adk.guard import TenuoGuard
+
+        guard = TenuoGuard(
+            warrant=warrant,
+            signing_key=agent,
+            trusted_roots=[issuer.public_key],
+            require_pop=True,
+            approvals=[approval],
+            on_denial="raise",
+        )
+        tool = MagicMock()
+        tool.name = "transfer"
+        context = MagicMock()
+
+        with pytest.raises(InsufficientApprovals):
+            guard.before_tool(tool, tool_args, context)
