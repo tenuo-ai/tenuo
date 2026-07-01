@@ -608,7 +608,7 @@ with chain_scope([root]):
 ## See Also
 
 - [LangGraph Integration](./langgraph)  -- Multi-agent graph security
-- [Human Approvals](./approvals)  -- Approval policy guide
+- [Human Approvals](./approvals)  -- Approval gates and handlers guide
 - [Argument Extraction](./constraints#argument-extraction)  -- How extraction works
 - [Security](./security)  -- Threat model, best practices
 - [API Reference](./api-reference)  -- Full Python API documentation

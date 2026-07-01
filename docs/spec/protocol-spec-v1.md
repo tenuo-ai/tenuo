@@ -477,8 +477,12 @@ def authorize(warrant, tool, args, pop_signature, approvals=[], tool_reqs={}):
     # 5. Verify Proof-of-Possession (§7)
     verify_pop(warrant, pop_signature, tool, args)
     
-    # 6. Multi-sig enforcement (if required)
-    if warrant.required_approvers():
+    # 6. Multi-sig enforcement (if an approval gate fires for this call)
+    if evaluate_approval_gates(warrant, tool, args):
+        if not warrant.required_approvers():
+            raise ApprovalGateMisconfigured()
+        if approvals.is_empty():
+            raise ApprovalRequired(tool, request_hash=compute_request_hash(...))
         valid = count_valid_approvals(warrant, tool, args, approvals)
         if valid < warrant.min_approvals():
             raise InsufficientApprovals(f"Got {valid}, need {warrant.min_approvals()}")

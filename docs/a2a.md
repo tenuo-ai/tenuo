@@ -610,6 +610,41 @@ This simplifies proxy and load-balancer configurations (one header to forward in
 
 ---
 
+## Human Approval
+
+Define gates and approvers on the warrant. On retry, attach `SignedApproval` objects via header or param. See [Human Approvals](approvals.md) for minting and signing.
+
+```python
+from tenuo.a2a import A2AClient, ApprovalRequiredError, InsufficientApprovalsError
+from tenuo.approval import sign_approval
+
+try:
+    result = await client.send_task(skill="transfer", arguments={"amount": 5000})
+except ApprovalRequiredError as e:
+    # -32019 — gate fired; e.data has request_hash, min_approvals, skill
+    signed = sign_approval(approval_request, approver_key)  # from your UI flow
+    result = await client.send_task(
+        skill="transfer",
+        arguments={"amount": 5000},
+        approvals=[signed],  # encoded into X-Tenuo-Approvals
+    )
+except InsufficientApprovalsError as e:
+    # -32020 — collect additional signatures; check e.data["required"] vs ["received"]
+    ...
+```
+
+**Wire encoding:** `X-Tenuo-Approvals` = `base64(JSON(["base64(CBOR SignedApproval)", ...]))`. Same outer wrapper as FastAPI.
+
+| A2A JSON-RPC | Wire code | When | Key `data` fields |
+|--------------|-----------|------|-------------------|
+| **-32019** | 1707 | Gate fired, no approvals | `request_hash`, `min_approvals`, `skill` |
+| **-32020** | 1700 | Partial multi-sig | `required`, `received` |
+| **-32021** | 1701 | Invalid / malformed approval | `reason` |
+
+> **Note:** A2A `-32002` is **invalid signature** (1100), not approval. Do not reuse MCP's `-32002` semantics on A2A.
+
+---
+
 ## Error Handling
 
 All A2A errors inherit from `A2AError` and map to JSON-RPC error codes with canonical wire codes:
@@ -627,6 +662,9 @@ from tenuo.a2a import (
     ConstraintViolationError,  # -32008: Argument violates constraint
     ChainInvalidError,         # -32010: Delegation chain validation failed
     KeyMismatchError,          # -32012: Public key doesn't match pinned key
+    ApprovalRequiredError,     # -32019: Approval gate fired
+    InsufficientApprovalsError,  # -32020: Partial multi-sig
+    InvalidApprovalError,      # -32021: Bad signed approval
 )
 
 try:
@@ -671,6 +709,9 @@ This enables:
 | -32007 | 1500 | Tool not authorized |
 | -32008 | 1501 | Constraint violation |
 | -32010 | 1405 | Chain invalid |
+| -32019 | 1707 | Approval required (gate fired) |
+| -32020 | 1700 | Insufficient approvals (partial multi-sig) |
+| -32021 | 1701 | Invalid approval |
 
 See [wire format specification](./spec/wire-format-v1#appendix-a-error-codes) for the complete list.
 

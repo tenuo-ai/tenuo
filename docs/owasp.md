@@ -418,7 +418,7 @@ Attackers exploit the trust humans place in agent outputs. Deceptive summaries, 
 
 ### How Tenuo helps
 
-Tenuo supports cryptographic human approvals through its guards mechanism. When an action requires human authorization, the approval is not a log entry or an API call. It is a cryptographic artifact binding a specific tool call to a specific human's key, verifiable offline and recorded as a signed receipt. The artifact survives database tampering, log loss, and post-hoc dispute.
+Tenuo supports cryptographic human approvals through **approval gates** on warrants. When an action requires human authorization, the approval is not a log entry or an API call. It is a cryptographic artifact binding a specific tool call to a specific human's key, verifiable offline and recorded as a signed receipt. The artifact survives database tampering, log loss, and post-hoc dispute.
 
 Three properties the deployed baseline lacks:
 

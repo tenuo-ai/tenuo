@@ -2195,6 +2195,7 @@ pub enum ErrorCode {
     UnsupportedApprovalVersion = 1704,
     ApprovalPayloadInvalid = 1705,
     ApprovalRequestHashMismatch = 1706,
+    ApprovalRequired = 1707,  // Gate fired; no valid approvals supplied yet
     
     // Revocation errors (1800-1899)
     WarrantRevoked = 1800,
@@ -2275,6 +2276,9 @@ Uses standard JSON-RPC negative codes (-32001 to -32099) with canonical code in 
 - `-32009` (REVOKED) <--> `1800` (WarrantRevoked)
 - `-32010` (CHAIN_INVALID) <--> `1405` (ChainBroken)
 - `-32016` (POP_FAILED) <--> `1600` (PopSignatureInvalid)
+- `-32019` (APPROVAL_REQUIRED) <--> `1707` (ApprovalRequired)
+- `-32020` (INSUFFICIENT_APPROVALS) <--> `1700` (InsufficientApprovals)
+- `-32021` (INVALID_APPROVAL) <--> `1701` (ApprovalInvalid)
 
 Some A2A errors are protocol-specific (e.g., `-32001` MISSING_WARRANT, `-32005` AUDIENCE_MISMATCH) and have no wire format equivalent.
 
@@ -2291,7 +2295,8 @@ MCP tool calls carry warrant data in `params._meta.tenuo` -- the MCP spec's desi
   "_meta": {
     "tenuo": {
       "warrant": "<base64url CBOR WarrantStack>",
-      "pop": "<base64url PoP signature>"
+      "signature": "<base64url PoP signature>",
+      "approvals": ["<base64 CBOR SignedApproval>", "..."]
     }
   }
 }
@@ -2303,19 +2308,30 @@ MCP tool calls carry warrant data in `params._meta.tenuo` -- the MCP spec's desi
 {
   "jsonrpc": "2.0",
   "error": {
-    "code": -32001,
-    "message": "authorization_denied",
+    "code": -32002,
+    "message": "approval_required",
     "data": {
-      "tenuo_code": 1501,
-      "tool": "query_database"
+      "tenuo_code": 1707,
+      "request_hash": "a1b2c3..."
     }
   }
 }
 ```
 
+Partial multi-sig uses the same `-32002` code with `got` / `need` in `data` (wire `1700`):
+
+```json
+{
+  "error": {
+    "code": -32002,
+    "data": { "got": 1, "need": 2, "tenuo_code": 1700 }
+  }
+}
+```
+
 **Key mappings:**
-- `-32001` (DENIED) <--> Authorization denied (missing warrant, chain invalid, constraint violation)
-- `-32002` (APPROVAL_REQUIRED) <--> `1700` (InsufficientApprovals)
+- `-32001` (DENIED) <--> Authorization denied (missing warrant, chain invalid, constraint violation, invalid approval)
+- `-32002` (APPROVAL_RETRY) <--> `1707` (gate fired, `request_hash` in data) **or** `1700` (partial multi-sig, `got`/`need` in data)
 - `-32602` (INVALID_PARAMS) <--> Malformed or missing `_meta.tenuo` in request params
 
 **Server-side verification flow:**
@@ -2344,7 +2360,7 @@ All three representations are equally valid; the numeric codes 1000-2199 are can
 | 1400-1499 | 403 Forbidden | Chain validation failed |
 | 1500-1599 | 403 Forbidden | Authorization denied |
 | 1600-1699 | 401 Unauthorized | PoP verification failed |
-| 1700-1799 | 403 Forbidden | Approval requirements not met |
+| 1700-1799 | 403 Forbidden (409 in FastAPI adapter) | Approval requirements not met |
 | 1800-1899 | 401 Unauthorized | Warrant revoked |
 | 1900-1999 | 413 Payload Too Large | Size limits exceeded |
 | 2000-2099 | 400 Bad Request | Invalid extension |

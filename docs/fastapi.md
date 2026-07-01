@@ -240,15 +240,19 @@ Tenuo expects these HTTP headers:
 |--------|-------------|
 | `X-Tenuo-Warrant` | Base64-encoded warrant (or warrant stack) |
 | `X-Tenuo-PoP` | Base64-encoded Proof-of-Possession signature |
-| `X-Tenuo-Approvals` | Base64-encoded signed approvals (optional) |
+| `X-Tenuo-Approvals` | Base64-encoded JSON array of base64 CBOR `SignedApproval` blobs (optional, for retry) |
 
-**Example request:**
+**Example request (with approval retry):**
 
 ```bash
+# approvals_b64 = base64(json.dumps([base64(cbor_signed_approval), ...]))
 curl -X GET "https://api.example.com/search?query=test" \
   -H "X-Tenuo-Warrant: eyJ3YXJyYW50IjoiLi4uIn0=" \
-  -H "X-Tenuo-PoP: SGVsbG8gV29ybGQ="
+  -H "X-Tenuo-PoP: SGVsbG8gV29ybGQ=" \
+  -H "X-Tenuo-Approvals: W3siLi4uIn1d"
 ```
+
+On **409** with `"error": "approval_required"`, read `request_hash` from the body, sign, and re-submit with `X-Tenuo-Approvals`. See [Human Approvals](approvals.md#wire-format-retry-payloads).
 
 ---
 

@@ -20,7 +20,7 @@ warrant = (Warrant.mint_builder()
     .capability("transfer")
     .approval_gates({"transfer": None})       # this tool needs approval
     .required_approvers([approver_key.public_key])
-    .approval_threshold(1)
+    .min_approvals(1)
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(control_key)
@@ -36,13 +36,15 @@ result = enforce_tool_call(
 )
 ```
 
-**Three things to configure:**
+**Three things to configure on the warrant:**
 
-| On the warrant | Purpose |
-|----------------|---------|
+| Method | Purpose |
+|--------|---------|
 | `.approval_gates({...})` | Which tool calls trigger approval |
 | `.required_approvers([...])` | Who may sign |
-| `.approval_threshold(n)` | How many valid signatures (m-of-n) |
+| `.min_approvals(n)` | How many valid signatures (m-of-n) |
+
+> **Naming:** use `.min_approvals()` when **minting**. On issued warrants, read the threshold with `warrant.approval_threshold()`. The wire field is `min_approvals`.
 
 **Two ways to supply approvals at runtime:**
 
@@ -58,22 +60,22 @@ Gates are evaluated per call. Listing `required_approvers` alone does **not** re
 ## Approval Gates
 
 ```python
+from tenuo_core import Exact
+
 warrant = (Warrant.mint_builder()
     .capability("search")
-    .capability("transfer")
+    .capability("restart_service")
     .approval_gates({
-        "transfer": None,   # all transfer calls
-        # "search" — no gate, proceeds without approval
+        "restart_service": {"environment": Exact("production")},  # prod only
+        # whole-tool gate: "transfer": None
     })
     .required_approvers([approver_key.public_key])
-    .approval_threshold(1)
+    .min_approvals(1)
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(control_key)
 )
 ```
-
-Per-argument gates are supported — see [MCP approval gates](mcp.md#approval-gates) for constraint-keyed examples.
 
 ---
 
@@ -84,7 +86,7 @@ warrant = (Warrant.mint_builder()
     .capability("deploy_prod")
     .approval_gates({"deploy_prod": None})
     .required_approvers([alice.public_key, bob.public_key, carol.public_key])
-    .approval_threshold(2)   # any 2-of-3
+    .min_approvals(2)   # any 2-of-3
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(control_key)
@@ -104,25 +106,54 @@ Call without approvals
   → threshold met → proceed
 ```
 
-Sign approvals with `sign_approval(request, approver_key)` or a built-in handler (`cli_prompt`, custom Slack handler, etc.).
+Sign with `sign_approval(request, approver_key)` or a built-in handler (`cli_prompt`, etc.). Default approval TTL: handler `ttl_seconds` → **300s**.
+
+**Branch on the signal, not the message:**
+- First attempt → look for `request_hash` (or `ApprovalRequired` / `approval_required`)
+- Partial multi-sig → look for `got`/`need` or `required`/`received` (or `InsufficientApprovals`)
+
+---
+
+## Wire Format (retry payloads)
+
+Each `SignedApproval` is CBOR bytes. Adapters differ in how they wrap the list:
+
+| Integration | Where | Encoding |
+|-------------|-------|----------|
+| **MCP** | `params._meta.tenuo.approvals` | JSON array of **base64(CBOR)** strings — no outer wrapper |
+| **FastAPI / A2A** | `X-Tenuo-Approvals` header (A2A also accepts `x-tenuo-approvals` param) | **base64(JSON array of base64(CBOR) strings)** |
+| **Temporal** | `x-tenuo-approvals` activity header | **JSON array of base64(CBOR) strings** — no outer base64 wrapper |
+
+```python
+import base64, json
+from tenuo.approval import sign_approval
+
+signed = sign_approval(request, approver_key)
+
+# MCP / Temporal — array of base64 CBOR blobs
+approvals_wire = [base64.b64encode(signed.to_bytes()).decode("ascii")]
+
+# FastAPI / A2A — outer base64 JSON wrapper
+header_value = base64.b64encode(json.dumps(approvals_wire).encode()).decode()
+```
+
+See integration guides: [MCP](mcp.md#approval-gates), [FastAPI](fastapi.md#headers), [A2A](a2a.md#human-approval), [Temporal](temporal-reference.md#set_activity_approvals---pre-supply-multisig-approvals).
 
 ---
 
 ## Signals by Integration
-
-Use these to branch client/workflow retry logic. **Do not** parse denial message strings.
 
 | Integration | First call (gate, no approvals) | Partial multi-sig | Retry with |
 |-------------|--------------------------------|-------------------|------------|
 | **In-process** | `tenuo.approval.ApprovalRequired` | `tenuo.exceptions.InsufficientApprovals` | Same call + `approvals=[...]` or `approval_handler` |
 | **MCP** | JSON-RPC `-32002` + `request_hash` | JSON-RPC `-32002` + `got` / `need` | `_meta.tenuo.approvals` |
 | **FastAPI** | HTTP **409** `error: "approval_required"` + `request_hash` | HTTP **409** `error: "insufficient_approvals"` + `got` / `need` | `X-Tenuo-Approvals` header |
-| **A2A** | JSON-RPC **-32019** + `request_hash` | JSON-RPC **-32020** + `required` / `received` | Approvals in request metadata |
+| **A2A** | JSON-RPC **-32019** + `request_hash` | JSON-RPC **-32020** + `required` / `received` | `X-Tenuo-Approvals` header or `x-tenuo-approvals` param |
 | **Temporal** | `ApplicationError.type == "approval_required"` | `ApplicationError.type == "insufficient_approvals"` | `x-tenuo-approvals` header or `set_activity_approvals()` |
 
-Scope denials (wrong tool, constraint, expired warrant) use different codes — see each integration guide.
+Scope denials use different codes — see each integration guide.
 
-**Field names:** Python exceptions use `required` / `received` in `.details`. HTTP and MCP retry payloads use `got` / `need`. A2A uses `required` / `received`.
+**Field names:** Python `.details` use `required` / `received`. HTTP and MCP retry payloads use `got` / `need`. A2A error `data` uses `required` / `received`.
 
 ---
 
@@ -163,7 +194,7 @@ guard = (GuardBuilder()
     .build())
 ```
 
-See [LangChain](langchain.md), [CrewAI](crewai.md), [OpenAI](openai.md), [AutoGen](autogen.md), [Google ADK](google-adk.md), [MCP](mcp.md), [FastAPI](fastapi.md), [Temporal](temporal-reference.md).
+See [LangChain](langchain.md), [CrewAI](crewai.md), [OpenAI](openai.md), [AutoGen](autogen.md), [Google ADK](google-adk.md), [MCP](mcp.md), [FastAPI](fastapi.md), [A2A](a2a.md#human-approval), [Temporal](temporal-reference.md#human-approval).
 
 ### Temporal
 
@@ -203,7 +234,7 @@ def slack_approval(request):
     return sign_approval(request, approver_key, external_id=reaction.user, ttl_seconds=60)
 ```
 
-Async handlers are supported. Default approval TTL: handler `ttl_seconds` → **300s** fallback.
+Async handlers are supported.
 
 ---
 
@@ -223,26 +254,11 @@ from tenuo.approval import ApprovalRequired, ApprovalDenied, cli_prompt
 from tenuo.exceptions import InsufficientApprovals, ApprovalGateTriggered
 ```
 
-`InsufficientApprovals` message shape: `Insufficient approvals: required 2, received 1 [rejected: ...]`
-
 ---
 
 ## Cryptographic Model
 
-Every approval binds to `(warrant_id, tool, args, holder)` via SHA-256:
-
-```python
-from tenuo import compute_request_hash
-
-hash = compute_request_hash(
-    warrant_id=warrant.id,
-    tool="transfer",
-    args={"amount": 50000, "to": "alice"},
-    holder=agent_key.public_key,
-)
-```
-
-`SignedApproval` = Ed25519 signature over `ApprovalPayload` (`request_hash`, `nonce`, `expires_at`, ...). Rust core verifies signature, hash, expiry (30s clock tolerance), approver trust, deduplication, and threshold.
+Every approval binds to `(warrant_id, tool, args, holder)` via SHA-256 (`compute_request_hash`). `SignedApproval` = Ed25519 over `ApprovalPayload`. Rust verifies signature, hash, expiry (30s clock tolerance), approver trust, deduplication, and threshold.
 
 ---
 
