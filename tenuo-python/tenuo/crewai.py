@@ -412,6 +412,29 @@ class WarrantToolDenied(TenuoCrewAIError):
         super().__init__(msg)
 
 
+class InsufficientApprovalsDenied(TenuoCrewAIError):
+    """Multi-sig threshold not met — caller should collect more approvals."""
+
+    error_code = "INSUFFICIENT_APPROVALS"
+
+    def __init__(
+        self,
+        tool: str,
+        reason: str,
+        *,
+        got: int = 0,
+        need: int = 0,
+        warrant_id: Optional[str] = None,
+    ):
+        self.tool = tool
+        self.got = got
+        self.need = need
+        self.warrant_id = warrant_id
+        super().__init__(
+            f"Insufficient approvals for '{tool}': got {got}, need {need}. {reason}"
+        )
+
+
 # =============================================================================
 # Audit Support
 # =============================================================================
@@ -1116,6 +1139,9 @@ class CrewAIGuard:
         if enforcement.error_type == "expired":
             return WarrantExpired(reason=reason)
         elif enforcement.error_type == "constraint_violation":
+            if enforcement.constraint_violated == "tool":
+                bound = self._warrant.bind(self._signing_key) if self._warrant and self._signing_key else None
+                return WarrantToolDenied(tool=tool_name, warrant_id=getattr(bound, "id", None))
             from tenuo import Wildcard as _Wildcard
             violated_field = enforcement.constraint_violated or "unknown_field"
             return CrewAIConstraintViolation(
@@ -1128,6 +1154,16 @@ class CrewAIGuard:
         elif enforcement.error_type == "tool_not_allowed":
             bound = self._warrant.bind(self._signing_key) if self._warrant and self._signing_key else None
             return WarrantToolDenied(tool=tool_name, warrant_id=getattr(bound, "id", None))
+        elif enforcement.error_type == "insufficient_approvals":
+            meta = enforcement.approval_metadata or {}
+            bound = self._warrant.bind(self._signing_key) if self._warrant and self._signing_key else None
+            return InsufficientApprovalsDenied(
+                tool_name,
+                reason,
+                got=meta.get("got", 0),
+                need=meta.get("need", 0),
+                warrant_id=getattr(bound, "id", None),
+            )
         elif enforcement.error_type in ("invalid_pop", "signature_invalid", "missing_signature"):
             return InvalidPoP(reason=reason)
         elif enforcement.error_type in ("authorization_failed", "configuration_error"):

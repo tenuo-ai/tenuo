@@ -146,7 +146,7 @@ class TestApprovalErrors:
         rpc = err.to_jsonrpc_error()
         assert rpc["data"]["required"] == 3
         assert rpc["data"]["received"] == 1
-        assert rpc["data"]["tenuo_code"] == 1702
+        assert rpc["data"]["tenuo_code"] == 1700
 
     def test_invalid_approval_error_code(self):
         err = InvalidApprovalError("bad format")

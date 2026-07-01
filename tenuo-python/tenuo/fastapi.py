@@ -30,7 +30,14 @@ from typing import Any, Callable, Dict, List, Optional
 from tenuo_core import PublicKey, Warrant  # type: ignore[import-untyped]
 
 from tenuo._enforcement import EnforcementResult
-from tenuo.exceptions import ApprovalGateTriggered, DeserializationError, TenuoError
+from tenuo.approval import ApprovalRequired
+from tenuo.exceptions import (
+    ApprovalGateTriggered,
+    DeserializationError,
+    ErrorCode,
+    InsufficientApprovals,
+    TenuoError,
+)
 
 logger = logging.getLogger("tenuo.fastapi")
 
@@ -153,11 +160,16 @@ def configure_tenuo(
     @app.exception_handler(TenuoError)
     async def tenuo_error_handler(request: Request, exc: TenuoError):
         """Handle TenuoError exceptions with canonical wire codes."""
+        wire_code = exc.get_wire_code()
+        if wire_code in (ErrorCode.INSUFFICIENT_APPROVALS, ErrorCode.APPROVAL_GATE_TRIGGERED):
+            http_status = status.HTTP_409_CONFLICT
+        else:
+            http_status = exc.get_http_status()
         return JSONResponse(
-            status_code=exc.get_http_status(),
+            status_code=http_status,
             content={
                 "error": exc.get_wire_name(),
-                "error_code": exc.get_wire_code(),
+                "error_code": wire_code,
                 "message": str(exc),
                 "details": exc.details if expose_error_details else {},
             },
@@ -499,6 +511,18 @@ class TenuoGuard:
                 parents=parents,
                 approvals=decoded_approvals,
             )
+        except ApprovalRequired as approval_required:
+            req = approval_required.request
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "approval_required",
+                    "message": str(approval_required),
+                    "tool": req.tool,
+                    "request_hash": req.request_hash.hex(),
+                    "min_approvals": req.min_approvals or 1,
+                },
+            )
         except ApprovalGateTriggered as gate:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -509,6 +533,19 @@ class TenuoGuard:
                     "request_id": gate.request_id,
                     "request_hash": gate.request_hash,
                     "min_approvals": gate.min_approvals,
+                },
+            )
+        except InsufficientApprovals as insuf:
+            # Multi-sig threshold not met — distinct from a scope denial.
+            # 409 Conflict mirrors the ApprovalGateTriggered shape so callers
+            # can use the same retry-with-approval branch for both flows.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "insufficient_approvals",
+                    "message": str(insuf),
+                    "got": insuf.details.get("received", 0) if hasattr(insuf, "details") else 0,
+                    "need": insuf.details.get("required", 0) if hasattr(insuf, "details") else 0,
                 },
             )
 
@@ -533,6 +570,19 @@ class TenuoGuard:
             expose_details = _config.get("expose_error_details", False)
 
             # Map specific errors to HTTP codes
+            if enforcement.error_type == "insufficient_approvals":
+                meta = enforcement.approval_metadata or {}
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "insufficient_approvals",
+                        "message": reason,
+                        "got": meta.get("got", 0),
+                        "need": meta.get("need", 0),
+                        "request_id": request_id,
+                    },
+                )
+
             if enforcement.error_type == "expired" or (
                 "expired" in reason.lower() and "proof-of-possession" not in reason.lower()
             ):

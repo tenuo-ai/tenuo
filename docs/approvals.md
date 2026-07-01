@@ -2,124 +2,31 @@
 
 > **Cryptographically verified human-in-the-loop authorization for AI agent tool calls.**
 
-Warrants define *what* an agent can do — including *which* tool calls require human approval, *who* can approve, and *how many* must agree. Every approval is cryptographically signed; there is no unsigned path.
-
----
-
-## Architecture
-
-```
-Tool Call ──► Rust Core verifies warrant ──► Approval gate fires?
-              (PoP, expiration, constraints)        |
-                                              no gate → proceed
-                                              gate fires → invoke handler
-                                                    |
-                                              handler(s) sign → collect approvals
-                                                    |
-                                              Rust core verifies signatures
-                                              + hash binding + expiry + trust
-                                                    |
-                                              threshold met (m-of-n) → proceed
-                                              threshold not met → raise error
-```
-
-**Key separation**:
-
-| Concern | Mechanism | Where |
-|---------|-----------|-------|
-| *What* an agent can do | Warrant capabilities + constraints | Rust core |
-| *When* a human must confirm | Approval gates (in warrant) | Rust core |
-| *Who* can confirm | `required_approvers` (in warrant) | Rust core |
-| *How many* must confirm | `approval_threshold` (in warrant) | Rust core |
-| *Proof* of confirmation | SignedApproval (Ed25519) | Rust core |
-| *How* confirmation happens | `approval_handler` callback | Python adapter |
-
----
-
-## Cryptographic Model
-
-### Request Hash
-
-Every approval is bound to a specific `(warrant_id, tool, args, holder)` tuple via a SHA-256 request hash computed in the Rust core:
-
-```python
-from tenuo import compute_request_hash
-
-hash = compute_request_hash(
-    warrant_id="tnu_wrt_...",
-    tool="transfer",
-    args={"amount": 50000, "to": "alice"},
-    holder=agent_key.public_key,  # binds to specific agent
-)
-# Returns 32-byte SHA-256 hash
-```
-
-The hash ensures:
-- An approval for `transfer(amount=50000)` cannot be reused for `transfer(amount=999999)`
-- An approval for warrant A cannot be replayed against warrant B
-- An approval for agent X cannot be stolen by agent Y (holder binding)
-
-### SignedApproval
-
-The `SignedApproval` is the cryptographic proof. It contains:
-
-| Field | Purpose |
-|-------|---------|
-| `approval_version` | Protocol version (currently 1) |
-| `payload` | CBOR-encoded `ApprovalPayload` (signed content) |
-| `approver_key` | Ed25519 public key of the approver |
-| `signature` | Ed25519 signature over the payload |
-
-The `ApprovalPayload` contains:
-
-| Field | Purpose |
-|-------|---------|
-| `request_hash` | SHA-256 hash binding to the exact call |
-| `nonce` | 16-byte random nonce (replay protection) |
-| `external_id` | Identity of the approver (e.g., email) |
-| `approved_at` | Unix timestamp when approved |
-| `expires_at` | Unix timestamp when the approval expires |
-
-### Verification Pipeline
-
-When `enforce_tool_call()` receives `SignedApproval`(s) from a handler, the Rust core verifies each one:
-
-1. **Signature** — Ed25519 signature check
-2. **Hash match** — `payload.request_hash == expected_hash` (prevents reuse across calls)
-3. **Expiry** — `payload.expires_at > now` (with 30-second clock tolerance for distributed systems)
-4. **Key trust** — `signed.approver_key in warrant.required_approvers()` (prevents rogue approvers)
-5. **Deduplication** — one vote per approver key (prevents double-counting)
-6. **Threshold** — valid approval count >= `warrant.approval_threshold()` (m-of-n satisfaction)
-
-For **1-of-1** failures, the Rust core returns the specific rejection reason (e.g., "request hash mismatch", "approval expired"). For **m-of-n** failures, it returns a summary of all rejection reasons (e.g., "required 2, received 1 [rejected: 1 expired, 1 not trusted]").
+Define **who must approve**, **how many**, and **which calls** in the warrant. Collect `SignedApproval` signatures and retry. There is no unsigned path.
 
 ---
 
 ## Quick Start
 
 ```python
-from tenuo import SigningKey, Warrant, sign_approval, cli_prompt
+from tenuo import SigningKey, Warrant, BoundWarrant, enforce_tool_call, cli_prompt
 
-# 1. Keys
-control_key = SigningKey.generate()    # control plane
-agent_key = SigningKey.generate()      # the AI agent
-approver_key = SigningKey.generate()   # the human approver
+control_key = SigningKey.generate()
+agent_key = SigningKey.generate()
+approver_key = SigningKey.generate()
 
-# 2. Warrant — defines capabilities, approval gates, and who can approve
+# 1. Warrant — capabilities, gates, approvers, threshold
 warrant = (Warrant.mint_builder()
     .capability("transfer")
-    .capability("search")
-    .approval_gates({"transfer": None})  # all transfer calls need approval
+    .approval_gates({"transfer": None})       # this tool needs approval
     .required_approvers([approver_key.public_key])
-    .approval_threshold(1)
+    .min_approvals(1)
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(control_key)
 )
 
-# 3. Enforce with an approval handler
-from tenuo import enforce_tool_call, BoundWarrant
-
+# 2. Enforce — handler prompts and signs on gate fire
 result = enforce_tool_call(
     tool_name="transfer",
     tool_args={"amount": 50_000, "to": "alice"},
@@ -127,156 +34,143 @@ result = enforce_tool_call(
     trusted_roots=[control_key.public_key],
     approval_handler=cli_prompt(approver_key=approver_key),
 )
-# The CLI prompts the human. If they type 'y', a SignedApproval is
-# created, verified, and the call proceeds. If 'n', ApprovalDenied is raised.
 ```
+
+**Three things to configure on the warrant:**
+
+| Method | Purpose |
+|--------|---------|
+| `.approval_gates({...})` | Which tool calls trigger approval |
+| `.required_approvers([...])` | Who may sign |
+| `.min_approvals(n)` | How many valid signatures (m-of-n) |
+
+> **Naming:** use `.min_approvals()` when **minting**. On issued warrants, read the threshold with `warrant.approval_threshold()`. The wire field is `min_approvals`.
+
+**Two ways to supply approvals at runtime:**
+
+| Mechanism | When |
+|-----------|------|
+| `approval_handler=...` | Prompt or call your approval UI when a gate fires |
+| `approvals=[signed, ...]` | Pre-collected `SignedApproval` objects (retry / out-of-band) |
+
+Gates are evaluated per call. Listing `required_approvers` alone does **not** require approval unless a gate fires for that `(tool, args)`.
 
 ---
 
 ## Approval Gates
 
-Approval gates are defined in the warrant and evaluated by the Rust core. They determine *which* tool calls require human confirmation:
-
 ```python
+from tenuo_core import Exact
+
 warrant = (Warrant.mint_builder()
     .capability("search")
-    .capability("transfer")
-    .capability("delete_user")
+    .capability("restart_service")
     .approval_gates({
-        "transfer": None,           # all transfer calls need approval
-        "delete_user": None,        # all delete_user calls need approval
-        # "search" has no gate — proceeds without approval
+        "restart_service": {"environment": Exact("production")},  # prod only
+        # whole-tool gate: "transfer": None
     })
     .required_approvers([approver_key.public_key])
+    .min_approvals(1)
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(control_key)
 )
 ```
-
-When `enforce_tool_call()` or a framework adapter processes a tool call, the Rust core runs `evaluate_approval_gates(warrant, tool_name, tool_args)`. If a gate fires, the enforcement layer invokes the `approval_handler` to collect signatures.
 
 ---
 
 ## M-of-N Multi-Sig
 
-Require multiple approvers to sign before a tool call proceeds.
-Approvers and threshold are set **in the warrant** — the single source of truth:
-
 ```python
 warrant = (Warrant.mint_builder()
     .capability("deploy_prod")
-    .capability("transfer_funds")
-    .approval_gates({
-        "deploy_prod": None,
-        "transfer_funds": None,
-    })
+    .approval_gates({"deploy_prod": None})
     .required_approvers([alice.public_key, bob.public_key, carol.public_key])
-    .approval_threshold(2)  # any 2-of-3 must approve
+    .min_approvals(2)   # any 2-of-3
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(control_key)
 )
 ```
 
-| `approval_threshold` | `required_approvers` | Meaning |
-|----------------------|----------------------|---------|
-| 1 | `[alice]` | Single approver (default) |
-| 2 | `[alice, bob, carol]` | Any 2 of 3 must approve |
-| 3 | `[alice, bob, carol]` | All 3 must approve |
+---
 
-Validation rules:
-- `approval_threshold` must be >= 1
-- `approval_threshold` must be <= `len(required_approvers)` in the warrant
-- Each approver can only contribute one vote (duplicates are rejected)
+## Retry Flow
+
+```
+Call without approvals
+  → gate fires
+  → caller gets approval_required (or insufficient_approvals if partial)
+  → collect SignedApproval(s) bound to request_hash
+  → retry same call with approvals attached
+  → threshold met → proceed
+```
+
+Sign with `sign_approval(request, approver_key)` or a built-in handler (`cli_prompt`, etc.). Default approval TTL: handler `ttl_seconds` → **300s**.
+
+**Branch on the signal, not the message:**
+- First attempt → look for `request_hash` (or `ApprovalRequired` / `approval_required`)
+- Partial multi-sig → look for `got`/`need` or `required`/`received` (or `InsufficientApprovals`)
 
 ---
 
-## TTL Hierarchy
+## Wire Format (retry payloads)
 
-Approval TTL (how long a signed approval remains valid) is resolved in priority order:
+Each `SignedApproval` is CBOR bytes. Adapters differ in how they wrap the list:
 
-```
-1. Handler-level ttl_seconds argument         (highest priority)
-2. 300 seconds (5 minutes)                    (fallback)
-```
-
-Examples:
+| Integration | Where | Encoding |
+|-------------|-------|----------|
+| **MCP** | `params._meta.tenuo.approvals` | JSON array of **base64(CBOR)** strings — no outer wrapper |
+| **FastAPI / A2A** | `X-Tenuo-Approvals` header (A2A also accepts `x-tenuo-approvals` param) | **base64(JSON array of base64(CBOR) strings)** |
+| **Temporal** | `x-tenuo-approvals` activity header | **JSON array of base64(CBOR) strings** — no outer base64 wrapper |
 
 ```python
-# Handler with a short window
-handler = cli_prompt(approver_key=ops_key, ttl_seconds=60)
+import base64, json
+from tenuo.approval import sign_approval
 
-# Handler with the default 5-minute window
-handler = cli_prompt(approver_key=ops_key)
+signed = sign_approval(request, approver_key)
+
+# MCP / Temporal — array of base64 CBOR blobs
+approvals_wire = [base64.b64encode(signed.to_bytes()).decode("ascii")]
+
+# FastAPI / A2A — outer base64 JSON wrapper
+header_value = base64.b64encode(json.dumps(approvals_wire).encode()).decode()
 ```
 
-For long-running approval flows (e.g., Slack-based, email-based), pass a longer `ttl_seconds` to `sign_approval()` in your custom handler.
+See integration guides: [MCP](mcp.md#approval-gates), [FastAPI](fastapi.md#headers), [A2A](a2a.md#human-approval), [Temporal](temporal-reference.md#set_activity_approvals---pre-supply-multisig-approvals).
+
+---
+
+## Signals by Integration
+
+| Integration | First call (gate, no approvals) | Partial multi-sig | Retry with |
+|-------------|--------------------------------|-------------------|------------|
+| **In-process** | `tenuo.approval.ApprovalRequired` | `tenuo.exceptions.InsufficientApprovals` | Same call + `approvals=[...]` or `approval_handler` |
+| **MCP** | JSON-RPC `-32002` + `request_hash` | JSON-RPC `-32002` + `got` / `need` | `_meta.tenuo.approvals` |
+| **FastAPI** | HTTP **409** `error: "approval_required"` + `request_hash` | HTTP **409** `error: "insufficient_approvals"` + `got` / `need` | `X-Tenuo-Approvals` header |
+| **A2A** | JSON-RPC **-32019** + `request_hash` | JSON-RPC **-32020** + `required` / `received` | `X-Tenuo-Approvals` header or `x-tenuo-approvals` param |
+| **Temporal** | `ApplicationError.type == "approval_required"` | `ApplicationError.type == "insufficient_approvals"` | `x-tenuo-approvals` header or `set_activity_approvals()` |
+
+Scope denials use different codes — see each integration guide.
+
+**Field names:** Python `.details` use `required` / `received`. HTTP and MCP retry payloads use `got` / `need`. A2A error `data` uses `required` / `received`.
 
 ---
 
 ## Framework Integration
 
-All framework adapters accept `approval_handler` directly — the callback invoked when an approval gate fires.
+Gates and approvers live on the **warrant**. Pass `approval_handler` (or pre-built `approvals`) to the adapter.
 
-### CrewAI
-
-```python
-from tenuo.crewai import GuardBuilder
-from tenuo import SigningKey, cli_prompt
-
-approver_key = SigningKey.generate()
-
-guard = (GuardBuilder()
-    .allow("search", query=Wildcard())
-    .allow("transfer_funds", amount=Range(0, 100_000))
-    .with_warrant(warrant, agent_key)
-    .on_approval(cli_prompt(approver_key=approver_key))
-    .build())
-
-guard.register()
-crew.kickoff()
-```
-
-### AutoGen
+### LangChain
 
 ```python
-from tenuo.autogen import GuardBuilder
+from tenuo.langchain import guard
+from tenuo.approval import cli_prompt
 
-guard = (GuardBuilder()
-    .allow("transfer_funds")
-    .with_warrant(warrant, agent_key)
-    .on_approval(cli_prompt(approver_key=approver_key))
-    .build())
-
-protected = guard.guard_tool(transfer_funds)
-```
-
-### OpenAI
-
-```python
-from tenuo.openai import GuardBuilder
-
-client = (GuardBuilder(openai.OpenAI())
-    .allow("transfer_funds")
-    .with_warrant(warrant, agent_key)
-    .on_approval(cli_prompt(approver_key=approver_key))
-    .build())
-```
-
-### Google ADK
-
-```python
-from tenuo.google_adk import GuardBuilder
-
-guard = (GuardBuilder()
-    .with_warrant(warrant, agent_key)
-    .on_approval(cli_prompt(approver_key=approver_key))
-    .build())
-
-agent = Agent(
-    tools=guard.filter_tools(tools),
-    before_tool_callback=guard.before_tool,
+tools = guard(
+    [search, transfer_funds],
+    bound_warrant,
+    approval_handler=cli_prompt(approver_key=approver_key),
 )
 ```
 
@@ -288,40 +182,23 @@ from tenuo.langgraph import TenuoMiddleware
 middleware = TenuoMiddleware(
     approval_handler=cli_prompt(approver_key=approver_key),
 )
-
-agent = create_agent(
-    model="gpt-4.1",
-    tools=tools,
-    middleware=[middleware],
-)
 ```
 
-### LangChain
+### CrewAI / AutoGen / OpenAI / Google ADK
 
 ```python
-from tenuo.langchain import guard
-
-tools = guard(
-    [search, transfer_funds],
-    bound_warrant,
-    approval_handler=cli_prompt(approver_key=approver_key),
-)
+guard = (GuardBuilder()
+    .allow("transfer_funds", amount=Range(0, 100_000))
+    .with_warrant(warrant, agent_key)
+    .on_approval(cli_prompt(approver_key=approver_key))
+    .build())
 ```
+
+See [LangChain](langchain.md), [CrewAI](crewai.md), [OpenAI](openai.md), [AutoGen](autogen.md), [Google ADK](google-adk.md), [MCP](mcp.md), [FastAPI](fastapi.md), [A2A](a2a.md#human-approval), [Temporal](temporal-reference.md#human-approval).
 
 ### Temporal
 
 ```python
-from temporalio.client import Client
-from tenuo.temporal import (
-    TenuoTemporalPlugin,
-    TenuoPluginConfig,
-    EnvKeyResolver,
-)
-
-# Use whichever KeyResolver matches your deployment
-# (EnvKeyResolver, AWSSecretsManagerKeyResolver, VaultKeyResolver, ...).
-resolver = EnvKeyResolver()
-
 plugin = TenuoTemporalPlugin(
     TenuoPluginConfig(
         key_resolver=resolver,
@@ -329,150 +206,65 @@ plugin = TenuoTemporalPlugin(
         approval_handler=cli_prompt(approver_key=approver_key),
     )
 )
-
-client = await Client.connect("localhost:7233", plugins=[plugin])
 ```
 
 ---
 
 ## Built-in Handlers
 
-| Handler | Signs? | Use Case |
-|---------|--------|----------|
-| `cli_prompt(approver_key=key)` | Yes | Local development — prompts in terminal |
-| `auto_approve(approver_key=key)` | Yes | Testing — signs everything automatically |
-| `auto_deny(reason=...)` | No (raises) | Dry-run / audit mode |
+| Handler | Use Case |
+|---------|----------|
+| `cli_prompt(approver_key=key)` | Local dev — terminal prompt |
+| `auto_approve(approver_key=key)` | Tests — signs automatically |
+| `auto_deny(reason=...)` | Dry-run — always raises |
 
-All signing handlers require the approver's `SigningKey`. This is the key that produces the `SignedApproval`. It should be held by the human (or approval service), not the agent.
+All signing handlers require the approver's `SigningKey` (held by the human or approval service, not the agent).
 
 ---
 
 ## Custom Handlers
 
-Handlers implement a simple protocol: receive an `ApprovalRequest`, return a `SignedApproval` (or raise `ApprovalDenied`).
-
 ```python
 from tenuo.approval import sign_approval, ApprovalDenied
 
 def slack_approval(request):
-    """Post to Slack, wait for reaction."""
-    channel_response = post_to_slack(
-        channel="#approvals",
-        text=f"Approve {request.tool}({request.arguments})?",
-    )
-    reaction = wait_for_reaction(channel_response, timeout=300)
-
+    reaction = wait_for_slack_reaction(request, timeout=300)
     if reaction != "thumbsup":
-        raise ApprovalDenied(request, reason=f"denied in Slack by {reaction.user}")
-
-    return sign_approval(
-        request,
-        approver_key,
-        external_id=reaction.user,
-        ttl_seconds=60,
-    )
+        raise ApprovalDenied(request, reason="denied in Slack")
+    return sign_approval(request, approver_key, external_id=reaction.user, ttl_seconds=60)
 ```
 
-### Async Handlers
-
-Async handlers are supported natively:
-
-```python
-async def async_handler(request):
-    result = await call_approval_service(request)
-    if not result.approved:
-        raise ApprovalDenied(request, reason=result.reason)
-    return sign_approval(request, approver_key)
-```
-
-### The `sign_approval` Helper
-
-The canonical way to produce a `SignedApproval`:
-
-```python
-from tenuo import sign_approval
-
-signed = sign_approval(
-    request,                           # ApprovalRequest
-    approver_key,                      # SigningKey
-    external_id="alice@company.com",   # who approved (metadata)
-    ttl_seconds=300,                   # approval validity window
-)
-```
-
-This handles nonce generation, timestamps, and signing. You can also construct the `ApprovalPayload` and `SignedApproval` manually for full control.
+Async handlers are supported.
 
 ---
 
 ## Exceptions
 
-All approval exceptions are in `tenuo.approval`:
+| Exception | Module | When |
+|-----------|--------|------|
+| `ApprovalRequired` | `tenuo.approval` | Gate fired; no `approval_handler` / `approvals` (`enforce_tool_call`) |
+| `ApprovalGateTriggered` | `tenuo.exceptions` | Gate fired; direct `Authorizer` / MCP PEP path |
+| `InsufficientApprovals` | `tenuo.exceptions` | Approvals supplied but below threshold |
+| `ApprovalDenied` / `ApprovalTimeout` | `tenuo.approval` | Handler denied or timed out |
+| `ApprovalVerificationError` | `tenuo.approval` | Bad signature, hash mismatch, expired, untrusted key |
+| `InvalidApproval` / `ApprovalExpired` | `tenuo.exceptions` | Invalid or expired signed approval on wire paths |
 
 ```python
-from tenuo.approval import (
-    ApprovalRequired,
-    ApprovalDenied,
-    ApprovalTimeout,
-    ApprovalVerificationError,
-)
-```
-
-| Exception | When | Contains |
-|-----------|------|----------|
-| `ApprovalRequired` | Gate triggered but no handler configured | `request` |
-| `ApprovalDenied` | Handler explicitly denied | `request`, `reason` |
-| `ApprovalTimeout` | Handler timed out (subclass of `ApprovalDenied`) | `request`, `timeout_seconds` |
-| `ApprovalVerificationError` | Crypto verification failed | `request`, `reason` |
-
-`ApprovalVerificationError` reasons include:
-- `"invalid signature: ..."` — Ed25519 signature check failed
-- `"request hash mismatch (approval was signed for a different request)"` — replay attempt
-- `"approval expired (beyond clock tolerance)"` — `expires_at` in the past (with 30s tolerance)
-- `"approver not in trusted set"` — untrusted key
-- `"duplicate approval from same approver"` — same key signed twice
-
-For m-of-n failures, `InsufficientApprovals` is raised with a diagnostic summary:
-```
-Insufficient approvals: required 2, received 1 [rejected: 1 expired, 1 not trusted]
+from tenuo.approval import ApprovalRequired, ApprovalDenied, cli_prompt
+from tenuo.exceptions import InsufficientApprovals, ApprovalGateTriggered
 ```
 
 ---
 
-## Security Properties
+## Cryptographic Model
 
-| Property | Mechanism | Test |
-|----------|-----------|------|
-| **No unsigned approvals** | Handler must return `SignedApproval`; no `approved=True` boolean | `TestAutoApprove`, `TestCliPrompt` |
-| **Call binding** | SHA-256 request hash over `(warrant, tool, args, holder)` | `TestRequestHashBinding` |
-| **Replay prevention** | Different warrant/tool/args/holder = different hash; random nonce | `test_approval_reuse_across_warrants_fails` |
-| **Forgery resistance** | Ed25519 signature verification in Rust core | `test_tampered_bytes_fail_verify` |
-| **Key trust** | `required_approvers` in warrant | `TestMultiApprover`, `test_untrusted_key_rejected` |
-| **Time-bound** | `expires_at` checked with 30s clock tolerance | `test_expired_approval_rejected` |
-| **Fail-closed** | Buggy handler = `internal_error` denial | `test_handler_exception_is_fail_closed` |
-| **Warrant priority** | Warrant denial short-circuits before approval check | `test_warrant_denial_takes_priority` |
-| **Constraint priority** | Constraint violation short-circuits before approval check | `test_constraint_violation_skips_approval` |
-| **M-of-N threshold** | Rust core counts valid approvals, rejects duplicates | `TestMofN` (13 Rust + 11 Python tests) |
-| **Diagnostic errors** | Specific rejection reasons for 1-of-1; summary for m-of-n | `test_1of1_*`, `test_mofn_diagnostic_*` |
-
----
-
-## Warrants vs Approvals
-
-| | Warrants | Approvals |
-|---|---------|-----------|
-| **Question** | "Can this agent do X?" | "Should this specific call proceed?" |
-| **Issuer** | Control plane / parent agent | Human approver |
-| **Scope** | Capabilities + constraints | Single tool call |
-| **Lifetime** | TTL (minutes to hours) | TTL (seconds to minutes) |
-| **Enforcement** | Rust core (security boundary) | Python + Rust crypto (defense in depth) |
-| **Bypass impact** | Full security breach | Operational control loss (warrant still enforced) |
-
-Warrants are the security boundary. Approvals are defense in depth. Even if the approval layer is bypassed (compromised Python process), the warrant still limits what the agent can do.
+Every approval binds to `(warrant_id, tool, args, holder)` via SHA-256 (`compute_request_hash`). `SignedApproval` = Ed25519 over `ApprovalPayload`. Rust verifies signature, hash, expiry (30s clock tolerance), approver trust, deduplication, and threshold.
 
 ---
 
 ## See Also
 
-- [Enforcement Architecture](enforcement.md) — Where approvals fit in the enforcement pipeline
-- [AI Agents Security](ai-agents.md) — The 4-layer defense strategy
-- [Concepts](concepts.md) — Warrants, PoP, attenuation
+- [Enforcement Architecture](enforcement.md#human-approvals) — Where approvals sit in the pipeline
+- [MCP Approval Gates](mcp.md#approval-gates) — Remote PEP retry flow
+- [FastAPI](fastapi.md#error-handling) — HTTP 409 approval responses
+- [Wire format §16](spec/wire-format-v1.md#16-approval-wire-format) — `SignedApproval` bytes

@@ -17,6 +17,8 @@ from hypothesis import given, settings
 from tenuo import SigningKey
 from tenuo._enforcement import enforce_tool_call
 
+from tests.contracts.error_type_contract import CANONICAL_ERROR_TYPES
+
 from .strategies import st_bound_warrant_bundle, st_tool_name
 
 
@@ -46,18 +48,7 @@ class TestEnforceDeterminism:
 # ---------------------------------------------------------------------------
 
 
-KNOWN_ERROR_TYPES = {
-    None,  # allowed=True
-    "tool_not_allowed",
-    "policy_violation",
-    "authorization_failed",
-    "expired",
-    "constraint_violation",
-    "tenuo_error",
-    "internal_error",
-    "invalid_pop",
-    "approval_gate_misconfigured",
-}
+KNOWN_ERROR_TYPES = CANONICAL_ERROR_TYPES
 
 
 class TestDenialTaxonomy:

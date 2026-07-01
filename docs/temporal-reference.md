@@ -784,9 +784,30 @@ TenuoPluginConfig(
 
 Both `tool_mappings` and `@tool()` can coexist; `tool_mappings` takes precedence.
 
+## Human Approval
+
+Gates and approvers live on the warrant. Configure `approval_handler` on `TenuoPluginConfig`, or pre-supply approvals per activity.
+
+| Signal | `ApplicationError.type` | Retry with |
+|--------|-------------------------|------------|
+| Gate fired, no approvals | `"approval_required"` | `set_activity_approvals()` or `x-tenuo-approvals` header |
+| Partial multi-sig | `"insufficient_approvals"` | Additional `SignedApproval` objects on retry |
+
+**Header encoding:** `x-tenuo-approvals` = JSON array of base64(CBOR) strings — **no** outer base64 wrapper (differs from FastAPI). See [Human Approvals](approvals.md#wire-format-retry-payloads).
+
+```python
+TenuoPluginConfig(
+    key_resolver=resolver,
+    trusted_roots=[issuer_public_key],
+    approval_handler=cli_prompt(approver_key=approver_key),
+)
+```
+
 ### set_activity_approvals() - Pre-Supply Multisig Approvals
 
-Call from a workflow before `workflow.execute_activity()` when the warrant has guards that require approval. The outbound interceptor attaches the approvals to the next activity dispatch.
+Call from a **workflow** immediately before `workflow.execute_activity()` when the warrant has **approval gates** for that activity.
+
+**One-shot:** approvals attach to the **next** activity dispatch only, then clear. For parallel activities, call `set_activity_approvals` before each dispatch — not once before `asyncio.gather`.
 
 ```python
 from tenuo.temporal import set_activity_approvals
@@ -798,6 +819,8 @@ await workflow.execute_activity(
     start_to_close_timeout=timedelta(seconds=30),
 )
 ```
+
+On denial, the worker raises non-retryable `ApplicationError` with `type` of `"approval_required"` or `"insufficient_approvals"`. Retry explicitly from the workflow after collecting signatures — Temporal will not auto-retry auth failures.
 
 ### tenuo_warrant_context() - Warrant Context for Plain Client Calls
 
@@ -926,6 +949,12 @@ from tenuo.temporal import (
 )
 ```
 
+Approval denials surface as `ApplicationError(non_retryable=True)` with `type`:
+- `"approval_required"` — gate fired, resubmit with approvals
+- `"insufficient_approvals"` — partial multi-sig, collect more signatures
+
+See [Human Approval](#human-approval) and [Human Approvals](approvals.md#signals-by-integration).
+
 ## Failure Semantics
 
 Authorization failures are wrapped in `ApplicationError(non_retryable=True)` to prevent retrying permanent denials.
@@ -935,6 +964,7 @@ Authorization failures are wrapped in `ApplicationError(non_retryable=True)` to 
 | Missing/invalid warrant | `TemporalConstraintViolation` / `ChainValidationError` | **No** |
 | Invalid PoP or replay | `PopVerificationError` | **No** |
 | Expired warrant | `WarrantExpired` | **No** — mint a new warrant |
+| Approval gate / partial multi-sig | `ApplicationError` (`approval_required` / `insufficient_approvals`) | **No** — workflow must collect signatures and retry |
 | Local activity without `@unprotected` | `LocalActivityError` | **No** |
 | Key resolution failure | `KeyResolutionError` | Retry only for transient backend failures |
 | Missing `trusted_roots` | `ConfigurationError` | Fix config |

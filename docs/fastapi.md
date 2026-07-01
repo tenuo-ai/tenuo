@@ -240,15 +240,19 @@ Tenuo expects these HTTP headers:
 |--------|-------------|
 | `X-Tenuo-Warrant` | Base64-encoded warrant (or warrant stack) |
 | `X-Tenuo-PoP` | Base64-encoded Proof-of-Possession signature |
-| `X-Tenuo-Approvals` | Base64-encoded signed approvals (optional) |
+| `X-Tenuo-Approvals` | Base64-encoded JSON array of base64 CBOR `SignedApproval` blobs (optional, for retry) |
 
-**Example request:**
+**Example request (with approval retry):**
 
 ```bash
+# approvals_b64 = base64(json.dumps([base64(cbor_signed_approval), ...]))
 curl -X GET "https://api.example.com/search?query=test" \
   -H "X-Tenuo-Warrant: eyJ3YXJyYW50IjoiLi4uIn0=" \
-  -H "X-Tenuo-PoP: SGVsbG8gV29ybGQ="
+  -H "X-Tenuo-PoP: SGVsbG8gV29ybGQ=" \
+  -H "X-Tenuo-Approvals: W3siLi4uIn1d"
 ```
+
+On **409** with `"error": "approval_required"`, read `request_hash` from the body, sign, and re-submit with `X-Tenuo-Approvals`. See [Human Approvals](approvals.md#wire-format-retry-payloads).
 
 ---
 
@@ -284,7 +288,11 @@ Common error codes:
 | 1500 | `tool-not-authorized` | 403 | Tool not in warrant's allowed list |
 | 1501 | `constraint-violation` | 403 | Argument violates constraint |
 | 1600 | `pop-signature-mismatch` | 403 | PoP verification failed |
+| 1700 | `insufficient-approvals` | **409** | Multi-sig threshold not met (`got` / `need` in body) |
+| 1707 | `approval-required` | **409** | Approval gate fired (`request_hash` in body) |
 | 1800 | `warrant-revoked` | 401 | Warrant revoked by issuer |
+
+Approval retries use **409 Conflict** (not 403) so clients can branch separately from scope denials. Re-submit with `X-Tenuo-Approvals`. See [Human Approvals](approvals.md#signals-by-integration).
 
 See [wire format specification](/docs/spec/wire-format-v1#appendix-a-error-codes) for the complete list.
 

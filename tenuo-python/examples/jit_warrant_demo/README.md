@@ -52,40 +52,16 @@ python demo.py --auto-approve --delegation
 
 Both system AND human must cryptographically approve before authorization succeeds.
 
-This demo uses Tenuo's real `Approval` class:
-- Each approver creates a signed `Approval` object bound to a specific request
-- Approvals are passed to `Authorizer.authorize()` for verification
+This demo uses Tenuo's `SignedApproval` + `sign_approval()`:
+- Each approver signs an `ApprovalPayload` bound to the specific `(warrant, tool, args, holder)` request hash
+- Approvals are passed to `Authorizer.authorize_one()` / `enforce_tool_call()` for verification
 - Both approvals must be valid (not expired) and correctly signed
 
 ```python
-from tenuo import Approval
+from tenuo.approval import sign_approval
 
-# System creates its approval
-system_approval = Approval.create(
-    warrant=warrant,
-    tool="fetch_url",
-    args={"url": "https://docs.python.org"},
-    keypair=system_key,
-    external_id="control_plane@system",
-    provider="policy-engine",
-    ttl_secs=300,
-)
-
-# Human reviews and creates their approval
-human_approval = Approval.create(
-    warrant=warrant,
-    tool="fetch_url",
-    args={"url": "https://docs.python.org"},
-    keypair=human_key,
-    external_id="reviewer@company.com",
-    provider="human-review",
-    ttl_secs=300,
-    reason="Approved for scheduled task"
-)
-
-# Both approvals passed to authorization
-authorizer.authorize(warrant, tool, args, signature, 
-                     approvals=[system_approval, human_approval])
+# After human reviews the proposed call:
+signed = sign_approval(approval_request, human_key, external_id="reviewer@company.com")
 ```
 
 ```

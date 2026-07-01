@@ -1167,6 +1167,7 @@ class A2AServer:
                 logger.debug(f"PoP verified for skill '{skill_id}'")
             except Exception as e:
                 from tenuo.exceptions import (
+                    ApprovalExpired as _ApprovalExpired,
                     ApprovalGateTriggered as _ApprovalGate,
                     InsufficientApprovals as _InsufficientApprovals,
                     InvalidApproval as _InvalidApproval,
@@ -1174,16 +1175,19 @@ class A2AServer:
                 if isinstance(e, _ApprovalGate):
                     raise ApprovalRequiredError(
                         skill_id,
-                        request_hash=getattr(e, "request_hash", ""),
-                        min_approvals=getattr(e, "min_approvals", 1),
+                        request_hash=getattr(e, "request_hash", "") or e.details.get("request_hash", ""),
+                        min_approvals=getattr(e, "min_approvals", 1) or e.details.get("min_approvals", 1),
                     ) from e
                 if isinstance(e, _InsufficientApprovals):
+                    _details = getattr(e, "details", {}) or {}
                     raise InsufficientApprovalsError(
                         str(e),
-                        required=getattr(e, "required", 0),
-                        received=getattr(e, "received", 0),
+                        required=_details.get("required", 0),
+                        received=_details.get("received", 0),
                     ) from e
                 if isinstance(e, _InvalidApproval):
+                    raise InvalidApprovalError(str(e)) from e
+                if isinstance(e, _ApprovalExpired):
                     raise InvalidApprovalError(str(e)) from e
                 # Map PoP errors
                 error_msg = str(e)

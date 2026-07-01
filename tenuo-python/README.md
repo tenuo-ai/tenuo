@@ -599,8 +599,7 @@ async def read_file(path: str, **kwargs) -> str:
     return open(clean["path"]).read()
 ```
 
-Guard-protected tools return JSON-RPC error `-32002` when approval is required.
-See `examples/mcp/` for complete examples.
+MCP servers return JSON-RPC `-32002` when an approval gate fires or multi-sig threshold is not met — retry with `_meta.tenuo.approvals`. See [Human Approvals](../docs/approvals.md).
 
 ## Security Considerations
 

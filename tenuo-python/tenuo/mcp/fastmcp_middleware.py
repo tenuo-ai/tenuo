@@ -129,6 +129,12 @@ def _denial_tool_return(verification: MCPVerificationResult) -> _VerifierDenialT
     }
     if verification.request_hash:
         tenuo_block["request_hash"] = verification.request_hash
+    if verification.approval_metadata:
+        meta = verification.approval_metadata
+        if "got" in meta:
+            tenuo_block["got"] = meta["got"]
+        if "need" in meta:
+            tenuo_block["need"] = meta["need"]
     call = mt.CallToolResult(
         content=[TextContent(type="text", text=message)],
         isError=True,

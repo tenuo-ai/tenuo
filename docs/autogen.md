@@ -60,18 +60,16 @@ asyncio.run(main())
 
 ## Human Approval
 
-Add human-in-the-loop approval with `.approval_policy()` and `.on_approval()` when using GuardBuilder. See [Human Approvals](approvals.md) for the full guide.
+Define gates and approvers on the warrant, then pass `.on_approval()`. See [Human Approvals](approvals.md) for the full guide.
 
 ```python
-from tenuo import SigningKey, cli_prompt
+from tenuo import cli_prompt
 from tenuo.autogen import GuardBuilder
 
-key = SigningKey.generate()
-
 guard = (GuardBuilder()
-    ...
-    .approval_policy(policy)
-    .on_approval(cli_prompt(approver_key=key))
+    .allow("transfer_funds")
+    .with_warrant(warrant, agent_key)
+    .on_approval(cli_prompt(approver_key=approver_key))
     .build())
 ```
 

@@ -135,8 +135,29 @@ check_openai_compat()
 # Import shared enforcement logic (after version check)
 from tenuo._enforcement import DenialPolicy, EnforcementResult, enforce_tool_call, enforce_tool_call_async, handle_denial  # noqa: E402
 from tenuo.config import resolve_trusted_roots  # noqa: E402
+from tenuo.exceptions import InsufficientApprovals  # noqa: E402
 
 logger = logging.getLogger("tenuo.openai")
+
+
+def _raise_for_enforcement_denial(tool_name: str, result: EnforcementResult) -> None:
+    """Map an ``EnforcementResult`` denial to a typed OpenAI adapter exception."""
+    if result.error_type == "expired":
+        raise WarrantDenied(tool_name, "warrant expired")
+    if result.error_type == "insufficient_approvals":
+        meta = result.approval_metadata or {}
+        raise InsufficientApprovals(
+            required=meta.get("need", 0),
+            received=meta.get("got", 0),
+            detail=result.denial_reason or "",
+        )
+    if result.error_type == "constraint_violation":
+        raise WarrantDenied(tool_name, result.denial_reason or "constraint violation")
+    if result.error_type == "tool_not_allowed":
+        raise WarrantDenied(tool_name, result.denial_reason or "tool not in warrant")
+    if result.error_type == "invalid_pop":
+        raise WarrantDenied(tool_name, result.denial_reason or "invalid proof-of-possession")
+    raise WarrantDenied(tool_name, result.denial_reason or "not authorized by warrant")
 
 
 def enable_debug(handler: Optional[logging.Handler] = None) -> None:
@@ -536,10 +557,7 @@ def verify_tool_call(
 
         if not result.allowed:
             logger.debug(f"Tier 2: Authorization DENIED for '{tool_name}'")
-            if result.error_type == "expired":
-                raise WarrantDenied(tool_name, "warrant expired")
-            else:
-                raise WarrantDenied(tool_name, result.denial_reason or "not authorized by warrant")
+            _raise_for_enforcement_denial(tool_name, result)
         else:
             logger.debug(f"Tier 2: Authorization GRANTED for '{tool_name}'")
 
@@ -637,10 +655,7 @@ async def verify_tool_call_async(
         )
 
         if not result.allowed:
-            if result.error_type == "expired":
-                raise WarrantDenied(tool_name, "warrant expired")
-            else:
-                raise WarrantDenied(tool_name, result.denial_reason or "not authorized by warrant")
+            _raise_for_enforcement_denial(tool_name, result)
 
     if deny_tools and tool_name in deny_tools:
         raise ToolDenied(tool_name, "Tool is in denylist")

@@ -35,6 +35,7 @@ from .config import resolve_trusted_roots
 from .exceptions import (
     AuthorizationDenied,
     ConstraintViolation,
+    InsufficientApprovals,
     ToolNotAuthorized,
 )
 
@@ -437,6 +438,13 @@ class _Guard:
                 elif _is_tool_not_authorized(result.denial_reason or ""):
                     # Handle tool not in warrant from Rust Authorizer messages
                     raise ToolNotAuthorized(tool=tool_name)
+                elif result.error_type == "insufficient_approvals":
+                    meta = result.approval_metadata or {}
+                    raise InsufficientApprovals(
+                        required=meta.get("need", 0),
+                        received=meta.get("got", 0),
+                        detail=result.denial_reason or "",
+                    )
 
                 # Default to AuthorizationDenied for constraint violations and others
                 constraint_results = []
@@ -492,6 +500,13 @@ class _Guard:
                     )
                 elif _is_tool_not_authorized(result.denial_reason or ""):
                     raise ToolNotAuthorized(tool=tool_name)
+                elif result.error_type == "insufficient_approvals":
+                    meta = result.approval_metadata or {}
+                    raise InsufficientApprovals(
+                        required=meta.get("need", 0),
+                        received=meta.get("got", 0),
+                        detail=result.denial_reason or "",
+                    )
 
                 constraint_results = []
                 if result.constraint_violated:
