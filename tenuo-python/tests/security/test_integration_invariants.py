@@ -1899,7 +1899,11 @@ class TestLangChainInvariants:
         )
         bw = BoundWarrant(warrant=w, key=root_key)
 
-        tool = TenuoTool(self._make_mock_lc_tool("delete_file"), bound_warrant=bw)
+        tool = TenuoTool(
+            self._make_mock_lc_tool("delete_file"),
+            bound_warrant=bw,
+            trusted_roots=[root_key.public_key],
+        )
         with pytest.raises(ToolNotAuthorized):
             tool._check_authorization({})
 
@@ -1924,7 +1928,11 @@ class TestLangChainInvariants:
         time.sleep(2)
         bw = BoundWarrant(warrant=w, key=root_key)
 
-        tool = TenuoTool(self._make_mock_lc_tool("search"), bound_warrant=bw)
+        tool = TenuoTool(
+            self._make_mock_lc_tool("search"),
+            bound_warrant=bw,
+            trusted_roots=[root_key.public_key],
+        )
         with pytest.raises(Exception) as exc_info:
             tool._check_authorization({})
         assert exc_info.type.__name__ not in ("AttributeError", "TypeError")
