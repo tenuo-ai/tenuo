@@ -53,6 +53,16 @@ Integrates with the frameworks teams already use:
 
 All integrations share a single enforcement code path through the Rust core: same behavior, same audit log, same security guarantees regardless of framework.
 
+### Human Approvals
+
+After PoP and constraint checks, the Rust core evaluates **approval gates** on the warrant. If a gate fires:
+
+1. Collect `SignedApproval`(s) from `required_approvers` (via handler or pre-supplied approvals).
+2. Verify signatures, request-hash binding, expiry, and m-of-n threshold.
+3. Proceed or return a typed retry signal (`approval_required` vs `insufficient_approvals`).
+
+Gates, approvers, and threshold are defined on the warrant — not in adapter config. See [Human Approvals](approvals.md) for quick start and per-integration retry codes.
+
 > [!NOTE]
 > **Limitation**: In-process enforcement cannot survive agent compromise (RCE). If an attacker gets code execution inside the agent, they can call tools directly. For that threat, add a sidecar.
 

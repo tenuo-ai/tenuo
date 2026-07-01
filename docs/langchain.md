@@ -533,25 +533,25 @@ result = protected.invoke({"input": "Read /data/report.txt"})
 
 ## Human Approval
 
-Add human-in-the-loop approval with `approval_handler` and `approvals` parameters on `guard_tools()` or `TenuoTool`. See [Human Approvals](approvals.md) for the full guide.
+Define gates and approvers on the warrant, then pass `approval_handler` to `guard()` or `TenuoTool`. See [Human Approvals](approvals.md) for the full guide.
 
 ```python
-from tenuo.langchain import guard_tools, TenuoTool
+from tenuo.langchain import guard, TenuoTool
 from tenuo.approval import cli_prompt
 
 approver_key = SigningKey.generate()
 
-# Via guard_tools: specify which tools require approval and the handler
-protected = guard_tools(
-    [search, delete_database],
+# warrant must include .approval_gates(...) and .required_approvers([...])
+tools = guard(
+    [search, transfer_funds],
     bound_warrant,
-    approvals=["delete_database"],
     approval_handler=cli_prompt(approver_key=approver_key),
 )
 
-# Or per-tool via TenuoTool
+# Or per-tool
 tool = TenuoTool(
-    inner=delete_database,
+    transfer_funds,
+    bound_warrant=bound_warrant,
     approval_handler=cli_prompt(approver_key=approver_key),
 )
 ```

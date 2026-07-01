@@ -131,13 +131,15 @@ response = client.chat.completions.create(...)
 
 ### Human Approval
 
-Add human-in-the-loop approval with `.with_approvals()` and `.on_approval()`. See [Human Approvals](approvals.md) for the full guide.
+Define gates and approvers on the warrant, then pass `.on_approval()`. See [Human Approvals](approvals.md) for the full guide.
 
 ```python
+from tenuo.approval import cli_prompt
+
 client = (GuardBuilder(openai.OpenAI())
-    ...
-    .with_approvals(policy)
-    .on_approval(cli_prompt(approver_key=key))
+    .allow("transfer_funds")
+    .with_warrant(warrant, agent_key)
+    .on_approval(cli_prompt(approver_key=approver_key))
     .build())
 ```
 

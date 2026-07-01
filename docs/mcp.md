@@ -343,11 +343,13 @@ except MCPApprovalRequired as e:
 
 ### JSON-RPC Error Codes
 
-| Code | Meaning | Action |
-|------|---------|--------|
-| `-32602` | Invalid params (missing required extraction field) | Fix arguments |
-| `-32001` | Access denied (constraint violation, expired, bad signature) | Request new warrant |
-| `-32002` | Approval required (approval gate triggered) | Collect approvals and re-submit |
+| Code | Meaning | `error.data` | Action |
+|------|---------|--------------|--------|
+| `-32602` | Invalid params (missing required extraction field) | — | Fix arguments |
+| `-32001` | Access denied (constraint, expired, bad PoP, invalid approval) | — | Fix warrant or args |
+| `-32002` | Approval retry (gate fired **or** insufficient multi-sig) | `request_hash` and/or `got` / `need` | Collect `SignedApproval`(s), re-submit with `_meta.tenuo.approvals` |
+
+Both first-call gate hits and partial multi-sig use `-32002` so clients can share one retry branch. Distinguish partial multi-sig by presence of `got` / `need`. See [Human Approvals](approvals.md#signals-by-integration).
 
 ---
 

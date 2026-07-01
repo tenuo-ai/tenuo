@@ -284,7 +284,11 @@ Common error codes:
 | 1500 | `tool-not-authorized` | 403 | Tool not in warrant's allowed list |
 | 1501 | `constraint-violation` | 403 | Argument violates constraint |
 | 1600 | `pop-signature-mismatch` | 403 | PoP verification failed |
+| 1700 | `insufficient-approvals` | **409** | Multi-sig threshold not met (`got` / `need` in body) |
+| 1707 | `approval-required` | **409** | Approval gate fired (`request_hash` in body) |
 | 1800 | `warrant-revoked` | 401 | Warrant revoked by issuer |
+
+Approval retries use **409 Conflict** (not 403) so clients can branch separately from scope denials. Re-submit with `X-Tenuo-Approvals`. See [Human Approvals](approvals.md#signals-by-integration).
 
 See [wire format specification](/docs/spec/wire-format-v1#appendix-a-error-codes) for the complete list.
 
