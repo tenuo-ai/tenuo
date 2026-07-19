@@ -295,6 +295,13 @@ def _constraint_field_from_exception(exc: BaseException) -> Optional[str]:
     return _extract_violated_field(str(exc))
 
 
+def _constraint_field_for_authorization_error(exc: BaseException) -> Optional[str]:
+    """Preserve the synthetic ``tool`` field for capability-scope denials."""
+    if isinstance(exc, ToolNotAuthorized):
+        return "tool"
+    return _constraint_field_from_exception(exc)
+
+
 def _enforcement_result_from_chain_error(
     exc: BaseException,
     tool_name: str,
@@ -334,6 +341,7 @@ def _enforcement_result_from_chain_error(
             tool=tool_name,
             arguments=tool_args,
             denial_reason=str(exc),
+            constraint_violated="tool",
             error_type="tool_not_allowed",
             warrant_id=warrant_id,
         )
@@ -1134,7 +1142,7 @@ def enforce_tool_call(
             tool=tool_name,
             arguments=tool_args,
             denial_reason=str(e),
-            constraint_violated=_constraint_field_from_exception(e),
+            constraint_violated=_constraint_field_for_authorization_error(e),
             error_type=err_type,
             warrant_id=warrant_id,
         )
@@ -1457,7 +1465,7 @@ async def enforce_tool_call_async(
         return EnforcementResult(
             allowed=False, tool=tool_name, arguments=tool_args,
             denial_reason=str(e),
-            constraint_violated=_constraint_field_from_exception(e),
+            constraint_violated=_constraint_field_for_authorization_error(e),
             error_type=err_type, warrant_id=warrant_id,
         )
     except TenuoError as e:

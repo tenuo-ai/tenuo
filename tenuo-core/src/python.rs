@@ -155,6 +155,9 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             ),
 
             // Constraints
+            crate::error::Error::ToolNotAuthorized { tool } => {
+                ("ToolNotAuthorized", PyTuple::new(py, [tool.as_str()]))
+            }
             crate::error::Error::ConstraintNotSatisfied { field, reason } => (
                 "ConstraintViolation",
                 PyTuple::new(py, [field.as_str(), reason.as_str()]),
@@ -4075,6 +4078,10 @@ impl PyWarrant {
 
         match self.inner.check_constraints(tool, &rust_args) {
             Ok(()) => Ok(None),
+            Err(crate::error::Error::ToolNotAuthorized { tool }) => Ok(Some(format!(
+                "Constraint 'tool' not satisfied: warrant does not authorize tool '{}'",
+                tool
+            ))),
             Err(crate::error::Error::ConstraintNotSatisfied { field, reason }) => Ok(Some(
                 format!("Constraint '{}' not satisfied: {}", field, reason),
             )),
@@ -4102,6 +4109,10 @@ impl PyWarrant {
 
         match self.inner.check_constraints(tool, &rust_args) {
             Ok(()) => Ok(None),
+            Err(crate::error::Error::ToolNotAuthorized { tool }) => Ok(Some((
+                "tool".to_string(),
+                format!("warrant does not authorize tool '{}'", tool),
+            ))),
             Err(crate::error::Error::ConstraintNotSatisfied { field, reason }) => {
                 Ok(Some((field, reason)))
             }

@@ -24,6 +24,7 @@ from tenuo._enforcement import (
     EnforcementResult,
     _extract_violated_field,
     enforce_tool_call,
+    enforce_tool_call_async,
     filter_tools_by_warrant,
     handle_denial,
 )
@@ -396,7 +397,20 @@ class TestEnforceToolCall:
         """Unlisted tool should be denied by Rust core."""
         result = enforce_tool_call("delete_file", {}, bound_warrant, trusted_roots=[signing_key.public_key])
         assert result.allowed is False
-        assert "delete_file" in result.denial_reason or result.error_type == "tool_not_allowed"
+        assert result.error_type == "tool_not_allowed"
+
+    @pytest.mark.asyncio
+    async def test_unlisted_tool_denied_by_rust_core_async(self, bound_warrant, signing_key):
+        """Async enforcement should expose the same missing-tool category."""
+        result = await enforce_tool_call_async(
+            "delete_file",
+            {},
+            bound_warrant,
+            trusted_roots=[signing_key.public_key],
+        )
+        assert result.allowed is False
+        assert result.error_type == "tool_not_allowed"
+        assert result.constraint_violated == "tool"
 
     def test_application_allowlist_restricts_tools(self, bound_warrant):
         """Application allowed_tools should restrict beyond warrant."""
@@ -477,7 +491,32 @@ class TestEnforceToolCall:
             trusted_roots=[signing_key.public_key],
         )
         assert result.allowed is False
-        # Should capture constraint violation details
+        assert result.error_type == "constraint_violation"
+        assert result.constraint_violated == "path"
+
+    def test_constraint_named_tool_remains_constraint_violation(self, signing_key):
+        """An argument named tool must not be confused with capability scope."""
+        from tenuo import Exact
+
+        warrant = (
+            Warrant.mint_builder()
+            .capability("dispatch", constraints={"tool": Exact("safe")})
+            .holder(signing_key.public_key)
+            .ttl(3600)
+            .mint(signing_key)
+        )
+        bound = warrant.bind(signing_key)
+
+        result = enforce_tool_call(
+            "dispatch",
+            {"tool": "unsafe"},
+            bound,
+            trusted_roots=[signing_key.public_key],
+        )
+
+        assert result.allowed is False
+        assert result.error_type == "constraint_violation"
+        assert result.constraint_violated == "tool"
 
     def test_critical_tool_without_constraints_denied(self, signing_key):
         """Critical tools should require relevant constraints."""
@@ -897,5 +936,5 @@ class TestEnforceToolCallWithAuthorizer:
             authorizer=authorizer,
         )
         assert result.allowed is False
-        assert result.error_type == "constraint_violation"
+        assert result.error_type == "tool_not_allowed"
         assert result.constraint_violated == "tool"
