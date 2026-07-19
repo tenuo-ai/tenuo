@@ -519,6 +519,12 @@ impl DenyReason {
         self
     }
 
+    fn with_tool_not_allowed(mut self) -> Self {
+        self.reason = "tool_not_allowed".to_string();
+        self.constraint = Some("tool".to_string());
+        self
+    }
+
     fn with_constraint(mut self, name: &str, expected: &str, actual: Value) -> Self {
         self.reason = "constraint_violation".to_string();
         self.constraint = Some(name.to_string());
@@ -1792,6 +1798,9 @@ fn parse_deny_reason(
     let mut deny = DenyReason::new(tool, warrant_id, request_id);
 
     match error {
+        Error::ToolNotAuthorized { .. } => {
+            deny = deny.with_tool_not_allowed();
+        }
         Error::ConstraintNotSatisfied { field, reason } => {
             // Try to extract the actual value from constraints
             let actual = constraints
@@ -1890,6 +1899,36 @@ routes:
     method: ["POST"]
     tool: "deploy"
 "#;
+
+    #[test]
+    fn parse_deny_reason_distinguishes_tool_scope_from_argument_constraint() {
+        let missing_tool = tenuo::Error::ToolNotAuthorized {
+            tool: "delete_file".to_string(),
+        };
+        let deny = parse_deny_reason(
+            &missing_tool,
+            "delete_file",
+            "tnu_wrt_test",
+            "request-1",
+            &HashMap::new(),
+        );
+        assert_eq!(deny.reason, "tool_not_allowed");
+        assert_eq!(deny.constraint.as_deref(), Some("tool"));
+
+        let invalid_argument = tenuo::Error::ConstraintNotSatisfied {
+            field: "path".to_string(),
+            reason: "outside allowed prefix".to_string(),
+        };
+        let deny = parse_deny_reason(
+            &invalid_argument,
+            "read_file",
+            "tnu_wrt_test",
+            "request-2",
+            &HashMap::new(),
+        );
+        assert_eq!(deny.reason, "constraint_violation");
+        assert_eq!(deny.constraint.as_deref(), Some("path"));
+    }
 
     /// Build a minimal test app with the given authorizer and gateway YAML.
     fn build_test_app(authorizer: Authorizer) -> Router {

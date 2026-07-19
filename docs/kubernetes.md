@@ -405,7 +405,7 @@ X-Tenuo-Deny-Reason: constraint_violation: path=/etc/passwd not in Pattern(/data
 
 | Reason | Cause | Fix |
 |--------|-------|-----|
-| `tool_not_in_warrant` | Tool not authorized | Issue warrant with correct tools |
+| `tool_not_allowed` | Tool not authorized | Issue warrant with correct tools |
 | `constraint_violation` | Argument out of bounds | Check constraints or widen warrant |
 | `warrant_expired` | TTL passed | Issue new warrant or increase TTL |
 | `missing_pop` | No PoP signature | Ensure keypair is set in context |
