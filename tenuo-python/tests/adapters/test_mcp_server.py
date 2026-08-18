@@ -946,6 +946,116 @@ class TestNonceReplayPrevention:
 
 
 # ---------------------------------------------------------------------------
+# MCPVerifier latency observer
+# ---------------------------------------------------------------------------
+
+
+class TestLatencyObserver:
+    def test_early_denial_observes_end_to_end_latency(
+        self, authorizer: Authorizer
+    ) -> None:
+        from unittest.mock import MagicMock, patch
+
+        observed: list[tuple[MCPVerificationResult, int]] = []
+        mock_cp = MagicMock()
+        verifier = MCPVerifier(
+            authorizer=authorizer,
+            control_plane=mock_cp,
+            latency_observer=lambda result, latency_us: observed.append(
+                (result, latency_us)
+            ),
+        )
+
+        with patch(
+            "tenuo.mcp.server.time.perf_counter_ns",
+            side_effect=[1_000_000, 6_000_000],
+        ):
+            result = verifier.verify("read_file", {"path": "/x"})
+
+        assert not result.allowed
+        assert observed == [(result, 5_000)]
+        assert mock_cp.emit_for_enforcement.call_args.kwargs["latency_us"] == 5_000
+
+    def test_authorized_call_observes_latency(
+        self,
+        authorizer: Authorizer,
+        simple_warrant: Warrant,
+        agent_key: SigningKey,
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        observer = MagicMock()
+        verifier = MCPVerifier(
+            authorizer=authorizer,
+            control_plane=None,
+            latency_observer=observer,
+        )
+        tool_args = {"path": "/data/f.txt"}
+        arguments, meta = _make_arguments(
+            simple_warrant, agent_key, "read_file", tool_args
+        )
+
+        result = verifier.verify("read_file", arguments, meta=meta)
+
+        assert result.allowed
+        observer.assert_called_once()
+        observed_result, latency_us = observer.call_args.args
+        assert observed_result == result
+        assert observed_result is not result
+        assert latency_us >= 0
+
+    def test_observer_failure_does_not_change_result_or_audit(
+        self,
+        authorizer: Authorizer,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        def mutate_and_raise(result: MCPVerificationResult, latency_us: int) -> None:
+            result.allowed = True
+            result.clean_arguments["path"] = "/mutated"
+            raise RuntimeError("metrics unavailable")
+
+        observer = MagicMock(side_effect=mutate_and_raise)
+        mock_cp = MagicMock()
+        verifier = MCPVerifier(
+            authorizer=authorizer,
+            control_plane=mock_cp,
+            latency_observer=observer,
+        )
+
+        result = verifier.verify("read_file", {"path": "/x"})
+
+        assert not result.allowed
+        assert result.clean_arguments == {"path": "/x"}
+        observer.assert_called_once()
+        mock_cp.emit_for_enforcement.assert_called_once()
+        assert "Latency observer failed for 'read_file'" in caplog.text
+
+    def test_falsey_callable_observer_is_invoked(
+        self, authorizer: Authorizer
+    ) -> None:
+        class FalseyObserver:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def __bool__(self) -> bool:
+                return False
+
+            def __call__(
+                self, result: MCPVerificationResult, latency_us: int
+            ) -> None:
+                self.calls += 1
+
+        observer = FalseyObserver()
+        verifier = MCPVerifier(authorizer=authorizer, latency_observer=observer)
+
+        verifier.verify("read_file", {"path": "/x"})
+
+        assert observer.calls == 1
+
+
+# ---------------------------------------------------------------------------
 # Control plane emission coverage tests
 # ---------------------------------------------------------------------------
 

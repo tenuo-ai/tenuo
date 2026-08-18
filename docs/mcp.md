@@ -251,7 +251,7 @@ Use `MCPVerifier` directly when you're not using FastMCP — works with the raw 
 
 ```python
 from tenuo import Authorizer, PublicKey, CompiledMcpConfig, McpConfig
-from tenuo.mcp import MCPVerifier
+from tenuo.mcp import MCPVerificationResult, MCPVerifier
 
 authorizer = Authorizer(trusted_roots=[PublicKey.from_bytes(root_pub)])
 config = CompiledMcpConfig.compile(McpConfig.from_file("mcp-config.yaml"))
@@ -264,6 +264,35 @@ execute_tool(result.clean_arguments)
 
 # Or use verify_or_raise for a one-liner:
 clean = verifier.verify_or_raise("read_file", {"path": path}, meta=request_meta)
+```
+
+To record end-to-end verification latency in your own metrics pipeline, pass a
+`latency_observer`. It receives a result snapshot and elapsed time in
+microseconds on every allow and denial path. Observer failures and snapshot
+mutations never change the authorization decision.
+
+```python
+from prometheus_client import Histogram
+
+verification_latency = Histogram(
+    "tenuo_mcp_verification_latency_seconds",
+    "End-to-end MCP warrant verification latency",
+    ["tool", "allowed"],
+)
+
+
+def observe_latency(result: MCPVerificationResult, latency_us: int) -> None:
+    verification_latency.labels(
+        tool=result.tool,
+        allowed=str(result.allowed).lower(),
+    ).observe(latency_us / 1_000_000)
+
+
+verifier = MCPVerifier(
+    authorizer=authorizer,
+    config=config,
+    latency_observer=observe_latency,
+)
 ```
 
 ### Pattern 4: Securing LangChain MCP Adapters

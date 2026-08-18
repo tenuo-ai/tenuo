@@ -104,8 +104,10 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
+from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .._pop_canonicalize import strip_none_values
 from ..exceptions import (
@@ -375,6 +377,9 @@ class MCPVerifier:
         require_warrant: bool = True,
         control_plane: Optional[Any] = None,
         nonce_store: Optional[Any] = None,
+        latency_observer: Callable[
+            [MCPVerificationResult, int], None
+        ] | None = None,
     ) -> None:
         """
         Args:
@@ -399,6 +404,12 @@ class MCPVerifier:
                 ``enable_default_nonce_store()`` at startup or pass an explicit
                 ``NonceStore(backend=RedisNonceBackend(...))`` for distributed
                 deployments.
+            latency_observer: Optional callback invoked after every verification
+                with a snapshot of the final :class:`MCPVerificationResult` and
+                end-to-end elapsed time in microseconds. Observer failures and
+                snapshot mutations never change the authorization result. Use
+                this to feed local Prometheus, OpenTelemetry, or structured-log
+                instrumentation.
         """
         from tenuo._extension import require_extension
         require_extension("MCPVerifier")
@@ -411,6 +422,7 @@ class MCPVerifier:
             control_plane = get_or_create()
         self._control_plane = control_plane
         self._nonce_store = nonce_store
+        self._latency_observer = latency_observer
 
     def verify(
         self,
@@ -441,18 +453,13 @@ class MCPVerifier:
             or ``allowed=False`` with ``denial_reason`` and
             ``jsonrpc_error_code`` on failure.
         """
-        args: Dict[str, Any] = arguments or {}
-        # PoP bytes cover the wire-args view. Both client and server apply
-        # strip_none_values to that view so optional arguments with None
-        # defaults don't crash the Rust canonicalizer and don't silently
-        # diverge the signed-bytes shape between sides.
-        pop_args: Dict[str, Any] = strip_none_values(args)
+        start_ns = time.perf_counter_ns()
 
         def _emit_and_return(
             result: MCPVerificationResult,
             chain_result: Any = None,
-            latency_us: int = 0,
         ) -> MCPVerificationResult:
+            latency_us = (time.perf_counter_ns() - start_ns) // 1000
             if self._control_plane:
                 try:
                     self._control_plane.emit_for_enforcement(
@@ -460,7 +467,23 @@ class MCPVerifier:
                     )
                 except Exception:
                     logger.warning("Control plane emission failed for '%s'; audit event lost", result.tool, exc_info=True)
+            if self._latency_observer is not None:
+                try:
+                    self._latency_observer(deepcopy(result), latency_us)
+                except Exception:
+                    logger.warning(
+                        "Latency observer failed for '%s'",
+                        result.tool,
+                        exc_info=True,
+                    )
             return result
+
+        args: Dict[str, Any] = arguments or {}
+        # PoP bytes cover the wire-args view. Both client and server apply
+        # strip_none_values to that view so optional arguments with None
+        # defaults don't crash the Rust canonicalizer and don't silently
+        # diverge the signed-bytes shape between sides.
+        pop_args: Dict[str, Any] = strip_none_values(args)
 
         # ------------------------------------------------------------------
         # Step 1: extract Tenuo envelope from params._meta
@@ -676,8 +699,6 @@ class MCPVerifier:
         # ------------------------------------------------------------------
         # Step 6: authorize
         # ------------------------------------------------------------------
-        import time
-        start_ns = time.perf_counter_ns()
         chain_result = None
         result: MCPVerificationResult
 
@@ -730,7 +751,6 @@ class MCPVerifier:
                         ),
                         jsonrpc_error_code=-32001,
                     ),
-                    latency_us=(time.perf_counter_ns() - start_ns) // 1000,
                 )
 
             logger.debug("MCP call authorized for '%s' (warrant=%s)", tool_name, warrant_id)
@@ -861,8 +881,7 @@ class MCPVerifier:
                 jsonrpc_error_code=-32001,
             )
 
-        latency_us = (time.perf_counter_ns() - start_ns) // 1000
-        return _emit_and_return(result, chain_result=chain_result, latency_us=latency_us)
+        return _emit_and_return(result, chain_result=chain_result)
 
     def verify_or_raise(
         self,
