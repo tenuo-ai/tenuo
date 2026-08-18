@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`h2` bumped to 0.4.16 in `tenuo-python/Cargo.lock`** for RUSTSEC-2026-0258
   (unbounded memory growth from empty `DATA` frames). The `tenuo-core` lockfile
   was already updated in #501; this covers the second workspace.
+- **Pull-request dependency audits now cover both Rust workspaces.** The
+  PR-time audit checked only `tenuo-core`, and the job that checks both ran only
+  on push to `main`, so a vulnerable `tenuo-python/Cargo.lock` could not be
+  caught before merge.
 
 ### Changed
 
