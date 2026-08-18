@@ -7,8 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP tool-call denials could be read as successes on MCP SDK 2.x.** The SDK
+  renamed `CallToolResult.isError` to `is_error`, so `SecureMCPClient`'s error
+  check silently evaluated to `False` and a server-side authorization denial was
+  returned to the caller as an apparent success. Both spellings are now probed,
+  so a denial is never mistaken for a success on either SDK line.
+- **`h2` bumped to 0.4.16 in `tenuo-python/Cargo.lock`** for RUSTSEC-2026-0258
+  (unbounded memory growth from empty `DATA` frames). The `tenuo-core` lockfile
+  was already updated in #501; this covers the second workspace.
+
 ### Changed
 
+- **`tenuo.mcp` now supports both MCP SDK 1.x and 2.x.** MCP 2.0 renamed
+  `CallToolResult` fields, replaced `RequestParams.Meta` with a
+  `RequestParamsMeta` `TypedDict`, and swapped `streamablehttp_client` for a
+  `streamable_http_client` that takes a caller-built HTTP client and yields two
+  streams rather than three. These differences are bridged in
+  `tenuo.mcp._compat`, so no minimum `mcp` version bump is required.
 - **IETF Draft**: Published `draft-niyikiza-oauth-attenuating-agent-tokens-01`.
 
 ## [0.2.3] - 2026-07-02

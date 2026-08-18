@@ -633,8 +633,8 @@ class TestTransportValidation:
         )
 
     @pytest.mark.asyncio
-    async def test_connect_http_calls_streamablehttp_client(self):
-        """connect() uses streamablehttp_client for transport='http'."""
+    async def test_connect_http_opens_streamable_http_transport(self):
+        """connect() opens the StreamableHTTP transport for transport='http'."""
         client = _make_client()
         client.transport = "http"
         client.url = "https://example.com/mcp"
@@ -647,7 +647,7 @@ class TestTransportValidation:
         mock_session.list_tools.return_value = MagicMock(tools=[])
 
         with (
-            patch("tenuo.mcp.client.streamablehttp_client") as mock_http,
+            patch("tenuo.mcp.client.open_streamable_http_transport") as mock_http,
             patch("tenuo.mcp.client.ClientSession", return_value=mock_session),
         ):
             mock_http.return_value.__aenter__ = AsyncMock(
@@ -669,7 +669,7 @@ class TestTransportValidation:
 
     @pytest.mark.asyncio
     async def test_connect_http_discards_session_id_callback(self):
-        """The session-ID callback (3rd element of streamablehttp_client tuple) is ignored."""
+        """The session-ID callback (3rd element of the transport tuple) is ignored."""
         client = _make_client()
         client.transport = "http"
         client.url = "https://example.com/mcp"
@@ -682,7 +682,7 @@ class TestTransportValidation:
         mock_session.list_tools.return_value = MagicMock(tools=[])
 
         with (
-            patch("tenuo.mcp.client.streamablehttp_client") as mock_http,
+            patch("tenuo.mcp.client.open_streamable_http_transport") as mock_http,
             patch("tenuo.mcp.client.ClientSession", return_value=mock_session),
         ):
             mock_http.return_value.__aenter__ = AsyncMock(

@@ -1,7 +1,9 @@
 """
 Integration tests for Tenuo + MCP.
 
-Tests SecureMCPClient with a real MCP server.
+Tests SecureMCPClient against a real MCP server. The server fixture uses the
+lowlevel ``Server`` decorator API, so these skip on SDK lines that no longer
+provide it.
 """
 
 import os
@@ -11,6 +13,11 @@ from pathlib import Path
 
 import pytest
 
+from ._mcp_sdk_support import (
+    LOWLEVEL_SERVER_DECORATORS_AVAILABLE,
+    LOWLEVEL_SERVER_SKIP_REASON,
+)
+
 # Check if MCP is available
 try:
     from tenuo_core import CompiledMcpConfig, McpConfig
@@ -18,7 +25,13 @@ try:
     from tenuo import Capability, Pattern, Range, SigningKey, configure, mint
     from tenuo.mcp import MCP_AVAILABLE, SecureMCPClient
 
-    pytestmark = pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
+    pytestmark = [
+        pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed"),
+        pytest.mark.skipif(
+            not LOWLEVEL_SERVER_DECORATORS_AVAILABLE,
+            reason=LOWLEVEL_SERVER_SKIP_REASON,
+        ),
+    ]
 except ImportError:
     pytestmark = pytest.mark.skip(reason="MCP integration not available")
 

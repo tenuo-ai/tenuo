@@ -1,8 +1,9 @@
 """
 Tests for :class:`tenuo.mcp.fastmcp_middleware.TenuoMiddleware`.
 
-Requires the MCP SDK and FastMCP (``importorskip("mcp")`` then ``importorskip("fastmcp")``);
-the whole module is skipped when MCP is unavailable (e.g. Python 3.9 matrix jobs).
+Requires the MCP SDK and FastMCP; the whole module is skipped when MCP is
+unavailable (e.g. Python 3.9 matrix jobs) and when only MCP 2.x is installed,
+since FastMCP's server stack still requires ``mcp<2.0``.
 """
 
 from __future__ import annotations
@@ -20,6 +21,10 @@ from tenuo.mcp.server import MCPVerifier
 
 pytest.importorskip("mcp")
 pytest.importorskip("fastmcp")
+# FastMCP's server extras require mcp<2.0, and the lowlevel ``request_ctx``
+# ContextVar this module drives was removed in MCP 2.0. Probing a server module
+# skips the file on 2.x instead of failing collection.
+pytest.importorskip("fastmcp.server.context", exc_type=ImportError)
 
 from mcp.server.lowlevel.server import request_ctx  # noqa: E402
 from mcp.shared.context import RequestContext  # noqa: E402

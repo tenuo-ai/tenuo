@@ -25,7 +25,13 @@ _FASTMCP_INSTALL = 'pip install "tenuo[fastmcp]"'
 
 try:
     import mcp.types as mt
-    from mcp.types import RequestParams, TextContent
+    from mcp.types import TextContent
+
+    from ._compat import (
+        build_request_params_meta,
+        make_error_call_tool_result,
+        request_params_meta_as_dict,
+    )
 except ImportError as exc:
     raise ImportError(
         "tenuo.mcp.fastmcp_middleware requires the MCP SDK. "
@@ -91,19 +97,21 @@ def _strip_tenuo_meta(
     if meta is None:
         if resolved_meta and "tenuo" in resolved_meta:
             ctx_trimmed = {k: v for k, v in resolved_meta.items() if k != "tenuo"}
-            ctx_meta = (
-                RequestParams.Meta.model_validate(ctx_trimmed) if ctx_trimmed else None
-            )
             return params.model_copy(
-                update={"arguments": clean_arguments, "meta": ctx_meta}
+                update={
+                    "arguments": clean_arguments,
+                    "meta": build_request_params_meta(ctx_trimmed),
+                }
             )
         return params.model_copy(update={"arguments": clean_arguments})
-    trimmed = meta.model_dump(mode="python", exclude_none=True)
+    trimmed = request_params_meta_as_dict(meta)
     trimmed.pop("tenuo", None)
-    new_meta: RequestParams.Meta | None = (
-        RequestParams.Meta.model_validate(trimmed) if trimmed else None
+    return params.model_copy(
+        update={
+            "arguments": clean_arguments,
+            "meta": build_request_params_meta(trimmed),
+        }
     )
-    return params.model_copy(update={"arguments": clean_arguments, "meta": new_meta})
 
 
 class _VerifierDenialToolReturn:
@@ -135,10 +143,9 @@ def _denial_tool_return(verification: MCPVerificationResult) -> _VerifierDenialT
             tenuo_block["got"] = meta["got"]
         if "need" in meta:
             tenuo_block["need"] = meta["need"]
-    call = mt.CallToolResult(
+    call = make_error_call_tool_result(
         content=[TextContent(type="text", text=message)],
-        isError=True,
-        structuredContent={"tenuo": tenuo_block},
+        structured_content={"tenuo": tenuo_block},
     )
     return _VerifierDenialToolReturn(call)
 

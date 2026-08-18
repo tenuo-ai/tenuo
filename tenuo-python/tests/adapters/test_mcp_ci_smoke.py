@@ -16,10 +16,10 @@ from pathlib import Path
 
 import pytest
 
-try:
-    import fastmcp  # noqa: F401
-except ImportError:
-    pytestmark = pytest.mark.skip(reason="fastmcp not installed")
+from ._mcp_sdk_support import FASTMCP_SERVER_AVAILABLE, FASTMCP_SERVER_SKIP_REASON
+
+if not FASTMCP_SERVER_AVAILABLE:
+    pytestmark = pytest.mark.skip(reason=FASTMCP_SERVER_SKIP_REASON)
 else:
     from tenuo import Capability, Pattern, SigningKey, configure, mint
     from tenuo.mcp import MCP_AVAILABLE, SecureMCPClient
