@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import init, { decode_warrant, check_access, check_chain_access, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm } from './wasm/tenuo_wasm'
-import wasmUrl from './wasm/tenuo_wasm_bg.wasm'
+import wasmUrl from './wasm/tenuo_wasm_bg.wasm?url'
 import { cleanInput, truncate, generateId } from './utils';
 import packageJson from '../package.json';
 
