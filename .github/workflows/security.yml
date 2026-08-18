@@ -88,8 +88,16 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
       
-      - name: Rust audit
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Both workspaces carry their own lockfile. Auditing only tenuo-core let
+      # RUSTSEC-2026-0258 reach main in tenuo-python/Cargo.lock, because the
+      # job that covers both (ci.yml "Security Audit") runs only on push to main.
+      - name: Audit tenuo-core
         working-directory: tenuo-core
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
+        run: cargo audit
+
+      - name: Audit tenuo-python
+        working-directory: tenuo-python
+        run: cargo audit

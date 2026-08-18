@@ -28,6 +28,8 @@ import pytest
 from tenuo import SigningKey, Warrant
 from tenuo.exceptions import InsufficientApprovals
 
+from .._mcp_sdk_support import FASTMCP_SERVER_AVAILABLE, FASTMCP_SERVER_SKIP_REASON
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -651,7 +653,8 @@ class TestTemporalErrorTypeForWire:
 
 class TestFastMCPMiddlewareDenialPayload:
     def test_structured_content_includes_got_and_need(self):
-        pytest.importorskip("fastmcp")
+        if not FASTMCP_SERVER_AVAILABLE:
+            pytest.skip(FASTMCP_SERVER_SKIP_REASON)
         from tenuo.mcp.fastmcp_middleware import _denial_tool_return
         from tenuo.mcp.server import MCPVerificationResult
 
@@ -665,7 +668,12 @@ class TestFastMCPMiddlewareDenialPayload:
             approval_metadata={"got": 1, "need": 2},
         )
         mcp_result = _denial_tool_return(result).to_mcp_result()
-        tenuo = mcp_result.structuredContent["tenuo"]
+        # Field is structuredContent on MCP 1.x, structured_content on 2.x.
+        from tenuo.mcp._compat import call_tool_result_structured_content
+
+        structured = call_tool_result_structured_content(mcp_result)
+        assert structured is not None
+        tenuo = structured["tenuo"]
         assert tenuo["code"] == -32002
         assert tenuo["got"] == 1
         assert tenuo["need"] == 2

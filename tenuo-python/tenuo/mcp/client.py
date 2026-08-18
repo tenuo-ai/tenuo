@@ -11,7 +11,7 @@ import random
 import sys
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Callable, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional, cast
 
 from .._enforcement import EnforcementResult, enforce_tool_call_async
 from .._pop_canonicalize import strip_none_values
@@ -36,8 +36,13 @@ try:
     from mcp import ClientSession, StdioServerParameters  # type: ignore[import-not-found]
     from mcp.client.sse import sse_client  # type: ignore[import-not-found]
     from mcp.client.stdio import stdio_client  # type: ignore[import-not-found]
-    from mcp.client.streamable_http import streamablehttp_client  # type: ignore[import-not-found]
     from mcp.types import Tool as MCPTool  # type: ignore[import-not-found]
+
+    from ._compat import (
+        call_tool_result_is_error,
+        call_tool_result_structured_content,
+        open_streamable_http_transport,
+    )
 
     MCP_AVAILABLE = True
 except ImportError:
@@ -319,7 +324,7 @@ class SecureMCPClient:
 
         elif self.transport == "http":
             http_transport = await self.exit_stack.enter_async_context(
-                streamablehttp_client(
+                open_streamable_http_transport(
                     url=self.url,
                     headers=self.headers,
                     timeout=self.timeout,
@@ -327,7 +332,7 @@ class SecureMCPClient:
                     auth=self.auth,
                 )
             )
-            # streamablehttp_client returns a 3-tuple; third element is session-ID callback
+            # The transport yields a 3-tuple; third element is session-ID callback
             read_stream, write_stream, _ = http_transport
 
         else:
@@ -674,12 +679,17 @@ class SecureMCPClient:
             for attempt in range(2):
                 try:
                     response = await asyncio.wait_for(
-                        self.session.call_tool(tool_name, call_args, meta=meta_payload),
+                        # meta is annotated dict on MCP 1.x and RequestParamsMeta
+                        # on 2.x; that type is a TypedDict, so a plain dict is
+                        # correct at runtime on both.
+                        self.session.call_tool(
+                            tool_name, call_args, meta=cast(Any, meta_payload)
+                        ),
                         timeout=timeout,
                     )
-                    if getattr(response, "isError", False) is True:
+                    if call_tool_result_is_error(response):
                         raw_content = getattr(response, "content", None)
-                        structured = getattr(response, "structuredContent", None)
+                        structured = call_tool_result_structured_content(response)
                         _tenuo_code = _extract_tenuo_error_code(structured)
                         if _tenuo_code == -32002:
                             from .server import MCPApprovalRequired

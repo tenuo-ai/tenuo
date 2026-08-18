@@ -1920,7 +1920,9 @@ def test_otel_import_check():
 
 def test_otel_span_emitted_on_allow():
     """Verify Tenuo emits a 'tenuo.authorize' OTel span with allow decision on success."""
-    pytest.importorskip("opentelemetry")
+    # opentelemetry-sdk ships separately from opentelemetry-api, and only the
+    # api is pulled in transitively, so the sdk is what has to be probed here.
+    pytest.importorskip("opentelemetry.sdk")
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter

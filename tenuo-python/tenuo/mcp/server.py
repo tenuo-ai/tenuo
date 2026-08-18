@@ -20,17 +20,19 @@ Usage pattern
 
 2. Call ``verify()`` or ``verify_or_raise()`` inside each tool handler.
 
-   For raw ``@server.call_tool`` handlers that receive the full request object,
-   pass ``req.params._meta`` so the verifier can read the warrant from
-   ``params._meta["tenuo"]``::
+   Raw handlers that receive the full request params pass ``params.meta`` so the
+   verifier can read the warrant from the ``tenuo`` key. ``_meta`` is the wire
+   name; the parsed attribute is ``meta`` on both SDK lines::
 
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> list:
-        # ``req`` is the full CallToolRequest — use the low-level handler form
-        meta = req.params._meta  # MCP SDK exposes this on the raw request
-        result = verifier.verify(name, arguments, meta=meta)
+    # Low-level handler form: the whole CallToolRequestParams is available.
+    async def handle_call_tool(req: types.CallToolRequest) -> types.ServerResult:
+        params = req.params
+        result = verifier.verify(params.name, params.arguments or {}, meta=params.meta)
         result.raise_if_denied()
         return execute_tool(result.clean_arguments)
+
+   ``params.meta`` is a model on MCP 1.x and a plain dict on 2.x; ``verify()``
+   accepts either.
 
    Note: ``fastmcp`` does not pass ``_meta`` into Python tool parameters. Use
    :class:`tenuo.mcp.fastmcp_middleware.TenuoMiddleware` (re-exported as
@@ -77,9 +79,11 @@ extension point::
 
 Tool arguments are never polluted with authorization metadata.
 
-On the server, ``MCPVerifier.verify()`` accepts the ``_meta`` dict via its
-``meta`` parameter.  Pass ``req.params._meta`` when using a raw
-``@server.call_tool`` handler that receives the full ``CallToolRequest``.
+On the server, ``MCPVerifier.verify()`` reads that block via its ``meta``
+parameter.  Pass ``req.params.meta`` from a raw handler that receives the full
+``CallToolRequest``: ``_meta`` is the wire name, and the parsed attribute is
+``meta`` on both SDK lines.  It arrives as a model on 1.x and a dict on 2.x, and
+``verify()`` accepts either.
 
 Approval gate flow
 ------------------
@@ -104,6 +108,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -128,6 +133,33 @@ MAX_WARRANT_B64_BYTES = 64 * 1024
 MAX_SIGNATURE_B64_BYTES = 4 * 1024
 MAX_APPROVAL_B64_BYTES = 8 * 1024
 MAX_APPROVALS_COUNT = 64
+
+
+def _coerce_meta(meta: Any) -> Optional[Dict[str, Any]]:
+    """Accept request ``_meta`` as either a mapping or the SDK's model.
+
+    MCP 1.x parses ``_meta`` into a ``RequestParams.Meta`` model while 2.x leaves
+    it a plain dict, so a handler forwarding ``params.meta`` straight through
+    would work on only one line. Both are accepted here rather than pushing the
+    conversion onto every caller.
+
+    An unrecognised type yields ``None``, which drops the Tenuo envelope and so
+    denies the call when a warrant is required.
+    """
+    if meta is None:
+        return None
+    if isinstance(meta, Mapping):
+        return dict(meta)
+    model_dump = getattr(meta, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(mode="python", exclude_none=True)
+        if isinstance(dumped, Mapping):
+            return dict(dumped)
+    logger.warning(
+        "Ignoring request _meta of unsupported type %s; pass params.meta or a dict",
+        type(meta).__name__,
+    )
+    return None
 
 
 def _access_denial_reason(exc: BaseException) -> str:
@@ -416,16 +448,16 @@ class MCPVerifier:
         self,
         tool_name: str,
         arguments: Optional[Dict[str, Any]],
-        meta: Optional[Dict[str, Any]] = None,
+        meta: Any = None,
     ) -> MCPVerificationResult:
         """Verify a tool call against the embedded Tenuo warrant.
 
         Extracts the warrant and PoP signature, verifies them, satisfies any
         approval gates, and checks all constraints.
 
-        Authorization metadata is read from ``params._meta["tenuo"]``.  Pass
-        the ``_meta`` dict when your server framework exposes the full
-        ``CallToolRequest`` (e.g. raw ``@server.call_tool`` handlers).
+        Authorization metadata is read from the ``tenuo`` key of the request
+        ``_meta``.  Pass ``params.meta`` when your server framework exposes the
+        full ``CallToolRequest`` (e.g. raw low-level handlers).
 
         This method never raises — all failures are returned as a denial result.
 
@@ -433,8 +465,9 @@ class MCPVerifier:
             tool_name: The MCP tool name being called.
             arguments: Tool arguments dict.  ``None`` is treated as an empty
                 dict.
-            meta: Contents of ``params._meta`` from the MCP request.
-                Must contain ``meta["tenuo"]`` with warrant and PoP signature.
+            meta: The request's ``_meta``, as either a dict or the SDK's parsed
+                model — 1.x supplies a model and 2.x a dict.  Must carry a
+                ``tenuo`` key with the warrant and PoP signature.
 
         Returns:
             :class:`MCPVerificationResult` with ``allowed=True`` on success,
@@ -466,8 +499,9 @@ class MCPVerifier:
         # Step 1: extract Tenuo envelope from params._meta
         # ------------------------------------------------------------------
         tenuo_envelope: Dict[str, Any] = {}
-        if meta is not None and isinstance(meta.get("tenuo"), dict):
-            tenuo_envelope = meta["tenuo"]
+        resolved_meta = _coerce_meta(meta)
+        if resolved_meta is not None and isinstance(resolved_meta.get("tenuo"), dict):
+            tenuo_envelope = resolved_meta["tenuo"]
 
         clean_arguments: Dict[str, Any]
         constraints: Dict[str, Any]
@@ -520,7 +554,7 @@ class MCPVerifier:
                     constraints=constraints,
                     denial_reason=(
                         "No warrant provided. Use SecureMCPClient(inject_warrant=True), "
-                        "or pass params._meta with tenuo metadata into MCPVerifier.verify. "
+                        "or pass params.meta with tenuo metadata into MCPVerifier.verify. "
                         "On FastMCP, register TenuoMiddleware(verifier) so _meta from the "
                         "wire request reaches the verifier (tool handlers alone do not "
                         "receive _meta)."
@@ -868,7 +902,7 @@ class MCPVerifier:
         self,
         tool_name: str,
         arguments: Optional[Dict[str, Any]],
-        meta: Optional[Dict[str, Any]] = None,
+        meta: Any = None,
     ) -> Dict[str, Any]:
         """Verify and return clean arguments, or raise on any denial.
 
@@ -877,8 +911,8 @@ class MCPVerifier:
         Args:
             tool_name: The MCP tool name.
             arguments: Tool arguments dict.
-            meta: Contents of ``params._meta`` from the MCP request, when
-                available.  See :meth:`verify` for extraction priority.
+            meta: The request's ``_meta`` as a dict or the SDK's parsed model,
+                when available.  See :meth:`verify` for extraction priority.
 
         Returns:
             Clean arguments dict if authorized.
@@ -908,7 +942,7 @@ def verify_mcp_call(
     authorizer: Any,
     config: Optional[Any] = None,
     require_warrant: bool = True,
-    meta: Optional[Dict[str, Any]] = None,
+    meta: Any = None,
     control_plane: Optional[Any] = None,
 ) -> MCPVerificationResult:
     """Verify a single MCP tool call — convenience wrapper around :class:`MCPVerifier`.
@@ -923,8 +957,8 @@ def verify_mcp_call(
         authorizer: ``tenuo_core.Authorizer`` configured with trusted issuer keys.
         config: Optional ``tenuo_core.CompiledMcpConfig`` for constraint extraction.
         require_warrant: If ``True`` (default), calls without a warrant are denied.
-        meta: Contents of ``params._meta`` from the MCP request, when available.
-            See :meth:`MCPVerifier.verify` for extraction priority.
+        meta: The request's ``_meta`` as a dict or the SDK's parsed model, when
+            available.  See :meth:`MCPVerifier.verify` for extraction priority.
 
     Returns:
         :class:`MCPVerificationResult`.
