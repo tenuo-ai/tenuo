@@ -28,6 +28,8 @@ import pytest
 from tenuo import SigningKey, Warrant
 from tenuo.exceptions import InsufficientApprovals
 
+from .._mcp_sdk_support import FASTMCP_SERVER_AVAILABLE, FASTMCP_SERVER_SKIP_REASON
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -651,9 +653,8 @@ class TestTemporalErrorTypeForWire:
 
 class TestFastMCPMiddlewareDenialPayload:
     def test_structured_content_includes_got_and_need(self):
-        # fastmcp's server extras still require mcp<2.0, so the server package
-        # is unimportable when only 2.x is installed.
-        pytest.importorskip("fastmcp.server")
+        if not FASTMCP_SERVER_AVAILABLE:
+            pytest.skip(FASTMCP_SERVER_SKIP_REASON)
         from tenuo.mcp.fastmcp_middleware import _denial_tool_return
         from tenuo.mcp.server import MCPVerificationResult
 

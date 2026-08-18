@@ -23,7 +23,7 @@ except ImportError:
 
 pytest.importorskip("fastmcp")
 
-from ._mcp_sdk_support import (  # noqa: E402
+from .._mcp_sdk_support import (  # noqa: E402
     FASTMCP_SERVER_AVAILABLE,
     FASTMCP_SERVER_SKIP_REASON,
 )

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from ._mcp_sdk_support import (
+from .._mcp_sdk_support import (
     LOWLEVEL_SERVER_DECORATORS_AVAILABLE,
     LOWLEVEL_SERVER_SKIP_REASON,
 )

@@ -32,6 +32,17 @@ except ImportError:
     print("Install MCP: uv pip install 'tenuo[mcp]'", file=sys.stderr)
     sys.exit(1)
 
+# This demo drives the lowlevel server through the decorator API that MCP 2.0
+# restructured. Bail out with a clear message rather than failing mid-handshake,
+# which leaves the client waiting on a server that will never answer.
+if not hasattr(Server, "list_tools"):
+    print(
+        "This example needs the MCP 1.x lowlevel Server decorator API; "
+        "the installed SDK is 2.x. Install 'mcp<2' to run it.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 from tenuo import Authorizer, PublicKey
 from tenuo.mcp.server import MCPVerifier
 

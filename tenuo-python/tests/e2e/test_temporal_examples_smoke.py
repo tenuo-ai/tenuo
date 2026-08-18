@@ -9,7 +9,9 @@ breakage from SDK refactors.  These tests load each example module and run
 ``test_temporal_live.py``, but executing the published example code paths.
 
 MCP layering examples are optional: they require the MCP SDK and spawn an MCP
-subprocess; see ``test_temporal_mcp_examples_smoke``.
+subprocess; see ``test_temporal_mcp_examples_smoke``.  That subprocess drives the
+lowlevel server through the decorator API MCP 2.0 restructured, so it is skipped
+on the 2.x line.
 """
 
 from __future__ import annotations
@@ -23,6 +25,11 @@ pytest.importorskip("temporalio")
 
 from temporalio.client import Client as TemporalClient  # noqa: E402
 from temporalio.testing import WorkflowEnvironment  # noqa: E402
+
+from .._mcp_sdk_support import (  # noqa: E402
+    LOWLEVEL_SERVER_DECORATORS_AVAILABLE,
+    LOWLEVEL_SERVER_SKIP_REASON,
+)
 
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent.parent / "examples" / "temporal"
 
@@ -83,6 +90,9 @@ async def test_core_temporal_example_main_runs(script: str, monkeypatch: pytest.
 @pytest.mark.parametrize("script", MCP_LAYERING_SCRIPTS)
 async def test_temporal_mcp_examples_smoke(script: str, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("mcp")
+
+    if not LOWLEVEL_SERVER_DECORATORS_AVAILABLE:
+        pytest.skip(LOWLEVEL_SERVER_SKIP_REASON)
 
     mod = _load_example_module(script)
     if not getattr(mod, "MCP_AVAILABLE", False):
