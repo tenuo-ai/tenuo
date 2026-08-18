@@ -95,6 +95,37 @@ spec:
       # Only accepts traffic from localhost (sidecar)
 ```
 
+#### Serving over a Unix domain socket
+
+When the agent and the authorizer share a pod or host, the sidecar can serve the
+**same HTTP API over a Unix domain socket** instead of a localhost TCP port. This
+keeps authorization traffic off the network stack entirely and lets you gate access
+with filesystem permissions.
+
+```bash
+tenuo-authorizer serve \
+  --config /etc/tenuo/authorizer.yaml \
+  --socket /var/run/tenuo/authorizer.sock \
+  --socket-mode 0660 \
+  --socket-group tenuo
+```
+
+- `--socket PATH` — serve over `AF_UNIX` at `PATH`. Mutually exclusive with `--port` / `--bind` (the CLI rejects combining them).
+- `--socket-mode` — octal bits controlling who may *connect* (default `0660` = owner + group). Use `0600` for owner-only or `0666` for any local user.
+- `--socket-group` — group name or numeric gid the socket is `chgrp`'d to after bind. With the default `0660`, this lets a **non-root client** (e.g. an app user in a shared `tenuo` group) reach an authorizer running as root.
+
+Clients connect with any HTTP-over-UDS client, e.g.:
+
+```bash
+curl --unix-socket /var/run/tenuo/authorizer.sock http://localhost/health
+```
+
+**Security:** the socket's trust rests on its *parent directory*. The authorizer
+refuses to bind if that directory is group- or world-writable, refuses a symlink or
+non-socket file at the path, and removes a stale socket left by a previous crash.
+Place the socket in a directory only the authorizer's own user can write to (for
+example `/var/run/tenuo`).
+
 ### Gateway: Centralized Enforcement for Multiple Services
 
 One Tenuo instance protects many backend services. Plugs into existing service mesh infrastructure via Envoy's `ext_authz` gRPC protocol. No new proxy to deploy if you already run Envoy or Istio.

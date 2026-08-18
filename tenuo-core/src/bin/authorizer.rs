@@ -825,8 +825,9 @@ async fn serve_http(
 /// because connecting to (and creating/replacing) the socket requires write
 /// access to that directory, a directory that no untrusted user can write to is
 /// what lets a client authenticate the responder by ownership instead of a
-/// shared secret (see `_safe_managed_socket` on the client side). This function
-/// enforces that invariant on the server and refuses path-confusion tricks:
+/// shared secret: a client trusts the responder because the socket lives in a
+/// directory only a trusted user can write to. This function enforces that
+/// invariant on the server and refuses path-confusion tricks:
 ///
 /// - The parent directory must exist (created if missing) and must NOT be
 ///   group- or world-writable. We refuse otherwise — a writable directory would
