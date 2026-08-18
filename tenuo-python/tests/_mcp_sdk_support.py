@@ -39,3 +39,21 @@ try:
     LOWLEVEL_SERVER_DECORATORS_AVAILABLE = hasattr(_LowlevelServer, "list_tools")
 except ImportError:
     LOWLEVEL_SERVER_DECORATORS_AVAILABLE = False
+
+
+#: The 2.x counterpart: handlers are registered explicitly rather than by
+#: decorator. Lets the client keep end-to-end coverage on the 2.x line, where
+#: the 1.x stdio fixtures cannot run.
+MCP_SDK2_SERVER_AVAILABLE: bool
+MCP_SDK2_SERVER_SKIP_REASON = (
+    "requires the MCP 2.x lowlevel server API (Server.add_request_handler)"
+)
+
+try:
+    from mcp.server.lowlevel import Server as _Sdk2Server
+
+    MCP_SDK2_SERVER_AVAILABLE = hasattr(_Sdk2Server, "add_request_handler") and not hasattr(
+        _Sdk2Server, "list_tools"
+    )
+except ImportError:
+    MCP_SDK2_SERVER_AVAILABLE = False

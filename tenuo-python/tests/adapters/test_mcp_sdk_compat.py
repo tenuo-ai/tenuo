@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 
+import pydantic
 import pytest
 
 pytest.importorskip("mcp", reason="requires the MCP SDK")
@@ -117,6 +118,61 @@ class TestRequestParamsMeta:
             }
         )
         assert request_params_meta_as_dict(params.meta)["tenuo"] == {"warrant": "abc"}
+
+
+class TestVerifierAcceptsEitherMetaShape:
+    """``MCPVerifier`` is handed ``params.meta``, whose type differs by SDK line.
+
+    1.x parses ``_meta`` into a model and 2.x leaves it a dict, so the verifier
+    normalises rather than making every handler convert.
+    """
+
+    @staticmethod
+    def _both_shapes(envelope: dict) -> list:
+        """A dict and a model carrying the same ``_meta``.
+
+        Only one shape occurs on any given SDK line, so both are built here
+        explicitly; taking ``params.meta`` would silently test the dict path
+        twice when running on 2.x.
+        """
+        model = pydantic.create_model(
+            "_Meta", __config__=pydantic.ConfigDict(extra="allow")
+        ).model_validate(envelope)
+        return [dict(envelope), model]
+
+    @pytest.mark.parametrize("shape_index", [0, 1], ids=["dict", "model"])
+    def test_either_shape_yields_the_same_dict(self, shape_index: int) -> None:
+        from tenuo.mcp.server import _coerce_meta
+
+        envelope = {"tenuo": {"warrant": "abc"}}
+        meta = self._both_shapes(envelope)[shape_index]
+        assert _coerce_meta(meta) == envelope
+
+    def test_none_stays_none(self) -> None:
+        from tenuo.mcp.server import _coerce_meta
+
+        assert _coerce_meta(None) is None
+
+    def test_unsupported_type_denies_rather_than_crashing(self) -> None:
+        """Dropping the envelope denies the call; raising would surface as a 500."""
+        from tenuo.mcp.server import _coerce_meta
+
+        assert _coerce_meta("not-a-mapping") is None
+
+    @pytest.mark.parametrize("shape_index", [0, 1], ids=["dict", "model"])
+    def test_verifier_finds_the_warrant_under_either_shape(self, shape_index: int) -> None:
+        """The end the caller sees: the envelope is located, not missed."""
+        from tenuo.mcp.server import MCPVerifier
+
+        meta = self._both_shapes({"tenuo": {"warrant": "bogus"}})[shape_index]
+        verifier = MCPVerifier(authorizer=None, require_warrant=True)
+        result = verifier.verify("read_file", {}, meta=meta)
+
+        # The warrant is deliberately junk, so this denies either way. Failing on
+        # the *decode* path rather than "No warrant provided" is what proves the
+        # envelope was read.
+        assert result.allowed is False
+        assert "Malformed warrant" in (result.denial_reason or "")
 
 
 class TestStreamableHttpTransport:

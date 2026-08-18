@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PR-time audit checked only `tenuo-core`, and the job that checks both ran only
   on push to `main`, so a vulnerable `tenuo-python/Cargo.lock` could not be
   caught before merge.
+- **`MCPVerifier.verify()` accepts request `_meta` in either SDK shape.** MCP 1.x
+  parses `_meta` into a model while 2.x leaves it a dict, and `verify()` required
+  a dict — so a handler forwarding `params.meta` straight through raised
+  `AttributeError` on 1.x. Both shapes are now accepted.
+- **Corrected the server-side integration docs.** They instructed callers to read
+  `req.params._meta`, which raises `AttributeError` on both SDK lines; `_meta` is
+  the wire name and the parsed attribute is `meta`. The sample handler also used
+  the `@server.call_tool` decorator form, which never receives the request
+  object.
 
 ### Changed
 
@@ -30,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `streamable_http_client` that takes a caller-built HTTP client and yields two
   streams rather than three. These differences are bridged in
   `tenuo.mcp._compat`, so no minimum `mcp` version bump is required.
+- **`SecureMCPClient` keeps end-to-end test coverage on both SDK lines.** The
+  existing stdio fixtures drive the 1.x decorator API, so a 2.x fixture server
+  was added rather than leaving the client covered only by patched transports —
+  which is what let the renamed error field go unnoticed.
 - **IETF Draft**: Published `draft-niyikiza-oauth-attenuating-agent-tokens-01`.
 
 ## [0.2.3] - 2026-07-02
