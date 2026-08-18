@@ -16,6 +16,7 @@ permissions:
 jobs:
   python-security:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     name: Python Red Team Tests
     
     steps:
@@ -60,6 +61,7 @@ jobs:
 
   rust-security:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     name: Rust Red Team Tests
     
     steps:
@@ -80,6 +82,7 @@ jobs:
 
   security-audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     name: Dependency Audit
     
     steps:
