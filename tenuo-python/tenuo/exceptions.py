@@ -492,7 +492,7 @@ class ToolNotAuthorized(ScopeViolation):
     """Tool is not authorized by the warrant."""
 
     error_code = "tool_not_authorized"
-    rust_variant = "Unauthorized"
+    rust_variant = "ToolNotAuthorized"
 
     def __init__(self, tool: str, authorized_tools: Optional[list[str]] = None, hint: Optional[str] = None):
         details: dict[str, Any] = {"tool": tool}
@@ -1457,4 +1457,3 @@ class AuthorizationDenied(ScopeViolation):
                 lines.append(f"  ✅ {result.name}: OK")
 
         return "\n".join(lines)
-

@@ -1113,9 +1113,8 @@ impl Warrant {
         } else if let Some(c) = self.payload.tools.get("*") {
             c
         } else {
-            return Err(Error::ConstraintNotSatisfied {
-                field: "tool".to_string(),
-                reason: format!("warrant does not authorize tool '{}'", tool),
+            return Err(Error::ToolNotAuthorized {
+                tool: tool.to_string(),
             });
         };
 
@@ -1184,9 +1183,8 @@ impl Warrant {
         } else if let Some(c) = self.payload.tools.get("*") {
             c
         } else {
-            return Err(Error::ConstraintNotSatisfied {
-                field: "tool".to_string(),
-                reason: format!("warrant does not authorize tool '{}'", tool),
+            return Err(Error::ToolNotAuthorized {
+                tool: tool.to_string(),
             });
         };
 
@@ -1210,9 +1208,8 @@ impl Warrant {
         } else if let Some(c) = self.payload.tools.get("*") {
             c
         } else {
-            return Err(Error::ConstraintNotSatisfied {
-                field: "tool".to_string(),
-                reason: format!("warrant does not authorize tool '{}'", tool),
+            return Err(Error::ToolNotAuthorized {
+                tool: tool.to_string(),
             });
         };
 

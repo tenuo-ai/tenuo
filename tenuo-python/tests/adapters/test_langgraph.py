@@ -1054,7 +1054,7 @@ class TestPhilosophyAndDesign:
             result = enforce_tool_call("delete_file", {"path": "/"}, bound)
 
         assert not result.allowed
-        assert result.error_type == "constraint_violation"
+        assert result.error_type == "tool_not_allowed"
 
         # Tool not in warrant — expected denial logged at DEBUG on tenuo.enforcement.
         denial_records = [

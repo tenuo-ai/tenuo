@@ -491,6 +491,10 @@ pub enum Error {
     // =========================================================================
     // Constraint Matching Errors (Authorization)
     // =========================================================================
+    /// Requested tool is not present in the warrant's capabilities.
+    #[error("warrant does not authorize tool '{tool}'")]
+    ToolNotAuthorized { tool: String },
+
     /// Constraint does not match the action.
     #[error("constraint not satisfied: {field} - {reason}")]
     ConstraintNotSatisfied { field: String, reason: String },
@@ -706,6 +710,7 @@ impl Error {
             Self::ExactValueMismatch { .. } => ErrorCode::InvalidAttenuation,
 
             // Constraint Matching Errors (Authorization)
+            Self::ToolNotAuthorized { .. } => ErrorCode::ToolNotAuthorized,
             Self::ConstraintNotSatisfied { .. } => ErrorCode::ConstraintViolation,
             Self::InsufficientClearance { .. } => ErrorCode::ToolNotAuthorized,
 
@@ -908,6 +913,21 @@ mod tests {
         assert_eq!(err.code(), ErrorCode::ConstraintViolation);
         assert_eq!(err.name(), "constraint-violation");
 
+        // `tool` is also a valid argument name; only the dedicated variant
+        // represents a missing capability.
+        let err = Error::ConstraintNotSatisfied {
+            field: "tool".into(),
+            reason: "argument value not allowed".into(),
+        };
+        assert_eq!(err.code(), ErrorCode::ConstraintViolation);
+        assert_eq!(err.name(), "constraint-violation");
+
+        let err = Error::ToolNotAuthorized {
+            tool: "delete_file".into(),
+        };
+        assert_eq!(err.code(), ErrorCode::ToolNotAuthorized);
+        assert_eq!(err.name(), "tool-not-authorized");
+
         // Monotonicity violations
         let err = Error::RangeExpanded {
             bound: "max".into(),
@@ -962,6 +982,9 @@ mod tests {
             Error::ConstraintNotSatisfied {
                 field: "a".into(),
                 reason: "b".into(),
+            },
+            Error::ToolNotAuthorized {
+                tool: "missing".into(),
             },
             Error::InvalidPattern("test".into()),
             Error::InvalidRange("test".into()),

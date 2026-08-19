@@ -362,6 +362,9 @@ pub fn auth_error_to_jsonrpc(error: &crate::error::Error) -> (i32, String) {
     use crate::error::Error;
 
     match error {
+        Error::ToolNotAuthorized { .. } => {
+            (-32001, "Access denied: Tool not authorized".to_string())
+        }
         Error::ConstraintNotSatisfied { field, reason } => (
             -32001,
             format!(
@@ -390,6 +393,27 @@ mod tests {
     use std::collections::HashMap;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_auth_error_distinguishes_tool_scope_from_argument_constraint() {
+        let missing_tool = crate::error::Error::ToolNotAuthorized {
+            tool: "delete_file".to_string(),
+        };
+        let (code, message) = auth_error_to_jsonrpc(&missing_tool);
+        assert_eq!(code, -32001);
+        assert_eq!(message, "Access denied: Tool not authorized");
+
+        let invalid_argument = crate::error::Error::ConstraintNotSatisfied {
+            field: "path".to_string(),
+            reason: "outside allowed prefix".to_string(),
+        };
+        let (code, message) = auth_error_to_jsonrpc(&invalid_argument);
+        assert_eq!(code, -32001);
+        assert_eq!(
+            message,
+            "Access denied: Constraint 'path' not satisfied: outside allowed prefix"
+        );
+    }
 
     #[test]
     fn test_mcp_config_from_file() {
