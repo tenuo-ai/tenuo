@@ -83,9 +83,9 @@ jobs:
 
       - name: Install mold linker (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mold clang
+        uses: ./.github/actions/apt-install
+        with:
+          packages: mold clang
 
       - name: Configure mold linker (Linux)
         if: runner.os == 'Linux'

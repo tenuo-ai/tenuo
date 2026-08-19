@@ -24,6 +24,7 @@ jobs:
   test-compatibility:
     name: ${{ matrix.integration }} @ ${{ matrix.version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

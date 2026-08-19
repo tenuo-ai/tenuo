@@ -1,0 +1,34 @@
+name: apt install
+description: >-
+  Install apt packages, retrying around the mirror stalls that intermittently
+  hang hosted runners.
+
+inputs:
+  packages:
+    description: Space-separated list of packages to install.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        APT_PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+
+        # apt applies no deadline of its own, so a stalled mirror hangs until the
+        # job's timeout rather than failing. `timeout` bounds each attempt so a
+        # stall costs seconds and retries instead of the whole job budget.
+        for attempt in 1 2 3; do
+          # shellcheck disable=SC2086  # deliberate word splitting into packages
+          if sudo timeout 120 apt-get update \
+            && sudo timeout 300 apt-get install -y $APT_PACKAGES; then
+            exit 0
+          fi
+          echo "::warning::apt failed to install '$APT_PACKAGES' (attempt $attempt/3)"
+          sleep 15
+        done
+
+        echo "::error::apt could not install '$APT_PACKAGES' after 3 attempts"
+        exit 1
