@@ -18,6 +18,7 @@ from tenuo.temporal._headers import (
     _current_workflow_headers,
     _extract_key_id_from_headers,
     _extract_warrant_from_headers,
+    _validate_chain_ends_with_warrant,
     tenuo_headers,
 )
 from tenuo.temporal._observability import _MintRequest
@@ -45,19 +46,7 @@ if TYPE_CHECKING:
     from tenuo.temporal._config import TenuoPluginConfig
 
 logger = logging.getLogger("tenuo.temporal")
-
-
-def _validate_chain_ends_with_warrant(
-    chain: List[Any],
-    warrant: Any,
-    *,
-    operation: str,
-) -> None:
-    """Bind a separately supplied warrant to its asserted chain leaf."""
-    if not chain:
-        raise TenuoContextError(f"{operation}: warrant_chain must not be empty.")
-    if chain[-1].to_bytes() != warrant.to_bytes():
-        raise TenuoContextError(f"{operation}: warrant_chain must end with warrant.")
+_MISSING_REVOCATION_LIST = object()
 
 
 def _fail_workflow_non_retryable(exc: Exception) -> Exception:
@@ -1279,31 +1268,32 @@ async def tenuo_complete_async_activity(
             f"tenuo_complete_async_activity: {detail}. Pass the exact Activity "
             "task queue used during Worker setup."
         )
-    # ``TenuoPluginConfig`` snapshots the provider's initial roots. Match the
-    # worker interceptor's rotation behavior: a non-empty provider result
-    # replaces that snapshot; failure/empty results retain the last good roots.
+    refreshed_roots: Optional[List[Any]] = None
     roots_provider = worker_cfg.trusted_roots_provider
     if roots_provider is not None:
         try:
-            refreshed_roots = list(roots_provider() or [])
+            candidate_roots = list(roots_provider() or [])
         except Exception as exc:
             logger.warning(
                 "trusted_roots_provider failed during async completion; "
-                "retaining configured roots: %s",
+                "retaining last good roots: %s",
                 exc,
             )
-            roots = list(worker_cfg.trusted_roots or [])
         else:
-            if refreshed_roots:
-                roots = refreshed_roots
+            if candidate_roots:
+                refreshed_roots = candidate_roots
             else:
                 logger.warning(
                     "trusted_roots_provider returned empty during async completion; "
-                    "retaining configured roots"
+                    "retaining last good roots"
                 )
-                roots = list(worker_cfg.trusted_roots or [])
-    else:
-        roots = list(worker_cfg.trusted_roots or [])
+    with worker_cfg._provider_state_lock:
+        roots = list(
+            refreshed_roots
+            or worker_cfg._last_good_trusted_roots
+            or worker_cfg.trusted_roots
+            or []
+        )
     if not roots:
         raise TenuoContextError(
             "tenuo_complete_async_activity: trusted roots are required."
@@ -1327,25 +1317,31 @@ async def tenuo_complete_async_activity(
         operation="tenuo_complete_async_activity",
     )
 
-    revocations = worker_cfg.revocation_list
+    refreshed_revocations: Any = _MISSING_REVOCATION_LIST
     revocation_provider = worker_cfg.revocation_list_provider
     if revocation_provider is not None:
         try:
-            refreshed_revocations = revocation_provider()
+            candidate_revocations = revocation_provider()
         except Exception as exc:
             logger.warning(
                 "revocation_list_provider failed during async completion; "
-                "retaining configured revocation list: %s",
+                "retaining last good revocation list: %s",
                 exc,
             )
         else:
-            if refreshed_revocations is not None:
-                revocations = refreshed_revocations
+            if candidate_revocations is not None:
+                refreshed_revocations = candidate_revocations
             else:
                 logger.warning(
                     "revocation_list_provider returned None during async completion; "
-                    "retaining configured revocation list"
+                    "retaining last good revocation list"
                 )
+    with worker_cfg._provider_state_lock:
+        revocations = (
+            refreshed_revocations
+            if refreshed_revocations is not _MISSING_REVOCATION_LIST
+            else worker_cfg._last_good_revocation_list
+        )
 
     try:
         from tenuo_core import Authorizer
@@ -1357,6 +1353,11 @@ async def tenuo_complete_async_activity(
             worker_cfg,
             revocation_list=revocations,
         )
+        with worker_cfg._provider_state_lock:
+            if refreshed_roots is not None:
+                worker_cfg._last_good_trusted_roots = list(refreshed_roots)
+            if refreshed_revocations is not _MISSING_REVOCATION_LIST:
+                worker_cfg._last_good_revocation_list = refreshed_revocations
         authorizer.verify_chain(chain)
     except Exception as exc:
         raise TenuoContextError(

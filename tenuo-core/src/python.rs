@@ -60,6 +60,10 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             crate::error::Error::WarrantRevoked(id) => {
                 ("RevokedError", PyTuple::new(py, [id.as_str()]))
             }
+            crate::error::Error::SRLVersionRollback { current, attempted } => (
+                "SrlVersionRollback",
+                PyTuple::new(py, [*current, *attempted]),
+            ),
             crate::error::Error::WarrantExpired {
                 warrant_id,
                 expired_at,

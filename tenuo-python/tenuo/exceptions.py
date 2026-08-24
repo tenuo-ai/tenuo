@@ -127,6 +127,7 @@ __all__ = [
     "PayloadTooLarge",
     # Revocation
     "RevokedError",
+    "SrlVersionRollback",
     # Validation errors
     "ValidationError",
     "MissingField",
@@ -1038,6 +1039,21 @@ class RevokedError(TenuoError):
         super().__init__(f"Warrant '{warrant_id}' has been revoked", details, hint=hint)
 
 
+@wire_code(ErrorCode.SRL_VERSION_ROLLBACK)
+class SrlVersionRollback(TenuoError):
+    """Signed revocation list version moved backwards."""
+
+    error_code = "srl_version_rollback"
+    rust_variant = "SRLVersionRollback"
+
+    def __init__(self, current: int, attempted: int, hint: Optional[str] = None):
+        super().__init__(
+            f"SRL version rollback detected: current version {current}, attempted version {attempted}",
+            {"current": current, "attempted": attempted},
+            hint=hint,
+        )
+
+
 # =============================================================================
 # Validation Errors (field/format validation)
 # =============================================================================
@@ -1457,4 +1473,3 @@ class AuthorizationDenied(ScopeViolation):
                 lines.append(f"  ✅ {result.name}: OK")
 
         return "\n".join(lines)
-

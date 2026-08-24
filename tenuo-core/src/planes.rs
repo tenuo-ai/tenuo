@@ -552,6 +552,14 @@ impl DataPlane {
     ) -> Result<()> {
         // Verify signature
         srl.verify(expected_issuer)?;
+        if let Some(current) = &self.revocation_list {
+            if srl.version() < current.version() {
+                return Err(Error::SRLVersionRollback {
+                    current: current.version(),
+                    attempted: srl.version(),
+                });
+            }
+        }
         self.revocation_list = Some(srl);
         Ok(())
     }
@@ -1708,6 +1716,14 @@ impl Authorizer {
         expected_issuer: &PublicKey,
     ) -> Result<()> {
         srl.verify(expected_issuer)?;
+        if let Some(current) = &self.revocation_list {
+            if srl.version() < current.version() {
+                return Err(Error::SRLVersionRollback {
+                    current: current.version(),
+                    attempted: srl.version(),
+                });
+            }
+        }
         self.revocation_list = Some(srl);
         Ok(())
     }
@@ -3015,6 +3031,66 @@ mod tests {
             .set_revocation_list_from_trusted_issuer(srl)
             .unwrap_err();
         assert!(error.to_string().contains("not a trusted root"));
+    }
+
+    #[test]
+    fn test_data_plane_rejects_srl_version_rollback() {
+        let control_plane = ControlPlane::generate();
+        let v2 = SignedRevocationList::builder()
+            .revoke("tnu_wrt_revoked")
+            .version(2)
+            .build(&control_plane.keypair)
+            .unwrap();
+        let v1 = SignedRevocationList::builder()
+            .version(1)
+            .build(&control_plane.keypair)
+            .unwrap();
+        let mut data_plane = DataPlane::new();
+
+        data_plane
+            .set_revocation_list(v2, &control_plane.public_key())
+            .unwrap();
+        let error = data_plane
+            .set_revocation_list(v1, &control_plane.public_key())
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::SRLVersionRollback {
+                current: 2,
+                attempted: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn test_authorizer_rejects_srl_version_rollback() {
+        let control_plane = ControlPlane::generate();
+        let v2 = SignedRevocationList::builder()
+            .revoke("tnu_wrt_revoked")
+            .version(2)
+            .build(&control_plane.keypair)
+            .unwrap();
+        let v1 = SignedRevocationList::builder()
+            .version(1)
+            .build(&control_plane.keypair)
+            .unwrap();
+        let mut authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
+
+        authorizer
+            .set_revocation_list_from_trusted_issuer(v2)
+            .unwrap();
+        let error = authorizer
+            .set_revocation_list_from_trusted_issuer(v1)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::SRLVersionRollback {
+                current: 2,
+                attempted: 1
+            }
+        ));
     }
 
     // =========================================================================

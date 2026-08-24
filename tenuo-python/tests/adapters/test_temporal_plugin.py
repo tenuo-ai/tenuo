@@ -492,6 +492,33 @@ def test_revocation_list_provider_accepted() -> None:
     assert config.revocation_refresh_secs == 60
 
 
+def test_revocation_list_provider_excludes_static_revocation_list() -> None:
+    """Static and provider-backed SRLs cannot both own revocation state."""
+    from tenuo.exceptions import ConfigurationError
+
+    sk = SigningKey.generate()
+    with pytest.raises(ConfigurationError, match="revocation_list_provider"):
+        TenuoPluginConfig(
+            signing_key=sk,
+            trusted_roots=[sk.public_key],
+            revocation_list=object(),
+            revocation_list_provider=lambda: None,
+        )
+
+
+def test_revocation_refresh_secs_requires_provider() -> None:
+    """A refresh interval without a provider is a configuration error."""
+    from tenuo.exceptions import ConfigurationError
+
+    sk = SigningKey.generate()
+    with pytest.raises(ConfigurationError, match="revocation_refresh_secs"):
+        TenuoPluginConfig(
+            signing_key=sk,
+            trusted_roots=[sk.public_key],
+            revocation_refresh_secs=60,
+        )
+
+
 def test_revocation_refresh_secs_none_by_default() -> None:
     """revocation_refresh_secs defaults to None."""
     sk = SigningKey.generate()

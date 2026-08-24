@@ -899,9 +899,9 @@ enforcement boundary: code that directly invokes `AsyncActivityHandle.complete()
 can bypass it.
 For compatibility, callers that omit `task_queue=` may use the sole registered
 worker config with a deprecation warning. Zero or multiple registrations fail
-closed. Provider failures or empty results retain the config's last known-good
+closed. Provider failures or empty results retain the config's last accepted
 trusted-root snapshot; revocation-provider failures or `None` results likewise
-retain the configured revocation list. `TenuoTemporalPlugin` validates that the
+retain the last accepted signed revocation list. `TenuoTemporalPlugin` validates that the
 worker has a non-empty task queue during worker setup, so the registry cannot be
 silently left unconfigured.
 

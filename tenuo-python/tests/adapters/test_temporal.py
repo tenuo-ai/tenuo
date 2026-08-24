@@ -861,11 +861,19 @@ class TestTenuoPluginConfig:
 
         root = SigningKey.generate().public_key
         srl_value = {"revoked": ["warrant-xyz"]}
+        provider_calls = 0
+
+        def provider():
+            nonlocal provider_calls
+            provider_calls += 1
+            if provider_calls == 1:
+                return None
+            return srl_value
 
         cfg = TenuoPluginConfig(
             key_resolver=EnvKeyResolver(),
             trusted_roots=[root],
-            revocation_list_provider=lambda: srl_value,
+            revocation_list_provider=provider,
             revocation_refresh_secs=1.0,
         )
         ai = TenuoActivityInboundInterceptor(
@@ -876,9 +884,11 @@ class TestTenuoPluginConfig:
         ai._maybe_refresh_revocation_list()
 
         assert ai._authorizer.srl_attempts == 1
-        assert ai._config.revocation_list == srl_value, (
-            "config.revocation_list should be updated even if the Authorizer "
-            "call failed — the next refresh tick must be able to retry."
+        assert ai._config.revocation_list is None, (
+            "provider-backed SRLs must not be copied into the static config field"
+        )
+        assert ai._config._last_good_revocation_list is None, (
+            "a failed refresh must not poison the last-good SRL snapshot"
         )
 
     def test_retry_authorizer_selected_on_retry_attempt(self):
@@ -2512,7 +2522,7 @@ async def test_async_activity_completion_provider_failure_keeps_snapshot(
     )
 
     handle.complete.assert_awaited_once_with("result")
-    assert "retaining configured roots" in caplog.text
+    assert "retaining last good roots" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -2531,7 +2541,13 @@ async def test_async_activity_completion_revocation_provider_failure_falls_back(
         holder=root_key.public_key,
     )
 
+    calls = 0
+
     def provider():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None
         if provider_outcome == "raises":
             raise TimeoutError("revocation provider timed out")
         return None
@@ -2557,7 +2573,103 @@ async def test_async_activity_completion_revocation_provider_failure_falls_back(
     )
 
     handle.complete.assert_awaited_once_with("result")
-    assert "retaining configured revocation list" in caplog.text
+    assert "retaining last good revocation list" in caplog.text
+
+
+def test_revocation_provider_installs_startup_snapshot():
+    from tenuo_core import SignedRevocationList, SigningKey, Warrant
+    from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+
+    root_key = SigningKey.generate()
+    warrant = Warrant.issue(
+        root_key,
+        capabilities={"read_file": {}},
+        holder=root_key.public_key,
+    )
+    builder = SignedRevocationList.builder()
+    builder.revoke(warrant.id)
+    builder.version(1)
+    revocations = builder.build(root_key)
+    calls = 0
+
+    def provider():
+        nonlocal calls
+        calls += 1
+        return revocations
+
+    resolver = AsyncMock()
+    resolver.resolve.return_value = root_key
+    cfg = TenuoPluginConfig(
+        key_resolver=resolver,
+        trusted_roots=[root_key.public_key],
+        revocation_list_provider=provider,
+    )
+    ai = TenuoActivityInboundInterceptor(MagicMock(), cfg, "test")
+
+    assert calls == 1
+    with pytest.raises(Exception, match="revoked"):
+        ai._authorizer.verify_chain([warrant])
+
+
+@pytest.mark.asyncio
+async def test_async_completion_provider_failure_uses_last_good_revocation_snapshot():
+    from tenuo_core import SignedRevocationList, SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    root_key = SigningKey.generate()
+    warrant = Warrant.issue(
+        root_key,
+        capabilities={"external_job": {}},
+        holder=root_key.public_key,
+    )
+    empty_builder = SignedRevocationList.builder()
+    empty_builder.version(1)
+    srl_v1 = empty_builder.build(root_key)
+    revoked_builder = SignedRevocationList.builder()
+    revoked_builder.revoke(warrant.id)
+    revoked_builder.version(2)
+    srl_v2 = revoked_builder.build(root_key)
+    calls = 0
+
+    def provider():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return srl_v1
+        if calls == 2:
+            return srl_v2
+        raise TimeoutError("revocation provider timed out")
+
+    resolver = AsyncMock()
+    resolver.resolve.return_value = root_key
+    cfg = TenuoPluginConfig(
+        key_resolver=resolver,
+        trusted_roots=[root_key.public_key],
+        revocation_list_provider=provider,
+    )
+    _set_worker_config(cfg, task_queue="async-completion-last-good-srl")
+    handle = AsyncMock()
+
+    with pytest.raises(TenuoContextError, match="revoked"):
+        await tenuo_complete_async_activity(
+            handle,
+            "result",
+            warrant,
+            "root-key",
+            task_queue="async-completion-last-good-srl",
+        )
+    with pytest.raises(TenuoContextError, match="revoked"):
+        await tenuo_complete_async_activity(
+            handle,
+            "result",
+            warrant,
+            "root-key",
+            task_queue="async-completion-last-good-srl",
+        )
+
+    assert calls == 3
+    handle.complete.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -2729,6 +2841,96 @@ async def test_per_activity_override_reaches_interceptor_and_extends_chain():
     assert TENUO_POP_HEADER in result.headers
     resolver.resolve_sync.assert_called_once_with("holder-key")
     assert _activity_warrant_override.get() is None
+
+
+@pytest.mark.asyncio
+async def test_activity_ingress_rejects_mismatched_warrant_and_chain_leaf():
+    """Raw headers must not let a shallow warrant mask a deeper chain."""
+    import time as _time
+    from dataclasses import dataclass
+
+    from temporalio.exceptions import ApplicationError
+    from tenuo_core import SigningKey, Warrant, encode_warrant_stack
+    from tenuo.temporal._interceptors import TenuoWorkerInterceptor
+    from tenuo.temporal._resolvers import KeyResolver
+
+    @dataclass
+    class FakePayload:
+        data: bytes
+
+    class StaticResolver(KeyResolver):
+        def __init__(self, key):
+            self._key = key
+
+        async def resolve(self, key_id):  # noqa: ARG002
+            return self._key
+
+        def resolve_sync(self, key_id):  # noqa: ARG002
+            return self._key
+
+    root_key = SigningKey.generate()
+    mid_key = SigningKey.generate()
+    leaf_key = SigningKey.generate()
+    root = Warrant.issue(
+        root_key,
+        capabilities={"read_file": {}},
+        holder=mid_key.public_key,
+    )
+    child = root.attenuate(
+        signing_key=mid_key,
+        holder=leaf_key.public_key,
+        capabilities={"read_file": {}},
+    )
+    grandchild = child.attenuate(
+        signing_key=leaf_key,
+        holder=leaf_key.public_key,
+        capabilities={"read_file": {}},
+    )
+    assert root.depth == 0
+    assert grandchild.depth >= 2
+
+    raw = tenuo_headers(root, "leaf-key")
+    raw[TENUO_CHAIN_HEADER] = encode_warrant_stack([root, child, grandchild]).encode("utf-8")
+    pop = grandchild.sign(
+        leaf_key,
+        "read_file",
+        {"path": "/tmp/demo/f.txt"},
+        int(_time.time()),
+    )
+    raw[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+
+    cfg = TenuoPluginConfig(
+        key_resolver=StaticResolver(leaf_key),
+        trusted_roots=[root_key.public_key],
+        max_chain_depth=1,
+        on_denial="raise",
+    )
+    nxt = MagicMock()
+    nxt.execute_activity = AsyncMock(return_value="ALLOWED")
+    ti = TenuoWorkerInterceptor(cfg)
+    inbound = ti.intercept_activity(nxt)
+    info = MagicMock(
+        activity_type="read_file",
+        activity_id="1",
+        workflow_id="wf-mismatch",
+        workflow_run_id="run-mismatch",
+        workflow_type="W",
+        task_queue="q",
+        is_local=False,
+        attempt=1,
+    )
+    inp = MagicMock()
+    inp.fn = lambda path: path
+    inp.args = ("/tmp/demo/f.txt",)
+    inp.headers = {k: FakePayload(v) for k, v in raw.items()}
+
+    with patch("temporalio.activity.info", return_value=info):
+        with pytest.raises(ApplicationError) as exc_info:
+            await inbound.execute_activity(inp)
+
+    assert exc_info.value.non_retryable is True
+    assert exc_info.value.type == "CHAIN_INVALID"
+    nxt.execute_activity.assert_not_awaited()
 
 
 # =============================================================================

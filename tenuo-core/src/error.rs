@@ -320,6 +320,12 @@ pub enum Error {
     #[error("warrant revoked: {0}")]
     WarrantRevoked(String),
 
+    /// Signed revocation list version moved backwards.
+    #[error(
+        "SRL version rollback detected: current version {current}, attempted version {attempted}"
+    )]
+    SRLVersionRollback { current: u64, attempted: u64 },
+
     /// Warrant has expired.
     #[error("warrant '{warrant_id}' expired at {expired_at}")]
     WarrantExpired {
@@ -668,6 +674,7 @@ impl Error {
 
             // Warrant Lifecycle Errors
             Self::WarrantRevoked(_) => ErrorCode::WarrantRevoked,
+            Self::SRLVersionRollback { .. } => ErrorCode::SRLVersionRollback,
             Self::WarrantExpired { .. } => ErrorCode::WarrantExpired,
             Self::IssuedInFuture => ErrorCode::IssuedInFuture,
             Self::DepthExceeded(_, _) => ErrorCode::DepthExceeded,
