@@ -48,6 +48,22 @@ _active_tenuo_warrant: contextvars.ContextVar[Optional[tuple]] = contextvars.Con
     "tenuo_active_warrant", default=None
 )
 
+#: Per-Activity warrant override used by ``tenuo_execute_activity(warrant=...)``.
+#: A ContextVar is intentional: workflows can schedule Activities concurrently,
+#: so a run-id keyed "next headers" slot would let sibling asyncio tasks consume
+#: one another's warrant. The value is raw Tenuo headers and is scoped to the
+#: single call around ``workflow.execute_activity``.
+_activity_warrant_override: contextvars.ContextVar[Optional[Dict[str, bytes]]] = (
+    contextvars.ContextVar("tenuo_activity_warrant_override", default=None)
+)
+
+#: Function reference paired with the current ``tenuo_execute_activity`` call.
+#: The legacy run-id store remains as a compatibility fallback, but this value
+#: prevents concurrent workflow tasks from racing over argument-name mapping.
+_activity_fn_override: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar(
+    "tenuo_activity_fn_override", default=None
+)
+
 # _workflow_headers_store:    run_id → {warrant, key_id}
 # _pending_child_headers:     child_wf_id → attenuated headers
 #                              (keyed by workflow_id because the child's run_id

@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Temporal per-Activity warrant overrides.**
+  `tenuo_execute_activity(..., warrant=..., key_id=...)` now applies a
+  task-local warrant to one dispatch, including the active delegation chain.
+  This makes warrants returned by `workflow_grant()` and
+  `workflow_issue_execution()` usable without replacing the workflow's base
+  warrant and without cross-talk between concurrent workflow tasks.
+- **Supported Temporal Schedule and async-completion helpers.**
+  `create_scheduled_workflow_with_warrant()` and
+  `tenuo_complete_async_activity()` are now exported from `tenuo.temporal`.
+  Scheduled starts carry real `x-tenuo-*` headers, while async completion
+  fails closed unless the warrant chain is trusted and the configured key
+  resolves to the warrant holder.
+
 ### Fixed
+
+- **Temporal scheduled warrants were written to memo instead of headers.**
+  Workers never read warrant material from memo, so scheduled workflows had no
+  Tenuo context. Schedule actions now use Temporal's workflow-header field.
+- **Temporal async completion discarded its best-effort PoP.** The helper no
+  longer computes an unused signature or silently completes without validation.
 
 - **MCP tool-call denials could be read as successes on MCP SDK 2.x.** The SDK
   renamed `CallToolResult.isError` to `is_error`, so `SecureMCPClient`'s error

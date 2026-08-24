@@ -21,6 +21,8 @@ from tenuo.temporal._headers import (
 )
 from tenuo.temporal._observability import _MintRequest
 from tenuo.temporal._state import (
+    _activity_fn_override,
+    _activity_warrant_override,
     _current_run_key,
     _pending_activity_fn,
     _pending_child_headers,
@@ -183,6 +185,10 @@ async def tenuo_execute_activity(
     activity: Any,
     *,
     args: Optional[List[Any]] = None,
+    warrant: Any = None,
+    key_id: Optional[str] = None,
+    warrant_chain: Optional[List[Any]] = None,
+    compress: bool = True,
     start_to_close_timeout: Any = None,
     schedule_to_close_timeout: Any = None,
     schedule_to_start_timeout: Any = None,
@@ -194,10 +200,11 @@ async def tenuo_execute_activity(
 ) -> Any:
     """Execute an activity with automatic function-reference registration.
 
-    This is a wrapper around ``workflow.execute_activity()`` with one
-    additional behaviour: it stores the activity function reference in
-    ``_pending_activity_fn`` before dispatch, so the outbound interceptor
-    can resolve real Python parameter names for PoP signing.
+    This is a wrapper around ``workflow.execute_activity()`` that registers
+    the activity function for named-argument PoP signing. It can also apply a
+    warrant to this dispatch only. Per-dispatch warrants make
+    ``workflow_grant()`` and ``workflow_issue_execution()`` useful for
+    long-running workflows without replacing the workflow's base warrant.
 
     **When to use it:** if your warrant uses named field constraints
     (e.g. ``path=Subpath(...)``) and you have not set ``activity_fns``
@@ -209,6 +216,11 @@ async def tenuo_execute_activity(
     Args:
         activity: The activity function to execute
         args: Arguments to pass to the activity
+        warrant: Optional warrant for this Activity dispatch only.
+        key_id: Holder key ID for ``warrant``. Required with ``warrant``.
+        warrant_chain: Optional full root-to-leaf chain. When omitted, the
+            active workflow chain is extended with ``warrant``.
+        compress: Whether to compress the per-dispatch warrant header.
         start_to_close_timeout: Timeout for activity execution
         schedule_to_close_timeout: Timeout from schedule to completion
         schedule_to_start_timeout: Timeout from schedule to start
@@ -254,13 +266,56 @@ async def tenuo_execute_activity(
         }.items() if v is not None
     }
 
+    if (warrant is None) != (key_id is None):
+        raise TenuoContextError(
+            "tenuo_execute_activity: warrant and key_id must be provided together."
+        )
+
+    override_headers: Optional[Dict[str, bytes]] = None
+    if warrant is not None:
+        assert key_id is not None  # narrowed by the paired-argument check above
+        override_headers = tenuo_headers(warrant, key_id, compress=compress)
+
+        if warrant_chain is not None:
+            chain = list(warrant_chain)
+        else:
+            raw_current = _current_workflow_headers()
+            encoded_current = raw_current.get(TENUO_CHAIN_HEADER)
+            if encoded_current:
+                from tenuo_core import decode_warrant_stack_base64 as _decode_stack
+
+                chain = list(_decode_stack(encoded_current.decode("utf-8")))
+            else:
+                chain = [current_warrant()]
+            chain.append(warrant)
+
+        if not chain:
+            raise TenuoContextError(
+                "tenuo_execute_activity: warrant_chain must not be empty."
+            )
+        if chain[-1].to_bytes() != warrant.to_bytes():
+            raise TenuoContextError(
+                "tenuo_execute_activity: warrant_chain must end with warrant."
+            )
+        if len(chain) > 1:
+            from tenuo_core import encode_warrant_stack as _encode_stack
+
+            override_headers[TENUO_CHAIN_HEADER] = _encode_stack(chain).encode("utf-8")
+
     run_key = _current_run_key()
     with _store_lock:
         _pending_activity_fn[run_key] = activity
 
+    override_token = None
+    if override_headers is not None:
+        override_token = _activity_warrant_override.set(override_headers)
+    activity_fn_token = _activity_fn_override.set(activity)
     try:
         return await workflow.execute_activity(activity, **activity_kwargs)
     finally:
+        _activity_fn_override.reset(activity_fn_token)
+        if override_token is not None:
+            _activity_warrant_override.reset(override_token)
         with _store_lock:
             _pending_activity_fn.pop(run_key, None)
 
@@ -1086,26 +1141,40 @@ async def create_scheduled_workflow_with_warrant(
     workflow_args: Optional[list] = None,
     workflow_kwargs: Optional[dict] = None,
     task_queue: str = "default",
+    compress: bool = True,
+    memo: Optional[dict] = None,
     **schedule_kwargs: Any,
 ) -> Any:
-    """Create a Temporal Schedule that carries a Tenuo warrant in the schedule memo."""
-    import base64 as _b64
-    from temporalio.client import Schedule, ScheduleActionStartWorkflow
+    """Create a Temporal Schedule whose workflow starts carry Tenuo headers.
 
-    warrant_bytes = warrant.to_bytes()
-    memo = {
-        "tenuo_warrant": _b64.b64encode(warrant_bytes).decode(),
-        "tenuo_key_id": key_id,
-    }
+    The supplied warrant is embedded in the Schedule action and reused for
+    every trigger. Its TTL must therefore cover the intended Schedule lifetime.
+    For unbounded recurring Schedules, start a workflow under a longer-lived
+    issuer warrant and mint short-lived execution warrants per Activity.
+    """
+    from temporalio.client import Schedule, ScheduleActionStartWorkflow
+    from temporalio.api.common.v1 import Payload
+
+    if workflow_kwargs:
+        raise ValueError(
+            "Temporal workflow arguments are positional. Pass workflow_args=; "
+            "workflow_kwargs= is not supported."
+        )
+
+    raw_headers = tenuo_headers(warrant, key_id, compress=compress)
+    payload_headers = {name: Payload(data=value) for name, value in raw_headers.items()}
 
     action = ScheduleActionStartWorkflow(
         workflow,
-        *(workflow_args or []),
-        **(workflow_kwargs or {}),
+        args=workflow_args or [],
         id=f"{schedule_id}-run",
         task_queue=task_queue,
         memo=memo,
     )
+    # ``headers`` is a supported ScheduleActionStartWorkflow field but is not
+    # present in the temporalio 1.23 overload stubs. Assign after construction
+    # to preserve compatibility with our minimum SDK while remaining typed.
+    action.headers = payload_headers
 
     schedule = Schedule(action=action, spec=schedule_spec)
     return await client.create_schedule(schedule_id, schedule, **schedule_kwargs)
@@ -1119,31 +1188,67 @@ async def tenuo_complete_async_activity(
     *,
     client: Optional["Client"] = None,
     task_queue: Optional[str] = None,
+    warrant_chain: Optional[List[Any]] = None,
 ) -> None:
-    """Complete an async activity with Tenuo authorization headers.
+    """Complete an async Activity after fail-closed Tenuo validation.
 
-    PoP signing is best-effort and is skipped (with a debug log) when
-    no worker config can be located. To enable it, pass *task_queue*
-    to select the registered :class:`TenuoPluginConfig`; otherwise the
-    completion proceeds without a PoP signature.
+    Temporal's async-completion RPC has no user-header field, so authorization
+    cannot be transported to a second worker. This helper instead verifies the
+    warrant chain (including expiry/revocation) and proves that ``key_id``
+    resolves to the warrant holder before releasing the completion call.
+
+    ``task_queue`` is required so multi-worker processes cannot select another
+    tenant's key resolver. Supply ``warrant_chain`` for delegated warrants;
+    root warrants default to a one-element chain.
     """
-    import datetime as _datetime
 
     from tenuo.temporal._state import _get_worker_config
 
-    now = _datetime.datetime.now(_datetime.timezone.utc)
+    worker_cfg = _get_worker_config(task_queue)
+    if worker_cfg is None:
+        raise TenuoContextError(
+            "tenuo_complete_async_activity: no TenuoPluginConfig registered for "
+            f"task_queue={task_queue!r}. Pass the exact Activity task queue."
+        )
+    if worker_cfg.key_resolver is None:
+        raise TenuoContextError(
+            "tenuo_complete_async_activity: the registered worker config has no key_resolver."
+        )
+
+    roots = list(worker_cfg.trusted_roots or [])
+    if worker_cfg.trusted_roots_provider is not None:
+        roots = list(worker_cfg.trusted_roots_provider())
+    if not roots:
+        raise TenuoContextError(
+            "tenuo_complete_async_activity: trusted roots are required."
+        )
+
+    chain = list(warrant_chain) if warrant_chain is not None else [warrant]
+    if not chain or chain[-1].to_bytes() != warrant.to_bytes():
+        raise TenuoContextError(
+            "tenuo_complete_async_activity: warrant_chain must end with warrant."
+        )
 
     try:
-        worker_cfg = _get_worker_config(task_queue)
-        if worker_cfg is not None and worker_cfg.key_resolver is not None:
-            key = await worker_cfg.key_resolver.resolve(key_id)
-            if key is not None:
-                import json as _json
-                payload_str = _json.dumps({"result": str(result), "ts": now.isoformat()})
-                if hasattr(warrant, "sign_pop"):
-                    warrant.sign_pop(payload_str.encode(), key)
-    except Exception:
-        logger.debug("PoP signing skipped for async activity completion", exc_info=True)
+        from tenuo_core import Authorizer
+
+        authorizer = Authorizer(trusted_roots=roots)
+        revocations = worker_cfg.revocation_list
+        if worker_cfg.revocation_list_provider is not None:
+            revocations = worker_cfg.revocation_list_provider()
+        if revocations is not None and hasattr(authorizer, "set_revocation_list"):
+            authorizer.set_revocation_list(revocations)
+        authorizer.verify_chain(chain)
+    except Exception as exc:
+        raise TenuoContextError(
+            f"tenuo_complete_async_activity: warrant validation failed: {exc}"
+        ) from exc
+
+    key = await worker_cfg.key_resolver.resolve(key_id)
+    if key is None or key.public_key.to_bytes() != warrant.holder_key.to_bytes():
+        raise TenuoContextError(
+            "tenuo_complete_async_activity: key_id does not resolve to the warrant holder."
+        )
 
     if isinstance(handle_or_task_token, (bytes, bytearray)):
         if client is None:

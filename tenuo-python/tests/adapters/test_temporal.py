@@ -30,6 +30,7 @@ from tenuo.temporal.exceptions import (  # noqa: E402
     LocalActivityError,
     PopVerificationError,
     TemporalConstraintViolation,
+    TenuoContextError,
     WarrantExpired,
 )
 from tenuo.temporal._resolvers import EnvKeyResolver, KeyResolver  # noqa: E402
@@ -2181,11 +2182,65 @@ def test_tenuo_continue_as_new_in_all():
     assert callable(tenuo_continue_as_new)
 
 
-def test_create_scheduled_workflow_with_warrant_exists():
-    """Verify the scheduled workflow helper is exported."""
-    from tenuo.temporal._workflow import create_scheduled_workflow_with_warrant
-    import inspect
-    assert inspect.iscoroutinefunction(create_scheduled_workflow_with_warrant)
+@pytest.mark.asyncio
+async def test_create_scheduled_workflow_carries_tenuo_headers_not_warrant_memo():
+    """Scheduled starts must use workflow headers, which the worker reads."""
+    from datetime import timedelta
+
+    from temporalio.client import ScheduleIntervalSpec, ScheduleSpec
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import create_scheduled_workflow_with_warrant
+
+    holder = SigningKey.generate()
+    warrant = Warrant.issue(
+        holder,
+        capabilities={"read_file": {}},
+        holder=holder.public_key,
+    )
+    client = AsyncMock()
+    client.create_schedule.return_value = "schedule-handle"
+
+    result = await create_scheduled_workflow_with_warrant(
+        client,
+        "nightly-report",
+        "ReportWorkflow",
+        warrant,
+        "report-agent",
+        ScheduleSpec(
+            intervals=[ScheduleIntervalSpec(every=timedelta(days=1))]
+        ),
+        workflow_args=["tenant-a"],
+        memo={"purpose": "nightly report"},
+    )
+
+    assert result == "schedule-handle"
+    schedule = client.create_schedule.await_args.args[1]
+    assert schedule.action.headers[TENUO_KEY_ID_HEADER].data == b"report-agent"
+    assert TENUO_WARRANT_HEADER in schedule.action.headers
+    assert schedule.action.memo == {"purpose": "nightly report"}
+    assert "tenuo_warrant" not in schedule.action.memo
+    assert schedule.action.args
+
+
+@pytest.mark.asyncio
+async def test_scheduled_workflow_rejects_keyword_workflow_arguments():
+    from temporalio.client import ScheduleSpec
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import create_scheduled_workflow_with_warrant
+
+    holder = SigningKey.generate()
+    warrant = Warrant.issue(holder, capabilities={"x": {}}, holder=holder.public_key)
+
+    with pytest.raises(ValueError, match="positional"):
+        await create_scheduled_workflow_with_warrant(
+            AsyncMock(),
+            "schedule-id",
+            "Workflow",
+            warrant,
+            "holder",
+            ScheduleSpec(),
+            workflow_kwargs={"unsupported": True},
+        )
 
 
 # =============================================================================
@@ -2193,11 +2248,115 @@ def test_create_scheduled_workflow_with_warrant_exists():
 # =============================================================================
 
 
-def test_tenuo_complete_async_activity_exists():
-    """Verify the async activity completion wrapper is exported."""
-    from tenuo.temporal._workflow import tenuo_complete_async_activity
-    import inspect
-    assert inspect.iscoroutinefunction(tenuo_complete_async_activity)
+@pytest.mark.asyncio
+async def test_async_activity_completion_validates_chain_and_holder_key():
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    holder = SigningKey.generate()
+    warrant = Warrant.issue(
+        holder,
+        capabilities={"external_job": {}},
+        holder=holder.public_key,
+    )
+    resolver = AsyncMock()
+    resolver.resolve.return_value = holder
+    _set_worker_config(
+        TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=[holder.public_key],
+        ),
+        task_queue="async-completion-valid",
+    )
+    handle = AsyncMock()
+
+    await tenuo_complete_async_activity(
+        handle,
+        {"status": "done"},
+        warrant,
+        "holder-key",
+        task_queue="async-completion-valid",
+    )
+
+    handle.complete.assert_awaited_once_with({"status": "done"})
+
+
+@pytest.mark.asyncio
+async def test_async_activity_completion_rejects_wrong_holder_key():
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    holder = SigningKey.generate()
+    wrong_holder = SigningKey.generate()
+    warrant = Warrant.issue(
+        holder,
+        capabilities={"external_job": {}},
+        holder=holder.public_key,
+    )
+    resolver = AsyncMock()
+    resolver.resolve.return_value = wrong_holder
+    _set_worker_config(
+        TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=[holder.public_key],
+        ),
+        task_queue="async-completion-wrong-holder",
+    )
+    handle = AsyncMock()
+
+    with pytest.raises(TenuoContextError, match="warrant holder"):
+        await tenuo_complete_async_activity(
+            handle,
+            "result",
+            warrant,
+            "wrong-key",
+            task_queue="async-completion-wrong-holder",
+        )
+
+    handle.complete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_per_activity_warrant_override_is_task_local_and_cleared():
+    from temporalio import workflow
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import tenuo_execute_activity
+    from tenuo.temporal._state import _activity_warrant_override
+
+    holder = SigningKey.generate()
+    warrant = Warrant.issue(
+        holder,
+        capabilities={"read_file": {}},
+        holder=holder.public_key,
+    )
+    seen_headers = None
+
+    async def capture_dispatch(*_args, **_kwargs):
+        nonlocal seen_headers
+        seen_headers = _activity_warrant_override.get()
+        return "ok"
+
+    info = MagicMock(run_id="run-per-dispatch", workflow_id="wf-per-dispatch")
+    with (
+        patch.object(workflow, "info", return_value=info),
+        patch.object(workflow, "execute_activity", side_effect=capture_dispatch),
+    ):
+        result = await tenuo_execute_activity(
+            "read_file",
+            args=["/data/report.txt"],
+            warrant=warrant,
+            key_id="holder-key",
+            warrant_chain=[warrant],
+            start_to_close_timeout=1,
+        )
+
+    assert result == "ok"
+    assert seen_headers is not None
+    assert seen_headers[TENUO_KEY_ID_HEADER] == b"holder-key"
+    assert TENUO_WARRANT_HEADER in seen_headers
+    assert _activity_warrant_override.get() is None
 
 
 # =============================================================================

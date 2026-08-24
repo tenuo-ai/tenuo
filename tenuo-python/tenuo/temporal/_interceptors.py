@@ -49,6 +49,8 @@ from tenuo.temporal._pop import (
     _warrant_tool_has_non_empty_field_constraints,
 )
 from tenuo.temporal._state import (
+    _activity_fn_override,
+    _activity_warrant_override,
     _current_run_key,
     _pending_activity_approvals,
     _pending_activity_fn,
@@ -169,8 +171,12 @@ class _TenuoWorkflowOutboundInterceptor:
             with _store_lock:
                 pending_approvals = _pending_activity_approvals.pop(run_key, None)
 
-            with _store_lock:
-                raw_headers = dict(_workflow_headers_store.get(run_key, {}))
+            override_headers = _activity_warrant_override.get()
+            if override_headers is not None:
+                raw_headers = dict(override_headers)
+            else:
+                with _store_lock:
+                    raw_headers = dict(_workflow_headers_store.get(run_key, {}))
 
             if raw_headers:
                 warrant = _extract_warrant_from_headers(raw_headers)
@@ -189,6 +195,8 @@ class _TenuoWorkflowOutboundInterceptor:
                     signer = self._config.key_resolver.resolve_sync(key_id)
 
                     activity_fn = getattr(input, "fn", None)
+                    if activity_fn is None:
+                        activity_fn = _activity_fn_override.get()
                     if activity_fn is None:
                         with _store_lock:
                             activity_fn = _pending_activity_fn.get(run_key)

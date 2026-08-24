@@ -628,7 +628,11 @@ What the TTL **does** bound is how long activities scheduled by that workflow ca
 
 - **Short workflows (< TTL):** mint a warrant whose TTL covers the worst-case workflow duration including retries and timer sleeps.
 - **Long workflows (> a single warrant can safely cover):** treat the warrant like a short-lived session token. Use one of:
-  - `workflow_grant(...)` to mint a narrower per-phase warrant inside the workflow (requires the parent warrant to be an issuer).
+  - `workflow_issue_execution(...)` to mint a short-lived execution warrant
+    from a longer-lived issuer warrant, then pass it to
+    `tenuo_execute_activity(..., warrant=execution_warrant, key_id=...)`.
+  - `workflow_grant(...)` to mint a narrower per-phase delegated warrant, then
+    pass it to the same per-Activity override (requires the parent holder key).
   - `tenuo_execute_child_workflow(...)` to spawn child workflows each with their own freshly-minted warrant.
   - A resolver-side key rotation so `retry_pop_max_windows` extends the PoP window for durable retries (see previous section).
 - **Unbounded workflows:** structure work as a series of child workflows rather than a single long-lived parent so each fresh warrant is scoped to a bounded unit of work.
@@ -849,9 +853,43 @@ file_warrant = await workflow_grant(
     constraints={"path": path},
     ttl_seconds=60,
 )
+
+contents = await tenuo_execute_activity(
+    read_file,
+    args=[path],
+    warrant=file_warrant,
+    key_id=current_key_id(),
+    start_to_close_timeout=timedelta(seconds=30),
+)
 ```
 
 Constraint keys must already exist in the parent warrant.
+
+The per-Activity override is held in a workflow task-local `ContextVar`, so
+parallel workflow tasks cannot consume one another's warrant. When
+`warrant_chain=` is omitted, Tenuo extends the active workflow chain with the
+override warrant automatically.
+
+### Scheduled Workflows
+
+`create_scheduled_workflow_with_warrant(...)` places Tenuo payloads in the
+`ScheduleActionStartWorkflow.headers` field consumed by the worker interceptor.
+It never stores warrant material in memo. Because a Schedule action is static,
+the same warrant is used by every trigger; choose a TTL that covers the bounded
+Schedule lifetime or use an issuer warrant plus per-Activity execution warrants.
+
+### Async Activity Completion
+
+`tenuo_complete_async_activity(...)` completes an Activity whose original
+dispatch was already authorized. Temporal's completion RPC has no user-header
+field, so the helper validates locally before releasing the completion:
+
+- exact task-queue worker-config selection;
+- trusted-root chain, expiry, and configured revocation-list validation; and
+- `key_id` resolution to the leaf warrant's holder key.
+
+Delegated warrants must include `warrant_chain=[root, ..., leaf]`. Validation is
+fail-closed; the helper never falls back to an unverified completion.
 
 ---
 
