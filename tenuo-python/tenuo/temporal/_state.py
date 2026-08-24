@@ -192,6 +192,11 @@ def _get_only_worker_config() -> "Optional[TenuoPluginConfig]":
     return next(iter(_worker_configs.values()))
 
 
+def _worker_config_count() -> int:
+    """Return the number of registered worker configs for diagnostics."""
+    return len(_worker_configs)
+
+
 def _clear_worker_config(task_queue: Optional[str] = None) -> None:
     """Testing hook: clear the registered worker config(s).
 

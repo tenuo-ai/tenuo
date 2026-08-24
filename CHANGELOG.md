@@ -19,8 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `create_scheduled_workflow_with_warrant()` and
   `tenuo_complete_async_activity()` are now exported from `tenuo.temporal`.
   Scheduled starts carry real `x-tenuo-*` headers, while async completion
-  fails closed unless the warrant chain is trusted and the configured key
-  resolves to the warrant holder.
+  performs a local preflight that rejects untrusted, malformed, expired, or
+  revoked warrant chains before calling Temporal's completion handle. This
+  helper is not a Temporal enforcement boundary and can be bypassed by callers
+  that invoke the raw completion API directly.
 
 ### Fixed
 
@@ -31,11 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer computes an unused signature or silently completes without validation.
   Temporal's async-completion RPC has no user-header field, so the previous
   signature never left the process and could not be checked downstream.
+- **Root expiry and Python revocation enforcement.** `verify_chain()` now checks
+  current-time validity for every warrant, including singleton roots. Python's
+  `Authorizer` now exposes `set_revocation_list()` and accepts an SRL only when
+  its signature is valid and its issuer is an already-configured trusted root;
+  Temporal no longer silently skips SRL enforcement when the binding is absent.
 - **Temporal helper compatibility and failure handling.** Deprecated Schedule
   `workflow_kwargs` continue to be forwarded as action options, and omitted
   async-completion `task_queue` values remain supported when exactly one worker
-  config is registered. Resolver failures are consistently wrapped, delegated
-  completions require an explicit chain, and trusted-root provider failures
+  config is registered. Delegated completions require an explicit chain, and
+  trusted-root provider failures
   retain the last configured root snapshot. Revocation-provider failures retain
   the configured revocation list, and plugin workers now reject a missing task
   queue during setup instead of failing later during completion or minting.

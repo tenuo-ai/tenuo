@@ -84,11 +84,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # _client
     "TenuoWarrantContextPropagator": ("tenuo.temporal._client", "TenuoWarrantContextPropagator"),
     "tenuo_warrant_context": ("tenuo.temporal._client", "tenuo_warrant_context"),
-    # _warrant_source
-    "WarrantSource": ("tenuo.temporal._warrant_source", "WarrantSource"),
-    "LiteralWarrantSource": ("tenuo.temporal._warrant_source", "LiteralWarrantSource"),
-    "EnvWarrantSource": ("tenuo.temporal._warrant_source", "EnvWarrantSource"),
-    "CloudTriggerWarrantSource": ("tenuo.temporal._warrant_source", "CloudTriggerWarrantSource"),
     # _decorators
     "tool": ("tenuo.temporal._decorators", "tool"),
     "unprotected": ("tenuo.temporal._decorators", "unprotected"),

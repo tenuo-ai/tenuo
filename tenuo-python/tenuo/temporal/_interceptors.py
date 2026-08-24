@@ -78,6 +78,35 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("tenuo.temporal")
 
+_CONFIG_REVOCATION_LIST = object()
+
+
+def _build_authorizer(
+    authorizer_cls: Any,
+    trusted_roots: Any,
+    config: "TenuoPluginConfig",
+    *,
+    revocation_list: Any = _CONFIG_REVOCATION_LIST,
+    **kwargs: Any,
+) -> Any:
+    """Build an Authorizer with the worker's shared validation policy.
+
+    ``revocation_list`` can override the config snapshot after a provider
+    refresh. Missing core SRL support is an error, never a silent downgrade.
+    """
+    auth = authorizer_cls(trusted_roots=trusted_roots, **kwargs)
+    if config.clearance_requirements:
+        for tool, clearance in config.clearance_requirements.items():
+            auth.require_clearance(tool, clearance)
+    srl = (
+        config.revocation_list
+        if revocation_list is _CONFIG_REVOCATION_LIST
+        else revocation_list
+    )
+    if srl is not None:
+        auth.set_revocation_list(srl)
+    return auth
+
 # OTel is a soft dependency
 try:
     from opentelemetry import trace as _otel_trace
@@ -631,11 +660,11 @@ class TenuoActivityInboundInterceptor:
         self._retry_authorizer: Optional[Any] = None
         try:
             from tenuo_core import Authorizer
-            self._authorizer = self._build_authorizer(
+            self._authorizer = _build_authorizer(
                 Authorizer, config.trusted_roots, config
             )
             if config.retry_pop_max_windows is not None:
-                self._retry_authorizer = self._build_authorizer(
+                self._retry_authorizer = _build_authorizer(
                     Authorizer,
                     config.trusted_roots,
                     config,
@@ -648,24 +677,6 @@ class TenuoActivityInboundInterceptor:
                 "Install tenuo with the native extension, or ensure the "
                 "interpreter can import tenuo_core."
             ) from e
-
-    @staticmethod
-    def _build_authorizer(
-        authorizer_cls: Any,
-        trusted_roots: Any,
-        config: "TenuoPluginConfig",
-        **kwargs: Any,
-    ) -> Any:
-        """Build an Authorizer instance and apply config-level policies."""
-        auth = authorizer_cls(trusted_roots=trusted_roots, **kwargs)
-        if config.clearance_requirements:
-            for tool, clearance in config.clearance_requirements.items():
-                if hasattr(auth, "require_clearance"):
-                    auth.require_clearance(tool, clearance)
-        srl = config.revocation_list
-        if srl is not None and hasattr(auth, "set_revocation_list"):
-            auth.set_revocation_list(srl)
-        return auth
 
     def _maybe_refresh_trusted_roots(self) -> None:
         """Rebuild Authorizer from ``trusted_roots_provider`` on a fixed interval."""
@@ -702,11 +713,11 @@ class TenuoActivityInboundInterceptor:
                 # ``self._config.trusted_roots`` because ``dataclasses.replace``
                 # would re-run ``__post_init__`` and fail the either/or check
                 # when ``trusted_roots_provider=`` is set.
-                self._authorizer = self._build_authorizer(
+                self._authorizer = _build_authorizer(
                     Authorizer, roots, self._config
                 )
                 if self._config.retry_pop_max_windows is not None:
-                    self._retry_authorizer = self._build_authorizer(
+                    self._retry_authorizer = _build_authorizer(
                         Authorizer,
                         roots,
                         self._config,
@@ -758,7 +769,7 @@ class TenuoActivityInboundInterceptor:
                 # Authorizer instead; the snapshot is *not* resynced.
                 self._config = _dc.replace(self._config, revocation_list=srl)
                 for auth in (self._authorizer, self._retry_authorizer):
-                    if auth is not None and hasattr(auth, "set_revocation_list"):
+                    if auth is not None:
                         try:
                             auth.set_revocation_list(srl)
                         except Exception as e:

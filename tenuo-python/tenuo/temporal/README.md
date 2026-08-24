@@ -32,7 +32,7 @@ Activity definitions require no changes. Authorization is transparent to user wo
 | `_observability.py` | `TemporalAuditEvent`, `TenuoMetrics`. |
 | `_constants.py` | Wire header names and encoding limits. |
 | `exceptions.py` | Public exception taxonomy with stable `error_code` attributes. |
-| `_warrant_source.py` | Public lazy warrant sources (`Literal`, `Env`, `CloudTrigger`) for workflow starts. |
+| `_warrant_source.py` | Internal helpers for warrant construction and chain encoding. |
 
 ## Invariants worth knowing before editing
 

@@ -39,7 +39,7 @@ Durability sharpens the problem. An agent loop that pauses on a signal, resumes 
 
 Tenuo addresses this challenge with a task-scoped warrant: a cryptographic authorization layer that operates on top of your worker's existing credentials (service account or OAuth token) and is verified offline at the worker boundary before any Activity runs.
 
-This separate layer bounds a prompt-injected agent's actions, gates high-risk calls on cryptographically signed human approvals, and produces verifiable execution evidence for every protected action.
+This separate layer bounds a prompt-injected agent's actions, gates high-risk calls on cryptographically signed human approvals, and produces an attested receipt for every single action taken.
 
 This is achieved without touching your existing Activity code by leveraging Temporal primitives you already understand: interceptors enforce warrants, signals carry approvals, and event history provides a verifiable audit log.
 
@@ -68,7 +68,7 @@ Verification applies three checks: signature validity, request-hash binding, and
 [done]     workflow complete
 ```
 
-End-of-incident authorization evidence:
+End-of-incident receipt chain:
 
 ```
 incident-warrant
@@ -84,7 +84,7 @@ incident-warrant
 
 That's the audit chain a regulator wants to see.
 
-The warrant is issuer-signed, each dispatch carries the holder's PoP signature, and every elevated action carries the operator's SignedApproval. Together, those artifacts let an auditor verify the authority presented for each protected dispatch. Worker authorization decisions are emitted separately as `TemporalAuditEvent` records.
+The warrant is issuer-signed, each dispatch carries the holder's PoP signature, and every elevated action carries the operator's SignedApproval. Each entry becomes an independently attested cryptographic receipt.
 
 The whole chain verifies offline with just a trusted-root pubkey. Temporal's event history is immutable and replayable, so every decision in the sequence can be reconstructed, not just recalled from logs. Every ALLOWED is provably tied to the provenance of authority.
 
@@ -155,7 +155,7 @@ Every authorized Activity gets a human-readable summary in the Event History:
 Temporal Event History with Tenuo Warrants.
 {: .image-caption}
 
-Authorized Activities receive Tenuo-prefixed summaries, while denials show up as non-retryable `ApplicationError` events with stable error codes `(CHAIN_INVALID, WARRANT_EXPIRED, POP_VERIFICATION_FAILED, CONSTRAINT_VIOLATED)`. Warrant, PoP, and approval material remains in the corresponding Event History headers for forensic verification; operational dashboards can consume the emitted audit events and metrics.
+Approvals are displayed with their cryptographic signatures. Denials show up as non-retryable `ApplicationError` events with stable error codes `(CHAIN_INVALID, WARRANT_EXPIRED, POP_VERIFICATION_FAILED, CONSTRAINT_VIOLATED`). Alerts and dashboards live on the same primitives Temporal users already use.
 
 ## From demo to production
 

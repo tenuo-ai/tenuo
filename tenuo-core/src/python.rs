@@ -5336,6 +5336,16 @@ impl PyAuthorizer {
         self.inner.add_trusted_root(key.inner.clone());
     }
 
+    /// Install a signed revocation list from an already-trusted root.
+    ///
+    /// The Rust authorizer verifies both that the SRL issuer is in its trust
+    /// roots and that the SRL signature is valid before accepting it.
+    fn set_revocation_list(&mut self, srl: &PySignedRevocationList) -> PyResult<()> {
+        self.inner
+            .set_revocation_list_from_trusted_issuer(srl.inner.clone())
+            .map_err(to_py_err)
+    }
+
     /// Set the clock tolerance for expiration checks.
     ///
     /// Args:

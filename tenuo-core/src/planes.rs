@@ -882,13 +882,17 @@ impl DataPlane {
             }
         }
 
-        // STRUCTURAL INVARIANT CHECK: Validate each warrant's structural consistency
-        // (version, type constraints, min_approvals, etc.) without clock-based checks.
-        // This catches malformed deserialized warrants that bypass builder-level checks.
-        // Temporal checks (expiry, clock-skew) are omitted here; they are either
-        // handled separately by the chain verifier or intentionally relaxed in
-        // offline/test contexts that use fixed future timestamps.
+        // Validate temporal validity and structural consistency for every
+        // warrant, including a single-element/root chain. Previously expiry
+        // was checked only while walking child links, so an expired root was
+        // accepted despite verify_chain's documented contract.
         for warrant in chain {
+            if warrant.is_expired_with_tolerance(self.clock_tolerance) {
+                return Err(Error::WarrantExpired {
+                    warrant_id: warrant.id().to_string(),
+                    expired_at: warrant.expires_at(),
+                });
+            }
             warrant.validate_structural().map_err(|e| {
                 Error::ChainVerificationFailed(format!(
                     "warrant '{}' failed structural validation: {}",
@@ -1708,6 +1712,24 @@ impl Authorizer {
         Ok(())
     }
 
+    /// Set a signed revocation list only when its issuer is already trusted.
+    ///
+    /// This is the safe one-argument form exposed to language bindings: the
+    /// SRL cannot choose an arbitrary self-asserted verification key because
+    /// its issuer must match one of this Authorizer's configured trust roots.
+    pub fn set_revocation_list_from_trusted_issuer(
+        &mut self,
+        srl: SignedRevocationList,
+    ) -> Result<()> {
+        let issuer = srl.issuer().clone();
+        if !self.trusted_keys.iter().any(|key| key == &issuer) {
+            return Err(Error::SignatureInvalid(
+                "revocation list issuer is not a trusted root".to_string(),
+            ));
+        }
+        self.set_revocation_list(srl, &issuer)
+    }
+
     /// Set the clock tolerance (mutable version).
     pub fn set_clock_tolerance(&mut self, tolerance: chrono::Duration) {
         self.clock_tolerance = tolerance;
@@ -2039,13 +2061,17 @@ impl Authorizer {
             }
         }
 
-        // STRUCTURAL INVARIANT CHECK: Validate each warrant's structural consistency
-        // (version, type constraints, min_approvals, etc.) without clock-based checks.
-        // This catches malformed deserialized warrants that bypass builder-level checks.
-        // Temporal checks (expiry, clock-skew) are omitted here; they are either
-        // handled separately by the chain verifier or intentionally relaxed in
-        // offline/test contexts that use fixed future timestamps.
+        // Validate temporal validity and structural consistency for every
+        // warrant, including a single-element/root chain. Previously expiry
+        // was checked only while walking child links, so an expired root was
+        // accepted despite verify_chain's documented contract.
         for warrant in chain {
+            if warrant.is_expired_with_tolerance(self.clock_tolerance) {
+                return Err(Error::WarrantExpired {
+                    warrant_id: warrant.id().to_string(),
+                    expired_at: warrant.expires_at(),
+                });
+            }
             warrant.validate_structural().map_err(|e| {
                 Error::ChainVerificationFailed(format!(
                     "warrant '{}' failed structural validation: {}",
@@ -2208,14 +2234,6 @@ impl Authorizer {
                 child.expires_at(),
                 parent.expires_at()
             )));
-        }
-
-        // Check expiration with clock tolerance
-        if child.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired {
-                warrant_id: child.id().to_string(),
-                expired_at: child.expires_at(),
-            });
         }
 
         // Validate monotonicity based on warrant type
@@ -2958,12 +2976,45 @@ mod tests {
             .build(&control_plane.keypair)
             .unwrap();
         authorizer
-            .set_revocation_list(srl, &control_plane.public_key())
+            .set_revocation_list_from_trusted_issuer(srl)
             .unwrap();
 
         let result = authorizer.verify_chain(&[root, child]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("revoked"));
+    }
+
+    #[test]
+    fn test_authorizer_rejects_expired_single_root_chain() {
+        let control_plane = ControlPlane::generate();
+        let warrant = control_plane
+            .issue_warrant("test", &[], Duration::from_secs(0))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(1100));
+
+        let authorizer = Authorizer::new()
+            .with_trusted_root(control_plane.public_key())
+            .with_clock_tolerance(chrono::Duration::zero());
+
+        let error = authorizer.verify_chain(&[warrant]).unwrap_err();
+        assert!(matches!(error, Error::WarrantExpired { .. }));
+    }
+
+    #[test]
+    fn test_authorizer_rejects_srl_from_untrusted_issuer() {
+        let control_plane = ControlPlane::generate();
+        let attacker = ControlPlane::generate();
+        let srl = SignedRevocationList::builder()
+            .revoke("tnu_wrt_target")
+            .version(1)
+            .build(&attacker.keypair)
+            .unwrap();
+        let mut authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
+
+        let error = authorizer
+            .set_revocation_list_from_trusted_issuer(srl)
+            .unwrap_err();
+        assert!(error.to_string().contains("not a trusted root"));
     }
 
     // =========================================================================

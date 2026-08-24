@@ -889,11 +889,14 @@ dispatch was already authorized. Temporal's completion RPC has no user-header
 field, so the helper validates locally before releasing the completion:
 
 - exact task-queue worker-config selection;
-- trusted-root chain, expiry, and configured revocation-list validation; and
-- `key_id` resolution to the leaf warrant's holder key.
+- trusted-root chain, signature, linkage, and current-time validation; and
+- configured revocation-list validation.
 
 Delegated warrants must include `warrant_chain=[root, ..., leaf]`. Validation is
-fail-closed; the helper never falls back to an unverified completion.
+performed before this helper calls the completion handle; it never falls back
+to an unverified completion. This is a caller-side preflight, not a Temporal
+enforcement boundary: code that directly invokes `AsyncActivityHandle.complete()`
+can bypass it.
 For compatibility, callers that omit `task_queue=` may use the sole registered
 worker config with a deprecation warning. Zero or multiple registrations fail
 closed. Provider failures or empty results retain the config's last known-good
@@ -902,10 +905,14 @@ retain the configured revocation list. `TenuoTemporalPlugin` validates that the
 worker has a non-empty task queue during worker setup, so the registry cannot be
 silently left unconfigured.
 
+An empty, valid signed revocation list is different from `None`: it explicitly
+replaces the prior list and clears its revoked-ID set.
+
 Temporal's async-completion RPC cannot carry user headers. Earlier helper code
 computed a PoP signature but discarded it, so no downstream validator could
-observe it. The helper therefore validates locally before releasing completion;
-the original Activity dispatch remains the worker-boundary PoP authorization.
+observe it. The helper therefore does not resolve or load the holder's private
+key merely to compare its public half. The original Activity dispatch remains
+the worker-boundary PoP authorization.
 
 ---
 

@@ -1198,18 +1198,15 @@ async def create_scheduled_workflow_with_warrant(
     raw_headers = tenuo_headers(warrant, key_id, compress=compress)
     payload_headers = {name: Payload(data=value) for name, value in raw_headers.items()}
 
-    action = ScheduleActionStartWorkflow(
+    action = ScheduleActionStartWorkflow(  # type: ignore[call-overload]
         workflow,
         args=workflow_args or [],
         id=f"{schedule_id}-run",
         task_queue=task_queue,
         memo=memo,
+        headers=payload_headers,
         **action_options,
     )
-    # ``headers`` is a supported ScheduleActionStartWorkflow field but is not
-    # present in the temporalio 1.23 overload stubs. Assign after construction
-    # to preserve compatibility with our minimum SDK while remaining typed.
-    action.headers = payload_headers
 
     schedule = Schedule(action=action, spec=schedule_spec)
     return await client.create_schedule(schedule_id, schedule, **schedule_kwargs)
@@ -1219,18 +1216,18 @@ async def tenuo_complete_async_activity(
     handle_or_task_token: Any,
     result: Any,
     warrant: "Warrant",
-    key_id: str,
+    key_id: Optional[str] = None,
     *,
     client: Optional["Client"] = None,
     task_queue: Optional[str] = None,
     warrant_chain: Optional[List[Any]] = None,
 ) -> None:
-    """Complete an async Activity after fail-closed Tenuo validation.
+    """Complete an async Activity after local Tenuo preflight validation.
 
     Temporal's async-completion RPC has no user-header field, so authorization
     cannot be transported to a second worker. This helper instead verifies the
-    warrant chain (including expiry/revocation) and proves that ``key_id``
-    resolves to the warrant holder before releasing the completion call.
+    warrant chain (including expiry/revocation) before releasing the completion
+    call through this helper.
 
     ``task_queue`` selects the exact worker config so multi-worker processes
     cannot select another tenant's key resolver. For compatibility, omission
@@ -1241,9 +1238,18 @@ async def tenuo_complete_async_activity(
     No completion PoP is returned or attached: Temporal's async-completion RPC
     has no user-header field. Older versions computed a signature and discarded
     it, so it could never be consumed by a downstream validator.
+
+    This is a caller-side guard, not a Temporal enforcement boundary: code with
+    direct access to ``AsyncActivityHandle.complete()`` can bypass it. ``key_id``
+    remains accepted for source compatibility but is not resolved because doing
+    so would load private key material without producing a verifiable proof.
     """
 
-    from tenuo.temporal._state import _get_only_worker_config, _get_worker_config
+    from tenuo.temporal._state import (
+        _get_only_worker_config,
+        _get_worker_config,
+        _worker_config_count,
+    )
 
     if task_queue is None:
         worker_cfg = _get_only_worker_config()
@@ -1258,15 +1264,21 @@ async def tenuo_complete_async_activity(
     else:
         worker_cfg = _get_worker_config(task_queue)
     if worker_cfg is None:
+        if task_queue is None:
+            config_count = _worker_config_count()
+            if config_count == 0:
+                detail = "no worker configs are registered"
+            else:
+                detail = (
+                    f"{config_count} worker configs are registered; task_queue is "
+                    "required to choose one safely"
+                )
+        else:
+            detail = f"no config is registered for task_queue={task_queue!r}"
         raise TenuoContextError(
-            "tenuo_complete_async_activity: no TenuoPluginConfig registered for "
-            f"task_queue={task_queue!r}. Pass the exact Activity task queue."
+            f"tenuo_complete_async_activity: {detail}. Pass the exact Activity "
+            "task queue used during Worker setup."
         )
-    if worker_cfg.key_resolver is None:
-        raise TenuoContextError(
-            "tenuo_complete_async_activity: the registered worker config has no key_resolver."
-        )
-
     # ``TenuoPluginConfig`` snapshots the provider's initial roots. Match the
     # worker interceptor's rotation behavior: a non-empty provider result
     # replaces that snapshot; failure/empty results retain the last good roots.
@@ -1337,27 +1349,19 @@ async def tenuo_complete_async_activity(
 
     try:
         from tenuo_core import Authorizer
+        from tenuo.temporal._interceptors import _build_authorizer
 
-        authorizer = Authorizer(trusted_roots=roots)
-        if revocations is not None and hasattr(authorizer, "set_revocation_list"):
-            authorizer.set_revocation_list(revocations)
+        authorizer = _build_authorizer(
+            Authorizer,
+            roots,
+            worker_cfg,
+            revocation_list=revocations,
+        )
         authorizer.verify_chain(chain)
     except Exception as exc:
         raise TenuoContextError(
             f"tenuo_complete_async_activity: warrant validation failed: {exc}"
         ) from exc
-
-    try:
-        key = await worker_cfg.key_resolver.resolve(key_id)
-    except Exception as exc:
-        raise TenuoContextError(
-            f"tenuo_complete_async_activity: key resolution failed for "
-            f"key_id={key_id!r}: {exc}"
-        ) from exc
-    if key is None or key.public_key.to_bytes() != warrant.holder_key.to_bytes():
-        raise TenuoContextError(
-            "tenuo_complete_async_activity: key_id does not resolve to the warrant holder."
-        )
 
     if isinstance(handle_or_task_token, (bytes, bytearray)):
         if client is None:
