@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tenuo context. Schedule actions now use Temporal's workflow-header field.
 - **Temporal async completion discarded its best-effort PoP.** The helper no
   longer computes an unused signature or silently completes without validation.
+  Temporal's async-completion RPC has no user-header field, so the previous
+  signature never left the process and could not be checked downstream.
+- **Temporal helper compatibility and failure handling.** Deprecated Schedule
+  `workflow_kwargs` continue to be forwarded as action options, and omitted
+  async-completion `task_queue` values remain supported when exactly one worker
+  config is registered. Resolver failures are consistently wrapped, delegated
+  completions require an explicit chain, and trusted-root provider failures
+  retain the last configured root snapshot.
 
 - **MCP tool-call denials could be read as successes on MCP SDK 2.x.** The SDK
   renamed `CallToolResult.isError` to `is_error`, so `SecureMCPClient`'s error

@@ -178,6 +178,20 @@ def _get_worker_config(
     return _worker_configs.get(task_queue)
 
 
+def _get_only_worker_config() -> "Optional[TenuoPluginConfig]":
+    """Return the sole registered worker config, if it is unambiguous.
+
+    This exists only as a compatibility bridge for APIs that historically
+    allowed callers to omit ``task_queue``. Security-sensitive routing should
+    continue to use :func:`_get_worker_config` for exact matching. Returning
+    ``None`` for zero or multiple registrations keeps the bridge fail-closed
+    and prevents cross-queue/tenant config selection.
+    """
+    if len(_worker_configs) != 1:
+        return None
+    return next(iter(_worker_configs.values()))
+
+
 def _clear_worker_config(task_queue: Optional[str] = None) -> None:
     """Testing hook: clear the registered worker config(s).
 

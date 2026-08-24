@@ -2223,7 +2223,10 @@ async def test_create_scheduled_workflow_carries_tenuo_headers_not_warrant_memo(
 
 
 @pytest.mark.asyncio
-async def test_scheduled_workflow_rejects_keyword_workflow_arguments():
+async def test_scheduled_workflow_preserves_deprecated_workflow_kwargs():
+    """Legacy workflow_kwargs are action options and remain compatible."""
+    from datetime import timedelta
+
     from temporalio.client import ScheduleSpec
     from tenuo_core import SigningKey, Warrant
     from tenuo.temporal import create_scheduled_workflow_with_warrant
@@ -2231,7 +2234,33 @@ async def test_scheduled_workflow_rejects_keyword_workflow_arguments():
     holder = SigningKey.generate()
     warrant = Warrant.issue(holder, capabilities={"x": {}}, holder=holder.public_key)
 
-    with pytest.raises(ValueError, match="positional"):
+    client = AsyncMock()
+    timeout = timedelta(minutes=5)
+    with pytest.warns(DeprecationWarning, match="action_options"):
+        await create_scheduled_workflow_with_warrant(
+            client,
+            "schedule-id",
+            "Workflow",
+            warrant,
+            "holder",
+            ScheduleSpec(),
+            workflow_kwargs={"execution_timeout": timeout},
+        )
+
+    schedule = client.create_schedule.await_args.args[1]
+    assert schedule.action.execution_timeout == timeout
+
+
+@pytest.mark.asyncio
+async def test_scheduled_workflow_rejects_managed_action_option_override():
+    from temporalio.client import ScheduleSpec
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import create_scheduled_workflow_with_warrant
+
+    holder = SigningKey.generate()
+    warrant = Warrant.issue(holder, capabilities={"x": {}}, holder=holder.public_key)
+
+    with pytest.raises(ValueError, match="helper-managed fields: task_queue"):
         await create_scheduled_workflow_with_warrant(
             AsyncMock(),
             "schedule-id",
@@ -2239,7 +2268,7 @@ async def test_scheduled_workflow_rejects_keyword_workflow_arguments():
             warrant,
             "holder",
             ScheduleSpec(),
-            workflow_kwargs={"unsupported": True},
+            action_options={"task_queue": "other"},
         )
 
 
@@ -2316,6 +2345,209 @@ async def test_async_activity_completion_rejects_wrong_holder_key():
         )
 
     handle.complete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_activity_completion_wraps_key_resolver_failure():
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    holder = SigningKey.generate()
+    warrant = Warrant.issue(
+        holder,
+        capabilities={"external_job": {}},
+        holder=holder.public_key,
+    )
+    resolver = AsyncMock()
+    resolver.resolve.side_effect = TimeoutError("resolver timed out")
+    _set_worker_config(
+        TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=[holder.public_key],
+        ),
+        task_queue="async-completion-resolver-error",
+    )
+
+    with pytest.raises(TenuoContextError, match="key resolution failed") as exc_info:
+        await tenuo_complete_async_activity(
+            AsyncMock(),
+            "result",
+            warrant,
+            "holder-key",
+            task_queue="async-completion-resolver-error",
+        )
+
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
+
+
+@pytest.mark.asyncio
+async def test_async_activity_completion_requires_chain_for_delegated_warrant():
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    root_key = SigningKey.generate()
+    leaf_key = SigningKey.generate()
+    root = Warrant.issue(
+        root_key,
+        capabilities={"external_job": {}},
+        holder=root_key.public_key,
+    )
+    leaf = root.attenuate(
+        signing_key=root_key,
+        holder=leaf_key.public_key,
+        capabilities={"external_job": {}},
+    )
+    resolver = AsyncMock()
+    resolver.resolve.return_value = leaf_key
+    _set_worker_config(
+        TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=[root_key.public_key],
+        ),
+        task_queue="async-completion-delegated",
+    )
+    handle = AsyncMock()
+
+    with pytest.raises(TenuoContextError, match="explicit root-to-leaf"):
+        await tenuo_complete_async_activity(
+            handle,
+            "result",
+            leaf,
+            "leaf-key",
+            task_queue="async-completion-delegated",
+        )
+    handle.complete.assert_not_awaited()
+
+    await tenuo_complete_async_activity(
+        handle,
+        "result",
+        leaf,
+        "leaf-key",
+        task_queue="async-completion-delegated",
+        warrant_chain=[root, leaf],
+    )
+    handle.complete.assert_awaited_once_with("result")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_outcome", ["raises", "empty"])
+async def test_async_activity_completion_provider_failure_keeps_snapshot(
+    caplog, provider_outcome
+):
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    root_key = SigningKey.generate()
+    warrant = Warrant.issue(
+        root_key,
+        capabilities={"external_job": {}},
+        holder=root_key.public_key,
+    )
+    calls = 0
+
+    def provider():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return [root_key.public_key]
+        if provider_outcome == "raises":
+            raise TimeoutError("root provider timed out")
+        return None
+
+    resolver = AsyncMock()
+    resolver.resolve.return_value = root_key
+    _set_worker_config(
+        TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots_provider=provider,
+        ),
+        task_queue="async-completion-provider-fallback",
+    )
+    handle = AsyncMock()
+
+    await tenuo_complete_async_activity(
+        handle,
+        "result",
+        warrant,
+        "root-key",
+        task_queue="async-completion-provider-fallback",
+    )
+
+    handle.complete.assert_awaited_once_with("result")
+    assert "retaining configured roots" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_async_activity_completion_legacy_single_config_fallback():
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _clear_worker_config, _set_worker_config
+
+    _clear_worker_config()
+    root_key = SigningKey.generate()
+    warrant = Warrant.issue(
+        root_key,
+        capabilities={"external_job": {}},
+        holder=root_key.public_key,
+    )
+    resolver = AsyncMock()
+    resolver.resolve.return_value = root_key
+    _set_worker_config(
+        TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=[root_key.public_key],
+        ),
+        task_queue="only-queue",
+    )
+    handle = AsyncMock()
+
+    try:
+        with pytest.warns(DeprecationWarning, match="Omitting task_queue"):
+            await tenuo_complete_async_activity(
+                handle,
+                "result",
+                warrant,
+                "root-key",
+            )
+    finally:
+        _clear_worker_config()
+
+    handle.complete.assert_awaited_once_with("result")
+
+
+@pytest.mark.asyncio
+async def test_async_activity_completion_legacy_fallback_rejects_multiple_configs():
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _clear_worker_config, _set_worker_config
+
+    _clear_worker_config()
+    root_key = SigningKey.generate()
+    warrant = Warrant.issue(
+        root_key,
+        capabilities={"external_job": {}},
+        holder=root_key.public_key,
+    )
+    config = TenuoPluginConfig(
+        key_resolver=AsyncMock(),
+        trusted_roots=[root_key.public_key],
+    )
+    _set_worker_config(config, task_queue="queue-a")
+    _set_worker_config(config, task_queue="queue-b")
+
+    try:
+        with pytest.raises(TenuoContextError, match="no TenuoPluginConfig"):
+            await tenuo_complete_async_activity(
+                AsyncMock(),
+                "result",
+                warrant,
+                "root-key",
+            )
+    finally:
+        _clear_worker_config()
 
 
 @pytest.mark.asyncio

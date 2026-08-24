@@ -5,6 +5,7 @@ internal mint activity, scheduled workflows, and async activity completion.
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from tenuo.temporal._constants import (
@@ -282,6 +283,10 @@ async def tenuo_execute_activity(
             raw_current = _current_workflow_headers()
             encoded_current = raw_current.get(TENUO_CHAIN_HEADER)
             if encoded_current:
+                # Keep tenuo_core localized: this module is imported inside the
+                # Temporal workflow sandbox, and the PyO3 extension must remain
+                # a passthrough module for deterministic replay. Python caches
+                # the import, so repeated dispatches do not reload the module.
                 from tenuo_core import decode_warrant_stack_base64 as _decode_stack
 
                 chain = list(_decode_stack(encoded_current.decode("utf-8")))
@@ -1143,6 +1148,7 @@ async def create_scheduled_workflow_with_warrant(
     task_queue: str = "default",
     compress: bool = True,
     memo: Optional[dict] = None,
+    action_options: Optional[dict] = None,
     **schedule_kwargs: Any,
 ) -> Any:
     """Create a Temporal Schedule whose workflow starts carry Tenuo headers.
@@ -1155,10 +1161,28 @@ async def create_scheduled_workflow_with_warrant(
     from temporalio.client import Schedule, ScheduleActionStartWorkflow
     from temporalio.api.common.v1 import Payload
 
-    if workflow_kwargs:
+    if workflow_kwargs is not None:
+        if action_options is not None:
+            raise ValueError(
+                "Pass either deprecated workflow_kwargs= or action_options=, not both."
+            )
+        warnings.warn(
+            "create_scheduled_workflow_with_warrant(workflow_kwargs=...) is "
+            "deprecated; these values have always been Temporal Schedule action "
+            "options, not workflow arguments. Use action_options= instead. "
+            "Workflow arguments remain positional via workflow_args=.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        action_options = workflow_kwargs
+
+    action_options = dict(action_options or {})
+    reserved_options = {"args", "id", "task_queue", "memo", "headers"}
+    conflicts = reserved_options.intersection(action_options)
+    if conflicts:
+        names = ", ".join(sorted(conflicts))
         raise ValueError(
-            "Temporal workflow arguments are positional. Pass workflow_args=; "
-            "workflow_kwargs= is not supported."
+            f"action_options cannot override helper-managed fields: {names}"
         )
 
     raw_headers = tenuo_headers(warrant, key_id, compress=compress)
@@ -1170,6 +1194,7 @@ async def create_scheduled_workflow_with_warrant(
         id=f"{schedule_id}-run",
         task_queue=task_queue,
         memo=memo,
+        **action_options,
     )
     # ``headers`` is a supported ScheduleActionStartWorkflow field but is not
     # present in the temporalio 1.23 overload stubs. Assign after construction
@@ -1197,14 +1222,31 @@ async def tenuo_complete_async_activity(
     warrant chain (including expiry/revocation) and proves that ``key_id``
     resolves to the warrant holder before releasing the completion call.
 
-    ``task_queue`` is required so multi-worker processes cannot select another
-    tenant's key resolver. Supply ``warrant_chain`` for delegated warrants;
-    root warrants default to a one-element chain.
+    ``task_queue`` selects the exact worker config so multi-worker processes
+    cannot select another tenant's key resolver. For compatibility, omission
+    is temporarily accepted only when exactly one config is registered and
+    emits a deprecation warning. Supply ``warrant_chain`` for delegated
+    warrants; root warrants default to a one-element chain.
+
+    No completion PoP is returned or attached: Temporal's async-completion RPC
+    has no user-header field. Older versions computed a signature and discarded
+    it, so it could never be consumed by a downstream validator.
     """
 
-    from tenuo.temporal._state import _get_worker_config
+    from tenuo.temporal._state import _get_only_worker_config, _get_worker_config
 
-    worker_cfg = _get_worker_config(task_queue)
+    if task_queue is None:
+        worker_cfg = _get_only_worker_config()
+        if worker_cfg is not None:
+            warnings.warn(
+                "Omitting task_queue from tenuo_complete_async_activity() is "
+                "deprecated. Pass the exact Activity task queue; implicit "
+                "selection is allowed only while one worker config is registered.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+    else:
+        worker_cfg = _get_worker_config(task_queue)
     if worker_cfg is None:
         raise TenuoContextError(
             "tenuo_complete_async_activity: no TenuoPluginConfig registered for "
@@ -1215,15 +1257,44 @@ async def tenuo_complete_async_activity(
             "tenuo_complete_async_activity: the registered worker config has no key_resolver."
         )
 
+    # ``TenuoPluginConfig`` snapshots the provider's initial roots. Match the
+    # worker interceptor's rotation behavior: a non-empty provider result
+    # replaces that snapshot; failure/empty results retain the last good roots.
     roots = list(worker_cfg.trusted_roots or [])
     if worker_cfg.trusted_roots_provider is not None:
-        roots = list(worker_cfg.trusted_roots_provider())
+        try:
+            refreshed_roots = list(worker_cfg.trusted_roots_provider() or [])
+        except Exception as exc:
+            logger.warning(
+                "trusted_roots_provider failed during async completion; "
+                "retaining configured roots: %s",
+                exc,
+            )
+        else:
+            if refreshed_roots:
+                roots = refreshed_roots
+            else:
+                logger.warning(
+                    "trusted_roots_provider returned empty during async completion; "
+                    "retaining configured roots"
+                )
     if not roots:
         raise TenuoContextError(
             "tenuo_complete_async_activity: trusted roots are required."
         )
 
-    chain = list(warrant_chain) if warrant_chain is not None else [warrant]
+    if warrant_chain is None:
+        if getattr(warrant, "parent_hash", None) is not None:
+            raise TenuoContextError(
+                "tenuo_complete_async_activity: delegated warrants require an "
+                "explicit root-to-leaf warrant_chain."
+            )
+        chain = [warrant]
+    else:
+        chain = list(warrant_chain)
+    # Authorizer validates signatures, linkage, attenuation, and policy. This
+    # separate check binds the caller's ``warrant`` argument (used below for
+    # holder-key verification) to the verified chain leaf.
     if not chain or chain[-1].to_bytes() != warrant.to_bytes():
         raise TenuoContextError(
             "tenuo_complete_async_activity: warrant_chain must end with warrant."
@@ -1244,7 +1315,13 @@ async def tenuo_complete_async_activity(
             f"tenuo_complete_async_activity: warrant validation failed: {exc}"
         ) from exc
 
-    key = await worker_cfg.key_resolver.resolve(key_id)
+    try:
+        key = await worker_cfg.key_resolver.resolve(key_id)
+    except Exception as exc:
+        raise TenuoContextError(
+            f"tenuo_complete_async_activity: key resolution failed for "
+            f"key_id={key_id!r}: {exc}"
+        ) from exc
     if key is None or key.public_key.to_bytes() != warrant.holder_key.to_bytes():
         raise TenuoContextError(
             "tenuo_complete_async_activity: key_id does not resolve to the warrant holder."

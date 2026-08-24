@@ -877,6 +877,10 @@ override warrant automatically.
 It never stores warrant material in memo. Because a Schedule action is static,
 the same warrant is used by every trigger; choose a TTL that covers the bounded
 Schedule lifetime or use an issuer warrant plus per-Activity execution warrants.
+Temporal action settings such as `execution_timeout` belong in
+`action_options=`. The legacy `workflow_kwargs=` alias remains temporarily
+supported with a deprecation warning; workflow input remains positional via
+`workflow_args=`.
 
 ### Async Activity Completion
 
@@ -890,6 +894,15 @@ field, so the helper validates locally before releasing the completion:
 
 Delegated warrants must include `warrant_chain=[root, ..., leaf]`. Validation is
 fail-closed; the helper never falls back to an unverified completion.
+For compatibility, callers that omit `task_queue=` may use the sole registered
+worker config with a deprecation warning. Zero or multiple registrations fail
+closed. Provider failures or empty results retain the config's last known-good
+trusted-root snapshot.
+
+Temporal's async-completion RPC cannot carry user headers. Earlier helper code
+computed a PoP signature but discarded it, so no downstream validator could
+observe it. The helper therefore validates locally before releasing completion;
+the original Activity dispatch remains the worker-boundary PoP authorization.
 
 ---
 
