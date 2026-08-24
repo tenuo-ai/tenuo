@@ -349,14 +349,15 @@ class TenuoTemporalPlugin(SimplePlugin):
         worker's signing key.
         """
         task_queue = _extract_task_queue(config)
-        if task_queue:
-            _set_worker_config(self._tenuo_config, task_queue=task_queue)
-        # Silently skip when no queue is discoverable (e.g. SDK plumbing
-        # that merges runner/interceptor config before the Worker has its
-        # task_queue set, or test fixtures that pass a bare ``{}``). The
-        # mint activity will fire a targeted ``TenuoContextError`` with
-        # remediation steps if delegation is attempted without a
-        # registration, so there's no silent-failure risk.
+        if task_queue is None:
+            raise ConfigurationError(
+                "TenuoTemporalPlugin.configure_worker requires a non-empty "
+                "task_queue in the Temporal Worker config. Construct Worker(..., "
+                "task_queue=<queue>) before plugin configuration; this queue is "
+                "required to route async completion and minting to the correct "
+                "TenuoPluginConfig."
+            )
+        _set_worker_config(self._tenuo_config, task_queue=task_queue)
         return super().configure_worker(config)
 
     def _preload_keys(self) -> None:

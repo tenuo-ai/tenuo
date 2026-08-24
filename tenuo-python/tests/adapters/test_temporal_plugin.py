@@ -63,13 +63,25 @@ def test_configure_worker_merges_interceptor_and_runner() -> None:
     # Unified ``interceptors=`` SimplePlugin reads the client's interceptor list when merging.
     mock_client = MagicMock()
     mock_client.config.return_value = {"interceptors": [ci]}
-    cfg: dict = {"client": mock_client}
+    cfg: dict = {"client": mock_client, "task_queue": "plugin-test-queue"}
     out = p.configure_worker(cfg)
     inters = out.get("interceptors") or []
     assert len(inters) == 1
     assert isinstance(inters[0], TenuoWorkerInterceptor)
     wr = out.get("workflow_runner")
     assert isinstance(wr, SandboxedWorkflowRunner)
+
+
+def test_configure_worker_rejects_missing_task_queue() -> None:
+    """Missing queue configuration must fail during Worker setup."""
+    from tenuo.exceptions import ConfigurationError
+
+    p = TenuoTemporalPlugin(_minimal_config())
+    mock_client = MagicMock()
+    mock_client.config.return_value = {"interceptors": [p.client_interceptor]}
+
+    with pytest.raises(ConfigurationError, match="requires a non-empty task_queue"):
+        p.configure_worker({"client": mock_client})
 
 
 def test_configure_client_merges_client_interceptors() -> None:

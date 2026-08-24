@@ -897,7 +897,10 @@ fail-closed; the helper never falls back to an unverified completion.
 For compatibility, callers that omit `task_queue=` may use the sole registered
 worker config with a deprecation warning. Zero or multiple registrations fail
 closed. Provider failures or empty results retain the config's last known-good
-trusted-root snapshot.
+trusted-root snapshot; revocation-provider failures or `None` results likewise
+retain the configured revocation list. `TenuoTemporalPlugin` validates that the
+worker has a non-empty task queue during worker setup, so the registry cannot be
+silently left unconfigured.
 
 Temporal's async-completion RPC cannot carry user headers. Earlier helper code
 computed a PoP signature but discarded it, so no downstream validator could

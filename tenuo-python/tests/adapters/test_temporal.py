@@ -2481,6 +2481,51 @@ async def test_async_activity_completion_provider_failure_keeps_snapshot(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider_outcome", ["raises", "none"])
+async def test_async_activity_completion_revocation_provider_failure_falls_back(
+    caplog, provider_outcome
+):
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    root_key = SigningKey.generate()
+    warrant = Warrant.issue(
+        root_key,
+        capabilities={"external_job": {}},
+        holder=root_key.public_key,
+    )
+
+    def provider():
+        if provider_outcome == "raises":
+            raise TimeoutError("revocation provider timed out")
+        return None
+
+    resolver = AsyncMock()
+    resolver.resolve.return_value = root_key
+    _set_worker_config(
+        TenuoPluginConfig(
+            key_resolver=resolver,
+            trusted_roots=[root_key.public_key],
+            revocation_list_provider=provider,
+        ),
+        task_queue="async-completion-revocation-fallback",
+    )
+    handle = AsyncMock()
+
+    await tenuo_complete_async_activity(
+        handle,
+        "result",
+        warrant,
+        "root-key",
+        task_queue="async-completion-revocation-fallback",
+    )
+
+    handle.complete.assert_awaited_once_with("result")
+    assert "retaining configured revocation list" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_async_activity_completion_legacy_single_config_fallback():
     from tenuo_core import SigningKey, Warrant
     from tenuo.temporal import tenuo_complete_async_activity
