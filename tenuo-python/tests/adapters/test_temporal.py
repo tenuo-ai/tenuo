@@ -2673,6 +2673,135 @@ async def test_async_completion_provider_failure_uses_last_good_revocation_snaps
 
 
 @pytest.mark.asyncio
+async def test_async_completion_rejects_revocation_provider_version_rollback():
+    from tenuo_core import SignedRevocationList, SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    root_key = SigningKey.generate()
+    warrant = Warrant.issue(
+        root_key,
+        capabilities={"external_job": {}},
+        holder=root_key.public_key,
+    )
+    empty_builder = SignedRevocationList.builder()
+    empty_builder.version(1)
+    empty_v1 = empty_builder.build(root_key)
+    revoked_builder = SignedRevocationList.builder()
+    revoked_builder.revoke(warrant.id)
+    revoked_builder.version(2)
+    revoked_v2 = revoked_builder.build(root_key)
+    calls = 0
+
+    def provider():
+        nonlocal calls
+        calls += 1
+        return revoked_v2 if calls == 1 else empty_v1
+
+    cfg = TenuoPluginConfig(
+        key_resolver=AsyncMock(),
+        trusted_roots=[root_key.public_key],
+        revocation_list_provider=provider,
+    )
+    _set_worker_config(cfg, task_queue="async-completion-srl-rollback")
+    handle = AsyncMock()
+
+    with pytest.raises(TenuoContextError, match="older SRL version"):
+        await tenuo_complete_async_activity(
+            handle,
+            "result",
+            warrant,
+            "root-key",
+            task_queue="async-completion-srl-rollback",
+        )
+
+    assert calls == 2
+    assert cfg._last_good_revocation_list is revoked_v2
+    handle.complete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_completion_rejects_same_version_revocation_replacement():
+    from tenuo_core import SignedRevocationList, SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    root_key = SigningKey.generate()
+    warrant = Warrant.issue(
+        root_key,
+        capabilities={"external_job": {}},
+        holder=root_key.public_key,
+    )
+    empty_builder = SignedRevocationList.builder()
+    empty_builder.version(2)
+    empty_v2 = empty_builder.build(root_key)
+    revoked_builder = SignedRevocationList.builder()
+    revoked_builder.revoke(warrant.id)
+    revoked_builder.version(2)
+    revoked_v2 = revoked_builder.build(root_key)
+    calls = 0
+
+    def provider():
+        nonlocal calls
+        calls += 1
+        return revoked_v2 if calls == 1 else empty_v2
+
+    cfg = TenuoPluginConfig(
+        key_resolver=AsyncMock(),
+        trusted_roots=[root_key.public_key],
+        revocation_list_provider=provider,
+    )
+    _set_worker_config(cfg, task_queue="async-completion-srl-same-version")
+    handle = AsyncMock()
+
+    with pytest.raises(TenuoContextError, match="different SRL with the same version"):
+        await tenuo_complete_async_activity(
+            handle,
+            "result",
+            warrant,
+            "root-key",
+            task_queue="async-completion-srl-same-version",
+        )
+
+    assert calls == 2
+    assert cfg._last_good_revocation_list is revoked_v2
+    handle.complete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_completion_warns_when_key_id_is_passed():
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    root_key = SigningKey.generate()
+    warrant = Warrant.issue(
+        root_key,
+        capabilities={"external_job": {}},
+        holder=root_key.public_key,
+    )
+    _set_worker_config(
+        TenuoPluginConfig(
+            key_resolver=AsyncMock(),
+            trusted_roots=[root_key.public_key],
+        ),
+        task_queue="async-completion-key-id-warning",
+    )
+    handle = AsyncMock()
+
+    with pytest.warns(DeprecationWarning, match="key_id is ignored"):
+        await tenuo_complete_async_activity(
+            handle,
+            "result",
+            warrant,
+            "root-key",
+            task_queue="async-completion-key-id-warning",
+        )
+
+    handle.complete.assert_awaited_once_with("result")
+
+
+@pytest.mark.asyncio
 async def test_async_activity_completion_legacy_single_config_fallback():
     from tenuo_core import SigningKey, Warrant
     from tenuo.temporal import tenuo_complete_async_activity

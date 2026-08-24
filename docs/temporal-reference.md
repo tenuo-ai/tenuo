@@ -593,6 +593,12 @@ Default dedup is **in-memory per process** (`InMemoryPopDedupStore`). For fleet-
 
 Static `trusted_roots` require a restart to pick up new issuer keys. For rotation without restarts, use `trusted_roots_provider` + `trusted_roots_refresh_interval_secs`. During rotation, return overlapping old and new issuer keys. On refresh failure, the worker retains the previous `Authorizer` and logs a warning.
 
+Signed revocation lists loaded through Python Temporal config must be signed by
+one of the configured `trusted_roots`. This matches the one-argument binding
+exposed to Python today; the Rust authorizer has an explicit issuer form for
+deployments that separate warrant-issuing authority from revocation-list
+signing authority.
+
 ### Out of scope
 
 - **Compromised Temporal service**: address with Temporal security, not Tenuo alone.
@@ -901,12 +907,14 @@ For compatibility, callers that omit `task_queue=` may use the sole registered
 worker config with a deprecation warning. Zero or multiple registrations fail
 closed. Provider failures or empty results retain the config's last accepted
 trusted-root snapshot; revocation-provider failures or `None` results likewise
-retain the last accepted signed revocation list. `TenuoTemporalPlugin` validates that the
-worker has a non-empty task queue during worker setup, so the registry cannot be
-silently left unconfigured.
+retain the last accepted signed revocation list. SRL refreshes must be
+monotonic: lower versions are rejected, and a different SRL with the same
+version is rejected so revocations cannot be silently rolled back.
+`TenuoTemporalPlugin` validates that the worker has a non-empty task queue
+during worker setup, so the registry cannot be silently left unconfigured.
 
-An empty, valid signed revocation list is different from `None`: it explicitly
-replaces the prior list and clears its revoked-ID set.
+An empty, valid signed revocation list is different from `None`: at a higher
+version, it explicitly replaces the prior list and clears its revoked-ID set.
 
 Temporal's async-completion RPC cannot carry user headers. Earlier helper code
 computed a PoP signature but discarded it, so no downstream validator could

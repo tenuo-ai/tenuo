@@ -353,6 +353,12 @@ class TenuoPluginConfig:
     inbound authorization.  Warrants whose ID appears in the list are denied
     even when the chain is otherwise valid.
 
+    The SRL issuer must be one of ``trusted_roots``.  Python Temporal
+    integration currently uses the same trust roots for warrant issuance and
+    revocation-list signing; configure the revocation signer as a trusted root
+    or use the Rust authorizer API when you need an explicit separate
+    revocation authority.
+
     Mutually exclusive with ``revocation_list_provider`` (raises
     ``ConfigurationError`` if both are set).
 
@@ -369,6 +375,10 @@ class TenuoPluginConfig:
     Use this instead of ``revocation_list`` when you need periodic SRL
     refresh without redeploying workers.
 
+    The initial provider call is part of worker startup.  If it raises, worker
+    construction fails closed with ``ConfigurationError`` so a transient SRL
+    outage is visible before the worker accepts work.
+
     ``None`` (default) disables provider-based SRL refresh.
     """
 
@@ -380,9 +390,15 @@ class TenuoPluginConfig:
     Requires ``revocation_list_provider`` to be set.
     """
 
-    _last_good_trusted_roots: List[Any] = field(default_factory=list, init=False, repr=False)
-    _last_good_revocation_list: Optional[Any] = field(default=None, init=False, repr=False)
-    _provider_state_lock: Any = field(default_factory=threading.RLock, init=False, repr=False)
+    _last_good_trusted_roots: List[Any] = field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
+    _last_good_revocation_list: Optional[Any] = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _provider_state_lock: Any = field(
+        default_factory=threading.RLock, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.dry_run:
@@ -454,7 +470,19 @@ class TenuoPluginConfig:
                 )
 
         if self.revocation_list_provider is not None:
-            initial_srl = self.revocation_list_provider()
+            try:
+                initial_srl = self.revocation_list_provider()
+            except Exception as exc:
+                from tenuo.exceptions import ConfigurationError
+
+                raise ConfigurationError(
+                    "TenuoPluginConfig: revocation_list_provider failed during "
+                    "startup. Provider-backed revocation is installed before the "
+                    "worker accepts work, so the provider must return a valid "
+                    "SignedRevocationList or None at worker construction. Check "
+                    "SRL endpoint availability, credentials, and timeout settings, "
+                    "or pass a static revocation_list for bootstrap."
+                ) from exc
             if initial_srl is not None:
                 self._last_good_revocation_list = initial_srl
         else:

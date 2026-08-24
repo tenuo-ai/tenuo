@@ -492,6 +492,43 @@ def test_revocation_list_provider_accepted() -> None:
     assert config.revocation_refresh_secs == 60
 
 
+def test_config_private_provider_state_is_excluded_from_equality() -> None:
+    """Provider caches and locks must not make identical configs compare unequal."""
+    sk = SigningKey.generate()
+    resolver = EnvKeyResolver()
+
+    config_a = TenuoPluginConfig(
+        key_resolver=resolver,
+        trusted_roots=[sk.public_key],
+    )
+    config_b = TenuoPluginConfig(
+        key_resolver=resolver,
+        trusted_roots=[sk.public_key],
+    )
+
+    assert config_a == config_b
+
+
+def test_revocation_list_provider_startup_failure_is_configuration_error() -> None:
+    """Startup SRL provider failures fail closed with remediation text."""
+    from tenuo.exceptions import ConfigurationError
+
+    sk = SigningKey.generate()
+
+    def provider():
+        raise TimeoutError("srl endpoint timed out")
+
+    with pytest.raises(ConfigurationError, match="failed during startup") as exc_info:
+        TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[sk.public_key],
+            revocation_list_provider=provider,
+        )
+
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
+    assert "worker accepts work" in str(exc_info.value)
+
+
 def test_revocation_list_provider_excludes_static_revocation_list() -> None:
     """Static and provider-backed SRLs cannot both own revocation state."""
     from tenuo.exceptions import ConfigurationError

@@ -49,6 +49,48 @@ logger = logging.getLogger("tenuo.temporal")
 _MISSING_REVOCATION_LIST = object()
 
 
+def _srl_version(srl: Any) -> Optional[int]:
+    version = getattr(srl, "version", None)
+    if callable(version):
+        version = version()
+    if version is None:
+        return None
+    return int(version)
+
+
+def _srl_bytes(srl: Any) -> Optional[bytes]:
+    to_bytes = getattr(srl, "to_bytes", None)
+    if not callable(to_bytes):
+        return None
+    return bytes(to_bytes())
+
+
+def _ensure_srl_refresh_not_rolled_back(current: Any, candidate: Any) -> None:
+    current_version = _srl_version(current)
+    candidate_version = _srl_version(candidate)
+    if current_version is None or candidate_version is None:
+        return
+    if candidate_version < current_version:
+        raise TenuoContextError(
+            "revocation_list_provider returned an older SRL version during async "
+            f"completion (current={current_version}, attempted={candidate_version})."
+        )
+    if candidate_version == current_version:
+        current_bytes = _srl_bytes(current)
+        candidate_bytes = _srl_bytes(candidate)
+        if (
+            current_bytes is not None
+            and candidate_bytes is not None
+            and current_bytes != candidate_bytes
+        ):
+            raise TenuoContextError(
+                "revocation_list_provider returned a different SRL with the same "
+                f"version during async completion (version={candidate_version}). "
+                "Publish revocation-list updates with a monotonically increasing "
+                "version."
+            )
+
+
 def _fail_workflow_non_retryable(exc: Exception) -> Exception:
     """Wrap *exc* as a non-retryable ``ApplicationError``.
 
@@ -1240,6 +1282,15 @@ async def tenuo_complete_async_activity(
         _worker_config_count,
     )
 
+    if key_id is not None:
+        warnings.warn(
+            "key_id is ignored by tenuo_complete_async_activity() because "
+            "Temporal async-completion RPCs cannot carry a verifiable Tenuo "
+            "proof-of-possession signature.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     if task_queue is None:
         worker_cfg = _get_only_worker_config()
         if worker_cfg is not None:
@@ -1337,6 +1388,14 @@ async def tenuo_complete_async_activity(
                     "retaining last good revocation list"
                 )
     with worker_cfg._provider_state_lock:
+        if (
+            refreshed_revocations is not _MISSING_REVOCATION_LIST
+            and worker_cfg._last_good_revocation_list is not None
+        ):
+            _ensure_srl_refresh_not_rolled_back(
+                worker_cfg._last_good_revocation_list,
+                refreshed_revocations,
+            )
         revocations = (
             refreshed_revocations
             if refreshed_revocations is not _MISSING_REVOCATION_LIST

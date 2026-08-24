@@ -43,10 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   async-completion `task_queue` values remain supported when exactly one worker
   config is registered. Delegated completions require an explicit chain, and
   trusted-root provider failures retain the last accepted root snapshot.
-  Revocation providers are installed at startup, failed SRL refreshes no longer
-  poison the config snapshot, SRL version rollback is rejected, and plugin
-  workers now reject a missing task queue during setup instead of failing later
-  during completion or minting.
+  Revocation providers are installed at startup and fail worker construction
+  with `ConfigurationError` if the initial provider call fails; later failed
+  SRL refreshes no longer poison the config snapshot. SRL version rollback and
+  same-version replacement are rejected, and plugin workers now reject a
+  missing task queue during setup instead of failing later during completion or
+  minting.
 
 - **MCP tool-call denials could be read as successes on MCP SDK 2.x.** The SDK
   renamed `CallToolResult.isError` to `is_error`, so `SecureMCPClient`'s error

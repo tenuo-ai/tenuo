@@ -663,11 +663,7 @@ class TenuoActivityInboundInterceptor:
         self._retry_authorizer: Optional[Any] = None
         try:
             from tenuo_core import Authorizer
-            initial_revocation_list = getattr(
-                config,
-                "_last_good_revocation_list",
-                config.revocation_list,
-            )
+            initial_revocation_list = config._last_good_revocation_list
             self._authorizer = _build_authorizer(
                 Authorizer,
                 config.trusted_roots,
@@ -729,22 +725,14 @@ class TenuoActivityInboundInterceptor:
                     Authorizer,
                     roots,
                     self._config,
-                    revocation_list=getattr(
-                        self._config,
-                        "_last_good_revocation_list",
-                        self._config.revocation_list,
-                    ),
+                    revocation_list=self._config._last_good_revocation_list,
                 )
                 if self._config.retry_pop_max_windows is not None:
                     self._retry_authorizer = _build_authorizer(
                         Authorizer,
                         roots,
                         self._config,
-                        revocation_list=getattr(
-                            self._config,
-                            "_last_good_revocation_list",
-                            self._config.revocation_list,
-                        ),
+                        revocation_list=self._config._last_good_revocation_list,
                         pop_max_windows=self._config.retry_pop_max_windows,
                     )
             except Exception as e:
@@ -944,8 +932,7 @@ class TenuoActivityInboundInterceptor:
                 return await _deny_or_continue(tool=tool_name, reason=reason)
 
         # -- 6. Delegation Depth Limit --
-        leaf = chain[-1] if chain else warrant
-        chain_depth = leaf.depth if hasattr(leaf, "depth") else 0
+        chain_depth = warrant.depth if hasattr(warrant, "depth") else 0
         if chain_depth > self._config.max_chain_depth:
             self._emit_denial_event(
                 info=info,
