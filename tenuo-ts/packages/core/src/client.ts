@@ -86,6 +86,46 @@ export function publicKeyFromBytes(bytes: Uint8Array): PublicKeyHandle {
   return { kind: "public-key", source: "bytes", hex };
 }
 
+function normalizeSecretHex(value: string): string {
+  const hex = value.trim().toLowerCase().replace(/^0x/, "");
+  if (!/^[0-9a-f]{64}$/.test(hex)) {
+    throw new TenuoConfigurationError(
+      "Holder key must be a 32-byte hex secret (64 hex characters)",
+    );
+  }
+  return hex;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i += 1) {
+    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+export function holderKeyFromEnv(name: string): Uint8Array {
+  if (name.length === 0) {
+    throw new TenuoConfigurationError("holderKeyFromEnv() requires an environment variable name");
+  }
+  if (typeof process === "undefined") {
+    throw new TenuoConfigurationError(
+      `Environment variable ${name} is not available. Tenuo fails closed without a holder key.`,
+    );
+  }
+  const value = process.env[name];
+  if (value === undefined || value.length === 0) {
+    throw new TenuoConfigurationError(
+      `Environment variable ${name} is not set or empty. Tenuo fails closed without a holder key.`,
+    );
+  }
+  return hexToBytes(normalizeSecretHex(value));
+}
+
+export function holderKeyFromHex(hex: string): Uint8Array {
+  return hexToBytes(normalizeSecretHex(hex));
+}
+
 function rootHexes(options: CreateTenuoOptions): string[] {
   const handles: PublicKeyHandle[] = [];
   if (options.root !== undefined && options.root.kind === "public-key") {
@@ -132,6 +172,9 @@ class TenuoClient implements Tenuo {
       this.context = createVerifierContext(rootHexes(options));
       this.canMint = false;
     }
+    if (options.revocationList !== undefined) {
+      this.context.loadRevocationList(normalizeWireBytes(options.revocationList));
+    }
   }
 
   tool<T extends { execute: (args: never, options?: never) => unknown }>(
@@ -150,7 +193,13 @@ class TenuoClient implements Tenuo {
     ) => unknown;
     const execute = async (args: never, callOptions?: unknown) => {
       const session = resolveSession(callOptions);
-      const decision = this.context.authorize(nativeSession(session), capability, args);
+      const decision = this.context.authorize(
+        nativeSession(session),
+        capability,
+        args,
+        approvalsFrom(callOptions),
+      );
+      emitReceipt(callOptions, decision.receipt);
       if (decision.outcome === "allow") {
         return original(plainArgs(decision.args), callOptions);
       }
@@ -184,7 +233,15 @@ class TenuoClient implements Tenuo {
       );
     }
     const ttl = input.ttlSeconds ?? 0;
-    const native = this.context.mint(input.allow, ttl);
+    if (input.requireApproval !== undefined) {
+      if (input.requireApproval.approvers.length === 0) {
+        throw new TenuoConfigurationError("requireApproval.approvers must not be empty");
+      }
+      if (input.requireApproval.min < 1) {
+        throw new TenuoConfigurationError("requireApproval.min must be at least 1");
+      }
+    }
+    const native = this.context.mint(input.allow, ttl, requireApprovalJson(input.requireApproval));
     return new Session(native);
   }
 
@@ -234,6 +291,10 @@ class TenuoClient implements Tenuo {
     }
   }
 
+  revoke(list: string | Uint8Array): void {
+    this.context.loadRevocationList(normalizeWireBytes(list));
+  }
+
   ready(): void {
     loadWasm();
   }
@@ -247,6 +308,49 @@ function plainArgs(value: unknown): Record<string, unknown> {
     return { ...(value as Record<string, unknown>) };
   }
   return {};
+}
+
+function requireApprovalJson(
+  require: SessionInput["requireApproval"],
+): { approvers: string[]; min: number; tools?: string[] } | undefined {
+  if (require === undefined) {
+    return undefined;
+  }
+  const payload: { approvers: string[]; min: number; tools?: string[] } = {
+    approvers: require.approvers.map((approver) => approver.hex),
+    min: require.min,
+  };
+  if (require.tools !== undefined) {
+    payload.tools = [...require.tools];
+  }
+  return payload;
+}
+
+function normalizeWireBytes(value: string | Uint8Array): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  return Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function emitReceipt(callOptions: unknown, receipt: string | undefined): void {
+  if (receipt === undefined || callOptions === null || typeof callOptions !== "object") {
+    return;
+  }
+  if (!("onReceipt" in callOptions)) {
+    return;
+  }
+  const onReceipt = (callOptions as { onReceipt?: unknown }).onReceipt;
+  if (typeof onReceipt === "function") {
+    onReceipt(receipt);
+  }
+}
+
+function approvalsFrom(callOptions: unknown): unknown {
+  if (callOptions !== null && typeof callOptions === "object" && "approvals" in callOptions) {
+    return (callOptions as { approvals?: unknown }).approvals;
+  }
+  return undefined;
 }
 
 function resolveSession(callOptions: unknown): Session {
@@ -286,9 +390,13 @@ export const createTenuo: ((options?: CreateTenuoOptions) => Tenuo) & {
   publicKeyFromEnv: typeof publicKeyFromEnv;
   publicKeyFromHex: typeof publicKeyFromHex;
   publicKeyFromBytes: typeof publicKeyFromBytes;
+  holderKeyFromEnv: typeof holderKeyFromEnv;
+  holderKeyFromHex: typeof holderKeyFromHex;
 } = Object.assign(createTenuoImpl, {
   devRoot,
   publicKeyFromEnv,
   publicKeyFromHex,
   publicKeyFromBytes,
+  holderKeyFromEnv,
+  holderKeyFromHex,
 });

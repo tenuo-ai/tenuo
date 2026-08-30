@@ -297,17 +297,25 @@ describe.skipIf(pythonBin === undefined)("Python ↔ TypeScript compatibility", 
       });
       const parent = importPythonSession(tenuo, minted);
       const reports = tenuo.narrow(parent, { path: under("/data/reports") });
-      const exported = exportSession(reports);
-      expect(exported.warrants).toHaveLength(2);
+      const tokens = reports.toWire();
+      expect(tokens).toHaveLength(2);
+      const worker = createTenuo({
+        trustedRoots: [createTenuo.publicKeyFromHex(minted.root_hex)],
+      });
+      const imported = worker.sessionFromWire({
+        warrant: tokens,
+        holderKey: createTenuo.holderKeyFromHex(minted.holder_hex),
+      });
+      const exported = { ...exportSession(reports), warrants: [...tokens] };
       expect(exported.root_hex).toBe(minted.root_hex);
 
       expectAgree(
-        await tsCall(tenuo, reports, "read_file", { path: under("/data") }, { path: "/data/reports/q3.pdf" }),
+        await tsCall(worker, imported, "read_file", { path: under("/data") }, { path: "/data/reports/q3.pdf" }),
         verifyPython(pythonBin!, exported, "read_file", { path: "/data/reports/q3.pdf" }),
         "allow",
       );
       expectAgree(
-        await tsCall(tenuo, reports, "read_file", { path: under("/data") }, { path: "/data/other.txt" }),
+        await tsCall(worker, imported, "read_file", { path: under("/data") }, { path: "/data/other.txt" }),
         verifyPython(pythonBin!, exported, "read_file", { path: "/data/other.txt" }),
         "deny",
         "TENUO_CONSTRAINT_VIOLATION",

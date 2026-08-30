@@ -87,6 +87,10 @@ declare const protectedBrand: unique symbol;
 
 export type ExecuteOptions = {
   readonly session?: Session;
+  /** Already-signed approval envelopes (hex, standard base64, or CBOR bytes). */
+  readonly approvals?: readonly (string | Uint8Array)[];
+  /** Signed evidence of the decision. Not a security hook — the tool already ran or was denied. */
+  readonly onReceipt?: (receipt: string) => void;
 };
 
 /** Wrapped tool. `execute` still authorizes; optional `{ session }` overrides ALS. */
@@ -101,11 +105,19 @@ export type ProtectedTool<T extends { execute: (args: never, options?: never) =>
   readonly [protectedBrand]: true;
 };
 
+/** Whole-tool approval gate. Host collects SignedApproval bytes; Rust decides. */
+export type RequireApproval = {
+  readonly approvers: readonly PublicKeyHandle[];
+  readonly min: number;
+  readonly tools?: readonly string[];
+};
+
 export type SessionInput = {
   readonly allow: {
     readonly [capability: string]: AllowPolicy;
   };
   readonly ttlSeconds?: number;
+  readonly requireApproval?: RequireApproval;
 };
 
 export type DenyMode = "tool-error" | "abort";
@@ -137,6 +149,8 @@ export type CreateTenuoOptions = {
   readonly trustedRoots?: readonly PublicKeyHandle[];
   readonly root?: DevRoot | PublicKeyHandle;
   readonly onDeny?: DenyMode;
+  /** Published SignedRevocationList (hex or standard base64). Verified against a trusted root. */
+  readonly revocationList?: string | Uint8Array;
 };
 
 export type ApprovalRequest = {
@@ -152,6 +166,8 @@ export type Decision =
 
 export interface Session {
   readonly [Symbol.toStringTag]: "TenuoSession";
+  /** Warrant tokens, root first. Does not include the holder secret. */
+  toWire(): readonly string[];
 }
 
 export interface Tenuo {
@@ -168,5 +184,7 @@ export interface Tenuo {
   sessionFromWire(input: SessionFromWireInput): Session;
   withSession<R>(session: Session, fn: () => R): R;
   narrow(session: Session, allow: NarrowInput): Session;
+  /** Load a published SignedRevocationList. Rust verifies the issuer against trusted roots. */
+  revoke(list: string | Uint8Array): void;
   ready(): void;
 }

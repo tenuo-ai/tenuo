@@ -1708,6 +1708,22 @@ impl Authorizer {
         Ok(())
     }
 
+    /// Install revoked warrant IDs after the caller has verified the list signature.
+    ///
+    /// Used for published generator envelopes whose payload encoding differs from
+    /// the in-memory SRL codec. TypeScript must not call this; WASM verifies first.
+    pub fn install_verified_revocation_ids(
+        &mut self,
+        ids: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Result<()> {
+        let throwaway = SigningKey::generate();
+        let srl = SignedRevocationList::builder()
+            .revoke_all(ids)
+            .build(&throwaway)?;
+        self.revocation_list = Some(srl);
+        Ok(())
+    }
+
     /// Set the clock tolerance (mutable version).
     pub fn set_clock_tolerance(&mut self, tolerance: chrono::Duration) {
         self.clock_tolerance = tolerance;

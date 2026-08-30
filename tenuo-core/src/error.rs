@@ -537,6 +537,10 @@ pub enum Error {
     #[error("unsupported wire format version: {0}")]
     UnsupportedVersion(u8),
 
+    /// Receipt signature or payload is invalid.
+    #[error("invalid receipt: {0}")]
+    InvalidReceipt(String),
+
     // =========================================================================
     // General Errors
     // =========================================================================
@@ -719,6 +723,7 @@ impl Error {
             Self::SerializationError(_) => ErrorCode::MalformedCBOR,
             Self::DeserializationError(_) => ErrorCode::MalformedCBOR,
             Self::UnsupportedVersion(_) => ErrorCode::UnsupportedPayloadVersion,
+            Self::InvalidReceipt(_) => ErrorCode::InvalidPayloadStructure,
 
             // General Errors
             Self::MissingField(_) => ErrorCode::MissingRequiredField,
@@ -970,6 +975,7 @@ mod tests {
             Error::SerializationError("test".into()),
             Error::DeserializationError("test".into()),
             Error::UnsupportedVersion(1),
+            Error::InvalidReceipt("test".into()),
             Error::MissingField("test".into()),
             Error::ChainVerificationFailed("test".into()),
             Error::ApprovalExpired {

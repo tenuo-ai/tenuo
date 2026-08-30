@@ -4,22 +4,37 @@
  */
 import type { Session as SessionContract } from "./api.ts";
 import { Session, nativeSession } from "./session.ts";
+import type { WasmSession } from "./wasm.ts";
 import {
+  createDevContext,
   createVerifierContext,
   importSessionFromChain,
   importSessionFromParts,
   importSessionFromWire,
   inspectParts,
   inspectWarrant,
+  loadWasm,
   type WasmContext,
   type WasmDecision,
   type WasmInspect,
+  type WasmReceipt,
 } from "./wasm.ts";
 
-export type { WasmDecision, WasmInspect };
+export type { WasmDecision, WasmInspect, WasmReceipt };
 
-export function verifierContext(rootHexes: readonly string[]): WasmContext {
-  return createVerifierContext(rootHexes);
+export function devContext(): WasmContext {
+  return createDevContext();
+}
+
+export function verifierContext(
+  rootHexes: readonly string[],
+  options?: { revocationList?: string },
+): WasmContext {
+  return createVerifierContext(rootHexes, options?.revocationList);
+}
+
+export function wrapSession(native: WasmSession): Session {
+  return new Session(native);
 }
 
 export function sessionFromWire(warrant: string, holderKey: Uint8Array): Session {
@@ -43,12 +58,31 @@ export function sessionFromChain(
 
 export function authorizeAsOf(
   context: WasmContext,
-  session: Session,
+  session: SessionContract,
   tool: string,
   args: unknown,
   asOf: number,
+  approvals?: unknown,
 ): WasmDecision {
-  return context.authorizeAsOf(nativeSession(session), tool, args, asOf);
+  return context.authorizeAsOf(nativeSession(session as Session), tool, args, asOf, approvals);
+}
+
+/** Signs a SignedApproval envelope. Does not authorize. */
+export function signApproval(
+  session: SessionContract,
+  tool: string,
+  args: unknown,
+  approverSecret: Uint8Array,
+  options?: { externalId?: string; asOf?: number },
+): string {
+  return loadWasm().sdkSignApproval(
+    nativeSession(session as Session),
+    tool,
+    args,
+    approverSecret,
+    options?.externalId ?? "test-approver",
+    options?.asOf,
+  );
 }
 
 export type ExportedSession = {
@@ -61,6 +95,32 @@ export type ExportedSession = {
 export function exportSession(session: SessionContract): ExportedSession {
   const native = nativeSession(session as Session) as { exportWire(): ExportedSession };
   return native.exportWire();
+}
+
+/** Warrant IDs, root first. */
+export function warrantIds(session: SessionContract): string[] {
+  const native = nativeSession(session as Session) as { warrantIds(): unknown };
+  const ids = native.warrantIds();
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
+    throw new Error("warrantIds() did not return warrant ids");
+  }
+  return ids;
+}
+
+/** Signs an SRL with the context issuer (devRoot) or a provided secret. Does not authorize. */
+export function signRevocationList(
+  issuer: WasmContext | Uint8Array,
+  ids: readonly string[],
+): string {
+  if (issuer instanceof Uint8Array) {
+    return loadWasm().sdkSignRevocationList([...ids], issuer);
+  }
+  return issuer.signRevocationList([...ids]);
+}
+
+/** Signature authenticity only. Not authorization. */
+export function verifyReceipt(wire: string): WasmReceipt {
+  return loadWasm().sdkVerifyReceipt(wire);
 }
 
 export { inspectParts, inspectWarrant };

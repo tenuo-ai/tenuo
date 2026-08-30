@@ -401,6 +401,9 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             crate::error::Error::ConfigurationError(msg) => {
                 ("ConfigurationError", PyTuple::new(py, [msg.as_str()]))
             }
+            crate::error::Error::InvalidReceipt(msg) => {
+                ("InvalidReceipt", PyTuple::new(py, [msg.as_str()]))
+            }
             crate::error::Error::FeatureNotEnabled { feature } => {
                 ("FeatureNotEnabled", PyTuple::new(py, [feature]))
             }

@@ -25,6 +25,18 @@ export class Session implements SessionContract {
   [inspect](): string {
     return "[TenuoSession]";
   }
+
+  toWire(): string[] {
+    const native = nativeSessions.get(this) as { toWire?: () => unknown } | undefined;
+    if (native?.toWire === undefined) {
+      throw new Error("session is not bound to the WASM core");
+    }
+    const tokens = native.toWire();
+    if (!Array.isArray(tokens) || tokens.some((token) => typeof token !== "string")) {
+      throw new Error("toWire() did not return warrant tokens");
+    }
+    return tokens;
+  }
 }
 
 export function isSession(value: unknown): value is Session {

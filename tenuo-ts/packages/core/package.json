@@ -13,6 +13,10 @@
   },
   "files": [
     "src",
+    "src/generated/tenuo_wasm.js",
+    "src/generated/tenuo_wasm.d.ts",
+    "src/generated/tenuo_wasm_bg.wasm",
+    "src/generated/tenuo_wasm_bg.wasm.d.ts",
     "README.md"
   ],
   "scripts": {

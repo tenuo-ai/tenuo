@@ -14,20 +14,38 @@ export type WasmDecision = {
   tool?: string;
   required?: number;
   received?: number;
+  receipt?: string;
 };
 
 export type WasmInspect = {
   payload_hex: string;
   signature_hex: string;
+  id: string;
+};
+
+export type WasmReceipt = {
+  authentic: true;
+  outcome: "allow" | "deny";
+  action: string;
+  decision_code?: string;
+  request_id: string;
 };
 
 export type WasmSession = object;
 
 export type WasmContext = {
-  mint(allow: unknown, ttlSeconds: number): WasmSession;
+  mint(allow: unknown, ttlSeconds: number, requireApproval?: unknown): WasmSession;
   narrow(session: WasmSession, allow: unknown): WasmSession;
-  authorize(session: WasmSession, tool: string, args: unknown): WasmDecision;
-  authorizeAsOf(session: WasmSession, tool: string, args: unknown, asOf: number): WasmDecision;
+  authorize(session: WasmSession, tool: string, args: unknown, approvals?: unknown): WasmDecision;
+  authorizeAsOf(
+    session: WasmSession,
+    tool: string,
+    args: unknown,
+    asOf: number,
+    approvals?: unknown,
+  ): WasmDecision;
+  loadRevocationList(srl: string): void;
+  signRevocationList(ids: string[]): string;
 };
 
 type Generated = {
@@ -42,6 +60,16 @@ type Generated = {
   };
   sdkInspectWarrant(wire: string): WasmInspect;
   sdkInspectParts(payloadHex: string, signatureHex: string): WasmInspect;
+  sdkSignApproval(
+    session: WasmSession,
+    tool: string,
+    args: unknown,
+    approverSecret: Uint8Array,
+    externalId: string,
+    asOf?: number,
+  ): string;
+  sdkSignRevocationList(ids: string[], issuerSecret: Uint8Array): string;
+  sdkVerifyReceipt(wire: string): WasmReceipt;
 };
 
 let loaded: Generated | undefined;
@@ -76,9 +104,16 @@ export function createDevContext(): WasmContext {
   return new SdkContext();
 }
 
-export function createVerifierContext(rootHexes: readonly string[]): WasmContext {
+export function createVerifierContext(
+  rootHexes: readonly string[],
+  revocationList?: string,
+): WasmContext {
   const { SdkContext } = loadWasm();
-  return SdkContext.fromTrustedRoots([...rootHexes]);
+  const context = SdkContext.fromTrustedRoots([...rootHexes]);
+  if (revocationList !== undefined && revocationList.length > 0) {
+    context.loadRevocationList(revocationList);
+  }
+  return context;
 }
 
 export function importSessionFromWire(warrant: string, holderKey: Uint8Array): WasmSession {

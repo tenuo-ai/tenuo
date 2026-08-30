@@ -4,10 +4,13 @@ import {
   authorizeAsOf,
   inspectParts,
   inspectWarrant,
+  signApproval,
+  signRevocationList,
   sessionFromChain,
   sessionFromParts,
   sessionFromWire,
   verifierContext,
+  verifyReceipt,
 } from "../src/testkit.ts";
 import {
   A1_BASE64,
@@ -38,13 +41,31 @@ import {
   A3_L0_SIG_HEX,
   A4_CHILD_PAYLOAD_HEX,
   A4_CHILD_SIG_HEX,
+  A21_1_PAYLOAD_HEX,
+  A21_1_SIG_HEX,
+  A21_2_PAYLOAD_HEX,
+  A21_2_SIG_HEX,
+  A22_CHAIN,
+  A22_CHILD_ID,
+  A22_CHILD_PAYLOAD_HEX,
+  A22_CHILD_SIG_HEX,
+  A22_ROOT_ID,
+  A22_ROOT_PAYLOAD_HEX,
+  A22_ROOT_SIG_HEX,
+  A22B_SRL_HEX,
   A5_PAYLOAD_HEX,
   A5_SIG_HEX,
+  APPROVER1_PUB,
+  APPROVER1_SECRET,
+  APPROVER2_PUB,
+  APPROVER2_SECRET,
+  APPROVER3_PUB,
   AS_OF,
   ISSUED_AT,
   ATTACKER_PUB,
   ATTACKER_SECRET,
   CONTROL_PLANE_PUB,
+  CONTROL_PLANE_SECRET,
   EXPIRES_AT,
   ORCHESTRATOR_SECRET,
   WORKER2_SECRET,
@@ -325,5 +346,145 @@ describe("A.13 I3 TTL extension", () => {
     expect(
       authorizeAsOf(ctx, session, "read_file", { path: "/data/reports/q3.pdf" }, AS_OF),
     ).toMatchObject({ outcome: "deny", code: "TENUO_CHAIN_INVALID" });
+  });
+});
+
+describe("A.21 signed approval", () => {
+  it("decodes the published 2-of-3 and 2-of-2 envelopes", () => {
+    expect(inspectParts(A21_1_PAYLOAD_HEX, A21_1_SIG_HEX).payload_hex).toBe(A21_1_PAYLOAD_HEX);
+    expect(inspectParts(A21_1_PAYLOAD_HEX, A21_1_SIG_HEX).signature_hex).toBe(A21_1_SIG_HEX);
+    expect(inspectParts(A21_2_PAYLOAD_HEX, A21_2_SIG_HEX).payload_hex).toBe(A21_2_PAYLOAD_HEX);
+  });
+
+  it("allows with two of the three published approver keys", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const args = { path: "/data/q3.pdf" };
+    const session = tenuo.session({
+      allow: { read_file: { path: under("/data") } },
+      requireApproval: {
+        approvers: [
+          createTenuo.publicKeyFromHex(APPROVER1_PUB),
+          createTenuo.publicKeyFromHex(APPROVER2_PUB),
+          createTenuo.publicKeyFromHex(APPROVER3_PUB),
+        ],
+        min: 2,
+      },
+    });
+    const a1 = signApproval(session, "read_file", args, APPROVER1_SECRET);
+    const a2 = signApproval(session, "read_file", args, APPROVER2_SECRET);
+    const readFile = tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    await expect(readFile.execute(args, { session, approvals: [a1, a2] })).resolves.toBe(
+      "/data/q3.pdf",
+    );
+  });
+
+  it("rejects a single approval when two are required", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const args = { path: "/data/q3.pdf" };
+    const session = tenuo.session({
+      allow: { read_file: { path: under("/data") } },
+      requireApproval: {
+        approvers: [
+          createTenuo.publicKeyFromHex(APPROVER1_PUB),
+          createTenuo.publicKeyFromHex(APPROVER2_PUB),
+        ],
+        min: 2,
+      },
+    });
+    const a1 = signApproval(session, "read_file", args, APPROVER1_SECRET);
+    const attacker = signApproval(session, "read_file", args, ATTACKER_SECRET);
+    const readFile = tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    await expect(readFile.execute(args, { session, approvals: [a1] })).rejects.toMatchObject({
+      code: "TENUO_INSUFFICIENT_APPROVALS",
+    });
+    await expect(
+      readFile.execute(args, { session, approvals: [a1, attacker] }),
+    ).rejects.toMatchObject({ code: "TENUO_INSUFFICIENT_APPROVALS" });
+  });
+});
+
+describe("A.22 cascading revocation", () => {
+  it("matches published root, child, and A.22.b bytes", () => {
+    const root = inspectParts(A22_ROOT_PAYLOAD_HEX, A22_ROOT_SIG_HEX);
+    const child = inspectParts(A22_CHILD_PAYLOAD_HEX, A22_CHILD_SIG_HEX);
+    expect(root.payload_hex).toBe(A22_ROOT_PAYLOAD_HEX);
+    expect(root.signature_hex).toBe(A22_ROOT_SIG_HEX);
+    expect(root.id).toBe(A22_ROOT_ID);
+    expect(child.id).toBe(A22_CHILD_ID);
+    expect(A22B_SRL_HEX).toHaveLength(466);
+  });
+
+  it("allows the child chain when no SRL is loaded", () => {
+    const ctx = verifierContext([CONTROL_PLANE_PUB]);
+    const session = sessionFromChain(A22_CHAIN, WORKER_SECRET);
+    expect(
+      authorizeAsOf(ctx, session, "read_file", { path: "/data/q3.pdf" }, AS_OF),
+    ).toMatchObject({ outcome: "allow" });
+  });
+
+  it("denies the revoked child and never runs the tool", async () => {
+    const tenuo = createTenuo({
+      trustedRoots: [createTenuo.publicKeyFromHex(CONTROL_PLANE_PUB)],
+      revocationList: A22B_SRL_HEX,
+    });
+    const session = tenuo.sessionFromWire({
+      warrant: A22_CHAIN,
+      holderKey: WORKER_SECRET,
+    });
+    let executed = false;
+    const readFile = tenuo.tool(
+      {
+        execute: async (_args: { path: string }) => {
+          executed = true;
+          return "leaked";
+        },
+      },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    const decision = authorizeAsOf(
+      verifierContext([CONTROL_PLANE_PUB], { revocationList: A22B_SRL_HEX }),
+      session,
+      "read_file",
+      { path: "/data/q3.pdf" },
+      AS_OF,
+    );
+    expect(decision).toMatchObject({ outcome: "deny", code: "TENUO_REVOKED" });
+    expect(decision.receipt).toEqual(expect.any(String));
+    const receipt = verifyReceipt(decision.receipt!);
+    expect(receipt).toMatchObject({
+      authentic: true,
+      outcome: "deny",
+      decision_code: "warrant-revoked",
+    });
+
+    await expect(
+      tenuo.withSession(session, () => readFile.execute({ path: "/data/q3.pdf" })),
+    ).rejects.toMatchObject({
+      name: "AuthorizationDeniedError",
+      code: "TENUO_REVOKED",
+    });
+    expect(executed).toBe(false);
+  });
+
+  it("cascades when the parent is revoked", () => {
+    const srl = signRevocationList(CONTROL_PLANE_SECRET, [A22_ROOT_ID]);
+    const ctx = verifierContext([CONTROL_PLANE_PUB], { revocationList: srl });
+    const session = sessionFromChain(A22_CHAIN, WORKER_SECRET);
+    expect(
+      authorizeAsOf(ctx, session, "read_file", { path: "/data/q3.pdf" }, AS_OF),
+    ).toMatchObject({ outcome: "deny", code: "TENUO_REVOKED" });
+  });
+
+  it("rejects an SRL that is not signed by a trusted root", () => {
+    const forged = signRevocationList(ATTACKER_SECRET, [A22_CHILD_ID]);
+    expect(() => verifierContext([CONTROL_PLANE_PUB], { revocationList: forged })).toThrow(
+      /trusted root/,
+    );
   });
 });

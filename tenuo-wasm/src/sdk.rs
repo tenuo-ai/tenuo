@@ -4,15 +4,21 @@
 //! SDK, without exposing the intermediate signature to JavaScript.
 //! Explorer-facing JSON helpers stay in `lib.rs`.
 
+use base64::Engine;
+use chrono::Utc;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
+use tenuo::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
 use tenuo::constraints::Subpath;
 use tenuo::payload::WarrantPayload;
+use tenuo::receipt::{Receipt, ReceiptPayload};
+use tenuo::wire::WarrantStack;
 use tenuo::{
-    wire, Authorizer, Constraint, ConstraintSet, ConstraintValue, Error, Exact, OneOf, Pattern,
-    PublicKey, Range, Signature, SigningKey, Warrant,
+    encode_approval_gate_map, wire, ApprovalGateMap, Authorizer, Constraint, ConstraintSet,
+    ConstraintValue, Error, Exact, OneOf, Pattern, PublicKey, Range, Signature, SignedRevocationList,
+    SigningKey, ToolApprovalGate, Warrant, APPROVAL_GATE_EXTENSION_KEY,
 };
 use wasm_bindgen::prelude::*;
 
@@ -37,12 +43,25 @@ struct DecisionDto {
     required: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     received: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt: Option<String>,
 }
 
 #[derive(Serialize)]
 struct InspectDto {
     payload_hex: String,
     signature_hex: String,
+    id: String,
+}
+
+#[derive(Serialize)]
+struct ReceiptInspectDto {
+    authentic: bool,
+    outcome: String,
+    action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    decision_code: Option<String>,
+    request_id: String,
 }
 
 #[derive(Serialize)]
@@ -58,6 +77,8 @@ struct ExportDto {
 pub struct SdkContext {
     issuer: Option<SigningKey>,
     authorizer: Authorizer,
+    trusted_roots: Vec<PublicKey>,
+    receipt_signer: SigningKey,
 }
 
 /// Opaque warrant chain (root first) + leaf holder key. Not JSON-serializable from JS.
@@ -67,16 +88,25 @@ pub struct SdkSession {
     holder: SigningKey,
 }
 
+impl Default for SdkContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[wasm_bindgen]
 impl SdkContext {
     #[wasm_bindgen(constructor)]
     pub fn new() -> SdkContext {
         init_panic_hook();
         let issuer = SigningKey::generate();
-        let authorizer = Authorizer::new().with_trusted_root(issuer.public_key());
+        let root = issuer.public_key();
+        let authorizer = Authorizer::new().with_trusted_root(root.clone());
         SdkContext {
-            issuer: Some(issuer),
+            issuer: Some(issuer.clone()),
             authorizer,
+            trusted_roots: vec![root],
+            receipt_signer: issuer,
         }
     }
 
@@ -90,20 +120,71 @@ impl SdkContext {
             return Err(JsError::new("trustedRoots must not be empty"));
         }
         let mut authorizer = Authorizer::new();
+        let mut trusted_roots = Vec::with_capacity(hexes.len());
         for hex in hexes {
             let key = parse_public_key_hex(&hex)?;
-            authorizer = authorizer.with_trusted_root(key);
+            authorizer = authorizer.with_trusted_root(key.clone());
+            trusted_roots.push(key);
         }
         Ok(SdkContext {
             issuer: None,
             authorizer,
+            trusted_roots,
+            receipt_signer: SigningKey::generate(),
         })
+    }
+
+    /// Load a published SignedRevocationList. The SRL must be signed by a trusted root.
+    #[wasm_bindgen(js_name = loadRevocationList)]
+    pub fn load_revocation_list(&mut self, wire: &str) -> Result<(), JsError> {
+        init_panic_hook();
+        let bytes = parse_srl_bytes(wire)?;
+        match SignedRevocationList::from_bytes(&bytes) {
+            Ok(srl) => {
+                let mut last = None;
+                for root in &self.trusted_roots {
+                    match self.authorizer.set_revocation_list(srl.clone(), root) {
+                        Ok(()) => return Ok(()),
+                        Err(e) => last = Some(e),
+                    }
+                }
+                Err(JsError::new(&format!(
+                    "revocation list is not signed by a trusted root: {}",
+                    last.map(|e| e.to_string())
+                        .unwrap_or_else(|| "no trusted roots".into())
+                )))
+            }
+            Err(_) => {
+                let ids = verify_published_srl(&bytes, &self.trusted_roots)?;
+                self.authorizer
+                    .install_verified_revocation_ids(ids)
+                    .map_err(|e| JsError::new(&format!("failed to install revocation list: {e}")))
+            }
+        }
+    }
+
+    /// Test / host seam. Signs an SRL with the local issuer. Does not load it.
+    #[wasm_bindgen(js_name = signRevocationList)]
+    pub fn sign_revocation_list(&self, ids: JsValue) -> Result<String, JsError> {
+        init_panic_hook();
+        let issuer = self.issuer.as_ref().ok_or_else(|| {
+            JsError::new("signRevocationList() needs a local issuer (devRoot context)")
+        })?;
+        sign_srl_hex(ids, issuer)
     }
 
     /// Mint a short-lived session from an allow map:
     /// `{ "read_file": { "path": { "kind": "under", "root": "/data" } } }`
+    ///
+    /// `require_approval` is optional:
+    /// `{ "approvers": ["hex..."], "min": 2, "tools": ["transfer"] }`
     #[wasm_bindgen]
-    pub fn mint(&self, allow_json: JsValue, ttl_seconds: u32) -> Result<SdkSession, JsError> {
+    pub fn mint(
+        &self,
+        allow_json: JsValue,
+        ttl_seconds: u32,
+        require_approval: JsValue,
+    ) -> Result<SdkSession, JsError> {
         init_panic_hook();
         let holder = SigningKey::generate();
         let ttl = if ttl_seconds == 0 {
@@ -122,6 +203,7 @@ impl SdkContext {
             ));
         }
 
+        let tool_names: Vec<String> = allow.keys().cloned().collect();
         let mut builder = Warrant::builder()
             .ttl(Duration::from_secs(ttl))
             .holder(holder.public_key());
@@ -135,6 +217,8 @@ impl SdkContext {
             }
             builder = builder.capability(tool, set);
         }
+
+        builder = apply_require_approval(builder, &require_approval, &tool_names)?;
 
         let issuer = self.issuer.as_ref().ok_or_else(|| {
             JsError::new(
@@ -180,8 +264,14 @@ impl SdkContext {
 
     /// Sign PoP and authorize in one call. Never returns allow without a core allow.
     #[wasm_bindgen]
-    pub fn authorize(&self, session: &SdkSession, tool: &str, args_json: JsValue) -> JsValue {
-        self.authorize_inner(session, tool, args_json, None)
+    pub fn authorize(
+        &self,
+        session: &SdkSession,
+        tool: &str,
+        args_json: JsValue,
+        approvals: JsValue,
+    ) -> JsValue {
+        self.authorize_inner(session, tool, args_json, approvals, None)
     }
 
     /// Test / replay seam. Not exposed on `createTenuo` or `execute`.
@@ -192,8 +282,9 @@ impl SdkContext {
         tool: &str,
         args_json: JsValue,
         as_of: f64,
+        approvals: JsValue,
     ) -> JsValue {
-        self.authorize_inner(session, tool, args_json, Some(as_of as i64))
+        self.authorize_inner(session, tool, args_json, approvals, Some(as_of as i64))
     }
 }
 
@@ -222,6 +313,28 @@ impl SdkSession {
     pub fn from_chain(parts: JsValue, holder_secret: &[u8]) -> Result<SdkSession, JsError> {
         init_panic_hook();
         session_from_chain(parse_chain_parts(parts)?, holder_secret)
+    }
+
+    /// Warrant IDs, root first. Test / revoke seam.
+    #[wasm_bindgen(js_name = warrantIds)]
+    pub fn warrant_ids(&self) -> Result<JsValue, JsError> {
+        init_panic_hook();
+        let ids: Vec<String> = self.chain.iter().map(|w| w.id().to_string()).collect();
+        Ok(to_js_value(&ids))
+    }
+
+    /// Warrant tokens, root first. Does not include the holder secret.
+    #[wasm_bindgen(js_name = toWire)]
+    pub fn to_wire(&self) -> Result<JsValue, JsError> {
+        init_panic_hook();
+        let mut warrants = Vec::with_capacity(self.chain.len());
+        for warrant in &self.chain {
+            warrants.push(
+                wire::encode_base64(warrant)
+                    .map_err(|e| JsError::new(&format!("failed to encode warrant: {e}")))?,
+            );
+        }
+        Ok(to_js_value(&warrants))
     }
 
     /// Test / interop seam. Not on the public TypeScript Session type.
@@ -269,45 +382,148 @@ pub fn sdk_inspect_parts(payload_hex: &str, signature_hex: &str) -> Result<JsVal
     Ok(inspect_js(&warrant))
 }
 
+/// Test / host seam. Signs an SRL with a provided issuer secret. Does not load it.
+#[wasm_bindgen(js_name = sdkSignRevocationList)]
+pub fn sdk_sign_revocation_list(ids: JsValue, issuer_secret: &[u8]) -> Result<String, JsError> {
+    init_panic_hook();
+    let issuer = parse_holder_secret(issuer_secret)?;
+    sign_srl_hex(ids, &issuer)
+}
+
+/// Signature authenticity only. Not authorization.
+#[wasm_bindgen(js_name = sdkVerifyReceipt)]
+pub fn sdk_verify_receipt(wire: &str) -> Result<JsValue, JsError> {
+    init_panic_hook();
+    let bytes = parse_srl_bytes(wire)?;
+    let receipt: Receipt = ciborium::from_reader(bytes.as_slice())
+        .map_err(|e| JsError::new(&format!("invalid receipt: {e}")))?;
+    let payload = receipt
+        .verify_signature()
+        .map_err(|e| JsError::new(&format!("receipt signature does not verify: {e}")))?;
+    Ok(to_js_value(&ReceiptInspectDto {
+        authentic: true,
+        outcome: match payload.outcome {
+            tenuo::receipt::Outcome::Allow => "allow".into(),
+            tenuo::receipt::Outcome::Deny => "deny".into(),
+        },
+        action: payload.action,
+        decision_code: payload.decision_code,
+        request_id: payload.request_id,
+    }))
+}
+
+/// Test / host seam. Signs a SignedApproval envelope; does not authorize.
+#[wasm_bindgen(js_name = sdkSignApproval)]
+pub fn sdk_sign_approval(
+    session: &SdkSession,
+    tool: &str,
+    args_json: JsValue,
+    approver_secret: &[u8],
+    external_id: &str,
+    as_of: Option<f64>,
+) -> Result<String, JsError> {
+    init_panic_hook();
+    let leaf = session.leaf()?;
+    let args = js_to_args(&args_json).map_err(|e| JsError::new(&e))?;
+    let approver = parse_holder_secret(approver_secret)?;
+    let now = as_of.map(|t| t as i64).unwrap_or_else(|| Utc::now().timestamp());
+    if now < 0 {
+        return Err(JsError::new("asOf must be a non-negative unix timestamp"));
+    }
+    let approved_at = now as u64;
+    let warrant_expires = leaf.expires_at().timestamp().max(0) as u64;
+    let expires_at = warrant_expires.min(approved_at.saturating_add(3600));
+    let request_hash = compute_request_hash(
+        &leaf.id().to_string(),
+        tool,
+        &args,
+        Some(leaf.authorized_holder()),
+    );
+    let mut nonce = [0u8; 16];
+    nonce[..8].copy_from_slice(&now.to_le_bytes());
+    nonce[8..].copy_from_slice(&approver.public_key().to_bytes()[..8]);
+    let payload = ApprovalPayload {
+        version: 1,
+        request_hash,
+        nonce,
+        external_id: if external_id.is_empty() {
+            "test-approver".into()
+        } else {
+            external_id.to_string()
+        },
+        approved_at,
+        expires_at,
+        extensions: None,
+    };
+    let signed = SignedApproval::create(payload, &approver);
+    let mut buf = Vec::new();
+    ciborium::into_writer(&signed, &mut buf)
+        .map_err(|e| JsError::new(&format!("failed to encode SignedApproval: {e}")))?;
+    Ok(hex::encode(buf))
+}
+
 impl SdkContext {
     fn authorize_inner(
         &self,
         session: &SdkSession,
         tool: &str,
         args_json: JsValue,
+        approvals_json: JsValue,
         as_of: Option<i64>,
     ) -> JsValue {
         init_panic_hook();
+        let timestamp = as_of.unwrap_or_else(|| Utc::now().timestamp());
+        let request_id = format!("{tool}:{timestamp}");
 
         let args = match js_to_args(&args_json) {
             Ok(a) => a,
             Err(e) => {
-                return to_js(&DecisionDto {
-                    outcome: "deny".into(),
-                    code: Some("TENUO_CANONICALIZATION".into()),
-                    field: None,
-                    message: Some(e),
-                    args: None,
-                    tool: None,
-                    required: None,
-                    received: None,
-                })
+                return self.finish_decision(
+                    session,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    DecisionDto {
+                        outcome: "deny".into(),
+                        code: Some("TENUO_CANONICALIZATION".into()),
+                        field: None,
+                        message: Some(e),
+                        args: None,
+                        tool: None,
+                        required: None,
+                        received: None,
+                        receipt: None,
+                    },
+                    None,
+                    false,
+                    Some("canonicalization"),
+                )
             }
         };
 
         let leaf = match session.leaf() {
             Ok(w) => w,
             Err(e) => {
-                return to_js(&DecisionDto {
-                    outcome: "deny".into(),
-                    code: Some("TENUO_CONFIGURATION".into()),
-                    field: None,
-                    message: Some(format!("{e:?}")),
-                    args: None,
-                    tool: None,
-                    required: None,
-                    received: None,
-                })
+                return self.finish_decision(
+                    session,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    DecisionDto {
+                        outcome: "deny".into(),
+                        code: Some("TENUO_CONFIGURATION".into()),
+                        field: None,
+                        message: Some(format!("{e:?}")),
+                        args: None,
+                        tool: None,
+                        required: None,
+                        received: None,
+                        receipt: None,
+                    },
+                    None,
+                    false,
+                    Some("configuration"),
+                )
             }
         };
 
@@ -317,7 +533,44 @@ impl SdkContext {
         };
         let signature = match signature {
             Ok(s) => s,
-            Err(e) => return deny_from_error(&e),
+            Err(e) => {
+                return self.finish_decision(
+                    session,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    deny_from_error(&e),
+                    None,
+                    false,
+                    Some(e.name()),
+                )
+            }
+        };
+
+        let approvals = match parse_approvals(&approvals_json) {
+            Ok(a) => a,
+            Err(e) => {
+                return self.finish_decision(
+                    session,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    DecisionDto {
+                        outcome: "deny".into(),
+                        code: Some("TENUO_CANONICALIZATION".into()),
+                        field: None,
+                        message: Some(e),
+                        args: None,
+                        tool: None,
+                        required: None,
+                        received: None,
+                        receipt: None,
+                    },
+                    Some(&signature),
+                    false,
+                    Some("canonicalization"),
+                )
+            }
         };
 
         let result = match as_of {
@@ -327,7 +580,7 @@ impl SdkContext {
                 &args,
                 &args,
                 Some(&signature),
-                &[],
+                &approvals,
                 t,
             ),
             None => self.authorizer.check_chain_with_pop_args(
@@ -336,7 +589,7 @@ impl SdkContext {
                 &args,
                 &args,
                 Some(&signature),
-                &[],
+                &approvals,
             ),
         };
 
@@ -346,20 +599,160 @@ impl SdkContext {
                 for (k, v) in &args {
                     obj.insert(k.clone(), cv_to_json(v));
                 }
-                to_js(&DecisionDto {
-                    outcome: "allow".into(),
-                    code: None,
-                    field: None,
-                    message: None,
-                    args: Some(serde_json::Value::Object(obj)),
-                    tool: None,
-                    required: None,
-                    received: None,
-                })
+                self.finish_decision(
+                    session,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    DecisionDto {
+                        outcome: "allow".into(),
+                        code: None,
+                        field: None,
+                        message: None,
+                        args: Some(serde_json::Value::Object(obj)),
+                        tool: None,
+                        required: None,
+                        received: None,
+                        receipt: None,
+                    },
+                    Some(&signature),
+                    true,
+                    None,
+                )
             }
-            Err(e) => deny_from_error(&e),
+            Err(e) => self.finish_decision(
+                session,
+                tool,
+                timestamp,
+                &request_id,
+                deny_from_error(&e),
+                Some(&signature),
+                pop_established_before_error(&e),
+                Some(e.name()),
+            ),
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_decision(
+        &self,
+        session: &SdkSession,
+        tool: &str,
+        timestamp: i64,
+        request_id: &str,
+        mut dto: DecisionDto,
+        pop: Option<&Signature>,
+        after_pop: bool,
+        decision_code: Option<&str>,
+    ) -> JsValue {
+        dto.receipt = encode_receipt(
+            &self.receipt_signer,
+            &session.chain,
+            tool,
+            timestamp,
+            request_id,
+            dto.outcome == "allow",
+            after_pop,
+            pop,
+            decision_code,
+        );
+        to_js(&dto)
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct RequireApprovalDto {
+    approvers: Vec<String>,
+    min: u32,
+    #[serde(default)]
+    tools: Option<Vec<String>>,
+}
+
+fn apply_require_approval(
+    mut builder: tenuo::WarrantBuilder,
+    require_json: &JsValue,
+    allow_tools: &[String],
+) -> Result<tenuo::WarrantBuilder, JsError> {
+    if require_json.is_null() || require_json.is_undefined() {
+        return Ok(builder);
+    }
+    let require: RequireApprovalDto = serde_wasm_bindgen::from_value(require_json.clone())
+        .map_err(|e| JsError::new(&format!("invalid requireApproval: {e}")))?;
+    if require.approvers.is_empty() {
+        return Err(JsError::new("requireApproval.approvers must not be empty"));
+    }
+    if require.min == 0 {
+        return Err(JsError::new("requireApproval.min must be at least 1"));
+    }
+    let mut keys = Vec::with_capacity(require.approvers.len());
+    for hex in &require.approvers {
+        keys.push(parse_public_key_hex(hex)?);
+    }
+    builder = builder.required_approvers(keys).min_approvals(require.min);
+
+    let gated = require.tools.unwrap_or_else(|| allow_tools.to_vec());
+    if gated.is_empty() {
+        return Err(JsError::new(
+            "requireApproval.tools must name at least one capability",
+        ));
+    }
+    let mut gates = ApprovalGateMap::new();
+    for tool in gated {
+        gates.insert(tool, ToolApprovalGate::whole_tool());
+    }
+    let encoded = encode_approval_gate_map(&gates)
+        .map_err(|e| JsError::new(&format!("failed to encode approval gates: {e}")))?;
+    Ok(builder.extension(APPROVAL_GATE_EXTENSION_KEY, encoded))
+}
+
+fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, String> {
+    if value.is_null() || value.is_undefined() {
+        return Ok(Vec::new());
+    }
+    if !js_sys::Array::is_array(value) {
+        return Err("approvals must be an array of SignedApproval envelopes".into());
+    }
+    let arr = js_sys::Array::from(value);
+    let mut out = Vec::with_capacity(arr.length() as usize);
+    for i in 0..arr.length() {
+        out.push(parse_one_approval(&arr.get(i))?);
+    }
+    Ok(out)
+}
+
+fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, String> {
+    if let Some(text) = value.as_string() {
+        return signed_approval_from_text(&text);
+    }
+    if js_sys::Uint8Array::instanceof(value) {
+        let bytes = js_sys::Uint8Array::new(value);
+        let mut buf = vec![0u8; bytes.length() as usize];
+        bytes.copy_to(&mut buf);
+        return signed_approval_from_bytes(&buf);
+    }
+    Err("each approval must be hex, base64, or bytes".into())
+}
+
+fn signed_approval_from_text(text: &str) -> Result<SignedApproval, String> {
+    let trimmed = text.trim();
+    if let Ok(bytes) = parse_hex(trimmed) {
+        if let Ok(approval) = signed_approval_from_bytes(&bytes) {
+            return Ok(approval);
+        }
+    }
+    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(trimmed.as_bytes()) {
+        if let Ok(approval) = signed_approval_from_bytes(&bytes) {
+            return Ok(approval);
+        }
+    }
+    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(trimmed.as_bytes()) {
+        return signed_approval_from_bytes(&bytes);
+    }
+    Err("approval is not valid hex or base64 SignedApproval CBOR".into())
+}
+
+fn signed_approval_from_bytes(bytes: &[u8]) -> Result<SignedApproval, String> {
+    ciborium::from_reader(bytes).map_err(|e| format!("invalid SignedApproval: {e}"))
 }
 
 fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constraint, String> {
@@ -554,24 +947,25 @@ fn cv_to_json(value: &ConstraintValue) -> serde_json::Value {
     }
 }
 
-fn deny_from_error(e: &Error) -> JsValue {
-    if let Error::ApprovalRequired { tool, .. } = e {
-        return to_js(&DecisionDto {
+fn deny_from_error(e: &Error) -> DecisionDto {
+    if let Error::ApprovalRequired { tool, request } = e {
+        return DecisionDto {
             outcome: "approval_required".into(),
             code: Some("TENUO_APPROVAL_REQUIRED".into()),
             field: None,
             message: Some(e.to_string()),
             args: None,
             tool: Some(tool.clone()),
-            required: None,
-            received: None,
-        });
+            required: Some(request.min_approvals),
+            received: Some(0),
+            receipt: None,
+        };
     }
     if let Error::InsufficientApprovals {
         required, received, ..
     } = e
     {
-        return to_js(&DecisionDto {
+        return DecisionDto {
             outcome: "deny".into(),
             code: Some("TENUO_INSUFFICIENT_APPROVALS".into()),
             field: None,
@@ -580,10 +974,11 @@ fn deny_from_error(e: &Error) -> JsValue {
             tool: None,
             required: Some(*required),
             received: Some(*received),
-        });
+            receipt: None,
+        };
     }
 
-    to_js(&DecisionDto {
+    DecisionDto {
         outcome: "deny".into(),
         code: Some(map_code(e).into()),
         field: error_field(e).map(str::to_string),
@@ -592,7 +987,156 @@ fn deny_from_error(e: &Error) -> JsValue {
         tool: None,
         required: None,
         received: None,
-    })
+        receipt: None,
+    }
+}
+
+fn pop_established_before_error(e: &Error) -> bool {
+    matches!(
+        e,
+        Error::ConstraintNotSatisfied { .. }
+            | Error::PathNotContained { .. }
+            | Error::InvalidPath { .. }
+            | Error::ValueNotInRange { .. }
+            | Error::UrlMismatch { .. }
+            | Error::UrlNotSafe { .. }
+            | Error::ApprovalRequired { .. }
+            | Error::InsufficientApprovals { .. }
+            | Error::ApprovalExpired { .. }
+            | Error::InvalidApproval(_)
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_receipt(
+    signer: &SigningKey,
+    chain: &[Warrant],
+    tool: &str,
+    timestamp: i64,
+    request_id: &str,
+    allowed: bool,
+    after_pop: bool,
+    pop: Option<&Signature>,
+    decision_code: Option<&str>,
+) -> Option<String> {
+    let warrant_chain = wire::encode_stack(&WarrantStack(chain.to_vec())).unwrap_or_default();
+    let payload = if allowed {
+        let pop = pop?;
+        ReceiptPayload::allow(
+            warrant_chain,
+            tool.to_string(),
+            timestamp,
+            request_id.to_string(),
+            pop.to_bytes(),
+        )
+    } else if after_pop {
+        let pop = pop?;
+        ReceiptPayload::deny(
+            warrant_chain,
+            tool.to_string(),
+            timestamp,
+            request_id.to_string(),
+            decision_code.unwrap_or("denied").to_string(),
+            pop.to_bytes(),
+        )
+    } else {
+        ReceiptPayload::deny_before_pop(
+            warrant_chain,
+            tool.to_string(),
+            timestamp,
+            request_id.to_string(),
+            decision_code.unwrap_or("denied").to_string(),
+        )
+    };
+    let receipt = Receipt::create(&payload, signer).ok()?;
+    let mut buf = Vec::new();
+    ciborium::into_writer(&receipt, &mut buf).ok()?;
+    Some(hex::encode(buf))
+}
+
+fn sign_srl_hex(ids: JsValue, issuer: &SigningKey) -> Result<String, JsError> {
+    let revoked: Vec<String> = serde_wasm_bindgen::from_value(ids)
+        .map_err(|e| JsError::new(&format!("revoked ids must be an array of strings: {e}")))?;
+    if revoked.is_empty() {
+        return Err(JsError::new("revocation list must name at least one warrant id"));
+    }
+    let srl = SignedRevocationList::builder()
+        .revoke_all(revoked)
+        .build(issuer)
+        .map_err(|e| JsError::new(&format!("failed to sign revocation list: {e}")))?;
+    let bytes = srl
+        .to_bytes()
+        .map_err(|e| JsError::new(&format!("failed to encode revocation list: {e}")))?;
+    Ok(hex::encode(bytes))
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PublishedSrlPayload {
+    revoked_ids: Vec<String>,
+    version: u64,
+    issued_at: u64,
+    issuer: [u8; 32],
+}
+
+#[derive(serde::Deserialize)]
+struct PublishedSrl {
+    payload: PublishedSrlPayload,
+    #[serde(with = "serde_bytes")]
+    signature: Vec<u8>,
+}
+
+fn verify_published_srl(
+    bytes: &[u8],
+    trusted_roots: &[PublicKey],
+) -> Result<Vec<String>, JsError> {
+    let published: PublishedSrl = ciborium::from_reader(bytes)
+        .map_err(|e| JsError::new(&format!("invalid revocation list: {e}")))?;
+    if published.signature.len() != 64 {
+        return Err(JsError::new("revocation list signature must be 64 bytes"));
+    }
+    let mut sig = [0u8; 64];
+    sig.copy_from_slice(&published.signature);
+    let signature = Signature::from_bytes(&sig)
+        .map_err(|e| JsError::new(&format!("invalid revocation list signature: {e}")))?;
+
+    let mut payload_bytes = Vec::new();
+    ciborium::into_writer(&published.payload, &mut payload_bytes)
+        .map_err(|e| JsError::new(&format!("failed to encode revocation payload: {e}")))?;
+    let mut preimage = Vec::with_capacity(b"tenuo-srl-v1".len() + payload_bytes.len());
+    preimage.extend_from_slice(b"tenuo-srl-v1");
+    preimage.extend_from_slice(&payload_bytes);
+
+    let issuer = PublicKey::from_bytes(&published.payload.issuer)
+        .map_err(|e| JsError::new(&format!("invalid revocation list issuer: {e}")))?;
+    if !trusted_roots.iter().any(|root| root == &issuer) {
+        return Err(JsError::new(
+            "revocation list is not signed by a trusted root",
+        ));
+    }
+    issuer
+        .verify(&preimage, &signature)
+        .map_err(|e| JsError::new(&format!("revocation list signature does not verify: {e}")))?;
+    if published.payload.revoked_ids.is_empty() {
+        return Err(JsError::new("revocation list must name at least one warrant id"));
+    }
+    Ok(published.payload.revoked_ids)
+}
+
+fn parse_srl_bytes(input: &str) -> Result<Vec<u8>, JsError> {
+    let trimmed = input.trim();
+    if let Ok(bytes) = parse_hex(trimmed) {
+        if !bytes.is_empty() {
+            return Ok(bytes);
+        }
+    }
+    let compact: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(compact.as_bytes()) {
+        return Ok(bytes);
+    }
+    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(compact.as_bytes()) {
+        return Ok(bytes);
+    }
+    Err(JsError::new("invalid revocation list or receipt encoding"))
 }
 
 fn map_code(e: &Error) -> &'static str {
@@ -621,6 +1165,7 @@ fn map_code(e: &Error) -> &'static str {
         | Error::UrlMismatch { .. }
         | Error::UrlNotSafe { .. } => "TENUO_CONSTRAINT_VIOLATION",
         Error::Unauthorized(_) => "TENUO_TOOL_NOT_AUTHORIZED",
+        Error::InvalidApproval(_) => "TENUO_INSUFFICIENT_APPROVALS",
         _ => "TENUO_TOOL_NOT_AUTHORIZED",
     }
 }
@@ -806,6 +1351,7 @@ fn inspect_js(warrant: &Warrant) -> JsValue {
     to_js_inspect(&InspectDto {
         payload_hex: hex::encode(warrant.payload_bytes()),
         signature_hex: hex::encode(warrant.signature().to_bytes()),
+        id: warrant.id().to_string(),
     })
 }
 

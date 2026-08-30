@@ -15,6 +15,7 @@ export type {
   PatternConstraint,
   ProtectedTool,
   PublicKeyHandle,
+  RequireApproval,
   Session,
   SessionFromWireInput,
   SessionInput,
