@@ -430,14 +430,14 @@ class TenuoPluginConfig:
 
         # Trusted roots are mandatory: explicit list, provider, or global configure().
         if self.trusted_roots_provider is not None:
-            if self.trusted_roots:
+            if self.trusted_roots and not self._provider_snapshots_ready:
                 from tenuo.exceptions import ConfigurationError
                 raise ConfigurationError(
                     "TenuoPluginConfig: pass either trusted_roots= or "
                     "trusted_roots_provider=, not both."
                 )
             if self._provider_snapshots_ready:
-                roots = list(self.trusted_roots)
+                roots = list(self.trusted_roots or [])
             else:
                 roots = list(self.trusted_roots_provider())
         elif self.trusted_roots:
