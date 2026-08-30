@@ -1185,6 +1185,7 @@ impl Warrant {
     }
 
     /// Authorize against a committed evaluation instant (test / replay seam).
+    #[allow(clippy::too_many_arguments)]
     pub fn authorize_with_pop_args_and_config_as_of(
         &self,
         tool: &str,

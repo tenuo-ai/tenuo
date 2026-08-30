@@ -2476,6 +2476,7 @@ impl Authorizer {
     }
 
     /// Verify a chain at a committed evaluation instant (test / replay seam).
+    #[allow(clippy::too_many_arguments)]
     pub fn check_chain_with_pop_args_as_of(
         &self,
         chain: &[Warrant],
