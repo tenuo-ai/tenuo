@@ -26,11 +26,24 @@ describe("createTenuo", () => {
 
   it("cannot mint a session without a local issuer", () => {
     const tenuo = createTenuo({
-      trustedRoots: [createTenuo.publicKeyFromEnv("TENUO_ROOT_PUBLIC_KEY")],
+      trustedRoots: [
+        createTenuo.publicKeyFromHex(
+          "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        ),
+      ],
     });
     expect(() => tenuo.session({ allow: { read_file: { path: under("/data") } } })).toThrow(
       /local issuer/,
     );
+  });
+
+  it("fails closed when publicKeyFromEnv is missing", () => {
+    const previous = process.env.TENUO_MISSING_ROOT;
+    delete process.env.TENUO_MISSING_ROOT;
+    expect(() => createTenuo.publicKeyFromEnv("TENUO_MISSING_ROOT")).toThrow(/not set or empty/);
+    if (previous !== undefined) {
+      process.env.TENUO_MISSING_ROOT = previous;
+    }
   });
 
   it("refuses a tool with an empty allow policy", () => {
@@ -120,5 +133,37 @@ describe("authorize through WASM", () => {
       allow: { search: { q: pattern("report*") } },
     });
     await expect(search.execute({ q: "report-q3" }, { session })).resolves.toBe("report-q3");
+  });
+});
+
+describe("narrow", () => {
+  it("tightens a session and leaves the parent unchanged", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const readFile = tenuo.tool(
+      { execute: async ({ path }: { path: string }) => `ok:${path}` },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    const session = tenuo.session({
+      allow: { read_file: { path: under("/data") } },
+    });
+    const reports = tenuo.narrow(session, { path: under("/data/reports") });
+
+    await expect(
+      tenuo.withSession(reports, () => readFile.execute({ path: "/data/reports/q3.pdf" })),
+    ).resolves.toBe("ok:/data/reports/q3.pdf");
+    await expect(
+      tenuo.withSession(reports, () => readFile.execute({ path: "/data/other.txt" })),
+    ).rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION" });
+    await expect(
+      tenuo.withSession(session, () => readFile.execute({ path: "/data/other.txt" })),
+    ).resolves.toBe("ok:/data/other.txt");
+  });
+
+  it("refuses a widening narrow", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({
+      allow: { read_file: { path: under("/data/reports") } },
+    });
+    expect(() => tenuo.narrow(session, { path: under("/data") })).toThrow(/narrow\(\) rejected/);
   });
 });

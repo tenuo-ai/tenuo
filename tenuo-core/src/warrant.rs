@@ -1013,7 +1013,12 @@ impl Warrant {
 
     /// Check if the warrant has expired.
     pub fn is_expired(&self) -> bool {
-        let now = Utc::now().timestamp() as u64;
+        self.is_expired_as_of(Utc::now().timestamp())
+    }
+
+    /// Check expiry against a committed evaluation instant.
+    pub fn is_expired_as_of(&self, as_of: i64) -> bool {
+        let now = as_of.max(0) as u64;
         now >= self.payload.expires_at
     }
 
@@ -1024,9 +1029,12 @@ impl Warrant {
 
     /// Check if the warrant has expired, with clock skew tolerance.
     pub fn is_expired_with_tolerance(&self, tolerance: chrono::Duration) -> bool {
-        let now = Utc::now().timestamp() as u64;
-        // Avoid underflow if tolerance is relatively large negative (unlikely)
-        // tolerance.num_seconds()
+        self.is_expired_with_tolerance_as_of(tolerance, Utc::now().timestamp())
+    }
+
+    /// Clock-skew expiry check against a committed evaluation instant.
+    pub fn is_expired_with_tolerance_as_of(&self, tolerance: chrono::Duration, as_of: i64) -> bool {
+        let now = as_of.max(0) as u64;
         let tol_secs = tolerance.num_seconds();
         if tol_secs < 0 {
             now > self.payload.expires_at.saturating_sub((-tol_secs) as u64)
@@ -1165,8 +1173,29 @@ impl Warrant {
         pop_window_secs: i64,
         pop_max_windows: u32,
     ) -> Result<()> {
-        // Check expiration
-        if self.is_expired() {
+        self.authorize_with_pop_args_and_config_as_of(
+            tool,
+            pop_args,
+            constraint_args,
+            signature,
+            pop_window_secs,
+            pop_max_windows,
+            Utc::now().timestamp(),
+        )
+    }
+
+    /// Authorize against a committed evaluation instant (test / replay seam).
+    pub fn authorize_with_pop_args_and_config_as_of(
+        &self,
+        tool: &str,
+        pop_args: &HashMap<String, ConstraintValue>,
+        constraint_args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+        pop_window_secs: i64,
+        pop_max_windows: u32,
+        as_of: i64,
+    ) -> Result<()> {
+        if self.is_expired_as_of(as_of) {
             return Err(Error::WarrantExpired {
                 warrant_id: self.id().to_string(),
                 expired_at: self.expires_at(),
@@ -1190,10 +1219,15 @@ impl Warrant {
             });
         };
 
-        // PoP covers the wire-args view
-        self.verify_pop(tool, pop_args, signature, pop_window_secs, pop_max_windows)?;
+        self.verify_pop_as_of(
+            tool,
+            pop_args,
+            signature,
+            pop_window_secs,
+            pop_max_windows,
+            as_of,
+        )?;
 
-        // Warrant constraints match the extracted view
         constraints.matches(constraint_args)
     }
 
@@ -1235,10 +1269,30 @@ impl Warrant {
         window_secs: i64,
         max_windows: u32,
     ) -> Result<()> {
+        self.verify_pop_as_of(
+            tool,
+            args,
+            signature,
+            window_secs,
+            max_windows,
+            Utc::now().timestamp(),
+        )
+    }
+
+    /// Verify PoP against a committed evaluation instant.
+    pub fn verify_pop_as_of(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+        window_secs: i64,
+        max_windows: u32,
+        as_of: i64,
+    ) -> Result<()> {
         let signature = signature
             .ok_or_else(|| Error::MissingSignature("Proof-of-Possession required".to_string()))?;
 
-        let now = Utc::now().timestamp();
+        let now = as_of;
 
         let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
         // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-pop-verify-sort.

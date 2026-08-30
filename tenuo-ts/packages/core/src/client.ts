@@ -1,17 +1,25 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type {
-  AllowPolicy,
   CreateTenuoOptions,
   DevRoot,
   ProtectedTool,
   PublicKeyHandle,
+  NarrowInput,
+  SessionFromWireInput,
   SessionInput,
   Tenuo,
   ToolPolicy,
 } from "./api.ts";
 import { AuthorizationDeniedError, ApprovalRequiredError, TenuoConfigurationError } from "./errors.ts";
 import { Session, isSession, nativeSession } from "./session.ts";
-import { createDevContext, loadWasm, wasmAvailable, type WasmContext } from "./wasm.ts";
+import {
+  createDevContext,
+  createVerifierContext,
+  importSessionFromChain,
+  importSessionFromWire,
+  loadWasm,
+  type WasmContext,
+} from "./wasm.ts";
 
 const currentSession = new AsyncLocalStorage<Session>();
 
@@ -38,11 +46,55 @@ export function devRoot(): DevRoot {
   return { kind: "dev-root" };
 }
 
+function normalizeHex(value: string): string {
+  const hex = value.trim().toLowerCase().replace(/^0x/, "");
+  if (!/^[0-9a-f]{64}$/.test(hex)) {
+    throw new TenuoConfigurationError(
+      "Trusted root must be a 32-byte hex public key (64 hex characters)",
+    );
+  }
+  return hex;
+}
+
 export function publicKeyFromEnv(name: string): PublicKeyHandle {
   if (name.length === 0) {
-    throw new TenuoConfigurationError("PublicKey.fromEnv() requires an environment variable name");
+    throw new TenuoConfigurationError("publicKeyFromEnv() requires an environment variable name");
   }
-  return { kind: "public-key", source: "env" };
+  if (typeof process === "undefined") {
+    throw new TenuoConfigurationError(
+      `Environment variable ${name} is not available. Tenuo fails closed without a trusted root.`,
+    );
+  }
+  const value = process.env[name];
+  if (value === undefined || value.length === 0) {
+    throw new TenuoConfigurationError(
+      `Environment variable ${name} is not set or empty. Tenuo fails closed without a trusted root.`,
+    );
+  }
+  return { kind: "public-key", source: "env", hex: normalizeHex(value) };
+}
+
+export function publicKeyFromHex(hex: string): PublicKeyHandle {
+  return { kind: "public-key", source: "hex", hex: normalizeHex(hex) };
+}
+
+export function publicKeyFromBytes(bytes: Uint8Array): PublicKeyHandle {
+  if (bytes.length !== 32) {
+    throw new TenuoConfigurationError("publicKeyFromBytes() requires a 32-byte public key");
+  }
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return { kind: "public-key", source: "bytes", hex };
+}
+
+function rootHexes(options: CreateTenuoOptions): string[] {
+  const handles: PublicKeyHandle[] = [];
+  if (options.root !== undefined && options.root.kind === "public-key") {
+    handles.push(options.root);
+  }
+  for (const root of options.trustedRoots ?? []) {
+    handles.push(root);
+  }
+  return handles.map((h) => h.hex);
 }
 
 function hasTrustAnchor(options: CreateTenuoOptions): boolean {
@@ -69,11 +121,16 @@ function capabilityName(inner: object, policy: ToolPolicy): string {
 }
 
 class TenuoClient implements Tenuo {
-  private readonly context: WasmContext | undefined;
+  private readonly context: WasmContext;
+  private readonly canMint: boolean;
 
-  constructor(private readonly options: CreateTenuoOptions) {
+  constructor(options: CreateTenuoOptions) {
     if (options.root?.kind === "dev-root") {
       this.context = createDevContext();
+      this.canMint = true;
+    } else {
+      this.context = createVerifierContext(rootHexes(options));
+      this.canMint = false;
     }
   }
 
@@ -93,8 +150,7 @@ class TenuoClient implements Tenuo {
     ) => unknown;
     const execute = async (args: never, callOptions?: unknown) => {
       const session = resolveSession(callOptions);
-      const ctx = this.requireContext();
-      const decision = ctx.authorize(nativeSession(session), capability, args);
+      const decision = this.context.authorize(nativeSession(session), capability, args);
       if (decision.outcome === "allow") {
         return original(plainArgs(decision.args), callOptions);
       }
@@ -122,10 +178,35 @@ class TenuoClient implements Tenuo {
     if (Object.keys(input.allow).length === 0) {
       throw new TenuoConfigurationError("tenuo.session() requires at least one capability in allow");
     }
-    const ctx = this.requireContext();
+    if (!this.canMint) {
+      throw new TenuoConfigurationError(
+        "session() mints a warrant and needs a local issuer. Use createTenuo({ root: createTenuo.devRoot() }).",
+      );
+    }
     const ttl = input.ttlSeconds ?? 0;
-    const native = ctx.mint(input.allow, ttl);
+    const native = this.context.mint(input.allow, ttl);
     return new Session(native);
+  }
+
+  sessionFromWire(input: SessionFromWireInput): Session {
+    if (!(input.holderKey instanceof Uint8Array) || input.holderKey.length !== 32) {
+      throw new TenuoConfigurationError("sessionFromWire() requires a 32-byte holderKey");
+    }
+    if (typeof input.warrant === "string" && input.warrant.trim().length === 0) {
+      throw new TenuoConfigurationError("sessionFromWire() requires a warrant");
+    }
+    try {
+      if (typeof input.warrant === "string") {
+        return new Session(importSessionFromWire(input.warrant, input.holderKey));
+      }
+      if (input.warrant.length === 0) {
+        throw new TenuoConfigurationError("sessionFromWire() requires a warrant");
+      }
+      return new Session(importSessionFromChain([...input.warrant], input.holderKey));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new TenuoConfigurationError(message);
+    }
   }
 
   withSession<R>(session: Session, fn: () => R): R {
@@ -135,27 +216,26 @@ class TenuoClient implements Tenuo {
     return currentSession.run(session, fn);
   }
 
-  narrow(_session: Session, allow: AllowPolicy): Session {
+  narrow(session: Session, allow: NarrowInput): Session {
     if (Object.keys(allow).length === 0) {
       throw new TenuoConfigurationError("tenuo.narrow() requires a non-empty allow policy");
     }
-    throw new TenuoConfigurationError(
-      "tenuo.narrow() is not implemented in this slice",
-      "TENUO_NOT_IMPLEMENTED",
-    );
+    if (!isSession(session)) {
+      throw new TenuoConfigurationError("narrow() requires a Tenuo Session, not a plain object");
+    }
+    try {
+      return new Session(this.context.narrow(nativeSession(session), allow));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("narrow() rejected")) {
+        throw new AuthorizationDeniedError("TENUO_CHAIN_INVALID", message);
+      }
+      throw new TenuoConfigurationError(message);
+    }
   }
 
   ready(): void {
     loadWasm();
-  }
-
-  private requireContext(): WasmContext {
-    if (this.context === undefined) {
-      throw new TenuoConfigurationError(
-        "session() mints a warrant and needs a local issuer. Use createTenuo({ root: createTenuo.devRoot() }). Loading an issued session is not in this slice.",
-      );
-    }
-    return this.context;
   }
 }
 
@@ -197,13 +277,18 @@ function createTenuoImpl(options: CreateTenuoOptions = {}): Tenuo {
       "createTenuo.devRoot() is disabled when NODE_ENV=production. Set TENUO_ALLOW_DEV=1 only for explicit break-glass.",
     );
   }
-  if (!wasmAvailable() && options.root?.kind === "dev-root") {
-    loadWasm();
-  }
+  loadWasm();
   return new TenuoClient(options);
 }
 
 export const createTenuo: ((options?: CreateTenuoOptions) => Tenuo) & {
   devRoot: typeof devRoot;
   publicKeyFromEnv: typeof publicKeyFromEnv;
-} = Object.assign(createTenuoImpl, { devRoot, publicKeyFromEnv });
+  publicKeyFromHex: typeof publicKeyFromHex;
+  publicKeyFromBytes: typeof publicKeyFromBytes;
+} = Object.assign(createTenuoImpl, {
+  devRoot,
+  publicKeyFromEnv,
+  publicKeyFromHex,
+  publicKeyFromBytes,
+});

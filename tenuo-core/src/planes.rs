@@ -1905,12 +1905,37 @@ impl Authorizer {
         signature: Option<&crate::crypto::Signature>,
         approvals: &[crate::approval::SignedApproval],
     ) -> Result<ChainVerificationResult> {
-        self.check_chain(
-            std::slice::from_ref(warrant),
+        self.authorize_one_as_of(
+            warrant,
             tool,
             args,
             signature,
             approvals,
+            chrono::Utc::now().timestamp(),
+        )
+    }
+
+    /// Authorize a single warrant at a committed evaluation instant.
+    ///
+    /// Test / replay seam. Production callers must use [`Self::authorize_one`],
+    /// which reads the clock once.
+    pub fn authorize_one_as_of(
+        &self,
+        warrant: &Warrant,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::SignedApproval],
+        as_of: i64,
+    ) -> Result<ChainVerificationResult> {
+        self.check_chain_with_pop_args_as_of(
+            std::slice::from_ref(warrant),
+            tool,
+            args,
+            args,
+            signature,
+            approvals,
+            as_of,
         )
     }
 
@@ -1980,12 +2005,30 @@ impl Authorizer {
         self.verify_chain_with_options(chain, true)
     }
 
+    /// Verify a chain at a committed evaluation instant (test / replay seam).
+    pub fn verify_chain_as_of(
+        &self,
+        chain: &[Warrant],
+        as_of: i64,
+    ) -> Result<ChainVerificationResult> {
+        self.verify_chain_with_options_as_of(chain, false, as_of)
+    }
+
     fn verify_chain_with_options(
         &self,
         chain: &[Warrant],
         enforce_session: bool,
     ) -> Result<ChainVerificationResult> {
-        let result = self.verify_chain_with_options_inner(chain, enforce_session);
+        self.verify_chain_with_options_as_of(chain, enforce_session, chrono::Utc::now().timestamp())
+    }
+
+    fn verify_chain_with_options_as_of(
+        &self,
+        chain: &[Warrant],
+        enforce_session: bool,
+        as_of: i64,
+    ) -> Result<ChainVerificationResult> {
+        let result = self.verify_chain_with_options_inner(chain, enforce_session, as_of);
 
         // Audit: Log verification failures
         if let Err(ref e) = result {
@@ -2010,6 +2053,7 @@ impl Authorizer {
         &self,
         chain: &[Warrant],
         enforce_session: bool,
+        as_of: i64,
     ) -> Result<ChainVerificationResult> {
         if chain.is_empty() {
             return Err(Error::ChainVerificationFailed(
@@ -2104,7 +2148,7 @@ impl Authorizer {
             let parent = &chain[i - 1];
             let child = &chain[i];
 
-            self.verify_link(parent, child)?;
+            self.verify_link_as_of(parent, child, as_of)?;
 
             // Check session binding if enforced
             if enforce_session && child.session_id() != expected_session {
@@ -2128,7 +2172,7 @@ impl Authorizer {
     }
 
     /// Verify a single link in a delegation chain.
-    fn verify_link(&self, parent: &Warrant, child: &Warrant) -> Result<()> {
+    fn verify_link_as_of(&self, parent: &Warrant, child: &Warrant, as_of: i64) -> Result<()> {
         // Check revocation
         if self.is_revoked(child) {
             return Err(Error::WarrantRevoked(child.id().to_string()));
@@ -2211,7 +2255,7 @@ impl Authorizer {
         }
 
         // Check expiration with clock tolerance
-        if child.is_expired_with_tolerance(self.clock_tolerance) {
+        if child.is_expired_with_tolerance_as_of(self.clock_tolerance, as_of) {
             return Err(Error::WarrantExpired {
                 warrant_id: child.id().to_string(),
                 expired_at: child.expires_at(),
@@ -2420,7 +2464,29 @@ impl Authorizer {
         signature: Option<&crate::crypto::Signature>,
         approvals: &[crate::approval::SignedApproval],
     ) -> Result<ChainVerificationResult> {
-        let result = self.verify_chain(chain)?;
+        self.check_chain_with_pop_args_as_of(
+            chain,
+            tool,
+            pop_args,
+            constraint_args,
+            signature,
+            approvals,
+            chrono::Utc::now().timestamp(),
+        )
+    }
+
+    /// Verify a chain at a committed evaluation instant (test / replay seam).
+    pub fn check_chain_with_pop_args_as_of(
+        &self,
+        chain: &[Warrant],
+        tool: &str,
+        pop_args: &HashMap<String, ConstraintValue>,
+        constraint_args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::SignedApproval],
+        as_of: i64,
+    ) -> Result<ChainVerificationResult> {
+        let result = self.verify_chain_as_of(chain, as_of)?;
         let mut verified_approvals = Vec::new();
 
         if let Some(leaf) = chain.last() {
@@ -2437,13 +2503,14 @@ impl Authorizer {
             }
 
             // Capability, constraint, and PoP verification (split-view)
-            leaf.authorize_with_pop_args_and_config(
+            leaf.authorize_with_pop_args_and_config_as_of(
                 tool,
                 pop_args,
                 constraint_args,
                 signature,
                 self.pop_window_secs,
                 self.pop_max_windows,
+                as_of,
             )?;
 
             // Approval gate evaluation: evaluated against the wire-args view so

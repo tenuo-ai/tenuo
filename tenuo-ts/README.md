@@ -1,6 +1,6 @@
 # `@tenuo/core`
 
-TypeScript SDK for Tenuo. Authorization decisions run in the Rust core (WASM). `createTenuo({ root: createTenuo.devRoot() })` can mint a session and authorize `tool.execute` in Node. Loading an issued production session is not in this slice.
+TypeScript SDK for Tenuo. Authorization decisions run in the Rust core (WASM). `createTenuo({ root: createTenuo.devRoot() })` can mint a session. Production loads an issued warrant with `sessionFromWire` and a trusted root.
 
 ## Five-minute path (target API)
 
@@ -38,6 +38,13 @@ Production setup uses a real root, not `devRoot()`:
 const tenuo = createTenuo({
   trustedRoots: [createTenuo.publicKeyFromEnv("TENUO_ROOT_PUBLIC_KEY")],
 });
+
+const session = tenuo.sessionFromWire({
+  warrant: process.env.TENUO_WARRANT!,
+  holderKey: holderSecret, // 32-byte Uint8Array, not a hex string
+});
+
+const reports = tenuo.narrow(session, { path: under("/data/reports") });
 ```
 
 `devRoot()` throws when `NODE_ENV=production` unless `TENUO_ALLOW_DEV=1`.

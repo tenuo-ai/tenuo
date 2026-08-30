@@ -16,15 +16,32 @@ export type WasmDecision = {
   received?: number;
 };
 
+export type WasmInspect = {
+  payload_hex: string;
+  signature_hex: string;
+};
+
 export type WasmSession = object;
 
 export type WasmContext = {
   mint(allow: unknown, ttlSeconds: number): WasmSession;
+  narrow(session: WasmSession, allow: unknown): WasmSession;
   authorize(session: WasmSession, tool: string, args: unknown): WasmDecision;
+  authorizeAsOf(session: WasmSession, tool: string, args: unknown, asOf: number): WasmDecision;
 };
 
 type Generated = {
-  SdkContext: new () => WasmContext;
+  SdkContext: {
+    new (): WasmContext;
+    fromTrustedRoots(roots: string[]): WasmContext;
+  };
+  SdkSession: {
+    fromWire(warrant: string, holder: Uint8Array): WasmSession;
+    fromParts(payloadHex: string, signatureHex: string, holder: Uint8Array): WasmSession;
+    fromChain(parts: unknown, holder: Uint8Array): WasmSession;
+  };
+  sdkInspectWarrant(wire: string): WasmInspect;
+  sdkInspectParts(payloadHex: string, signatureHex: string): WasmInspect;
 };
 
 let loaded: Generated | undefined;
@@ -57,4 +74,36 @@ export function loadWasm(): Generated {
 export function createDevContext(): WasmContext {
   const { SdkContext } = loadWasm();
   return new SdkContext();
+}
+
+export function createVerifierContext(rootHexes: readonly string[]): WasmContext {
+  const { SdkContext } = loadWasm();
+  return SdkContext.fromTrustedRoots([...rootHexes]);
+}
+
+export function importSessionFromWire(warrant: string, holderKey: Uint8Array): WasmSession {
+  const { SdkSession } = loadWasm();
+  return SdkSession.fromWire(warrant, holderKey);
+}
+
+export function importSessionFromParts(
+  payloadHex: string,
+  signatureHex: string,
+  holderKey: Uint8Array,
+): WasmSession {
+  const { SdkSession } = loadWasm();
+  return SdkSession.fromParts(payloadHex, signatureHex, holderKey);
+}
+
+export function importSessionFromChain(parts: unknown, holderKey: Uint8Array): WasmSession {
+  const { SdkSession } = loadWasm();
+  return SdkSession.fromChain(parts, holderKey);
+}
+
+export function inspectWarrant(wire: string): WasmInspect {
+  return loadWasm().sdkInspectWarrant(wire);
+}
+
+export function inspectParts(payloadHex: string, signatureHex: string): WasmInspect {
+  return loadWasm().sdkInspectParts(payloadHex, signatureHex);
 }

@@ -1,9 +1,8 @@
 /**
  * Frozen public contract for `@tenuo/core`.
  *
- * Implementation is stubbed until WASM bindings land. Names and shapes here
- * are the review surface — do not grow this file with protocol vocabulary
- * (`Warrant`, `mint`, `guard`) as the lead API.
+ * Names and shapes here are the review surface — do not grow this file with
+ * protocol vocabulary (`Warrant`, `mint`, `guard`) as the lead API.
  */
 
 export type TenuoErrorCode =
@@ -14,6 +13,8 @@ export type TenuoErrorCode =
   | "TENUO_WARRANT_EXPIRED"
   | "TENUO_UNTRUSTED_ROOT"
   | "TENUO_INVALID_POP"
+  | "TENUO_SIGNATURE_INVALID"
+  | "TENUO_CHAIN_INVALID"
   | "TENUO_REVOKED"
   | "TENUO_APPROVAL_REQUIRED"
   | "TENUO_INSUFFICIENT_APPROVALS"
@@ -115,8 +116,22 @@ export type DevRoot = {
 
 export type PublicKeyHandle = {
   readonly kind: "public-key";
-  readonly source: "env" | "bytes";
+  readonly source: "env" | "hex" | "bytes";
+  readonly hex: string;
 };
+
+export type WarrantPart = {
+  readonly payload_hex: string;
+  readonly signature_hex: string;
+};
+
+export type SessionFromWireInput = {
+  readonly warrant: string | readonly string[] | readonly WarrantPart[];
+  readonly holderKey: Uint8Array;
+};
+
+/** Field-level (`{ path: under("/data") }`) or per-capability (`{ read_file: { path: ... } }`). */
+export type NarrowInput = AllowPolicy | SessionInput["allow"];
 
 export type CreateTenuoOptions = {
   readonly trustedRoots?: readonly PublicKeyHandle[];
@@ -149,7 +164,9 @@ export interface Tenuo {
     policy: ToolPolicy,
   ): ProtectedTool<T>;
   session(input: SessionInput): Session;
+  /** Import a warrant minted elsewhere (Rust / Python / another process). */
+  sessionFromWire(input: SessionFromWireInput): Session;
   withSession<R>(session: Session, fn: () => R): R;
-  narrow(session: Session, allow: AllowPolicy): Session;
+  narrow(session: Session, allow: NarrowInput): Session;
   ready(): void;
 }

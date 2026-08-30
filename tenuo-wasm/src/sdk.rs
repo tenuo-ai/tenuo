@@ -9,9 +9,10 @@ use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use tenuo::constraints::Subpath;
+use tenuo::payload::WarrantPayload;
 use tenuo::{
-    Authorizer, Constraint, ConstraintSet, ConstraintValue, Error, Exact, OneOf, Pattern, Range,
-    SigningKey, Warrant,
+    wire, Authorizer, Constraint, ConstraintSet, ConstraintValue, Error, Exact, OneOf, Pattern,
+    PublicKey, Range, Signature, SigningKey, Warrant,
 };
 use wasm_bindgen::prelude::*;
 
@@ -38,17 +39,31 @@ struct DecisionDto {
     received: Option<u32>,
 }
 
+#[derive(Serialize)]
+struct InspectDto {
+    payload_hex: String,
+    signature_hex: String,
+}
+
+#[derive(Serialize)]
+struct ExportDto {
+    warrants: Vec<String>,
+    holder_hex: String,
+    root_hex: String,
+}
+
 /// Issuer + authorizer for `createTenuo({ root: devRoot() })`.
+/// Verifier-only contexts have `issuer: None` and cannot mint.
 #[wasm_bindgen]
 pub struct SdkContext {
-    issuer: SigningKey,
+    issuer: Option<SigningKey>,
     authorizer: Authorizer,
 }
 
-/// Opaque warrant + holder key. Not JSON-serializable from JS.
+/// Opaque warrant chain (root first) + leaf holder key. Not JSON-serializable from JS.
 #[wasm_bindgen]
 pub struct SdkSession {
-    warrant: Warrant,
+    chain: Vec<Warrant>,
     holder: SigningKey,
 }
 
@@ -59,7 +74,30 @@ impl SdkContext {
         init_panic_hook();
         let issuer = SigningKey::generate();
         let authorizer = Authorizer::new().with_trusted_root(issuer.public_key());
-        SdkContext { issuer, authorizer }
+        SdkContext {
+            issuer: Some(issuer),
+            authorizer,
+        }
+    }
+
+    /// Authorizer-only context. `mint()` fails; import a session from the wire.
+    #[wasm_bindgen(js_name = fromTrustedRoots)]
+    pub fn from_trusted_roots(roots: JsValue) -> Result<SdkContext, JsError> {
+        init_panic_hook();
+        let hexes: Vec<String> = serde_wasm_bindgen::from_value(roots)
+            .map_err(|e| JsError::new(&format!("trustedRoots must be an array of hex keys: {e}")))?;
+        if hexes.is_empty() {
+            return Err(JsError::new("trustedRoots must not be empty"));
+        }
+        let mut authorizer = Authorizer::new();
+        for hex in hexes {
+            let key = parse_public_key_hex(&hex)?;
+            authorizer = authorizer.with_trusted_root(key);
+        }
+        Ok(SdkContext {
+            issuer: None,
+            authorizer,
+        })
     }
 
     /// Mint a short-lived session from an allow map:
@@ -98,16 +136,147 @@ impl SdkContext {
             builder = builder.capability(tool, set);
         }
 
+        let issuer = self.issuer.as_ref().ok_or_else(|| {
+            JsError::new(
+                "session() mints a warrant and needs a local issuer. Use createTenuo({ root: createTenuo.devRoot() }).",
+            )
+        })?;
+
         let warrant = builder
-            .build(&self.issuer)
+            .build(issuer)
             .map_err(|e| JsError::new(&format!("failed to mint session: {e}")))?;
 
-        Ok(SdkSession { warrant, holder })
+        Ok(SdkSession {
+            chain: vec![warrant],
+            holder,
+        })
+    }
+
+    /// Attenuate the leaf. The current holder signs; the same holder keeps the child.
+    #[wasm_bindgen]
+    pub fn narrow(&self, session: &SdkSession, allow_json: JsValue) -> Result<SdkSession, JsError> {
+        init_panic_hook();
+        let leaf = session.leaf()?;
+        let tools = tools_for_narrow(leaf, &allow_json)?;
+        if tools.is_empty() {
+            return Err(JsError::new("narrow() requires at least one capability"));
+        }
+
+        let mut builder = leaf.attenuate();
+        for (tool, set) in tools {
+            builder = builder.capability(tool, set);
+        }
+        let child = builder
+            .build(&session.holder)
+            .map_err(|e| JsError::new(&format!("narrow() rejected: {e}")))?;
+
+        let mut chain = session.chain.clone();
+        chain.push(child);
+        Ok(SdkSession {
+            chain,
+            holder: session.holder.clone(),
+        })
     }
 
     /// Sign PoP and authorize in one call. Never returns allow without a core allow.
     #[wasm_bindgen]
     pub fn authorize(&self, session: &SdkSession, tool: &str, args_json: JsValue) -> JsValue {
+        self.authorize_inner(session, tool, args_json, None)
+    }
+
+    /// Test / replay seam. Not exposed on `createTenuo` or `execute`.
+    #[wasm_bindgen(js_name = authorizeAsOf)]
+    pub fn authorize_as_of(
+        &self,
+        session: &SdkSession,
+        tool: &str,
+        args_json: JsValue,
+        as_of: f64,
+    ) -> JsValue {
+        self.authorize_inner(session, tool, args_json, Some(as_of as i64))
+    }
+}
+
+#[wasm_bindgen]
+impl SdkSession {
+    /// Import a published warrant (base64 or envelope hex) plus the holder secret.
+    #[wasm_bindgen(js_name = fromWire)]
+    pub fn from_wire(warrant: &str, holder_secret: &[u8]) -> Result<SdkSession, JsError> {
+        init_panic_hook();
+        session_from_chain(parse_chain(warrant)?, holder_secret)
+    }
+
+    /// Reconstruct a warrant from published payload + signature hex (A.14).
+    #[wasm_bindgen(js_name = fromParts)]
+    pub fn from_parts(
+        payload_hex: &str,
+        signature_hex: &str,
+        holder_secret: &[u8],
+    ) -> Result<SdkSession, JsError> {
+        init_panic_hook();
+        session_from_chain(vec![warrant_from_parts(payload_hex, signature_hex)?], holder_secret)
+    }
+
+    /// Import a chain: string[] of wire tokens, or `{ payload_hex, signature_hex }[]`.
+    #[wasm_bindgen(js_name = fromChain)]
+    pub fn from_chain(parts: JsValue, holder_secret: &[u8]) -> Result<SdkSession, JsError> {
+        init_panic_hook();
+        session_from_chain(parse_chain_parts(parts)?, holder_secret)
+    }
+
+    /// Test / interop seam. Not on the public TypeScript Session type.
+    #[wasm_bindgen(js_name = exportWire)]
+    pub fn export_wire(&self) -> Result<JsValue, JsError> {
+        init_panic_hook();
+        let root = self
+            .chain
+            .first()
+            .ok_or_else(|| JsError::new("session chain is empty"))?;
+        let mut warrants = Vec::with_capacity(self.chain.len());
+        for warrant in &self.chain {
+            warrants.push(
+                wire::encode_base64(warrant)
+                    .map_err(|e| JsError::new(&format!("failed to encode warrant: {e}")))?,
+            );
+        }
+        Ok(to_js_value(&ExportDto {
+            warrants,
+            holder_hex: hex::encode(self.holder.secret_key_bytes()),
+            root_hex: hex::encode(root.issuer().to_bytes()),
+        }))
+    }
+}
+
+impl SdkSession {
+    fn leaf(&self) -> Result<&Warrant, JsError> {
+        self.chain
+            .last()
+            .ok_or_else(|| JsError::new("session chain is empty"))
+    }
+}
+
+#[wasm_bindgen(js_name = sdkInspectWarrant)]
+pub fn sdk_inspect_warrant(wire: &str) -> Result<JsValue, JsError> {
+    init_panic_hook();
+    let warrant = parse_warrant(wire)?;
+    Ok(inspect_js(&warrant))
+}
+
+#[wasm_bindgen(js_name = sdkInspectParts)]
+pub fn sdk_inspect_parts(payload_hex: &str, signature_hex: &str) -> Result<JsValue, JsError> {
+    init_panic_hook();
+    let warrant = warrant_from_parts(payload_hex, signature_hex)?;
+    Ok(inspect_js(&warrant))
+}
+
+impl SdkContext {
+    fn authorize_inner(
+        &self,
+        session: &SdkSession,
+        tool: &str,
+        args_json: JsValue,
+        as_of: Option<i64>,
+    ) -> JsValue {
         init_panic_hook();
 
         let args = match js_to_args(&args_json) {
@@ -126,15 +295,52 @@ impl SdkContext {
             }
         };
 
-        let signature = match session.warrant.sign(&session.holder, tool, &args) {
+        let leaf = match session.leaf() {
+            Ok(w) => w,
+            Err(e) => {
+                return to_js(&DecisionDto {
+                    outcome: "deny".into(),
+                    code: Some("TENUO_CONFIGURATION".into()),
+                    field: None,
+                    message: Some(format!("{e:?}")),
+                    args: None,
+                    tool: None,
+                    required: None,
+                    received: None,
+                })
+            }
+        };
+
+        let signature = match as_of {
+            Some(t) => leaf.sign_with_timestamp(&session.holder, tool, &args, Some(t)),
+            None => leaf.sign(&session.holder, tool, &args),
+        };
+        let signature = match signature {
             Ok(s) => s,
             Err(e) => return deny_from_error(&e),
         };
 
-        match self
-            .authorizer
-            .authorize_one(&session.warrant, tool, &args, Some(&signature), &[])
-        {
+        let result = match as_of {
+            Some(t) => self.authorizer.check_chain_with_pop_args_as_of(
+                &session.chain,
+                tool,
+                &args,
+                &args,
+                Some(&signature),
+                &[],
+                t,
+            ),
+            None => self.authorizer.check_chain_with_pop_args(
+                &session.chain,
+                tool,
+                &args,
+                &args,
+                Some(&signature),
+                &[],
+            ),
+        };
+
+        match result {
             Ok(_) => {
                 let mut obj = serde_json::Map::new();
                 for (k, v) in &args {
@@ -393,8 +599,21 @@ fn map_code(e: &Error) -> &'static str {
     match e {
         Error::WarrantExpired { .. } => "TENUO_WARRANT_EXPIRED",
         Error::WarrantRevoked(_) => "TENUO_REVOKED",
-        Error::SignatureInvalid(_) | Error::MissingSignature(_) => "TENUO_INVALID_POP",
-        Error::ChainVerificationFailed(_) => "TENUO_UNTRUSTED_ROOT",
+        Error::SignatureInvalid(msg) if msg.contains("not trusted") => "TENUO_UNTRUSTED_ROOT",
+        Error::SignatureInvalid(msg) if msg.contains("Proof-of-Possession") => "TENUO_INVALID_POP",
+        Error::MissingSignature(_) => "TENUO_INVALID_POP",
+        Error::SignatureInvalid(_) => "TENUO_SIGNATURE_INVALID",
+        Error::ChainVerificationFailed(_)
+        | Error::MonotonicityViolation(_)
+        | Error::DelegationAuthorityError { .. }
+        | Error::DepthExceeded(_, _)
+        | Error::ToolMismatch { .. }
+        | Error::IncompatibleConstraintTypes { .. }
+        | Error::WildcardExpansion { .. }
+        | Error::PatternExpanded { .. }
+        | Error::EmptyResultSet { .. }
+        | Error::ExclusionRemoved { .. } => "TENUO_CHAIN_INVALID",
+        Error::ConstraintNotSatisfied { field, .. } if field == "tool" => "TENUO_TOOL_NOT_AUTHORIZED",
         Error::ConstraintNotSatisfied { .. }
         | Error::PathNotContained { .. }
         | Error::InvalidPath { .. }
@@ -406,6 +625,196 @@ fn map_code(e: &Error) -> &'static str {
     }
 }
 
+fn parse_hex(input: &str) -> Result<Vec<u8>, JsError> {
+    let clean: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    hex::decode(clean).map_err(|e| JsError::new(&format!("invalid hex: {e}")))
+}
+
+fn parse_public_key_hex(hex: &str) -> Result<PublicKey, JsError> {
+    let bytes = parse_hex(hex)?;
+    if bytes.len() != 32 {
+        return Err(JsError::new("trusted root must be a 32-byte hex public key"));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    PublicKey::from_bytes(&arr).map_err(|e| JsError::new(&format!("invalid public key: {e}")))
+}
+
+fn parse_holder_secret(bytes: &[u8]) -> Result<SigningKey, JsError> {
+    if bytes.len() != 32 {
+        return Err(JsError::new("holder key must be 32 bytes"));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(bytes);
+    Ok(SigningKey::from_bytes(&arr))
+}
+
+fn session_from_chain(chain: Vec<Warrant>, holder_secret: &[u8]) -> Result<SdkSession, JsError> {
+    if chain.is_empty() {
+        return Err(JsError::new("chain must not be empty"));
+    }
+    let holder = parse_holder_secret(holder_secret)?;
+    let leaf = chain.last().expect("non-empty chain");
+    if holder.public_key() != *leaf.authorized_holder() {
+        return Err(JsError::new(
+            "holder key does not match the warrant's authorized holder",
+        ));
+    }
+    Ok(SdkSession { chain, holder })
+}
+
+fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
+    let trimmed = input.trim();
+    if let Ok(stack) = wire::decode_pem_chain(trimmed) {
+        if !stack.0.is_empty() {
+            return Ok(stack.0);
+        }
+    }
+    if let Ok(warrant) = parse_warrant(trimmed) {
+        return Ok(vec![warrant]);
+    }
+    if let Ok(bytes) = parse_hex(trimmed) {
+        if let Ok(stack) = wire::decode_stack(&bytes) {
+            return Ok(stack.0);
+        }
+    }
+    Err(JsError::new("invalid warrant or warrant chain"))
+}
+
+fn parse_chain_parts(parts: JsValue) -> Result<Vec<Warrant>, JsError> {
+    let value: serde_json::Value = serde_wasm_bindgen::from_value(parts)
+        .map_err(|e| JsError::new(&format!("invalid chain: {e}")))?;
+    let arr = value
+        .as_array()
+        .ok_or_else(|| JsError::new("chain must be an array"))?;
+    if arr.is_empty() {
+        return Err(JsError::new("chain must not be empty"));
+    }
+    let mut out = Vec::with_capacity(arr.len());
+    for (i, item) in arr.iter().enumerate() {
+        if let Some(s) = item.as_str() {
+            out.push(
+                parse_warrant(s)
+                    .map_err(|_| JsError::new(&format!("chain[{i}] is not a valid warrant")))?,
+            );
+            continue;
+        }
+        let obj = item.as_object().ok_or_else(|| {
+            JsError::new(&format!(
+                "chain[{i}] must be a wire string or payload/signature pair"
+            ))
+        })?;
+        let payload = obj
+            .get("payload_hex")
+            .or_else(|| obj.get("payloadHex"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| JsError::new(&format!("chain[{i}] missing payload_hex")))?;
+        let signature = obj
+            .get("signature_hex")
+            .or_else(|| obj.get("signatureHex"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| JsError::new(&format!("chain[{i}] missing signature_hex")))?;
+        out.push(warrant_from_parts(payload, signature)?);
+    }
+    Ok(out)
+}
+
+fn tools_for_narrow(
+    leaf: &Warrant,
+    allow_json: &JsValue,
+) -> Result<HashMap<String, ConstraintSet>, JsError> {
+    let raw: serde_json::Value = serde_wasm_bindgen::from_value(allow_json.clone())
+        .map_err(|e| JsError::new(&format!("invalid allow policy: {e}")))?;
+    let obj = raw
+        .as_object()
+        .ok_or_else(|| JsError::new("allow must be an object"))?;
+    if obj.is_empty() {
+        return Err(JsError::new("narrow() requires a non-empty allow policy"));
+    }
+
+    let field_level = obj
+        .values()
+        .all(|v| v.get("kind").and_then(|k| k.as_str()).is_some());
+
+    if field_level {
+        let set = constraint_set_from_fields(obj)?;
+        let tools = leaf
+            .capabilities()
+            .ok_or_else(|| JsError::new("leaf has no capabilities to narrow"))?;
+        if tools.is_empty() {
+            return Err(JsError::new("leaf has no capabilities to narrow"));
+        }
+        let mut out = HashMap::new();
+        for name in tools.keys() {
+            out.insert(name.clone(), set.clone());
+        }
+        return Ok(out);
+    }
+
+    let mut out = HashMap::new();
+    for (tool, fields) in obj {
+        let fields = fields
+            .as_object()
+            .ok_or_else(|| JsError::new(&format!("allow.{tool} must be an object")))?;
+        out.insert(tool.clone(), constraint_set_from_fields(fields)?);
+    }
+    Ok(out)
+}
+
+fn constraint_set_from_fields(
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Result<ConstraintSet, JsError> {
+    let mut set = ConstraintSet::new();
+    for (field, expr) in fields {
+        let constraint = constraint_from_expr(expr)
+            .map_err(|e| JsError::new(&format!("allow.{field}: {e}")))?;
+        set.insert(field.clone(), constraint);
+    }
+    Ok(set)
+}
+
+fn parse_warrant(input: &str) -> Result<Warrant, JsError> {
+    let trimmed = input.trim();
+    if let Ok(warrant) = wire::decode_base64(trimmed) {
+        return Ok(warrant);
+    }
+    let bytes = parse_hex(trimmed)?;
+    wire::decode(&bytes).map_err(|e| JsError::new(&format!("invalid warrant: {e}")))
+}
+
+fn warrant_from_parts(payload_hex: &str, signature_hex: &str) -> Result<Warrant, JsError> {
+    let payload_bytes = parse_hex(payload_hex)?;
+    let sig_bytes = parse_hex(signature_hex)?;
+    if sig_bytes.len() != 64 {
+        return Err(JsError::new("signature must be 64 bytes"));
+    }
+    let mut sig_arr = [0u8; 64];
+    sig_arr.copy_from_slice(&sig_bytes);
+    let payload: WarrantPayload = ciborium::de::from_reader(payload_bytes.as_slice())
+        .map_err(|e| JsError::new(&format!("invalid warrant payload: {e}")))?;
+    let signature = Signature::from_bytes(&sig_arr)
+        .map_err(|e| JsError::new(&format!("invalid signature: {e}")))?;
+    Ok(Warrant {
+        payload,
+        signature,
+        payload_bytes,
+        envelope_version: 1,
+    })
+}
+
+fn inspect_js(warrant: &Warrant) -> JsValue {
+    to_js_inspect(&InspectDto {
+        payload_hex: hex::encode(warrant.payload_bytes()),
+        signature_hex: hex::encode(warrant.signature().to_bytes()),
+    })
+}
+
+fn to_js_inspect(dto: &InspectDto) -> JsValue {
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    dto.serialize(&serializer)
+        .unwrap_or_else(|_| JsValue::from_str("internal serialize error"))
+}
+
 fn error_field(e: &Error) -> Option<&str> {
     match e {
         Error::ConstraintNotSatisfied { field, .. } => Some(field.as_str()),
@@ -415,6 +824,10 @@ fn error_field(e: &Error) -> Option<&str> {
 }
 
 fn to_js(dto: &DecisionDto) -> JsValue {
+    to_js_value(dto)
+}
+
+fn to_js_value<T: Serialize>(dto: &T) -> JsValue {
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
     dto.serialize(&serializer)
         .unwrap_or_else(|_| JsValue::from_str("internal serialize error"))
