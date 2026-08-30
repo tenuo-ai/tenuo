@@ -760,26 +760,32 @@ class TenuoActivityInboundInterceptor:
             if (now2 - self._last_srl_refresh) < interval:
                 return
             try:
-                srl = provider()
-            except Exception as e:
-                logger.warning("revocation_list_provider failed during refresh: %s", e)
-                return
-            if srl is None:
-                logger.warning(
-                    "revocation_list_provider returned None during refresh; "
-                    "keeping prior revocation list"
-                )
-                return
-            try:
-                for auth in (self._authorizer, self._retry_authorizer):
-                    if auth is not None:
-                        auth.set_revocation_list(srl)
+                try:
+                    srl = provider()
+                except Exception as e:
+                    logger.warning("revocation_list_provider failed during refresh: %s", e)
+                    return
+                if srl is None:
+                    logger.warning(
+                        "revocation_list_provider returned None during refresh; "
+                        "keeping prior revocation list"
+                    )
+                    return
+                authorizers = [
+                    auth
+                    for auth in (self._authorizer, self._retry_authorizer)
+                    if auth is not None
+                ]
+                for auth in authorizers:
+                    auth.set_revocation_list(srl)
+                with self._config._provider_state_lock:
+                    self._config._last_good_revocation_list = srl
             except Exception as e:
                 logger.warning("SRL refresh failed: %s", e)
-                return
-            with self._config._provider_state_lock:
-                self._config._last_good_revocation_list = srl
-            self._last_srl_refresh = _time.monotonic()
+            finally:
+                # Advance on every attempt so a broken source retries on
+                # interval instead of on every subsequent activity.
+                self._last_srl_refresh = _time.monotonic()
 
     def init(self, outbound: Any) -> None:
         """Called by Temporal to initialize the interceptor with an outbound impl."""
@@ -901,6 +907,29 @@ class TenuoActivityInboundInterceptor:
 
         args = self._extract_arguments(input, headers)
 
+        # -- 6. Delegation Depth Limit --
+        chain_depth = warrant.depth if hasattr(warrant, "depth") else 0
+        if chain_depth > self._config.max_chain_depth:
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
+                constraint="max_chain_depth_exceeded",
+                start_ns=start_ns,
+            )
+            if self._config.on_denial == "raise" and not self._config.dry_run:
+                raise self._wrap_as_non_retryable(ChainValidationError(
+                    reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
+                    depth=chain_depth,
+                ))
+            return await _deny_or_continue(
+                tool=tool_name,
+                reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
+            )
+
+        # -- 6b. Warrant-Chain Leaf Binding --
         chain = None
         chain_header = headers.get(TENUO_CHAIN_HEADER)
         if chain_header:
@@ -930,28 +959,6 @@ class TenuoActivityInboundInterceptor:
                         depth=0,
                     )) from exc
                 return await _deny_or_continue(tool=tool_name, reason=reason)
-
-        # -- 6. Delegation Depth Limit --
-        chain_depth = warrant.depth if hasattr(warrant, "depth") else 0
-        if chain_depth > self._config.max_chain_depth:
-            self._emit_denial_event(
-                info=info,
-                warrant=warrant,
-                tool=tool_name,
-                args=args,
-                reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
-                constraint="max_chain_depth_exceeded",
-                start_ns=start_ns,
-            )
-            if self._config.on_denial == "raise" and not self._config.dry_run:
-                raise self._wrap_as_non_retryable(ChainValidationError(
-                    reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
-                    depth=chain_depth,
-                ))
-            return await _deny_or_continue(
-                tool=tool_name,
-                reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
-            )
 
         # -- 7. Trusted-Root & Revocation Refresh --
         self._maybe_refresh_trusted_roots()

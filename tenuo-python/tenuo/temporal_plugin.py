@@ -265,7 +265,13 @@ class TenuoTemporalPlugin(SimplePlugin):
         """
         # Work on a copy so we never mutate the user's config object. This
         # isolates two workers that happen to share a ``TenuoPluginConfig``.
-        self._tenuo_config = dataclasses.replace(config)
+        self._tenuo_config = dataclasses.replace(config, _provider_snapshots_ready=True)
+        self._tenuo_config._last_good_trusted_roots = list(
+            config._last_good_trusted_roots
+        )
+        self._tenuo_config._last_good_revocation_list = (
+            config._last_good_revocation_list
+        )
         if self._tenuo_config.activity_fns is not None:
             self._tenuo_config.activity_fns = list(self._tenuo_config.activity_fns)
         # The activity registry is rebuilt from our copy; any later auto-discovery

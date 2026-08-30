@@ -64,6 +64,9 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 "SrlVersionRollback",
                 PyTuple::new(py, [*current, *attempted]),
             ),
+            crate::error::Error::SRLContentChanged { version } => {
+                ("SrlContentChanged", PyTuple::new(py, [*version]))
+            }
             crate::error::Error::WarrantExpired {
                 warrant_id,
                 expired_at,

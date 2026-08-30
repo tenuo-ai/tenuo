@@ -890,6 +890,10 @@ class TestTenuoPluginConfig:
         assert ai._config._last_good_revocation_list is None, (
             "a failed refresh must not poison the last-good SRL snapshot"
         )
+        assert ai._last_srl_refresh > 0, (
+            "a failed refresh must still advance the interval so the provider "
+            "is not re-invoked on every subsequent activity"
+        )
 
     def test_retry_authorizer_selected_on_retry_attempt(self):
         """``_retry_authorizer`` must be used for ``info.attempt > 1``."""
@@ -2754,7 +2758,7 @@ async def test_async_completion_rejects_same_version_revocation_replacement():
     _set_worker_config(cfg, task_queue="async-completion-srl-same-version")
     handle = AsyncMock()
 
-    with pytest.raises(TenuoContextError, match="different SRL with the same version"):
+    with pytest.raises(TenuoContextError, match="different revoked set at the same SRL version"):
         await tenuo_complete_async_activity(
             handle,
             "result",
@@ -2766,6 +2770,53 @@ async def test_async_completion_rejects_same_version_revocation_replacement():
     assert calls == 2
     assert cfg._last_good_revocation_list is revoked_v2
     handle.complete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_completion_accepts_resigned_same_version_revocation_list():
+    from tenuo_core import SignedRevocationList, SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+
+    root_key = SigningKey.generate()
+    warrant = Warrant.issue(
+        root_key,
+        capabilities={"external_job": {}},
+        holder=root_key.public_key,
+    )
+    first_builder = SignedRevocationList.builder()
+    first_builder.version(2)
+    first = first_builder.build(root_key)
+    resigned_builder = SignedRevocationList.builder()
+    resigned_builder.version(2)
+    resigned = resigned_builder.build(root_key)
+    assert first.to_bytes() != resigned.to_bytes()
+    calls = 0
+
+    def provider():
+        nonlocal calls
+        calls += 1
+        return first if calls == 1 else resigned
+
+    cfg = TenuoPluginConfig(
+        key_resolver=AsyncMock(),
+        trusted_roots=[root_key.public_key],
+        revocation_list_provider=provider,
+    )
+    _set_worker_config(cfg, task_queue="async-completion-srl-resign")
+    handle = AsyncMock()
+
+    await tenuo_complete_async_activity(
+        handle,
+        "result",
+        warrant,
+        "root-key",
+        task_queue="async-completion-srl-resign",
+    )
+
+    assert calls == 2
+    assert cfg._last_good_revocation_list is resigned
+    handle.complete.assert_awaited_once_with("result")
 
 
 @pytest.mark.asyncio

@@ -898,6 +898,9 @@ field, so the helper validates locally before releasing the completion:
 - trusted-root chain, signature, linkage, and current-time validation; and
 - configured revocation-list validation.
 
+This is warrant liveness, not capability scope: the helper does not check
+whether the warrant authorizes completing this Activity.
+
 Delegated warrants must include `warrant_chain=[root, ..., leaf]`. Validation is
 performed before this helper calls the completion handle; it never falls back
 to an unverified completion. This is a caller-side preflight, not a Temporal
@@ -908,8 +911,9 @@ worker config with a deprecation warning. Zero or multiple registrations fail
 closed. Provider failures or empty results retain the config's last accepted
 trusted-root snapshot; revocation-provider failures or `None` results likewise
 retain the last accepted signed revocation list. SRL refreshes must be
-monotonic: lower versions are rejected, and a different SRL with the same
-version is rejected so revocations cannot be silently rolled back.
+monotonic: lower versions are rejected, and a different revoked-ID set at the
+same version is rejected. Re-signing the same set at the same version is
+accepted.
 `TenuoTemporalPlugin` validates that the worker has a non-empty task queue
 during worker setup, so the registry cannot be silently left unconfigured.
 

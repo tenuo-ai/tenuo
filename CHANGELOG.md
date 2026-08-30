@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **Temporal `TenuoPluginConfig` now rejects two previously ignored SRL settings.**
+  `revocation_refresh_secs` without `revocation_list_provider`, and passing both
+  `revocation_list` and `revocation_list_provider`, raise `ConfigurationError`
+  at worker construction. Audit worker configs before upgrade.
+
 ### Added
 
 - **Temporal per-Activity warrant overrides.**
@@ -34,7 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Temporal's async-completion RPC has no user-header field, so the previous
   signature never left the process and could not be checked downstream.
 - **Root expiry and Python revocation enforcement.** `verify_chain()` now checks
-  current-time validity for every warrant, including singleton roots. Python's
+  current-time validity for every warrant, including singleton roots. Archival
+  or offline callers that previously used `verify_chain()` after expiry will
+  now receive `WarrantExpired`. Python's
   `Authorizer` now exposes `set_revocation_list()` and accepts an SRL only when
   its signature is valid and its issuer is an already-configured trusted root;
   Temporal no longer silently skips SRL enforcement when the binding is absent.
@@ -45,10 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trusted-root provider failures retain the last accepted root snapshot.
   Revocation providers are installed at startup and fail worker construction
   with `ConfigurationError` if the initial provider call fails; later failed
-  SRL refreshes no longer poison the config snapshot. SRL version rollback and
-  same-version replacement are rejected, and plugin workers now reject a
-  missing task queue during setup instead of failing later during completion or
-  minting.
+  SRL refreshes no longer poison the config snapshot. SRL version rollback is
+  rejected; a different revoked-ID set at the same version is rejected as
+  `SRLContentChanged`. Re-signing the same revoked set at the same version is
+  accepted. Plugin workers now reject a missing task queue during setup instead
+  of failing later during completion or minting.
 
 - **MCP tool-call denials could be read as successes on MCP SDK 2.x.** The SDK
   renamed `CallToolResult.isError` to `is_error`, so `SecureMCPClient`'s error

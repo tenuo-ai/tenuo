@@ -509,6 +509,29 @@ def test_config_private_provider_state_is_excluded_from_equality() -> None:
     assert config_a == config_b
 
 
+def test_plugin_copy_does_not_refetch_revocation_provider() -> None:
+    """Worker plugin copies must inherit last-good SRL state, not re-fetch."""
+    from tenuo.temporal_plugin import TenuoTemporalPlugin
+
+    sk = SigningKey.generate()
+    calls = 0
+
+    def provider():
+        nonlocal calls
+        calls += 1
+        return None
+
+    config = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[sk.public_key],
+        revocation_list_provider=provider,
+    )
+    assert calls == 1
+    TenuoTemporalPlugin(config)
+    assert calls == 1
+    assert config._last_good_revocation_list is None
+
+
 def test_revocation_list_provider_startup_failure_is_configuration_error() -> None:
     """Startup SRL provider failures fail closed with remediation text."""
     from tenuo.exceptions import ConfigurationError

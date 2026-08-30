@@ -58,11 +58,13 @@ def _srl_version(srl: Any) -> Optional[int]:
     return int(version)
 
 
-def _srl_bytes(srl: Any) -> Optional[bytes]:
-    to_bytes = getattr(srl, "to_bytes", None)
-    if not callable(to_bytes):
+def _srl_revoked_ids(srl: Any) -> Optional[set]:
+    ids = getattr(srl, "revoked_ids", None)
+    if callable(ids):
+        ids = ids()
+    if ids is None:
         return None
-    return bytes(to_bytes())
+    return set(ids)
 
 
 def _ensure_srl_refresh_not_rolled_back(current: Any, candidate: Any) -> None:
@@ -76,18 +78,18 @@ def _ensure_srl_refresh_not_rolled_back(current: Any, candidate: Any) -> None:
             f"completion (current={current_version}, attempted={candidate_version})."
         )
     if candidate_version == current_version:
-        current_bytes = _srl_bytes(current)
-        candidate_bytes = _srl_bytes(candidate)
+        current_ids = _srl_revoked_ids(current)
+        candidate_ids = _srl_revoked_ids(candidate)
         if (
-            current_bytes is not None
-            and candidate_bytes is not None
-            and current_bytes != candidate_bytes
+            current_ids is not None
+            and candidate_ids is not None
+            and current_ids != candidate_ids
         ):
             raise TenuoContextError(
-                "revocation_list_provider returned a different SRL with the same "
-                f"version during async completion (version={candidate_version}). "
-                "Publish revocation-list updates with a monotonically increasing "
-                "version."
+                "revocation_list_provider returned a different revoked set at the "
+                f"same SRL version during async completion (version={candidate_version}). "
+                "Re-signing the same set is allowed; change the revoked IDs only "
+                "with a higher version."
             )
 
 
@@ -323,6 +325,8 @@ async def tenuo_execute_activity(
 
         if warrant_chain is not None:
             chain = list(warrant_chain)
+        elif getattr(warrant, "parent_hash", None) is None:
+            chain = [warrant]
         else:
             raw_current = _current_workflow_headers()
             encoded_current = raw_current.get(TENUO_CHAIN_HEADER)
@@ -1256,9 +1260,10 @@ async def tenuo_complete_async_activity(
     """Complete an async Activity after local Tenuo preflight validation.
 
     Temporal's async-completion RPC has no user-header field, so authorization
-    cannot be transported to a second worker. This helper instead verifies the
-    warrant chain (including expiry/revocation) before releasing the completion
-    call through this helper.
+    cannot be transported to a second worker. This helper checks warrant
+    liveness — trust, linkage, expiry, and revocation — not capability scope.
+    It does not evaluate whether the warrant authorizes completing this
+    Activity; the completion RPC does not carry the activity type or arguments.
 
     ``task_queue`` selects the exact worker config so multi-worker processes
     cannot select another tenant's key resolver. For compatibility, omission
@@ -1402,21 +1407,31 @@ async def tenuo_complete_async_activity(
             else worker_cfg._last_good_revocation_list
         )
 
-    try:
-        from tenuo_core import Authorizer
-        from tenuo.temporal._interceptors import _build_authorizer
+    from tenuo.exceptions import ConfigurationError
+    from tenuo_core import Authorizer
+    from tenuo.temporal._interceptors import _build_authorizer
 
+    try:
         authorizer = _build_authorizer(
             Authorizer,
             roots,
             worker_cfg,
             revocation_list=revocations,
         )
-        with worker_cfg._provider_state_lock:
-            if refreshed_roots is not None:
-                worker_cfg._last_good_trusted_roots = list(refreshed_roots)
-            if refreshed_revocations is not _MISSING_REVOCATION_LIST:
-                worker_cfg._last_good_revocation_list = refreshed_revocations
+    except ConfigurationError:
+        raise
+    except AttributeError as exc:
+        raise ConfigurationError(
+            "tenuo_complete_async_activity: Authorizer is missing "
+            "set_revocation_list; upgrade tenuo_core to a build that exposes "
+            "revocation-list installation."
+        ) from exc
+    with worker_cfg._provider_state_lock:
+        if refreshed_roots is not None:
+            worker_cfg._last_good_trusted_roots = list(refreshed_roots)
+        if refreshed_revocations is not _MISSING_REVOCATION_LIST:
+            worker_cfg._last_good_revocation_list = refreshed_revocations
+    try:
         authorizer.verify_chain(chain)
     except Exception as exc:
         raise TenuoContextError(

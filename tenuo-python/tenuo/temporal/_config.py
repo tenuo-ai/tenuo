@@ -399,6 +399,9 @@ class TenuoPluginConfig:
     _provider_state_lock: Any = field(
         default_factory=threading.RLock, init=False, repr=False, compare=False
     )
+    _provider_snapshots_ready: bool = field(
+        default=False, init=True, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.dry_run:
@@ -433,7 +436,10 @@ class TenuoPluginConfig:
                     "TenuoPluginConfig: pass either trusted_roots= or "
                     "trusted_roots_provider=, not both."
                 )
-            roots = list(self.trusted_roots_provider())
+            if self._provider_snapshots_ready:
+                roots = list(self.trusted_roots)
+            else:
+                roots = list(self.trusted_roots_provider())
         elif self.trusted_roots:
             roots = list(self.trusted_roots)
         else:
@@ -447,8 +453,9 @@ class TenuoPluginConfig:
                 "Pass trusted_roots=[control_key.public_key], trusted_roots_provider=..., "
                 "or call tenuo.configure(trusted_roots=[...]) at application startup."
             )
-        self.trusted_roots = roots  # type: ignore[assignment]
-        self._last_good_trusted_roots = list(roots)
+        if not self._provider_snapshots_ready:
+            self.trusted_roots = roots  # type: ignore[assignment]
+            self._last_good_trusted_roots = list(roots)
 
         if self.revocation_list is not None and self.revocation_list_provider is not None:
             from tenuo.exceptions import ConfigurationError
@@ -469,24 +476,26 @@ class TenuoPluginConfig:
                     "revocation_refresh_secs requires revocation_list_provider."
                 )
 
-        if self.revocation_list_provider is not None:
-            try:
-                initial_srl = self.revocation_list_provider()
-            except Exception as exc:
-                from tenuo.exceptions import ConfigurationError
+        if not self._provider_snapshots_ready:
+            if self.revocation_list_provider is not None:
+                try:
+                    initial_srl = self.revocation_list_provider()
+                except Exception as exc:
+                    from tenuo.exceptions import ConfigurationError
 
-                raise ConfigurationError(
-                    "TenuoPluginConfig: revocation_list_provider failed during "
-                    "startup. Provider-backed revocation is installed before the "
-                    "worker accepts work, so the provider must return a valid "
-                    "SignedRevocationList or None at worker construction. Check "
-                    "SRL endpoint availability, credentials, and timeout settings, "
-                    "or pass a static revocation_list for bootstrap."
-                ) from exc
-            if initial_srl is not None:
-                self._last_good_revocation_list = initial_srl
-        else:
-            self._last_good_revocation_list = self.revocation_list
+                    raise ConfigurationError(
+                        "TenuoPluginConfig: revocation_list_provider failed during "
+                        "startup. Provider-backed revocation is installed before the "
+                        "worker accepts work, so the provider must return a valid "
+                        "SignedRevocationList or None at worker construction. Check "
+                        "SRL endpoint availability, credentials, and timeout settings, "
+                        "or pass a static revocation_list for bootstrap."
+                    ) from exc
+                if initial_srl is not None:
+                    self._last_good_revocation_list = initial_srl
+            else:
+                self._last_good_revocation_list = self.revocation_list
+            self._provider_snapshots_ready = True
 
         if self.signing_key is not None and self.key_resolver is None:
 

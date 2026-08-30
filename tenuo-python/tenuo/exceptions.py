@@ -128,6 +128,7 @@ __all__ = [
     # Revocation
     "RevokedError",
     "SrlVersionRollback",
+    "SrlContentChanged",
     # Validation errors
     "ValidationError",
     "MissingField",
@@ -249,6 +250,7 @@ class ErrorCode:
     WARRANT_REVOKED = 1800
     SRL_INVALID = 1801
     SRL_VERSION_ROLLBACK = 1802
+    SRL_CONTENT_CHANGED = 1803
 
     # Size limit errors (1900-1999)
     WARRANT_TOO_LARGE = 1900
@@ -311,6 +313,7 @@ class ErrorCode:
             1800: "warrant-revoked",
             1801: "srl-invalid",
             1802: "srl-version-rollback",
+            1803: "srl-content-changed",
             1900: "warrant-too-large",
             1901: "chain-too-large",
             1902: "too-many-tools",
@@ -1050,6 +1053,21 @@ class SrlVersionRollback(TenuoError):
         super().__init__(
             f"SRL version rollback detected: current version {current}, attempted version {attempted}",
             {"current": current, "attempted": attempted},
+            hint=hint,
+        )
+
+
+@wire_code(ErrorCode.SRL_CONTENT_CHANGED)
+class SrlContentChanged(TenuoError):
+    """Signed revocation list kept its version but changed the revoked set."""
+
+    error_code = "srl_content_changed"
+    rust_variant = "SRLContentChanged"
+
+    def __init__(self, version: int, hint: Optional[str] = None):
+        super().__init__(
+            f"SRL revoked set changed at version {version}; bump the version when the revoked set changes",
+            {"version": version},
             hint=hint,
         )
 

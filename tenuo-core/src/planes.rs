@@ -461,6 +461,10 @@ pub const DEFAULT_CLOCK_TOLERANCE_SECS: i64 = 30;
 
 use crate::revocation::SignedRevocationList;
 
+fn srl_revoked_set(srl: &SignedRevocationList) -> HashSet<&str> {
+    srl.revoked_ids().iter().map(String::as_str).collect()
+}
+
 fn ensure_srl_not_replaced_or_rolled_back(
     current: &SignedRevocationList,
     attempted: &SignedRevocationList,
@@ -471,10 +475,14 @@ fn ensure_srl_not_replaced_or_rolled_back(
             attempted: attempted.version(),
         });
     }
-    if attempted.version() == current.version() && attempted.to_bytes()? != current.to_bytes()? {
-        return Err(Error::SRLVersionRollback {
-            current: current.version(),
-            attempted: attempted.version(),
+    // Version is the anti-rollback sequence number; issued_at/signature may
+    // change on a scheduled re-sign. Only a different revoked-ID set at the
+    // same version is a mutation.
+    if attempted.version() == current.version()
+        && srl_revoked_set(attempted) != srl_revoked_set(current)
+    {
+        return Err(Error::SRLContentChanged {
+            version: current.version(),
         });
     }
     Ok(())
@@ -904,26 +912,6 @@ impl DataPlane {
             }
         }
 
-        // Validate temporal validity and structural consistency for every
-        // warrant, including a single-element/root chain. Previously expiry
-        // was checked only while walking child links, so an expired root was
-        // accepted despite verify_chain's documented contract.
-        for warrant in chain {
-            if warrant.is_expired_with_tolerance(self.clock_tolerance) {
-                return Err(Error::WarrantExpired {
-                    warrant_id: warrant.id().to_string(),
-                    expired_at: warrant.expires_at(),
-                });
-            }
-            warrant.validate_structural().map_err(|e| {
-                Error::ChainVerificationFailed(format!(
-                    "warrant '{}' failed structural validation: {}",
-                    warrant.id(),
-                    e
-                ))
-            })?;
-        }
-
         let mut result = ChainVerificationResult {
             root_issuer: None,
             chain_length: chain.len(),
@@ -953,6 +941,25 @@ impl DataPlane {
             .map(|(w, msg)| (w.issuer(), msg.as_slice(), w.signature()))
             .collect();
         verify_batch_raw(&batch_items)?;
+
+        // Authenticity first, then semantics. Expiry/structural checks cover
+        // every warrant, including a singleton root — they used to run only
+        // while walking child links.
+        for warrant in chain {
+            if warrant.is_expired_with_tolerance(self.clock_tolerance) {
+                return Err(Error::WarrantExpired {
+                    warrant_id: warrant.id().to_string(),
+                    expired_at: warrant.expires_at(),
+                });
+            }
+            warrant.validate_structural().map_err(|e| {
+                Error::ChainVerificationFailed(format!(
+                    "warrant '{}' failed structural validation: {}",
+                    warrant.id(),
+                    e
+                ))
+            })?;
+        }
 
         result.root_issuer = Some(root.issuer().to_bytes());
         result.verified_steps.push(ChainStep {
@@ -2086,26 +2093,6 @@ impl Authorizer {
             }
         }
 
-        // Validate temporal validity and structural consistency for every
-        // warrant, including a single-element/root chain. Previously expiry
-        // was checked only while walking child links, so an expired root was
-        // accepted despite verify_chain's documented contract.
-        for warrant in chain {
-            if warrant.is_expired_with_tolerance(self.clock_tolerance) {
-                return Err(Error::WarrantExpired {
-                    warrant_id: warrant.id().to_string(),
-                    expired_at: warrant.expires_at(),
-                });
-            }
-            warrant.validate_structural().map_err(|e| {
-                Error::ChainVerificationFailed(format!(
-                    "warrant '{}' failed structural validation: {}",
-                    warrant.id(),
-                    e
-                ))
-            })?;
-        }
-
         let root = &chain[0];
         let mut result = ChainVerificationResult {
             root_issuer: None,
@@ -2135,6 +2122,25 @@ impl Authorizer {
             .map(|(w, msg)| (w.issuer(), msg.as_slice(), w.signature()))
             .collect();
         verify_batch_raw(&batch_items)?;
+
+        // Authenticity first, then semantics. Expiry/structural checks cover
+        // every warrant, including a singleton root — they used to run only
+        // while walking child links.
+        for warrant in chain {
+            if warrant.is_expired_with_tolerance(self.clock_tolerance) {
+                return Err(Error::WarrantExpired {
+                    warrant_id: warrant.id().to_string(),
+                    expired_at: warrant.expires_at(),
+                });
+            }
+            warrant.validate_structural().map_err(|e| {
+                Error::ChainVerificationFailed(format!(
+                    "warrant '{}' failed structural validation: {}",
+                    warrant.id(),
+                    e
+                ))
+            })?;
+        }
 
         result.root_issuer = Some(issuer.to_bytes());
         result.verified_steps.push(ChainStep {
@@ -3094,13 +3100,7 @@ mod tests {
             .set_revocation_list(empty_v2, &control_plane.public_key())
             .unwrap_err();
 
-        assert!(matches!(
-            error,
-            Error::SRLVersionRollback {
-                current: 2,
-                attempted: 2
-            }
-        ));
+        assert!(matches!(error, Error::SRLContentChanged { version: 2 }));
     }
 
     #[test]
@@ -3152,6 +3152,30 @@ mod tests {
     }
 
     #[test]
+    fn test_authorizer_allows_resigned_same_version_srl_refresh() {
+        let control_plane = ControlPlane::generate();
+        let first = SignedRevocationList::builder()
+            .revoke("tnu_wrt_revoked")
+            .version(2)
+            .build(&control_plane.keypair)
+            .unwrap();
+        let resigned = SignedRevocationList::builder()
+            .revoke("tnu_wrt_revoked")
+            .version(2)
+            .build(&control_plane.keypair)
+            .unwrap();
+        assert_ne!(first.to_bytes().unwrap(), resigned.to_bytes().unwrap());
+        let mut authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
+
+        authorizer
+            .set_revocation_list_from_trusted_issuer(first)
+            .unwrap();
+        authorizer
+            .set_revocation_list_from_trusted_issuer(resigned)
+            .unwrap();
+    }
+
+    #[test]
     fn test_authorizer_rejects_same_version_srl_replacement() {
         let control_plane = ControlPlane::generate();
         let revoked_v2 = SignedRevocationList::builder()
@@ -3172,13 +3196,7 @@ mod tests {
             .set_revocation_list_from_trusted_issuer(empty_v2)
             .unwrap_err();
 
-        assert!(matches!(
-            error,
-            Error::SRLVersionRollback {
-                current: 2,
-                attempted: 2
-            }
-        ));
+        assert!(matches!(error, Error::SRLContentChanged { version: 2 }));
     }
 
     // =========================================================================
