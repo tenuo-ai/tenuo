@@ -1,0 +1,31 @@
+{
+  "name": "@tenuo/core",
+  "version": "0.2.3",
+  "description": "Tenuo TypeScript SDK — authorization decisions run in the Rust core (WASM).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "~5.8.2",
+    "vitest": "^3.0.9"
+  }
+}

@@ -112,3 +112,6 @@ docs/plans/
 
 # Internal/working artifacts — not for the public repo
 /outputs/
+
+# Local git worktrees
+.worktrees/

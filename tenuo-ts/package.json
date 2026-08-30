@@ -1,0 +1,12 @@
+{
+  "name": "tenuo-ts",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "test": "pnpm --filter @tenuo/core test",
+    "typecheck": "pnpm --filter @tenuo/core typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

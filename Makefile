@@ -11,7 +11,7 @@
 # Run `make check` before every commit to avoid CI surprises.
 
 .PHONY: help check check-ci fmt lint test test-rust test-python test-explorer \
-        build audit clean vectors docker benchmark
+        test-ts build audit clean vectors docker benchmark
 
 # Default target
 help:
@@ -28,6 +28,7 @@ help:
 	@echo "  make test-rust   Run Rust tests only"
 	@echo "  make test-python Run Python tests only"
 	@echo "  make test-explorer Run Explorer tests only"
+	@echo "  make test-ts      Run TypeScript SDK tests only"
 	@echo "  make vectors     Regenerate test vectors"
 	@echo "  make audit       Security audit (cargo-audit)"
 	@echo "  make docker      Build Docker images"
@@ -83,7 +84,7 @@ lint-python:
 # TESTING
 # ============================================================================
 
-test: test-rust test-python test-explorer
+test: test-rust test-python test-explorer test-ts
 
 test-rust:
 	cd tenuo-core && cargo test --all-features
@@ -100,6 +101,13 @@ test-explorer:
 		cd tenuo-explorer && npm test -- --run; \
 	else \
 		echo "Skipping Explorer tests (no node_modules)"; \
+	fi
+
+test-ts:
+	@if [ -d "tenuo-ts/node_modules" ]; then \
+		cd tenuo-ts && pnpm test; \
+	else \
+		echo "Skipping TypeScript SDK tests (no tenuo-ts/node_modules)"; \
 	fi
 
 # Security-specific tests (matches security.yml)
