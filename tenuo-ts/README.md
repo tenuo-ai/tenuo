@@ -1,6 +1,6 @@
 # `@tenuo/core`
 
-TypeScript SDK for Tenuo. Authorization decisions run in the Rust core (WASM). This package currently ships the **public API contract** — `createTenuo`, `tool`, `session`, and `withSession` typecheck and validate configuration. WASM wiring is the next slice.
+TypeScript SDK for Tenuo. Authorization decisions run in the Rust core (WASM). `createTenuo({ root: createTenuo.devRoot() })` can mint a session and authorize `tool.execute` in Node. Loading an issued production session is not in this slice.
 
 ## Five-minute path (target API)
 
@@ -77,6 +77,7 @@ tenuo-ts/
 ```bash
 cd tenuo-ts
 pnpm install
+pnpm build:wasm   # requires wasm-pack + rustc
 pnpm typecheck
 pnpm test
 ```

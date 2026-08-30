@@ -3,7 +3,8 @@
   "private": true,
   "packageManager": "pnpm@9.15.9",
   "scripts": {
-    "test": "pnpm --filter @tenuo/core test",
+    "build:wasm": "wasm-pack build --release --target nodejs --out-dir ../tenuo-ts/packages/core/src/generated ../tenuo-wasm",
+    "test": "pnpm build:wasm && pnpm --filter @tenuo/core test",
     "typecheck": "pnpm --filter @tenuo/core typecheck"
   },
   "engines": {

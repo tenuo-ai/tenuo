@@ -18,7 +18,8 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:wasm": "pnpm --dir ../.. build:wasm"
   },
   "engines": {
     "node": ">=20"

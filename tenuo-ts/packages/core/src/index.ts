@@ -8,6 +8,7 @@ export type {
   DevRoot,
   EmailConstraint,
   ExactConstraint,
+  ExecuteOptions,
   MaxConstraint,
   OneOfConstraint,
   PatternConstraint,

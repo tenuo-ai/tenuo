@@ -1451,6 +1451,7 @@ dependencies = [
  "ciborium",
  "console_error_panic_hook",
  "hex",
+ "js-sys",
  "serde",
  "serde-wasm-bindgen",
  "serde_bytes",

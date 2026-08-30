@@ -84,8 +84,19 @@ export type ToolPolicy = {
 
 declare const protectedBrand: unique symbol;
 
-/** Wrapped tool. Assignable to the original type; not forgeable as a plain object. */
-export type ProtectedTool<T> = T & {
+export type ExecuteOptions = {
+  readonly session?: Session;
+};
+
+/** Wrapped tool. `execute` still authorizes; optional `{ session }` overrides ALS. */
+export type ProtectedTool<T extends { execute: (args: never, options?: never) => unknown }> = Omit<
+  T,
+  "execute"
+> & {
+  execute: (
+    args: Parameters<T["execute"]>[0],
+    options?: ExecuteOptions,
+  ) => ReturnType<T["execute"]>;
   readonly [protectedBrand]: true;
 };
 
@@ -133,7 +144,7 @@ export interface Tenuo {
    * Wrap any `{ execute }` tool (Vercel AI SDK, Mastra, plain object).
    * `parameters` / Zod stay on the inner tool and are never treated as authority.
    */
-  tool<T extends { execute: (...args: never[]) => unknown }>(
+  tool<T extends { execute: (args: never, options?: never) => unknown }>(
     inner: T,
     policy: ToolPolicy,
   ): ProtectedTool<T>;
