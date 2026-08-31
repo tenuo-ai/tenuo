@@ -654,6 +654,158 @@ def _parse_ttl(ttl: str) -> int:
         return int(ttl)
 
 
+def _load_receipt_arg(value: str) -> str:
+    """Accept a receipt inline or as a path. Returns the receipt text.
+
+    A receipt is longer than any filename the OS will accept, so probing it as
+    a path raises rather than returning False. Treat that as "not a path".
+    """
+    from pathlib import Path
+
+    value = value.strip()
+    try:
+        candidate = Path(value)
+        if candidate.exists():
+            return candidate.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    return value
+
+
+def _print_receipt(payload, indent: str = "") -> None:
+    """Render a verified receipt, naming what each field does and does not say."""
+    mark = "✅" if payload.outcome == "allow" else "🚫"
+    print(f"{indent}{mark} {payload.outcome.upper()}  {payload.action}")
+    print(f"{indent}   request       {payload.request_id}")
+    print(f"{indent}   decided at    {payload.timestamp}")
+    if payload.decision_code:
+        print(f"{indent}   reason        {payload.decision_code}")
+
+    print(f"{indent}   signer        {payload.signer_key}")
+    if payload.authorizer_id:
+        print(f"{indent}   authorizer    {payload.authorizer_id} (label only)")
+
+    if payload.pop_signature:
+        print(f"{indent}   possession    proven by the holder")
+    else:
+        print(f"{indent}   possession    NOT established — this attests only that "
+              "some party was refused")
+
+    if payload.request_hash:
+        print(f"{indent}   arguments     committed as {payload.request_hash[:16]}…")
+        print(f"{indent}                 (supply the arguments to check the commitment)")
+
+    if payload.srl_hash:
+        version = f" v{payload.srl_version}" if payload.srl_version is not None else " (unversioned)"
+        print(f"{indent}   revocation    list{version} {payload.srl_hash[:16]}…")
+    else:
+        print(f"{indent}   revocation    NOT consulted — cannot conclude the warrant "
+              "was unrevoked")
+
+    if payload.trusted_roots_hash:
+        print(f"{indent}   trust anchors {payload.trusted_roots_hash[:16]}…")
+    else:
+        print(f"{indent}   trust anchors NOT recorded")
+
+    if payload.policy_definition_hash:
+        print(f"{indent}   host ceiling  {payload.policy_definition_hash[:16]}…")
+
+    if payload.prev_receipt_hash:
+        print(f"{indent}   chained to    {payload.prev_receipt_hash[:16]}…")
+    else:
+        print(f"{indent}   chained to    nothing (first receipt, or chaining off)")
+
+
+def verify_receipt_cli(value: str) -> bool:
+    """Verify one receipt's signature and describe what it establishes."""
+    try:
+        import tenuo_core
+    except ImportError:
+        print("❌ tenuo_core is not available")
+        return False
+
+    try:
+        payload = tenuo_core.verify_receipt(_load_receipt_arg(value))
+    except Exception as exc:  # noqa: BLE001
+        print(f"❌ Receipt does not verify: {exc}")
+        return False
+
+    print("Signature verifies.\n")
+    _print_receipt(payload)
+    print(
+        "\nThis proves what was decided, over what authority. It does not prove "
+        "\nthat the signer legitimately speaks for a deployment — resolve "
+        f"\n{payload.signer_key[:16]}… against your authorizer registry."
+    )
+    return True
+
+
+def verify_receipt_chain(path: str, *, verbose: bool = False) -> bool:
+    """Walk a receipt chain and report breaks.
+
+    Reads the JSONL a FileReceiptSink writes. Each receipt links to the one
+    before it, so a link that resolves to nothing means a receipt was removed
+    from the stream — which is the whole reason the link exists.
+    """
+    import hashlib
+    import json
+    from pathlib import Path
+
+    try:
+        import tenuo_core
+    except ImportError:
+        print("❌ tenuo_core is not available")
+        return False
+
+    lines = [l for l in Path(path).read_text(encoding="utf-8").splitlines() if l.strip()]
+    if not lines:
+        print(f"❌ No receipts in {path}")
+        return False
+
+    seen: dict = {}
+    order: list = []
+    for number, line in enumerate(lines, start=1):
+        try:
+            wire = json.loads(line)["receipt"] if line.lstrip().startswith("{") else line.strip()
+            payload = tenuo_core.verify_receipt(wire)
+        except Exception as exc:  # noqa: BLE001
+            print(f"❌ line {number}: receipt does not verify: {exc}")
+            return False
+        digest = hashlib.sha256(bytes.fromhex(wire)).hexdigest()
+        seen[digest] = number
+        order.append((number, payload, digest))
+
+    breaks = []
+    for number, payload, _ in order:
+        link = payload.prev_receipt_hash
+        if link is None:
+            continue
+        if link not in seen:
+            breaks.append((number, payload, link))
+
+    print(f"{len(order)} receipt(s), all signatures verify.")
+    if verbose:
+        for _, payload, _ in order:
+            print()
+            _print_receipt(payload, indent="  ")
+
+    if not breaks:
+        first_unlinked = sum(1 for _, p, _ in order if p.prev_receipt_hash is None)
+        print("✅ Chain intact — every link resolves to a receipt in this file.")
+        if first_unlinked > 1:
+            print(
+                f"⚠️  {first_unlinked} receipts have no predecessor. Expect one per "
+                "signer; more than that means separate streams were merged, or "
+                "chaining was off for some of them."
+            )
+        return True
+
+    print(f"\n❌ {len(breaks)} break(s) — a receipt is missing from this stream:")
+    for number, payload, link in breaks:
+        print(f"   line {number} ({payload.request_id}) links to {link[:16]}…, which is absent")
+    return False
+
+
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -702,6 +854,32 @@ def main():
     decode_parser.add_argument(
         "warrant",
         help="Base64-encoded warrant string",
+    )
+
+    # receipt command
+    receipt_parser = subparsers.add_parser(
+        "receipt",
+        help="Verify signed authorization receipts",
+    )
+    receipt_sub = receipt_parser.add_subparsers(dest="receipt_command")
+    receipt_verify = receipt_sub.add_parser(
+        "verify",
+        help="Verify one receipt and describe what it establishes",
+    )
+    receipt_verify.add_argument(
+        "receipt",
+        help="Receipt as hex/base64, or a path to a file containing one",
+    )
+    receipt_chain = receipt_sub.add_parser(
+        "chain",
+        help="Walk a receipt chain and report missing receipts",
+    )
+    receipt_chain.add_argument(
+        "path",
+        help="JSONL file written by FileReceiptSink",
+    )
+    receipt_chain.add_argument(
+        "--verbose", "-v", action="store_true", help="Print every receipt"
     )
 
     # mint command
@@ -821,6 +999,15 @@ def main():
             sys.exit(1)
         success = verify_warrant(args.warrant, args.tool, tool_args)
         sys.exit(0 if success else 1)
+
+    elif args.command == "receipt":
+        if args.receipt_command == "verify":
+            sys.exit(0 if verify_receipt_cli(args.receipt) else 1)
+        elif args.receipt_command == "chain":
+            sys.exit(0 if verify_receipt_chain(args.path, verbose=args.verbose) else 1)
+        else:
+            receipt_parser.print_help()
+            sys.exit(1)
 
     elif args.command == "init":
         init_project()
