@@ -316,6 +316,34 @@ def test_forward_nexus_authority_creates_bootstrap_envelope(
     assert envelope.target_workflow_id == "refund-wf-001"
 
 
+def test_forward_nexus_authority_requires_workflow_id(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    ctx = SimpleNamespace(
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+
+    with pytest.raises(TenuoContextError, match="requires workflow_id"):
+        tenuo_forward_nexus_authority(ctx, input, config, endpoint="billing-prod")
+
+
 def test_create_nexus_workflow_envelope_supports_handler_minted_authority(
     nexus_keys: tuple[Any, Any],
 ) -> None:
@@ -341,6 +369,22 @@ def test_create_nexus_workflow_envelope_supports_handler_minted_authority(
     assert envelope.mode == "minted"
     assert envelope.source_endpoint == "billing-prod"
     assert envelope.target_workflow_id == "refund-wf-002"
+
+
+def test_create_nexus_workflow_envelope_requires_workflow_id(
+    nexus_keys: tuple[Any, Any],
+) -> None:
+    root_key, handler_key = nexus_keys
+    workflow_warrant = (
+        Warrant.mint_builder()
+        .holder(handler_key.public_key)
+        .capability("record_refund", order_id=Exact("ord_123"))
+        .ttl(3600)
+        .mint(root_key)
+    )
+
+    with pytest.raises(TenuoContextError, match="requires workflow_id"):
+        tenuo_create_nexus_workflow_envelope(workflow_warrant, "handler-key")
 
 
 def test_bootstrap_nexus_workflow_installs_envelope_headers(
