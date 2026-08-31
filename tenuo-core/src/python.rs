@@ -5066,6 +5066,166 @@ fn py_compute_request_hash(
     ))
 }
 
+/// Verified content of an authorization receipt.
+///
+/// Only constructible by verifying a signature, so holding one of these means
+/// the signature checked out. Whether `signer_key` legitimately speaks for an
+/// enforcement point is a separate question this type does not answer — that
+/// resolution is out of band.
+#[pyclass(name = "ReceiptPayload")]
+#[derive(Clone)]
+pub struct PyReceiptPayload {
+    inner: crate::receipt::ReceiptPayload,
+    signer_key: [u8; 32],
+}
+
+#[pymethods]
+impl PyReceiptPayload {
+    #[getter]
+    fn version(&self) -> u8 {
+        self.inner.version
+    }
+
+    /// Descriptive operator label, never a trust key. See `signer_key`.
+    #[getter]
+    fn authorizer_id(&self) -> Option<String> {
+        self.inner.authorizer_id.clone()
+    }
+
+    /// Hex public key the receipt was signed under. The only field trust may
+    /// be keyed on.
+    #[getter]
+    fn signer_key(&self) -> String {
+        hex::encode(self.signer_key)
+    }
+
+    #[getter]
+    fn action(&self) -> String {
+        self.inner.action.clone()
+    }
+
+    #[getter]
+    fn outcome(&self) -> String {
+        self.inner.outcome.as_str().to_string()
+    }
+
+    #[getter]
+    fn timestamp(&self) -> i64 {
+        self.inner.timestamp
+    }
+
+    #[getter]
+    fn request_id(&self) -> String {
+        self.inner.request_id.clone()
+    }
+
+    #[getter]
+    fn decision_code(&self) -> Option<String> {
+        self.inner.decision_code.clone()
+    }
+
+    /// Base64 CBOR warrant stack the decision was made over.
+    #[getter]
+    fn warrant_chain(&self) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(&self.inner.warrant_chain)
+    }
+
+    #[getter]
+    fn request_hash(&self) -> Option<String> {
+        self.inner.request_hash.map(hex::encode)
+    }
+
+    /// The holder's proof-of-possession. Absent means possession was never
+    /// established, so the receipt attests only that some party was refused.
+    #[getter]
+    fn pop_signature(&self) -> Option<String> {
+        self.inner.pop_signature.map(hex::encode)
+    }
+
+    /// Version of the revocation list in force, when it carried one.
+    #[getter]
+    fn srl_version(&self) -> Option<u64> {
+        self.inner.srl_version
+    }
+
+    /// SHA-256 of the revocation list in force. `None` means no revocation data
+    /// was loaded — a different claim from a list that revoked nothing.
+    #[getter]
+    fn srl_hash(&self) -> Option<String> {
+        self.inner.srl_hash.map(hex::encode)
+    }
+
+    /// Raise if a conditionally-required field is missing: `decision_code` on a
+    /// denial, `pop_signature` on an allow.
+    fn check_conditional_requirements(&self) -> PyResult<()> {
+        self.inner
+            .check_conditional_requirements()
+            .map_err(to_py_err)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ReceiptPayload(action='{}', outcome='{}', request_id='{}')",
+            self.inner.action,
+            self.inner.outcome.as_str(),
+            self.inner.request_id
+        )
+    }
+}
+
+/// Verify a receipt's signature and return its content.
+///
+/// Accepts CBOR bytes, hex, or standard base64. Raises `InvalidReceipt` when
+/// the signature does not check out — the payload is never parsed into a
+/// decision from an unauthenticated source.
+///
+/// This establishes only that the holder of `signer_key` made this statement.
+/// Resolving that key to a legitimate enforcement point is out of band.
+#[pyfunction]
+#[pyo3(name = "verify_receipt")]
+fn py_verify_receipt(wire: &Bound<'_, PyAny>) -> PyResult<PyReceiptPayload> {
+    let bytes: Vec<u8> = if let Ok(b) = wire.extract::<Vec<u8>>() {
+        b
+    } else {
+        let text: String = wire.extract()?;
+        let trimmed = text.trim();
+        match hex::decode(trimmed) {
+            Ok(b) => b,
+            Err(_) => {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD
+                    .decode(trimmed)
+                    .map_err(|e| {
+                        to_py_err(crate::error::Error::InvalidReceipt(format!(
+                            "receipt is not CBOR bytes, hex, or base64: {e}"
+                        )))
+                    })?
+            }
+        }
+    };
+
+    let receipt: crate::receipt::Receipt =
+        ciborium::from_reader(bytes.as_slice()).map_err(|e| {
+            to_py_err(crate::error::Error::InvalidReceipt(format!(
+                "invalid receipt: {e}"
+            )))
+        })?;
+    let signer_key = receipt.signer_key.to_bytes();
+    let inner = receipt.verify_signature().map_err(to_py_err)?;
+    Ok(PyReceiptPayload { inner, signer_key })
+}
+
+/// SHA-256 over revocation list bytes as loaded, for receipt payload key 13.
+///
+/// Exposed so a verifier can recompute the commitment from a published list
+/// and compare it against what a receipt claims.
+#[pyfunction]
+#[pyo3(name = "srl_commitment_digest")]
+fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
+    crate::srl_commitment_digest(srl_bytes)
+}
+
 /// Verify a set of signed approvals against a request hash (m-of-n multi-sig).
 ///
 /// ALL approval verification must go through this function — it is the single
@@ -6231,6 +6391,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRevocationRequest>()?;
     m.add_class::<PySignedRevocationList>()?;
     m.add_class::<PySrlBuilder>()?;
+    m.add_class::<PyReceiptPayload>()?;
 
     #[cfg(feature = "python-server")]
     m.add_class::<crate::python_control_plane::PyControlPlaneClient>()?;
@@ -6252,6 +6413,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_build_approval_context_attestation, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approval_context_attestation, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(py_verify_receipt, m)?)?;
+    m.add_function(wrap_pyfunction!(py_srl_commitment_digest, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approvals, m)?)?;
     m.add_function(wrap_pyfunction!(py_evaluate_approval_gates, m)?)?;
     m.add_function(wrap_pyfunction!(py_resolve_approval_required_message, m)?)?;
