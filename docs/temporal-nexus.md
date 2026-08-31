@@ -1,12 +1,13 @@
 ---
 title: Temporal Nexus Authorization
-description: Design preview for Tenuo authorization across Temporal Nexus namespace boundaries
+description: Experimental Tenuo authorization across Temporal Nexus namespace boundaries
 ---
 
 # Temporal Nexus Authorization
 
-> Design preview. This page sketches the product and implementation shape for
-> Tenuo support across Temporal Nexus endpoints.
+> Experimental surface. Tenuo can now emit and verify authorization headers for
+> Temporal Nexus operations. Workflow-backed Nexus propagation is still a
+> follow-up design area.
 
 Temporal Nexus lets one Temporal namespace expose a service contract that
 workflows in another namespace can call through a named endpoint. That is the
@@ -34,12 +35,13 @@ A workflow in `agent-namespace` calls a Nexus endpoint exposed by
 `billing-namespace`:
 
 ```python
-nexus_client = tenuo_nexus_client(
+nexus_client = workflow.create_nexus_client(
     service=BillingService,
     endpoint="billing-prod",
 )
 
-await nexus_client.execute_operation(
+await tenuo_execute_nexus_operation(
+    nexus_client,
     BillingService.refund,
     RefundInput(order_id="ord_123", amount_cents=5000),
     warrant=refund_warrant,
@@ -51,9 +53,8 @@ The `billing-namespace` handler verifies the Tenuo warrant before performing
 the refund:
 
 ```python
-@tenuo_nexus_service(config)
 class BillingServiceHandler:
-    @tenuo_nexus_operation("refund")
+    @tenuo_nexus_operation(config, endpoint="billing-prod")
     async def refund(self, ctx, input: RefundInput) -> RefundOutput:
         ...
 ```
@@ -62,12 +63,13 @@ If the warrant only allows `order_id="ord_123"` and
 `amount_cents <= 5000`, a larger or different refund is denied at the handler
 boundary, even though the Nexus endpoint itself is reachable.
 
-## Proposed surfaces
+## Supported experimental surfaces
 
 ### Caller workflow helper
 
-`tenuo_execute_nexus_operation(...)` should mirror the successful
-`tenuo_execute_activity(...)` shape:
+`tenuo_execute_nexus_operation(...)` and
+`tenuo_start_nexus_operation(...)` mirror the successful
+`tenuo_execute_activity(...)` shape for Nexus callers:
 
 - read the current workflow warrant, or accept a per-call `warrant=`;
 - require `key_id=` when a per-call warrant is supplied;
@@ -75,26 +77,35 @@ boundary, even though the Nexus endpoint itself is reachable.
 - sign proof-of-possession over Nexus-specific context; and
 - pass Tenuo material through the Nexus operation `headers=` argument.
 
-The proof input should bind at least:
+The proof input currently binds:
 
 - endpoint name;
 - service name;
 - operation name;
-- normalized operation input; and
-- workflow identity / run identity when available.
+- normalized operation input.
+
+`tenuo_nexus_headers(...)` is also available as a lower-level escape hatch for
+advanced wiring and tests.
 
 ### Handler verifier
 
-The handler-side surface should verify `ctx.headers` before user code runs:
+The handler-side surface verifies `ctx.headers` before user code runs:
 
 - warrant chain roots, signatures, linkage, expiry, and revocation;
 - PoP against the caller's holder key;
 - service and operation binding;
 - operation input constraints; and
-- replay/dedup where Nexus task metadata makes that possible.
+- Nexus-native unauthorized errors via `tenuo_nexus_operation(...,
+  raise_nexus_error=True)` behavior.
 
 Authorization failures should raise Nexus-native non-retryable errors so
 Temporal does not retry permanent denials.
+
+The supported APIs are:
+
+- `verify_nexus_operation(ctx, input, config, ...)`
+- `tenuo_nexus_operation(config, ...)`
+- `nexus_tool_name(endpoint, operation, service=...)`
 
 ### Workflow-backed Nexus operations
 
@@ -118,9 +129,9 @@ and the work it starts.
      Nexus endpoints in CI.
 
 2. **Sync operation support**
-   - Add `tenuo_execute_nexus_operation(...)`.
-   - Add `@tenuo_nexus_service` / `@tenuo_nexus_operation` or an equivalent
-     service-handler wrapper.
+   - Add `tenuo_execute_nexus_operation(...)` and
+     `tenuo_start_nexus_operation(...)`.
+   - Add `verify_nexus_operation(...)` and `@tenuo_nexus_operation(...)`.
    - Document cross-namespace setup and denial behavior.
 
 3. **Workflow-run operation support**

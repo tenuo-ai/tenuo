@@ -21,6 +21,7 @@ Activity definitions require no changes. Authorization is transparent to user wo
 |---|---|
 | `_interceptors.py` | Activity-inbound authorization (warrant extract → chain check → PoP verify → dedup → execute) and workflow-outbound PoP signing. The `execute_activity` method has phase markers for navigation. |
 | `_workflow.py` | User-facing helpers (`execute_workflow_authorized`, `AuthorizedWorkflow`, `tenuo_execute_activity`, `tenuo_execute_child_workflow`, `workflow_grant`, `set_activity_approvals`, `tenuo_continue_as_new`), and the `_tenuo_internal_mint_activity` that delegations dispatch into. |
+| `_nexus.py` | Experimental Temporal Nexus helpers: caller-side string header emission plus handler-side operation verification/decorator support. |
 | `_client.py` | Client-side header injection, keyed by `workflow_id`, via `TenuoClientInterceptor` and `execute_workflow_authorized`. |
 | `_headers.py` | Serialize / extract warrant bytes across the Temporal header boundary (raw CBOR, optional gzip). |
 | `_config.py` | `TenuoPluginConfig`: the single configuration surface. |
@@ -43,6 +44,11 @@ These are non-obvious from the code alone; each has a corresponding test guard c
 - **Workflow-clock discipline.** All time-based checks inside the sandbox (warrant TTL, PoP time window) use `workflow.now()`. Using wall-clock time would make replay non-deterministic and crash long-running workflows on replay after the original warrant's `expires_at`. _Guard:_ `tests/e2e/test_temporal_replay.py::test_tenuo_plugin_replay_clock_boundary_crossing` (uses `WorkflowEnvironment.start_time_skipping()` to cross a PoP window boundary).
 - **Sandbox passthrough.** `tenuo` and `tenuo_core` must be passthrough modules (the PyO3 core can only initialize once per process). `TenuoTemporalPlugin` handles this; manual setup with a custom `SandboxedWorkflowRunner` must set it explicitly. _Guard:_ `tests/adapters/test_temporal_replay_safety.py::TestPassthroughModules`.
 - **Wire format.** `x-tenuo-warrant` is raw CBOR bytes (not base64, not JSON). `x-tenuo-compressed` is `b"0"` or `b"1"`. PoP (`x-tenuo-pop`) is base64-encoded bytes. _Guards:_ `tests/property/test_temporal_props.py::TestTemporalWireRoundtrip` (Hypothesis-based) and `tests/e2e/test_temporal_e2e.py::TestMalformedWarrantHeadersAtIngress` (adversarial).
+- **Nexus header envelope.** Nexus operation headers are strings, so `_nexus.py`
+  base64-wraps the existing byte-oriented `x-tenuo-*` values and marks them
+  with `x-tenuo-nexus-header-encoding=base64-v1`. The warrant bytes and PoP
+  bytes are otherwise the same payloads used for Temporal activity headers.
+  _Guard:_ `tests/adapters/test_temporal_nexus.py`.
 - **Per-Activity overrides are task-local.** `tenuo_execute_activity(warrant=...)`
   stores override headers in a `ContextVar`, not a run-level "next dispatch"
   slot, so concurrent workflow tasks cannot consume one another's warrants.
@@ -55,6 +61,7 @@ These are non-obvious from the code alone; each has a corresponding test guard c
 - `tenuo-python/tests/e2e/test_temporal_examples_smoke.py` - loads each `examples/temporal/*.py` script and runs `main()` against `WorkflowEnvironment` (redirecting `Client.connect` away from `localhost:7233`).
 - `tenuo-python/tests/e2e/test_temporal_replay.py` - record-and-replay determinism, including denial, trusted-root rotation, and PoP time-window clock-boundary crossing via `start_time_skipping()`.
 - `tenuo-python/tests/adapters/test_temporal.py` - per-helper unit and regression tests.
+- `tenuo-python/tests/adapters/test_temporal_nexus.py` - Nexus caller header emission and handler verification tests.
 - `tenuo-python/tests/adapters/test_temporal_plugin.py` - `SimplePlugin` contract coverage.
 - `tenuo-python/tests/adapters/test_tenant_isolation.py` - `run_id` keying and `task_queue` routing invariants.
 - `tenuo-python/tests/property/test_temporal_props.py` - Hypothesis-based wire-format and error-wrapping invariants.
