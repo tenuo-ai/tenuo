@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 from tenuo.temporal._constants import (
     TENUO_APPROVALS_HEADER,
+    TENUO_ARG_KEYS_HEADER,
     TENUO_CHAIN_HEADER,
     TENUO_POP_HEADER,
 )
@@ -48,6 +49,7 @@ from tenuo.temporal.exceptions import (
 logger = logging.getLogger("tenuo.temporal")
 
 TENUO_NEXUS_HEADER_ENCODING = "x-tenuo-nexus-header-encoding"
+TENUO_NEXUS_TOOL_HEADER = "x-tenuo-tool-name"
 _TENUO_NEXUS_HEADER_ENCODING_V1 = "base64-v1"
 _TENUO_NEXUS_WORKFLOW_ENVELOPE_VERSION = "tenuo-nexus-workflow-envelope/v1"
 _UNSET = object()
@@ -135,6 +137,8 @@ def tenuo_nexus_headers(
 
     tool_name = nexus_tool_name(endpoint, operation, service=service)
     args = nexus_input_args(input)
+    raw_headers[TENUO_NEXUS_TOOL_HEADER] = tool_name.encode("utf-8")
+    raw_headers[TENUO_ARG_KEYS_HEADER] = ",".join(args.keys()).encode("utf-8")
     ts = int(time.time()) if timestamp is None else int(timestamp)
     pop_signature = warrant.sign(signer, tool_name, args, ts)
     raw_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop_signature))
@@ -1019,6 +1023,8 @@ def _verify_nexus_operation(
             exc=missing_warrant,
         )
         raise missing_warrant
+    _validate_nexus_tool_header(raw_headers, tool_name)
+    _validate_nexus_arg_keys_header(raw_headers, args, tool_name)
 
     chain: Optional[List[Any]] = None
     chain_header = raw_headers.get(TENUO_CHAIN_HEADER)
@@ -1222,6 +1228,68 @@ def _ctx_tool_name_unchecked(
     )
 
 
+def _validate_nexus_tool_header(
+    raw_headers: Mapping[str, bytes],
+    tool_name: str,
+) -> None:
+    raw_tool = raw_headers.get(TENUO_NEXUS_TOOL_HEADER)
+    if raw_tool is None:
+        raise TenuoContextError(
+            "Nexus request is missing x-tenuo-tool-name; upgrade the caller to "
+            "send the exact Tenuo tool name it used for PoP signing."
+        )
+    try:
+        advertised_tool = raw_tool.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise TenuoContextError(
+            "Nexus request has malformed x-tenuo-tool-name; expected UTF-8."
+        ) from exc
+    if advertised_tool != tool_name:
+        logger.warning(
+            "Nexus Tenuo tool binding mismatch: caller advertised %r but "
+            "handler derived %r",
+            advertised_tool,
+            tool_name,
+        )
+        raise TenuoContextError(
+            "Nexus Tenuo tool binding mismatch; caller and handler disagree on "
+            "endpoint/service/operation."
+        )
+
+
+def _validate_nexus_arg_keys_header(
+    raw_headers: Mapping[str, bytes],
+    args: Mapping[str, Any],
+    tool_name: str,
+) -> None:
+    raw_keys = raw_headers.get(TENUO_ARG_KEYS_HEADER)
+    if raw_keys is None:
+        raise TenuoContextError(
+            "Nexus request is missing x-tenuo-arg-keys; upgrade the caller to "
+            "send the input fields it used for PoP signing."
+        )
+    try:
+        decoded = raw_keys.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise TenuoContextError(
+            "Nexus request has malformed x-tenuo-arg-keys; expected UTF-8."
+        ) from exc
+    signed_keys = [] if decoded == "" else decoded.split(",")
+    handler_keys = list(args.keys())
+    if set(signed_keys) != set(handler_keys):
+        logger.warning(
+            "Nexus Tenuo argument binding mismatch for %s: caller advertised "
+            "keys %r but handler derived keys %r",
+            tool_name,
+            signed_keys,
+            handler_keys,
+        )
+        raise TenuoContextError(
+            "Nexus Tenuo argument binding mismatch; caller and handler disagree "
+            "on input fields."
+        )
+
+
 def _redact_nexus_args(config: Any, args: Dict[str, Any]) -> Dict[str, Any]:
     if not getattr(config, "redact_args_in_logs", True):
         return args
@@ -1315,9 +1383,14 @@ def _ctx_tool_name(
     _validate_ctx_endpoint(ctx, endpoint)
     service_name = service or getattr(ctx, "service", None)
     operation_name = operation or getattr(ctx, "operation", None)
+    if not operation_name:
+        raise TenuoContextError(
+            "verify_nexus_operation requires operation= when the Nexus handler "
+            "context does not expose an operation name."
+        )
     return nexus_tool_name(
         endpoint,
-        operation_name or "unknown-operation",
+        operation_name,
         service=service_name,
     )
 

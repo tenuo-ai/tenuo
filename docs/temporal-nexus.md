@@ -85,6 +85,13 @@ The proof input currently binds:
 - operation name;
 - normalized operation input.
 
+Tenuo-generated Nexus calls also carry diagnostic binding headers for the exact
+tool name and input fields used for PoP signing. The handler compares those
+headers to its own derived endpoint/service/operation and normalized input
+shape before cryptographic authorization, so contract drift shows up as a
+wiring error in handler logs instead of as an opaque policy denial. Manual
+callers must send these headers too; missing binding headers fail closed.
+
 `tenuo_nexus_headers(...)` is also available as a lower-level escape hatch for
 advanced wiring and tests.
 
@@ -122,6 +129,22 @@ The supported APIs are:
 - `verify_nexus_operation(ctx, input, config, ...)`
 - `tenuo_nexus_operation(config, ...)`
 - `nexus_tool_name(endpoint, operation, service=...)`
+- `TemporalNexusOperation.exact(endpoint, operation, service=..., ...)`
+
+Use the template helper when minting warrants so callers and handlers share the
+same canonical tool string:
+
+```python
+from tenuo.templates import TemporalNexusOperation
+
+refund_capability = TemporalNexusOperation.exact(
+    "billing-prod",
+    "refund",
+    service="BillingService",
+    order_id=Exact("ord_123"),
+    amount_cents=Range(max=5000),
+)
+```
 
 ### Workflow-backed Nexus operations
 
