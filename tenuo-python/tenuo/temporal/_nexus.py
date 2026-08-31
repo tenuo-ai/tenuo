@@ -13,7 +13,7 @@ import dataclasses as _dataclasses
 import functools
 import inspect
 import time
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from tenuo.temporal._constants import (
     TENUO_CHAIN_HEADER,
@@ -43,6 +43,7 @@ from tenuo.temporal.exceptions import (
 TENUO_NEXUS_HEADER_ENCODING = "x-tenuo-nexus-header-encoding"
 _TENUO_NEXUS_HEADER_ENCODING_V1 = "base64-v1"
 _TENUO_NEXUS_WORKFLOW_ENVELOPE_VERSION = "tenuo-nexus-workflow-envelope/v1"
+_UNSET = object()
 
 
 @_dataclasses.dataclass(frozen=True)
@@ -293,6 +294,167 @@ def tenuo_nexus_operation(
         return sync_wrapper
 
     return decorator
+
+
+async def tenuo_nexus_signal_workflow(
+    ctx: Any,
+    input: Any,
+    config: Any,
+    handle: Any,
+    signal: Any,
+    arg: Any = _UNSET,
+    *,
+    args: Sequence[Any] = (),
+    endpoint: Optional[str] = None,
+    service: Optional[str] = None,
+    operation: Optional[Any] = None,
+    rpc_metadata: Optional[Mapping[str, str | bytes]] = None,
+    rpc_timeout: Any = None,
+) -> None:
+    """Verify a Nexus request, then signal a Temporal workflow handle.
+
+    Use this in sync Nexus router handlers that translate an authorized Nexus
+    request into a Temporal signal. The warrant still authorizes the public
+    Nexus operation/input; include the target workflow id, signal name, and
+    signal payload fields in that input when they need policy constraints.
+    """
+    verify_nexus_operation(
+        ctx,
+        input,
+        config,
+        endpoint=endpoint,
+        service=service,
+        operation=operation,
+        raise_nexus_error=True,
+    )
+    kwargs = _temporal_handle_kwargs(
+        args=args,
+        rpc_metadata=rpc_metadata or {},
+        rpc_timeout=rpc_timeout,
+    )
+    if arg is _UNSET:
+        await handle.signal(signal, **kwargs)
+    else:
+        await handle.signal(signal, arg, **kwargs)
+
+
+async def tenuo_nexus_query_workflow(
+    ctx: Any,
+    input: Any,
+    config: Any,
+    handle: Any,
+    query: Any,
+    arg: Any = _UNSET,
+    *,
+    args: Sequence[Any] = (),
+    endpoint: Optional[str] = None,
+    service: Optional[str] = None,
+    operation: Optional[Any] = None,
+    result_type: type | None = None,
+    reject_condition: Any = None,
+    rpc_metadata: Optional[Mapping[str, str | bytes]] = None,
+    rpc_timeout: Any = None,
+) -> Any:
+    """Verify a Nexus request, then query a Temporal workflow handle."""
+    verify_nexus_operation(
+        ctx,
+        input,
+        config,
+        endpoint=endpoint,
+        service=service,
+        operation=operation,
+        raise_nexus_error=True,
+    )
+    kwargs = _temporal_handle_kwargs(
+        args=args,
+        result_type=result_type,
+        reject_condition=reject_condition,
+        rpc_metadata=rpc_metadata or {},
+        rpc_timeout=rpc_timeout,
+    )
+    if arg is _UNSET:
+        return await handle.query(query, **kwargs)
+    return await handle.query(query, arg, **kwargs)
+
+
+async def tenuo_nexus_execute_update(
+    ctx: Any,
+    input: Any,
+    config: Any,
+    handle: Any,
+    update: Any,
+    arg: Any = _UNSET,
+    *,
+    args: Sequence[Any] = (),
+    endpoint: Optional[str] = None,
+    service: Optional[str] = None,
+    operation: Optional[Any] = None,
+    id: str | None = None,
+    result_type: type | None = None,
+    rpc_metadata: Optional[Mapping[str, str | bytes]] = None,
+    rpc_timeout: Any = None,
+) -> Any:
+    """Verify a Nexus request, then execute a Temporal workflow update."""
+    verify_nexus_operation(
+        ctx,
+        input,
+        config,
+        endpoint=endpoint,
+        service=service,
+        operation=operation,
+        raise_nexus_error=True,
+    )
+    kwargs = _temporal_handle_kwargs(
+        args=args,
+        id=id,
+        result_type=result_type,
+        rpc_metadata=rpc_metadata or {},
+        rpc_timeout=rpc_timeout,
+    )
+    if arg is _UNSET:
+        return await handle.execute_update(update, **kwargs)
+    return await handle.execute_update(update, arg, **kwargs)
+
+
+async def tenuo_nexus_start_update(
+    ctx: Any,
+    input: Any,
+    config: Any,
+    handle: Any,
+    update: Any,
+    arg: Any = _UNSET,
+    *,
+    wait_for_stage: Any,
+    args: Sequence[Any] = (),
+    endpoint: Optional[str] = None,
+    service: Optional[str] = None,
+    operation: Optional[Any] = None,
+    id: str | None = None,
+    result_type: type | None = None,
+    rpc_metadata: Optional[Mapping[str, str | bytes]] = None,
+    rpc_timeout: Any = None,
+) -> Any:
+    """Verify a Nexus request, then start a Temporal workflow update."""
+    verify_nexus_operation(
+        ctx,
+        input,
+        config,
+        endpoint=endpoint,
+        service=service,
+        operation=operation,
+        raise_nexus_error=True,
+    )
+    kwargs = _temporal_handle_kwargs(
+        wait_for_stage=wait_for_stage,
+        args=args,
+        id=id,
+        result_type=result_type,
+        rpc_metadata=rpc_metadata or {},
+        rpc_timeout=rpc_timeout,
+    )
+    if arg is _UNSET:
+        return await handle.start_update(update, **kwargs)
+    return await handle.start_update(update, arg, **kwargs)
 
 
 def tenuo_forward_nexus_authority(
@@ -614,6 +776,10 @@ def _workflow_timestamp() -> int:
 
 
 def _nexus_operation_kwargs(**kwargs: Any) -> Dict[str, Any]:
+    return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def _temporal_handle_kwargs(**kwargs: Any) -> Dict[str, Any]:
     return {k: v for k, v in kwargs.items() if v is not None}
 
 

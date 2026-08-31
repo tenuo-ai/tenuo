@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Added `tenuo_execute_nexus_operation()`,
   `tenuo_start_nexus_operation()`, `tenuo_nexus_headers()`,
   `verify_nexus_operation()`, `@tenuo_nexus_operation(...)`,
+  `tenuo_nexus_signal_workflow()`, `tenuo_nexus_query_workflow()`,
+  `tenuo_nexus_execute_update()`, `tenuo_nexus_start_update()`,
   `tenuo_forward_nexus_authority()`,
   `tenuo_create_nexus_workflow_envelope()`, and
   `tenuo_bootstrap_nexus_workflow()` for carrying delegated Tenuo authority
@@ -29,7 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Workflow-backed Nexus supports both exact caller-authority forwarding and
   handler-created/attenuated workflow authority. Added a live cross-namespace
   Nexus allow/deny smoke test for the real SDK header boundary and both
-  workflow-backed propagation modes.
+  workflow-backed propagation modes. The Nexus guide now documents endpoint
+  name binding, workflow-id dedupe, multi-hop attenuation, Temporal platform
+  controls, polyglot input contracts, and sync router handlers that signal,
+  query, or update existing workflows.
 - **Temporal per-Activity warrant overrides.**
   `tenuo_execute_activity(..., warrant=..., key_id=...)` now applies a
   task-local warrant to one dispatch, including the active delegation chain.

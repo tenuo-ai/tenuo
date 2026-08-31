@@ -174,6 +174,102 @@ class RefundWorkflow:
 The product goal is still the same: authorize both the incoming Nexus operation
 and the work it starts.
 
+### Sync router handlers: signals, queries, and updates
+
+Temporal's Nexus guidance also calls out a common enterprise router pattern:
+a synchronous Nexus handler receives a cross-namespace request, then uses a
+Temporal client handle to signal, query, or update an existing workflow. Tenuo
+supports that shape with small handler-side helpers:
+
+- `tenuo_nexus_signal_workflow(ctx, input, config, handle, signal, ...)`
+- `tenuo_nexus_query_workflow(ctx, input, config, handle, query, ...)`
+- `tenuo_nexus_execute_update(ctx, input, config, handle, update, ...)`
+- `tenuo_nexus_start_update(ctx, input, config, handle, update, ...)`
+
+Each helper first verifies the signed Nexus operation and input with
+`verify_nexus_operation(..., raise_nexus_error=True)`. Only after that passes
+does it call the corresponding Temporal `WorkflowHandle` method.
+
+The warrant authorizes the public Nexus operation, so put the policy-relevant
+routing fields in the Nexus input: target workflow id, signal/query/update
+name, tenant id, record id, and any payload fields that should be constrained.
+The handler may then map those verified fields to the internal Temporal handle
+operation without exposing handler namespace credentials to the caller.
+
+Example:
+
+```python
+@dataclass
+class ApprovalRoute:
+    workflow_id: str
+    tenant_id: str
+    decision: str
+
+
+@nexus.sync_operation
+async def approve(self, ctx, input: ApprovalRoute) -> None:
+    handle = temporal_client.get_workflow_handle(input.workflow_id)
+    await tenuo_nexus_signal_workflow(
+        ctx,
+        input,
+        config,
+        handle,
+        ApprovalWorkflow.approve,
+        input.decision,
+        endpoint="approvals-prod",
+    )
+```
+
+The matching warrant should constrain the Nexus route operation, for example
+`nexus:approvals-prod:ApprovalService:approve` with exact `workflow_id` and
+`tenant_id` fields and an allowed `decision` set.
+
+## Enterprise operating guidance
+
+### Endpoint names are part of the security boundary
+
+Nexus callers address endpoints by name, and Tenuo's proof-of-possession binds
+that endpoint name into the signed tool string. This is intentional: a warrant
+for `billing-prod` should not silently authorize a call to `billing-staging` or
+to a renamed endpoint. Operationally, endpoint renames require issuing updated
+warrants and draining or handling in-flight callers that still reference the
+old name.
+
+### Use workflow ids and conflict policy for async dedupe
+
+Nexus delivery is at-least-once. Tenuo verifies authority, but it does not make
+an arbitrary handler side effect idempotent. For workflow-backed operations,
+derive a stable workflow id from the business request and use Temporal's
+workflow id conflict policy to dedupe retried or duplicated Nexus starts.
+`tenuo_create_nexus_workflow_envelope(...)` and
+`tenuo_forward_nexus_authority(...)` require `workflow_id=` so the envelope is
+bound to that exact backing workflow.
+
+### Prefer attenuation at each hop
+
+Multi-level Nexus calls are supported by Temporal, and a bootstrapped Tenuo
+workflow can make another Tenuo-authorized Nexus call. For production, prefer
+minting or attenuating a narrower warrant at each hop. Forward exact caller
+authority only when the next workflow genuinely needs the caller's original
+holder context and the worker can resolve that holder key.
+
+### Temporal platform controls still matter
+
+Tenuo is an application authorization layer, not a replacement for Temporal
+Cloud or cluster controls. Keep using namespace isolation, endpoint ownership,
+Temporal ACLs, mTLS or Cloud identity, payload codecs/encryption, rate limits,
+and observability. Tenuo answers "is this caller allowed to perform this
+operation on this input?"; Temporal still controls who can create endpoints,
+deploy workers, reach namespaces, and operate the cluster.
+
+### Keep cross-SDK input contracts stable
+
+Tenuo normalizes the decoded Nexus operation input before checking warrant
+constraints. Python-to-Python callers can usually rely on dataclass or mapping
+field names. Polyglot services should define explicit JSON or protobuf field
+names and keep those names stable, because warrant constraints are written
+against the decoded argument shape.
+
 ## Phased implementation
 
 1. **Design spike / tests**
@@ -201,6 +297,11 @@ and the work it starts.
    - Cover endpoint naming, namespace boundaries, revocation providers, trusted
      roots, operation naming, input normalization, retries, and observability.
 
+5. **Enterprise router helpers**
+   - Add first-class helpers for Nexus handlers that authorize the incoming
+     request before signaling, querying, or updating an existing Temporal
+     workflow.
+
 ## Open questions
 
 - Should Nexus PoP bind the endpoint name only, or endpoint + resolved handler
@@ -211,7 +312,6 @@ and the work it starts.
   target workflow binding, or is mandatory `workflow_id` binding plus
   Temporal's handler-created input boundary sufficient for the first
   experimental surface?
-- What durable replay/dedup key is available for sync Nexus operations?
 - Should a denied Nexus operation be represented as `UNAUTHORIZED` or as a
   Tenuo-specific non-retryable operation error with structured details?
 
