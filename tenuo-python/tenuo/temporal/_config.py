@@ -65,6 +65,12 @@ class TenuoPluginConfig:
     """
     Optional ControlPlaneClient for emitting authorization check results
     back to the control plane.
+
+    When this is left unset, ``TenuoWorkerInterceptor`` populates it **on this
+    config object** at construction time rather than on a copy. That is
+    deliberate: Nexus verification and ``@tenuo_nexus_operation`` decorators
+    capture the config instance you pass them, so they must observe the same
+    client as the activity path or their decisions go unreported.
     """
 
     on_denial: Literal["raise", "log", "skip"] = "raise"

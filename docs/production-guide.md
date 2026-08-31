@@ -254,8 +254,29 @@ print(f"Authorized: {authorized}")  # True
 
 **Rule of thumb**: Same language + same process = runtime integration only. Cross-service = add [A2A](./a2a).
 
+### Cross-namespace Temporal (Nexus)
+
+If your Temporal workers call across Namespaces with Nexus, the handler worker needs three things before it is safe to ship. The first one is required: a worker that serves Nexus operations without it denies every request.
+
+1. **Set `TenuoPluginConfig.nexus_endpoint`** to the endpoint name this worker serves.
+2. **Build the worker with `TenuoWorkerInterceptor`** (or `TenuoTemporalPlugin`). Inbound Nexus starts are then authorized even if a handler is missing its `@tenuo_nexus_operation` decorator.
+3. **Keep backing workflows unreachable by untrusted clients.** They are an implementation detail of the handler, and starting one directly skips the Nexus verifier.
+
+```python
+config = TenuoPluginConfig(
+    key_resolver=resolver,
+    trusted_roots=[root_key.public_key],
+    nexus_endpoint="billing-prod",   # required for Nexus handler workers
+)
+```
+
+Turning on `nexus_pop_replay_protection` adds one more requirement: a fleet running more than one worker also needs a shared owner-aware `pop_dedup_store`, because the in-process default only suppresses replays on a single worker.
+
+Full setup, the workflow-backed operation path, and the complete pre-ship checklist are in [Temporal Nexus Authorization](./temporal-nexus).
+
 ## Next Steps
 
+- **[Temporal Nexus Authorization](./temporal-nexus)** — cross-namespace setup, workflow-backed operations, production checklist
 - **[Constraint Types](./constraints)** — `Subpath`, `Pattern`, `Range`, `UrlSafe`, `Exact`, and more
 - **[Security Model](./security)** — threat model, PoP mechanics, delegation chain verification
 - **[API Reference](./api-reference)** — full `Warrant`, `SigningKey`, `BoundWarrant` API

@@ -64,12 +64,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consumes them. The live Nexus test now exercises concurrent backing starts
   over this interceptor path.
 - **Temporal Nexus production hardening.** `TenuoWorkerInterceptor` now
-  authorizes inbound Nexus starts by default when
-  `TenuoPluginConfig.nexus_endpoint` is set, wires `control_plane` onto the
-  shared config object used by verify/decorators, and emits `audit_callback`
-  plus metrics for Nexus allow/deny. Ambient backing starts fail closed if the
-  client interceptor does not consume the pending header binding. Strict Nexus
-  PoP replay is bound to handler namespace, task queue, and `request_id`.
+  authorizes every inbound Nexus start by default, so a missing
+  `@tenuo_nexus_operation` decorator cannot skip authorization.
+  **`TenuoPluginConfig.nexus_endpoint` is now required on workers that serve
+  Nexus operations**: set it to the endpoint name the worker serves, or every
+  inbound Nexus request is denied. The interceptor also wires `control_plane`
+  onto the shared config object used by verify/decorators, and emits
+  `audit_callback` plus metrics for Nexus allow/deny. Ambient backing starts
+  fail closed if the client interceptor does not consume the pending header
+  binding. Strict Nexus PoP replay is bound to handler namespace, task queue,
+  and `request_id`.
+- **Temporal Nexus callers must send `x-tenuo-tool-name`.** Nexus handlers now
+  reject requests without it so a caller/handler disagreement on
+  endpoint/service/operation surfaces as a clear binding error instead of an
+  opaque PoP failure. `tenuo_nexus_headers(...)` emits it; non-Python and
+  older callers must be upgraded before the handler side rolls out.
 - **Temporal per-Activity warrant overrides.**
   `tenuo_execute_activity(..., warrant=..., key_id=...)` now applies a
   task-local warrant to one dispatch, including the active delegation chain.
