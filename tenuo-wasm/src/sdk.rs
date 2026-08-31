@@ -120,6 +120,9 @@ struct ReceiptInspectDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     srl_hash: Option<String>,
     /// Commitment to the host ceiling applied to this decision.
+    /// Commitment to the canonical invocation this decision was made over.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     policy_definition_hash: Option<String>,
     /// Link to the previous receipt from this signer. Absent on the first, or
@@ -608,6 +611,7 @@ pub fn sdk_verify_receipt(wire: &str) -> Result<JsValue, JsError> {
         request_id: payload.request_id,
         srl_version: payload.srl_version,
         srl_hash: payload.srl_hash.map(hex::encode),
+        request_hash: payload.request_hash.map(hex::encode),
         policy_definition_hash: payload.policy_definition_hash.map(hex::encode),
         prev_receipt_hash: payload.prev_receipt_hash.map(hex::encode),
         trusted_roots_hash: payload.trusted_roots_hash.map(hex::encode),
@@ -686,6 +690,10 @@ impl SdkContext {
         let request_id =
             request_id.unwrap_or_else(|| format!("{tool}:{timestamp}"));
         let policy_hash = policy_digest(&tool_allow);
+        // Filled once the leaf and arguments resolve. Stays None when the
+        // arguments could not be canonicalized — a receipt must not claim to
+        // commit to arguments it never parsed.
+        let mut request_hash: Option<[u8; 32]> = None;
 
         let args = match js_to_args(&args_json) {
             Ok(a) => a,
@@ -695,7 +703,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
-                    policy_hash,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -722,7 +731,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
-                    policy_hash,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CONFIGURATION".into()),
@@ -741,6 +751,13 @@ impl SdkContext {
             }
         };
 
+        request_hash = Some(compute_request_hash(
+            &leaf.id().to_string(),
+            tool,
+            &args,
+            Some(leaf.authorized_holder()),
+        ));
+
         let signature = match as_of {
             Some(t) => leaf.sign_with_timestamp(&session.holder, tool, &args, Some(t)),
             None => leaf.sign(&session.holder, tool, &args),
@@ -753,7 +770,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
-                    policy_hash,
+                    request_hash,
+            policy_hash,
                     deny_from_error(&e),
                     None,
                     false,
@@ -770,7 +788,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
-                    policy_hash,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -817,7 +836,8 @@ impl SdkContext {
                         tool,
                         timestamp,
                         &request_id,
-                        policy_hash,
+                        request_hash,
+            policy_hash,
                         deny_from_error(&e),
                         Some(&signature),
                         true,
@@ -833,7 +853,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
-                    policy_hash,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "allow".into(),
                         code: None,
@@ -855,7 +876,8 @@ impl SdkContext {
                 tool,
                 timestamp,
                 &request_id,
-                policy_hash,
+                request_hash,
+            policy_hash,
                 deny_from_error(&e),
                 Some(&signature),
                 pop_established_before_error(&e),
@@ -884,6 +906,10 @@ impl SdkContext {
         let request_id =
             request_id.unwrap_or_else(|| format!("{tool}:{timestamp}"));
         let policy_hash = policy_digest(&tool_allow);
+        // Filled once the leaf and arguments resolve. Stays None when the
+        // arguments could not be canonicalized — a receipt must not claim to
+        // commit to arguments it never parsed.
+        let mut request_hash: Option<[u8; 32]> = None;
         let empty: Vec<Warrant> = Vec::new();
 
         let chain = match parse_presented_chain(&warrants) {
@@ -894,7 +920,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
-                    policy_hash,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CONFIGURATION".into()),
@@ -917,7 +944,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
-                    policy_hash,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CHAIN_INVALID".into()),
@@ -944,7 +972,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
-                    policy_hash,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -971,7 +1000,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
-                    policy_hash,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_INVALID_POP".into()),
@@ -998,7 +1028,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
-                    policy_hash,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -1045,7 +1076,8 @@ impl SdkContext {
                         tool,
                         timestamp,
                         &request_id,
-                        policy_hash,
+                        request_hash,
+            policy_hash,
                         deny_from_error(&e),
                         Some(&signature),
                         true,
@@ -1061,7 +1093,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
-                    policy_hash,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "allow".into(),
                         code: None,
@@ -1083,7 +1116,8 @@ impl SdkContext {
                 tool,
                 timestamp,
                 &request_id,
-                policy_hash,
+                request_hash,
+            policy_hash,
                 deny_from_error(&e),
                 Some(&signature),
                 pop_established_before_error(&e),
@@ -1099,6 +1133,7 @@ impl SdkContext {
         tool: &str,
         timestamp: i64,
         request_id: &str,
+        request_hash: Option<[u8; 32]>,
         policy_hash: Option<[u8; 32]>,
         mut dto: DecisionDto,
         pop: Option<&Signature>,
@@ -1116,6 +1151,7 @@ impl SdkContext {
             pop,
             decision_code,
             self.srl_commitment,
+            request_hash,
             policy_hash,
             self.trusted_roots_hash,
             self.last_receipt_hash.get(),
@@ -1557,6 +1593,7 @@ fn encode_receipt(
     pop: Option<&Signature>,
     decision_code: Option<&str>,
     srl_commitment: Option<(Option<u64>, [u8; 32])>,
+    request_hash: Option<[u8; 32]>,
     policy_hash: Option<[u8; 32]>,
     trusted_roots_hash: [u8; 32],
     prev_receipt_hash: Option<[u8; 32]>,
@@ -1594,6 +1631,9 @@ fn encode_receipt(
         payload.srl_version = version;
         payload.srl_hash = Some(digest);
     }
+    // Key 7. Without it a receipt records that a decision happened but not what
+    // it was made over, which is most of what makes it evidence.
+    payload.request_hash = request_hash;
     payload.policy_definition_hash = policy_hash;
     payload.trusted_roots_hash = Some(trusted_roots_hash);
     payload.prev_receipt_hash = prev_receipt_hash;

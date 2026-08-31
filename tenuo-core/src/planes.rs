@@ -290,6 +290,14 @@ pub struct ChainVerificationResult {
     /// (payload key 7) are where these acquire a pinned encoding.
     #[serde(skip)]
     pub request_hash: Option<[u8; 32]>,
+    /// The tool this verification actually authorized.
+    ///
+    /// Carried so a receipt names the decision that was reached rather than one
+    /// a caller supplies. Without it, `request_hash` commits to the authorized
+    /// tool while `action` could say something else — a receipt describing a
+    /// different decision than the one it proves.
+    #[serde(skip)]
+    pub tool: Option<String>,
 }
 
 /// Base64 CBOR of the presented chain, for audit transmission and receipts.
@@ -324,6 +332,12 @@ impl ChainVerificationResult {
         decision_code: Option<&str>,
     ) -> Option<crate::receipt::ReceiptPayload> {
         use base64::Engine;
+
+        // The tool this verification authorized wins over the caller's string.
+        // `request_hash` commits to the authorized tool, so letting `action`
+        // disagree would sign a receipt describing a different decision than
+        // the one it proves.
+        let tool = self.tool.as_deref().unwrap_or(tool);
 
         let warrant_chain = base64::engine::general_purpose::STANDARD
             .decode(self.warrant_stack_b64.as_ref()?)
@@ -1021,6 +1035,7 @@ impl DataPlane {
             verified_approvals: Vec::new(),
             pop_signature: None,
             request_hash: None,
+            tool: None,
         };
 
         // Step 1: Verify the root warrant is from a trusted key
@@ -2275,6 +2290,7 @@ impl Authorizer {
             verified_approvals: Vec::new(),
             pop_signature: None,
             request_hash: None,
+            tool: None,
         };
 
         // Root must be from a trusted key
@@ -2764,6 +2780,7 @@ impl Authorizer {
         // against, so a receipt built from this result cannot disagree with the
         // decision it records.
         if let Some(leaf) = chain.last() {
+            result.tool = Some(tool.to_string());
             result.pop_signature = signature.map(|s| s.to_bytes());
             result.request_hash = Some(crate::approval::compute_request_hash(
                 &leaf.id().to_string(),
@@ -2986,6 +3003,37 @@ mod receipt_plumbing_tests {
             Some("tool-not-authorized")
         );
         assert!(payload.check_conditional_requirements().is_ok());
+    }
+
+    /// A caller-supplied tool name must not be able to rename the decision:
+    /// request_hash commits to the tool that was authorized, so `action` saying
+    /// something else would sign a receipt describing a different decision than
+    /// the one it proves.
+    #[test]
+    fn a_caller_cannot_rename_the_authorized_tool() {
+        let (warrant, holder, args, authorizer) = invocation();
+        let pop = warrant.sign(&holder, "read_file", &args).unwrap();
+        let result = authorizer
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "read_file",
+                &args,
+                Some(&pop),
+                &[],
+            )
+            .expect("chain verifies");
+
+        let payload = result
+            .to_receipt_payload(
+                "harmless_read",
+                crate::receipt::Outcome::Allow,
+                1,
+                "req",
+                None,
+            )
+            .expect("payload builds");
+
+        assert_eq!(payload.action, "read_file");
     }
 
     /// Chain verification with no invocation has no PoP and nothing to commit

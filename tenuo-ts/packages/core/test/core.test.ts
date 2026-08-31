@@ -837,3 +837,50 @@ describe("request correlation", () => {
     expect(seen).toBeUndefined();
   });
 });
+
+describe("receipt argument commitment", () => {
+  it("commits to the invocation the decision was made over", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+
+    // Without key 7 a receipt records that a decision happened but not what it
+    // was made over, which is most of what makes it evidence.
+    const receipt = verifyReceipt(wire);
+    expect(receipt.request_hash).toBeDefined();
+    expect(receipt.request_hash).toHaveLength(64);
+  });
+
+  it("commits to a different invocation differently", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+    const hashes: (string | undefined)[] = [];
+    for (const path of ["/data/a.txt", "/data/b.txt"]) {
+      await tenuo.withSession(session, () =>
+        tool.execute({ path }, {
+          onReceipt: (receipt: string) => {
+            hashes.push(verifyReceipt(receipt).request_hash);
+          },
+        } as never),
+      );
+    }
+
+    expect(hashes[0]).not.toBe(hashes[1]);
+  });
+});

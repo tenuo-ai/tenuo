@@ -37,6 +37,12 @@ export type WasmReceipt = {
    * loaded list that revoked nothing.
    */
   srl_hash?: string;
+  /**
+   * SHA-256 (hex) commitment to the canonical invocation this decision was
+   * made over. Absent when the arguments could not be canonicalized — never
+   * zero-filled, so absence is a claim rather than a value.
+   */
+  request_hash?: string;
   /** SHA-256 (hex) of the host ceiling applied to this decision. */
   policy_definition_hash?: string;
   /**

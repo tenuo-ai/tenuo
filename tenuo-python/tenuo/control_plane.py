@@ -80,6 +80,38 @@ def get_or_create() -> Optional["ControlPlaneClient"]:
     return client
 
 
+# Receipt payload key 10 carries a canonical kebab-case error name drawn from
+# the Rust `Error::name()` vocabulary, the same one WASM emits. Python's
+# EnforcementResult.error_type is a coarser category, so it is mapped rather
+# than case-converted — `expired` alone would not match `warrant-expired`, and
+# two runtimes disagreeing on this field makes it useless for correlation.
+#
+# denial_reason is deliberately not used: it is human prose that may quote
+# argument values, and key 10 is signed and widely shared.
+_DECISION_CODE_BY_ERROR_TYPE = {
+    "expired": "warrant-expired",
+    "revoked": "warrant-revoked",
+    "invalid_pop": "pop-signature-invalid",
+    "constraint_violation": "constraint-not-satisfied",
+    "tool_not_allowed": "tool-not-authorized",
+    "policy_violation": "constraint-not-satisfied",
+    "insufficient_approvals": "insufficient-approvals",
+    "approval_gate_misconfigured": "invalid-approval",
+    "untrusted_issuer": "untrusted-issuer",
+    "authorization_failed": "authorization-failed",
+    "internal_error": "internal-error",
+    "tenuo_error": "authorization-failed",
+}
+
+
+def _decision_code(result) -> str:
+    """Canonical kebab-case name for a denial, for receipt payload key 10."""
+    error_type = getattr(result, "error_type", None)
+    if not error_type:
+        return "authorization-failed"
+    return _DECISION_CODE_BY_ERROR_TYPE.get(error_type, error_type.replace("_", "-"))
+
+
 class ControlPlaneClient:
     """
     Thin Python wrapper around tenuo_core.ControlPlaneClient.
@@ -283,7 +315,7 @@ class ControlPlaneClient:
                 latency_us, request_id, arguments_json,
             )
             self._bind_for_receipts_from_result(result)
-            self._emit_receipt(chain_result, tool, False, request_id, deny_reason or None)
+            self._emit_receipt(chain_result, tool, False, request_id, _decision_code(result))
 
     def _bind_for_receipts_from_result(self, result: Any) -> None:
         """Best-effort receipt trust binding from the authorizer that decided.

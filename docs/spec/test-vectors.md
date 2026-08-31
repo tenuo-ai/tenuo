@@ -2128,6 +2128,21 @@ Keys 12 and 13 commit to the revocation list in force. Absent means no
 list was loaded, which is a different claim from a loaded list that
 revoked nothing.
 
+**Signing Preimage:**
+```
+b"tenuo-receipt-v1" || receipt_version || payload_bytes
+```
+
+`receipt_version` is the artifact's own byte (key 0 of the payload must equal
+it, and verification rejects a mismatch). `payload_bytes` are the deterministic
+CBOR of the payload map, carried opaquely in the artifact so a verifier checks
+the signature over exactly the bytes it received rather than over a
+re-encoding.
+
+**Verification** additionally rejects a receipt whose claims are not
+self-consistent, even when the signature is valid: an allow must carry key 8,
+and a denial must carry key 10.
+
 ### A.30.1 Allow, No Revocation Data
 
 Keys 12 and 13 are both absent: the enforcement point never consulted revocation. A verifier cannot conclude the warrant was unrevoked.
