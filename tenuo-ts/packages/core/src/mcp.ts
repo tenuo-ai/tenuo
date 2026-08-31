@@ -58,7 +58,7 @@ export function createMcp(context: WasmContext, decide: (decision: WasmDecision,
         options?.allow,
       );
       if (decision.outcome === "allow") {
-        await admitPop(options?.nonceStore, envelope.signature);
+        await admitPop(options?.nonceStore, envelope.signature, options?.onNonceStoreError);
       }
       emitReceipt(options?.onReceipt, decision.receipt);
       decide(decision, name);
@@ -76,6 +76,7 @@ export function createMcp(context: WasmContext, decide: (decision: WasmDecision,
           ...(policy?.allow !== undefined ? { allow: policy.allow } : {}),
           ...(policy?.onReceipt !== undefined ? { onReceipt: policy.onReceipt } : {}),
           ...(policy?.nonceStore !== undefined ? { nonceStore: policy.nonceStore } : {}),
+          ...(policy?.onNonceStoreError !== undefined ? { onNonceStoreError: policy.onNonceStoreError } : {}),
         });
         return execute(authorized as never);
       };
@@ -135,8 +136,9 @@ function tenuoEnvelope(
   };
 }
 
-const HANDLER_POLICY_KEYS = new Set(["allow", "onReceipt", "nonceStore"]);
-const VERIFY_OPTION_KEYS = new Set(["allow", "onReceipt", "nonceStore"]);
+const HANDLER_POLICY_KEYS = new Set(["allow", "onReceipt", "nonceStore", "onNonceStoreError"]);
+const VERIFY_OPTION_KEYS = new Set(["allow", "onReceipt", "nonceStore", "onNonceStoreError"]);
+const REPLAY_STORE_UNAVAILABLE = "Replay store unavailable";
 const ATTACH_OPTION_KEYS = new Set(["approvals", "onReceipt"]);
 const MAX_STRIP_DEPTH = 32;
 const MAX_STRIP_LEN = 1024;
@@ -156,17 +158,24 @@ function isHandlerPolicy(value: unknown): value is McpHandlerPolicy {
   }
   const keys = Object.keys(value);
   assertKnownKeys(value, HANDLER_POLICY_KEYS, "mcp.handler() policy");
-  const record = value as { allow?: unknown; onReceipt?: unknown; nonceStore?: unknown };
+  const record = value as {
+    allow?: unknown;
+    onReceipt?: unknown;
+    nonceStore?: unknown;
+    onNonceStoreError?: unknown;
+  };
   const hasAllow =
     "allow" in record && record.allow !== null && typeof record.allow === "object" && !Array.isArray(record.allow);
   const hasReceipt = "onReceipt" in record && typeof record.onReceipt === "function";
   const hasNonce = "nonceStore" in record && record.nonceStore !== null && typeof record.nonceStore === "object";
-  return keys.length === 0 || hasAllow || hasReceipt || hasNonce;
+  const hasStoreError = "onNonceStoreError" in record && typeof record.onNonceStoreError === "function";
+  return keys.length === 0 || hasAllow || hasReceipt || hasNonce || hasStoreError;
 }
 
 async function admitPop(
   store: { checkAndRecord(popSignature: string): boolean | Promise<boolean> } | undefined,
   signature: string,
+  onNonceStoreError?: (error: unknown) => void | Promise<void>,
 ): Promise<void> {
   if (store === undefined) {
     return;
@@ -175,27 +184,55 @@ async function admitPop(
   try {
     admitted = store.checkAndRecord(signature);
   } catch (error) {
-    throw new TenuoConfigurationError(
-      `NonceStore.checkAndRecord() failed closed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw replayStoreUnavailable(error, onNonceStoreError);
   }
   if (isThenable(admitted)) {
     try {
       admitted = await admitted;
     } catch (error) {
-      throw new TenuoConfigurationError(
-        `NonceStore.checkAndRecord() failed closed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw replayStoreUnavailable(error, onNonceStoreError);
     }
   }
   if (typeof admitted !== "boolean") {
-    throw new TenuoConfigurationError("NonceStore.checkAndRecord() must return boolean or Promise<boolean>");
+    throw replayStoreUnavailable(
+      new TenuoConfigurationError("NonceStore.checkAndRecord() must return boolean or Promise<boolean>"),
+      onNonceStoreError,
+    );
   }
   if (!admitted) {
     throw new AuthorizationDeniedError(
       "TENUO_INVALID_POP",
       "PoP replay detected — this exact authorization token was already consumed.",
     );
+  }
+}
+
+function replayStoreUnavailable(
+  cause: unknown,
+  onNonceStoreError?: (error: unknown) => void | Promise<void>,
+): TenuoConfigurationError {
+  emitIsolated(onNonceStoreError, cause);
+  const error = new TenuoConfigurationError(REPLAY_STORE_UNAVAILABLE);
+  if (cause !== undefined) {
+    error.cause = cause;
+  }
+  return error;
+}
+
+function emitIsolated(
+  hook: ((error: unknown) => void | Promise<void>) | undefined,
+  error: unknown,
+): void {
+  if (hook === undefined) {
+    return;
+  }
+  try {
+    const result = hook(error);
+    if (isThenable(result)) {
+      void Promise.resolve(result).catch(() => undefined);
+    }
+  } catch {
+    // Isolated — must not change the public error.
   }
 }
 

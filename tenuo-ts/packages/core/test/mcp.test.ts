@@ -117,15 +117,25 @@ describe("tenuo.mcp", () => {
     await expect(server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store })).rejects.toMatchObject({
       code: "TENUO_INVALID_POP",
     });
+    const seenErrors: unknown[] = [];
     const broken = {
       async checkAndRecord() {
-        throw new Error("redis down");
+        throw new Error("redis://user:secret@host/0");
       },
     };
     const other = issuer.mcp.attach(session, "read_file", { path: "/data/other.txt" });
     await expect(
-      server.mcp.verify(other.name, other.arguments, other._meta, { nonceStore: broken }),
-    ).rejects.toThrow(/failed closed/);
+      server.mcp.verify(other.name, other.arguments, other._meta, {
+        nonceStore: broken,
+        onNonceStoreError: (error) => {
+          seenErrors.push(error);
+        },
+      }),
+    ).rejects.toMatchObject({
+      message: "Replay store unavailable",
+      cause: expect.objectContaining({ message: "redis://user:secret@host/0" }),
+    });
+    expect(seenErrors).toEqual([expect.objectContaining({ message: "redis://user:secret@host/0" })]);
   });
 
   it("rejects a mixed option typo instead of ignoring it", () => {

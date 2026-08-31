@@ -1,50 +1,58 @@
 import type { AllowPolicy, NonceStore, Tenuo } from "@tenuo/core";
 import { TenuoConfigurationError } from "@tenuo/core";
+import type {
+  CallToolResult,
+  Icon,
+  InputRequiredResult,
+  McpServer,
+  RegisteredTool,
+  ServerContext,
+  StandardSchemaWithJSON,
+  ToolAnnotations,
+  ToolCallback,
+  ToolExecution,
+} from "@modelcontextprotocol/server";
 
-/** Subset of an official v2 `CallToolResult` the adapter returns on deny. */
-export type McpToolResult = {
-  readonly content?: readonly Record<string, unknown>[];
-  readonly structuredContent?: unknown;
-  readonly isError?: boolean;
-  readonly _meta?: Readonly<Record<string, unknown>>;
-};
+export type McpToolResult = CallToolResult | InputRequiredResult;
 
 export type GuardToolOptions = {
   readonly allow?: AllowPolicy;
   readonly onReceipt?: (receipt: string) => void | Promise<void>;
   readonly nonceStore?: NonceStore;
+  readonly onNonceStoreError?: (error: unknown) => void | Promise<void>;
+  /**
+   * Isolated. Called when the tool handler throws. The client only ever sees
+   * "Tool execution failed".
+   */
+  readonly onHandlerError?: (error: unknown, ctx: ServerContext) => void | Promise<void>;
 };
 
-/** Infer handler args from a Zod-like schema (`_zod.output` or `_output`). */
-export type InferToolArgs<TSchema> = TSchema extends { _zod: { output: infer Output } }
-  ? Output extends Record<string, unknown>
-    ? Output
+/** Infer handler args from an official Standard Schema (Zod v4 included). */
+export type InferToolArgs<TSchema> = TSchema extends StandardSchemaWithJSON
+  ? StandardSchemaWithJSON.InferOutput<TSchema> extends Record<string, unknown>
+    ? StandardSchemaWithJSON.InferOutput<TSchema>
     : Record<string, unknown>
-  : TSchema extends { _output: infer Output }
-    ? Output extends Record<string, unknown>
-      ? Output
-      : Record<string, unknown>
-    : Record<string, unknown>;
+  : Record<string, unknown>;
 
 /** Official `registerTool` config plus the host ceiling. `allow` is never advertised. */
-export type GuardToolConfig<TSchema = unknown> = {
+export type GuardToolConfig<TSchema extends StandardSchemaWithJSON | undefined = undefined> = {
   readonly title?: string;
   readonly description?: string;
   readonly inputSchema?: TSchema;
-  readonly outputSchema?: unknown;
-  readonly annotations?: unknown;
-  readonly icons?: unknown;
+  readonly outputSchema?: StandardSchemaWithJSON;
+  readonly annotations?: ToolAnnotations;
+  readonly icons?: Icon[];
+  readonly execution?: ToolExecution;
   readonly _meta?: Readonly<Record<string, unknown>>;
 } & GuardToolOptions;
 
-export type GuardedToolHandler<TArgs extends Record<string, unknown> = Record<string, unknown>> = (
-  args: TArgs,
-  ctx: unknown,
-) => McpToolResult | Promise<McpToolResult>;
-
-type Registerable = {
-  registerTool(name: string, config: object, handler: (...args: never[]) => unknown): unknown;
-};
+export type GuardedToolHandler<TSchema extends StandardSchemaWithJSON | undefined = undefined> =
+  TSchema extends StandardSchemaWithJSON
+    ? (
+        args: StandardSchemaWithJSON.InferOutput<TSchema>,
+        ctx: ServerContext,
+      ) => McpToolResult | Promise<McpToolResult>
+    : (ctx: ServerContext) => McpToolResult | Promise<McpToolResult>;
 
 const APPLICATION_ERROR_TEXT = "Tool execution failed";
 
@@ -65,28 +73,38 @@ export function requestMeta(ctx: unknown): unknown {
 }
 
 /**
- * Wrap a v2 `registerTool` callback. Verify runs in Rust; the original handler
- * does not run unless the presented warrant and host `allow` both match.
- * Handler exceptions become a sanitized `{ isError: true }` result — the
- * official transport must not see thrown messages.
+ * Wrap a v2 `registerTool` callback. Official no-schema tools are invoked as
+ * `(ctx)` only — this wrapper accepts that calling convention.
+ * Handler exceptions become a sanitized `{ isError: true }` result.
  */
-export function guardHandler<TArgs extends Record<string, unknown>>(
+export function guardHandler(
   tenuo: Tenuo,
   name: string,
-  handler: GuardedToolHandler<TArgs>,
-): (args: TArgs, ctx?: unknown) => Promise<McpToolResult>;
-export function guardHandler<TArgs extends Record<string, unknown>>(
+  handler: GuardedToolHandler<undefined>,
+): ToolCallback<undefined>;
+export function guardHandler<TSchema extends StandardSchemaWithJSON>(
+  tenuo: Tenuo,
+  name: string,
+  handler: GuardedToolHandler<TSchema>,
+): ToolCallback<TSchema>;
+export function guardHandler(
   tenuo: Tenuo,
   name: string,
   options: GuardToolOptions,
-  handler: GuardedToolHandler<TArgs>,
-): (args: TArgs, ctx?: unknown) => Promise<McpToolResult>;
-export function guardHandler<TArgs extends Record<string, unknown>>(
+  handler: GuardedToolHandler<undefined>,
+): ToolCallback<undefined>;
+export function guardHandler<TSchema extends StandardSchemaWithJSON>(
   tenuo: Tenuo,
   name: string,
-  optionsOrHandler: GuardToolOptions | GuardedToolHandler<TArgs>,
-  maybeHandler?: GuardedToolHandler<TArgs>,
-): (args: TArgs, ctx?: unknown) => Promise<McpToolResult> {
+  options: GuardToolOptions,
+  handler: GuardedToolHandler<TSchema>,
+): ToolCallback<TSchema>;
+export function guardHandler(
+  tenuo: Tenuo,
+  name: string,
+  optionsOrHandler: GuardToolOptions | GuardedToolHandler<StandardSchemaWithJSON | undefined>,
+  maybeHandler?: GuardedToolHandler<StandardSchemaWithJSON | undefined>,
+): ToolCallback<StandardSchemaWithJSON | undefined> {
   const options = isGuardOptions(optionsOrHandler) ? optionsOrHandler : undefined;
   const handler = isGuardOptions(optionsOrHandler) ? maybeHandler : optionsOrHandler;
   if (isTaskHandler(optionsOrHandler) || isTaskHandler(maybeHandler)) {
@@ -95,60 +113,120 @@ export function guardHandler<TArgs extends Record<string, unknown>>(
   if (typeof handler !== "function") {
     throw new TenuoConfigurationError("guardHandler() requires a tool handler");
   }
-  return async (args, ctx) => {
-    let authorized: Record<string, unknown>;
-    try {
-      authorized = await tenuo.mcp.verify(name, asRecord(args), requestMeta(ctx), {
-        ...(options?.allow !== undefined ? { allow: options.allow } : {}),
-        ...(options?.onReceipt !== undefined ? { onReceipt: options.onReceipt } : {}),
-        ...(options?.nonceStore !== undefined ? { nonceStore: options.nonceStore } : {}),
-      });
-    } catch (error) {
-      return {
-        isError: true,
-        content: [{ type: "text", text: JSON.stringify(tenuo.mcp.jsonRpcError(error)) }],
-      };
-    }
-    try {
-      return await handler(authorized as TArgs, ctx);
-    } catch {
-      return {
-        isError: true,
-        content: [{ type: "text", text: APPLICATION_ERROR_TEXT }],
-      };
-    }
-  };
+  return (async (argsOrCtx: unknown, maybeCtx?: unknown) => {
+    const ctxOnly = isCtxOnlyCall(argsOrCtx, maybeCtx);
+    const args = ctxOnly ? {} : asRecord(argsOrCtx);
+    const ctx = (ctxOnly ? argsOrCtx : maybeCtx) as ServerContext;
+    return runGuarded(tenuo, name, options, handler, args, ctx, ctxOnly);
+  }) as ToolCallback<StandardSchemaWithJSON | undefined>;
 }
 
 /**
  * Register tools on an official `@modelcontextprotocol/server` v2 `McpServer`.
  * Client attach stays `tenuo.mcp.attach()` on `@tenuo/core`.
+ * Tools without `inputSchema` are registered as `(ctx) => …`.
  */
-export function guardTools(tenuo: Tenuo, server: Registerable): {
-  register<TSchema>(
+export function guardTools(tenuo: Tenuo, server: Pick<McpServer, "registerTool">): {
+  register(name: string, config: GuardToolConfig<undefined>, handler: GuardedToolHandler<undefined>): RegisteredTool;
+  register<TSchema extends StandardSchemaWithJSON>(
     name: string,
     config: GuardToolConfig<TSchema>,
-    handler: GuardedToolHandler<InferToolArgs<TSchema>>,
-  ): unknown;
+    handler: GuardedToolHandler<TSchema>,
+  ): RegisteredTool;
 } {
   return {
-    register(name, config, handler) {
+    register(name: string, config: GuardToolConfig<StandardSchemaWithJSON | undefined>, handler: GuardedToolHandler<StandardSchemaWithJSON | undefined>) {
       assertRegisterConfig(config);
-      const { allow, onReceipt, nonceStore, ...advertised } = config;
+      const options = tenuoOptions(config);
+      const official = advertisedConfig(config);
+      if (config.inputSchema === undefined) {
+        return server.registerTool(name, official, async (ctx: ServerContext) =>
+          runGuarded(tenuo, name, options, handler, {}, ctx, true),
+        );
+      }
       return server.registerTool(
         name,
-        advertised,
-        guardHandler(tenuo, name, {
-          ...(allow !== undefined ? { allow } : {}),
-          ...(onReceipt !== undefined ? { onReceipt } : {}),
-          ...(nonceStore !== undefined ? { nonceStore } : {}),
-        }, handler) as never,
+        { ...official, inputSchema: config.inputSchema },
+        async (args: unknown, ctx: ServerContext) =>
+          runGuarded(tenuo, name, options, handler, asRecord(args), ctx, false),
       );
     },
   };
 }
 
-const GUARD_OPTION_KEYS = new Set(["allow", "onReceipt", "nonceStore"]);
+async function runGuarded(
+  tenuo: Tenuo,
+  name: string,
+  options: GuardToolOptions | undefined,
+  handler: GuardedToolHandler<StandardSchemaWithJSON | undefined>,
+  args: Record<string, unknown>,
+  ctx: ServerContext,
+  ctxOnly: boolean,
+): Promise<McpToolResult> {
+  let authorized: Record<string, unknown>;
+  try {
+    authorized = await tenuo.mcp.verify(name, args, requestMeta(ctx), {
+      ...(options?.allow !== undefined ? { allow: options.allow } : {}),
+      ...(options?.onReceipt !== undefined ? { onReceipt: options.onReceipt } : {}),
+      ...(options?.nonceStore !== undefined ? { nonceStore: options.nonceStore } : {}),
+      ...(options?.onNonceStoreError !== undefined ? { onNonceStoreError: options.onNonceStoreError } : {}),
+    });
+  } catch (error) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: JSON.stringify(tenuo.mcp.jsonRpcError(error)) }],
+    };
+  }
+  try {
+    if (ctxOnly) {
+      return await (handler as GuardedToolHandler<undefined>)(ctx);
+    }
+    return await (handler as GuardedToolHandler<StandardSchemaWithJSON>)(
+      authorized as StandardSchemaWithJSON.InferOutput<StandardSchemaWithJSON>,
+      ctx,
+    );
+  } catch (error) {
+    emitHandlerError(options?.onHandlerError, error, ctx);
+    return {
+      isError: true,
+      content: [{ type: "text", text: APPLICATION_ERROR_TEXT }],
+    };
+  }
+}
+
+function emitHandlerError(
+  hook: ((error: unknown, ctx: ServerContext) => void | Promise<void>) | undefined,
+  error: unknown,
+  ctx: ServerContext,
+): void {
+  if (hook === undefined) {
+    return;
+  }
+  try {
+    const result = hook(error, ctx);
+    if (result !== null && typeof result === "object" && "then" in result && typeof result.then === "function") {
+      void Promise.resolve(result).catch(() => undefined);
+    }
+  } catch {
+    // Isolated — must not change the public error.
+  }
+}
+
+function isCtxOnlyCall(argsOrCtx: unknown, maybeCtx: unknown): boolean {
+  return maybeCtx === undefined && isServerContext(argsOrCtx);
+}
+
+function isServerContext(value: unknown): boolean {
+  return value !== null && typeof value === "object" && "mcpReq" in value;
+}
+
+const GUARD_OPTION_KEYS = new Set([
+  "allow",
+  "onReceipt",
+  "nonceStore",
+  "onNonceStoreError",
+  "onHandlerError",
+]);
 const REGISTER_KEYS = new Set([
   "title",
   "description",
@@ -156,10 +234,13 @@ const REGISTER_KEYS = new Set([
   "outputSchema",
   "annotations",
   "icons",
+  "execution",
   "_meta",
   "allow",
   "onReceipt",
   "nonceStore",
+  "onNonceStoreError",
+  "onHandlerError",
 ]);
 
 function assertKnownKeys(value: object, known: ReadonlySet<string>, label: string): void {
@@ -175,17 +256,53 @@ function assertRegisterConfig(config: object): void {
   assertKnownKeys(config, REGISTER_KEYS, "guardTools().register() config");
 }
 
+function tenuoOptions(config: GuardToolOptions): GuardToolOptions {
+  return {
+    ...(config.allow !== undefined ? { allow: config.allow } : {}),
+    ...(config.onReceipt !== undefined ? { onReceipt: config.onReceipt } : {}),
+    ...(config.nonceStore !== undefined ? { nonceStore: config.nonceStore } : {}),
+    ...(config.onNonceStoreError !== undefined ? { onNonceStoreError: config.onNonceStoreError } : {}),
+    ...(config.onHandlerError !== undefined ? { onHandlerError: config.onHandlerError } : {}),
+  };
+}
+
+function advertisedConfig(config: GuardToolConfig<StandardSchemaWithJSON | undefined>): {
+  title?: string;
+  description?: string;
+  outputSchema?: StandardSchemaWithJSON;
+  annotations?: ToolAnnotations;
+  icons?: Icon[];
+  _meta?: Record<string, unknown>;
+} {
+  return {
+    ...(config.title !== undefined ? { title: config.title } : {}),
+    ...(config.description !== undefined ? { description: config.description } : {}),
+    ...(config.outputSchema !== undefined ? { outputSchema: config.outputSchema } : {}),
+    ...(config.annotations !== undefined ? { annotations: config.annotations } : {}),
+    ...(config.icons !== undefined ? { icons: config.icons } : {}),
+    ...(config._meta !== undefined ? { _meta: { ...config._meta } } : {}),
+  };
+}
+
 function isGuardOptions(value: unknown): value is GuardToolOptions {
   if (value === null || typeof value !== "object" || Array.isArray(value) || typeof value === "function") {
     return false;
   }
   const keys = Object.keys(value);
   assertKnownKeys(value, GUARD_OPTION_KEYS, "guardHandler() options");
-  const record = value as { allow?: unknown; onReceipt?: unknown; nonceStore?: unknown };
+  const record = value as {
+    allow?: unknown;
+    onReceipt?: unknown;
+    nonceStore?: unknown;
+    onNonceStoreError?: unknown;
+    onHandlerError?: unknown;
+  };
   const hasAllow = "allow" in record && record.allow !== null && typeof record.allow === "object";
   const hasReceipt = "onReceipt" in record && typeof record.onReceipt === "function";
   const hasNonce = "nonceStore" in record && record.nonceStore !== null && typeof record.nonceStore === "object";
-  return keys.length === 0 || hasAllow || hasReceipt || hasNonce;
+  const hasStoreError = "onNonceStoreError" in record && typeof record.onNonceStoreError === "function";
+  const hasHandlerError = "onHandlerError" in record && typeof record.onHandlerError === "function";
+  return keys.length === 0 || hasAllow || hasReceipt || hasNonce || hasStoreError || hasHandlerError;
 }
 
 function isTaskHandler(value: unknown): boolean {

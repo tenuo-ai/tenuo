@@ -637,6 +637,27 @@ describe("revocation and receipts", () => {
     });
   });
 
+  it("rejects a cumulative argument payload even when each field is under the per-item cap", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({
+      allow: { read_file: { path: under("/data") } },
+    });
+    const readFile = tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    const bomb: Record<string, string> = { path: "/data/q3.pdf" };
+    for (let i = 0; i < 20; i += 1) {
+      bomb[`k${i}`] = "x".repeat(10_000);
+    }
+    await expect(
+      tenuo.withSession(session, () => readFile.execute(bomb as { path: string })),
+    ).rejects.toMatchObject({
+      code: "TENUO_CANONICALIZATION",
+      message: expect.stringMatching(/value budget/),
+    });
+  });
+
   it("rejects an oversized warrant string at the WASM boundary", () => {
     const tenuo = createTenuo({
       trustedRoots: [
@@ -645,7 +666,7 @@ describe("revocation and receipts", () => {
     });
     expect(() =>
       tenuo.sessionFromWire({
-        warrant: "A".repeat(64 * 1024 * 64 * 2 + 1),
+        warrant: "A".repeat(256 * 1024 * 2 + 1),
         holderKey: createTenuo.holderKeyFromHex("02".repeat(32)),
       }),
     ).toThrow(/WASM input budget|TENUO_CHAIN_INVALID/);

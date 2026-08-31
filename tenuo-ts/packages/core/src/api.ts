@@ -233,6 +233,11 @@ export type McpHandlerPolicy = {
   readonly allow?: AllowPolicy;
   readonly onReceipt?: (receipt: string) => void | Promise<void>;
   readonly nonceStore?: NonceStore;
+  /**
+   * Isolated. Called when `nonceStore.checkAndRecord` throws or rejects.
+   * The client only ever sees "Replay store unavailable".
+   */
+  readonly onNonceStoreError?: (error: unknown) => void | Promise<void>;
 };
 
 export type McpVerifyOptions = {
@@ -244,6 +249,11 @@ export type McpVerifyOptions = {
    * across processes.
    */
   readonly nonceStore?: NonceStore;
+  /**
+   * Isolated. Called when `nonceStore.checkAndRecord` throws or rejects.
+   * The client only ever sees "Replay store unavailable".
+   */
+  readonly onNonceStoreError?: (error: unknown) => void | Promise<void>;
 };
 
 /**

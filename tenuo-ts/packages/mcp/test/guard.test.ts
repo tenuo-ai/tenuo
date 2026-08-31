@@ -132,6 +132,27 @@ describe("@tenuo/mcp v2 adapter", () => {
     expect(receipts).toHaveLength(1);
   });
 
+  it("authorizes a no-schema tool that the official server invokes as (ctx) only", async () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const session = issuer.session({
+      allow: { ping: {} },
+    });
+    const executed: string[] = [];
+    const server = new McpServer({ name: "tenuo-ping", version: "0.2.3" });
+    const tools = guardTools(issuer, server);
+    tools.register("ping", { description: "ping", allow: {} }, async () => {
+      executed.push("ping");
+      return { content: [{ type: "text", text: "pong" }] };
+    });
+    const host = await connect(server);
+    harnesses.push(host);
+    const call = issuer.mcp.attach(session, "ping", {});
+    const result = await host.call(call.name, { ...call.arguments }, call._meta);
+    expect(result.isError).toBe(false);
+    expect(result.text).toBe("pong");
+    expect(executed).toEqual(["ping"]);
+  });
+
   it("sanitizes a handler throw so the official transport cannot see it", async () => {
     const issuer = createTenuo({ root: createTenuo.devRoot() });
     const session = issuer.session({
@@ -157,6 +178,67 @@ describe("@tenuo/mcp v2 adapter", () => {
     expect(result.text).toBe("Tool execution failed");
     expect(result.text).not.toMatch(/hunter2/);
     expect(result.rpc).toBeUndefined();
+  });
+
+  it("reports handler errors to onHandlerError without disclosing them", async () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const session = issuer.session({
+      allow: { read_file: { path: under("/data") } },
+    });
+    const seen: unknown[] = [];
+    const handler = guardHandler(
+      issuer,
+      "read_file",
+      {
+        allow: { path: under("/data") },
+        onHandlerError: (error) => {
+          seen.push(error);
+        },
+      },
+      async () => {
+        throw new Error("DB password=hunter2");
+      },
+    );
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    const result = await handler(call.arguments as { path: string }, {
+      mcpReq: { _meta: call._meta },
+    } as never);
+    expect(result).toMatchObject({
+      isError: true,
+      content: [{ type: "text", text: "Tool execution failed" }],
+    });
+    expect(seen).toEqual([expect.objectContaining({ message: "DB password=hunter2" })]);
+  });
+
+  it("does not leak nonce-store infrastructure errors to the client", async () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const session = issuer.session({
+      allow: { read_file: { path: under("/data") } },
+    });
+    const seen: unknown[] = [];
+    const handler = guardHandler(
+      issuer,
+      "read_file",
+      {
+        allow: { path: under("/data") },
+        nonceStore: {
+          async checkAndRecord() {
+            throw new Error("redis://user:secret@host/0");
+          },
+        },
+        onNonceStoreError: (error) => {
+          seen.push(error);
+        },
+      },
+      async ({ path }) => ({ content: [{ type: "text", text: path }] }),
+    );
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    const result = await handler(call.arguments as { path: string }, {
+      mcpReq: { _meta: call._meta },
+    } as never);
+    expect(String(result.content?.[0]?.text)).toMatch(/Replay store unavailable/);
+    expect(String(result.content?.[0]?.text)).not.toMatch(/secret/);
+    expect(seen).toEqual([expect.objectContaining({ message: "redis://user:secret@host/0" })]);
   });
 
   it("rejects option typos instead of asking for a handler", () => {

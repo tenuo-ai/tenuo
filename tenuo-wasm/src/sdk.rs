@@ -30,9 +30,52 @@ const DEFAULT_TTL_SECS: u64 = 300;
 /// [`MAX_WARRANT_SIZE`] / [`MAX_CONSTRAINT_DEPTH`] after decode.
 const MAX_ARG_KEYS: usize = 256;
 const MAX_COLLECTION_LEN: usize = 1024;
+const MAX_INPUT_NODES: usize = 2048;
+const MAX_INPUT_KEY_BYTES: usize = MAX_WARRANT_SIZE;
+const MAX_INPUT_VALUE_BYTES: usize = MAX_WARRANT_SIZE;
 const MAX_POP_CHARS: usize = 256;
 const MAX_ENCODED_WARRANT_CHARS: usize = MAX_WARRANT_SIZE * 2;
-const MAX_ENCODED_CHAIN_CHARS: usize = MAX_WARRANT_SIZE * MAX_DELEGATION_DEPTH as usize * 2;
+/// Encoded chain cap follows core [`wire::MAX_STACK_SIZE`], not depth × warrant.
+const MAX_ENCODED_CHAIN_CHARS: usize = wire::MAX_STACK_SIZE * 2;
+
+#[derive(Default)]
+struct InputBudget {
+    nodes: usize,
+    key_bytes: usize,
+    value_bytes: usize,
+}
+
+impl InputBudget {
+    fn charge_node(&mut self) -> Result<(), String> {
+        self.nodes = self.nodes.saturating_add(1);
+        if self.nodes > MAX_INPUT_NODES {
+            return Err(format!(
+                "arguments exceed the WASM node budget of {MAX_INPUT_NODES}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn charge_key(&mut self, len: usize) -> Result<(), String> {
+        self.key_bytes = self.key_bytes.saturating_add(len);
+        if self.key_bytes > MAX_INPUT_KEY_BYTES {
+            return Err(format!(
+                "arguments exceed the WASM key budget of {MAX_INPUT_KEY_BYTES} bytes"
+            ));
+        }
+        Ok(())
+    }
+
+    fn charge_value(&mut self, len: usize) -> Result<(), String> {
+        self.value_bytes = self.value_bytes.saturating_add(len);
+        if self.value_bytes > MAX_INPUT_VALUE_BYTES {
+            return Err(format!(
+                "arguments exceed the WASM value budget of {MAX_INPUT_VALUE_BYTES} bytes"
+            ));
+        }
+        Ok(())
+    }
+}
 
 #[derive(Serialize)]
 struct DecisionDto {
@@ -1130,19 +1173,24 @@ fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constraint, String> 
         }
         "exact" => {
             let value = expr.get("value").ok_or("exact requires value")?;
-            let cv = json_to_cv(value, 0)?;
+            let cv = json_to_cv(value, 0, &mut InputBudget::default())?;
             Ok(Exact::new(cv).into())
         }
         other => Err(format!("unknown constraint kind '{other}'")),
     }
 }
 
-fn json_to_cv(value: &serde_json::Value, depth: u32) -> Result<ConstraintValue, String> {
+fn json_to_cv(
+    value: &serde_json::Value,
+    depth: u32,
+    budget: &mut InputBudget,
+) -> Result<ConstraintValue, String> {
     if depth > MAX_CONSTRAINT_DEPTH {
         return Err(format!(
             "value nesting exceeds maximum depth {MAX_CONSTRAINT_DEPTH}"
         ));
     }
+    budget.charge_node()?;
     match value {
         serde_json::Value::Null => Ok(ConstraintValue::Null),
         serde_json::Value::Bool(b) => Ok(ConstraintValue::Boolean(*b)),
@@ -1157,18 +1205,23 @@ fn json_to_cv(value: &serde_json::Value, depth: u32) -> Result<ConstraintValue, 
         }
         serde_json::Value::String(s) => {
             reject_string_budget(s.len())?;
+            budget.charge_value(s.len())?;
             Ok(ConstraintValue::String(s.clone()))
         }
         serde_json::Value::Array(xs) => {
             reject_collection_budget(xs.len())?;
-            let vals: Result<Vec<_>, _> = xs.iter().map(|v| json_to_cv(v, depth + 1)).collect();
-            Ok(ConstraintValue::List(vals?))
+            let mut vals = Vec::with_capacity(xs.len());
+            for v in xs {
+                vals.push(json_to_cv(v, depth + 1, budget)?);
+            }
+            Ok(ConstraintValue::List(vals))
         }
         serde_json::Value::Object(map) => {
             reject_collection_budget(map.len())?;
             let mut out = BTreeMap::new();
             for (k, v) in map {
-                out.insert(k.clone(), json_to_cv(v, depth + 1)?);
+                budget.charge_key(k.len())?;
+                out.insert(k.clone(), json_to_cv(v, depth + 1, budget)?);
             }
             Ok(ConstraintValue::Object(out))
         }
@@ -1187,12 +1240,15 @@ fn js_to_args(value: &JsValue) -> Result<HashMap<String, ConstraintValue>, Strin
     if keys.length() as usize > MAX_ARG_KEYS {
         return Err(format!("arguments exceed maximum of {MAX_ARG_KEYS} keys"));
     }
+    let mut budget = InputBudget::default();
+    budget.charge_node()?;
     let mut out = HashMap::new();
     for i in 0..keys.length() {
         let key_js = keys.get(i);
         let key = key_js
             .as_string()
             .ok_or_else(|| "argument keys must be strings".to_string())?;
+        budget.charge_key(key.len())?;
         let v = js_sys::Reflect::get(&obj, &key_js)
             .map_err(|_| format!("failed to read argument '{key}'"))?;
         if v.is_undefined() {
@@ -1209,17 +1265,22 @@ fn js_to_args(value: &JsValue) -> Result<HashMap<String, ConstraintValue>, Strin
         if v.js_typeof().as_string().as_deref() == Some("symbol") {
             return Err(format!("symbols are not allowed for '{key}'"));
         }
-        out.insert(key, js_to_cv(&v, 0)?);
+        out.insert(key, js_to_cv(&v, 0, &mut budget)?);
     }
     Ok(out)
 }
 
-fn js_to_cv(value: &JsValue, depth: u32) -> Result<ConstraintValue, String> {
+fn js_to_cv(
+    value: &JsValue,
+    depth: u32,
+    budget: &mut InputBudget,
+) -> Result<ConstraintValue, String> {
     if depth > MAX_CONSTRAINT_DEPTH {
         return Err(format!(
             "argument nesting exceeds maximum depth {MAX_CONSTRAINT_DEPTH}"
         ));
     }
+    budget.charge_node()?;
     if value.is_null() {
         return Ok(ConstraintValue::Null);
     }
@@ -1237,6 +1298,7 @@ fn js_to_cv(value: &JsValue, depth: u32) -> Result<ConstraintValue, String> {
     }
     if let Some(s) = value.as_string() {
         reject_string_budget(s.len())?;
+        budget.charge_value(s.len())?;
         return Ok(ConstraintValue::String(s));
     }
     if js_sys::Array::is_array(value) {
@@ -1244,7 +1306,7 @@ fn js_to_cv(value: &JsValue, depth: u32) -> Result<ConstraintValue, String> {
         reject_collection_budget(arr.length() as usize)?;
         let mut vals = Vec::with_capacity(arr.length() as usize);
         for i in 0..arr.length() {
-            vals.push(js_to_cv(&arr.get(i), depth + 1)?);
+            vals.push(js_to_cv(&arr.get(i), depth + 1, budget)?);
         }
         return Ok(ConstraintValue::List(vals));
     }
@@ -1258,9 +1320,10 @@ fn js_to_cv(value: &JsValue, depth: u32) -> Result<ConstraintValue, String> {
             let key = key_js
                 .as_string()
                 .ok_or_else(|| "object keys must be strings".to_string())?;
+            budget.charge_key(key.len())?;
             let v = js_sys::Reflect::get(&obj, &key_js)
                 .map_err(|_| format!("failed to read '{key}'"))?;
-            map.insert(key, js_to_cv(&v, depth + 1)?);
+            map.insert(key, js_to_cv(&v, depth + 1, budget)?);
         }
         return Ok(ConstraintValue::Object(map));
     }
