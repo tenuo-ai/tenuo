@@ -70,6 +70,10 @@ cross-Namespace call, and Tenuo carries the signed, task-scoped authority. The
 managed control plane is about running that authority system consistently at
 enterprise scale.
 
+If you are evaluating this model for multiple teams or business units,
+[schedule a demo / request access](https://tenuo.ai/early-access.html) and we
+can walk through your Temporal topology.
+
 ## Example 1: AI agent requests a payment refund
 
 An AI workflow in `finance-ai-prd` identifies that a customer needs a refund.
@@ -303,6 +307,9 @@ over:
 That is the point where the problem shifts from "can this handler verify a
 warrant?" to "can the enterprise operate warrant authority safely across all
 the teams using Nexus?"
+
+For that enterprise-scale operating model,
+[schedule a demo / request access](https://tenuo.ai/early-access.html).
 
 ## When this is the right fit
 

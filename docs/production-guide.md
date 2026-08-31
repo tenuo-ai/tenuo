@@ -133,7 +133,7 @@ With a managed control plane, you skip the manual key management, rotation,
 approval, revocation, and audit infrastructure described below. The self-hosted
 patterns are for teams that need full control or have on-prem requirements.
 
-> **[Request early access →](https://tenuo.ai/early-access.html)**
+> **[Schedule a demo / request access →](https://tenuo.ai/early-access.html)**
 
 ## Production Patterns (Self-Hosted)
 
