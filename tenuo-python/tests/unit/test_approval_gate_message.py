@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from tenuo import Authorizer, SigningKey, Warrant
+from tenuo import Authorizer, BoundWarrant, SigningKey, Warrant
+from tenuo._enforcement import enforce_tool_call
 from tenuo.a2a.errors import ApprovalRequiredError
 from tenuo.approval import ApprovalRequest, ApprovalRequired, cli_prompt
 from tenuo.cp_approval import build_control_plane_approval_request_v1
@@ -112,6 +113,30 @@ def test_approval_required_and_for_warrant_gate_copy_message():
     req = ApprovalRequest.for_warrant_gate("email.delete", args, w, rh)
     assert req.message == CUSTOM
     assert str(ApprovalRequired(req)) == CUSTOM
+
+
+def test_shared_enforcement_raises_resolved_message():
+    issuer = SigningKey.generate()
+    holder = SigningKey.generate()
+    approver = SigningKey.generate()
+    w = _mint(
+        issuer,
+        holder,
+        approver,
+        {"email.delete": {"args": None, "message": CUSTOM}},
+    )
+    bound = BoundWarrant(w, holder)
+
+    with pytest.raises(ApprovalRequired) as exc_info:
+        enforce_tool_call(
+            "email.delete",
+            {"id": "42"},
+            bound,
+            trusted_roots=[issuer.public_key],
+        )
+
+    assert str(exc_info.value) == CUSTOM
+    assert exc_info.value.request.message == CUSTOM
 
 
 def test_same_bytes_across_surfaces():
