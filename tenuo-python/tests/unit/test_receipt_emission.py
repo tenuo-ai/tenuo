@@ -9,6 +9,7 @@ being reachable at exactly the moment it usually is not.
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +17,7 @@ tenuo_core = pytest.importorskip("tenuo_core")
 
 from tenuo_core import Authorizer, ControlPlaneClient, Pattern, SigningKey, Warrant  # noqa: E402
 
+from tenuo.control_plane import ControlPlaneClient as PythonControlPlaneClient  # noqa: E402
 from tenuo.receipts import FileReceiptSink, InMemoryReceiptSink, deliver  # noqa: E402
 
 
@@ -66,6 +68,32 @@ def test_a_bound_client_signs_a_verifiable_receipt():
     assert payload.signer_key == client.receipt_signer_key
     # An allow without a PoP is evidence of nothing but the signer's word.
     assert payload.pop_signature is not None
+
+
+def test_python_emission_auto_binds_receipt_trust_context():
+    authorizer, result = _decision()
+    sink = InMemoryReceiptSink()
+    client = PythonControlPlaneClient(
+        url="http://127.0.0.1:1",
+        api_key="k",
+        authorizer_name="test",
+        receipt_sink=sink,
+    )
+    decision = SimpleNamespace(
+        allowed=True,
+        tool="read_file",
+        arguments={"path": "/data/q3.pdf"},
+        warrant_id="wrt-test",
+        chain_result=result,
+        authorizer=authorizer,
+    )
+
+    client.emit_for_enforcement(decision, chain_result=result, request_id="req-auto")
+
+    assert len(sink.receipts) == 1
+    payload = tenuo_core.verify_receipt(sink.receipts[0])
+    assert payload.request_id == "req-auto"
+    assert payload.trusted_roots_hash == authorizer.trusted_roots_hash.hex()
 
 
 def test_the_receipt_commits_to_the_authorizers_own_trust_context():

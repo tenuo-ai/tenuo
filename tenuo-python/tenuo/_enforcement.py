@@ -95,6 +95,10 @@ class EnforcementResult:
             Pass to ``emit_for_enforcement(chain_result=...)`` so receipts
             are signed with Rust-attested fields (approvals, warrant stack,
             root issuer) instead of Python-supplied metadata.
+        authorizer: Rust ``Authorizer`` instance that produced ``chain_result``.
+            ControlPlaneClient uses this to bind receipt trust commitments
+            automatically, so hosts do not need a separate manual
+            ``bind_authorizer()`` step before receipt emission.
         approval_metadata: Populated when ``error_type == "insufficient_approvals"``.
             Contains ``{"got": int, "need": int}`` so callers can tell "re-submit
             with more approvals" from a flat scope denial without parsing the
@@ -109,6 +113,7 @@ class EnforcementResult:
     error_type: Optional[str] = None
     warrant_id: Optional[str] = None
     chain_result: Optional[Any] = None
+    authorizer: Optional[Any] = None
     approval_metadata: Optional[Dict[str, Any]] = None
 
     def raise_if_denied(self) -> None:
@@ -1111,6 +1116,7 @@ def enforce_tool_call(
             arguments=tool_args,
             warrant_id=warrant_id,
             chain_result=_chain_result,
+            authorizer=_auth if verify_mode == "sign" else authorizer,
         )
 
     except InsufficientApprovals as e:
@@ -1444,6 +1450,7 @@ async def enforce_tool_call_async(
         return EnforcementResult(
             allowed=True, tool=tool_name, arguments=tool_args,
             warrant_id=warrant_id, chain_result=_chain_result,
+            authorizer=_auth if verify_mode == "sign" else authorizer,
         )
 
     except InsufficientApprovals as e:

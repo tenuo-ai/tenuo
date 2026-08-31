@@ -157,6 +157,7 @@ class ControlPlaneClient:
         # a dropped receipt costs the ability to prove what happened.
         self._receipt_sink = receipt_sink
         self._on_receipt_error = on_receipt_error
+        self._receipt_unbound_warned = False
         self._inner = _Rust(
             url=resolved_url,
             api_key=resolved_key,
@@ -248,6 +249,7 @@ class ControlPlaneClient:
                 chain_result, tool, arguments_json,
                 latency_us, request_id,
             )
+            self._bind_for_receipts_from_result(result)
             self._emit_receipt(chain_result, tool, True, request_id, None)
             return
 
@@ -280,7 +282,34 @@ class ControlPlaneClient:
                 chain_depth, root_principal, warrant_stack,
                 latency_us, request_id, arguments_json,
             )
+            self._bind_for_receipts_from_result(result)
             self._emit_receipt(chain_result, tool, False, request_id, deny_reason or None)
+
+    def _bind_for_receipts_from_result(self, result: Any) -> None:
+        """Best-effort receipt trust binding from the authorizer that decided.
+
+        EnforcementResult carries the Rust Authorizer that produced the
+        ChainVerificationResult. Binding from that object keeps receipt setup
+        automatic for existing integrations while preserving the important
+        invariant: receipts commit to the trust context the enforcement point
+        actually used.
+        """
+        if self._receipt_sink is None:
+            return
+        authorizer = getattr(result, "authorizer", None)
+        if authorizer is None:
+            if not self._receipt_unbound_warned:
+                logger.warning(
+                    "receipt sink is configured but no authorizer was available "
+                    "for automatic trust binding; no receipt will be emitted for "
+                    "this decision"
+                )
+                self._receipt_unbound_warned = True
+            return
+        try:
+            self.bind_authorizer(authorizer)
+        except Exception as exc:  # noqa: BLE001 - receipt setup must not fail auth
+            logger.warning("failed to bind authorizer for receipt emission", exc_info=exc)
 
     def _emit_receipt(self, chain_result, tool, allowed, request_id, decision_code) -> None:
         """Sign a receipt for this decision and hand it to the sink.

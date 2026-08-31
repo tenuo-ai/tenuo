@@ -631,6 +631,7 @@ impl Receipt {
                 payload.version, self.receipt_version
             )));
         }
+        payload.check_conditional_requirements()?;
 
         Ok(payload)
     }
@@ -1140,6 +1141,35 @@ mod tests {
 
         assert!(allowed.check_conditional_requirements().is_err());
         assert!(payload().check_conditional_requirements().is_ok());
+    }
+
+    #[test]
+    fn verification_rejects_a_signed_allow_without_pop_signature() {
+        let signer = SigningKey::generate();
+        let mut invalid = payload();
+        invalid.pop_signature = None;
+
+        let receipt = Receipt::create(&invalid, &signer).unwrap();
+        let err = receipt.verify_signature().unwrap_err();
+        assert!(
+            err.to_string().contains("pop_signature is required"),
+            "public verification must reject invalid receipt claims, got: {err}"
+        );
+    }
+
+    #[test]
+    fn verification_rejects_a_signed_deny_without_decision_code() {
+        let signer = SigningKey::generate();
+        let mut invalid = full_payload();
+        invalid.outcome = Outcome::Deny;
+        invalid.decision_code = None;
+
+        let receipt = Receipt::create(&invalid, &signer).unwrap();
+        let err = receipt.verify_signature().unwrap_err();
+        assert!(
+            err.to_string().contains("decision_code is required"),
+            "public verification must reject invalid receipt claims, got: {err}"
+        );
     }
 
     #[test]
