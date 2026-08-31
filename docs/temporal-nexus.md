@@ -1,13 +1,13 @@
 ---
 title: Temporal Nexus Authorization
-description: Experimental Tenuo authorization across Temporal Nexus namespace boundaries
+description: Tenuo authorization across Temporal Nexus namespace boundaries
 ---
 
 # Temporal Nexus Authorization
 
-> Experimental surface. Tenuo can now emit and verify authorization headers for
-> Temporal Nexus operations, and can carry verified authority into
-> workflow-backed Nexus operations through an explicit envelope/bootstrap path.
+> Tenuo can emit and verify authorization headers for Temporal Nexus
+> operations, and can carry verified authority into workflow-backed Nexus
+> operations through an explicit envelope/bootstrap path.
 
 Temporal Nexus lets one Temporal namespace expose a service contract that
 workflows in another namespace can call through a named endpoint. That is the
@@ -63,7 +63,7 @@ If the warrant only allows `order_id="ord_123"` and
 `amount_cents <= 5000`, a larger or different refund is denied at the handler
 boundary, even though the Nexus endpoint itself is reachable.
 
-## Supported experimental surfaces
+## Supported surfaces
 
 ### Caller workflow helper
 
@@ -476,7 +476,7 @@ against the decoded argument shape.
 - Should the workflow envelope grow an additional handler signature over the
   target workflow binding, or is mandatory `workflow_id` binding plus
   Temporal's handler-created input boundary sufficient for the first
-  experimental surface?
+  surface?
 - Should a denied Nexus operation be represented as `UNAUTHORIZED` or as a
   Tenuo-specific non-retryable operation error with structured details?
 
