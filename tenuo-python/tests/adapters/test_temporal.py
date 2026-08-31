@@ -4730,6 +4730,60 @@ class TestClientHeadersPendingMapBound:
         ci.set_headers_for_workflow("c", {"x-tenuo-warrant": b"3"})
         assert set(ci._headers_by_workflow_id.keys()) == {"a", "c"}
 
+    @pytest.mark.asyncio
+    async def test_nexus_shaped_workflow_start_injects_headers_and_preserves_fields(self):
+        """Nexus backing starts still pass through the normal client interceptor.
+
+        Temporal's Python SDK represents ``ctx.start_workflow(...)`` as a normal
+        client ``start_workflow`` call with Nexus-specific fields such as
+        ``request_id``, completion callbacks, and workflow event links. This
+        contract test keeps our side honest: adding Tenuo headers must not drop
+        those fields, and the workflow-id-scoped header binding must be consumed
+        exactly once.
+        """
+        from types import SimpleNamespace
+
+        from tenuo.temporal._client import TenuoClientInterceptor
+
+        class NextOutbound:
+            def __init__(self):
+                self.seen_input = None
+
+            async def start_workflow(self, input):
+                self.seen_input = input
+                return "workflow-handle"
+
+        next_outbound = NextOutbound()
+        ci = TenuoClientInterceptor()
+        outbound = ci.intercept_client(next_outbound)
+        ci.set_headers_for_workflow(
+            "nexus-backed-wf",
+            {
+                "x-tenuo-warrant": b"warrant-bytes",
+                "x-tenuo-key-id": b"agent-key",
+            },
+        )
+        nexus_callback = SimpleNamespace(url="nexus-callback")
+        nexus_link = SimpleNamespace(workflow_event="event-link")
+        start_input = SimpleNamespace(
+            id="nexus-backed-wf",
+            headers={},
+            request_id="nexus-request-id",
+            callbacks=[nexus_callback],
+            workflow_event_links=[nexus_link],
+        )
+
+        result = await outbound.start_workflow(start_input)
+
+        assert result == "workflow-handle"
+        assert next_outbound.seen_input is start_input
+        assert start_input.request_id == "nexus-request-id"
+        assert start_input.callbacks == [nexus_callback]
+        assert start_input.workflow_event_links == [nexus_link]
+        assert start_input.headers["x-tenuo-warrant"].data == b"warrant-bytes"
+        assert start_input.headers["x-tenuo-key-id"].data == b"agent-key"
+        assert "nexus-backed-wf" not in ci._headers_by_workflow_id
+
 
 class TestSignalAndUpdateRuntimeDenial:
     """The inbound workflow interceptor rejects signals/updates that aren't
