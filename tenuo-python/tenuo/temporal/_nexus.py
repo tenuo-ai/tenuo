@@ -43,6 +43,21 @@ from tenuo.temporal.exceptions import (
 
 TENUO_NEXUS_HEADER_ENCODING = "x-tenuo-nexus-header-encoding"
 _TENUO_NEXUS_HEADER_ENCODING_V1 = "base64-v1"
+_TENUO_NEXUS_WORKFLOW_ENVELOPE_VERSION = "tenuo-nexus-workflow-envelope/v1"
+
+
+@_dataclasses.dataclass(frozen=True)
+class TenuoNexusWorkflowEnvelope:
+    """Serializable Tenuo context for workflow-backed Nexus operations."""
+
+    version: str
+    headers: Dict[str, str]
+    source_endpoint: Optional[str] = None
+    source_service: Optional[str] = None
+    source_operation: Optional[str] = None
+    target_workflow_id: Optional[str] = None
+    target_workflow_type: Optional[str] = None
+    mode: str = "forwarded"
 
 
 def nexus_tool_name(
@@ -281,6 +296,198 @@ def tenuo_nexus_operation(
     return decorator
 
 
+def tenuo_forward_nexus_authority(
+    ctx: Any,
+    input: Any,
+    config: Any,
+    *,
+    workflow_id: Optional[str] = None,
+    workflow_type: Optional[str] = None,
+    endpoint: Optional[str] = None,
+    service: Optional[str] = None,
+    operation: Optional[Any] = None,
+) -> TenuoNexusWorkflowEnvelope:
+    """Create a workflow envelope by forwarding verified Nexus authority.
+
+    This is the explicit escape hatch: the backing workflow receives the same
+    warrant/key context that authorized the Nexus operation. If that workflow
+    later calls protected activities, its worker config must be able to resolve
+    the forwarded ``key_id`` for PoP signing.
+    """
+    verify_nexus_operation(
+        ctx,
+        input,
+        config,
+        endpoint=endpoint,
+        service=service,
+        operation=operation,
+    )
+    raw_headers = _decode_nexus_headers(getattr(ctx, "headers", {}) or {})
+    return _workflow_envelope_from_raw_headers(
+        raw_headers,
+        ctx=ctx,
+        workflow_id=workflow_id,
+        workflow_type=workflow_type,
+        endpoint=endpoint,
+        service=service,
+        operation=operation,
+        mode="forwarded",
+    )
+
+
+def tenuo_create_nexus_workflow_envelope(
+    warrant: Any,
+    key_id: str,
+    *,
+    workflow_id: Optional[str] = None,
+    workflow_type: Optional[str] = None,
+    warrant_chain: Optional[List[Any]] = None,
+    compress: bool = True,
+    source_ctx: Any = None,
+    source_endpoint: Optional[str] = None,
+    source_service: Optional[str] = None,
+    source_operation: Optional[Any] = None,
+) -> TenuoNexusWorkflowEnvelope:
+    """Create a workflow envelope for handler-minted or attenuated authority.
+
+    Use this as the preferred workflow-backed Nexus path: after verifying the
+    operation, the handler passes a narrower workflow warrant whose holder key
+    belongs to the handler/backing-workflow namespace.
+    """
+    raw_headers = tenuo_headers(warrant, key_id, compress=compress)
+    chain = list(warrant_chain) if warrant_chain is not None else [warrant]
+    _validate_chain_ends_with_warrant(
+        chain,
+        warrant,
+        operation="tenuo_create_nexus_workflow_envelope",
+    )
+    if len(chain) > 1:
+        from tenuo_core import encode_warrant_stack
+
+        raw_headers[TENUO_CHAIN_HEADER] = encode_warrant_stack(chain).encode("utf-8")
+
+    return _workflow_envelope_from_raw_headers(
+        raw_headers,
+        ctx=source_ctx,
+        workflow_id=workflow_id,
+        workflow_type=workflow_type,
+        endpoint=source_endpoint,
+        service=source_service,
+        operation=source_operation,
+        mode="minted",
+    )
+
+
+def tenuo_bootstrap_nexus_workflow(envelope: Any) -> None:
+    """Install a Nexus workflow envelope into the current Temporal workflow.
+
+    Call this at the start of a workflow-backed Nexus workflow before calling
+    ``current_warrant()``, ``current_key_id()``, or ``tenuo_execute_activity()``.
+    The worker still needs ``TenuoWorkerInterceptor`` so the run-scoped config
+    is present for outbound PoP signing.
+    """
+    try:
+        _bootstrap_nexus_workflow(envelope)
+    except Exception as exc:
+        _raise_bootstrap_error(exc)
+
+
+def _bootstrap_nexus_workflow(envelope: Any) -> None:
+    env = _coerce_workflow_envelope(envelope)
+    if env.version != _TENUO_NEXUS_WORKFLOW_ENVELOPE_VERSION:
+        raise TenuoContextError(
+            f"Unsupported Tenuo Nexus workflow envelope version: {env.version!r}"
+        )
+    try:
+        from temporalio import workflow  # type: ignore[import-not-found]
+
+        info = workflow.info()
+        workflow_id = getattr(info, "workflow_id", None)
+        workflow_type = getattr(info, "workflow_type", None)
+    except Exception as exc:
+        raise TenuoContextError(
+            "tenuo_bootstrap_nexus_workflow requires an active Temporal workflow context."
+        ) from exc
+
+    if env.target_workflow_id and workflow_id != env.target_workflow_id:
+        raise TenuoContextError(
+            "Tenuo Nexus workflow envelope target_workflow_id mismatch: "
+            f"expected {env.target_workflow_id!r}, got {workflow_id!r}."
+        )
+    if env.target_workflow_type and workflow_type != env.target_workflow_type:
+        raise TenuoContextError(
+            "Tenuo Nexus workflow envelope target_workflow_type mismatch: "
+            f"expected {env.target_workflow_type!r}, got {workflow_type!r}."
+        )
+
+    run_key = _current_run_key()
+    raw_headers = _decode_nexus_headers(env.headers)
+    warrant = _extract_warrant_from_headers(raw_headers)
+    key_id = _extract_key_id_from_headers(raw_headers)
+    if warrant is None or key_id is None:
+        raise TenuoContextError(
+            "Tenuo Nexus workflow envelope is missing warrant or key_id headers."
+        )
+
+    chain = [warrant]
+    chain_header = raw_headers.get(TENUO_CHAIN_HEADER)
+    if chain_header:
+        try:
+            from tenuo_core import decode_warrant_stack_base64
+
+            chain = list(decode_warrant_stack_base64(chain_header.decode("utf-8")))
+            _validate_chain_ends_with_warrant(
+                chain,
+                warrant,
+                operation="tenuo_bootstrap_nexus_workflow",
+            )
+        except Exception as exc:
+            raise ChainValidationError(
+                reason=f"Invalid Nexus workflow envelope chain header: {exc}",
+                depth=0,
+            ) from exc
+
+    with _store_lock:
+        config = _workflow_config_store.get(run_key)
+    if config is None:
+        raise TenuoContextError(
+            "tenuo_bootstrap_nexus_workflow requires TenuoWorkerInterceptor on "
+            "the backing workflow worker."
+        )
+
+    try:
+        from tenuo_core import Authorizer
+
+        revocation_list = config._last_good_revocation_list or config.revocation_list
+        authorizer = _build_authorizer(
+            Authorizer,
+            config.trusted_roots,
+            config,
+            revocation_list=revocation_list,
+        )
+        authorizer.verify_chain(chain)
+    except Exception as exc:
+        raise TenuoContextError(
+            f"Tenuo Nexus workflow envelope authorization failed: {exc}"
+        ) from exc
+
+    with _store_lock:
+        _workflow_headers_store[run_key] = raw_headers
+
+
+def _raise_bootstrap_error(exc: Exception) -> None:
+    try:
+        from temporalio import workflow  # type: ignore[import-not-found]
+
+        if not workflow.in_workflow():
+            raise exc
+        from tenuo.temporal.exceptions import _build_non_retryable_application_error
+
+        raise _build_non_retryable_application_error(exc) from exc
+    except ImportError:
+        raise exc
+
+
 def _authorized_nexus_headers(
     nexus_client: Any,
     operation: Any,
@@ -399,6 +606,51 @@ def _workflow_timestamp() -> int:
 
 def _nexus_operation_kwargs(**kwargs: Any) -> Dict[str, Any]:
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def _workflow_envelope_from_raw_headers(
+    raw_headers: Mapping[str, bytes],
+    *,
+    ctx: Any,
+    workflow_id: Optional[str],
+    workflow_type: Optional[str],
+    endpoint: Optional[str],
+    service: Optional[str],
+    operation: Optional[Any],
+    mode: str,
+) -> TenuoNexusWorkflowEnvelope:
+    source_operation = operation or getattr(ctx, "operation", None)
+    return TenuoNexusWorkflowEnvelope(
+        version=_TENUO_NEXUS_WORKFLOW_ENVELOPE_VERSION,
+        headers=_encode_nexus_headers(raw_headers),
+        source_endpoint=endpoint,
+        source_service=service or getattr(ctx, "service", None),
+        source_operation=_operation_name(source_operation) if source_operation else None,
+        target_workflow_id=workflow_id,
+        target_workflow_type=workflow_type,
+        mode=mode,
+    )
+
+
+def _coerce_workflow_envelope(envelope: Any) -> TenuoNexusWorkflowEnvelope:
+    if isinstance(envelope, TenuoNexusWorkflowEnvelope):
+        return envelope
+    if isinstance(envelope, Mapping):
+        return TenuoNexusWorkflowEnvelope(
+            version=str(envelope.get("version", "")),
+            headers=dict(envelope.get("headers", {})),
+            source_endpoint=envelope.get("source_endpoint"),
+            source_service=envelope.get("source_service"),
+            source_operation=envelope.get("source_operation"),
+            target_workflow_id=envelope.get("target_workflow_id"),
+            target_workflow_type=envelope.get("target_workflow_type"),
+            mode=str(envelope.get("mode", "")),
+        )
+    if _dataclasses.is_dataclass(envelope) and not isinstance(envelope, type):
+        return _coerce_workflow_envelope(_dataclasses.asdict(envelope))
+    raise TenuoContextError(
+        "Expected TenuoNexusWorkflowEnvelope or envelope-shaped mapping."
+    )
 
 
 def _verify_nexus_operation(

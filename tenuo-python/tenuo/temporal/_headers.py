@@ -199,5 +199,20 @@ def _current_workflow_headers() -> Dict[str, bytes]:
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
+    try:
+        from tenuo.temporal._state import (
+            _current_run_key,
+            _store_lock,
+            _workflow_headers_store,
+        )
+
+        run_key = _current_run_key()
+        with _store_lock:
+            stored = dict(_workflow_headers_store.get(run_key, {}))
+        if stored:
+            return stored
+    except Exception:
+        pass
+
     info = workflow.info()
     return _unwrap_payload_headers(getattr(info, "headers", {}))

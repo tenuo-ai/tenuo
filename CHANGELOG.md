@@ -19,12 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Experimental Temporal Nexus authorization helpers.**
   Added `tenuo_execute_nexus_operation()`,
   `tenuo_start_nexus_operation()`, `tenuo_nexus_headers()`,
-  `verify_nexus_operation()`, and `@tenuo_nexus_operation(...)` for carrying
-  delegated Tenuo authority across Nexus operation headers. The first slice
-  supports caller-side PoP signing plus handler-side warrant, chain, expiry,
-  revocation, operation, and input-constraint verification. Workflow-backed
-  Nexus operation propagation remains a follow-up design area. Added a live
-  cross-namespace Nexus allow/deny smoke test for the real SDK header boundary.
+  `verify_nexus_operation()`, `@tenuo_nexus_operation(...)`,
+  `tenuo_forward_nexus_authority()`,
+  `tenuo_create_nexus_workflow_envelope()`, and
+  `tenuo_bootstrap_nexus_workflow()` for carrying delegated Tenuo authority
+  across Nexus operation headers and into workflow-backed Nexus operations.
+  The first slice supports caller-side PoP signing plus handler-side warrant,
+  chain, expiry, revocation, operation, and input-constraint verification.
+  Workflow-backed Nexus supports both exact caller-authority forwarding and
+  handler-created/attenuated workflow authority. Added a live cross-namespace
+  Nexus allow/deny smoke test for the real SDK header boundary and both
+  workflow-backed propagation modes.
 - **Temporal per-Activity warrant overrides.**
   `tenuo_execute_activity(..., warrant=..., key_id=...)` now applies a
   task-local warrant to one dispatch, including the active delegation chain.

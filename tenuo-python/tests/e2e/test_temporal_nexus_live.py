@@ -20,7 +20,7 @@ pytest.importorskip("nexusrpc")
 import nexusrpc  # noqa: E402
 from google.protobuf.duration_pb2 import Duration  # noqa: E402
 from nexusrpc import handler as nexus_handler  # noqa: E402
-from temporalio import workflow  # noqa: E402
+from temporalio import activity, nexus as temporal_nexus, workflow  # noqa: E402
 from temporalio.api.common.v1 import message_pb2 as common_pb2  # noqa: E402
 from temporalio.api.nexus.v1 import message_pb2 as nexus_pb2  # noqa: E402
 from temporalio.api.operatorservice.v1 import (  # noqa: E402
@@ -46,10 +46,16 @@ from tenuo.temporal import (  # noqa: E402
     TenuoClientInterceptor,
     TenuoPluginConfig,
     TenuoWorkerInterceptor,
+    current_key_id,
     nexus_tool_name,
+    tenuo_bootstrap_nexus_workflow,
+    tenuo_create_nexus_workflow_envelope,
     tenuo_execute_nexus_operation,
+    tenuo_execute_activity,
+    tenuo_forward_nexus_authority,
     tenuo_headers,
     tenuo_nexus_operation,
+    verify_nexus_operation,
 )
 
 
@@ -64,26 +70,77 @@ class RefundOutput:
     status: str
 
 
+@dataclass
+class BackingRefundInput:
+    order_id: str
+    amount_cents: int
+    tenuo: Any
+
+
 @nexusrpc.service
 class BillingService:
     refund: nexusrpc.Operation[RefundInput, RefundOutput]
+    forwarded_refund: nexusrpc.Operation[RefundInput, RefundOutput]
+    minted_refund: nexusrpc.Operation[RefundInput, RefundOutput]
+
+
+@activity.defn
+async def record_refund(order_id: str, amount_cents: int) -> str:
+    return f"recorded:{order_id}:{amount_cents}"
 
 
 @workflow.defn
 class NexusCallerWorkflow:
     @workflow.run
-    async def run(self, endpoint: str, order_id: str, amount_cents: int) -> str:
+    async def run(
+        self,
+        endpoint: str,
+        operation: str,
+        order_id: str,
+        amount_cents: int,
+    ) -> str:
         nexus_client = workflow.create_nexus_client(
             service=BillingService,
             endpoint=endpoint,
         )
+        if operation == "refund":
+            nexus_operation = BillingService.refund
+        elif operation == "forwarded_refund":
+            nexus_operation = BillingService.forwarded_refund
+        elif operation == "minted_refund":
+            nexus_operation = BillingService.minted_refund
+        else:
+            raise ValueError(f"unknown operation: {operation}")
+
         result = await tenuo_execute_nexus_operation(
             nexus_client,
-            BillingService.refund,
+            nexus_operation,
             RefundInput(order_id=order_id, amount_cents=amount_cents),
             schedule_to_close_timeout=timedelta(seconds=10),
         )
         return result.status
+
+
+@workflow.defn
+class ForwardedRefundWorkflow:
+    @workflow.run
+    async def run(self, input: BackingRefundInput) -> RefundOutput:
+        tenuo_bootstrap_nexus_workflow(input.tenuo)
+        return RefundOutput(status=f"forwarded:{current_key_id()}:{input.order_id}")
+
+
+@workflow.defn
+class MintedRefundWorkflow:
+    @workflow.run
+    async def run(self, input: BackingRefundInput) -> RefundOutput:
+        tenuo_bootstrap_nexus_workflow(input.tenuo)
+        recorded = await tenuo_execute_activity(
+            record_refund,
+            args=[input.order_id, input.amount_cents],
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+        return RefundOutput(status=recorded)
 
 
 class DictKeyResolver(KeyResolver):
@@ -164,6 +221,7 @@ def _nexus_supported_or_skip(exc: Exception) -> None:
 async def test_live_cross_namespace_nexus_operation_authorizes_headers() -> None:
     control_key = SigningKey.generate()
     agent_key = SigningKey.generate()
+    handler_key = SigningKey.generate()
 
     suffix = uuid.uuid4().hex[:10]
     caller_namespace = f"tenuo-caller-{suffix}"
@@ -173,6 +231,8 @@ async def test_live_cross_namespace_nexus_operation_authorizes_headers() -> None
     endpoint_name = f"tenuo-nexus-{suffix}"
     allowed_workflow_id = f"tenuo-nexus-allow-{suffix}"
     denied_workflow_id = f"tenuo-nexus-deny-{suffix}"
+    forwarded_workflow_id = f"tenuo-nexus-forward-{suffix}"
+    minted_workflow_id = f"tenuo-nexus-minted-{suffix}"
 
     async with await WorkflowEnvironment.start_local() as env:
         try:
@@ -209,20 +269,46 @@ async def test_live_cross_namespace_nexus_operation_authorizes_headers() -> None
                     order_id=Exact("ord_123"),
                     amount_cents=Range(0, 5000),
                 )
+                .capability(
+                    nexus_tool_name(
+                        endpoint_name,
+                        "forwarded_refund",
+                        service="BillingService",
+                    ),
+                    order_id=Exact("ord_123"),
+                    amount_cents=Range(0, 5000),
+                )
+                .capability(
+                    nexus_tool_name(
+                        endpoint_name,
+                        "minted_refund",
+                        service="BillingService",
+                    ),
+                    order_id=Exact("ord_123"),
+                    amount_cents=Range(0, 5000),
+                )
                 .ttl(3600)
                 .mint(control_key)
             )
-            caller_headers.set_headers_for_workflow(
+            for workflow_id in (
                 allowed_workflow_id,
-                tenuo_headers(warrant, "agent1"),
-            )
-            caller_headers.set_headers_for_workflow(
                 denied_workflow_id,
-                tenuo_headers(warrant, "agent1"),
-            )
+                forwarded_workflow_id,
+                minted_workflow_id,
+            ):
+                caller_headers.set_headers_for_workflow(
+                    workflow_id,
+                    tenuo_headers(warrant, "agent1"),
+                )
             config = TenuoPluginConfig(
-                key_resolver=DictKeyResolver({"agent1": agent_key}),
+                key_resolver=DictKeyResolver(
+                    {
+                        "agent1": agent_key,
+                        "handler1": handler_key,
+                    }
+                ),
                 trusted_roots=[control_key.public_key],
+                activity_fns=[record_refund],
             )
 
             @nexus_handler.service_handler(service=BillingService)
@@ -235,6 +321,69 @@ async def test_live_cross_namespace_nexus_operation_authorizes_headers() -> None
                     input: RefundInput,
                 ) -> RefundOutput:
                     return RefundOutput(status=f"refunded:{input.order_id}")
+
+                @temporal_nexus.workflow_run_operation
+                async def forwarded_refund(
+                    self,
+                    ctx: temporal_nexus.WorkflowRunOperationContext,
+                    input: RefundInput,
+                ) -> temporal_nexus.WorkflowHandle[RefundOutput]:
+                    workflow_id = f"forwarded-{ctx.request_id}"
+                    envelope = tenuo_forward_nexus_authority(
+                        ctx,
+                        input,
+                        config,
+                        endpoint=endpoint_name,
+                        workflow_id=workflow_id,
+                        workflow_type="ForwardedRefundWorkflow",
+                    )
+                    return await ctx.start_workflow(
+                        ForwardedRefundWorkflow.run,
+                        BackingRefundInput(
+                            order_id=input.order_id,
+                            amount_cents=input.amount_cents,
+                            tenuo=envelope,
+                        ),
+                        id=workflow_id,
+                    )
+
+                @temporal_nexus.workflow_run_operation
+                async def minted_refund(
+                    self,
+                    ctx: temporal_nexus.WorkflowRunOperationContext,
+                    input: RefundInput,
+                ) -> temporal_nexus.WorkflowHandle[RefundOutput]:
+                    verify_nexus_operation(ctx, input, config, endpoint=endpoint_name)
+                    workflow_id = f"minted-{ctx.request_id}"
+                    workflow_warrant = (
+                        Warrant.mint_builder()
+                        .holder(handler_key.public_key)
+                        .capability(
+                            "record_refund",
+                            order_id=Exact(input.order_id),
+                            amount_cents=Range(0, input.amount_cents),
+                        )
+                        .ttl(3600)
+                        .mint(control_key)
+                    )
+                    envelope = tenuo_create_nexus_workflow_envelope(
+                        workflow_warrant,
+                        "handler1",
+                        workflow_id=workflow_id,
+                        workflow_type="MintedRefundWorkflow",
+                        source_ctx=ctx,
+                        source_endpoint=endpoint_name,
+                        source_operation="minted_refund",
+                    )
+                    return await ctx.start_workflow(
+                        MintedRefundWorkflow.run,
+                        BackingRefundInput(
+                            order_id=input.order_id,
+                            amount_cents=input.amount_cents,
+                            tenuo=envelope,
+                        ),
+                        id=workflow_id,
+                    )
 
             sandbox_runner = SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
@@ -250,6 +399,10 @@ async def test_live_cross_namespace_nexus_operation_authorizes_headers() -> None
             async with Worker(
                 handler_client,
                 task_queue=handler_task_queue,
+                activities=[record_refund],
+                workflows=[ForwardedRefundWorkflow, MintedRefundWorkflow],
+                interceptors=[TenuoWorkerInterceptor(config, task_queue=handler_task_queue)],
+                workflow_runner=sandbox_runner,
                 nexus_service_handlers=[BillingServiceHandler()],
             ), Worker(
                 caller_client,
@@ -260,7 +413,7 @@ async def test_live_cross_namespace_nexus_operation_authorizes_headers() -> None
             ):
                 result = await caller_client.execute_workflow(
                     NexusCallerWorkflow.run,
-                    args=[endpoint_name, "ord_123", 2500],
+                    args=[endpoint_name, "refund", "ord_123", 2500],
                     id=allowed_workflow_id,
                     task_queue=caller_task_queue,
                     execution_timeout=timedelta(seconds=20),
@@ -269,14 +422,32 @@ async def test_live_cross_namespace_nexus_operation_authorizes_headers() -> None
                 with pytest.raises(WorkflowFailureError):
                     await caller_client.execute_workflow(
                         NexusCallerWorkflow.run,
-                        args=[endpoint_name, "ord_123", 7000],
+                        args=[endpoint_name, "refund", "ord_123", 7000],
                         id=denied_workflow_id,
                         task_queue=caller_task_queue,
                         execution_timeout=timedelta(seconds=20),
                         retry_policy=RetryPolicy(maximum_attempts=1),
                     )
+                forwarded_result = await caller_client.execute_workflow(
+                    NexusCallerWorkflow.run,
+                    args=[endpoint_name, "forwarded_refund", "ord_123", 2500],
+                    id=forwarded_workflow_id,
+                    task_queue=caller_task_queue,
+                    execution_timeout=timedelta(seconds=20),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+                minted_result = await caller_client.execute_workflow(
+                    NexusCallerWorkflow.run,
+                    args=[endpoint_name, "minted_refund", "ord_123", 2500],
+                    id=minted_workflow_id,
+                    task_queue=caller_task_queue,
+                    execution_timeout=timedelta(seconds=20),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
 
             assert result == "refunded:ord_123"
+            assert forwarded_result == "forwarded:agent1:ord_123"
+            assert minted_result == "recorded:ord_123:2500"
         finally:
             try:
                 await _delete_nexus_endpoint(env.client, endpoint_id, endpoint_version)
