@@ -920,7 +920,7 @@ def _ctx_tool_name(
 
 def _operation_name(operation: Any) -> str:
     try:
-        import nexusrpc
+        import nexusrpc  # type: ignore[import-not-found]
 
         nexus_operation = nexusrpc.get_operation(operation)
         nexus_name = getattr(nexus_operation, "name", None)
@@ -971,7 +971,7 @@ def _decode_nexus_headers(headers: Mapping[str, Any]) -> Dict[str, bytes]:
 
 def _as_nexus_unauthorized(exc: Exception) -> Exception:
     try:
-        import nexusrpc
+        import nexusrpc  # type: ignore[import-not-found]
 
         return nexusrpc.HandlerError(
             str(exc),
