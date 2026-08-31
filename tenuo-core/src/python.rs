@@ -5156,6 +5156,25 @@ impl PyReceiptPayload {
         self.inner.srl_hash.map(hex::encode)
     }
 
+    /// Commitment to the host ceiling applied to this decision.
+    #[getter]
+    fn policy_definition_hash(&self) -> Option<String> {
+        self.inner.policy_definition_hash.map(hex::encode)
+    }
+
+    /// Link to the previous receipt from this signer. A link that resolves to
+    /// nothing means a receipt was removed from the stream.
+    #[getter]
+    fn prev_receipt_hash(&self) -> Option<String> {
+        self.inner.prev_receipt_hash.map(hex::encode)
+    }
+
+    /// Commitment to the trusted root set in force at decision time.
+    #[getter]
+    fn trusted_roots_hash(&self) -> Option<String> {
+        self.inner.trusted_roots_hash.map(hex::encode)
+    }
+
     /// Raise if a conditionally-required field is missing: `decision_code` on a
     /// denial, `pop_signature` on an allow.
     fn check_conditional_requirements(&self) -> PyResult<()> {
@@ -5220,6 +5239,23 @@ fn py_verify_receipt(wire: &Bound<'_, PyAny>) -> PyResult<PyReceiptPayload> {
 ///
 /// Exposed so a verifier can recompute the commitment from a published list
 /// and compare it against what a receipt claims.
+/// SHA-256 over the host policy ceiling, for receipt payload key 11.
+#[pyfunction]
+#[pyo3(name = "policy_commitment_digest")]
+fn py_policy_commitment_digest(policy_bytes: &[u8]) -> [u8; 32] {
+    crate::policy_commitment_digest(policy_bytes)
+}
+
+/// SHA-256 over the trusted root set, for receipt payload key 15.
+///
+/// Sorts and deduplicates, so the commitment describes the set rather than the
+/// order it was loaded in.
+#[pyfunction]
+#[pyo3(name = "trusted_roots_digest")]
+fn py_trusted_roots_digest(roots: Vec<[u8; 32]>) -> [u8; 32] {
+    crate::trusted_roots_digest(&roots)
+}
+
 #[pyfunction]
 #[pyo3(name = "srl_commitment_digest")]
 fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
@@ -6415,6 +6451,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_receipt, m)?)?;
     m.add_function(wrap_pyfunction!(py_srl_commitment_digest, m)?)?;
+    m.add_function(wrap_pyfunction!(py_policy_commitment_digest, m)?)?;
+    m.add_function(wrap_pyfunction!(py_trusted_roots_digest, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approvals, m)?)?;
     m.add_function(wrap_pyfunction!(py_evaluate_approval_gates, m)?)?;
     m.add_function(wrap_pyfunction!(py_resolve_approval_required_message, m)?)?;

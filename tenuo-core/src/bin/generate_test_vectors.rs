@@ -3067,14 +3067,27 @@ fn main() {
     const SRL_DIGEST_INPUT_A30: &[u8] = b"tenuo-test-vector-a30-revocation-list";
     let srl_digest_a30 = tenuo::srl_commitment_digest(SRL_DIGEST_INPUT_A30);
 
+    // Key 15 commits to the trusted root set. Sorted and deduplicated before
+    // hashing, so it describes the set rather than the load order.
+    let roots_digest_a30 = tenuo::trusted_roots_digest(&[control_plane.public_key().to_bytes()]);
+
+    // Key 11 commits to the host ceiling. The input is fixed CBOR so an
+    // implementer can reproduce it; a deployment hashes its own policy.
+    const POLICY_INPUT_A30: &[u8] = b"tenuo-test-vector-a30-policy";
+    let policy_digest_a30 = tenuo::policy_commitment_digest(POLICY_INPUT_A30);
+
     let base_a30 = || {
-        ReceiptPayload::allow(
+        let mut p = ReceiptPayload::allow(
             chain_a30.clone(),
             "read_file",
             ISSUED_AT as i64,
             "req-a30",
             pop_a30.to_bytes(),
-        )
+        );
+        // Present on every receipt a real enforcement point emits: it always
+        // knows which roots it trusts.
+        p.trusted_roots_hash = Some(roots_digest_a30);
+        p
     };
 
     // A.30.1 — no revocation data loaded
@@ -3103,6 +3116,7 @@ fn main() {
     let mut payload_a30_3 = base_a30();
     payload_a30_3.srl_version = Some(47);
     payload_a30_3.srl_hash = Some(srl_digest_a30);
+    payload_a30_3.policy_definition_hash = Some(policy_digest_a30);
     let receipt_a30_3 = Receipt::create(&payload_a30_3, &authorizer).expect("A.30.3 signs");
     print_receipt_vector(
         "A.30.3 Allow, Versioned Revocation Commitment",
@@ -3120,12 +3134,35 @@ fn main() {
         "tool-not-authorized",
     );
     payload_a30_4.srl_hash = Some(srl_digest_a30);
+    // A denial still happened under a known trust set.
+    payload_a30_4.trusted_roots_hash = Some(roots_digest_a30);
     let receipt_a30_4 = Receipt::create(&payload_a30_4, &authorizer).expect("A.30.4 signs");
     print_receipt_vector(
         "A.30.4 Deny Before Proof-of-Possession",
         &receipt_a30_4,
         "Key 8 absent because possession was never established, so this attests \
          only that some party was refused. Key 10 is required for a denial.",
+    );
+
+    // A.30.5 — the chain link. Individually verifiable receipts do not make a
+    // set trustworthy; this is what makes a removed receipt detectable.
+    let mut payload_a30_5 = base_a30();
+    payload_a30_5.request_id = "req-a30-second".to_string();
+    payload_a30_5.srl_hash = Some(srl_digest_a30);
+    payload_a30_5.prev_receipt_hash =
+        Some(receipt_a30_2.digest().expect("A.30.2 digests"));
+    let receipt_a30_5 = Receipt::create(&payload_a30_5, &authorizer).expect("A.30.5 signs");
+    println!(
+        "**Key 14 input:** SHA-256 over the complete A.30.2 receipt bytes, `{}`",
+        hex::encode(receipt_a30_2.digest().unwrap())
+    );
+    println!();
+    print_receipt_vector(
+        "A.30.5 Chained Receipt",
+        &receipt_a30_5,
+        "Key 14 links to A.30.2. Removing A.30.2 from a stream leaves this \
+         receipt pointing at nothing, which is what turns \"this decision \
+         happened\" into \"these are all the decisions\".",
     );
 }
 
@@ -3167,6 +3204,30 @@ fn print_receipt_vector(label: &str, receipt: &Receipt, note: &str) {
         payload
             .srl_version
             .map(|v| format!("`{}`", v))
+            .unwrap_or_else(|| "absent".to_string())
+    );
+    println!(
+        "| Key 11 policy_definition_hash | {} |",
+        payload
+            .policy_definition_hash
+            .map(hex::encode)
+            .map(|h| format!("`{}`", h))
+            .unwrap_or_else(|| "absent".to_string())
+    );
+    println!(
+        "| Key 14 prev_receipt_hash | {} |",
+        payload
+            .prev_receipt_hash
+            .map(hex::encode)
+            .map(|h| format!("`{}`", h))
+            .unwrap_or_else(|| "absent".to_string())
+    );
+    println!(
+        "| Key 15 trusted_roots_hash | {} |",
+        payload
+            .trusted_roots_hash
+            .map(hex::encode)
+            .map(|h| format!("`{}`", h))
             .unwrap_or_else(|| "absent".to_string())
     );
     println!(

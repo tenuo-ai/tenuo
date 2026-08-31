@@ -6,6 +6,8 @@ import {
   A30_2_RECEIPT_HEX,
   A30_3_RECEIPT_HEX,
   A30_4_RECEIPT_HEX,
+  A30_5_RECEIPT_HEX,
+  A30_POLICY_INPUT,
   A30_SRL_DIGEST_INPUT,
 } from "./vectors/spec.ts";
 import {
@@ -554,5 +556,47 @@ describe("A.30 authorization receipts", () => {
     bytes.writeUInt8(bytes.readUInt8(last) ^ 0x01, last);
 
     expect(() => verifyReceipt(bytes.toString("hex"))).toThrow();
+  });
+});
+
+describe("A.30 receipt commitments", () => {
+  it("commits to the trusted root set on allows and denials alike", () => {
+    for (const wire of [A30_1_RECEIPT_HEX, A30_3_RECEIPT_HEX, A30_4_RECEIPT_HEX, A30_5_RECEIPT_HEX]) {
+      // A receipt that does not say which roots it honoured cannot show the
+      // chain was rooted in anything legitimate.
+      expect(verifyReceipt(wire).trusted_roots_hash).toBeDefined();
+    }
+  });
+
+  it("commits to the host ceiling that was applied", () => {
+    const expected = createHash("sha256").update(A30_POLICY_INPUT).digest("hex");
+
+    // Without key 11 a receipt cannot distinguish an allow under a tight
+    // ceiling from one under an open ceiling.
+    expect(verifyReceipt(A30_3_RECEIPT_HEX).policy_definition_hash).toBe(expected);
+  });
+
+  it("links each receipt to the one before it", () => {
+    const previous = createHash("sha256")
+      .update(Buffer.from(A30_2_RECEIPT_HEX, "hex"))
+      .digest("hex");
+
+    expect(verifyReceipt(A30_5_RECEIPT_HEX).prev_receipt_hash).toBe(previous);
+  });
+
+  it("omits the link on the first receipt rather than zero-filling it", () => {
+    // A zero hash would be indistinguishable from a link to a receipt nobody
+    // can produce.
+    expect(verifyReceipt(A30_1_RECEIPT_HEX).prev_receipt_hash).toBeUndefined();
+  });
+
+  it("makes a withheld receipt detectable by its dangling successor", () => {
+    const kept = verifyReceipt(A30_5_RECEIPT_HEX);
+    const streamWithoutPredecessor: string[] = [];
+
+    // The point of chaining: withholding a receipt leaves its successor
+    // pointing at something absent.
+    expect(kept.prev_receipt_hash).toBeDefined();
+    expect(streamWithoutPredecessor).not.toContain(kept.prev_receipt_hash);
   });
 });

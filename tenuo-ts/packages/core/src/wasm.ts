@@ -37,6 +37,16 @@ export type WasmReceipt = {
    * loaded list that revoked nothing.
    */
   srl_hash?: string;
+  /** SHA-256 (hex) of the host ceiling applied to this decision. */
+  policy_definition_hash?: string;
+  /**
+   * SHA-256 (hex) of the previous receipt from this signer. Absent on the
+   * first receipt, or when the deployment does not chain. A broken link means
+   * a receipt was removed from the stream.
+   */
+  prev_receipt_hash?: string;
+  /** SHA-256 (hex) of the trusted root set in force at decision time. */
+  trusted_roots_hash?: string;
 };
 
 export type WasmSession = object;

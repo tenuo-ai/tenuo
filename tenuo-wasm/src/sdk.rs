@@ -119,6 +119,16 @@ struct ReceiptInspectDto {
     srl_version: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     srl_hash: Option<String>,
+    /// Commitment to the host ceiling applied to this decision.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    policy_definition_hash: Option<String>,
+    /// Link to the previous receipt from this signer. Absent on the first, or
+    /// when the deployment does not chain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prev_receipt_hash: Option<String>,
+    /// Commitment to the trusted root set in force.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trusted_roots_hash: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -140,6 +150,16 @@ pub struct SdkContext {
     /// `None` until one is installed — receipts then omit keys 12 and 13, which
     /// is the honest claim that revocation was never consulted.
     srl_commitment: Option<(Option<u64>, [u8; 32])>,
+    /// Commitment to the trusted root set (receipt key 15). Fixed at
+    /// construction because the trust anchors do not change over a context's
+    /// life.
+    trusted_roots_hash: [u8; 32],
+    /// Digest of the last receipt this context emitted (receipt key 14).
+    ///
+    /// `Cell` because authorization takes `&self` and chaining is inherently
+    /// stateful. Single-threaded by construction: wasm has no threads, and one
+    /// context serves one enforcement point.
+    last_receipt_hash: std::cell::Cell<Option<[u8; 32]>>,
 }
 
 /// Opaque warrant chain (root first) + leaf holder key. Not JSON-serializable from JS.
@@ -165,6 +185,8 @@ impl SdkContext {
         let authorizer = Authorizer::new().with_trusted_root(root.clone());
         SdkContext {
             srl_commitment: None,
+            trusted_roots_hash: tenuo::trusted_roots_digest(&[root.to_bytes()]),
+            last_receipt_hash: std::cell::Cell::new(None),
             issuer: Some(issuer.clone()),
             authorizer,
             trusted_roots: vec![root],
@@ -191,6 +213,10 @@ impl SdkContext {
         }
         Ok(SdkContext {
             srl_commitment: None,
+            trusted_roots_hash: tenuo::trusted_roots_digest(
+                &trusted_roots.iter().map(|r| r.to_bytes()).collect::<Vec<_>>(),
+            ),
+            last_receipt_hash: std::cell::Cell::new(None),
             issuer: None,
             authorizer,
             trusted_roots,
@@ -562,6 +588,9 @@ pub fn sdk_verify_receipt(wire: &str) -> Result<JsValue, JsError> {
         request_id: payload.request_id,
         srl_version: payload.srl_version,
         srl_hash: payload.srl_hash.map(hex::encode),
+        policy_definition_hash: payload.policy_definition_hash.map(hex::encode),
+        prev_receipt_hash: payload.prev_receipt_hash.map(hex::encode),
+        trusted_roots_hash: payload.trusted_roots_hash.map(hex::encode),
     }))
 }
 
@@ -630,6 +659,7 @@ impl SdkContext {
         init_panic_hook();
         let timestamp = as_of.unwrap_or_else(|| Utc::now().timestamp());
         let request_id = format!("{tool}:{timestamp}");
+        let policy_hash = policy_digest(&tool_allow);
 
         let args = match js_to_args(&args_json) {
             Ok(a) => a,
@@ -639,6 +669,7 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -665,6 +696,7 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CONFIGURATION".into()),
@@ -695,6 +727,7 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    policy_hash,
                     deny_from_error(&e),
                     None,
                     false,
@@ -711,6 +744,7 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -757,6 +791,7 @@ impl SdkContext {
                         tool,
                         timestamp,
                         &request_id,
+                        policy_hash,
                         deny_from_error(&e),
                         Some(&signature),
                         true,
@@ -772,6 +807,7 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    policy_hash,
                     DecisionDto {
                         outcome: "allow".into(),
                         code: None,
@@ -793,6 +829,7 @@ impl SdkContext {
                 tool,
                 timestamp,
                 &request_id,
+                policy_hash,
                 deny_from_error(&e),
                 Some(&signature),
                 pop_established_before_error(&e),
@@ -814,6 +851,7 @@ impl SdkContext {
         init_panic_hook();
         let timestamp = as_of.unwrap_or_else(|| Utc::now().timestamp());
         let request_id = format!("{tool}:{timestamp}");
+        let policy_hash = policy_digest(&tool_allow);
         let empty: Vec<Warrant> = Vec::new();
 
         let chain = match parse_presented_chain(&warrants) {
@@ -824,6 +862,7 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CONFIGURATION".into()),
@@ -846,6 +885,7 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CHAIN_INVALID".into()),
@@ -872,6 +912,7 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -898,6 +939,7 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_INVALID_POP".into()),
@@ -924,6 +966,7 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -970,6 +1013,7 @@ impl SdkContext {
                         tool,
                         timestamp,
                         &request_id,
+                        policy_hash,
                         deny_from_error(&e),
                         Some(&signature),
                         true,
@@ -985,6 +1029,7 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    policy_hash,
                     DecisionDto {
                         outcome: "allow".into(),
                         code: None,
@@ -1006,6 +1051,7 @@ impl SdkContext {
                 tool,
                 timestamp,
                 &request_id,
+                policy_hash,
                 deny_from_error(&e),
                 Some(&signature),
                 pop_established_before_error(&e),
@@ -1021,12 +1067,13 @@ impl SdkContext {
         tool: &str,
         timestamp: i64,
         request_id: &str,
+        policy_hash: Option<[u8; 32]>,
         mut dto: DecisionDto,
         pop: Option<&Signature>,
         after_pop: bool,
         decision_code: Option<&str>,
     ) -> JsValue {
-        dto.receipt = encode_receipt(
+        let emitted = encode_receipt(
             &self.receipt_signer,
             chain,
             tool,
@@ -1037,7 +1084,16 @@ impl SdkContext {
             pop,
             decision_code,
             self.srl_commitment,
+            policy_hash,
+            self.trusted_roots_hash,
+            self.last_receipt_hash.get(),
         );
+        // Advance the chain only on a receipt that was actually emitted; a
+        // failure to encode must not silently break every later link.
+        if let Some((wire, link)) = emitted {
+            self.last_receipt_hash.set(Some(link));
+            dto.receipt = Some(wire);
+        }
         to_js(&dto)
     }
 }
@@ -1469,7 +1525,10 @@ fn encode_receipt(
     pop: Option<&Signature>,
     decision_code: Option<&str>,
     srl_commitment: Option<(Option<u64>, [u8; 32])>,
-) -> Option<String> {
+    policy_hash: Option<[u8; 32]>,
+    trusted_roots_hash: [u8; 32],
+    prev_receipt_hash: Option<[u8; 32]>,
+) -> Option<(String, [u8; 32])> {
     let warrant_chain = wire::encode_stack(&WarrantStack(chain.to_vec())).unwrap_or_default();
     let mut payload = if allowed {
         let pop = pop?;
@@ -1503,10 +1562,33 @@ fn encode_receipt(
         payload.srl_version = version;
         payload.srl_hash = Some(digest);
     }
+    payload.policy_definition_hash = policy_hash;
+    payload.trusted_roots_hash = Some(trusted_roots_hash);
+    payload.prev_receipt_hash = prev_receipt_hash;
     let receipt = Receipt::create(&payload, signer).ok()?;
+    let link = receipt.digest().ok()?;
     let mut buf = Vec::new();
     ciborium::into_writer(&receipt, &mut buf).ok()?;
-    Some(hex::encode(buf))
+    Some((hex::encode(buf), link))
+}
+
+/// Commitment to the host ceiling applied to this decision (receipt key 11).
+///
+/// `None` when no ceiling was supplied, which is a different claim from an
+/// empty ceiling: the first says the host imposed nothing, the second says it
+/// deliberately imposed an open policy. serde_json's object map is sorted, so
+/// the CBOR encoding is stable for a given policy.
+fn policy_digest(tool_allow: &JsValue) -> Option<[u8; 32]> {
+    if tool_allow.is_null() || tool_allow.is_undefined() {
+        return None;
+    }
+    let raw: serde_json::Value = serde_wasm_bindgen::from_value(tool_allow.clone()).ok()?;
+    if raw.is_null() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&raw, &mut bytes).ok()?;
+    Some(tenuo::policy_commitment_digest(&bytes))
 }
 
 fn sign_srl_hex(ids: JsValue, issuer: &SigningKey) -> Result<String, JsError> {
