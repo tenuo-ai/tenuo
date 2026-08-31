@@ -355,6 +355,7 @@ These scripts under [`tenuo-python/examples/temporal/`](https://github.com/tenuo
 ## Next steps
 
 - **[Temporal Integration Reference](./temporal-reference.md)** — production checklist, key management (Vault, AWS, GCP), sandbox details, PoP mechanics, configuration reference, constraint types, troubleshooting, and the full threat model.
+- **[Temporal Nexus Authorization](./temporal-nexus.md)** — design preview for carrying delegated Tenuo authority across Nexus namespace boundaries.
 - [Tenuo Core Concepts](./concepts.md)
 - [Security Model](./security.md)
 - [Example Code](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal)
