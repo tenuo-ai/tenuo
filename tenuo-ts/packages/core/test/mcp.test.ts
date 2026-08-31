@@ -98,6 +98,26 @@ describe("tenuo.mcp", () => {
     });
   });
 
+  it("emits a receipt when a nonce store rejects a replay", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const store = memoryNonceStore();
+    const receipts: string[] = [];
+    const onReceipt = (receipt: string) => {
+      receipts.push(receipt);
+    };
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    await server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store, onReceipt });
+    await expect(
+      server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store, onReceipt }),
+    ).rejects.toMatchObject({
+      code: "TENUO_INVALID_POP",
+      message: expect.stringMatching(/replay/),
+    });
+    expect(receipts).toHaveLength(2);
+    expect(verifyReceipt(receipts[0]!)).toMatchObject({ authentic: true, outcome: "allow" });
+    expect(verifyReceipt(receipts[1]!)).toMatchObject({ authentic: true, outcome: "allow" });
+  });
+
   it("awaits an async nonceStore and fails closed when it rejects", async () => {
     const { issuer, session, server } = issuerAndServer();
     const seen = new Set<string>();

@@ -100,20 +100,26 @@ export function wasmAvailable(): boolean {
   return existsSync(generatedPath());
 }
 
+const WASM_LOAD_HINT =
+  "WASM core is missing from this @tenuo/core install. @tenuo/core is Node 20+ only (not a bundler target). If this is Next.js/webpack, set serverExternalPackages: ['@tenuo/core']. Do not run wasm-pack in the consuming app.";
+
 export function loadWasm(): Generated {
   if (loaded) {
     return loaded;
   }
   const path = generatedPath();
   if (!existsSync(path)) {
-    throw new TenuoConfigurationError(
-      "WASM core is missing from this @tenuo/core install. @tenuo/core is Node 20+ only (not a bundler target). If this is Next.js/webpack, set serverExternalPackages: ['@tenuo/core']. Do not run wasm-pack in the consuming app.",
-      "TENUO_NOT_READY",
-    );
+    throw new TenuoConfigurationError(WASM_LOAD_HINT, "TENUO_NOT_READY");
   }
-  const require = createRequire(import.meta.url);
-  loaded = require(path) as Generated;
-  return loaded;
+  try {
+    const require = createRequire(import.meta.url);
+    loaded = require(path) as Generated;
+    return loaded;
+  } catch (error) {
+    const wrapped = new TenuoConfigurationError(WASM_LOAD_HINT, "TENUO_NOT_READY");
+    wrapped.cause = error;
+    throw wrapped;
+  }
 }
 
 export function createDevContext(): WasmContext {

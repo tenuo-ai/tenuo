@@ -57,10 +57,12 @@ export function createMcp(context: WasmContext, decide: (decision: WasmDecision,
         envelope.approvals,
         options?.allow,
       );
+      // Rust already signed this envelope. Emit before the nonce store can
+      // refuse a replay — otherwise an attacker leaves no audit artifact.
+      emitReceipt(options?.onReceipt, decision.receipt);
       if (decision.outcome === "allow") {
         await admitPop(options?.nonceStore, envelope.signature, options?.onNonceStoreError);
       }
-      emitReceipt(options?.onReceipt, decision.receipt);
       decide(decision, name);
       return plainArgs(decision.args);
     },
