@@ -336,10 +336,19 @@ impl ReceiptPayload {
 
     /// Check the requirements that depend on other fields rather than on presence alone.
     ///
-    /// This is deliberately not called during deserialization: a verifier needs
-    /// to observe that a receipt omits a conditionally-required field in order
-    /// to report the corresponding claim as failed, which it cannot do if
-    /// parsing rejected the receipt outright.
+    /// An allow must carry a proof-of-possession and a denial must carry a
+    /// reason. Neither is a presence check on its own field, so neither can be
+    /// expressed in the payload's shape.
+    ///
+    /// Deserialization deliberately does not call this, so a malformed receipt
+    /// can still be parsed and inspected — a tool reporting *which* claim is
+    /// missing needs the payload in hand, which it cannot have if parsing
+    /// rejected it outright.
+    ///
+    /// [`Receipt::verify_signature`] does call it. Parsing is for looking at a
+    /// receipt; verification is for relying on one, and a signed allow that
+    /// never established possession must not pass as evidence merely because
+    /// the signature checks out.
     pub fn check_conditional_requirements(&self) -> Result<()> {
         if self.outcome == Outcome::Deny && self.decision_code.is_none() {
             return Err(Error::InvalidReceipt(
