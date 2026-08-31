@@ -362,8 +362,8 @@ pub fn auth_error_to_jsonrpc(error: &crate::error::Error) -> (i32, String) {
     use crate::error::Error;
 
     match error {
-        Error::ToolNotAuthorized { .. } => {
-            (-32001, "Access denied: Tool not authorized".to_string())
+        Error::ToolNotAuthorized { tool } => {
+            (-32001, format!("Access denied: Tool '{}' not authorized", tool))
         }
         Error::ConstraintNotSatisfied { field, reason } => (
             -32001,
@@ -401,7 +401,7 @@ mod tests {
         };
         let (code, message) = auth_error_to_jsonrpc(&missing_tool);
         assert_eq!(code, -32001);
-        assert_eq!(message, "Access denied: Tool not authorized");
+        assert_eq!(message, "Access denied: Tool 'delete_file' not authorized");
 
         let invalid_argument = crate::error::Error::ConstraintNotSatisfied {
             field: "path".to_string(),

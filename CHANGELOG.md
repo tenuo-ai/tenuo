@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Distinct missing-tool denial category.** Requests for tools outside a
+  warrant's capabilities now surface as `tool_not_allowed` instead of
+  `constraint_violation` in authorizer audit events and Python enforcement.
+  MCP responses identify these as tool-authorization failures while argument
+  constraint failures retain their existing category and detail.
 - **Temporal scheduled warrants were written to memo instead of headers.**
   Workers never read warrant material from memo, so scheduled workflows had no
   Tenuo context. Schedule actions now use Temporal's workflow-header field.
@@ -95,11 +100,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was added rather than leaving the client covered only by patched transports —
   which is what let the renamed error field go unnoticed.
 - **IETF Draft**: Published `draft-niyikiza-oauth-attenuating-agent-tokens-01`.
-- **Distinct missing-tool denial category.** Requests for tools outside a
-  warrant's capabilities now surface as `tool_not_allowed` instead of
-  `constraint_violation` in authorizer audit events and Python enforcement.
-  MCP responses identify these as tool-authorization failures while argument
-  constraint failures retain their existing category and detail.
 
 ## [0.2.3] - 2026-07-02
 
