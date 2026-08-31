@@ -129,6 +129,8 @@ Two modes are supported:
 
 The backing workflow calls `tenuo_bootstrap_nexus_workflow(input.tenuo)` before
 `current_warrant()`, `current_key_id()`, or `tenuo_execute_activity(...)`.
+Both envelope constructors require `workflow_id=` so the bootstrap step can
+reject replay into a different backing workflow.
 
 Example preferred shape:
 
@@ -206,8 +208,9 @@ and the work it starts.
 - Should operation constraints use the service contract operation name, the
   Python handler method name, or an explicit Tenuo tool mapping?
 - Should the workflow envelope grow an additional handler signature over the
-  target workflow binding, or is Temporal's handler-created input boundary
-  sufficient for the first experimental surface?
+  target workflow binding, or is mandatory `workflow_id` binding plus
+  Temporal's handler-created input boundary sufficient for the first
+  experimental surface?
 - What durable replay/dedup key is available for sync Nexus operations?
 - Should a denied Nexus operation be represented as `UNAUTHORIZED` or as a
   Tenuo-specific non-retryable operation error with structured details?

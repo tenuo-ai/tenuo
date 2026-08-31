@@ -17,7 +17,6 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from tenuo.temporal._constants import (
     TENUO_CHAIN_HEADER,
-    TENUO_KEY_ID_HEADER,
     TENUO_POP_HEADER,
 )
 from tenuo.temporal._headers import (
@@ -314,6 +313,11 @@ def tenuo_forward_nexus_authority(
     later calls protected activities, its worker config must be able to resolve
     the forwarded ``key_id`` for PoP signing.
     """
+    if not workflow_id:
+        raise TenuoContextError(
+            "tenuo_forward_nexus_authority requires workflow_id= to bind the "
+            "envelope to one backing workflow."
+        )
     verify_nexus_operation(
         ctx,
         input,
@@ -354,6 +358,11 @@ def tenuo_create_nexus_workflow_envelope(
     operation, the handler passes a narrower workflow warrant whose holder key
     belongs to the handler/backing-workflow namespace.
     """
+    if not workflow_id:
+        raise TenuoContextError(
+            "tenuo_create_nexus_workflow_envelope requires workflow_id= to bind "
+            "the envelope to one backing workflow."
+        )
     raw_headers = tenuo_headers(warrant, key_id, compress=compress)
     chain = list(warrant_chain) if warrant_chain is not None else [warrant]
     _validate_chain_ends_with_warrant(
