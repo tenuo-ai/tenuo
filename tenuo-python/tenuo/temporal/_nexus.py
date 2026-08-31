@@ -12,13 +12,16 @@ import base64
 import dataclasses as _dataclasses
 import functools
 import inspect
+import json
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 from tenuo.temporal._constants import (
+    TENUO_APPROVALS_HEADER,
     TENUO_CHAIN_HEADER,
     TENUO_POP_HEADER,
 )
+from tenuo.temporal._dedup import _default_pop_dedup_store
 from tenuo.temporal._headers import (
     _extract_key_id_from_headers,
     _extract_warrant_from_headers,
@@ -100,6 +103,7 @@ def tenuo_nexus_headers(
     service: Optional[str] = None,
     warrant_chain: Optional[List[Any]] = None,
     compress: bool = True,
+    approvals: Optional[Sequence[Any]] = None,
     timestamp: Optional[int] = None,
 ) -> Dict[str, str]:
     """Create Nexus string headers carrying a Tenuo warrant and PoP.
@@ -126,6 +130,8 @@ def tenuo_nexus_headers(
     ts = int(time.time()) if timestamp is None else int(timestamp)
     pop_signature = warrant.sign(signer, tool_name, args, ts)
     raw_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop_signature))
+    if approvals:
+        raw_headers[TENUO_APPROVALS_HEADER] = _encode_approvals_header(approvals)
     return _encode_nexus_headers(raw_headers)
 
 
@@ -140,6 +146,7 @@ async def tenuo_execute_nexus_operation(
     key_id: Optional[str] = None,
     warrant_chain: Optional[List[Any]] = None,
     compress: bool = True,
+    approvals: Optional[Sequence[Any]] = None,
     output_type: Any = None,
     schedule_to_close_timeout: Any = None,
     cancellation_type: Any = None,
@@ -157,6 +164,7 @@ async def tenuo_execute_nexus_operation(
         key_id=key_id,
         warrant_chain=warrant_chain,
         compress=compress,
+        approvals=approvals,
         headers=headers,
     )
     kwargs = _nexus_operation_kwargs(
@@ -180,6 +188,7 @@ async def tenuo_start_nexus_operation(
     key_id: Optional[str] = None,
     warrant_chain: Optional[List[Any]] = None,
     compress: bool = True,
+    approvals: Optional[Sequence[Any]] = None,
     output_type: Any = None,
     schedule_to_close_timeout: Any = None,
     cancellation_type: Any = None,
@@ -197,6 +206,7 @@ async def tenuo_start_nexus_operation(
         key_id=key_id,
         warrant_chain=warrant_chain,
         compress=compress,
+        approvals=approvals,
         headers=headers,
     )
     kwargs = _nexus_operation_kwargs(
@@ -252,13 +262,8 @@ def tenuo_nexus_operation(
         if inspect.iscoroutinefunction(fn):
 
             @functools.wraps(fn)
-            async def async_wrapper(
-                self: Any,
-                ctx: Any,
-                input: Any,
-                *args: Any,
-                **kwargs: Any,
-            ) -> Any:
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                ctx, input = _handler_ctx_and_input(args)
                 verify_nexus_operation(
                     ctx,
                     input,
@@ -268,18 +273,13 @@ def tenuo_nexus_operation(
                     operation=operation or fn,
                     raise_nexus_error=True,
                 )
-                return await fn(self, ctx, input, *args, **kwargs)
+                return await fn(*args, **kwargs)
 
             return async_wrapper
 
         @functools.wraps(fn)
-        def sync_wrapper(
-            self: Any,
-            ctx: Any,
-            input: Any,
-            *args: Any,
-            **kwargs: Any,
-        ) -> Any:
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            ctx, input = _handler_ctx_and_input(args)
             verify_nexus_operation(
                 ctx,
                 input,
@@ -289,11 +289,22 @@ def tenuo_nexus_operation(
                 operation=operation or fn,
                 raise_nexus_error=True,
             )
-            return fn(self, ctx, input, *args, **kwargs)
+            return fn(*args, **kwargs)
 
         return sync_wrapper
 
     return decorator
+
+
+def _handler_ctx_and_input(args: Sequence[Any]) -> tuple[Any, Any]:
+    if len(args) >= 2 and hasattr(args[0], "headers"):
+        return args[0], args[1]
+    if len(args) >= 3 and hasattr(args[1], "headers"):
+        return args[1], args[2]
+    raise TenuoContextError(
+        "tenuo_nexus_operation expects a handler shaped as (ctx, input) or "
+        "(self, ctx, input)."
+    )
 
 
 async def tenuo_nexus_signal_workflow(
@@ -625,6 +636,7 @@ def _bootstrap_nexus_workflow(envelope: Any) -> None:
             "tenuo_bootstrap_nexus_workflow requires TenuoWorkerInterceptor on "
             "the backing workflow worker."
         )
+    _validate_envelope_key_holder(config, key_id, warrant)
 
     try:
         from tenuo_core import Authorizer
@@ -644,6 +656,36 @@ def _bootstrap_nexus_workflow(envelope: Any) -> None:
 
     with _store_lock:
         _workflow_headers_store[run_key] = raw_headers
+
+
+def _validate_envelope_key_holder(config: Any, key_id: str, warrant: Any) -> None:
+    resolver = getattr(config, "key_resolver", None)
+    if resolver is None:
+        raise TenuoContextError(
+            "tenuo_bootstrap_nexus_workflow requires TenuoPluginConfig.key_resolver "
+            "to bind the envelope key_id to the warrant holder."
+        )
+    try:
+        signer = resolver.resolve_sync(key_id)
+        signer_public = getattr(signer, "public_key", None)
+        warrant_holder = getattr(warrant, "holder_key", None) or getattr(
+            warrant, "authorized_holder", None
+        )
+        if signer_public is None or warrant_holder is None:
+            raise TenuoContextError(
+                "Cannot compare envelope key_id with warrant holder."
+            )
+        if signer_public.to_bytes() != warrant_holder.to_bytes():
+            raise TenuoContextError(
+                "Tenuo Nexus workflow envelope key_id does not resolve to the "
+                "warrant holder key."
+            )
+    except TenuoContextError:
+        raise
+    except Exception as exc:
+        raise TenuoContextError(
+            f"Failed to resolve Nexus workflow envelope key_id {key_id!r}: {exc}"
+        ) from exc
 
 
 def _raise_bootstrap_error(exc: Exception) -> None:
@@ -670,6 +712,7 @@ def _authorized_nexus_headers(
     key_id: Optional[str],
     warrant_chain: Optional[List[Any]],
     compress: bool,
+    approvals: Optional[Sequence[Any]],
     headers: Optional[Mapping[str, str]],
 ) -> Dict[str, str]:
     endpoint_name = endpoint or getattr(nexus_client, "endpoint", None)
@@ -681,7 +724,7 @@ def _authorized_nexus_headers(
     service_name = service or getattr(nexus_client, "service_name", None)
     existing_headers = dict(headers or {})
     for header_name in existing_headers:
-        if header_name.startswith("x-tenuo-"):
+        if header_name.casefold().startswith("x-tenuo-"):
             raise TenuoContextError(
                 f"Nexus headers already include reserved Tenuo header {header_name!r}."
             )
@@ -702,6 +745,7 @@ def _authorized_nexus_headers(
         input=input,
         warrant_chain=chain,
         compress=compress,
+        approvals=approvals,
         timestamp=timestamp,
     )
     existing_headers.update(tenuo)
@@ -781,6 +825,72 @@ def _nexus_operation_kwargs(**kwargs: Any) -> Dict[str, Any]:
 
 def _temporal_handle_kwargs(**kwargs: Any) -> Dict[str, Any]:
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def _encode_approvals_header(approvals: Sequence[Any]) -> bytes:
+    encoded = json.dumps(
+        [base64.b64encode(approval.to_bytes()).decode("ascii") for approval in approvals]
+    )
+    return encoded.encode("utf-8")
+
+
+def _decode_approvals_header(headers: Mapping[str, bytes]) -> Optional[List[Any]]:
+    raw = headers.get(TENUO_APPROVALS_HEADER)
+    if not raw:
+        return None
+    try:
+        from tenuo_core import SignedApproval as CoreSignedApproval
+
+        approvals_list = json.loads(raw.decode("utf-8"))
+        return [
+            CoreSignedApproval.from_bytes(base64.b64decode(item))
+            for item in approvals_list
+        ]
+    except Exception as exc:
+        from tenuo.exceptions import InvalidApproval
+
+        raise InvalidApproval(f"Malformed x-tenuo-approvals header: {exc}") from exc
+
+
+def _check_nexus_pop_replay(
+    config: Any,
+    warrant: Any,
+    tool_name: str,
+    args: Mapping[str, Any],
+) -> None:
+    store = getattr(config, "pop_dedup_store", None) or _default_pop_dedup_store
+    base_dedup = warrant.dedup_key(tool_name, dict(args))
+    dedup_key = f"nexus:{base_dedup}"
+    now = time.time()
+    ttl = float(warrant.dedup_ttl_secs())
+    store.check_pop_replay(
+        dedup_key,
+        now,
+        ttl,
+        activity_name=tool_name,
+    )
+
+
+def _nexus_auth_error_types() -> tuple[type[BaseException], ...]:
+    try:
+        from tenuo.exceptions import (
+            TenuoError,
+        )
+        from tenuo.temporal.exceptions import WarrantExpired
+
+        return (
+            TenuoError,
+            TemporalConstraintViolation,
+            PopVerificationError,
+            ChainValidationError,
+            WarrantExpired,
+        )
+    except Exception:
+        return (
+            TemporalConstraintViolation,
+            PopVerificationError,
+            ChainValidationError,
+        )
 
 
 def _workflow_envelope_from_raw_headers(
@@ -891,10 +1001,26 @@ def _verify_nexus_operation(
             config,
             revocation_list=revocation_list,
         )
+        approvals = _decode_approvals_header(raw_headers)
         if chain:
-            authorizer.check_chain(chain, tool_name, args, signature=pop_bytes)
+            authorizer.check_chain(
+                chain,
+                tool_name,
+                args,
+                signature=pop_bytes,
+                approvals=approvals,
+            )
         else:
-            authorizer.authorize_one(warrant, tool_name, args, signature=pop_bytes)
+            authorizer.authorize_one(
+                warrant,
+                tool_name,
+                args,
+                signature=pop_bytes,
+                approvals=approvals,
+            )
+        _check_nexus_pop_replay(config, warrant, tool_name, args)
+    except _nexus_auth_error_types():
+        raise
     except Exception as exc:
         raise TenuoContextError(
             f"Nexus operation authorization failed for {tool_name!r}: {exc}"
@@ -911,6 +1037,12 @@ def _ctx_tool_name(
     service_name = service or getattr(ctx, "service", None)
     operation_name = operation or getattr(ctx, "operation", None)
     endpoint_name = endpoint or "unknown-endpoint"
+    if not endpoint:
+        raise TenuoContextError(
+            "verify_nexus_operation requires endpoint=; Nexus handler contexts "
+            "do not expose the endpoint name reliably enough to preserve "
+            "endpoint-bound warrants."
+        )
     return nexus_tool_name(
         endpoint_name,
         operation_name or "unknown-operation",

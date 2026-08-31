@@ -231,6 +231,7 @@ jobs:
           pytest tests/e2e/test_temporal_live.py \
                  tests/e2e/test_temporal_replay.py \
                  tests/e2e/test_temporal_examples_smoke.py \
+                 tests/e2e/test_temporal_nexus_live.py \
                  -v -m temporal_live --timeout=300
 
       - name: Check for deprecation warnings
