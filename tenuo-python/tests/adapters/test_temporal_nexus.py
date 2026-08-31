@@ -17,7 +17,7 @@ from tenuo.approval import ApprovalRequest, sign_approval  # noqa: E402
 from tenuo_core import Exact, Range, SigningKey, Warrant, py_compute_request_hash  # noqa: E402
 
 from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
-from tenuo.temporal._dedup import _pop_dedup_cache  # noqa: E402
+from tenuo.temporal._dedup import _default_pop_dedup_store, _pop_dedup_cache  # noqa: E402
 from tenuo.temporal._workflow import current_key_id  # noqa: E402
 from tenuo.temporal._headers import tenuo_headers  # noqa: E402
 from tenuo.temporal._nexus import (  # noqa: E402
@@ -116,11 +116,13 @@ def clean_workflow_stores() -> None:
         _workflow_headers_store.clear()
         _workflow_config_store.clear()
         _pop_dedup_cache.clear()
+        _default_pop_dedup_store._owner_cache.clear()
     yield
     with _store_lock:
         _workflow_headers_store.clear()
         _workflow_config_store.clear()
         _pop_dedup_cache.clear()
+        _default_pop_dedup_store._owner_cache.clear()
 
 
 @pytest.fixture
@@ -181,6 +183,7 @@ def _router_ctx_and_config(
 ) -> tuple[Any, Any]:
     warrant = _router_warrant(root_key, agent_key)
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="route_signal",
         headers=tenuo_nexus_headers(
@@ -216,6 +219,7 @@ def test_tenuo_nexus_headers_round_trip_verifies_cross_namespace_operation(
         input=input,
     )
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers=headers,
@@ -236,6 +240,7 @@ def test_verify_nexus_operation_rejects_missing_endpoint(
     root_key, agent_key = nexus_keys
     input = RefundInput("ord_123", 2500)
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers=tenuo_nexus_headers(
@@ -262,6 +267,7 @@ def test_verify_nexus_operation_rejects_missing_warrant(
 ) -> None:
     root_key, agent_key = nexus_keys
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers={},
@@ -297,6 +303,7 @@ def test_verify_nexus_operation_rejects_missing_pop(
     )
     headers.pop("x-tenuo-pop")
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers=headers,
@@ -310,13 +317,14 @@ def test_verify_nexus_operation_rejects_missing_pop(
         verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
 
 
-def test_verify_nexus_operation_rejects_pop_replay(
+def test_verify_nexus_operation_allows_repeat_calls_by_default(
     nexus_keys: tuple[Any, Any],
     nexus_warrant: Any,
 ) -> None:
     root_key, agent_key = nexus_keys
     input = RefundInput("ord_123", 2500)
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers=tenuo_nexus_headers(
@@ -335,8 +343,53 @@ def test_verify_nexus_operation_rejects_pop_replay(
     )
 
     verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+    verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+    redelivery_ctx = SimpleNamespace(
+        request_id="req-redelivery-default",
+        service="BillingService",
+        operation="refund",
+        headers=ctx.headers,
+    )
+    verify_nexus_operation(redelivery_ctx, input, config, endpoint="billing-prod")
+
+
+def test_verify_nexus_operation_strict_replay_scoped_by_request_id(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    ctx = SimpleNamespace(
+        request_id="req-original",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        nexus_pop_replay_protection=True,
+    )
+
+    verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+    verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+    replay_ctx = SimpleNamespace(
+        request_id="req-replay",
+        service="BillingService",
+        operation="refund",
+        headers=ctx.headers,
+    )
     with pytest.raises(PopVerificationError, match="replay detected"):
-        verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+        verify_nexus_operation(replay_ctx, input, config, endpoint="billing-prod")
 
 
 def test_execute_nexus_operation_rejects_reserved_header_case_insensitive(
@@ -383,6 +436,7 @@ def test_verify_nexus_operation_rejects_wrong_operation_binding(
         input=input,
     )
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="capture",
         headers=headers,
@@ -412,6 +466,7 @@ def test_verify_nexus_operation_rejects_input_constraint_mismatch(
         input=signed_input,
     )
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers=headers,
@@ -446,6 +501,7 @@ def test_verify_nexus_operation_approval_gate_requires_approval(
         approval_gates={tool_name: None},
     )
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers=tenuo_nexus_headers(
@@ -504,6 +560,7 @@ def test_verify_nexus_operation_accepts_pre_supplied_approvals(
         root_key,
     )
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers=tenuo_nexus_headers(
@@ -566,6 +623,7 @@ async def test_tenuo_execute_nexus_operation_merges_headers_and_calls_client(
     assert kwargs["headers"]["x-request-id"] == "req-123"
 
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers=kwargs["headers"],
@@ -594,6 +652,7 @@ async def test_tenuo_nexus_operation_decorator_maps_denial_to_handler_error(
 
     handler = Handler()
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers={},
@@ -617,6 +676,7 @@ async def test_tenuo_nexus_operation_wraps_plain_function_handlers(
         trusted_roots=[root_key.public_key],
     )
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers=tenuo_nexus_headers(
@@ -756,6 +816,7 @@ def test_forward_nexus_authority_creates_bootstrap_envelope(
     root_key, agent_key = nexus_keys
     input = RefundInput("ord_123", 2500)
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers=tenuo_nexus_headers(
@@ -795,6 +856,7 @@ def test_forward_nexus_authority_requires_workflow_id(
     root_key, agent_key = nexus_keys
     input = RefundInput("ord_123", 2500)
     ctx = SimpleNamespace(
+        request_id="req-default",
         service="BillingService",
         operation="refund",
         headers=tenuo_nexus_headers(

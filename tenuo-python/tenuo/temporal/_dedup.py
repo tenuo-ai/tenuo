@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Protocol
+from typing import Protocol, Tuple, Union
 
 from tenuo.temporal._state import _DEDUP_EVICT_INTERVAL, _DEDUP_MAX_SIZE
 from tenuo.temporal.exceptions import PopVerificationError
@@ -46,6 +46,40 @@ class PopDedupStore(Protocol):
         ...
 
 
+class OwnerAwarePopDedupStore(PopDedupStore, Protocol):
+    """Optional extension for Nexus PoP replay suppression.
+
+    Nexus uses the PoP signature as the replay key and the Nexus ``request_id``
+    as the owner: the same signature with the same request id is a permitted
+    redelivery, while the same signature with a different request id is a
+    replay.
+    """
+
+    def check_pop_replay_for_owner(
+        self,
+        dedup_key: str,
+        owner_id: str,
+        now: float,
+        ttl_seconds: float,
+        *,
+        activity_name: str,
+    ) -> None:
+        """Record *dedup_key* for *owner_id* or raise on cross-owner replay.
+
+        Args:
+            dedup_key: Stable key for the PoP signature being checked.
+            owner_id: Stable execution/request id allowed to reuse this key.
+            now: Unix timestamp (seconds, UTC).
+            ttl_seconds: Suppress cross-owner reuse inside this window.
+            activity_name: Activity or Nexus operation name for error messages.
+
+        Raises:
+            PopVerificationError: If this key was already recorded for a
+                different owner within TTL.
+        """
+        ...
+
+
 class InMemoryPopDedupStore:
     """Default ``PopDedupStore``: thread-safe ordered dict in this process only.
 
@@ -53,11 +87,12 @@ class InMemoryPopDedupStore:
     so size-cap eviction pops from the front in O(excess) instead of sorting.
     """
 
-    __slots__ = ("cache", "_last_evict", "_lock")
+    __slots__ = ("cache", "_owner_cache", "_last_evict", "_lock")
 
     def __init__(self) -> None:
         from collections import OrderedDict
         self.cache: OrderedDict[str, float] = OrderedDict()
+        self._owner_cache: OrderedDict[str, Tuple[float, str]] = OrderedDict()
         self._last_evict: float = 0.0
         self._lock = threading.Lock()
 
@@ -93,6 +128,49 @@ class InMemoryPopDedupStore:
 
             while len(self.cache) > _DEDUP_MAX_SIZE:
                 self.cache.popitem(last=False)
+
+    def check_pop_replay_for_owner(
+        self,
+        dedup_key: str,
+        owner_id: str,
+        now: float,
+        ttl_seconds: float,
+        *,
+        activity_name: str,
+    ) -> None:
+        with self._lock:
+            existing = self._owner_cache.get(dedup_key)
+            if existing is not None:
+                last_seen, existing_owner = existing
+                if (now - last_seen) < ttl_seconds and existing_owner != owner_id:
+                    raise PopVerificationError(
+                        reason=(
+                            "replay detected (PoP signature already used for "
+                            f"different request_id {existing_owner!r})"
+                        ),
+                        activity_name=activity_name,
+                    )
+            if dedup_key in self._owner_cache:
+                del self._owner_cache[dedup_key]
+            self._owner_cache[dedup_key] = (now, owner_id)
+            self._evict_owner_cache(now, ttl_seconds)
+
+    def _evict_owner_cache(self, now: float, ttl_seconds: float) -> None:
+        expired = [
+            k for k, value in self._owner_cache.items()
+            if (now - _owner_timestamp(value)) >= ttl_seconds
+        ]
+        for k in expired:
+            del self._owner_cache[k]
+
+        while len(self._owner_cache) > _DEDUP_MAX_SIZE:
+            self._owner_cache.popitem(last=False)
+
+
+def _owner_timestamp(value: Union[float, Tuple[float, str]]) -> float:
+    if isinstance(value, tuple):
+        return value[0]
+    return value
 
 
 _default_pop_dedup_store = InMemoryPopDedupStore()

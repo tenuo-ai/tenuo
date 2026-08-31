@@ -589,6 +589,12 @@ Workflow-side signing uses deterministic timestamps for Temporal replay; workers
 
 Default dedup is **in-memory per process** (`InMemoryPopDedupStore`). For fleet-wide suppression, implement `PopDedupStore` (e.g. Redis `SET NX`) and set `TenuoPluginConfig.pop_dedup_store`.
 
+For strict Nexus replay suppression, a custom shared store should also expose
+`check_pop_replay_for_owner(dedup_key, owner_id, now, ttl_seconds, *,
+activity_name)`. Nexus uses the PoP signature as `dedup_key` and the Nexus
+`request_id` as `owner_id`, allowing same-request redelivery while rejecting
+the same captured PoP on a different request.
+
 ### Trusted root rotation
 
 Static `trusted_roots` require a restart to pick up new issuer keys. For rotation without restarts, use `trusted_roots_provider` + `trusted_roots_refresh_interval_secs`. During rotation, return overlapping old and new issuer keys. On refresh failure, the worker retains the previous `Authorizer` and logs a warning.

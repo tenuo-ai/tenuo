@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import dataclasses as _dataclasses
 import functools
+import hashlib
 import inspect
 import json
 import time
@@ -297,10 +298,10 @@ def tenuo_nexus_operation(
 
 
 def _handler_ctx_and_input(args: Sequence[Any]) -> tuple[Any, Any]:
-    if len(args) >= 2 and hasattr(args[0], "headers"):
-        return args[0], args[1]
     if len(args) >= 3 and hasattr(args[1], "headers"):
         return args[1], args[2]
+    if len(args) >= 2 and hasattr(args[0], "headers"):
+        return args[0], args[1]
     raise TenuoContextError(
         "tenuo_nexus_operation expects a handler shaped as (ctx, input) or "
         "(self, ctx, input)."
@@ -854,21 +855,39 @@ def _decode_approvals_header(headers: Mapping[str, bytes]) -> Optional[List[Any]
 
 def _check_nexus_pop_replay(
     config: Any,
-    warrant: Any,
+    ctx: Any,
+    pop_bytes: bytes,
     tool_name: str,
-    args: Mapping[str, Any],
 ) -> None:
+    if not getattr(config, "nexus_pop_replay_protection", False):
+        return
     store = getattr(config, "pop_dedup_store", None) or _default_pop_dedup_store
-    base_dedup = warrant.dedup_key(tool_name, dict(args))
-    dedup_key = f"nexus:{base_dedup}"
+    owner_method = getattr(store, "check_pop_replay_for_owner", None)
+    if not callable(owner_method):
+        raise TenuoContextError(
+            "Nexus PoP replay protection requires pop_dedup_store to implement "
+            "check_pop_replay_for_owner(dedup_key, owner_id, now, ttl_seconds, ...)."
+        )
+    request_id = _ctx_request_id(ctx)
+    dedup_key = f"nexus-pop:{hashlib.sha256(pop_bytes).hexdigest()}"
     now = time.time()
-    ttl = float(warrant.dedup_ttl_secs())
-    store.check_pop_replay(
+    owner_method(
         dedup_key,
+        request_id,
         now,
-        ttl,
+        120.0,
         activity_name=tool_name,
     )
+
+
+def _ctx_request_id(ctx: Any) -> str:
+    request_id = getattr(ctx, "request_id", None)
+    if not request_id:
+        raise TenuoContextError(
+            "verify_nexus_operation requires ctx.request_id for request-scoped "
+            "PoP replay protection."
+        )
+    return str(request_id)
 
 
 def _nexus_auth_error_types() -> tuple[type[BaseException], ...]:
@@ -1018,7 +1037,7 @@ def _verify_nexus_operation(
                 signature=pop_bytes,
                 approvals=approvals,
             )
-        _check_nexus_pop_replay(config, warrant, tool_name, args)
+        _check_nexus_pop_replay(config, ctx, pop_bytes, tool_name)
     except _nexus_auth_error_types():
         raise
     except Exception as exc:
@@ -1034,17 +1053,16 @@ def _ctx_tool_name(
     service: Optional[str],
     operation: Optional[Any],
 ) -> str:
-    service_name = service or getattr(ctx, "service", None)
-    operation_name = operation or getattr(ctx, "operation", None)
-    endpoint_name = endpoint or "unknown-endpoint"
     if not endpoint:
         raise TenuoContextError(
             "verify_nexus_operation requires endpoint=; Nexus handler contexts "
             "do not expose the endpoint name reliably enough to preserve "
             "endpoint-bound warrants."
         )
+    service_name = service or getattr(ctx, "service", None)
+    operation_name = operation or getattr(ctx, "operation", None)
     return nexus_tool_name(
-        endpoint_name,
+        endpoint,
         operation_name or "unknown-operation",
         service=service_name,
     )
@@ -1070,6 +1088,10 @@ def _operation_name(operation: Any) -> str:
 
 
 def _encode_nexus_headers(headers: Mapping[str, bytes]) -> Dict[str, str]:
+    # Nexus Tenuo headers are emitted and consumed with lower-case names. The
+    # caller-side reserved-header check is case-insensitive, but this transport
+    # decoder remains case-sensitive so an intermediary that rewrites header
+    # casing fails closed instead of selecting between colliding variants.
     encoded = {
         k: base64.b64encode(bytes(v)).decode("ascii")
         for k, v in headers.items()
