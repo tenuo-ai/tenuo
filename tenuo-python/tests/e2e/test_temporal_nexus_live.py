@@ -7,6 +7,7 @@ version bundled by the Python SDK.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -39,7 +40,7 @@ from temporalio.worker.workflow_sandbox import (  # noqa: E402
 )
 
 import tenuo  # noqa: F401, E402 - installs Warrant.mint_builder()
-from tenuo_core import Exact, Range, SigningKey, Warrant  # noqa: E402
+from tenuo_core import Exact, Pattern, Range, SigningKey, Warrant  # noqa: E402
 
 from tenuo.temporal import (  # noqa: E402
     KeyResolver,
@@ -55,6 +56,7 @@ from tenuo.temporal import (  # noqa: E402
     tenuo_forward_nexus_authority,
     tenuo_headers,
     tenuo_nexus_operation,
+    tenuo_start_nexus_workflow,
     verify_nexus_operation,
 )
 
@@ -140,6 +142,22 @@ class NexusRawCallerWorkflow:
             endpoint=endpoint,
         )
         return await nexus_client.execute_operation(
+            HeaderProbeService.header_probe,
+            HeaderProbeInput(message=message),
+            schedule_to_close_timeout=timedelta(seconds=10),
+        )
+
+
+@workflow.defn
+class TenuoHeaderProbeCallerWorkflow:
+    @workflow.run
+    async def run(self, endpoint: str, message: str) -> str:
+        nexus_client = workflow.create_nexus_client(
+            service=HeaderProbeService,
+            endpoint=endpoint,
+        )
+        return await tenuo_execute_nexus_operation(
+            nexus_client,
             HeaderProbeService.header_probe,
             HeaderProbeInput(message=message),
             schedule_to_close_timeout=timedelta(seconds=10),
@@ -491,6 +509,7 @@ async def test_live_cross_namespace_nexus_operation_authorizes_headers() -> None
 @pytest.mark.asyncio
 async def test_live_nexus_backing_start_can_use_interceptor_bound_headers() -> None:
     control_key = SigningKey.generate()
+    agent_key = SigningKey.generate()
     handler_key = SigningKey.generate()
 
     suffix = uuid.uuid4().hex[:10]
@@ -499,7 +518,10 @@ async def test_live_nexus_backing_start_can_use_interceptor_bound_headers() -> N
     caller_task_queue = f"tenuo-caller-tq-{suffix}"
     handler_task_queue = f"tenuo-handler-tq-{suffix}"
     endpoint_name = f"tenuo-nexus-{suffix}"
-    caller_workflow_id = f"tenuo-nexus-header-probe-{suffix}"
+    caller_workflow_ids = [
+        f"tenuo-nexus-header-probe-a-{suffix}",
+        f"tenuo-nexus-header-probe-b-{suffix}",
+    ]
 
     async with await WorkflowEnvironment.start_local() as env:
         try:
@@ -516,7 +538,12 @@ async def test_live_nexus_backing_start_can_use_interceptor_bound_headers() -> N
 
         try:
             target = env.client.service_client.config.target_host
-            caller_client = await Client.connect(target, namespace=caller_namespace)
+            caller_headers = TenuoClientInterceptor()
+            caller_client = await Client.connect(
+                target,
+                namespace=caller_namespace,
+                interceptors=[caller_headers],  # type: ignore[list-item]
+            )
             handler_headers = TenuoClientInterceptor()
             handler_client = await Client.connect(
                 target,
@@ -524,9 +551,33 @@ async def test_live_nexus_backing_start_can_use_interceptor_bound_headers() -> N
                 interceptors=[handler_headers],  # type: ignore[list-item]
             )
             config = TenuoPluginConfig(
-                key_resolver=DictKeyResolver({"handler1": handler_key}),
+                key_resolver=DictKeyResolver(
+                    {
+                        "agent1": agent_key,
+                        "handler1": handler_key,
+                    }
+                ),
                 trusted_roots=[control_key.public_key],
             )
+            warrant = (
+                Warrant.mint_builder()
+                .holder(agent_key.public_key)
+                .capability(
+                    nexus_tool_name(
+                        endpoint_name,
+                        "header_probe",
+                        service="HeaderProbeService",
+                    ),
+                    message=Pattern("hello-*"),
+                )
+                .ttl(3600)
+                .mint(control_key)
+            )
+            for workflow_id in caller_workflow_ids:
+                caller_headers.set_headers_for_workflow(
+                    workflow_id,
+                    tenuo_headers(warrant, "agent1"),
+                )
 
             @nexus_handler.service_handler(service=HeaderProbeService)
             class HeaderProbeServiceHandler:
@@ -547,14 +598,17 @@ async def test_live_nexus_backing_start_can_use_interceptor_bound_headers() -> N
                         .ttl(3600)
                         .mint(control_key)
                     )
-                    handler_headers.set_headers_for_workflow(
-                        workflow_id,
-                        tenuo_headers(warrant, "handler1"),
-                    )
-                    return await ctx.start_workflow(
+                    return await tenuo_start_nexus_workflow(
+                        ctx,
+                        input,
+                        config,
+                        handler_headers,
                         HeaderProbeWorkflow.run,
                         input,
-                        id=workflow_id,
+                        workflow_id=workflow_id,
+                        workflow_warrant=warrant,
+                        workflow_key_id="handler1",
+                        endpoint=endpoint_name,
                     )
 
             sandbox_runner = SandboxedWorkflowRunner(
@@ -574,19 +628,28 @@ async def test_live_nexus_backing_start_can_use_interceptor_bound_headers() -> N
             ), Worker(
                 caller_client,
                 task_queue=caller_task_queue,
-                workflows=[NexusRawCallerWorkflow],
+                workflows=[TenuoHeaderProbeCallerWorkflow],
+                interceptors=[TenuoWorkerInterceptor(config, task_queue=caller_task_queue)],
                 workflow_runner=sandbox_runner,
             ):
-                result = await caller_client.execute_workflow(
-                    NexusRawCallerWorkflow.run,
-                    args=[endpoint_name, "hello"],
-                    id=caller_workflow_id,
-                    task_queue=caller_task_queue,
-                    execution_timeout=timedelta(seconds=20),
-                    retry_policy=RetryPolicy(maximum_attempts=1),
+                results = await asyncio.gather(
+                    *[
+                        caller_client.execute_workflow(
+                            TenuoHeaderProbeCallerWorkflow.run,
+                            args=[endpoint_name, message],
+                            id=workflow_id,
+                            task_queue=caller_task_queue,
+                            execution_timeout=timedelta(seconds=20),
+                            retry_policy=RetryPolicy(maximum_attempts=1),
+                        )
+                        for workflow_id, message in zip(
+                            caller_workflow_ids,
+                            ["hello-a", "hello-b"],
+                        )
+                    ]
                 )
 
-            assert result == "handler1:hello"
+            assert sorted(results) == ["handler1:hello-a", "handler1:hello-b"]
         finally:
             try:
                 await _delete_nexus_endpoint(env.client, endpoint_id, endpoint_version)

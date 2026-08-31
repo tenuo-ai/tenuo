@@ -149,37 +149,48 @@ refund_capability = TemporalNexusOperation.exact(
 ### Workflow-backed Nexus operations
 
 Python Nexus handlers commonly call `ctx.start_workflow(...)` from a
-`@nexus.workflow_run_operation`. Tenuo's high-level workflow-backed helpers use
-an explicit workflow-input envelope plus a bootstrap helper in the handler
-workflow so delegated authority remains visible in application code rather
-than hidden in transport plumbing.
+`@nexus.workflow_run_operation`. Tenuo supports that shape without putting
+authority into ordinary workflow input: `tenuo_start_nexus_workflow(...)`
+verifies the incoming Nexus request, binds a handler-created or attenuated
+workflow warrant to the exact backing `workflow_id`, then calls
+`ctx.start_workflow(...)` through the normal Temporal client interceptor path.
 
 Tenuo's client interceptor can inject headers into Nexus backing workflow
 starts without dropping Nexus-specific fields such as `request_id`, callbacks,
-or workflow event links; this path is covered by both a focused interceptor
-contract test and an isolated live Nexus backing-start probe. The envelope
-helpers remain the documented high-level path because they make forwarding,
-attenuation, target-workflow binding, and bootstrap validation explicit in
-application code.
+or workflow event links; this path is covered by both focused adapter coverage
+and an isolated live Nexus backing-start concurrency probe.
 
-Two modes are supported:
+Three modes are supported:
 
+- `tenuo_start_nexus_workflow(...)` carries handler-created, attenuated, or
+  freshly minted workflow authority via Temporal workflow headers. This is the
+  preferred production shape for backing workflows: the handler verifies the
+  public Nexus operation, decides what internal workflow work is allowed, and
+  starts that workflow with a narrower warrant held by a key the handler
+  namespace can resolve.
 - `tenuo_forward_nexus_authority(...)` forwards the exact verified caller
   warrant/key context into the backing workflow. This is the escape hatch for
   workflows that only need to inspect caller authority, or whose worker can
   resolve the caller holder key for downstream PoP signing.
 - `tenuo_create_nexus_workflow_envelope(...)` carries a handler-created,
-  attenuated, or freshly minted workflow warrant. This is the preferred
-  production shape: the handler verifies the Nexus operation, decides what
-  internal workflow work is allowed, and passes a narrower warrant held by a
-  key the handler namespace can resolve.
+  attenuated, or freshly minted workflow warrant through explicit workflow
+  input. Prefer `tenuo_start_nexus_workflow(...)` when the handler client has
+  `TenuoClientInterceptor`; keep the envelope path for manual transports,
+  migration, or cases where making bootstrap explicit in the workflow input is
+  desirable.
 
-The backing workflow calls `tenuo_bootstrap_nexus_workflow(input.tenuo)` before
-`current_warrant()`, `current_key_id()`, or `tenuo_execute_activity(...)`.
-Both envelope constructors require `workflow_id=` so the bootstrap step can
-reject replay into a different backing workflow. Bootstrap also resolves the
-envelope `key_id` and requires it to match the warrant holder key before the
-workflow can use that key for downstream PoP signing.
+The ambient helper requires a `TenuoClientInterceptor` installed on the handler
+namespace client. If `ctx.start_workflow(...)` fails before the interceptor
+consumes the pending header binding, Tenuo discards that binding so stale
+authority does not sit in memory until TTL eviction.
+
+Envelope-backed workflows call `tenuo_bootstrap_nexus_workflow(input.tenuo)`
+before `current_warrant()`, `current_key_id()`, or
+`tenuo_execute_activity(...)`. Both envelope constructors require
+`workflow_id=` so the bootstrap step can reject replay into a different backing
+workflow. Bootstrap also resolves the envelope `key_id` and requires it to
+match the warrant holder key before the workflow can use that key for
+downstream PoP signing.
 
 Treat the backing workflow as an internal implementation detail of the Nexus
 handler. Do not expose it for direct starts by untrusted clients; ordinary
@@ -193,8 +204,7 @@ Example preferred shape:
 ```python
 @nexus.workflow_run_operation
 async def minted_refund(self, ctx, input):
-    verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
-
+    workflow_id = f"refund-{ctx.request_id}"
     workflow_warrant = (
         Warrant.mint_builder()
         .holder(handler_key.public_key)
@@ -206,24 +216,24 @@ async def minted_refund(self, ctx, input):
         .ttl(3600)
         .mint(control_key)
     )
-    envelope = tenuo_create_nexus_workflow_envelope(
-        workflow_warrant,
-        "handler-workflow-key",
-        workflow_id=workflow_id,
-        source_ctx=ctx,
-        source_endpoint="billing-prod",
-    )
-    return await ctx.start_workflow(
+
+    return await tenuo_start_nexus_workflow(
+        ctx,
+        input,
+        config,
+        handler_client_interceptor,
         RefundWorkflow.run,
-        RefundWorkflowInput(input.order_id, input.amount_cents, tenuo=envelope),
-        id=workflow_id,
+        RefundWorkflowInput(input.order_id, input.amount_cents),
+        workflow_id=workflow_id,
+        workflow_warrant=workflow_warrant,
+        workflow_key_id="handler-workflow-key",
+        endpoint="billing-prod",
     )
 
 @workflow.defn
 class RefundWorkflow:
     @workflow.run
     async def run(self, input):
-        tenuo_bootstrap_nexus_workflow(input.tenuo)
         return await tenuo_execute_activity(...)
 ```
 

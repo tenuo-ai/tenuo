@@ -91,6 +91,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TenuoNexusWorkflowEnvelope": ("tenuo.temporal._nexus", "TenuoNexusWorkflowEnvelope"),
     "tenuo_forward_nexus_authority": ("tenuo.temporal._nexus", "tenuo_forward_nexus_authority"),
     "tenuo_create_nexus_workflow_envelope": ("tenuo.temporal._nexus", "tenuo_create_nexus_workflow_envelope"),
+    "tenuo_start_nexus_workflow": ("tenuo.temporal._nexus", "tenuo_start_nexus_workflow"),
     "tenuo_bootstrap_nexus_workflow": ("tenuo.temporal._nexus", "tenuo_bootstrap_nexus_workflow"),
     # _state — public escape hatch for manual worker setup
     "register_worker_config": ("tenuo.temporal._state", "register_worker_config"),
