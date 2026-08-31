@@ -58,6 +58,7 @@ These are non-obvious from the code alone; each has a corresponding test guard c
 
 - `tenuo-python/tests/e2e/test_temporal_e2e.py` - mocked end-to-end activity-inbound and workflow-outbound flows.
 - `tenuo-python/tests/e2e/test_temporal_live.py` - same paths against a real in-process `WorkflowEnvironment.start_local()`.
+- `tenuo-python/tests/e2e/test_temporal_nexus_live.py` - live cross-namespace Nexus operation allow/deny smoke test.
 - `tenuo-python/tests/e2e/test_temporal_examples_smoke.py` - loads each `examples/temporal/*.py` script and runs `main()` against `WorkflowEnvironment` (redirecting `Client.connect` away from `localhost:7233`).
 - `tenuo-python/tests/e2e/test_temporal_replay.py` - record-and-replay determinism, including denial, trusted-root rotation, and PoP time-window clock-boundary crossing via `start_time_skipping()`.
 - `tenuo-python/tests/adapters/test_temporal.py` - per-helper unit and regression tests.
