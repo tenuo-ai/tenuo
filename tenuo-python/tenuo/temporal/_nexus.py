@@ -14,6 +14,7 @@ import functools
 import hashlib
 import inspect
 import json
+import logging
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
@@ -43,6 +44,8 @@ from tenuo.temporal.exceptions import (
     TemporalConstraintViolation,
     TenuoContextError,
 )
+
+logger = logging.getLogger("tenuo.temporal")
 
 TENUO_NEXUS_HEADER_ENCODING = "x-tenuo-nexus-header-encoding"
 _TENUO_NEXUS_HEADER_ENCODING_V1 = "base64-v1"
@@ -969,14 +972,28 @@ def _verify_nexus_operation(
     operation: Optional[Any],
 ) -> Any:
     raw_headers = _decode_nexus_headers(getattr(ctx, "headers", {}) or {})
+    tool_name = _ctx_tool_name(ctx, endpoint, service, operation)
+    args = nexus_input_args(input)
+    start_ns = time.perf_counter_ns()
     warrant = _extract_warrant_from_headers(raw_headers)
     if warrant is None:
-        raise TemporalConstraintViolation(
-            tool=_ctx_tool_name(ctx, endpoint, service, operation),
-            arguments={},
+        exc = TemporalConstraintViolation(
+            tool=tool_name,
+            arguments=args,
             constraint="No warrant provided for Nexus operation",
             warrant_id="none",
         )
+        _emit_nexus_control_plane_event(
+            config,
+            ctx,
+            None,
+            None,
+            tool_name,
+            args,
+            start_ns=start_ns,
+            exc=exc,
+        )
+        raise exc
 
     chain: Optional[List[Any]] = None
     chain_header = raw_headers.get(TENUO_CHAIN_HEADER)
@@ -991,26 +1008,57 @@ def _verify_nexus_operation(
                 operation="Nexus operation",
             )
         except Exception as exc:
-            raise ChainValidationError(
+            chain_exc = ChainValidationError(
                 reason=f"Invalid Nexus warrant chain header: {exc}",
                 depth=0,
-            ) from exc
+            )
+            _emit_nexus_control_plane_event(
+                config,
+                ctx,
+                warrant,
+                chain,
+                tool_name,
+                args,
+                start_ns=start_ns,
+                exc=chain_exc,
+            )
+            raise chain_exc from exc
 
-    tool_name = _ctx_tool_name(ctx, endpoint, service, operation)
-    args = nexus_input_args(input)
     pop_header = raw_headers.get(TENUO_POP_HEADER)
     if not pop_header:
-        raise PopVerificationError(
+        exc = PopVerificationError(
             reason="Missing PoP header for Nexus operation",
             activity_name=tool_name,
         )
+        _emit_nexus_control_plane_event(
+            config,
+            ctx,
+            warrant,
+            chain,
+            tool_name,
+            args,
+            start_ns=start_ns,
+            exc=exc,
+        )
+        raise exc
     try:
         pop_bytes = base64.b64decode(pop_header, validate=True)
     except Exception as exc:
-        raise PopVerificationError(
+        pop_exc = PopVerificationError(
             reason=f"Malformed Nexus PoP header: {exc}",
             activity_name=tool_name,
-        ) from exc
+        )
+        _emit_nexus_control_plane_event(
+            config,
+            ctx,
+            warrant,
+            chain,
+            tool_name,
+            args,
+            start_ns=start_ns,
+            exc=pop_exc,
+        )
+        raise pop_exc from exc
 
     try:
         from tenuo_core import Authorizer
@@ -1024,7 +1072,7 @@ def _verify_nexus_operation(
         )
         approvals = _decode_approvals_header(raw_headers)
         if chain:
-            authorizer.check_chain(
+            chain_result = authorizer.check_chain(
                 chain,
                 tool_name,
                 args,
@@ -1032,7 +1080,7 @@ def _verify_nexus_operation(
                 approvals=approvals,
             )
         else:
-            authorizer.authorize_one(
+            chain_result = authorizer.authorize_one(
                 warrant,
                 tool_name,
                 args,
@@ -1040,13 +1088,175 @@ def _verify_nexus_operation(
                 approvals=approvals,
             )
         _check_nexus_pop_replay(config, ctx, pop_bytes, tool_name)
-    except _nexus_auth_error_types():
+        _emit_nexus_control_plane_event(
+            config,
+            ctx,
+            warrant,
+            chain,
+            tool_name,
+            args,
+            start_ns=start_ns,
+            chain_result=chain_result,
+        )
+    except _nexus_auth_error_types() as exc:
+        _emit_nexus_control_plane_event(
+            config,
+            ctx,
+            warrant,
+            chain,
+            tool_name,
+            args,
+            start_ns=start_ns,
+            exc=exc,
+        )
         raise
     except Exception as exc:
         raise TenuoContextError(
             f"Nexus operation authorization failed for {tool_name!r}: {exc}"
         ) from exc
     return warrant
+
+
+def _emit_nexus_control_plane_event(
+    config: Any,
+    ctx: Any,
+    warrant: Optional[Any],
+    chain: Optional[List[Any]],
+    tool_name: str,
+    args: Dict[str, Any],
+    *,
+    start_ns: int,
+    chain_result: Optional[Any] = None,
+    exc: Optional[BaseException] = None,
+) -> None:
+    control_plane = getattr(config, "control_plane", None)
+    if not control_plane:
+        return
+
+    from tenuo._enforcement import EnforcementResult
+
+    latency_us = int((time.perf_counter_ns() - start_ns) / 1000)
+    redacted_args = _redact_nexus_args(config, args)
+    request_id = getattr(ctx, "request_id", None)
+
+    if exc is None:
+        result = EnforcementResult(
+            allowed=True,
+            tool=tool_name,
+            arguments=redacted_args,
+            warrant_id=getattr(warrant, "id", None),
+            chain_result=chain_result,
+        )
+        try:
+            control_plane.emit_for_enforcement(
+                result,
+                chain_result=chain_result,
+                latency_us=latency_us,
+                request_id=str(request_id) if request_id else None,
+            )
+        except Exception:
+            logger.warning(
+                "Control plane emission failed for Nexus allow '%s'; audit event lost",
+                tool_name,
+                exc_info=True,
+            )
+        return
+
+    result = _nexus_denial_result(exc, tool_name, args, redacted_args, warrant)
+    warrant_stack_b64 = _encode_nexus_warrant_stack_for_denial(warrant, chain)
+    try:
+        control_plane.emit_for_enforcement(
+            result,
+            chain_result=None,
+            latency_us=latency_us,
+            request_id=str(request_id) if request_id else None,
+            warrant_stack_override=warrant_stack_b64,
+        )
+    except Exception:
+        logger.warning(
+            "Control plane emission failed for Nexus denial '%s'; audit event lost",
+            tool_name,
+            exc_info=True,
+        )
+
+
+def _redact_nexus_args(config: Any, args: Dict[str, Any]) -> Dict[str, Any]:
+    if not getattr(config, "redact_args_in_logs", True):
+        return args
+    return {key: "[REDACTED]" for key in args.keys()}
+
+
+def _nexus_denial_result(
+    exc: BaseException,
+    tool_name: str,
+    args: Dict[str, Any],
+    redacted_args: Dict[str, Any],
+    warrant: Optional[Any],
+) -> Any:
+    from tenuo._enforcement import (
+        EnforcementResult,
+        _enforcement_result_from_chain_error_with_logging,
+    )
+
+    warrant_id = getattr(warrant, "id", None)
+    if isinstance(exc, TemporalConstraintViolation):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=redacted_args,
+            denial_reason=str(exc),
+            constraint_violated=exc.constraint,
+            error_type="constraint_violation",
+            warrant_id=warrant_id,
+        )
+    if isinstance(exc, PopVerificationError):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=redacted_args,
+            denial_reason=str(exc),
+            error_type="invalid_pop",
+            warrant_id=warrant_id,
+        )
+    if isinstance(exc, ChainValidationError):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=redacted_args,
+            denial_reason=str(exc),
+            error_type="chain_invalid",
+            warrant_id=warrant_id,
+        )
+
+    result = _enforcement_result_from_chain_error_with_logging(
+        exc,
+        tool_name,
+        args,
+        warrant_id,
+        constraint_auth_args=args,
+        warrant=warrant,
+    )
+    result.arguments = redacted_args
+    return result
+
+
+def _encode_nexus_warrant_stack_for_denial(
+    warrant: Optional[Any],
+    chain: Optional[List[Any]],
+) -> Optional[str]:
+    if warrant is None:
+        return None
+    try:
+        from tenuo_core import encode_warrant_stack
+
+        return encode_warrant_stack(chain or [warrant])
+    except Exception:
+        logger.debug(
+            "encode_warrant_stack failed for Nexus denial audit; "
+            "proceeding without warrant_stack_override",
+            exc_info=True,
+        )
+        return None
 
 
 def _ctx_tool_name(

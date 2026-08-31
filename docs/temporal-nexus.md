@@ -126,10 +126,10 @@ The supported APIs are:
 ### Workflow-backed Nexus operations
 
 Python Nexus handlers commonly call `ctx.start_workflow(...)` from a
-`@nexus.workflow_run_operation`. In the Python SDK version exercised by this
-branch, that method does not expose a workflow `headers=` parameter. Tenuo's
-high-level workflow-backed helpers therefore use an explicit workflow-input
-envelope plus a bootstrap helper in the handler workflow.
+`@nexus.workflow_run_operation`. Tenuo's high-level workflow-backed helpers use
+an explicit workflow-input envelope plus a bootstrap helper in the handler
+workflow so delegated authority remains visible in application code rather
+than hidden in transport plumbing.
 
 Tenuo's client interceptor can inject headers into Nexus backing workflow
 starts without dropping Nexus-specific fields such as `request_id`, callbacks,

@@ -344,8 +344,9 @@ class _TenuoWorkflowOutboundInterceptor:
 
         return self._next.continue_as_new(input)
 
-    # ``start_nexus_operation`` is intentionally not overridden: Nexus
-    # operations are out of scope for Tenuo authorization.
+    # Nexus operation authorization is implemented in ``temporal._nexus``.
+    # The workflow interceptor does not override ``start_nexus_operation`` so
+    # mixed services can adopt Nexus protection explicitly per operation.
 
     def start_local_activity(self, input: Any) -> Any:
         """Block protected local activities unless @unprotected is set."""
