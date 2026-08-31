@@ -171,6 +171,31 @@ class TestPopDedupStoreIsBounded:
             "size-cap eviction is broken"
         )
 
+    def test_owner_cache_eviction_uses_interval_guard(self) -> None:
+        from tenuo.temporal._dedup import InMemoryPopDedupStore
+
+        store = InMemoryPopDedupStore()
+        store._owner_cache["old"] = (0.0, "request-old")
+        store._last_owner_evict = 100.0
+
+        store.check_pop_replay_for_owner(
+            dedup_key="fresh-before-interval",
+            owner_id="request-new",
+            now=120.0,
+            ttl_seconds=10.0,
+            activity_name="nexus-op",
+        )
+        assert "old" in store._owner_cache
+
+        store.check_pop_replay_for_owner(
+            dedup_key="fresh-after-interval",
+            owner_id="request-newer",
+            now=161.0,
+            ttl_seconds=10.0,
+            activity_name="nexus-op",
+        )
+        assert "old" not in store._owner_cache
+
 
 # ── _workflow_headers_store: cleanup-on-completion drains to zero ──────
 

@@ -270,9 +270,11 @@ shared owner-aware `pop_dedup_store` for multi-worker or multi-namespace
 deployments.
 
 Replay suppression still does not make arbitrary handler side effects
-idempotent. For workflow-backed operations, derive a stable workflow id from
-the business request and use Temporal's workflow id conflict policy to dedupe
-retried or duplicated Nexus starts.
+idempotent, and a captured PoP replayed with the captured `request_id` is
+indistinguishable from Temporal redelivery. For workflow-backed operations,
+derive a stable workflow id from the business request and use Temporal's
+workflow id conflict policy to dedupe retried or duplicated Nexus starts; sync
+operations need their own business idempotency if duplicate effects matter.
 `tenuo_create_nexus_workflow_envelope(...)` and
 `tenuo_forward_nexus_authority(...)` require `workflow_id=` so the envelope is
 bound to that exact backing workflow.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Protocol, Tuple, Union
+from typing import Protocol, Tuple
 
 from tenuo.temporal._state import _DEDUP_EVICT_INTERVAL, _DEDUP_MAX_SIZE
 from tenuo.temporal.exceptions import PopVerificationError
@@ -87,13 +87,14 @@ class InMemoryPopDedupStore:
     so size-cap eviction pops from the front in O(excess) instead of sorting.
     """
 
-    __slots__ = ("cache", "_owner_cache", "_last_evict", "_lock")
+    __slots__ = ("cache", "_owner_cache", "_last_evict", "_last_owner_evict", "_lock")
 
     def __init__(self) -> None:
         from collections import OrderedDict
         self.cache: OrderedDict[str, float] = OrderedDict()
         self._owner_cache: OrderedDict[str, Tuple[float, str]] = OrderedDict()
         self._last_evict: float = 0.0
+        self._last_owner_evict: float = 0.0
         self._lock = threading.Lock()
 
     def check_pop_replay(
@@ -153,24 +154,20 @@ class InMemoryPopDedupStore:
             if dedup_key in self._owner_cache:
                 del self._owner_cache[dedup_key]
             self._owner_cache[dedup_key] = (now, owner_id)
-            self._evict_owner_cache(now, ttl_seconds)
+            if (now - self._last_owner_evict) >= _DEDUP_EVICT_INTERVAL:
+                self._last_owner_evict = now
+                self._evict_owner_cache(now, ttl_seconds)
+
+            while len(self._owner_cache) > _DEDUP_MAX_SIZE:
+                self._owner_cache.popitem(last=False)
 
     def _evict_owner_cache(self, now: float, ttl_seconds: float) -> None:
         expired = [
-            k for k, value in self._owner_cache.items()
-            if (now - _owner_timestamp(value)) >= ttl_seconds
+            k for k, (last_seen, _owner) in self._owner_cache.items()
+            if (now - last_seen) >= ttl_seconds
         ]
         for k in expired:
             del self._owner_cache[k]
-
-        while len(self._owner_cache) > _DEDUP_MAX_SIZE:
-            self._owner_cache.popitem(last=False)
-
-
-def _owner_timestamp(value: Union[float, Tuple[float, str]]) -> float:
-    if isinstance(value, tuple):
-        return value[0]
-    return value
 
 
 _default_pop_dedup_store = InMemoryPopDedupStore()

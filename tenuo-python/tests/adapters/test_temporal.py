@@ -4940,6 +4940,25 @@ class TestInMemoryPopDedupStoreWarning:
             f"expected no in-memory-dedup WARNING, got: {messages}"
         )
 
+    def test_strict_nexus_replay_requires_owner_aware_store_at_startup(self):
+        from tenuo import SigningKey
+        from tenuo.exceptions import ConfigurationError
+
+        class ActivityOnlyDedupStore:
+            def check_pop_replay(self, *args, **kwargs):
+                return None
+
+        control_key = SigningKey.generate()
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            pop_dedup_store=ActivityOnlyDedupStore(),
+            nexus_pop_replay_protection=True,
+        )
+
+        with pytest.raises(ConfigurationError, match="check_pop_replay_for_owner"):
+            TenuoWorkerInterceptor(cfg)
+
 
 # =============================================================================
 # Main

@@ -871,11 +871,13 @@ def _check_nexus_pop_replay(
     request_id = _ctx_request_id(ctx)
     dedup_key = f"nexus-pop:{hashlib.sha256(pop_bytes).hexdigest()}"
     now = time.time()
+    from tenuo_core import Warrant
+
     owner_method(
         dedup_key,
         request_id,
         now,
-        120.0,
+        float(Warrant.dedup_ttl_secs()),
         activity_name=tool_name,
     )
 
