@@ -5,6 +5,7 @@ import {
   inspectParts,
   inspectWarrant,
   signApproval,
+  signPublishedRevocationList,
   signRevocationList,
   sessionFromChain,
   sessionFromParts,
@@ -486,5 +487,19 @@ describe("A.22 cascading revocation", () => {
     expect(() => verifierContext([CONTROL_PLANE_PUB], { revocationList: forged })).toThrow(
       /trusted root/,
     );
+  });
+
+  it("rejects a published SRL that rolls the version backwards", () => {
+    const v2 = signPublishedRevocationList(CONTROL_PLANE_SECRET, [A22_CHILD_ID], 2);
+    const v1 = signPublishedRevocationList(CONTROL_PLANE_SECRET, [A22_CHILD_ID], 1);
+    const ctx = verifierContext([CONTROL_PLANE_PUB], { revocationList: v2 });
+    expect(() => ctx.loadRevocationList(v1)).toThrow(/rollback/i);
+  });
+
+  it("rejects a same-version published SRL that changes the revoked set", () => {
+    const first = signPublishedRevocationList(CONTROL_PLANE_SECRET, [A22_CHILD_ID], 2);
+    const mutated = signPublishedRevocationList(CONTROL_PLANE_SECRET, [A22_ROOT_ID], 2);
+    const ctx = verifierContext([CONTROL_PLANE_PUB], { revocationList: first });
+    expect(() => ctx.loadRevocationList(mutated)).toThrow(/changed at version/i);
   });
 });

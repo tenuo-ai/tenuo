@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   ApprovalRequiredError,
   AuthorizationDeniedError,
@@ -11,7 +11,7 @@ import {
   TenuoError,
   under,
 } from "../src/index.ts";
-import type { ToolLike } from "../src/index.ts";
+import type { ExecuteOptions, ProtectedTool, ToolLike } from "../src/index.ts";
 import {
   devContext,
   exportSession,
@@ -22,6 +22,21 @@ import {
   wrapSession,
 } from "../src/testkit.ts";
 import { APPROVER1_PUB, APPROVER1_SECRET, APPROVER2_PUB, APPROVER2_SECRET } from "./vectors/spec.ts";
+
+describe("ProtectedTool types", () => {
+  it("intersects the original execute context and returns a Promise", () => {
+    type Inner = {
+      description: string;
+      execute: (args: { path: string }, options?: { abortSignal?: AbortSignal }) => string;
+    };
+    type Wrapped = ProtectedTool<Inner>;
+    type Ctx = NonNullable<Parameters<Wrapped["execute"]>[1]>;
+    expectTypeOf<Ctx>().toMatchTypeOf<ExecuteOptions & { abortSignal?: AbortSignal }>();
+    expectTypeOf<Ctx>().toHaveProperty("session");
+    expectTypeOf<Ctx>().toHaveProperty("abortSignal");
+    expectTypeOf<ReturnType<Wrapped["execute"]>>().toEqualTypeOf<Promise<string>>();
+  });
+});
 
 describe("createTenuo", () => {
   it("rejects an empty trust set", () => {
@@ -73,12 +88,9 @@ describe("createTenuo", () => {
     delete process.env.TENUO_TEST_HOLDER;
   });
 
-  it("refuses a tool with an empty allow policy", () => {
+  it("refuses a session with neither tools nor allow", () => {
     const tenuo = createTenuo({ root: createTenuo.devRoot() });
-    const inner: ToolLike<{ path: string }, string> = {
-      execute: async ({ path }) => path,
-    };
-    expect(() => tenuo.tool(inner, { allow: {} })).toThrow(/non-empty allow policy/);
+    expect(() => tenuo.session({})).toThrow(/tools from tenuo\.tool\(\)|capability in allow/);
   });
 });
 
@@ -211,6 +223,106 @@ describe("authorize through WASM", () => {
       allow: { search: { q: pattern("report*") } },
     });
     await expect(search.execute({ q: "report-q3" }, { session })).resolves.toBe("report-q3");
+  });
+});
+
+describe("tool allow and session({ tools })", () => {
+  it("mints from wrapped tools so allow is written once", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    let executed: string | undefined;
+    const readFile = tenuo.tool(
+      {
+        execute: async ({ path }: { path: string }) => {
+          executed = path;
+          return path;
+        },
+      },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    const session = tenuo.session({ tools: [readFile] });
+    await expect(
+      tenuo.withSession(session, () => readFile.execute({ path: "/data/q3.pdf" })),
+    ).resolves.toBe("/data/q3.pdf");
+    await expect(
+      tenuo.withSession(session, () => readFile.execute({ path: "/etc/passwd" })),
+    ).rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION" });
+    expect(executed).toBe("/data/q3.pdf");
+  });
+
+  it("ANDs a tighter wrapper with a wider session", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    let executed = false;
+    const readFile = tenuo.tool(
+      {
+        execute: async ({ path }: { path: string }) => {
+          executed = true;
+          return path;
+        },
+      },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    const session = tenuo.session({
+      allow: { read_file: { path: under("/") } },
+    });
+    await expect(
+      tenuo.withSession(session, () => readFile.execute({ path: "/data/q3.pdf" })),
+    ).resolves.toBe("/data/q3.pdf");
+    executed = false;
+    await expect(
+      tenuo.withSession(session, () => readFile.execute({ path: "/etc/passwd" })),
+    ).rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION", field: "path" });
+    expect(executed).toBe(false);
+  });
+
+  it("ANDs a tighter session with a wider wrapper", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    let executed = false;
+    const readFile = tenuo.tool(
+      {
+        execute: async ({ path }: { path: string }) => {
+          executed = true;
+          return path;
+        },
+      },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    const session = tenuo.session({
+      allow: { read_file: { path: under("/data/reports") } },
+    });
+    await expect(
+      tenuo.withSession(session, () => readFile.execute({ path: "/data/reports/q3.pdf" })),
+    ).resolves.toBe("/data/reports/q3.pdf");
+    executed = false;
+    await expect(
+      tenuo.withSession(session, () => readFile.execute({ path: "/data/other.txt" })),
+    ).rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION" });
+    expect(executed).toBe(false);
+  });
+
+  it("rejects session allow that disagrees with tools", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const readFile = tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    expect(() =>
+      tenuo.session({
+        tools: [readFile],
+        allow: { read_file: { path: under("/") } },
+      }),
+    ).toThrow(/disagree on read_file/);
+  });
+
+  it("accepts a no-arg tool with an empty allow and mints from it", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const ping = tenuo.tool(
+      { execute: async (_args: Record<string, never>) => "pong" },
+      { capability: "ping", allow: {} },
+    );
+    const session = tenuo.session({ tools: [ping] });
+    await expect(tenuo.withSession(session, () => ping.execute({} as Record<string, never>))).resolves.toBe(
+      "pong",
+    );
   });
 });
 

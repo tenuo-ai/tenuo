@@ -1765,15 +1765,21 @@ impl Authorizer {
     /// Install revoked warrant IDs after the caller has verified the list signature.
     ///
     /// Used for published generator envelopes whose payload encoding differs from
-    /// the in-memory SRL codec. TypeScript must not call this; WASM verifies first.
+    /// the in-memory SRL codec. TypeScript must not call this; WASM verifies first
+    /// and must pass the signed version so rollback cannot restore a prior list.
     pub fn install_verified_revocation_ids(
         &mut self,
         ids: impl IntoIterator<Item = impl Into<String>>,
+        version: u64,
     ) -> Result<()> {
         let throwaway = SigningKey::generate();
         let srl = SignedRevocationList::builder()
             .revoke_all(ids)
+            .version(version)
             .build(&throwaway)?;
+        if let Some(current) = &self.revocation_list {
+            ensure_srl_not_replaced_or_rolled_back(current, &srl)?;
+        }
         self.revocation_list = Some(srl);
         Ok(())
     }
@@ -3215,6 +3221,36 @@ mod tests {
                 attempted: 1
             }
         ));
+    }
+
+    #[test]
+    fn test_authorizer_install_verified_ids_rejects_version_rollback() {
+        let mut authorizer = Authorizer::new();
+        authorizer
+            .install_verified_revocation_ids(["tnu_wrt_revoked"], 2)
+            .unwrap();
+        let error = authorizer
+            .install_verified_revocation_ids(["tnu_wrt_revoked"], 1)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            Error::SRLVersionRollback {
+                current: 2,
+                attempted: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn test_authorizer_install_verified_ids_rejects_same_version_content_change() {
+        let mut authorizer = Authorizer::new();
+        authorizer
+            .install_verified_revocation_ids(["tnu_wrt_a"], 2)
+            .unwrap();
+        let error = authorizer
+            .install_verified_revocation_ids(["tnu_wrt_b"], 2)
+            .unwrap_err();
+        assert!(matches!(error, Error::SRLContentChanged { version: 2 }));
     }
 
     #[test]

@@ -22,9 +22,7 @@ describe("consumer e2e", () => {
       { capability: "read_file", allow: { path: under("/data") } },
     );
 
-    const session = tenuo.session({
-      allow: { read_file: { path: under("/data") } },
-    });
+    const session = tenuo.session({ tools: [readFile] });
     expect(JSON.stringify(session)).toBe('"[TenuoSession]"');
 
     await expect(

@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type {
+  AllowPolicy,
   CreateTenuoOptions,
   DevRoot,
   ProtectedTool,
@@ -25,6 +26,7 @@ import {
 } from "./wasm.ts";
 
 const currentSession = new AsyncLocalStorage<Session>();
+const toolPolicies = new WeakMap<object, { capability: string; allow: AllowPolicy }>();
 
 function nodeEnv(): string | undefined {
   if (typeof process === "undefined") {
@@ -182,15 +184,10 @@ class TenuoClient implements Tenuo {
     this.mcp = createMcp(this.context, (decision, tool) => applyDecision(decision, tool));
   }
 
-  tool<T extends { execute: (args: never, options?: never) => unknown }>(
+  tool<T extends { execute: (args: never) => unknown }>(
     inner: T,
     policy: ToolPolicy,
   ): ProtectedTool<T> {
-    if (Object.keys(policy.allow).length === 0) {
-      throw new TenuoConfigurationError(
-        "tenuo.tool() requires a non-empty allow policy. Zod parameters are not authority.",
-      );
-    }
     const capability = capabilityName(inner, policy);
     const original = inner.execute as (
       args: Record<string, unknown>,
@@ -203,6 +200,7 @@ class TenuoClient implements Tenuo {
         capability,
         args,
         approvalsFrom(callOptions),
+        policy.allow,
       );
       emitReceipt(callOptions, decision.receipt);
       if (decision.outcome === "allow") {
@@ -223,14 +221,19 @@ class TenuoClient implements Tenuo {
       );
     };
 
-    return Object.assign(Object.create(Object.getPrototypeOf(inner)), inner, {
+    const wrapped = Object.assign(Object.create(Object.getPrototypeOf(inner)), inner, {
       execute,
     }) as ProtectedTool<T>;
+    toolPolicies.set(wrapped, { capability, allow: { ...policy.allow } });
+    return wrapped;
   }
 
   session(input: SessionInput): Session {
-    if (Object.keys(input.allow).length === 0) {
-      throw new TenuoConfigurationError("tenuo.session() requires at least one capability in allow");
+    const allow = collectSessionAllow(input);
+    if (Object.keys(allow).length === 0) {
+      throw new TenuoConfigurationError(
+        "tenuo.session() requires tools from tenuo.tool() or at least one capability in allow",
+      );
     }
     if (!this.canMint) {
       throw new TenuoConfigurationError(
@@ -246,7 +249,7 @@ class TenuoClient implements Tenuo {
         throw new TenuoConfigurationError("requireApproval.min must be at least 1");
       }
     }
-    const native = this.context.mint(input.allow, ttl, requireApprovalJson(input.requireApproval));
+    const native = this.context.mint(allow, ttl, requireApprovalJson(input.requireApproval));
     return new Session(native);
   }
 
@@ -392,6 +395,43 @@ function resolveSession(callOptions: unknown): Session {
     );
   }
   return ambient;
+}
+
+function collectSessionAllow(input: SessionInput): { [capability: string]: AllowPolicy } {
+  const allow: { [capability: string]: AllowPolicy } = { ...(input.allow ?? {}) };
+  for (const tool of input.tools ?? []) {
+    if (tool === null || typeof tool !== "object") {
+      throw new TenuoConfigurationError("session({ tools }) requires tools from tenuo.tool()");
+    }
+    const policy = toolPolicies.get(tool);
+    if (policy === undefined) {
+      throw new TenuoConfigurationError("session({ tools }) requires tools from tenuo.tool()");
+    }
+    const existing = allow[policy.capability];
+    if (existing !== undefined && !sameAllow(existing, policy.allow)) {
+      throw new TenuoConfigurationError(
+        `session() allow and tools disagree on ${policy.capability}`,
+      );
+    }
+    allow[policy.capability] = policy.allow;
+  }
+  return allow;
+}
+
+function sameAllow(left: AllowPolicy, right: AllowPolicy): boolean {
+  return JSON.stringify(sortedAllow(left)) === JSON.stringify(sortedAllow(right));
+}
+
+function sortedAllow(allow: AllowPolicy): AllowPolicy {
+  const keys = Object.keys(allow).sort();
+  const out: { [field: string]: AllowPolicy[string] } = {};
+  for (const key of keys) {
+    const value = allow[key];
+    if (value !== undefined) {
+      out[key] = value;
+    }
+  }
+  return out;
 }
 
 function createTenuoImpl(options: CreateTenuoOptions = {}): Tenuo {

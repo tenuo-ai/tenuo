@@ -26,9 +26,7 @@ const readFile = tenuo.tool(
   { capability: "read_file", allow: { path: under("/data") } },
 );
 
-const session = tenuo.session({
-  allow: { read_file: { path: under("/data") } },
-});
+const session = tenuo.session({ tools: [readFile] });
 
 await tenuo.withSession(session, async () => {
   await readFile.execute({ path: "/data/q3.pdf" }); // allowed
@@ -36,7 +34,7 @@ await tenuo.withSession(session, async () => {
 });
 ```
 
-Host schemas (Zod or otherwise) answer **valid**. `allow` answers **allowed**. Only Rust can produce an allow.
+Host schemas (Zod or otherwise) answer **valid**. Tool `allow` is the host ceiling. The session is what this agent may do. Rust AND's both; TypeScript does not decide. `session({ tools })` mints from the wrappers so you do not write the same map twice.
 
 `devRoot()` throws when `NODE_ENV=production` unless `TENUO_ALLOW_DEV=1`.
 

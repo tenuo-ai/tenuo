@@ -36,13 +36,20 @@ export type WasmSession = object;
 export type WasmContext = {
   mint(allow: unknown, ttlSeconds: number, requireApproval?: unknown): WasmSession;
   narrow(session: WasmSession, allow: unknown): WasmSession;
-  authorize(session: WasmSession, tool: string, args: unknown, approvals?: unknown): WasmDecision;
+  authorize(
+    session: WasmSession,
+    tool: string,
+    args: unknown,
+    approvals?: unknown,
+    toolAllow?: unknown,
+  ): WasmDecision;
   authorizeAsOf(
     session: WasmSession,
     tool: string,
     args: unknown,
     asOf: number,
     approvals?: unknown,
+    toolAllow?: unknown,
   ): WasmDecision;
   loadRevocationList(srl: string): void;
   signRevocationList(ids: string[]): string;
@@ -77,6 +84,7 @@ type Generated = {
     asOf?: number,
   ): string;
   sdkSignRevocationList(ids: string[], issuerSecret: Uint8Array): string;
+  sdkSignPublishedRevocationList(ids: string[], version: number, issuerSecret: Uint8Array): string;
   sdkVerifyReceipt(wire: string): WasmReceipt;
 };
 

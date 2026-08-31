@@ -156,9 +156,9 @@ impl SdkContext {
                 )))
             }
             Err(_) => {
-                let ids = verify_published_srl(&bytes, &self.trusted_roots)?;
+                let published = verify_published_srl(&bytes, &self.trusted_roots)?;
                 self.authorizer
-                    .install_verified_revocation_ids(ids)
+                    .install_verified_revocation_ids(published.revoked_ids, published.version)
                     .map_err(|e| JsError::new(&format!("failed to install revocation list: {e}")))
             }
         }
@@ -264,6 +264,9 @@ impl SdkContext {
     }
 
     /// Sign PoP and authorize in one call. Never returns allow without a core allow.
+    ///
+    /// `tool_allow` is the wrapper ceiling (`tenuo.tool(..., { allow })`). Null/undefined
+    /// means no extra ceiling. Session and ceiling are AND'd; Rust decides both.
     #[wasm_bindgen]
     pub fn authorize(
         &self,
@@ -271,8 +274,9 @@ impl SdkContext {
         tool: &str,
         args_json: JsValue,
         approvals: JsValue,
+        tool_allow: JsValue,
     ) -> JsValue {
-        self.authorize_inner(session, tool, args_json, approvals, None)
+        self.authorize_inner(session, tool, args_json, approvals, tool_allow, None)
     }
 
     /// Test / replay seam. Not exposed on `createTenuo` or `execute`.
@@ -284,8 +288,16 @@ impl SdkContext {
         args_json: JsValue,
         as_of: f64,
         approvals: JsValue,
+        tool_allow: JsValue,
     ) -> JsValue {
-        self.authorize_inner(session, tool, args_json, approvals, Some(as_of as i64))
+        self.authorize_inner(
+            session,
+            tool,
+            args_json,
+            approvals,
+            tool_allow,
+            Some(as_of as i64),
+        )
     }
 
     /// Holder PoP only. Does not authorize. Used to fill `_meta.tenuo.signature`.
@@ -433,6 +445,18 @@ pub fn sdk_sign_revocation_list(ids: JsValue, issuer_secret: &[u8]) -> Result<St
     sign_srl_hex(ids, &issuer)
 }
 
+/// Test seam. Signs the published generator envelope (not the in-memory SRL codec).
+#[wasm_bindgen(js_name = sdkSignPublishedRevocationList)]
+pub fn sdk_sign_published_revocation_list(
+    ids: JsValue,
+    version: u32,
+    issuer_secret: &[u8],
+) -> Result<String, JsError> {
+    init_panic_hook();
+    let issuer = parse_holder_secret(issuer_secret)?;
+    sign_published_srl_hex(ids, u64::from(version), &issuer)
+}
+
 /// Signature authenticity only. Not authorization.
 #[wasm_bindgen(js_name = sdkVerifyReceipt)]
 pub fn sdk_verify_receipt(wire: &str) -> Result<JsValue, JsError> {
@@ -514,6 +538,7 @@ impl SdkContext {
         tool: &str,
         args_json: JsValue,
         approvals_json: JsValue,
+        tool_allow: JsValue,
         as_of: Option<i64>,
     ) -> JsValue {
         init_panic_hook();
@@ -640,6 +665,18 @@ impl SdkContext {
 
         match result {
             Ok(_) => {
+                if let Err(e) = apply_tool_ceiling(&tool_allow, &args) {
+                    return self.finish_decision(
+                        &session.chain,
+                        tool,
+                        timestamp,
+                        &request_id,
+                        deny_from_error(&e),
+                        Some(&signature),
+                        true,
+                        Some(e.name()),
+                    );
+                }
                 let mut obj = serde_json::Map::new();
                 for (k, v) in &args {
                     obj.insert(k.clone(), cv_to_json(v));
@@ -1325,14 +1362,59 @@ struct PublishedSrlPayload {
     issuer: [u8; 32],
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct PublishedSrl {
     payload: PublishedSrlPayload,
     #[serde(with = "serde_bytes")]
     signature: Vec<u8>,
 }
 
-fn verify_published_srl(bytes: &[u8], trusted_roots: &[PublicKey]) -> Result<Vec<String>, JsError> {
+fn published_srl_preimage(payload: &PublishedSrlPayload) -> Result<Vec<u8>, JsError> {
+    let mut payload_bytes = Vec::new();
+    ciborium::into_writer(payload, &mut payload_bytes)
+        .map_err(|e| JsError::new(&format!("failed to encode revocation payload: {e}")))?;
+    let mut preimage = Vec::with_capacity(b"tenuo-srl-v1".len() + payload_bytes.len());
+    preimage.extend_from_slice(b"tenuo-srl-v1");
+    preimage.extend_from_slice(&payload_bytes);
+    Ok(preimage)
+}
+
+fn sign_published_srl_hex(
+    ids: JsValue,
+    version: u64,
+    issuer: &SigningKey,
+) -> Result<String, JsError> {
+    let revoked: Vec<String> = serde_wasm_bindgen::from_value(ids)
+        .map_err(|e| JsError::new(&format!("revoked ids must be an array of strings: {e}")))?;
+    if revoked.is_empty() {
+        return Err(JsError::new(
+            "revocation list must name at least one warrant id",
+        ));
+    }
+    if version == 0 {
+        return Err(JsError::new("revocation list version must be at least 1"));
+    }
+    let payload = PublishedSrlPayload {
+        revoked_ids: revoked,
+        version,
+        issued_at: Utc::now().timestamp().max(0) as u64,
+        issuer: issuer.public_key().to_bytes(),
+    };
+    let preimage = published_srl_preimage(&payload)?;
+    let published = PublishedSrl {
+        payload,
+        signature: issuer.sign(&preimage).to_bytes().to_vec(),
+    };
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&published, &mut bytes)
+        .map_err(|e| JsError::new(&format!("failed to encode revocation list: {e}")))?;
+    Ok(hex::encode(bytes))
+}
+
+fn verify_published_srl(
+    bytes: &[u8],
+    trusted_roots: &[PublicKey],
+) -> Result<PublishedSrlPayload, JsError> {
     let published: PublishedSrl = ciborium::from_reader(bytes)
         .map_err(|e| JsError::new(&format!("invalid revocation list: {e}")))?;
     if published.signature.len() != 64 {
@@ -1343,13 +1425,7 @@ fn verify_published_srl(bytes: &[u8], trusted_roots: &[PublicKey]) -> Result<Vec
     let signature = Signature::from_bytes(&sig)
         .map_err(|e| JsError::new(&format!("invalid revocation list signature: {e}")))?;
 
-    let mut payload_bytes = Vec::new();
-    ciborium::into_writer(&published.payload, &mut payload_bytes)
-        .map_err(|e| JsError::new(&format!("failed to encode revocation payload: {e}")))?;
-    let mut preimage = Vec::with_capacity(b"tenuo-srl-v1".len() + payload_bytes.len());
-    preimage.extend_from_slice(b"tenuo-srl-v1");
-    preimage.extend_from_slice(&payload_bytes);
-
+    let preimage = published_srl_preimage(&published.payload)?;
     let issuer = PublicKey::from_bytes(&published.payload.issuer)
         .map_err(|e| JsError::new(&format!("invalid revocation list issuer: {e}")))?;
     if !trusted_roots.iter().any(|root| root == &issuer) {
@@ -1365,7 +1441,7 @@ fn verify_published_srl(bytes: &[u8], trusted_roots: &[PublicKey]) -> Result<Vec
             "revocation list must name at least one warrant id",
         ));
     }
-    Ok(published.payload.revoked_ids)
+    Ok(published.payload)
 }
 
 fn parse_srl_bytes(input: &str) -> Result<Vec<u8>, JsError> {
@@ -1593,6 +1669,34 @@ fn tools_for_narrow(
         out.insert(tool.clone(), constraint_set_from_fields(fields)?);
     }
     Ok(out)
+}
+
+/// Wrapper `allow` ceiling. Null/undefined: no extra gate. Empty object: open.
+fn apply_tool_ceiling(
+    tool_allow: &JsValue,
+    args: &HashMap<String, ConstraintValue>,
+) -> Result<(), Error> {
+    if tool_allow.is_null() || tool_allow.is_undefined() {
+        return Ok(());
+    }
+    let raw: serde_json::Value = serde_wasm_bindgen::from_value(tool_allow.clone())
+        .map_err(|e| Error::ConfigurationError(format!("invalid tool allow policy: {e}")))?;
+    if raw.is_null() {
+        return Ok(());
+    }
+    let obj = raw
+        .as_object()
+        .ok_or_else(|| Error::ConfigurationError("tool allow must be an object".into()))?;
+    if obj.is_empty() {
+        return Ok(());
+    }
+    let mut set = ConstraintSet::new();
+    for (field, expr) in obj {
+        let constraint = constraint_from_expr(expr)
+            .map_err(|e| Error::ConfigurationError(format!("tool allow.{field}: {e}")))?;
+        set.insert(field.clone(), constraint);
+    }
+    set.matches(args)
 }
 
 fn constraint_set_from_fields(

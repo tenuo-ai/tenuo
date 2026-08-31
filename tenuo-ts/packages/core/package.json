@@ -5,25 +5,24 @@
   "license": "Apache-2.0",
   "type": "module",
   "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     }
   },
   "files": [
-    "src",
-    "src/generated/package.json",
-    "src/generated/tenuo_wasm.js",
-    "src/generated/tenuo_wasm.d.ts",
-    "src/generated/tenuo_wasm_bg.wasm",
-    "src/generated/tenuo_wasm_bg.wasm.d.ts",
+    "dist",
     "README.md"
   ],
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/generated && cp src/generated/package.json src/generated/tenuo_wasm.js src/generated/tenuo_wasm.d.ts src/generated/tenuo_wasm_bg.wasm src/generated/tenuo_wasm_bg.wasm.d.ts dist/generated/",
+    "pack:smoke": "node scripts/pack-smoke.mjs",
     "build:wasm": "pnpm --dir ../.. build:wasm"
   },
   "engines": {

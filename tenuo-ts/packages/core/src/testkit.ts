@@ -63,8 +63,16 @@ export function authorizeAsOf(
   args: unknown,
   asOf: number,
   approvals?: unknown,
+  toolAllow?: unknown,
 ): WasmDecision {
-  return context.authorizeAsOf(nativeSession(session as Session), tool, args, asOf, approvals);
+  return context.authorizeAsOf(
+    nativeSession(session as Session),
+    tool,
+    args,
+    asOf,
+    approvals,
+    toolAllow,
+  );
 }
 
 /** Signs a SignedApproval envelope. Does not authorize. */
@@ -116,6 +124,15 @@ export function signRevocationList(
     return loadWasm().sdkSignRevocationList([...ids], issuer);
   }
   return issuer.signRevocationList([...ids]);
+}
+
+/** Signs the published generator SRL envelope. Does not load it. */
+export function signPublishedRevocationList(
+  issuerSecret: Uint8Array,
+  ids: readonly string[],
+  version: number,
+): string {
+  return loadWasm().sdkSignPublishedRevocationList([...ids], version, issuerSecret);
 }
 
 /** Signature authenticity only. Not authorization. */

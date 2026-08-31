@@ -642,6 +642,10 @@ jobs:
         working-directory: tenuo-ts
         run: pnpm test
 
+      - name: Pack smoke (Node 20)
+        working-directory: tenuo-ts
+        run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke
+
   # ============================================================================
   # DOC CODE BLOCKS
   # ============================================================================

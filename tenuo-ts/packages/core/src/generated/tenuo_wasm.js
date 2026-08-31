@@ -23,17 +23,21 @@ class SdkContext {
     }
     /**
      * Sign PoP and authorize in one call. Never returns allow without a core allow.
+     *
+     * `tool_allow` is the wrapper ceiling (`tenuo.tool(..., { allow })`). Null/undefined
+     * means no extra ceiling. Session and ceiling are AND'd; Rust decides both.
      * @param {SdkSession} session
      * @param {string} tool
      * @param {any} args_json
      * @param {any} approvals
+     * @param {any} tool_allow
      * @returns {any}
      */
-    authorize(session, tool, args_json, approvals) {
+    authorize(session, tool, args_json, approvals, tool_allow) {
         _assertClass(session, SdkSession);
         const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.sdkcontext_authorize(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json, approvals);
+        const ret = wasm.sdkcontext_authorize(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json, approvals, tool_allow);
         return ret;
     }
     /**
@@ -43,13 +47,14 @@ class SdkContext {
      * @param {any} args_json
      * @param {number} as_of
      * @param {any} approvals
+     * @param {any} tool_allow
      * @returns {any}
      */
-    authorizeAsOf(session, tool, args_json, as_of, approvals) {
+    authorizeAsOf(session, tool, args_json, as_of, approvals, tool_allow) {
         _assertClass(session, SdkSession);
         const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.sdkcontext_authorizeAsOf(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json, as_of, approvals);
+        const ret = wasm.sdkcontext_authorizeAsOf(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json, as_of, approvals, tool_allow);
         return ret;
     }
     /**
@@ -652,6 +657,35 @@ function sdkSignApproval(session, tool, args_json, approver_secret, external_id,
     }
 }
 exports.sdkSignApproval = sdkSignApproval;
+
+/**
+ * Test seam. Signs the published generator envelope (not the in-memory SRL codec).
+ * @param {any} ids
+ * @param {number} version
+ * @param {Uint8Array} issuer_secret
+ * @returns {string}
+ */
+function sdkSignPublishedRevocationList(ids, version, issuer_secret) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(issuer_secret, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkSignPublishedRevocationList(ids, version, ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+exports.sdkSignPublishedRevocationList = sdkSignPublishedRevocationList;
 
 /**
  * Test / host seam. Signs an SRL with a provided issuer secret. Does not load it.

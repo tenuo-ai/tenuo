@@ -79,6 +79,7 @@ export type ToolLike<
 };
 
 export type ToolPolicy = {
+  /** Host ceiling. AND'd with the session in Rust. Empty means no extra ceiling. */
   readonly allow: AllowPolicy;
   readonly capability?: string;
 };
@@ -93,15 +94,19 @@ export type ExecuteOptions = {
   readonly onReceipt?: (receipt: string) => void;
 };
 
+type ExtraExecuteOptions<T extends { execute: (args: never) => unknown }> =
+  T["execute"] extends (args: never, options?: infer O) => unknown
+    ? unknown extends O
+      ? object
+      : Omit<NonNullable<O>, keyof ExecuteOptions>
+    : object;
+
 /** Wrapped tool. `execute` still authorizes; optional `{ session }` overrides ALS. */
-export type ProtectedTool<T extends { execute: (args: never, options?: never) => unknown }> = Omit<
-  T,
-  "execute"
-> & {
+export type ProtectedTool<T extends { execute: (args: never) => unknown }> = Omit<T, "execute"> & {
   execute: (
     args: Parameters<T["execute"]>[0],
-    options?: ExecuteOptions,
-  ) => ReturnType<T["execute"]>;
+    options?: ExecuteOptions & ExtraExecuteOptions<T>,
+  ) => Promise<Awaited<ReturnType<T["execute"]>>>;
   readonly [protectedBrand]: true;
 };
 
@@ -112,15 +117,18 @@ export type RequireApproval = {
   readonly tools?: readonly string[];
 };
 
+export type SessionAllow = {
+  readonly [capability: string]: AllowPolicy;
+};
+
 export type SessionInput = {
-  readonly allow: {
-    readonly [capability: string]: AllowPolicy;
-  };
+  /** Capability map. Optional when `tools` is set. */
+  readonly allow?: SessionAllow;
+  /** Wrapped tools from `tenuo.tool()`. Their `allow` is minted into the session. */
+  readonly tools?: readonly object[];
   readonly ttlSeconds?: number;
   readonly requireApproval?: RequireApproval;
 };
-
-export type DenyMode = "tool-error" | "abort";
 
 export type DevRoot = {
   readonly kind: "dev-root";
@@ -143,12 +151,11 @@ export type SessionFromWireInput = {
 };
 
 /** Field-level (`{ path: under("/data") }`) or per-capability (`{ read_file: { path: ... } }`). */
-export type NarrowInput = AllowPolicy | SessionInput["allow"];
+export type NarrowInput = AllowPolicy | SessionAllow;
 
 export type CreateTenuoOptions = {
   readonly trustedRoots?: readonly PublicKeyHandle[];
   readonly root?: DevRoot | PublicKeyHandle;
-  readonly onDeny?: DenyMode;
   /** Published SignedRevocationList (hex or standard base64). Verified against a trusted root. */
   readonly revocationList?: string | Uint8Array;
 };
@@ -175,7 +182,7 @@ export interface Tenuo {
    * Wrap any `{ execute }` tool (Vercel AI SDK, Mastra, plain object).
    * `parameters` / Zod stay on the inner tool and are never treated as authority.
    */
-  tool<T extends { execute: (args: never, options?: never) => unknown }>(
+  tool<T extends { execute: (args: never) => unknown }>(
     inner: T,
     policy: ToolPolicy,
   ): ProtectedTool<T>;

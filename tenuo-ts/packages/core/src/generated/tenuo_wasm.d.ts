@@ -10,12 +10,15 @@ export class SdkContext {
     [Symbol.dispose](): void;
     /**
      * Sign PoP and authorize in one call. Never returns allow without a core allow.
+     *
+     * `tool_allow` is the wrapper ceiling (`tenuo.tool(..., { allow })`). Null/undefined
+     * means no extra ceiling. Session and ceiling are AND'd; Rust decides both.
      */
-    authorize(session: SdkSession, tool: string, args_json: any, approvals: any): any;
+    authorize(session: SdkSession, tool: string, args_json: any, approvals: any, tool_allow: any): any;
     /**
      * Test / replay seam. Not exposed on `createTenuo` or `execute`.
      */
-    authorizeAsOf(session: SdkSession, tool: string, args_json: any, as_of: number, approvals: any): any;
+    authorizeAsOf(session: SdkSession, tool: string, args_json: any, as_of: number, approvals: any, tool_allow: any): any;
     /**
      * Authorize a warrant + PoP presented on the wire. No holder secret.
      */
@@ -193,6 +196,11 @@ export function sdkInspectWarrant(wire: string): any;
  * Test / host seam. Signs a SignedApproval envelope; does not authorize.
  */
 export function sdkSignApproval(session: SdkSession, tool: string, args_json: any, approver_secret: Uint8Array, external_id: string, as_of?: number | null): string;
+
+/**
+ * Test seam. Signs the published generator envelope (not the in-memory SRL codec).
+ */
+export function sdkSignPublishedRevocationList(ids: any, version: number, issuer_secret: Uint8Array): string;
 
 /**
  * Test / host seam. Signs an SRL with a provided issuer secret. Does not load it.
