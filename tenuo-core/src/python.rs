@@ -2566,7 +2566,7 @@ fn py_dict_to_approval_gate_map(
                         if args_val.is_none() {
                             ToolApprovalGate::whole_tool()
                         } else if let Ok(inner) = args_val.cast::<PyDict>() {
-                            ToolApprovalGate::with_args(py_dict_to_arg_approval_gates(&inner)?)
+                            ToolApprovalGate::with_args(py_dict_to_arg_approval_gates(inner)?)
                         } else {
                             return Err(py_validation_err(format!(
                                 "approval gate for '{}': 'args' must be None or a dict of arg gates",
@@ -2581,7 +2581,7 @@ fn py_dict_to_approval_gate_map(
                     continue;
                 }
             }
-            let args = py_dict_to_arg_approval_gates(&args_dict)?;
+            let args = py_dict_to_arg_approval_gates(args_dict)?;
             gm.insert(tool, ToolApprovalGate::with_args(args));
         } else {
             return Err(py_validation_err(format!(
