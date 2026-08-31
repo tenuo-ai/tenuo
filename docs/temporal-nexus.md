@@ -111,10 +111,19 @@ The supported APIs are:
 
 Workflow-backed Nexus operations need one extra design decision. Python Nexus
 handlers commonly call `ctx.start_workflow(...)` from a
-`@nexus.workflow_run_operation`. If the SDK exposes workflow headers for that
-start path, Tenuo should propagate the verified Tenuo context into the handler
-workflow headers. If not, Tenuo needs an explicit signed envelope in workflow
-input, plus a bootstrap helper in the handler workflow.
+`@nexus.workflow_run_operation`. In the Python SDK version exercised by this
+branch, that method does not expose a workflow `headers=` parameter. Tenuo has
+two plausible follow-up paths:
+
+- seed the existing `TenuoClientInterceptor` for the backing workflow id before
+  calling `ctx.start_workflow(...)`; or
+- pass an explicit signed envelope in workflow input, plus a bootstrap helper
+  in the handler workflow.
+
+The first path fits the current Temporal integration, but it also means the
+handler worker client must include the Tenuo client interceptor and the caller
+warrant must be appropriate for any backing-workflow work it will authorize.
+The second path is more explicit, but introduces a new product surface.
 
 The product goal is still the same: authorize both the incoming Nexus operation
 and the work it starts.
@@ -125,8 +134,8 @@ and the work it starts.
    - Confirm exact Python SDK header behavior for Nexus caller and handler
      paths.
    - Add mocked unit tests for caller header emission and handler rejection.
-   - Add one live cross-namespace sample if the Temporal test server supports
-     Nexus endpoints in CI.
+   - Add one live cross-namespace allow/deny smoke test when the local
+     Temporal test server supports Nexus endpoints.
 
 2. **Sync operation support**
    - Add `tenuo_execute_nexus_operation(...)` and
@@ -150,8 +159,8 @@ and the work it starts.
   namespace/task queue when available?
 - Should operation constraints use the service contract operation name, the
   Python handler method name, or an explicit Tenuo tool mapping?
-- Can Temporal's Python SDK pass workflow headers from
-  `WorkflowRunOperationContext.start_workflow(...)` today?
+- Should workflow-backed propagation seed `TenuoClientInterceptor` for the
+  backing workflow id, or use an explicit signed workflow-input envelope?
 - What durable replay/dedup key is available for sync Nexus operations?
 - Should a denied Nexus operation be represented as `UNAUTHORIZED` or as a
   Tenuo-specific non-retryable operation error with structured details?

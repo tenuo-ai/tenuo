@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delegated Tenuo authority across Nexus operation headers. The first slice
   supports caller-side PoP signing plus handler-side warrant, chain, expiry,
   revocation, operation, and input-constraint verification. Workflow-backed
-  Nexus operation propagation remains a follow-up design area.
+  Nexus operation propagation remains a follow-up design area. Added a live
+  cross-namespace Nexus allow/deny smoke test for the real SDK header boundary.
 - **Temporal per-Activity warrant overrides.**
   `tenuo_execute_activity(..., warrant=..., key_id=...)` now applies a
   task-local warrant to one dispatch, including the active delegation chain.
