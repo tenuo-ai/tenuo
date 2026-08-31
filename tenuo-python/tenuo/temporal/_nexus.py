@@ -53,6 +53,10 @@ _TENUO_NEXUS_WORKFLOW_ENVELOPE_VERSION = "tenuo-nexus-workflow-envelope/v1"
 _UNSET = object()
 
 
+class _NexusEndpointMismatch(TenuoContextError):
+    """Raised when the handler context reports a different Nexus endpoint."""
+
+
 @_dataclasses.dataclass(frozen=True)
 class TenuoNexusWorkflowEnvelope:
     """Serializable Tenuo context for workflow-backed Nexus operations."""
@@ -972,9 +976,30 @@ def _verify_nexus_operation(
     operation: Optional[Any],
 ) -> Any:
     raw_headers = _decode_nexus_headers(getattr(ctx, "headers", {}) or {})
-    tool_name = _ctx_tool_name(ctx, endpoint, service, operation)
     args = nexus_input_args(input)
     start_ns = time.perf_counter_ns()
+    try:
+        tool_name = _ctx_tool_name(ctx, endpoint, service, operation)
+    except _NexusEndpointMismatch as exc:
+        warrant = _safe_extract_warrant_from_headers(raw_headers)
+        tool_name = _ctx_tool_name_unchecked(ctx, endpoint, service, operation)
+        endpoint_denial = TemporalConstraintViolation(
+            tool=tool_name,
+            arguments=args,
+            constraint=str(exc),
+            warrant_id=getattr(warrant, "id", None) or "none",
+        )
+        _emit_nexus_control_plane_event(
+            config,
+            ctx,
+            warrant,
+            None,
+            tool_name,
+            args,
+            start_ns=start_ns,
+            exc=endpoint_denial,
+        )
+        raise
     warrant = _extract_warrant_from_headers(raw_headers)
     if warrant is None:
         missing_warrant = TemporalConstraintViolation(
@@ -1129,42 +1154,35 @@ def _emit_nexus_control_plane_event(
     chain_result: Optional[Any] = None,
     exc: Optional[BaseException] = None,
 ) -> None:
-    control_plane = getattr(config, "control_plane", None)
-    if not control_plane:
-        return
+    try:
+        control_plane = getattr(config, "control_plane", None)
+        if not control_plane:
+            return
 
-    from tenuo._enforcement import EnforcementResult
+        from tenuo._enforcement import EnforcementResult
 
-    latency_us = int((time.perf_counter_ns() - start_ns) / 1000)
-    redacted_args = _redact_nexus_args(config, args)
-    request_id = getattr(ctx, "request_id", None)
+        latency_us = int((time.perf_counter_ns() - start_ns) / 1000)
+        redacted_args = _redact_nexus_args(config, args)
+        request_id = getattr(ctx, "request_id", None)
 
-    if exc is None:
-        result = EnforcementResult(
-            allowed=True,
-            tool=tool_name,
-            arguments=redacted_args,
-            warrant_id=getattr(warrant, "id", None),
-            chain_result=chain_result,
-        )
-        try:
+        if exc is None:
+            result = EnforcementResult(
+                allowed=True,
+                tool=tool_name,
+                arguments=redacted_args,
+                warrant_id=getattr(warrant, "id", None),
+                chain_result=chain_result,
+            )
             control_plane.emit_for_enforcement(
                 result,
                 chain_result=chain_result,
                 latency_us=latency_us,
                 request_id=str(request_id) if request_id else None,
             )
-        except Exception:
-            logger.warning(
-                "Control plane emission failed for Nexus allow '%s'; audit event lost",
-                tool_name,
-                exc_info=True,
-            )
-        return
+            return
 
-    result = _nexus_denial_result(exc, tool_name, args, redacted_args, warrant)
-    warrant_stack_b64 = _encode_nexus_warrant_stack_for_denial(warrant, chain)
-    try:
+        result = _nexus_denial_result(exc, tool_name, args, redacted_args, warrant)
+        warrant_stack_b64 = _encode_nexus_warrant_stack_for_denial(warrant, chain)
         control_plane.emit_for_enforcement(
             result,
             chain_result=None,
@@ -1173,11 +1191,35 @@ def _emit_nexus_control_plane_event(
             warrant_stack_override=warrant_stack_b64,
         )
     except Exception:
+        outcome = "allow" if exc is None else "denial"
         logger.warning(
-            "Control plane emission failed for Nexus denial '%s'; audit event lost",
+            "Control plane emission failed for Nexus %s '%s'; audit event lost",
+            outcome,
             tool_name,
             exc_info=True,
         )
+
+
+def _safe_extract_warrant_from_headers(raw_headers: Dict[str, bytes]) -> Optional[Any]:
+    try:
+        return _extract_warrant_from_headers(raw_headers)
+    except Exception:
+        return None
+
+
+def _ctx_tool_name_unchecked(
+    ctx: Any,
+    endpoint: Optional[str],
+    service: Optional[str],
+    operation: Optional[Any],
+) -> str:
+    service_name = service or getattr(ctx, "service", None)
+    operation_name = operation or getattr(ctx, "operation", None)
+    return nexus_tool_name(
+        endpoint or "unknown-endpoint",
+        operation_name or "unknown-operation",
+        service=service_name,
+    )
 
 
 def _redact_nexus_args(config: Any, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -1283,7 +1325,7 @@ def _ctx_tool_name(
 def _validate_ctx_endpoint(ctx: Any, expected_endpoint: str) -> None:
     observed_endpoint = _ctx_endpoint(ctx)
     if observed_endpoint and observed_endpoint != expected_endpoint:
-        raise TenuoContextError(
+        raise _NexusEndpointMismatch(
             "Nexus endpoint mismatch: configured endpoint="
             f"{expected_endpoint!r}, but the handler context reports "
             f"{observed_endpoint!r}."
