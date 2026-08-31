@@ -265,6 +265,31 @@ pub struct ChainVerificationResult {
     /// Approvals that passed full verification and contributed to meeting
     /// the approval threshold. Empty when no approvals were required.
     pub verified_approvals: Vec<VerifiedApproval>,
+    /// The holder's proof-of-possession for this invocation, when one was
+    /// presented and verified.
+    ///
+    /// Carried out of verification so a receipt can record it. Without the PoP
+    /// a receipt attests only that the enforcement point claims a decision was
+    /// reached; with it, a key the enforcement point does not hold corroborates
+    /// that this holder asked for this invocation at this instant.
+    /// `None` on paths that verify a chain without an invocation.
+    ///
+    /// Not part of this type's serialized form: it is an in-process handoff to
+    /// receipt construction, and the receipt is where it acquires a pinned wire
+    /// encoding (payload key 8).
+    #[serde(skip)]
+    pub pop_signature: Option<[u8; 64]>,
+    /// Commitment to the canonical invocation: `H(warrant_id, tool, args,
+    /// holder)` over the PoP view of the arguments.
+    ///
+    /// Derived here rather than left to callers so the bytes a receipt commits
+    /// to come from the same code that authorized the call.
+    /// `None` on paths that verify a chain without an invocation.
+    ///
+    /// Skipped alongside [`Self::pop_signature`] for the same reason: receipts
+    /// (payload key 7) are where these acquire a pinned encoding.
+    #[serde(skip)]
+    pub request_hash: Option<[u8; 32]>,
 }
 
 /// A single step in the verified chain.
@@ -919,6 +944,8 @@ impl DataPlane {
             verified_steps: Vec::new(),
             warrant_stack_b64: None,
             verified_approvals: Vec::new(),
+            pop_signature: None,
+            request_hash: None,
         };
 
         // Step 1: Verify the root warrant is from a trusted key
@@ -2167,6 +2194,8 @@ impl Authorizer {
             verified_steps: Vec::new(),
             warrant_stack_b64: None,
             verified_approvals: Vec::new(),
+            pop_signature: None,
+            request_hash: None,
         };
 
         // Root must be from a trusted key
@@ -2654,8 +2683,127 @@ impl Authorizer {
         let mut result = result;
         result.warrant_stack_b64 = warrant_stack_b64;
         result.verified_approvals = verified_approvals;
+        // Derived from the same leaf and args this authorization just ran
+        // against, so a receipt built from this result cannot disagree with the
+        // decision it records.
+        if let Some(leaf) = chain.last() {
+            result.pop_signature = signature.map(|s| s.to_bytes());
+            result.request_hash = Some(crate::approval::compute_request_hash(
+                &leaf.id().to_string(),
+                tool,
+                pop_args,
+                Some(leaf.authorized_holder()),
+            ));
+        }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod receipt_plumbing_tests {
+    use super::*;
+
+    use crate::constraints::{ConstraintValue, Pattern};
+    use crate::crypto::SigningKey;
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    fn invocation() -> (Warrant, SigningKey, HashMap<String, ConstraintValue>, Authorizer) {
+        let root = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let control_plane = ControlPlane::new(root.clone());
+        let warrant = control_plane
+            .issue_bound_warrant(
+                "read_file",
+                &[("path", Pattern::new("/data/*").unwrap().into())],
+                Duration::from_secs(600),
+                &holder.public_key(),
+            )
+            .unwrap();
+
+        let mut args = HashMap::new();
+        args.insert(
+            "path".to_string(),
+            ConstraintValue::String("/data/q3.pdf".to_string()),
+        );
+
+        let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+        (warrant, holder, args, authorizer)
+    }
+
+    /// The PoP has to survive verification, otherwise a receipt can only relay
+    /// the enforcement point's own claim that a decision happened.
+    #[test]
+    fn carries_the_pop_out_of_a_verified_invocation() {
+        let (warrant, holder, args, authorizer) = invocation();
+        let pop = warrant.sign(&holder, "read_file", &args).unwrap();
+
+        let result = authorizer
+            .check_chain(&[warrant], "read_file", &args, Some(&pop), &[])
+            .expect("chain verifies");
+
+        assert_eq!(
+            result.pop_signature,
+            Some(pop.to_bytes()),
+            "the receipt must record the same PoP the authorization verified"
+        );
+    }
+
+    /// The commitment must be derived by the code that authorized the call, so
+    /// a receipt cannot end up committing to a different invocation than the
+    /// one that was allowed.
+    #[test]
+    fn derives_the_request_hash_from_the_authorized_invocation() {
+        let (warrant, holder, args, authorizer) = invocation();
+        let pop = warrant.sign(&holder, "read_file", &args).unwrap();
+        let expected = crate::approval::compute_request_hash(
+            &warrant.id().to_string(),
+            "read_file",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+
+        let result = authorizer
+            .check_chain(&[warrant], "read_file", &args, Some(&pop), &[])
+            .expect("chain verifies");
+
+        assert_eq!(result.request_hash, Some(expected));
+    }
+
+    /// Different arguments are a different invocation, and the commitment has
+    /// to say so or it cannot pin anything.
+    #[test]
+    fn a_different_invocation_commits_to_different_bytes() {
+        let (warrant, holder, args, authorizer) = invocation();
+        let pop = warrant.sign(&holder, "read_file", &args).unwrap();
+        let first = authorizer
+            .check_chain(std::slice::from_ref(&warrant), "read_file", &args, Some(&pop), &[])
+            .expect("chain verifies");
+
+        let mut other = HashMap::new();
+        other.insert(
+            "path".to_string(),
+            ConstraintValue::String("/data/q4.pdf".to_string()),
+        );
+        let other_pop = warrant.sign(&holder, "read_file", &other).unwrap();
+        let second = authorizer
+            .check_chain(&[warrant], "read_file", &other, Some(&other_pop), &[])
+            .expect("chain verifies");
+
+        assert_ne!(first.request_hash, second.request_hash);
+    }
+
+    /// Chain verification with no invocation has no PoP and nothing to commit
+    /// to; inventing either would be a false claim.
+    #[test]
+    fn leaves_both_absent_when_there_is_no_invocation() {
+        let (warrant, _holder, _args, authorizer) = invocation();
+
+        let result = authorizer.verify_chain(&[warrant]).expect("chain verifies");
+
+        assert_eq!(result.pop_signature, None);
+        assert_eq!(result.request_hash, None);
     }
 }
 
