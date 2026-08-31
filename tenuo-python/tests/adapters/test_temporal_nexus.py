@@ -106,6 +106,11 @@ class RecordingControlPlane:
             self.deny_events.append(event)
 
 
+class FailingControlPlane:
+    def emit_for_enforcement(self, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("control plane unavailable")
+
+
 class FakeNexusClient:
     endpoint = "billing-prod"
     service_name = "BillingService"
@@ -304,6 +309,37 @@ def test_verify_nexus_operation_emits_control_plane_allow(
     }
 
 
+def test_verify_nexus_operation_control_plane_failure_does_not_deny_allow(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    ctx = SimpleNamespace(
+        request_id="req-control-plane-fails-open-for-authz",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        control_plane=FailingControlPlane(),
+    )
+
+    verified = verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+    assert verified.to_bytes() == nexus_warrant.to_bytes()
+
+
 def test_verify_nexus_operation_emits_control_plane_deny_before_reraising(
     nexus_keys: tuple[Any, Any],
     nexus_warrant: Any,
@@ -403,6 +439,45 @@ def test_verify_nexus_operation_rejects_context_endpoint_mismatch(
 
     with pytest.raises(TenuoContextError, match="endpoint mismatch"):
         verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+
+def test_verify_nexus_operation_emits_control_plane_deny_on_endpoint_mismatch(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    control_plane = RecordingControlPlane()
+    ctx = SimpleNamespace(
+        request_id="req-endpoint-mismatch",
+        endpoint="billing-staging",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        control_plane=control_plane,
+    )
+
+    with pytest.raises(TenuoContextError, match="endpoint mismatch"):
+        verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+    assert len(control_plane.deny_events) == 1
+    entry = control_plane.deny_events[0]
+    assert entry["request_id"] == "req-endpoint-mismatch"
+    assert entry["result"].allowed is False
+    assert entry["result"].error_type == "constraint_violation"
+    assert "endpoint mismatch" in entry["result"].constraint_violated
 
 
 def test_verify_nexus_operation_rejects_nexus_info_endpoint_mismatch(
