@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Optional, Tuple
 
 import pytest
 
@@ -71,7 +71,7 @@ class FakeNexusClient:
     service_name = "BillingService"
 
     def __init__(self) -> None:
-        self.execute_call: tuple[Any, Any, dict[str, Any]] | None = None
+        self.execute_call: Optional[Tuple[Any, Any, dict[str, Any]]] = None
 
     async def execute_operation(self, operation: Any, input: Any, **kwargs: Any) -> str:
         self.execute_call = (operation, input, kwargs)
