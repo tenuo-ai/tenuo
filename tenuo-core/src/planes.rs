@@ -2781,14 +2781,17 @@ impl Authorizer {
 mod receipt_plumbing_tests {
     use super::*;
 
-
-
     use crate::constraints::{ConstraintValue, Pattern};
     use crate::crypto::SigningKey;
     use std::collections::HashMap;
     use std::time::Duration;
 
-    fn invocation() -> (Warrant, SigningKey, HashMap<String, ConstraintValue>, Authorizer) {
+    fn invocation() -> (
+        Warrant,
+        SigningKey,
+        HashMap<String, ConstraintValue>,
+        Authorizer,
+    ) {
         let root = SigningKey::generate();
         let holder = SigningKey::generate();
         let control_plane = ControlPlane::new(root.clone());
@@ -2857,7 +2860,13 @@ mod receipt_plumbing_tests {
         let (warrant, holder, args, authorizer) = invocation();
         let pop = warrant.sign(&holder, "read_file", &args).unwrap();
         let first = authorizer
-            .check_chain(std::slice::from_ref(&warrant), "read_file", &args, Some(&pop), &[])
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "read_file",
+                &args,
+                Some(&pop),
+                &[],
+            )
             .expect("chain verifies");
 
         let mut other = HashMap::new();
@@ -2880,11 +2889,23 @@ mod receipt_plumbing_tests {
         let (warrant, holder, args, authorizer) = invocation();
         let pop = warrant.sign(&holder, "read_file", &args).unwrap();
         let result = authorizer
-            .check_chain(std::slice::from_ref(&warrant), "read_file", &args, Some(&pop), &[])
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "read_file",
+                &args,
+                Some(&pop),
+                &[],
+            )
             .expect("chain verifies");
 
         let payload = result
-            .to_receipt_payload("read_file", crate::receipt::Outcome::Allow, 1_700_000_000, "req-1", None)
+            .to_receipt_payload(
+                "read_file",
+                crate::receipt::Outcome::Allow,
+                1_700_000_000,
+                "req-1",
+                None,
+            )
             .expect("a verified chain yields a payload");
 
         assert_eq!(payload.outcome, crate::receipt::Outcome::Allow);
@@ -2901,10 +2922,22 @@ mod receipt_plumbing_tests {
         let (warrant, holder, args, authorizer) = invocation();
         let pop = warrant.sign(&holder, "read_file", &args).unwrap();
         let result = authorizer
-            .check_chain(std::slice::from_ref(&warrant), "read_file", &args, Some(&pop), &[])
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "read_file",
+                &args,
+                Some(&pop),
+                &[],
+            )
             .expect("chain verifies");
         let payload = result
-            .to_receipt_payload("read_file", crate::receipt::Outcome::Allow, 1_700_000_000, "req-1", None)
+            .to_receipt_payload(
+                "read_file",
+                crate::receipt::Outcome::Allow,
+                1_700_000_000,
+                "req-1",
+                None,
+            )
             .unwrap();
 
         let signer = SigningKey::generate();
@@ -2948,7 +2981,10 @@ mod receipt_plumbing_tests {
             .expect("a denial without a PoP is still worth recording");
 
         assert_eq!(payload.pop_signature, None);
-        assert_eq!(payload.decision_code.as_deref(), Some("tool-not-authorized"));
+        assert_eq!(
+            payload.decision_code.as_deref(),
+            Some("tool-not-authorized")
+        );
         assert!(payload.check_conditional_requirements().is_ok());
     }
 

@@ -757,7 +757,7 @@ def verify_receipt_chain(path: str, *, verbose: bool = False) -> bool:
         print("❌ tenuo_core is not available")
         return False
 
-    lines = [l for l in Path(path).read_text(encoding="utf-8").splitlines() if l.strip()]
+    lines = [line for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
     if not lines:
         print(f"❌ No receipts in {path}")
         return False

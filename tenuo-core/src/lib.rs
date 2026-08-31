@@ -96,8 +96,7 @@ pub use planes::{
     VerifiedApproval, DEFAULT_CLOCK_TOLERANCE_SECS,
 };
 pub use receipt::{
-    policy_commitment_digest, srl_commitment_digest, trusted_roots_digest, Receipt,
-    ReceiptPayload,
+    policy_commitment_digest, srl_commitment_digest, trusted_roots_digest, Receipt, ReceiptPayload,
 };
 pub use revocation::{
     RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,

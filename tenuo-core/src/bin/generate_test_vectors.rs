@@ -3046,8 +3046,8 @@ fn main() {
         min_approvals: None,
     };
     let warrant_a30 = sign_payload(&payload_a30, &control_plane);
-    let chain_a30 = wire::encode_stack(&WarrantStack(vec![warrant_a30.clone()]))
-        .expect("A.30 chain encodes");
+    let chain_a30 =
+        wire::encode_stack(&WarrantStack(vec![warrant_a30.clone()])).expect("A.30 chain encodes");
 
     let mut args_a30: HashMap<String, ConstraintValue> = HashMap::new();
     args_a30.insert(
@@ -3103,7 +3103,10 @@ fn main() {
     let mut payload_a30_2 = base_a30();
     payload_a30_2.srl_hash = Some(srl_digest_a30);
     let receipt_a30_2 = Receipt::create(&payload_a30_2, &authorizer).expect("A.30.2 signs");
-    println!("**Key 13 input:** `SHA-256(\"{}\")`", String::from_utf8_lossy(SRL_DIGEST_INPUT_A30));
+    println!(
+        "**Key 13 input:** `SHA-256(\"{}\")`",
+        String::from_utf8_lossy(SRL_DIGEST_INPUT_A30)
+    );
     println!();
     print_receipt_vector(
         "A.30.2 Allow, Unversioned Revocation Commitment",
@@ -3149,8 +3152,7 @@ fn main() {
     let mut payload_a30_5 = base_a30();
     payload_a30_5.request_id = "req-a30-second".to_string();
     payload_a30_5.srl_hash = Some(srl_digest_a30);
-    payload_a30_5.prev_receipt_hash =
-        Some(receipt_a30_2.digest().expect("A.30.2 digests"));
+    payload_a30_5.prev_receipt_hash = Some(receipt_a30_2.digest().expect("A.30.2 digests"));
     let receipt_a30_5 = Receipt::create(&payload_a30_5, &authorizer).expect("A.30.5 signs");
     println!(
         "**Key 14 input:** SHA-256 over the complete A.30.2 receipt bytes, `{}`",

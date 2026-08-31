@@ -506,8 +506,7 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                         }
                         14 => {
                             let bytes: serde_bytes::ByteBuf = map.next_value()?;
-                            prev_receipt_hash =
-                                Some(fixed(bytes.into_vec(), "prev_receipt_hash")?);
+                            prev_receipt_hash = Some(fixed(bytes.into_vec(), "prev_receipt_hash")?);
                         }
                         15 => {
                             let bytes: serde_bytes::ByteBuf = map.next_value()?;
@@ -727,9 +726,10 @@ mod tests {
     fn rejects_an_srl_hash_that_is_not_32_bytes() {
         let mut bytes = Vec::new();
         ciborium::into_writer(
-            &ciborium::Value::Map(vec![
-                (ciborium::Value::Integer(13u8.into()), ciborium::Value::Bytes(vec![0u8; 31])),
-            ]),
+            &ciborium::Value::Map(vec![(
+                ciborium::Value::Integer(13u8.into()),
+                ciborium::Value::Bytes(vec![0u8; 31]),
+            )]),
             &mut bytes,
         )
         .unwrap();
@@ -772,8 +772,14 @@ mod tests {
             other => panic!("payload must encode as a CBOR map, got {:?}", other),
         };
 
-        assert!(!keys.contains(&14), "key 14 must be omitted, not zero-filled");
-        assert!(!keys.contains(&15), "key 15 must be omitted, not zero-filled");
+        assert!(
+            !keys.contains(&14),
+            "key 14 must be omitted, not zero-filled"
+        );
+        assert!(
+            !keys.contains(&15),
+            "key 15 must be omitted, not zero-filled"
+        );
     }
 
     /// The commitment must describe the set, not the order it was loaded in,
@@ -784,7 +790,10 @@ mod tests {
         let b = [2u8; 32];
 
         assert_eq!(trusted_roots_digest(&[a, b]), trusted_roots_digest(&[b, a]));
-        assert_eq!(trusted_roots_digest(&[a, b]), trusted_roots_digest(&[b, a, a]));
+        assert_eq!(
+            trusted_roots_digest(&[a, b]),
+            trusted_roots_digest(&[b, a, a])
+        );
         assert_ne!(trusted_roots_digest(&[a]), trusted_roots_digest(&[a, b]));
     }
 
@@ -792,7 +801,10 @@ mod tests {
     /// point that trusts nothing is not the same as one that never said.
     #[test]
     fn an_empty_root_set_has_its_own_commitment() {
-        assert_ne!(trusted_roots_digest(&[]), trusted_roots_digest(&[[1u8; 32]]));
+        assert_ne!(
+            trusted_roots_digest(&[]),
+            trusted_roots_digest(&[[1u8; 32]])
+        );
     }
 
     #[test]
@@ -861,7 +873,10 @@ mod tests {
             .iter()
             .map(|(k, _)| k.as_integer().unwrap().into())
             .collect();
-        assert_eq!(keys, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        assert_eq!(
+            keys,
+            vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        );
     }
 
     #[test]

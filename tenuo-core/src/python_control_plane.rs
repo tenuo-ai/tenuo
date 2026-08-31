@@ -342,10 +342,9 @@ impl PyControlPlaneClient {
             trusted_roots_hash: authorizer.trusted_roots_hash_bytes(),
             srl_commitment: authorizer.srl_commitment_value(),
         };
-        let mut guard = self
-            .trust
-            .lock()
-            .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned"))?;
+        let mut guard = self.trust.lock().map_err(|_| {
+            pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned")
+        })?;
         *guard = Some(context);
         Ok(())
     }
@@ -376,10 +375,9 @@ impl PyControlPlaneClient {
         decision_code: Option<&str>,
     ) -> PyResult<Option<String>> {
         let trust = {
-            let guard = self
-                .trust
-                .lock()
-                .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned"))?;
+            let guard = self.trust.lock().map_err(|_| {
+                pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned")
+            })?;
             match *guard {
                 Some(t) => t,
                 None => return Ok(None),
@@ -409,10 +407,9 @@ impl PyControlPlaneClient {
             payload.srl_hash = Some(digest);
         }
 
-        let mut link = self
-            .last_receipt_hash
-            .lock()
-            .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("receipt chain lock poisoned"))?;
+        let mut link = self.last_receipt_hash.lock().map_err(|_| {
+            pyo3::exceptions::PyRuntimeError::new_err("receipt chain lock poisoned")
+        })?;
         payload.prev_receipt_hash = *link;
 
         let receipt =
@@ -420,8 +417,9 @@ impl PyControlPlaneClient {
         let digest = receipt.digest().map_err(to_py_err)?;
 
         let mut bytes = Vec::new();
-        ciborium::into_writer(&receipt, &mut bytes)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("failed to encode receipt: {e}")))?;
+        ciborium::into_writer(&receipt, &mut bytes).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("failed to encode receipt: {e}"))
+        })?;
 
         // Advance only once the receipt actually encoded, so a failure cannot
         // silently break every later link.
