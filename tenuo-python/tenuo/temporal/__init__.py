@@ -75,6 +75,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "workflow_issue_execution": ("tenuo.temporal._workflow", "workflow_issue_execution"),
     "set_activity_approvals": ("tenuo.temporal._workflow", "set_activity_approvals"),
     "tenuo_continue_as_new": ("tenuo.temporal._workflow", "tenuo_continue_as_new"),
+    "create_scheduled_workflow_with_warrant": ("tenuo.temporal._workflow", "create_scheduled_workflow_with_warrant"),
+    "tenuo_complete_async_activity": ("tenuo.temporal._workflow", "tenuo_complete_async_activity"),
     # _state — public escape hatch for manual worker setup
     "register_worker_config": ("tenuo.temporal._state", "register_worker_config"),
     # _workflow — manual-setup helper: Tenuo-owned activities every worker must register

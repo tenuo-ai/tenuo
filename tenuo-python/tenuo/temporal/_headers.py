@@ -5,7 +5,7 @@ from __future__ import annotations
 import binascii
 import gzip
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from tenuo.temporal._constants import (
     TENUO_COMPRESSED_HEADER,
@@ -87,6 +87,19 @@ def tenuo_headers(
         headers[TENUO_COMPRESSED_HEADER] = b"0"
 
     return headers
+
+
+def _validate_chain_ends_with_warrant(
+    chain: List[Any],
+    warrant: Any,
+    *,
+    operation: str,
+) -> None:
+    """Bind a separately supplied warrant to its asserted chain leaf."""
+    if not chain:
+        raise TenuoContextError(f"{operation}: warrant_chain must not be empty.")
+    if chain[-1].to_bytes() != warrant.to_bytes():
+        raise TenuoContextError(f"{operation}: warrant_chain must end with warrant.")
 
 
 def _extract_warrant_from_headers(headers: Dict[str, bytes]) -> Any:

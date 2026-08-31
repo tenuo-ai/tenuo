@@ -63,13 +63,25 @@ def test_configure_worker_merges_interceptor_and_runner() -> None:
     # Unified ``interceptors=`` SimplePlugin reads the client's interceptor list when merging.
     mock_client = MagicMock()
     mock_client.config.return_value = {"interceptors": [ci]}
-    cfg: dict = {"client": mock_client}
+    cfg: dict = {"client": mock_client, "task_queue": "plugin-test-queue"}
     out = p.configure_worker(cfg)
     inters = out.get("interceptors") or []
     assert len(inters) == 1
     assert isinstance(inters[0], TenuoWorkerInterceptor)
     wr = out.get("workflow_runner")
     assert isinstance(wr, SandboxedWorkflowRunner)
+
+
+def test_configure_worker_rejects_missing_task_queue() -> None:
+    """Missing queue configuration must fail during Worker setup."""
+    from tenuo.exceptions import ConfigurationError
+
+    p = TenuoTemporalPlugin(_minimal_config())
+    mock_client = MagicMock()
+    mock_client.config.return_value = {"interceptors": [p.client_interceptor]}
+
+    with pytest.raises(ConfigurationError, match="requires a non-empty task_queue"):
+        p.configure_worker({"client": mock_client})
 
 
 def test_configure_client_merges_client_interceptors() -> None:
@@ -478,6 +490,114 @@ def test_revocation_list_provider_accepted() -> None:
     )
     assert config.revocation_list_provider is provider
     assert config.revocation_refresh_secs == 60
+
+
+def test_config_private_provider_state_is_excluded_from_equality() -> None:
+    """Provider caches and locks must not make identical configs compare unequal."""
+    sk = SigningKey.generate()
+    resolver = EnvKeyResolver()
+
+    config_a = TenuoPluginConfig(
+        key_resolver=resolver,
+        trusted_roots=[sk.public_key],
+    )
+    config_b = TenuoPluginConfig(
+        key_resolver=resolver,
+        trusted_roots=[sk.public_key],
+    )
+
+    assert config_a == config_b
+
+
+def test_plugin_copy_does_not_refetch_revocation_provider() -> None:
+    """Worker plugin copies must inherit last-good SRL state, not re-fetch."""
+    from tenuo.temporal_plugin import TenuoTemporalPlugin
+
+    sk = SigningKey.generate()
+    calls = 0
+
+    def provider():
+        nonlocal calls
+        calls += 1
+        return None
+
+    config = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[sk.public_key],
+        revocation_list_provider=provider,
+    )
+    assert calls == 1
+    TenuoTemporalPlugin(config)
+    assert calls == 1
+    assert config._last_good_revocation_list is None
+
+
+def test_plugin_copy_does_not_refetch_trusted_roots_provider() -> None:
+    """Worker plugin copies must not re-call trusted_roots_provider."""
+    from tenuo.temporal_plugin import TenuoTemporalPlugin
+
+    sk = SigningKey.generate()
+    calls = 0
+
+    def provider():
+        nonlocal calls
+        calls += 1
+        return [sk.public_key]
+
+    config = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots_provider=provider,
+    )
+    assert calls == 1
+    TenuoTemporalPlugin(config)
+    assert calls == 1
+
+
+def test_revocation_list_provider_startup_failure_is_configuration_error() -> None:
+    """Startup SRL provider failures fail closed with remediation text."""
+    from tenuo.exceptions import ConfigurationError
+
+    sk = SigningKey.generate()
+
+    def provider():
+        raise TimeoutError("srl endpoint timed out")
+
+    with pytest.raises(ConfigurationError, match="failed during startup") as exc_info:
+        TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[sk.public_key],
+            revocation_list_provider=provider,
+        )
+
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
+    assert "worker accepts work" in str(exc_info.value)
+
+
+def test_revocation_list_provider_excludes_static_revocation_list() -> None:
+    """Static and provider-backed SRLs cannot both own revocation state."""
+    from tenuo.exceptions import ConfigurationError
+
+    sk = SigningKey.generate()
+    with pytest.raises(ConfigurationError, match="revocation_list_provider"):
+        TenuoPluginConfig(
+            signing_key=sk,
+            trusted_roots=[sk.public_key],
+            revocation_list=object(),
+            revocation_list_provider=lambda: None,
+        )
+
+
+def test_revocation_refresh_secs_requires_provider() -> None:
+    """A refresh interval without a provider is a configuration error."""
+    from tenuo.exceptions import ConfigurationError
+
+    sk = SigningKey.generate()
+    with pytest.raises(ConfigurationError, match="revocation_refresh_secs"):
+        TenuoPluginConfig(
+            signing_key=sk,
+            trusted_roots=[sk.public_key],
+            revocation_refresh_secs=60,
+        )
 
 
 def test_revocation_refresh_secs_none_by_default() -> None:

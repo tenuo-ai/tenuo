@@ -89,6 +89,7 @@ pub enum ErrorCode {
     WarrantRevoked = 1800,
     SRLInvalid = 1801,
     SRLVersionRollback = 1802,
+    SRLContentChanged = 1803,
 
     // Size limit errors (1900-1999)
     WarrantTooLarge = 1900,
@@ -176,6 +177,7 @@ impl ErrorCode {
             Self::WarrantRevoked => "warrant-revoked",
             Self::SRLInvalid => "srl-invalid",
             Self::SRLVersionRollback => "srl-version-rollback",
+            Self::SRLContentChanged => "srl-content-changed",
 
             // Size limit errors
             Self::WarrantTooLarge => "warrant-too-large",
@@ -275,6 +277,7 @@ impl ErrorCode {
             Self::WarrantRevoked => "Warrant has been revoked",
             Self::SRLInvalid => "Signature Revocation List is invalid",
             Self::SRLVersionRollback => "SRL version rollback detected",
+            Self::SRLContentChanged => "SRL revoked set changed at the same version",
 
             // Size limit errors
             Self::WarrantTooLarge => "Warrant size exceeds limit",
@@ -319,6 +322,18 @@ pub enum Error {
     /// Warrant has been revoked.
     #[error("warrant revoked: {0}")]
     WarrantRevoked(String),
+
+    /// Signed revocation list version moved backwards.
+    #[error(
+        "SRL version rollback detected: current version {current}, attempted version {attempted}"
+    )]
+    SRLVersionRollback { current: u64, attempted: u64 },
+
+    /// Same SRL version, but the revoked-ID set changed.
+    #[error(
+        "SRL revoked set changed at version {version}; bump the version when the revoked set changes"
+    )]
+    SRLContentChanged { version: u64 },
 
     /// Warrant has expired.
     #[error("warrant '{warrant_id}' expired at {expired_at}")]
@@ -668,6 +683,8 @@ impl Error {
 
             // Warrant Lifecycle Errors
             Self::WarrantRevoked(_) => ErrorCode::WarrantRevoked,
+            Self::SRLVersionRollback { .. } => ErrorCode::SRLVersionRollback,
+            Self::SRLContentChanged { .. } => ErrorCode::SRLContentChanged,
             Self::WarrantExpired { .. } => ErrorCode::WarrantExpired,
             Self::IssuedInFuture => ErrorCode::IssuedInFuture,
             Self::DepthExceeded(_, _) => ErrorCode::DepthExceeded,
@@ -814,6 +831,7 @@ mod tests {
         // Revocation errors
         assert_eq!(ErrorCode::WarrantRevoked.code(), 1800);
         assert_eq!(ErrorCode::SRLVersionRollback.code(), 1802);
+        assert_eq!(ErrorCode::SRLContentChanged.code(), 1803);
 
         // Size limit errors
         assert_eq!(ErrorCode::WarrantTooLarge.code(), 1900);

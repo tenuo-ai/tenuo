@@ -511,17 +511,35 @@ class TestManualSetupRegistrationPaths:
 
     def test_async_completion_honors_task_queue_kwarg(self):
         """``tenuo_complete_async_activity`` dropped its singleton
-        lookup; callers must pass ``task_queue=`` to get PoP signing.
-        Verify the resolver is actually hit when the queue matches.
+        lookup; callers must pass ``task_queue=`` for fail-closed chain and
+        holder validation. Verify completion succeeds for the exact queue.
         """
+        from tenuo import SigningKey, Warrant
+        from tenuo.temporal import KeyResolver, TenuoPluginConfig
         from tenuo.temporal._workflow import tenuo_complete_async_activity
 
-        config = self._make_config()
+        root = SigningKey.generate()
+        holder = SigningKey.generate()
+
+        class _Resolver(KeyResolver):
+            async def resolve(self, key_id: str) -> Any:
+                return holder
+
+            def resolve_sync(self, key_id: str) -> Any:
+                return holder
+
+        config = TenuoPluginConfig(
+            key_resolver=_Resolver(),
+            trusted_roots=[root.public_key],
+        )
         _set_worker_config(config, task_queue="async-complete-q")
 
         handle = AsyncMock()
-        warrant = MagicMock()
-        warrant.sign_pop = MagicMock()
+        warrant = Warrant.issue(
+            root,
+            capabilities={"external_job": {}},
+            holder=holder.public_key,
+        )
 
         import asyncio as _asyncio
 
@@ -539,5 +557,4 @@ class TestManualSetupRegistrationPaths:
         finally:
             loop.close()
 
-        warrant.sign_pop.assert_called_once()
         handle.complete.assert_awaited_once_with("result-payload")

@@ -163,6 +163,57 @@ await handle.signal(ApprovalWorkflow.approve, decision)
 result = await handle.result()
 ```
 
+### Use a fresh warrant for one Activity
+
+Long-running workflows can keep a longer-lived issuer warrant as their base
+authority while issuing a short-lived execution warrant for a consequential
+dispatch. The override is scoped to this call and is safe when workflow tasks
+schedule Activities concurrently:
+
+```python
+from tenuo.temporal import (
+    current_key_id, tenuo_execute_activity, workflow_issue_execution,
+)
+
+execution_warrant = await workflow_issue_execution(
+    "transfer_funds",
+    constraints={"account": account, "amount": amount},
+    ttl_seconds=60,
+)
+await tenuo_execute_activity(
+    transfer_funds,
+    args=[account, amount],
+    warrant=execution_warrant,
+    key_id=current_key_id(),
+    start_to_close_timeout=timedelta(seconds=30),
+)
+```
+
+### Scheduled workflows
+
+Use `create_scheduled_workflow_with_warrant()` so each scheduled workflow start
+carries Tenuo headers—not warrant material in a memo:
+
+```python
+from tenuo.temporal import create_scheduled_workflow_with_warrant
+
+await create_scheduled_workflow_with_warrant(
+    client,
+    "nightly-report",
+    ReportWorkflow.run,
+    issuer_warrant,
+    "report-agent",
+    schedule_spec,
+    workflow_args=[tenant_id],
+    task_queue="reports",
+)
+```
+
+The Schedule action reuses this warrant on every trigger. Its TTL must cover
+the Schedule lifetime. For unbounded recurring Schedules, use a longer-lived,
+narrowly scoped issuer warrant and mint short-lived per-Activity execution
+warrants as shown above.
+
 ## Capability constraints
 
 Warrants use a **closed-world (zero-trust) model**: every argument the activity receives must be declared in the capability, even if unconstrained. Use `Wildcard()` for arguments that can take any value:

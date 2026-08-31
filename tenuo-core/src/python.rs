@@ -60,6 +60,13 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             crate::error::Error::WarrantRevoked(id) => {
                 ("RevokedError", PyTuple::new(py, [id.as_str()]))
             }
+            crate::error::Error::SRLVersionRollback { current, attempted } => (
+                "SrlVersionRollback",
+                PyTuple::new(py, [*current, *attempted]),
+            ),
+            crate::error::Error::SRLContentChanged { version } => {
+                ("SrlContentChanged", PyTuple::new(py, [*version]))
+            }
             crate::error::Error::WarrantExpired {
                 warrant_id,
                 expired_at,
@@ -5334,6 +5341,16 @@ impl PyAuthorizer {
     ///     key: The public key to trust
     fn add_trusted_root(&mut self, key: &PyPublicKey) {
         self.inner.add_trusted_root(key.inner.clone());
+    }
+
+    /// Install a signed revocation list from an already-trusted root.
+    ///
+    /// The Rust authorizer verifies both that the SRL issuer is in its trust
+    /// roots and that the SRL signature is valid before accepting it.
+    fn set_revocation_list(&mut self, srl: &PySignedRevocationList) -> PyResult<()> {
+        self.inner
+            .set_revocation_list_from_trusted_issuer(srl.inner.clone())
+            .map_err(to_py_err)
     }
 
     /// Set the clock tolerance for expiration checks.

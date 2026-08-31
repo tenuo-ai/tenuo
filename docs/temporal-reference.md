@@ -593,6 +593,12 @@ Default dedup is **in-memory per process** (`InMemoryPopDedupStore`). For fleet-
 
 Static `trusted_roots` require a restart to pick up new issuer keys. For rotation without restarts, use `trusted_roots_provider` + `trusted_roots_refresh_interval_secs`. During rotation, return overlapping old and new issuer keys. On refresh failure, the worker retains the previous `Authorizer` and logs a warning.
 
+Signed revocation lists loaded through Python Temporal config must be signed by
+one of the configured `trusted_roots`. This matches the one-argument binding
+exposed to Python today; the Rust authorizer has an explicit issuer form for
+deployments that separate warrant-issuing authority from revocation-list
+signing authority.
+
 ### Out of scope
 
 - **Compromised Temporal service**: address with Temporal security, not Tenuo alone.
@@ -628,7 +634,11 @@ What the TTL **does** bound is how long activities scheduled by that workflow ca
 
 - **Short workflows (< TTL):** mint a warrant whose TTL covers the worst-case workflow duration including retries and timer sleeps.
 - **Long workflows (> a single warrant can safely cover):** treat the warrant like a short-lived session token. Use one of:
-  - `workflow_grant(...)` to mint a narrower per-phase warrant inside the workflow (requires the parent warrant to be an issuer).
+  - `workflow_issue_execution(...)` to mint a short-lived execution warrant
+    from a longer-lived issuer warrant, then pass it to
+    `tenuo_execute_activity(..., warrant=execution_warrant, key_id=...)`.
+  - `workflow_grant(...)` to mint a narrower per-phase delegated warrant, then
+    pass it to the same per-Activity override (requires the parent holder key).
   - `tenuo_execute_child_workflow(...)` to spawn child workflows each with their own freshly-minted warrant.
   - A resolver-side key rotation so `retry_pop_max_windows` extends the PoP window for durable retries (see previous section).
 - **Unbounded workflows:** structure work as a series of child workflows rather than a single long-lived parent so each fresh warrant is scoped to a bounded unit of work.
@@ -849,9 +859,72 @@ file_warrant = await workflow_grant(
     constraints={"path": path},
     ttl_seconds=60,
 )
+
+contents = await tenuo_execute_activity(
+    read_file,
+    args=[path],
+    warrant=file_warrant,
+    key_id=current_key_id(),
+    start_to_close_timeout=timedelta(seconds=30),
+)
 ```
 
 Constraint keys must already exist in the parent warrant.
+
+The per-Activity override is held in a workflow task-local `ContextVar`, so
+parallel workflow tasks cannot consume one another's warrant. When
+`warrant_chain=` is omitted, Tenuo extends the active workflow chain with the
+override warrant automatically.
+
+### Scheduled Workflows
+
+`create_scheduled_workflow_with_warrant(...)` places Tenuo payloads in the
+`ScheduleActionStartWorkflow.headers` field consumed by the worker interceptor.
+It never stores warrant material in memo. Because a Schedule action is static,
+the same warrant is used by every trigger; choose a TTL that covers the bounded
+Schedule lifetime or use an issuer warrant plus per-Activity execution warrants.
+Temporal action settings such as `execution_timeout` belong in
+`action_options=`. The legacy `workflow_kwargs=` alias remains temporarily
+supported with a deprecation warning; workflow input remains positional via
+`workflow_args=`.
+
+### Async Activity Completion
+
+`tenuo_complete_async_activity(...)` completes an Activity whose original
+dispatch was already authorized. Temporal's completion RPC has no user-header
+field, so the helper validates locally before releasing the completion:
+
+- exact task-queue worker-config selection;
+- trusted-root chain, signature, linkage, and current-time validation; and
+- configured revocation-list validation.
+
+This is warrant liveness, not capability scope: the helper does not check
+whether the warrant authorizes completing this Activity.
+
+Delegated warrants must include `warrant_chain=[root, ..., leaf]`. Validation is
+performed before this helper calls the completion handle; it never falls back
+to an unverified completion. This is a caller-side preflight, not a Temporal
+enforcement boundary: code that directly invokes `AsyncActivityHandle.complete()`
+can bypass it.
+For compatibility, callers that omit `task_queue=` may use the sole registered
+worker config with a deprecation warning. Zero or multiple registrations fail
+closed. Provider failures or empty results retain the config's last accepted
+trusted-root snapshot; revocation-provider failures or `None` results likewise
+retain the last accepted signed revocation list. SRL refreshes must be
+monotonic: lower versions are rejected, and a different revoked-ID set at the
+same version is rejected. Re-signing the same set at the same version is
+accepted.
+`TenuoTemporalPlugin` validates that the worker has a non-empty task queue
+during worker setup, so the registry cannot be silently left unconfigured.
+
+An empty, valid signed revocation list is different from `None`: at a higher
+version, it explicitly replaces the prior list and clears its revoked-ID set.
+
+Temporal's async-completion RPC cannot carry user headers. Earlier helper code
+computed a PoP signature but discarded it, so no downstream validator could
+observe it. The helper therefore does not resolve or load the holder's private
+key merely to compare its public half. The original Activity dispatch remains
+the worker-boundary PoP authorization.
 
 ---
 
