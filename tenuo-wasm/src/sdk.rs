@@ -113,6 +113,12 @@ struct ReceiptInspectDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     decision_code: Option<String>,
     request_id: String,
+    /// Absent when the enforcement point held no revocation data at all —
+    /// a different claim from holding a list that revoked nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    srl_version: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    srl_hash: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -130,6 +136,10 @@ pub struct SdkContext {
     authorizer: Authorizer,
     trusted_roots: Vec<PublicKey>,
     receipt_signer: SigningKey,
+    /// `(version, sha256(wire bytes))` of the revocation list currently loaded.
+    /// `None` until one is installed — receipts then omit keys 12 and 13, which
+    /// is the honest claim that revocation was never consulted.
+    srl_commitment: Option<(Option<u64>, [u8; 32])>,
 }
 
 /// Opaque warrant chain (root first) + leaf holder key. Not JSON-serializable from JS.
@@ -154,6 +164,7 @@ impl SdkContext {
         let root = issuer.public_key();
         let authorizer = Authorizer::new().with_trusted_root(root.clone());
         SdkContext {
+            srl_commitment: None,
             issuer: Some(issuer.clone()),
             authorizer,
             trusted_roots: vec![root],
@@ -179,6 +190,7 @@ impl SdkContext {
             trusted_roots.push(key);
         }
         Ok(SdkContext {
+            srl_commitment: None,
             issuer: None,
             authorizer,
             trusted_roots,
@@ -191,12 +203,16 @@ impl SdkContext {
     pub fn load_revocation_list(&mut self, wire: &str) -> Result<(), JsError> {
         init_panic_hook();
         let bytes = parse_srl_bytes(wire)?;
+        let digest = tenuo::srl_commitment_digest(&bytes);
         match SignedRevocationList::from_bytes(&bytes) {
             Ok(srl) => {
                 let mut last = None;
                 for root in &self.trusted_roots {
                     match self.authorizer.set_revocation_list(srl.clone(), root) {
-                        Ok(()) => return Ok(()),
+                        Ok(()) => {
+                            self.srl_commitment = Some((None, digest));
+                            return Ok(());
+                        }
                         Err(e) => last = Some(e),
                     }
                 }
@@ -208,9 +224,12 @@ impl SdkContext {
             }
             Err(_) => {
                 let published = verify_published_srl(&bytes, &self.trusted_roots)?;
+                let version = published.version;
                 self.authorizer
-                    .install_verified_revocation_ids(published.revoked_ids, published.version)
-                    .map_err(|e| JsError::new(&format!("failed to install revocation list: {e}")))
+                    .install_verified_revocation_ids(published.revoked_ids, version)
+                    .map_err(|e| JsError::new(&format!("failed to install revocation list: {e}")))?;
+                self.srl_commitment = Some((Some(version), digest));
+                Ok(())
             }
         }
     }
@@ -541,6 +560,8 @@ pub fn sdk_verify_receipt(wire: &str) -> Result<JsValue, JsError> {
         action: payload.action,
         decision_code: payload.decision_code,
         request_id: payload.request_id,
+        srl_version: payload.srl_version,
+        srl_hash: payload.srl_hash.map(hex::encode),
     }))
 }
 
@@ -1015,6 +1036,7 @@ impl SdkContext {
             after_pop,
             pop,
             decision_code,
+            self.srl_commitment,
         );
         to_js(&dto)
     }
@@ -1446,9 +1468,10 @@ fn encode_receipt(
     after_pop: bool,
     pop: Option<&Signature>,
     decision_code: Option<&str>,
+    srl_commitment: Option<(Option<u64>, [u8; 32])>,
 ) -> Option<String> {
     let warrant_chain = wire::encode_stack(&WarrantStack(chain.to_vec())).unwrap_or_default();
-    let payload = if allowed {
+    let mut payload = if allowed {
         let pop = pop?;
         ReceiptPayload::allow(
             warrant_chain,
@@ -1476,6 +1499,10 @@ fn encode_receipt(
             decision_code.unwrap_or("denied").to_string(),
         )
     };
+    if let Some((version, digest)) = srl_commitment {
+        payload.srl_version = version;
+        payload.srl_hash = Some(digest);
+    }
     let receipt = Receipt::create(&payload, signer).ok()?;
     let mut buf = Vec::new();
     ciborium::into_writer(&receipt, &mut buf).ok()?;

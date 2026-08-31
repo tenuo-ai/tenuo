@@ -29,6 +29,14 @@ export type WasmReceipt = {
   action: string;
   decision_code?: string;
   request_id: string;
+  /** Version of the revocation list in force, when it carried one. */
+  srl_version?: number;
+  /**
+   * SHA-256 (hex) of the revocation list bytes in force at decision time.
+   * Absent means no revocation data was loaded — a different claim from a
+   * loaded list that revoked nothing.
+   */
+  srl_hash?: string;
 };
 
 export type WasmSession = object;

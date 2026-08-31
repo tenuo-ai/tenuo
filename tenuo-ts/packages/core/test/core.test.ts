@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   ApprovalRequiredError,
@@ -508,6 +509,72 @@ describe("toWire", () => {
 });
 
 describe("revocation and receipts", () => {
+  it("commits to the revocation list in force at decision time", async () => {
+    const ctx = devContext();
+    const victim = wrapSession(ctx.mint({ read_file: { path: { kind: "under", root: "/data" } } }, 300));
+    const live = wrapSession(ctx.mint({ read_file: { path: { kind: "under", root: "/data" } } }, 300));
+    const leaked = exportSession(live);
+    const victimId = warrantIds(victim)[0];
+    if (victimId === undefined) {
+      throw new Error("expected a warrant id");
+    }
+    const srl = signRevocationList(ctx, [victimId]);
+
+    const tenuo = createTenuo({
+      trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)],
+      revocationList: srl,
+    });
+    const session = tenuo.sessionFromWire({
+      warrant: leaked.warrants,
+      holderKey: createTenuo.holderKeyFromHex(leaked.holder_hex),
+    });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+
+    const receipt = verifyReceipt(wire);
+    // The commitment is over the bytes as loaded, so a verifier can re-derive it
+    // from the published list without agreeing on a canonical re-encoding.
+    expect(receipt.srl_hash).toBe(createHash("sha256").update(Buffer.from(srl, "hex")).digest("hex"));
+    // A plain SignedRevocationList carries no version; the commitment says so
+    // rather than inventing one.
+    expect(receipt.srl_version).toBeUndefined();
+  });
+
+  it("omits the revocation commitment when no list was loaded", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+
+    // Absent, not zero-filled: "revocation was never consulted" is a distinct
+    // claim from "a list was consulted and matched nothing".
+    const receipt = verifyReceipt(wire);
+    expect(receipt.srl_hash).toBeUndefined();
+    expect(receipt.srl_version).toBeUndefined();
+  });
+
   it("revokes a live-minted session so execute never runs", async () => {
     const ctx = devContext();
     const session = wrapSession(

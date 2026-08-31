@@ -95,7 +95,7 @@ pub use planes::{
     Authorizer, AuthorizerBuilder, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,
     VerifiedApproval, DEFAULT_CLOCK_TOLERANCE_SECS,
 };
-pub use receipt::{Receipt, ReceiptPayload};
+pub use receipt::{srl_commitment_digest, Receipt, ReceiptPayload};
 pub use revocation::{
     RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,
 };

@@ -28,6 +28,19 @@ use crate::error::{Error, Result};
 /// The receipt format version this module produces.
 pub const RECEIPT_VERSION: u8 = 1;
 
+/// SHA-256 over the revocation list bytes exactly as loaded, for
+/// [`ReceiptPayload::srl_hash`].
+///
+/// Hashes the wire bytes rather than a re-serialization so every
+/// implementation derives the same commitment without having to agree on a
+/// canonical re-encoding of a list it only ever received as bytes.
+pub fn srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(srl_bytes);
+    hasher.finalize().into()
+}
+
 /// The decision an enforcement point reached.
 ///
 /// Encoded as the text `"allow"` or `"deny"`. A boolean encoding is
@@ -78,8 +91,15 @@ pub struct ReceiptPayload {
     /// Key 0. Must equal [`RECEIPT_VERSION`] and the artifact's `receipt_version`.
     pub version: u8,
 
-    /// Key 1. Deployment-assigned label for the enforcement point. Descriptive
-    /// only — `signer_key` is the cryptographic identity.
+    /// Key 1. Deployment-assigned label for the enforcement point.
+    ///
+    /// Descriptive only, and deliberately so: `signer_key` is the
+    /// cryptographic identity and the only field a verifier may key trust on.
+    /// This is a human-readable aid for operators reading receipts, never a
+    /// lookup key into an authorizer registry — two enforcement points may
+    /// carry the same label, and the label may change without the key changing.
+    /// Resolving a `signer_key` to a legitimate enforcement point is an
+    /// out-of-band concern this artifact does not attempt to answer.
     pub authorizer_id: Option<String>,
 
     /// Key 2. CBOR-encoded warrant stack for the presented chain, as a byte string.
@@ -116,6 +136,24 @@ pub struct ReceiptPayload {
     /// Key 11. Commitment to the enforcement point's policy configuration in
     /// force at decision time.
     pub policy_definition_hash: Option<[u8; 32]>,
+
+    /// Key 12. Version of the revocation list in force at decision time.
+    ///
+    /// Present only when the loaded list carries a version — a published,
+    /// monotonic SRL. `None` alongside a present [`Self::srl_hash`] means the
+    /// enforcement point held an unversioned list.
+    pub srl_version: Option<u64>,
+
+    /// Key 13. SHA-256 over the canonical bytes of the revocation list in
+    /// force at decision time.
+    ///
+    /// Absent means the enforcement point had no revocation data loaded, which
+    /// is a different claim from having loaded a list that revoked nothing. A
+    /// verifier needs to tell those apart: the first says revocation was never
+    /// consulted, the second says it was consulted and did not match. Without
+    /// this field a stale or absent list is indistinguishable from a current
+    /// one, and "the warrant was not revoked when this ran" is unfalsifiable.
+    pub srl_hash: Option<[u8; 32]>,
 }
 
 impl ReceiptPayload {
@@ -150,6 +188,8 @@ impl ReceiptPayload {
             request_id: request_id.into(),
             decision_code: None,
             policy_definition_hash: None,
+            srl_version: None,
+            srl_hash: None,
         }
     }
 
@@ -185,6 +225,8 @@ impl ReceiptPayload {
             request_id: request_id.into(),
             decision_code: Some(decision_code.into()),
             policy_definition_hash: None,
+            srl_version: None,
+            srl_hash: None,
         }
     }
 
@@ -220,6 +262,8 @@ impl ReceiptPayload {
             request_id: request_id.into(),
             decision_code: Some(decision_code.into()),
             policy_definition_hash: None,
+            srl_version: None,
+            srl_hash: None,
         }
     }
 
@@ -262,6 +306,8 @@ impl Serialize for ReceiptPayload {
             self.pop_signature.is_some(),
             self.decision_code.is_some(),
             self.policy_definition_hash.is_some(),
+            self.srl_version.is_some(),
+            self.srl_hash.is_some(),
         ]
         .iter()
         .filter(|present| **present)
@@ -293,6 +339,12 @@ impl Serialize for ReceiptPayload {
         }
         if let Some(policy_definition_hash) = &self.policy_definition_hash {
             map.serialize_entry(&11u8, serde_bytes::Bytes::new(policy_definition_hash))?;
+        }
+        if let Some(srl_version) = &self.srl_version {
+            map.serialize_entry(&12u8, srl_version)?;
+        }
+        if let Some(srl_hash) = &self.srl_hash {
+            map.serialize_entry(&13u8, serde_bytes::Bytes::new(srl_hash))?;
         }
         map.end()
     }
@@ -337,6 +389,8 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                 let mut request_id = None;
                 let mut decision_code = None;
                 let mut policy_definition_hash = None;
+                let mut srl_version = None;
+                let mut srl_hash = None;
 
                 while let Some(key) = map.next_key::<u8>()? {
                     if !seen.insert(key) {
@@ -368,6 +422,11 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                             policy_definition_hash =
                                 Some(fixed(bytes.into_vec(), "policy_definition_hash")?);
                         }
+                        12 => srl_version = Some(map.next_value()?),
+                        13 => {
+                            let bytes: serde_bytes::ByteBuf = map.next_value()?;
+                            srl_hash = Some(fixed(bytes.into_vec(), "srl_hash")?);
+                        }
                         _ => {
                             return Err(A::Error::custom(format!(
                                 "unknown receipt payload key {}",
@@ -391,6 +450,8 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                     request_id: request_id.ok_or_else(|| A::Error::custom("missing request_id"))?,
                     decision_code,
                     policy_definition_hash,
+                    srl_version,
+                    srl_hash,
                 })
             }
         }
@@ -509,7 +570,67 @@ mod tests {
             request_id: "req-2".to_string(),
             decision_code: Some("tool-not-authorized".to_string()),
             policy_definition_hash: Some([3u8; 32]),
+            srl_version: Some(47),
+            srl_hash: Some([5u8; 32]),
         }
+    }
+
+    /// An unversioned list still commits: key 13 present, key 12 absent. This
+    /// is the shape produced by a plain `SignedRevocationList`, and it must not
+    /// be confused with having loaded nothing at all.
+    #[test]
+    fn round_trips_an_unversioned_revocation_commitment() {
+        let mut original = full_payload();
+        original.srl_version = None;
+        original.srl_hash = Some([5u8; 32]);
+
+        let bytes = original.to_cbor().unwrap();
+        let decoded: ReceiptPayload = ciborium::from_reader(&bytes[..]).unwrap();
+
+        assert_eq!(original, decoded);
+        assert_eq!(decoded.srl_version, None);
+        assert_eq!(decoded.srl_hash, Some([5u8; 32]));
+    }
+
+    /// No revocation data loaded omits both keys rather than encoding null, so
+    /// two implementations agree on the bytes of the same logical receipt.
+    #[test]
+    fn omits_revocation_keys_when_no_list_was_loaded() {
+        let original = payload();
+        assert_eq!(original.srl_version, None);
+        assert_eq!(original.srl_hash, None);
+
+        let bytes = original.to_cbor().unwrap();
+        let map: ciborium::Value = ciborium::from_reader(&bytes[..]).unwrap();
+        let keys: Vec<i128> = match map {
+            ciborium::Value::Map(entries) => entries
+                .iter()
+                .filter_map(|(k, _)| k.as_integer().map(i128::from))
+                .collect(),
+            other => panic!("payload must encode as a CBOR map, got {:?}", other),
+        };
+
+        assert!(!keys.contains(&12), "key 12 must be omitted, not null");
+        assert!(!keys.contains(&13), "key 13 must be omitted, not null");
+    }
+
+    #[test]
+    fn rejects_an_srl_hash_that_is_not_32_bytes() {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(
+            &ciborium::Value::Map(vec![
+                (ciborium::Value::Integer(13u8.into()), ciborium::Value::Bytes(vec![0u8; 31])),
+            ]),
+            &mut bytes,
+        )
+        .unwrap();
+
+        let decoded: std::result::Result<ReceiptPayload, _> = ciborium::from_reader(&bytes[..]);
+        let message = decoded.unwrap_err().to_string();
+        assert!(
+            message.contains("srl_hash") && message.contains("32"),
+            "error must name the field and the expected length, got: {message}"
+        );
     }
 
     #[test]
@@ -558,7 +679,7 @@ mod tests {
             .iter()
             .map(|(k, _)| k.as_integer().unwrap().into())
             .collect();
-        assert_eq!(keys, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(keys, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
     }
 
     #[test]
@@ -567,7 +688,7 @@ mod tests {
         let value: ciborium::Value = ciborium::from_reader(&bytes[..]).unwrap();
         let entries = value.as_map().unwrap();
 
-        for key in [2i128, 7, 8, 11] {
+        for key in [2i128, 7, 8, 11, 13] {
             let (_, field) = entries
                 .iter()
                 .find(|(k, _)| i128::from(k.as_integer().unwrap()) == key)
