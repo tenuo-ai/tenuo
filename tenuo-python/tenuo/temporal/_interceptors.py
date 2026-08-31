@@ -568,6 +568,20 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
                 "See the module docstring for a full Worker setup example."
             ) from _e
 
+        if getattr(config, "nexus_pop_replay_protection", False):
+            nexus_store = config.pop_dedup_store or _default_pop_dedup_store
+            if not callable(getattr(nexus_store, "check_pop_replay_for_owner", None)):
+                from tenuo.exceptions import ConfigurationError
+
+                raise ConfigurationError(
+                    "TenuoPluginConfig(nexus_pop_replay_protection=True) requires "
+                    "pop_dedup_store to implement "
+                    "check_pop_replay_for_owner(dedup_key, owner_id, now, "
+                    "ttl_seconds, *, activity_name). Disable "
+                    "nexus_pop_replay_protection or provide an owner-aware shared "
+                    "dedup store."
+                )
+
         if config.pop_dedup_store is None:
             logger.warning(
                 "TenuoPluginConfig: using in-memory PopDedupStore — this is "
