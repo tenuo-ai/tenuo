@@ -262,6 +262,70 @@ def test_verify_nexus_operation_rejects_missing_endpoint(
         verify_nexus_operation(ctx, input, config)
 
 
+def test_verify_nexus_operation_rejects_context_endpoint_mismatch(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    ctx = SimpleNamespace(
+        request_id="req-default",
+        endpoint="billing-staging",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+
+    with pytest.raises(TenuoContextError, match="endpoint mismatch"):
+        verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+
+def test_verify_nexus_operation_rejects_nexus_info_endpoint_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    ctx = SimpleNamespace(
+        request_id="req-default",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+    monkeypatch.setattr(
+        "temporalio.nexus.info",
+        lambda: SimpleNamespace(endpoint="billing-staging"),
+    )
+
+    with pytest.raises(TenuoContextError, match="endpoint mismatch"):
+        verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+
 def test_verify_nexus_operation_rejects_missing_warrant(
     nexus_keys: tuple[Any, Any],
 ) -> None:
