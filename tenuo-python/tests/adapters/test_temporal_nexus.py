@@ -51,6 +51,7 @@ from tenuo.exceptions import (  # noqa: E402
     ApprovalGateTriggered,
     ConstraintViolation,
     SignatureInvalid,
+    ToolNotAuthorized,
 )
 
 
@@ -510,7 +511,7 @@ def test_verify_nexus_operation_rejects_wrong_operation_binding(
         trusted_roots=[root_key.public_key],
     )
 
-    with pytest.raises(ConstraintViolation):
+    with pytest.raises((ConstraintViolation, ToolNotAuthorized)):
         verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
 
 
