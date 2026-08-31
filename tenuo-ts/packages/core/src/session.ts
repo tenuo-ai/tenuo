@@ -1,4 +1,5 @@
 import type { Session as SessionContract } from "./api.ts";
+import { TenuoConfigurationError } from "./errors.ts";
 import type { WasmSession } from "./wasm.ts";
 
 const inspect = Symbol.for("nodejs.util.inspect.custom");
@@ -29,13 +30,23 @@ export class Session implements SessionContract {
   toWire(): string[] {
     const native = nativeSessions.get(this) as { toWire?: () => unknown } | undefined;
     if (native?.toWire === undefined) {
-      throw new Error("session is not bound to the WASM core");
+      throw new TenuoConfigurationError("session is not bound to the WASM core");
     }
     const tokens = native.toWire();
     if (!Array.isArray(tokens) || tokens.some((token) => typeof token !== "string")) {
-      throw new Error("toWire() did not return warrant tokens");
+      throw new TenuoConfigurationError("toWire() did not return warrant tokens");
     }
     return tokens;
+  }
+
+  dedupKey(tool: string, args: Readonly<Record<string, unknown>>): string {
+    const native = nativeSessions.get(this) as
+      | { dedupKey?: (tool: string, args: unknown) => string }
+      | undefined;
+    if (typeof native?.dedupKey !== "function") {
+      throw new TenuoConfigurationError("session is not bound to the WASM core");
+    }
+    return native.dedupKey(tool, args);
   }
 }
 
@@ -46,7 +57,7 @@ export function isSession(value: unknown): value is Session {
 export function nativeSession(session: Session): WasmSession {
   const native = nativeSessions.get(session);
   if (!native) {
-    throw new Error("session is not bound to the WASM core");
+    throw new TenuoConfigurationError("session is not bound to the WASM core");
   }
   return native;
 }

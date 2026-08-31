@@ -11,8 +11,11 @@ export type {
   MaxConstraint,
   McpAttachOptions,
   McpCallParams,
+  McpHandlerPolicy,
   McpJsonRpcError,
+  McpVerifyOptions,
   NarrowInput,
+  NonceStore,
   OneOfConstraint,
   PatternConstraint,
   ProtectedTool,
@@ -40,6 +43,8 @@ export {
 } from "./errors.ts";
 
 export { email, exact, max, oneOf, pattern, under } from "./constraints.ts";
+
+export { memoryNonceStore } from "./nonce.ts";
 
 export { Session as SessionHandle, isSession } from "./session.ts";
 

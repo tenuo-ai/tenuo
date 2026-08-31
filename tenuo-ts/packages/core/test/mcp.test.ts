@@ -3,6 +3,7 @@ import {
   ApprovalRequiredError,
   AuthorizationDeniedError,
   createTenuo,
+  memoryNonceStore,
   TenuoConfigurationError,
   TenuoError,
   under,
@@ -71,6 +72,29 @@ describe("tenuo.mcp", () => {
       code: "TENUO_INVALID_POP",
     });
     expect(executed).toBe(false);
+  });
+
+  it("rejects a handler policy typo instead of asking for execute", () => {
+    const { server } = issuerAndServer();
+    expect(() =>
+      server.mcp.handler("read_file", { allowed: { path: under("/data") } } as never, async () => ""),
+    ).toThrow(/unknown key 'allowed'/);
+  });
+
+  it("rejects an exact replayed PoP when a nonceStore is set", () => {
+    const { issuer, session, server } = issuerAndServer();
+    const store = memoryNonceStore();
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    expect(server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store })).toEqual({
+      path: "/data/q3.pdf",
+    });
+    expect(() => server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store })).toThrow(
+      expect.objectContaining({ code: "TENUO_INVALID_POP", message: expect.stringMatching(/replay/) }),
+    );
+    const other = issuer.mcp.attach(session, "read_file", { path: "/data/other.txt" });
+    expect(server.mcp.verify(other.name, other.arguments, other._meta, { nonceStore: store })).toEqual({
+      path: "/data/other.txt",
+    });
   });
 
   it("fails closed without _meta.tenuo", () => {
@@ -234,12 +258,77 @@ describe("tenuo.mcp", () => {
     expect(verifyReceipt(verified[0]!)).toMatchObject({ authentic: true, outcome: "allow" });
   });
 
+  it("forwards handler onReceipt to verify", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const receipts: string[] = [];
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    const readFile = server.mcp.handler(
+      "read_file",
+      { onReceipt: (receipt) => receipts.push(receipt) },
+      async ({ path }: { path: string }) => path,
+    );
+    await expect(readFile(call.arguments as { path: string }, { _meta: call._meta })).resolves.toBe(
+      "/data/q3.pdf",
+    );
+    expect(receipts).toHaveLength(1);
+    expect(verifyReceipt(receipts[0]!)).toMatchObject({ authentic: true, outcome: "allow" });
+  });
+
   it("reads _meta from extra.meta (MCP 1.x) as well as extra._meta", async () => {
     const { issuer, session, server } = issuerAndServer();
     const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
     const readFile = server.mcp.handler("read_file", async ({ path }: { path: string }) => path);
     await expect(readFile(call.arguments as { path: string }, { meta: call._meta })).resolves.toBe(
       "/data/q3.pdf",
+    );
+  });
+
+  it("ANDs a handler allow ceiling with a broader presented warrant", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/other.txt" });
+    let executed = false;
+    const readFile = server.mcp.handler(
+      "read_file",
+      { allow: { path: under("/data/reports") } },
+      async ({ path }: { path: string }) => {
+        executed = true;
+        return path;
+      },
+    );
+    await expect(readFile(call.arguments as { path: string }, { _meta: call._meta })).rejects.toMatchObject({
+      code: "TENUO_CONSTRAINT_VIOLATION",
+    });
+    expect(executed).toBe(false);
+
+    const inside = issuer.mcp.attach(session, "read_file", { path: "/data/reports/q3.pdf" });
+    await expect(readFile(inside.arguments as { path: string }, { _meta: inside._meta })).resolves.toBe(
+      "/data/reports/q3.pdf",
+    );
+    expect(executed).toBe(true);
+  });
+
+  it("ANDs verify() allow with a broader presented warrant", () => {
+    const { issuer, session, server } = issuerAndServer();
+    const outside = issuer.mcp.attach(session, "read_file", { path: "/data/other.txt" });
+    expect(() =>
+      server.mcp.verify(outside.name, outside.arguments, outside._meta, {
+        allow: { path: under("/data/reports") },
+      }),
+    ).toThrow(AuthorizationDeniedError);
+    const inside = issuer.mcp.attach(session, "read_file", { path: "/data/reports/q3.pdf" });
+    expect(
+      server.mcp.verify(inside.name, inside.arguments, inside._meta, {
+        allow: { path: under("/data/reports") },
+      }),
+    ).toEqual({ path: "/data/reports/q3.pdf" });
+  });
+
+  it("treats an empty handler allow as no extra ceiling", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/other.txt" });
+    const readFile = server.mcp.handler("read_file", { allow: {} }, async ({ path }: { path: string }) => path);
+    await expect(readFile(call.arguments as { path: string }, { _meta: call._meta })).resolves.toBe(
+      "/data/other.txt",
     );
   });
 

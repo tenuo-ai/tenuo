@@ -1,11 +1,12 @@
 import type {
   McpAttachOptions,
   McpCallParams,
+  McpHandlerPolicy,
   McpJsonRpcError,
   TenuoErrorCode,
   TenuoMcp,
 } from "./api.ts";
-import { ApprovalRequiredError, TenuoConfigurationError, TenuoError } from "./errors.ts";
+import { ApprovalRequiredError, AuthorizationDeniedError, TenuoConfigurationError, TenuoError } from "./errors.ts";
 import { nativeSession, type Session } from "./session.ts";
 import type { WasmContext, WasmDecision } from "./wasm.ts";
 
@@ -48,16 +49,36 @@ export function createMcp(context: WasmContext, decide: (decision: WasmDecision,
         stripNulls(args),
         envelope.signature,
         envelope.approvals,
+        options?.allow,
       );
+      if (
+        decision.outcome === "allow" &&
+        options?.nonceStore !== undefined &&
+        !options.nonceStore.checkAndRecord(envelope.signature)
+      ) {
+        throw new AuthorizationDeniedError(
+          "TENUO_INVALID_POP",
+          "PoP replay detected — this exact authorization token was already consumed.",
+        );
+      }
       emitReceipt(options?.onReceipt, decision.receipt);
       decide(decision, name);
       return plainArgs(decision.args);
     },
 
-    handler(name, execute) {
+    handler(name, policyOrExecute, maybeExecute?) {
+      const policy = isHandlerPolicy(policyOrExecute) ? policyOrExecute : undefined;
+      const execute = isHandlerPolicy(policyOrExecute) ? maybeExecute : policyOrExecute;
+      if (typeof execute !== "function") {
+        throw new TenuoConfigurationError("mcp.handler() requires an execute function");
+      }
       return async (args, extra) => {
-        const authorized = mcp.verify(name, args, extra?._meta ?? extra?.meta);
-        return execute(authorized as typeof args);
+        const authorized = mcp.verify(name, args, extra?._meta ?? extra?.meta, {
+          ...(policy?.allow !== undefined ? { allow: policy.allow } : {}),
+          ...(policy?.onReceipt !== undefined ? { onReceipt: policy.onReceipt } : {}),
+          ...(policy?.nonceStore !== undefined ? { nonceStore: policy.nonceStore } : {}),
+        });
+        return execute(authorized as never);
       };
     },
 
@@ -113,6 +134,28 @@ function tenuoEnvelope(
     signature: tenuo.signature,
     ...(approvals !== undefined && approvals.length > 0 ? { approvals } : {}),
   };
+}
+
+const HANDLER_POLICY_KEYS = new Set(["allow", "onReceipt", "nonceStore"]);
+
+function isHandlerPolicy(value: unknown): value is McpHandlerPolicy {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || typeof value === "function") {
+    return false;
+  }
+  const keys = Object.keys(value);
+  const known = keys.filter((key) => HANDLER_POLICY_KEYS.has(key));
+  const unknown = keys.filter((key) => !HANDLER_POLICY_KEYS.has(key));
+  if (unknown.length > 0 && known.length === 0) {
+    throw new TenuoConfigurationError(
+      `mcp.handler() policy has unknown key '${unknown[0]}'. Use allow, onReceipt, or nonceStore.`,
+    );
+  }
+  const record = value as { allow?: unknown; onReceipt?: unknown; nonceStore?: unknown };
+  const hasAllow =
+    "allow" in record && record.allow !== null && typeof record.allow === "object" && !Array.isArray(record.allow);
+  const hasReceipt = "onReceipt" in record && typeof record.onReceipt === "function";
+  const hasNonce = "nonceStore" in record && record.nonceStore !== null && typeof record.nonceStore === "object";
+  return hasAllow || hasReceipt || hasNonce;
 }
 
 function emitReceipt(onReceipt: ((receipt: string) => void) | undefined, receipt: string | undefined): void {

@@ -14,7 +14,7 @@ import type {
   ToolPolicy,
 } from "./api.ts";
 import { createMcp } from "./mcp.ts";
-import { AuthorizationDeniedError, ApprovalRequiredError, TenuoConfigurationError } from "./errors.ts";
+import { AuthorizationDeniedError, ApprovalRequiredError, TenuoConfigurationError, TenuoError } from "./errors.ts";
 import { Session, isSession, nativeSession } from "./session.ts";
 import {
   createDevContext,
@@ -27,6 +27,7 @@ import {
 
 const currentSession = new AsyncLocalStorage<Session>();
 const toolPolicies = new WeakMap<object, { capability: string; allow: AllowPolicy }>();
+const wrappedInners = new WeakSet<object>();
 
 function nodeEnv(): string | undefined {
   if (typeof process === "undefined") {
@@ -188,6 +189,9 @@ class TenuoClient implements Tenuo {
     inner: T,
     policy: ToolPolicy,
   ): ProtectedTool<T> {
+    if (toolPolicies.has(inner) || wrappedInners.has(inner)) {
+      throw new TenuoConfigurationError("tenuo.tool() already wrapped this tool");
+    }
     const capability = capabilityName(inner, policy);
     const original = inner.execute as (
       args: Record<string, unknown>,
@@ -204,7 +208,7 @@ class TenuoClient implements Tenuo {
       );
       emitReceipt(callOptions, decision.receipt);
       if (decision.outcome === "allow") {
-        return original(plainArgs(decision.args), callOptions);
+        return original(plainArgs(decision.args), forwardExecuteOptions(callOptions));
       }
       if (decision.outcome === "approval_required") {
         throw new ApprovalRequiredError(
@@ -216,7 +220,7 @@ class TenuoClient implements Tenuo {
       }
       throw new AuthorizationDeniedError(
         decision.code ?? "TENUO_TOOL_NOT_AUTHORIZED",
-        decision.message ?? "Authorization denied",
+        explainDeny(decision.message ?? "Authorization denied", decision.field),
         decision.field,
       );
     };
@@ -224,6 +228,7 @@ class TenuoClient implements Tenuo {
     const wrapped = Object.assign(Object.create(Object.getPrototypeOf(inner)), inner, {
       execute,
     }) as ProtectedTool<T>;
+    wrappedInners.add(inner);
     toolPolicies.set(wrapped, { capability, allow: { ...policy.allow } });
     return wrapped;
   }
@@ -269,8 +274,7 @@ class TenuoClient implements Tenuo {
       }
       return new Session(importSessionFromChain([...input.warrant], input.holderKey));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new TenuoConfigurationError(message);
+      throw importWireError(error);
     }
   }
 
@@ -292,7 +296,7 @@ class TenuoClient implements Tenuo {
       return new Session(this.context.narrow(nativeSession(session), allow));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("narrow() rejected")) {
+      if (message.startsWith("TENUO_CHAIN_INVALID")) {
         throw new AuthorizationDeniedError("TENUO_CHAIN_INVALID", message);
       }
       throw new TenuoConfigurationError(message);
@@ -348,9 +352,45 @@ function applyDecision(decision: { outcome: string; code?: string; field?: strin
   }
   throw new AuthorizationDeniedError(
     (decision.code as TenuoErrorCode | undefined) ?? "TENUO_TOOL_NOT_AUTHORIZED",
-    decision.message ?? "Authorization denied",
+    explainDeny(decision.message ?? "Authorization denied", decision.field),
     decision.field,
   );
+}
+
+function explainDeny(message: string, field?: string): string {
+  if (!message.includes("unknown field not allowed")) {
+    return message;
+  }
+  const named = field !== undefined && field.length > 0 ? `'${field}'` : "this argument";
+  return `${message}. Zero-trust: name ${named} in allow (e.g. ${named}: pattern("*")), or drop it from the call. Empty allow: {} adds no extra ceiling.`;
+}
+
+function forwardExecuteOptions(callOptions: unknown): unknown {
+  if (callOptions === null || typeof callOptions !== "object") {
+    return callOptions;
+  }
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(callOptions as Record<string, unknown>)) {
+    if (key === "session" || key === "approvals" || key === "onReceipt") {
+      continue;
+    }
+    rest[key] = value;
+  }
+  return Object.keys(rest).length === 0 ? undefined : rest;
+}
+
+function importWireError(error: unknown): TenuoError {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith("TENUO_CHAIN_INVALID") || message.includes("invalid warrant")) {
+    return new TenuoError("TENUO_CHAIN_INVALID", message);
+  }
+  if (message.startsWith("TENUO_SIGNATURE_INVALID")) {
+    return new TenuoError("TENUO_SIGNATURE_INVALID", message);
+  }
+  if (message.startsWith("TENUO_UNTRUSTED_ROOT")) {
+    return new TenuoError("TENUO_UNTRUSTED_ROOT", message);
+  }
+  return new TenuoConfigurationError(message);
 }
 
 function normalizeWireBytes(value: string | Uint8Array): string {

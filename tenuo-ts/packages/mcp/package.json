@@ -1,33 +1,29 @@
 {
-  "name": "@tenuo/core",
+  "name": "@tenuo/mcp",
   "version": "0.2.3",
-  "description": "Tenuo TypeScript SDK — authorization decisions run in the Rust core (WASM).",
+  "description": "Optional adapter: guard @modelcontextprotocol/server v2 tools with @tenuo/core.",
   "license": "Apache-2.0",
   "author": "Tenuo Contributors",
-  "homepage": "https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts/packages/core",
+  "homepage": "https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts/packages/mcp",
   "bugs": {
     "url": "https://github.com/tenuo-ai/tenuo/issues"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tenuo-ai/tenuo.git",
-    "directory": "tenuo-ts/packages/core"
+    "directory": "tenuo-ts/packages/mcp"
   },
   "keywords": [
     "tenuo",
-    "authorization",
-    "agents",
     "mcp",
-    "wasm",
-    "capabilities"
+    "modelcontextprotocol",
+    "authorization"
   ],
   "publishConfig": {
     "access": "public"
   },
   "type": "module",
-  "sideEffects": [
-    "./dist/generated/**"
-  ],
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -46,18 +42,23 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json && mkdir -p dist/generated && cp src/generated/package.json src/generated/tenuo_wasm.js src/generated/tenuo_wasm.d.ts src/generated/tenuo_wasm_bg.wasm src/generated/tenuo_wasm_bg.wasm.d.ts dist/generated/",
-    "pack:smoke": "node scripts/pack-smoke.mjs",
-    "build:wasm": "pnpm --dir ../.. build:wasm"
+    "build": "tsc -p tsconfig.build.json",
+    "pack:smoke": "node scripts/pack-smoke.mjs"
   },
   "engines": {
     "node": ">=20"
   },
+  "peerDependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@tenuo/core": ">=0.2.3"
+  },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "1.25.1",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "@tenuo/core": "workspace:*",
     "@types/node": "^22.13.10",
     "typescript": "~5.8.2",
     "vitest": "^3.0.9",
-    "zod": "3.25.76"
+    "zod": "^4.2.0"
   }
 }

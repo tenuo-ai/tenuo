@@ -253,7 +253,7 @@ impl SdkContext {
         }
         let child = builder
             .build(&session.holder)
-            .map_err(|e| JsError::new(&format!("narrow() rejected: {e}")))?;
+            .map_err(|e| JsError::new(&format!("TENUO_CHAIN_INVALID: {e}")))?;
 
         let mut chain = session.chain.clone();
         chain.push(child);
@@ -318,6 +318,9 @@ impl SdkContext {
     }
 
     /// Authorize a warrant + PoP presented on the wire. No holder secret.
+    ///
+    /// `tool_allow` is the server host ceiling (`mcp.handler(..., { allow })`).
+    /// Null/undefined: no extra ceiling. Empty object: open.
     #[wasm_bindgen(js_name = authorizePresented)]
     pub fn authorize_presented(
         &self,
@@ -326,8 +329,9 @@ impl SdkContext {
         args_json: JsValue,
         pop: &str,
         approvals: JsValue,
+        tool_allow: JsValue,
     ) -> JsValue {
-        self.authorize_presented_inner(warrants, tool, args_json, pop, approvals, None)
+        self.authorize_presented_inner(warrants, tool, args_json, pop, approvals, tool_allow, None)
     }
 }
 
@@ -376,6 +380,16 @@ impl SdkSession {
         let bytes = wire::encode_stack(&WarrantStack(self.chain.clone()))
             .map_err(|e| JsError::new(&format!("failed to encode warrant stack: {e}")))?;
         Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+    }
+
+    /// Application idempotency key: SHA-256 of `(warrant_id, tool, canonical args)`.
+    /// Not a PoP. MCP replay uses the PoP signature, not this key.
+    #[wasm_bindgen(js_name = dedupKey)]
+    pub fn dedup_key(&self, tool: &str, args_json: JsValue) -> Result<String, JsError> {
+        init_panic_hook();
+        let args = js_to_args(&args_json).map_err(|e| JsError::new(&e))?;
+        let leaf = self.leaf()?;
+        Ok(leaf.dedup_key(tool, &args))
     }
 
     /// Warrant tokens, root first. Does not include the holder secret.
@@ -722,6 +736,7 @@ impl SdkContext {
         args_json: JsValue,
         pop: &str,
         approvals_json: JsValue,
+        tool_allow: JsValue,
         as_of: Option<i64>,
     ) -> JsValue {
         init_panic_hook();
@@ -877,6 +892,18 @@ impl SdkContext {
 
         match result {
             Ok(_) => {
+                if let Err(e) = apply_tool_ceiling(&tool_allow, &args) {
+                    return self.finish_decision(
+                        &chain,
+                        tool,
+                        timestamp,
+                        &request_id,
+                        deny_from_error(&e),
+                        Some(&signature),
+                        true,
+                        Some(e.name()),
+                    );
+                }
                 let mut obj = serde_json::Map::new();
                 for (k, v) in &args {
                     obj.insert(k.clone(), cv_to_json(v));
@@ -1557,7 +1584,9 @@ fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
             }
         }
     }
-    Err(JsError::new("invalid warrant or warrant chain"))
+    Err(JsError::new(
+        "TENUO_CHAIN_INVALID: invalid warrant or warrant chain",
+    ))
 }
 
 fn parse_presented_chain(warrants: &JsValue) -> Result<Vec<Warrant>, JsError> {
@@ -1717,7 +1746,8 @@ fn parse_warrant(input: &str) -> Result<Warrant, JsError> {
         return Ok(warrant);
     }
     let bytes = parse_hex(trimmed)?;
-    wire::decode(&bytes).map_err(|e| JsError::new(&format!("invalid warrant: {e}")))
+    wire::decode(&bytes)
+        .map_err(|e| JsError::new(&format!("TENUO_CHAIN_INVALID: invalid warrant: {e}")))
 }
 
 fn warrant_from_parts(payload_hex: &str, signature_hex: &str) -> Result<Warrant, JsError> {

@@ -79,11 +79,16 @@ export type ToolLike<
 };
 
 export type ToolPolicy = {
-  /** Host ceiling. AND'd with the session in Rust. Empty means no extra ceiling. */
+  /**
+   * Host ceiling. AND'd with the session in Rust.
+   * Non-empty maps are zero-trust: every call argument must be named here.
+   * `{}` means no extra ceiling (session/warrant only).
+   */
   readonly allow: AllowPolicy;
   readonly capability?: string;
 };
 
+/** Compile-time brand only — never assigned at runtime. Do not `in`/`has` this key. */
 declare const protectedBrand: unique symbol;
 
 export type ExecuteOptions = {
@@ -175,6 +180,8 @@ export interface Session {
   readonly [Symbol.toStringTag]: "TenuoSession";
   /** Warrant tokens, root first. Does not include the holder secret. */
   toWire(): readonly string[];
+  /** SHA-256 of `(warrant_id, tool, canonical args)`. App-level idempotency, not PoP. */
+  dedupKey(tool: string, args: Readonly<Record<string, unknown>>): string;
 }
 
 export interface Tenuo {
@@ -212,6 +219,25 @@ export type McpAttachOptions = {
   readonly onReceipt?: (receipt: string) => void;
 };
 
+/** Host ceiling and optional receipt hook on `mcp.handler()`. */
+export type McpHandlerPolicy = {
+  readonly allow?: AllowPolicy;
+  readonly onReceipt?: (receipt: string) => void;
+  readonly nonceStore?: NonceStore;
+};
+
+export type McpVerifyOptions = {
+  readonly allow?: AllowPolicy;
+  readonly onReceipt?: (receipt: string) => void;
+  /** Opt-in exact-PoP replay check. In-memory stores do not work across processes. */
+  readonly nonceStore?: NonceStore;
+};
+
+/** Returns true if the PoP is fresh and recorded; false if this exact token was already consumed. */
+export type NonceStore = {
+  checkAndRecord(popSignature: string): boolean;
+};
+
 export type McpCallParams = {
   readonly name: string;
   readonly arguments: Readonly<Record<string, unknown>>;
@@ -240,11 +266,19 @@ export interface TenuoMcp {
     name: string,
     args: Readonly<Record<string, unknown>>,
     meta: unknown,
-    options?: { readonly onReceipt?: (receipt: string) => void },
+    options?: McpVerifyOptions,
   ): Readonly<Record<string, unknown>>;
   /** Wrap a handler: verify from `extra._meta` / `extra.meta`, then execute. */
   handler<TArgs extends Record<string, unknown>, TResult>(
     name: string,
+    execute: (args: TArgs) => TResult | Promise<TResult>,
+  ): (
+    args: TArgs,
+    extra?: { readonly _meta?: unknown; readonly meta?: unknown },
+  ) => Promise<TResult>;
+  handler<TArgs extends Record<string, unknown>, TResult>(
+    name: string,
+    policy: McpHandlerPolicy,
     execute: (args: TArgs) => TResult | Promise<TResult>,
   ): (
     args: TArgs,

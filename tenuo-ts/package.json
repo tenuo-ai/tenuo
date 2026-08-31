@@ -4,9 +4,11 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build:wasm": "wasm-pack build --release --target nodejs --out-dir ../tenuo-ts/packages/core/src/generated ../tenuo-wasm && rm -f packages/core/src/generated/.gitignore packages/core/src/generated/README.md packages/core/src/generated/.npmignore && printf '%s\\n' '{\"type\":\"commonjs\"}' > packages/core/src/generated/package.json",
-    "test": "pnpm build:wasm && pnpm --filter @tenuo/core test",
-    "typecheck": "pnpm --filter @tenuo/core typecheck",
-    "example:mcp": "pnpm --filter @tenuo/core exec vitest run test/mcp-smoke.test.ts"
+    "test": "pnpm build:wasm && pnpm --filter @tenuo/core test && pnpm --filter @tenuo/mcp test",
+    "typecheck": "pnpm --filter @tenuo/core typecheck && pnpm --filter @tenuo/mcp typecheck",
+    "example:mcp": "pnpm --filter @tenuo/core exec vitest run test/mcp-smoke.test.ts",
+    "example:mcp:host": "pnpm --filter @tenuo/core exec vitest run test/mcp-host.smoke.test.ts",
+    "example:mcp:adapter": "pnpm --filter @tenuo/mcp test"
   },
   "engines": {
     "node": ">=20"

@@ -644,7 +644,7 @@ jobs:
 
       - name: Pack smoke (Node 20)
         working-directory: tenuo-ts
-        run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke
+        run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
 
   # ============================================================================
   # DOC CODE BLOCKS

@@ -21,8 +21,11 @@ export class SdkContext {
     authorizeAsOf(session: SdkSession, tool: string, args_json: any, as_of: number, approvals: any, tool_allow: any): any;
     /**
      * Authorize a warrant + PoP presented on the wire. No holder secret.
+     *
+     * `tool_allow` is the server host ceiling (`mcp.handler(..., { allow })`).
+     * Null/undefined: no extra ceiling. Empty object: open.
      */
-    authorizePresented(warrants: any, tool: string, args_json: any, pop: string, approvals: any): any;
+    authorizePresented(warrants: any, tool: string, args_json: any, pop: string, approvals: any, tool_allow: any): any;
     /**
      * Authorizer-only context. `mint()` fails; import a session from the wire.
      */
@@ -61,6 +64,11 @@ export class SdkSession {
     private constructor();
     free(): void;
     [Symbol.dispose](): void;
+    /**
+     * Application idempotency key: SHA-256 of `(warrant_id, tool, canonical args)`.
+     * Not a PoP. MCP replay uses the PoP signature, not this key.
+     */
+    dedupKey(tool: string, args_json: any): string;
     /**
      * Test / interop seam. Not on the public TypeScript Session type.
      */

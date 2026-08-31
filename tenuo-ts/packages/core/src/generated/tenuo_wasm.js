@@ -59,19 +59,23 @@ class SdkContext {
     }
     /**
      * Authorize a warrant + PoP presented on the wire. No holder secret.
+     *
+     * `tool_allow` is the server host ceiling (`mcp.handler(..., { allow })`).
+     * Null/undefined: no extra ceiling. Empty object: open.
      * @param {any} warrants
      * @param {string} tool
      * @param {any} args_json
      * @param {string} pop
      * @param {any} approvals
+     * @param {any} tool_allow
      * @returns {any}
      */
-    authorizePresented(warrants, tool, args_json, pop, approvals) {
+    authorizePresented(warrants, tool, args_json, pop, approvals, tool_allow) {
         const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(pop, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.sdkcontext_authorizePresented(this.__wbg_ptr, warrants, ptr0, len0, args_json, ptr1, len1, approvals);
+        const ret = wasm.sdkcontext_authorizePresented(this.__wbg_ptr, warrants, ptr0, len0, args_json, ptr1, len1, approvals, tool_allow);
         return ret;
     }
     /**
@@ -210,6 +214,33 @@ class SdkSession {
     free() {
         const ptr = this.__destroy_into_raw();
         wasm.__wbg_sdksession_free(ptr, 0);
+    }
+    /**
+     * Application idempotency key: SHA-256 of `(warrant_id, tool, canonical args)`.
+     * Not a PoP. MCP replay uses the PoP signature, not this key.
+     * @param {string} tool
+     * @param {any} args_json
+     * @returns {string}
+     */
+    dedupKey(tool, args_json) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.sdksession_dedupKey(this.__wbg_ptr, ptr0, len0, args_json);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
     }
     /**
      * Test / interop seam. Not on the public TypeScript Session type.

@@ -92,6 +92,44 @@ describe("createTenuo", () => {
     const tenuo = createTenuo({ root: createTenuo.devRoot() });
     expect(() => tenuo.session({})).toThrow(/tools from tenuo\.tool\(\)|capability in allow/);
   });
+
+  it("disables devRoot in production unless TENUO_ALLOW_DEV=1", () => {
+    const previousEnv = process.env.NODE_ENV;
+    const previousAllow = process.env.TENUO_ALLOW_DEV;
+    process.env.NODE_ENV = "production";
+    delete process.env.TENUO_ALLOW_DEV;
+    try {
+      expect(() => createTenuo.devRoot()).toThrow(/disabled when NODE_ENV=production/);
+      expect(() => createTenuo({ root: { kind: "dev-root" } })).toThrow(
+        /disabled when NODE_ENV=production/,
+      );
+      process.env.TENUO_ALLOW_DEV = "1";
+      expect(createTenuo.devRoot()).toEqual({ kind: "dev-root" });
+    } finally {
+      if (previousEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = previousEnv;
+      }
+      if (previousAllow === undefined) {
+        delete process.env.TENUO_ALLOW_DEV;
+      } else {
+        process.env.TENUO_ALLOW_DEV = previousAllow;
+      }
+    }
+  });
+
+  it("rejects wrapping the same tool twice", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const inner = { execute: async ({ path }: { path: string }) => path };
+    const readFile = tenuo.tool(inner, { capability: "read_file", allow: { path: under("/data") } });
+    expect(() =>
+      tenuo.tool(inner, { capability: "read_file", allow: { path: under("/data/reports") } }),
+    ).toThrow(/already wrapped/);
+    expect(() =>
+      tenuo.tool(readFile, { capability: "read_file", allow: { path: under("/data") } }),
+    ).toThrow(/already wrapped/);
+  });
 });
 
 describe("constraints", () => {
@@ -160,6 +198,61 @@ describe("authorize through WASM", () => {
       field: "path",
     });
     expect(executed).toBeUndefined();
+  });
+
+  it("rejects extra arguments under a non-empty allow and names the fix", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const readFile = tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    const session = tenuo.session({ tools: [readFile] });
+    await expect(
+      tenuo.withSession(session, () =>
+        readFile.execute({ path: "/data/a.txt", encoding: "utf8" } as { path: string }),
+      ),
+    ).rejects.toMatchObject({
+      code: "TENUO_CONSTRAINT_VIOLATION",
+      field: "encoding",
+      message: expect.stringMatching(/Zero-trust: name 'encoding' in allow/),
+    });
+  });
+
+  it("does not forward session, approvals, or onReceipt into the inner tool", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    let seen: unknown;
+    const readFile = tenuo.tool(
+      {
+        execute: async ({ path }: { path: string }, options?: { abortSignal?: AbortSignal }) => {
+          seen = options;
+          return path;
+        },
+      },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    const session = tenuo.session({ tools: [readFile] });
+    const signal = new AbortController().signal;
+    await tenuo.withSession(session, () =>
+      readFile.execute(
+        { path: "/data/q3.pdf" },
+        { session, onReceipt: () => undefined, abortSignal: signal },
+      ),
+    );
+    expect(seen).toEqual({ abortSignal: signal });
+  });
+
+  it("maps a garbage warrant to TENUO_CHAIN_INVALID, not configuration", () => {
+    const tenuo = createTenuo({
+      trustedRoots: [
+        createTenuo.publicKeyFromHex("8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"),
+      ],
+    });
+    expect(() =>
+      tenuo.sessionFromWire({
+        warrant: "not-a-warrant",
+        holderKey: createTenuo.holderKeyFromHex("02".repeat(32)),
+      }),
+    ).toThrow(expect.objectContaining({ code: "TENUO_CHAIN_INVALID", name: "TenuoError" }));
   });
 
   it("blocks a gated tool until signed approvals are attached", async () => {
@@ -354,7 +447,24 @@ describe("narrow", () => {
     const session = tenuo.session({
       allow: { read_file: { path: under("/data/reports") } },
     });
-    expect(() => tenuo.narrow(session, { path: under("/data") })).toThrow(/narrow\(\) rejected/);
+    expect(() => tenuo.narrow(session, { path: under("/data") })).toThrow(
+      expect.objectContaining({ code: "TENUO_CHAIN_INVALID" }),
+    );
+  });
+});
+
+describe("dedupKey", () => {
+  it("is stable for the same tool and args, and changes when args change", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({
+      allow: { read_file: { path: under("/data") } },
+    });
+    const a = session.dedupKey("read_file", { path: "/data/q3.pdf" });
+    const b = session.dedupKey("read_file", { path: "/data/q3.pdf" });
+    const c = session.dedupKey("read_file", { path: "/data/other.txt" });
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
   });
 });
 

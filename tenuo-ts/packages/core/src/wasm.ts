@@ -60,6 +60,7 @@ export type WasmContext = {
     args: unknown,
     pop: string,
     approvals?: unknown,
+    toolAllow?: unknown,
   ): WasmDecision;
 };
 
@@ -106,7 +107,7 @@ export function loadWasm(): Generated {
   const path = generatedPath();
   if (!existsSync(path)) {
     throw new TenuoConfigurationError(
-      "WASM core is not built. From tenuo-ts run: pnpm build:wasm",
+      "WASM core is missing from this @tenuo/core install. @tenuo/core is Node 20+ only (not a bundler target). If this is Next.js/webpack, set serverExternalPackages: ['@tenuo/core']. Do not run wasm-pack in the consuming app.",
       "TENUO_NOT_READY",
     );
   }
