@@ -601,6 +601,14 @@ pub struct ApprovalRequest {
 
     /// When this request was created (Unix seconds).
     pub created_at: u64,
+
+    /// Resolved display text for this request. Not part of `request_hash`.
+    ///
+    /// Set when the gate fires (custom gate `message`, or the default
+    /// `Approval required for tool '{tool}'`). Adapters copy this field;
+    /// they must not invent a different sentence.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub message: String,
 }
 
 impl ApprovalRequest {
@@ -627,7 +635,15 @@ impl ApprovalRequest {
             min_approvals,
             warrant_expires_at,
             created_at: now,
+            message: crate::approval_gate::resolve_approval_required_message(tool, None),
         }
+    }
+
+    /// Overlay the resolved display message from the firing gate (if any).
+    pub fn with_resolved_message(mut self, gate_message: Option<&str>) -> Self {
+        self.message =
+            crate::approval_gate::resolve_approval_required_message(&self.tool, gate_message);
+        self
     }
 }
 

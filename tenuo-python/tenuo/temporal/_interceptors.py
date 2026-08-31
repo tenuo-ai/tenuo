@@ -1224,22 +1224,22 @@ class TenuoActivityInboundInterceptor:
                     f"Malformed x-tenuo-approvals header: {exc}",
                 ) from exc
 
+        from tenuo_core import py_compute_request_hash as _compute_hash
+        from tenuo.approval import ApprovalRequest
+
+        holder_key = getattr(warrant, "holder_key", None)
+        warrant_id = getattr(warrant, "id", "") or ""
+        request_hash = _compute_hash(warrant_id, tool_name, args, holder_key)
+        request = ApprovalRequest.for_warrant_gate(
+            tool_name,
+            args,
+            warrant,
+            request_hash,
+            holder_key=holder_key,
+        )
+
         handler = self._config.approval_handler if self._config else None
         if handler is not None:
-            from tenuo_core import py_compute_request_hash as _compute_hash
-            from tenuo.approval import ApprovalRequest
-
-            holder_key = getattr(warrant, "holder_key", None)
-            warrant_id = getattr(warrant, "id", "") or ""
-            request_hash = _compute_hash(warrant_id, tool_name, args, holder_key)
-            request = ApprovalRequest.for_warrant_gate(
-                tool_name,
-                args,
-                warrant,
-                request_hash,
-                holder_key=holder_key,
-            )
-
             result = handler(request)
             if _inspect.isawaitable(result):
                 result = await result
@@ -1255,6 +1255,7 @@ class TenuoActivityInboundInterceptor:
 
         raise ApprovalGateTriggered(
             tool=tool_name,
+            message=request.message,
             hint=(
                 "No approvals available — set approval_handler on "
                 "TenuoPluginConfig or supply x-tenuo-approvals header"

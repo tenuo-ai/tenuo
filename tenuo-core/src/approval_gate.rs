@@ -32,6 +32,9 @@ use std::fmt;
 /// Extension key for approval gate data in the warrant payload.
 pub const APPROVAL_GATE_EXTENSION_KEY: &str = "tenuo.approval_gates";
 
+/// Maximum UTF-8 characters stored on a gate `message`. Longer values are truncated.
+pub const APPROVAL_GATE_MESSAGE_MAX_CHARS: usize = 200;
+
 /// Top-level approval gate map: tool name → gate specification.
 ///
 /// Only tools present in the map are subject to approval gate evaluation.
@@ -81,26 +84,66 @@ impl Default for ApprovalGateMap {
 ///
 /// - `args: None` — entire tool is gated (all invocations require approval)
 /// - `args: Some(map)` — only invocations where a gated argument matches
+/// - `message` — optional display text copied onto `ApprovalRequest` when the
+///   gate fires. Not part of `request_hash`, receipts, or monotonicity.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolApprovalGate {
     pub args: Option<BTreeMap<String, ArgApprovalGate>>,
+    /// Optional human-facing reason. Empty / whitespace is stored as `None`.
+    pub message: Option<String>,
 }
 
 impl ToolApprovalGate {
     /// Create a whole-tool gate (all invocations require approval).
     pub fn whole_tool() -> Self {
-        Self { args: None }
+        Self {
+            args: None,
+            message: None,
+        }
     }
 
     /// Create a per-argument gate.
     pub fn with_args(args: BTreeMap<String, ArgApprovalGate>) -> Self {
-        Self { args: Some(args) }
+        Self {
+            args: Some(args),
+            message: None,
+        }
+    }
+
+    /// Attach a display message. Empty / whitespace is omitted; longer than
+    /// [`APPROVAL_GATE_MESSAGE_MAX_CHARS`] is truncated.
+    pub fn with_message(mut self, message: impl AsRef<str>) -> Self {
+        self.message = normalize_approval_gate_message(Some(message.as_ref()));
+        self
     }
 
     /// Returns true if this is a whole-tool gate.
     pub fn is_whole_tool(&self) -> bool {
         self.args.is_none()
     }
+}
+
+/// Trim, omit empty, and cap a gate display message.
+pub fn normalize_approval_gate_message(raw: Option<&str>) -> Option<String> {
+    let trimmed = raw?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(
+        trimmed
+            .chars()
+            .take(APPROVAL_GATE_MESSAGE_MAX_CHARS)
+            .collect(),
+    )
+}
+
+/// Resolve the string adapters copy when a gate fires.
+///
+/// Uses the stored gate message when present; otherwise the historical default
+/// `Approval required for tool '{tool}'`.
+pub fn resolve_approval_required_message(tool: &str, gate_message: Option<&str>) -> String {
+    normalize_approval_gate_message(gate_message)
+        .unwrap_or_else(|| format!("Approval required for tool '{}'", tool))
 }
 
 /// Approval gate specification for a single argument.
@@ -184,10 +227,14 @@ impl Serialize for ToolApprovalGate {
     where
         S: Serializer,
     {
-        let mut map = serializer.serialize_map(Some(1))?;
+        let n = if self.message.is_some() { 2 } else { 1 };
+        let mut map = serializer.serialize_map(Some(n))?;
         match &self.args {
             None => map.serialize_entry("args", &Option::<()>::None)?,
             Some(args) => map.serialize_entry("args", args)?,
+        }
+        if let Some(ref message) = self.message {
+            map.serialize_entry("message", message)?;
         }
         map.end()
     }
@@ -212,21 +259,34 @@ impl<'de> Deserialize<'de> for ToolApprovalGate {
                 M: MapAccess<'de>,
             {
                 let mut args: Option<Option<BTreeMap<String, ArgApprovalGate>>> = None;
+                let mut message: Option<String> = None;
 
                 while let Some(key) = map.next_key::<String>()? {
-                    if key == "args" {
-                        if args.is_some() {
-                            return Err(de::Error::duplicate_field("args"));
+                    match key.as_str() {
+                        "args" => {
+                            if args.is_some() {
+                                return Err(de::Error::duplicate_field("args"));
+                            }
+                            // Deserialize Option<Map> — null means whole-tool gate
+                            args = Some(map.next_value()?);
                         }
-                        // Deserialize Option<Map> — null means whole-tool gate
-                        args = Some(map.next_value()?);
-                    } else {
-                        let _: de::IgnoredAny = map.next_value()?;
+                        "message" => {
+                            if message.is_some() {
+                                return Err(de::Error::duplicate_field("message"));
+                            }
+                            message = Some(map.next_value()?);
+                        }
+                        _ => {
+                            let _: de::IgnoredAny = map.next_value()?;
+                        }
                     }
                 }
 
                 let args = args.ok_or_else(|| de::Error::missing_field("args"))?;
-                Ok(ToolApprovalGate { args })
+                Ok(ToolApprovalGate {
+                    args,
+                    message: normalize_approval_gate_message(message.as_deref()),
+                })
             }
         }
 
@@ -463,7 +523,10 @@ pub fn merge_approval_gate_maps(
 /// the base gate is the parent's established gate; the additional gate cannot
 /// loosen it. Swapping the argument order would silently flip this security property.
 fn take_stricter_approval_gate(a: &ToolApprovalGate, b: &ToolApprovalGate) -> ToolApprovalGate {
-    match (&a.args, &b.args) {
+    // Display text is not a security property. Child (`b`) wins when set;
+    // otherwise keep the parent's message.
+    let message = b.message.clone().or_else(|| a.message.clone());
+    let mut gate = match (&a.args, &b.args) {
         // Either is whole-tool → whole-tool wins (strictest possible)
         (None, _) | (_, None) => ToolApprovalGate::whole_tool(),
         // Both per-arg → union of argument keys (more args gated = stricter).
@@ -477,7 +540,9 @@ fn take_stricter_approval_gate(a: &ToolApprovalGate, b: &ToolApprovalGate) -> To
             }
             ToolApprovalGate::with_args(merged_args)
         }
-    }
+    };
+    gate.message = message;
+    gate
 }
 
 // ---------------------------------------------------------------------------
@@ -1593,5 +1658,97 @@ mod tests {
             Err(ApprovalGateError::ArgApprovalGateConstraintChanged),
             "Constraint↔Constraint: widening must be rejected"
         );
+    }
+
+    // -- Optional display message --
+
+    #[test]
+    fn test_gate_without_message_still_parses() {
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("email.delete".into(), ToolApprovalGate::whole_tool());
+        let encoded = encode_approval_gate_map(&gm).unwrap();
+        let decoded = parse_approval_gate_map(Some(&encoded)).unwrap().unwrap();
+        assert_eq!(decoded.get("email.delete").unwrap().message, None);
+    }
+
+    #[test]
+    fn test_gate_message_roundtrip_and_cap() {
+        let long: String = "é".repeat(APPROVAL_GATE_MESSAGE_MAX_CHARS + 20);
+        let gate = ToolApprovalGate::whole_tool().with_message(&long);
+        assert_eq!(
+            gate.message.as_ref().unwrap().chars().count(),
+            APPROVAL_GATE_MESSAGE_MAX_CHARS
+        );
+
+        let mut gm = ApprovalGateMap::new();
+        gm.insert("email.delete".into(), gate);
+        let encoded = encode_approval_gate_map(&gm).unwrap();
+        let decoded = parse_approval_gate_map(Some(&encoded)).unwrap().unwrap();
+        assert_eq!(
+            decoded
+                .get("email.delete")
+                .unwrap()
+                .message
+                .as_ref()
+                .unwrap()
+                .chars()
+                .count(),
+            APPROVAL_GATE_MESSAGE_MAX_CHARS
+        );
+    }
+
+    #[test]
+    fn test_empty_message_omitted() {
+        assert_eq!(
+            ToolApprovalGate::whole_tool().with_message("   ").message,
+            None
+        );
+        assert_eq!(
+            resolve_approval_required_message("exec", Some("  ")),
+            "Approval required for tool 'exec'"
+        );
+    }
+
+    #[test]
+    fn test_merge_inherits_parent_message_when_child_unset() {
+        let parent = ToolApprovalGate::whole_tool().with_message("parent text");
+        let child = ToolApprovalGate::whole_tool();
+        let merged = take_stricter_approval_gate(&parent, &child);
+        assert_eq!(merged.message.as_deref(), Some("parent text"));
+    }
+
+    #[test]
+    fn test_merge_child_message_wins_when_set() {
+        let parent = ToolApprovalGate::whole_tool().with_message("parent text");
+        let child = ToolApprovalGate::whole_tool().with_message("child text");
+        let merged = take_stricter_approval_gate(&parent, &child);
+        assert_eq!(merged.message.as_deref(), Some("child text"));
+    }
+
+    #[test]
+    fn test_merge_message_does_not_weaken_gate() {
+        let mut parent_args = BTreeMap::new();
+        parent_args.insert("path".into(), ArgApprovalGate::All);
+        let parent = ToolApprovalGate::with_args(parent_args).with_message("parent");
+
+        let child = ToolApprovalGate::whole_tool().with_message("different child text");
+        let merged = take_stricter_approval_gate(&parent, &child);
+        assert!(merged.is_whole_tool(), "whole-tool child must still win");
+        assert_eq!(merged.message.as_deref(), Some("different child text"));
+    }
+
+    #[test]
+    fn test_unknown_cbor_key_ignored() {
+        use ciborium::value::Value;
+        let gate = Value::Map(vec![
+            (Value::Text("args".into()), Value::Null),
+            (Value::Text("unknown".into()), Value::Integer(1.into())),
+        ]);
+        let gm = Value::Map(vec![(Value::Text("exec".into()), gate)]);
+        let mut buf = Vec::new();
+        ciborium::into_writer(&gm, &mut buf).unwrap();
+        let decoded = parse_approval_gate_map(Some(&buf)).unwrap().unwrap();
+        assert!(decoded.get("exec").unwrap().is_whole_tool());
+        assert_eq!(decoded.get("exec").unwrap().message, None);
     }
 }

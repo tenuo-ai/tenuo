@@ -63,6 +63,7 @@ class ControlPlaneApprovalRequestV1:
     created_at_unix: int
     attestation: Optional[Dict[str, Any]] = None
     temporal: Optional[Dict[str, str]] = None
+    message: Optional[str] = None
 
     def to_json_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -70,6 +71,8 @@ class ControlPlaneApprovalRequestV1:
             d.pop("attestation", None)
         if d.get("temporal") is None:
             d.pop("temporal", None)
+        if not d.get("message"):
+            d.pop("message", None)
         return d
 
     @staticmethod
@@ -91,6 +94,7 @@ class ControlPlaneApprovalRequestV1:
             created_at_unix=int(data["created_at_unix"]),
             attestation=dict(data["attestation"]) if data.get("attestation") is not None else None,
             temporal=dict(data["temporal"]) if data.get("temporal") is not None else None,
+            message=(str(data["message"]) if data.get("message") else None),
         )
 
 
@@ -163,6 +167,7 @@ def build_control_plane_approval_request_v1(
         created_at_unix=created,
         attestation=att,
         temporal=dict(temporal) if temporal else None,
+        message=req.message or None,
     )
 
 

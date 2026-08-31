@@ -381,14 +381,17 @@ class ApprovalRequiredError(A2AError):
         request_hash: str = "",
         required_approvers: Optional[list[str]] = None,
         min_approvals: int = 1,
+        message: Optional[str] = None,
     ) -> None:
+        text = message or f"Approval required for skill '{skill}'"
         super().__init__(
-            f"Approval required for skill '{skill}'",
+            text,
             {
                 "skill": skill,
                 "request_hash": request_hash,
                 "required_approvers": required_approvers or [],
                 "min_approvals": min_approvals,
+                "message": text,
             },
         )
 

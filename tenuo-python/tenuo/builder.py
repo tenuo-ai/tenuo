@@ -262,8 +262,10 @@ class MintBuilder:
     def approval_gates(self, approval_gate_map: Dict[str, Any]) -> "MintBuilder":
         """Add approval gates to the warrant.
 
-        Keys are tool names. Values are ``None`` (whole-tool gate) or a dict of
-        per-argument gate specifications.
+        Keys are tool names. Values are ``None`` (whole-tool gate), a dict of
+        per-argument gate specifications, or
+        ``{"args": None | {...}, "message": "..."}`` for an optional display
+        message (copied onto approval errors; not part of ``request_hash``).
         """
         self._approval_gates = approval_gate_map
         return self
@@ -623,8 +625,11 @@ class GrantBuilder:
     def approval_gates(self, approval_gate_map: Dict[str, Any]) -> "GrantBuilder":
         """Add or merge approval gates into the attenuated warrant.
 
-        Keys are tool names. Values are ``None`` (whole-tool gate) or a dict of
-        per-argument gate specifications. Gates merge with any inherited from the parent.
+        Keys are tool names. Values are ``None`` (whole-tool gate), a dict of
+        per-argument gate specifications, or
+        ``{"args": None | {...}, "message": "..."}``. Gates merge with any
+        inherited from the parent. Display ``message`` is not a security
+        property: child text wins when set, otherwise the parent text is kept.
         """
         self._rust_builder.with_approval_gates(approval_gate_map)
         return self
@@ -937,8 +942,10 @@ class IssuanceBuilder:
     def approval_gates(self, approval_gate_map: Dict[str, Any]) -> "IssuanceBuilder":
         """Add or merge approval gates into the issued execution warrant.
 
-        Keys are tool names. Values are ``None`` (whole-tool gate) or a dict of
-        per-argument gate specifications. Gates merge with any inherited from the issuer warrant.
+        Keys are tool names. Values are ``None`` (whole-tool gate), a dict of
+        per-argument gate specifications, or
+        ``{"args": None | {...}, "message": "..."}``. Gates merge with any
+        inherited from the issuer warrant.
         """
         self._rust_builder.with_approval_gates(approval_gate_map)
         return self

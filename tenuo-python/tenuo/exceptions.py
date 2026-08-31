@@ -1292,13 +1292,16 @@ class ApprovalGateTriggered(ApprovalError):
         request_hash: str = "",
         min_approvals: int = 1,
         hint: Optional[str] = None,
+        *,
+        message: Optional[str] = None,
     ):
         self.tool = tool
         self.request_id = request_id
         self.request_hash = request_hash
         self.min_approvals = min_approvals
+        text = message or f"Approval required for tool '{tool}'"
         super().__init__(
-            f"Approval required for tool '{tool}'",
+            text,
             hint=hint,
         )
         self.details = {
@@ -1306,6 +1309,7 @@ class ApprovalGateTriggered(ApprovalError):
             "request_id": request_id,
             "request_hash": request_hash,
             "min_approvals": min_approvals,
+            "message": text,
         }
 
 

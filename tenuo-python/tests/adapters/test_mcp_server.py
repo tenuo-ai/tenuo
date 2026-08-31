@@ -524,7 +524,7 @@ class TestApprovalGateTriggered:
         assert not result.allowed
         assert result.is_approval_required
         assert result.jsonrpc_error_code == -32002
-        assert "approvals" in (result.denial_reason or "").lower()
+        assert result.denial_reason == "Approval required for tool 'transfer'"
         assert result.request_hash is not None, "request_hash must be populated from Rust"
         assert len(result.request_hash) > 0
 

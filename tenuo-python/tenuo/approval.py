@@ -91,6 +91,7 @@ class ApprovalRequest:
         min_approvals: Effective m-of-n threshold when known (optional).
         warrant_expires_at_unix: Warrant expiry as Unix seconds when known (optional).
         created_at_unix: When this request was constructed (optional).
+        message: Resolved display text copied by adapters (optional).
     """
 
     tool: str
@@ -103,6 +104,7 @@ class ApprovalRequest:
     min_approvals: Optional[int] = None
     warrant_expires_at_unix: Optional[int] = None
     created_at_unix: Optional[int] = None
+    message: Optional[str] = None
 
     @staticmethod
     def for_warrant_gate(
@@ -113,6 +115,8 @@ class ApprovalRequest:
         holder_key: Optional[Any] = None,
     ) -> "ApprovalRequest":
         """Build a request aligned with Rust ``approval::ApprovalRequest`` context."""
+        from tenuo_core import resolve_approval_required_message as _resolve
+
         warrant_id = getattr(warrant, "id", None) or ""
         req_approvers = getattr(warrant, "required_approvers", None)
         approvers_list: Optional[List[Any]] = None
@@ -124,6 +128,10 @@ class ApprovalRequest:
         min_approvals: Optional[int] = None
         if callable(min_ap):
             min_approvals = int(min_ap())
+        raw_message = None
+        getter = getattr(warrant, "approval_gate_message", None)
+        if callable(getter):
+            raw_message = getter(tool)
         return ApprovalRequest(
             tool=tool,
             arguments=arguments,
@@ -135,6 +143,7 @@ class ApprovalRequest:
             min_approvals=min_approvals,
             warrant_expires_at_unix=warrant_expires_at_unix(warrant),
             created_at_unix=int(time.time()),
+            message=_resolve(tool, raw_message),
         )
 
 
@@ -155,10 +164,10 @@ class ApprovalRequired(Exception):
 
     def __init__(self, request: ApprovalRequest):
         self.request = request
-        super().__init__(
-            f"Approval required for '{request.tool}' "
-            f"(warrant: {request.warrant_id})"
-        )
+        from tenuo_core import resolve_approval_required_message as _resolve
+
+        text = request.message or _resolve(request.tool, None)
+        super().__init__(text)
 
 
 class ApprovalDenied(Exception):
@@ -318,6 +327,8 @@ def cli_prompt(
         print(f"\n{'=' * 60}", file=sys.stderr)
         print("  APPROVAL REQUIRED", file=sys.stderr)
         print(f"{'=' * 60}", file=sys.stderr)
+        if request.message:
+            print(f"  {request.message}", file=sys.stderr)
         print(f"  Tool:    {request.tool}", file=sys.stderr)
         if show_args and request.arguments:
             for k, v in request.arguments.items():

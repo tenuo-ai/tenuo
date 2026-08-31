@@ -444,10 +444,26 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             Ok(cls) => {
                 // Call constructor with the tuple of arguments
                 // Note: call1 takes a tuple of arguments. Our 'args' IS that tuple.
-                PyErr::from_value(cls.call1(args).unwrap_or_else(|e| {
+                let value = cls.call1(args).unwrap_or_else(|e| {
                     // Fallback if constructor fails
                     py_validation_err(e.to_string()).value(py).as_any().clone()
-                }))
+                });
+                // Keep the ApprovalGateTriggered 4-tuple (positional unpack). Overlay
+                // the resolved display message after construct.
+                if let crate::error::Error::ApprovalRequired { ref request, .. } = e {
+                    if !request.message.is_empty() {
+                        let _ = value.setattr("message", request.message.as_str());
+                        if let Ok(details) = value.getattr("details") {
+                            if let Ok(dict) = details.cast::<PyDict>() {
+                                let _ = dict.set_item("message", request.message.as_str());
+                            }
+                        }
+                        if let Ok(new_args) = PyTuple::new(py, [request.message.as_str()]) {
+                            let _ = value.setattr("args", new_args);
+                        }
+                    }
+                }
+                PyErr::from_value(value)
             }
             Err(e) => py_validation_err(e.to_string()),
         }
@@ -2507,10 +2523,24 @@ fn py_to_arg_approval_gate(
 ///     },
 /// }
 /// ```
+fn py_dict_to_arg_approval_gates(
+    args_dict: &Bound<'_, PyDict>,
+) -> PyResult<std::collections::BTreeMap<String, crate::approval_gate::ArgApprovalGate>> {
+    let mut args = std::collections::BTreeMap::new();
+    for (ak, av) in args_dict.iter() {
+        let arg_name: String = ak.extract()?;
+        let gate = py_to_arg_approval_gate(&arg_name, &av)?;
+        args.insert(arg_name, gate);
+    }
+    Ok(args)
+}
+
 fn py_dict_to_approval_gate_map(
     dict: &Bound<'_, PyDict>,
 ) -> PyResult<crate::approval_gate::ApprovalGateMap> {
-    use crate::approval_gate::{ApprovalGateMap, ToolApprovalGate};
+    use crate::approval_gate::{
+        normalize_approval_gate_message, ApprovalGateMap, ToolApprovalGate,
+    };
 
     let mut gm = ApprovalGateMap::new();
     for (key, value) in dict.iter() {
@@ -2518,12 +2548,40 @@ fn py_dict_to_approval_gate_map(
         if value.is_none() {
             gm.insert(tool, ToolApprovalGate::whole_tool());
         } else if let Ok(args_dict) = value.cast::<PyDict>() {
-            let mut args = std::collections::BTreeMap::new();
-            for (ak, av) in args_dict.iter() {
-                let arg_name: String = ak.extract()?;
-                let gate = py_to_arg_approval_gate(&arg_name, &av)?;
-                args.insert(arg_name, gate);
+            // Structured form: `{"args": None|dict, "message": str}`.
+            // Detected only when `message` is a Python str so an argument
+            // named "message" (constraint / None / exempt dict) stays per-arg.
+            if let Ok(Some(msg_obj)) = args_dict.get_item("message") {
+                if let Ok(msg) = msg_obj.extract::<String>() {
+                    for (k, _) in args_dict.iter() {
+                        let ks: String = k.extract()?;
+                        if ks != "args" && ks != "message" {
+                            return Err(py_validation_err(format!(
+                                "approval gate for '{}' with a string 'message' may only include 'args' and 'message'",
+                                tool
+                            )));
+                        }
+                    }
+                    let mut gate = if let Ok(Some(args_val)) = args_dict.get_item("args") {
+                        if args_val.is_none() {
+                            ToolApprovalGate::whole_tool()
+                        } else if let Ok(inner) = args_val.cast::<PyDict>() {
+                            ToolApprovalGate::with_args(py_dict_to_arg_approval_gates(&inner)?)
+                        } else {
+                            return Err(py_validation_err(format!(
+                                "approval gate for '{}': 'args' must be None or a dict of arg gates",
+                                tool
+                            )));
+                        }
+                    } else {
+                        ToolApprovalGate::whole_tool()
+                    };
+                    gate.message = normalize_approval_gate_message(Some(&msg));
+                    gm.insert(tool, gate);
+                    continue;
+                }
             }
+            let args = py_dict_to_arg_approval_gates(&args_dict)?;
             gm.insert(tool, ToolApprovalGate::with_args(args));
         } else {
             return Err(py_validation_err(format!(
@@ -4157,6 +4215,17 @@ impl PyWarrant {
         self.inner.approval_threshold()
     }
 
+    /// Return the stored display message for `tool`'s approval gate, if any.
+    fn approval_gate_message(&self, tool: &str) -> Option<String> {
+        let map = crate::approval_gate::parse_approval_gate_map(
+            self.inner
+                .extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+        )
+        .ok()
+        .flatten()?;
+        map.get(tool).and_then(|g| g.message.clone())
+    }
+
     /// Get all custom extensions as a dict of name -> bytes.
     fn extensions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
@@ -5211,6 +5280,12 @@ fn py_evaluate_approval_gates(
         .map_err(to_py_err)
 }
 
+/// Resolve the display string adapters copy when an approval gate fires.
+#[pyfunction(name = "resolve_approval_required_message")]
+fn py_resolve_approval_required_message(tool: &str, gate_message: Option<&str>) -> String {
+    crate::approval_gate::resolve_approval_required_message(tool, gate_message)
+}
+
 /// Unsigned metadata for an approval (NOT part of the signed payload).
 ///
 /// Provider and reason are metadata, not part of the approval semantics.
@@ -6176,6 +6251,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approvals, m)?)?;
     m.add_function(wrap_pyfunction!(py_evaluate_approval_gates, m)?)?;
+    m.add_function(wrap_pyfunction!(py_resolve_approval_required_message, m)?)?;
 
     Ok(())
 }
