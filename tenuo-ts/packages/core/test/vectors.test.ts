@@ -1,5 +1,13 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createTenuo, TenuoConfigurationError, under } from "../src/index.ts";
+import {
+  A30_1_RECEIPT_HEX,
+  A30_2_RECEIPT_HEX,
+  A30_3_RECEIPT_HEX,
+  A30_4_RECEIPT_HEX,
+  A30_SRL_DIGEST_INPUT,
+} from "./vectors/spec.ts";
 import {
   authorizeAsOf,
   inspectParts,
@@ -501,5 +509,50 @@ describe("A.22 cascading revocation", () => {
     const mutated = signPublishedRevocationList(CONTROL_PLANE_SECRET, [A22_ROOT_ID], 2);
     const ctx = verifierContext([CONTROL_PLANE_PUB], { revocationList: first });
     expect(() => ctx.loadRevocationList(mutated)).toThrow(/changed at version/i);
+  });
+});
+
+describe("A.30 authorization receipts", () => {
+  it("omits the revocation commitment when no list was loaded", () => {
+    const receipt = verifyReceipt(A30_1_RECEIPT_HEX);
+
+    expect(receipt.authentic).toBe(true);
+    expect(receipt.outcome).toBe("allow");
+    expect(receipt.srl_version).toBeUndefined();
+    // Absent is the honest claim that revocation was never consulted — not the
+    // same as a list that matched nothing.
+    expect(receipt.srl_hash).toBeUndefined();
+  });
+
+  it("commits to an unversioned list without inventing a version", () => {
+    const expected = createHash("sha256").update(A30_SRL_DIGEST_INPUT).digest("hex");
+    const receipt = verifyReceipt(A30_2_RECEIPT_HEX);
+
+    expect(receipt.srl_hash).toBe(expected);
+    expect(receipt.srl_version).toBeUndefined();
+  });
+
+  it("carries both keys for a versioned list", () => {
+    const receipt = verifyReceipt(A30_3_RECEIPT_HEX);
+
+    expect(receipt.srl_version).toBe(47);
+    expect(receipt.srl_hash).toBe(
+      createHash("sha256").update(A30_SRL_DIGEST_INPUT).digest("hex"),
+    );
+  });
+
+  it("records a denial reached before possession was proven", () => {
+    const receipt = verifyReceipt(A30_4_RECEIPT_HEX);
+
+    expect(receipt.outcome).toBe("deny");
+    expect(receipt.decision_code).toBe("tool-not-authorized");
+  });
+
+  it("rejects a receipt whose signature was tampered with", () => {
+    const bytes = Buffer.from(A30_3_RECEIPT_HEX, "hex");
+    const last = bytes.length - 1;
+    bytes.writeUInt8(bytes.readUInt8(last) ^ 0x01, last);
+
+    expect(() => verifyReceipt(bytes.toString("hex"))).toThrow();
   });
 });
