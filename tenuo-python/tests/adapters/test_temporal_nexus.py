@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Optional, Tuple
@@ -17,10 +18,12 @@ from tenuo.approval import ApprovalRequest, sign_approval  # noqa: E402
 from tenuo_core import Exact, Range, SigningKey, Warrant, py_compute_request_hash  # noqa: E402
 
 from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
+from tenuo.temporal._constants import TENUO_ARG_KEYS_HEADER  # noqa: E402
 from tenuo.temporal._dedup import _default_pop_dedup_store, _pop_dedup_cache  # noqa: E402
 from tenuo.temporal._workflow import current_key_id  # noqa: E402
 from tenuo.temporal._headers import tenuo_headers  # noqa: E402
 from tenuo.temporal._nexus import (  # noqa: E402
+    TENUO_NEXUS_TOOL_HEADER,
     TenuoNexusWorkflowEnvelope,
     nexus_input_args,
     nexus_tool_name,
@@ -51,7 +54,6 @@ from tenuo.exceptions import (  # noqa: E402
     ApprovalGateTriggered,
     ConstraintViolation,
     SignatureInvalid,
-    ToolNotAuthorized,
 )
 
 
@@ -698,8 +700,184 @@ def test_verify_nexus_operation_rejects_wrong_operation_binding(
         trusted_roots=[root_key.public_key],
     )
 
-    with pytest.raises((ConstraintViolation, ToolNotAuthorized)):
+    with pytest.raises(TenuoContextError, match="tool binding mismatch"):
         verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+
+def test_verify_nexus_operation_rejects_missing_tool_binding_header(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    headers = tenuo_nexus_headers(
+        nexus_warrant,
+        "agent-key",
+        agent_key,
+        endpoint="billing-prod",
+        service="BillingService",
+        operation="refund",
+        input=input,
+    )
+    del headers[TENUO_NEXUS_TOOL_HEADER]
+    ctx = SimpleNamespace(
+        request_id="req-default",
+        service="BillingService",
+        operation="refund",
+        headers=headers,
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+
+    with pytest.raises(TenuoContextError, match="missing x-tenuo-tool-name"):
+        verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+
+def test_verify_nexus_operation_rejects_missing_arg_key_binding_header(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    headers = tenuo_nexus_headers(
+        nexus_warrant,
+        "agent-key",
+        agent_key,
+        endpoint="billing-prod",
+        service="BillingService",
+        operation="refund",
+        input=input,
+    )
+    del headers[TENUO_ARG_KEYS_HEADER]
+    ctx = SimpleNamespace(
+        request_id="req-default",
+        service="BillingService",
+        operation="refund",
+        headers=headers,
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+
+    with pytest.raises(TenuoContextError, match="missing x-tenuo-arg-keys"):
+        verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+
+def test_verify_nexus_operation_requires_operation_name(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    headers = tenuo_nexus_headers(
+        nexus_warrant,
+        "agent-key",
+        agent_key,
+        endpoint="billing-prod",
+        service="BillingService",
+        operation="refund",
+        input=input,
+    )
+    ctx = SimpleNamespace(
+        request_id="req-default",
+        service="BillingService",
+        headers=headers,
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+
+    with pytest.raises(TenuoContextError, match="requires operation="):
+        verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+
+def test_verify_nexus_operation_accepts_arg_key_order_drift(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    signed_input = {"amount_cents": 2500, "order_id": "ord_123"}
+    headers = tenuo_nexus_headers(
+        nexus_warrant,
+        "agent-key",
+        agent_key,
+        endpoint="billing-prod",
+        service="BillingService",
+        operation="refund",
+        input=signed_input,
+    )
+    ctx = SimpleNamespace(
+        request_id="req-default",
+        service="BillingService",
+        operation="refund",
+        headers=headers,
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+
+    verify_nexus_operation(ctx, RefundInput("ord_123", 2500), config, endpoint="billing-prod")
+
+
+def test_verify_nexus_operation_rejects_arg_key_binding_mismatch(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    headers = tenuo_nexus_headers(
+        nexus_warrant,
+        "agent-key",
+        agent_key,
+        endpoint="billing-prod",
+        service="BillingService",
+        operation="refund",
+        input=input,
+    )
+    headers[TENUO_ARG_KEYS_HEADER] = base64.b64encode(
+        b"order_id,total_cents"
+    ).decode("ascii")
+    ctx = SimpleNamespace(
+        request_id="req-default",
+        service="BillingService",
+        operation="refund",
+        headers=headers,
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+
+    with pytest.raises(TenuoContextError, match="argument binding mismatch"):
+        verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+
+def test_tenuo_nexus_headers_send_binding_diagnostics(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    _root_key, agent_key = nexus_keys
+    headers = tenuo_nexus_headers(
+        nexus_warrant,
+        "agent-key",
+        agent_key,
+        endpoint="billing-prod",
+        service="BillingService",
+        operation="refund",
+        input=RefundInput("ord_123", 2500),
+    )
+
+    assert base64.b64decode(headers[TENUO_NEXUS_TOOL_HEADER]).decode() == (
+        "nexus:billing-prod:BillingService:refund"
+    )
+    assert base64.b64decode(headers[TENUO_ARG_KEYS_HEADER]).decode() == (
+        "order_id,amount_cents"
+    )
 
 
 def test_verify_nexus_operation_rejects_input_constraint_mismatch(

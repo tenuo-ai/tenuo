@@ -314,6 +314,45 @@ class ApiClient:
 
 
 # =============================================================================
+# Temporal Nexus Templates
+# =============================================================================
+
+
+class TemporalNexusOperation:
+    """Temporal Nexus operation capability templates.
+
+    Nexus tool names include the endpoint, optional service, and operation so a
+    warrant minted for one Nexus boundary cannot silently authorize another.
+    """
+
+    @staticmethod
+    def exact(
+        endpoint: str,
+        operation: Any,
+        *,
+        service: Optional[str] = None,
+        **constraints: Any,
+    ) -> Capability:
+        """Authorize one Nexus operation with optional input constraints.
+
+        Example:
+            cap = TemporalNexusOperation.exact(
+                "billing-prod",
+                "refund",
+                service="BillingService",
+                order_id=Exact("ord_123"),
+                amount_cents=Range(max=5000),
+            )
+        """
+        from tenuo.temporal import nexus_tool_name
+
+        return Capability(
+            nexus_tool_name(endpoint, operation, service=service),
+            **constraints,
+        )
+
+
+# =============================================================================
 # Code Execution Templates
 # =============================================================================
 
@@ -627,6 +666,8 @@ __all__ = [
     # Web templates
     "WebSearcher",
     "ApiClient",
+    # Temporal templates
+    "TemporalNexusOperation",
     # Code/Shell templates
     "CodeRunner",
     "ShellExecutor",

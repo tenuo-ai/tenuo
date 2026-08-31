@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PoP replay checks with Nexus `request_id` scoping, and binds
   workflow-envelope `key_id` values to the warrant holder before backing
   workflows can sign downstream PoPs.
+- **Temporal Nexus DX hardening.** Tenuo-generated Nexus calls now include the
+  exact PoP tool name and input field list so handlers can report
+  caller/handler contract drift as a wiring error instead of an opaque policy
+  denial; manual callers that omit these binding headers now fail closed. Added
+  `TemporalNexusOperation.exact(...)` for minting canonical Nexus operation
+  capabilities.
 - **Temporal per-Activity warrant overrides.**
   `tenuo_execute_activity(..., warrant=..., key_id=...)` now applies a
   task-local warrant to one dispatch, including the active delegation chain.

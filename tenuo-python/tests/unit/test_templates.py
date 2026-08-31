@@ -24,6 +24,7 @@ from tenuo.templates import (
     FileReader,
     FileWriter,
     ShellExecutor,
+    TemporalNexusOperation,
     WebSearcher,
 )
 
@@ -228,6 +229,32 @@ class TestApiClient:
 
         assert isinstance(cap.constraints["url"], Pattern)
         assert "internal.company.com/api/*" in cap.constraints["url"].pattern
+
+
+class TestTemporalNexusOperation:
+    """Test Temporal Nexus operation templates."""
+
+    def test_exact_operation_with_service(self):
+        """TemporalNexusOperation.exact creates canonical Nexus tool names."""
+        cap = TemporalNexusOperation.exact(
+            "billing-prod",
+            "refund",
+            service="BillingService",
+            order_id=Exact("ord_123"),
+            amount_cents=Range(max=5000),
+        )
+
+        assert isinstance(cap, Capability)
+        assert cap.tool == "nexus:billing-prod:BillingService:refund"
+        assert isinstance(cap.constraints["order_id"], Exact)
+        assert isinstance(cap.constraints["amount_cents"], Range)
+
+    def test_exact_operation_without_service(self):
+        """Service is optional for service-less Nexus operation scopes."""
+        cap = TemporalNexusOperation.exact("shared-endpoint", "ping")
+
+        assert cap.tool == "nexus:shared-endpoint:ping"
+        assert cap.constraints == {}
 
 
 class TestCodeRunner:
