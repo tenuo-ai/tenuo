@@ -127,6 +127,8 @@ __all__ = [
     "PayloadTooLarge",
     # Revocation
     "RevokedError",
+    "SrlVersionRollback",
+    "SrlContentChanged",
     # Validation errors
     "ValidationError",
     "MissingField",
@@ -248,6 +250,7 @@ class ErrorCode:
     WARRANT_REVOKED = 1800
     SRL_INVALID = 1801
     SRL_VERSION_ROLLBACK = 1802
+    SRL_CONTENT_CHANGED = 1803
 
     # Size limit errors (1900-1999)
     WARRANT_TOO_LARGE = 1900
@@ -310,6 +313,7 @@ class ErrorCode:
             1800: "warrant-revoked",
             1801: "srl-invalid",
             1802: "srl-version-rollback",
+            1803: "srl-content-changed",
             1900: "warrant-too-large",
             1901: "chain-too-large",
             1902: "too-many-tools",
@@ -1038,6 +1042,36 @@ class RevokedError(TenuoError):
         super().__init__(f"Warrant '{warrant_id}' has been revoked", details, hint=hint)
 
 
+@wire_code(ErrorCode.SRL_VERSION_ROLLBACK)
+class SrlVersionRollback(TenuoError):
+    """Signed revocation list version moved backwards."""
+
+    error_code = "srl_version_rollback"
+    rust_variant = "SRLVersionRollback"
+
+    def __init__(self, current: int, attempted: int, hint: Optional[str] = None):
+        super().__init__(
+            f"SRL version rollback detected: current version {current}, attempted version {attempted}",
+            {"current": current, "attempted": attempted},
+            hint=hint,
+        )
+
+
+@wire_code(ErrorCode.SRL_CONTENT_CHANGED)
+class SrlContentChanged(TenuoError):
+    """Signed revocation list kept its version but changed the revoked set."""
+
+    error_code = "srl_content_changed"
+    rust_variant = "SRLContentChanged"
+
+    def __init__(self, version: int, hint: Optional[str] = None):
+        super().__init__(
+            f"SRL revoked set changed at version {version}; bump the version when the revoked set changes",
+            {"version": version},
+            hint=hint,
+        )
+
+
 # =============================================================================
 # Validation Errors (field/format validation)
 # =============================================================================
@@ -1457,4 +1491,3 @@ class AuthorizationDenied(ScopeViolation):
                 lines.append(f"  ✅ {result.name}: OK")
 
         return "\n".join(lines)
-

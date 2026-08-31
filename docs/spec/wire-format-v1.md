@@ -2201,6 +2201,7 @@ pub enum ErrorCode {
     WarrantRevoked = 1800,
     SRLInvalid = 1801,
     SRLVersionRollback = 1802,
+    SRLContentChanged = 1803,
     
     // Size limit errors (1900-1999)
     WarrantTooLarge = 1900,

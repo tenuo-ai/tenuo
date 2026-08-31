@@ -48,6 +48,22 @@ _active_tenuo_warrant: contextvars.ContextVar[Optional[tuple]] = contextvars.Con
     "tenuo_active_warrant", default=None
 )
 
+#: Per-Activity warrant override used by ``tenuo_execute_activity(warrant=...)``.
+#: A ContextVar is intentional: workflows can schedule Activities concurrently,
+#: so a run-id keyed "next headers" slot would let sibling asyncio tasks consume
+#: one another's warrant. The value is raw Tenuo headers and is scoped to the
+#: single call around ``workflow.execute_activity``.
+_activity_warrant_override: contextvars.ContextVar[Optional[Dict[str, bytes]]] = (
+    contextvars.ContextVar("tenuo_activity_warrant_override", default=None)
+)
+
+#: Function reference paired with the current ``tenuo_execute_activity`` call.
+#: The legacy run-id store remains as a compatibility fallback, but this value
+#: prevents concurrent workflow tasks from racing over argument-name mapping.
+_activity_fn_override: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar(
+    "tenuo_activity_fn_override", default=None
+)
+
 # _workflow_headers_store:    run_id → {warrant, key_id}
 # _pending_child_headers:     child_wf_id → attenuated headers
 #                              (keyed by workflow_id because the child's run_id
@@ -160,6 +176,25 @@ def _get_worker_config(
     if not task_queue:
         return None
     return _worker_configs.get(task_queue)
+
+
+def _get_only_worker_config() -> "Optional[TenuoPluginConfig]":
+    """Return the sole registered worker config, if it is unambiguous.
+
+    This exists only as a compatibility bridge for APIs that historically
+    allowed callers to omit ``task_queue``. Security-sensitive routing should
+    continue to use :func:`_get_worker_config` for exact matching. Returning
+    ``None`` for zero or multiple registrations keeps the bridge fail-closed
+    and prevents cross-queue/tenant config selection.
+    """
+    if len(_worker_configs) != 1:
+        return None
+    return next(iter(_worker_configs.values()))
+
+
+def _worker_config_count() -> int:
+    """Return the number of registered worker configs for diagnostics."""
+    return len(_worker_configs)
 
 
 def _clear_worker_config(task_queue: Optional[str] = None) -> None:

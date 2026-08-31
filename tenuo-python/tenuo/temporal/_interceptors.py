@@ -38,7 +38,10 @@ from tenuo.temporal._decorators import (
     _warrant_tool_name_for_activity_type,
     is_unprotected,
 )
-from tenuo.temporal._headers import _extract_warrant_from_headers
+from tenuo.temporal._headers import (
+    _extract_warrant_from_headers,
+    _validate_chain_ends_with_warrant,
+)
 from tenuo.temporal._observability import TemporalAuditEvent
 from tenuo.temporal._pop import (
     _args_dict_uses_only_positional_fallback_keys,
@@ -49,6 +52,8 @@ from tenuo.temporal._pop import (
     _warrant_tool_has_non_empty_field_constraints,
 )
 from tenuo.temporal._state import (
+    _activity_fn_override,
+    _activity_warrant_override,
     _current_run_key,
     _pending_activity_approvals,
     _pending_activity_fn,
@@ -75,6 +80,35 @@ if TYPE_CHECKING:
     from tenuo.temporal._config import TenuoPluginConfig
 
 logger = logging.getLogger("tenuo.temporal")
+
+_CONFIG_REVOCATION_LIST = object()
+
+
+def _build_authorizer(
+    authorizer_cls: Any,
+    trusted_roots: Any,
+    config: "TenuoPluginConfig",
+    *,
+    revocation_list: Any = _CONFIG_REVOCATION_LIST,
+    **kwargs: Any,
+) -> Any:
+    """Build an Authorizer with the worker's shared validation policy.
+
+    ``revocation_list`` can override the config snapshot after a provider
+    refresh. Missing core SRL support is an error, never a silent downgrade.
+    """
+    auth = authorizer_cls(trusted_roots=trusted_roots, **kwargs)
+    if config.clearance_requirements:
+        for tool, clearance in config.clearance_requirements.items():
+            auth.require_clearance(tool, clearance)
+    srl = (
+        config.revocation_list
+        if revocation_list is _CONFIG_REVOCATION_LIST
+        else revocation_list
+    )
+    if srl is not None:
+        auth.set_revocation_list(srl)
+    return auth
 
 # OTel is a soft dependency
 try:
@@ -169,8 +203,12 @@ class _TenuoWorkflowOutboundInterceptor:
             with _store_lock:
                 pending_approvals = _pending_activity_approvals.pop(run_key, None)
 
-            with _store_lock:
-                raw_headers = dict(_workflow_headers_store.get(run_key, {}))
+            override_headers = _activity_warrant_override.get()
+            if override_headers is not None:
+                raw_headers = dict(override_headers)
+            else:
+                with _store_lock:
+                    raw_headers = dict(_workflow_headers_store.get(run_key, {}))
 
             if raw_headers:
                 warrant = _extract_warrant_from_headers(raw_headers)
@@ -189,6 +227,8 @@ class _TenuoWorkflowOutboundInterceptor:
                     signer = self._config.key_resolver.resolve_sync(key_id)
 
                     activity_fn = getattr(input, "fn", None)
+                    if activity_fn is None:
+                        activity_fn = _activity_fn_override.get()
                     if activity_fn is None:
                         with _store_lock:
                             activity_fn = _pending_activity_fn.get(run_key)
@@ -623,14 +663,19 @@ class TenuoActivityInboundInterceptor:
         self._retry_authorizer: Optional[Any] = None
         try:
             from tenuo_core import Authorizer
-            self._authorizer = self._build_authorizer(
-                Authorizer, config.trusted_roots, config
+            initial_revocation_list = config._last_good_revocation_list
+            self._authorizer = _build_authorizer(
+                Authorizer,
+                config.trusted_roots,
+                config,
+                revocation_list=initial_revocation_list,
             )
             if config.retry_pop_max_windows is not None:
-                self._retry_authorizer = self._build_authorizer(
+                self._retry_authorizer = _build_authorizer(
                     Authorizer,
                     config.trusted_roots,
                     config,
+                    revocation_list=initial_revocation_list,
                     pop_max_windows=config.retry_pop_max_windows,
                 )
         except ImportError as e:
@@ -640,24 +685,6 @@ class TenuoActivityInboundInterceptor:
                 "Install tenuo with the native extension, or ensure the "
                 "interpreter can import tenuo_core."
             ) from e
-
-    @staticmethod
-    def _build_authorizer(
-        authorizer_cls: Any,
-        trusted_roots: Any,
-        config: "TenuoPluginConfig",
-        **kwargs: Any,
-    ) -> Any:
-        """Build an Authorizer instance and apply config-level policies."""
-        auth = authorizer_cls(trusted_roots=trusted_roots, **kwargs)
-        if config.clearance_requirements:
-            for tool, clearance in config.clearance_requirements.items():
-                if hasattr(auth, "require_clearance"):
-                    auth.require_clearance(tool, clearance)
-        srl = config.revocation_list
-        if srl is not None and hasattr(auth, "set_revocation_list"):
-            auth.set_revocation_list(srl)
-        return auth
 
     def _maybe_refresh_trusted_roots(self) -> None:
         """Rebuild Authorizer from ``trusted_roots_provider`` on a fixed interval."""
@@ -694,14 +721,18 @@ class TenuoActivityInboundInterceptor:
                 # ``self._config.trusted_roots`` because ``dataclasses.replace``
                 # would re-run ``__post_init__`` and fail the either/or check
                 # when ``trusted_roots_provider=`` is set.
-                self._authorizer = self._build_authorizer(
-                    Authorizer, roots, self._config
+                self._authorizer = _build_authorizer(
+                    Authorizer,
+                    roots,
+                    self._config,
+                    revocation_list=self._config._last_good_revocation_list,
                 )
                 if self._config.retry_pop_max_windows is not None:
-                    self._retry_authorizer = self._build_authorizer(
+                    self._retry_authorizer = _build_authorizer(
                         Authorizer,
                         roots,
                         self._config,
+                        revocation_list=self._config._last_good_revocation_list,
                         pop_max_windows=self._config.retry_pop_max_windows,
                     )
             except Exception as e:
@@ -709,6 +740,8 @@ class TenuoActivityInboundInterceptor:
                     "Authorizer rebuild failed during trusted root refresh: %s", e
                 )
                 return
+            with self._config._provider_state_lock:
+                self._config._last_good_trusted_roots = list(roots)
             self._last_trusted_roots_refresh = _time.monotonic()
 
     def _maybe_refresh_revocation_list(self) -> None:
@@ -727,40 +760,32 @@ class TenuoActivityInboundInterceptor:
             if (now2 - self._last_srl_refresh) < interval:
                 return
             try:
-                srl = provider()
-            except Exception as e:
-                logger.warning("revocation_list_provider failed during refresh: %s", e)
-                return
-            if srl is None:
-                logger.warning(
-                    "revocation_list_provider returned None during refresh; "
-                    "keeping prior revocation list"
-                )
-                return
-            import dataclasses as _dc
-            try:
-                # ``self._config`` diverges from the ``TenuoPluginConfig`` held
-                # by ``TenuoWorkerInterceptor`` (and by any running workflow's
-                # ``_workflow_config_store[run_id]`` snapshot). Today that's
-                # benign because only the activity inbound path consults
-                # ``revocation_list`` — the workflow inbound path checks
-                # ``authorized_signals``/``authorized_updates`` only. If you
-                # add a future feature that consults ``revocation_list`` off
-                # the workflow-config snapshot, route it through the
-                # Authorizer instead; the snapshot is *not* resynced.
-                self._config = _dc.replace(self._config, revocation_list=srl)
-                for auth in (self._authorizer, self._retry_authorizer):
-                    if auth is not None and hasattr(auth, "set_revocation_list"):
-                        try:
-                            auth.set_revocation_list(srl)
-                        except Exception as e:
-                            logger.warning(
-                                "set_revocation_list failed during SRL refresh: %s", e
-                            )
+                try:
+                    srl = provider()
+                except Exception as e:
+                    logger.warning("revocation_list_provider failed during refresh: %s", e)
+                    return
+                if srl is None:
+                    logger.warning(
+                        "revocation_list_provider returned None during refresh; "
+                        "keeping prior revocation list"
+                    )
+                    return
+                authorizers = [
+                    auth
+                    for auth in (self._authorizer, self._retry_authorizer)
+                    if auth is not None
+                ]
+                for auth in authorizers:
+                    auth.set_revocation_list(srl)
+                with self._config._provider_state_lock:
+                    self._config._last_good_revocation_list = srl
             except Exception as e:
                 logger.warning("SRL refresh failed: %s", e)
-                return
-            self._last_srl_refresh = _time.monotonic()
+            finally:
+                # Advance on every attempt so a broken source retries on
+                # interval instead of on every subsequent activity.
+                self._last_srl_refresh = _time.monotonic()
 
     def init(self, outbound: Any) -> None:
         """Called by Temporal to initialize the interceptor with an outbound impl."""
@@ -904,6 +929,37 @@ class TenuoActivityInboundInterceptor:
                 reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
             )
 
+        # -- 6b. Warrant-Chain Leaf Binding --
+        chain = None
+        chain_header = headers.get(TENUO_CHAIN_HEADER)
+        if chain_header:
+            try:
+                from tenuo_core import decode_warrant_stack_base64 as _decode_stack
+
+                chain = _decode_stack(chain_header.decode("utf-8"))
+                _validate_chain_ends_with_warrant(
+                    list(chain),
+                    warrant,
+                    operation="activity ingress",
+                )
+            except Exception as exc:
+                reason = f"Invalid warrant chain header: {exc}"
+                self._emit_denial_event(
+                    info=info,
+                    warrant=warrant,
+                    tool=tool_name,
+                    args=args,
+                    reason=reason,
+                    constraint="chain_header_invalid",
+                    start_ns=start_ns,
+                )
+                if self._config.on_denial == "raise" and not self._config.dry_run:
+                    raise self._wrap_as_non_retryable(ChainValidationError(
+                        reason=reason,
+                        depth=0,
+                    )) from exc
+                return await _deny_or_continue(tool=tool_name, reason=reason)
+
         # -- 7. Trusted-Root & Revocation Refresh --
         self._maybe_refresh_trusted_roots()
         self._maybe_refresh_revocation_list()
@@ -935,8 +991,6 @@ class TenuoActivityInboundInterceptor:
         # Phases 9–13 run inside a single try/except so every failure path
         # funnels into phase 14 for unified fail-closed error mapping.
         try:
-            from tenuo_core import decode_warrant_stack_base64 as _decode_stack
-
             # -- 9. Retry-Aware Authorizer Selection --
             if info.attempt > 1 and self._retry_authorizer is not None:
                 authorizer = self._retry_authorizer
@@ -971,9 +1025,7 @@ class TenuoActivityInboundInterceptor:
             )
 
             # -- 12. Cryptographic Authorization Evaluation --
-            chain_header = headers.get(TENUO_CHAIN_HEADER)
-            if chain_header:
-                chain = _decode_stack(chain_header.decode("utf-8"))
+            if chain:
                 chain_result = authorizer.check_chain(
                     chain, tool_name, args,
                     signature=pop_bytes,

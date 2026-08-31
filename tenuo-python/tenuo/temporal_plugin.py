@@ -265,7 +265,13 @@ class TenuoTemporalPlugin(SimplePlugin):
         """
         # Work on a copy so we never mutate the user's config object. This
         # isolates two workers that happen to share a ``TenuoPluginConfig``.
-        self._tenuo_config = dataclasses.replace(config)
+        self._tenuo_config = dataclasses.replace(config, _provider_snapshots_ready=True)
+        self._tenuo_config._last_good_trusted_roots = list(
+            config._last_good_trusted_roots
+        )
+        self._tenuo_config._last_good_revocation_list = (
+            config._last_good_revocation_list
+        )
         if self._tenuo_config.activity_fns is not None:
             self._tenuo_config.activity_fns = list(self._tenuo_config.activity_fns)
         # The activity registry is rebuilt from our copy; any later auto-discovery
@@ -349,14 +355,15 @@ class TenuoTemporalPlugin(SimplePlugin):
         worker's signing key.
         """
         task_queue = _extract_task_queue(config)
-        if task_queue:
-            _set_worker_config(self._tenuo_config, task_queue=task_queue)
-        # Silently skip when no queue is discoverable (e.g. SDK plumbing
-        # that merges runner/interceptor config before the Worker has its
-        # task_queue set, or test fixtures that pass a bare ``{}``). The
-        # mint activity will fire a targeted ``TenuoContextError`` with
-        # remediation steps if delegation is attempted without a
-        # registration, so there's no silent-failure risk.
+        if task_queue is None:
+            raise ConfigurationError(
+                "TenuoTemporalPlugin.configure_worker requires a non-empty "
+                "task_queue in the Temporal Worker config. Construct Worker(..., "
+                "task_queue=<queue>) before plugin configuration; this queue is "
+                "required to route async completion and minting to the correct "
+                "TenuoPluginConfig."
+            )
+        _set_worker_config(self._tenuo_config, task_queue=task_queue)
         return super().configure_worker(config)
 
     def _preload_keys(self) -> None:
