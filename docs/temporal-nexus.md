@@ -127,17 +127,17 @@ The supported APIs are:
 
 Python Nexus handlers commonly call `ctx.start_workflow(...)` from a
 `@nexus.workflow_run_operation`. In the Python SDK version exercised by this
-branch, that method does not expose a workflow `headers=` parameter, so Tenuo
-uses an explicit workflow-input envelope plus a bootstrap helper in the
-handler workflow.
+branch, that method does not expose a workflow `headers=` parameter. Tenuo's
+high-level workflow-backed helpers therefore use an explicit workflow-input
+envelope plus a bootstrap helper in the handler workflow.
 
-We prototyped replacing the envelope with `TenuoClientInterceptor`
-`set_headers_for_workflow(workflow_id, ...)` bindings before
-`ctx.start_workflow(...)`. On the Python SDK versions tested locally, the
-interceptor path was invoked and consumed the binding, but the Nexus backing
-workflow start timed out before creating the workflow. Treat the envelope
-helpers as the supported portable path for now; native header propagation for
-Nexus backing workflow starts remains future work.
+Tenuo's client interceptor can inject headers into Nexus backing workflow
+starts without dropping Nexus-specific fields such as `request_id`, callbacks,
+or workflow event links; this path is covered by both a focused interceptor
+contract test and an isolated live Nexus backing-start probe. The envelope
+helpers remain the documented high-level path because they make forwarding,
+attenuation, target-workflow binding, and bootstrap validation explicit in
+application code.
 
 Two modes are supported:
 
