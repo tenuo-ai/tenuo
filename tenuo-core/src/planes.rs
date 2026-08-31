@@ -2530,6 +2530,10 @@ impl Authorizer {
                         Some(leaf.authorized_holder()),
                     );
                     let threshold = leaf.approval_threshold();
+                    let gate_message = approval_gate_map
+                        .as_ref()
+                        .and_then(|m| m.get(tool))
+                        .and_then(|g| g.message.as_deref());
                     let request = crate::approval::ApprovalRequest::new(
                         &leaf.id().to_string(),
                         tool,
@@ -2538,7 +2542,8 @@ impl Authorizer {
                         approvers,
                         threshold,
                         leaf.payload.expires_at,
-                    );
+                    )
+                    .with_resolved_message(gate_message);
                     return Err(Error::ApprovalRequired {
                         tool: tool.to_string(),
                         request: Box::new(request),
@@ -3274,7 +3279,9 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            err.to_string().contains("approval required"),
+            err.to_string()
+                .to_ascii_lowercase()
+                .contains("approval required"),
             "expected ApprovalRequired error, got: {}",
             err,
         );
@@ -4783,6 +4790,47 @@ mod tests {
             assert_eq!(request.tool, "email.delete");
             assert_eq!(request.min_approvals, 1);
             assert_eq!(request.required_approvers.len(), 1);
+            assert_eq!(request.message, "Approval required for tool 'email.delete'");
+        } else {
+            panic!("expected ApprovalRequired, got: {}", err);
+        }
+    }
+
+    #[test]
+    fn test_approval_gate_custom_message_on_request() {
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
+
+        let root_key = SigningKey::generate();
+        let approver_key = SigningKey::generate();
+
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert(
+            "email.delete".into(),
+            ToolApprovalGate::whole_tool().with_message("A human must confirm this deletion."),
+        );
+
+        let warrant = Warrant::builder()
+            .capability("email.delete", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver_key.public_key()])
+            .min_approvals(1)
+            .holder(root_key.public_key())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
+            .build(&root_key)
+            .unwrap();
+
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let args = HashMap::new();
+        let sig = warrant.sign(&root_key, "email.delete", &args).unwrap();
+        let err = authorizer
+            .authorize_one(&warrant, "email.delete", &args, Some(&sig), &[])
+            .unwrap_err();
+        if let Error::ApprovalRequired { request, .. } = &err {
+            assert_eq!(request.message, "A human must confirm this deletion.");
+            assert_eq!(err.to_string(), request.message);
         } else {
             panic!("expected ApprovalRequired, got: {}", err);
         }

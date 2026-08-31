@@ -788,10 +788,7 @@ class MCPVerifier:
                 constraints=constraints,
                 warrant_id=warrant_id,
                 request_hash=gate_exc.request_hash or None,
-                denial_reason=(
-                    f"Approval required for '{tool_name}'. "
-                    "Re-submit the call with approvals in _meta.tenuo.approvals."
-                ),
+                denial_reason=gate_exc.message,
                 jsonrpc_error_code=-32002,
             )
         except InsufficientApprovals as insuf_exc:

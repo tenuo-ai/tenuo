@@ -1177,6 +1177,7 @@ class A2AServer:
                         skill_id,
                         request_hash=getattr(e, "request_hash", "") or e.details.get("request_hash", ""),
                         min_approvals=getattr(e, "min_approvals", 1) or e.details.get("min_approvals", 1),
+                        message=getattr(e, "message", None),
                     ) from e
                 if isinstance(e, _InsufficientApprovals):
                     _details = getattr(e, "details", {}) or {}

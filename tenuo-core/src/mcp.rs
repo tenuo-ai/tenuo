@@ -362,9 +362,10 @@ pub fn auth_error_to_jsonrpc(error: &crate::error::Error) -> (i32, String) {
     use crate::error::Error;
 
     match error {
-        Error::ToolNotAuthorized { tool } => {
-            (-32001, format!("Access denied: Tool '{}' not authorized", tool))
-        }
+        Error::ToolNotAuthorized { tool } => (
+            -32001,
+            format!("Access denied: Tool '{}' not authorized", tool),
+        ),
         Error::ConstraintNotSatisfied { field, reason } => (
             -32001,
             format!(
@@ -375,13 +376,7 @@ pub fn auth_error_to_jsonrpc(error: &crate::error::Error) -> (i32, String) {
         Error::WarrantExpired { .. } => (-32001, "Access denied: Warrant expired".to_string()),
         Error::SignatureInvalid(_) => (-32001, "Access denied: Invalid signature".to_string()),
         Error::ToolMismatch { .. } => (-32001, "Access denied: Tool not authorized".to_string()),
-        Error::ApprovalRequired { tool, .. } => (
-            -32002,
-            format!(
-                "Approval required for tool '{}'. Supply approvals in params._meta.tenuo.approvals.",
-                tool
-            ),
-        ),
+        Error::ApprovalRequired { request, .. } => (-32002, request.message.clone()),
         _ => (-32001, format!("Access denied: {}", error)),
     }
 }
@@ -413,6 +408,22 @@ mod tests {
             message,
             "Access denied: Constraint 'path' not satisfied: outside allowed prefix"
         );
+    }
+
+    #[test]
+    fn test_auth_error_copies_approval_request_message() {
+        use crate::approval::ApprovalRequest;
+        use std::collections::HashMap;
+
+        let request =
+            ApprovalRequest::new("wrt_1", "deploy", &HashMap::new(), [0u8; 32], vec![], 1, 0)
+                .with_resolved_message(Some("A human must confirm this deploy."));
+        let (code, message) = auth_error_to_jsonrpc(&crate::error::Error::ApprovalRequired {
+            tool: "deploy".to_string(),
+            request: Box::new(request),
+        });
+        assert_eq!(code, -32002);
+        assert_eq!(message, "A human must confirm this deploy.");
     }
 
     #[test]

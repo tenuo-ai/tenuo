@@ -65,8 +65,12 @@ def _build_non_retryable_application_error(exc: BaseException) -> "ApplicationEr
     """
     from temporalio.exceptions import ApplicationError  # type: ignore[import-not-found]
 
+    if isinstance(exc, ApprovalGateTriggered) and getattr(exc, "message", None):
+        wire_message = exc.message
+    else:
+        wire_message = str(exc)
     app_error = ApplicationError(
-        str(exc),
+        wire_message,
         type=_error_type_for_wire(exc),
         non_retryable=True,
     )

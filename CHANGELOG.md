@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Optional approval-gate display message.** `ToolApprovalGate` accepts
+  `message` (max 200 UTF-8 characters). When a gate fires, Rust resolves the
+  string once onto `ApprovalRequest.message` (default:
+  `Approval required for tool '{tool}'`) and every adapter copies that field:
+  `ApprovalRequired` / `ApprovalGateTriggered`, FastAPI 409 `detail.message`,
+  MCP `denial_reason`, Temporal `ApplicationError` body, authorizer JSON
+  `message`, A2A error data, and control-plane request JSON. Not part of
+  `request_hash`, receipts, or error codes. Retry wording stays in the docs.
 - **Temporal Nexus authorization.**
   Added `tenuo_execute_nexus_operation()`,
   `tenuo_start_nexus_operation()`, `tenuo_nexus_headers()`,

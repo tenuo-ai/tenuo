@@ -58,6 +58,21 @@ class TestControlPlaneApprovalFlow:
 
         # JSON round-trip of arguments must preserve types Tenuo accepts (int stays int).
         assert parsed.arguments["amount"] == 42
+        assert parsed.message == req.message
+
+    def test_from_json_dict_accepts_payload_without_message(self):
+        issuer = SigningKey.generate()
+        holder = SigningKey.generate()
+        approver = SigningKey.generate()
+        w = _mint_warrant_with_gate(issuer, holder, approver.public_key)
+        args = {"amount": 42}
+        rh = compute_request_hash(w.id, "risky", args, holder.public_key)
+        req = ApprovalRequest.for_warrant_gate("risky", args, w, rh)
+        data = build_control_plane_approval_request_v1(req, holder.public_key).to_json_dict()
+        data.pop("message", None)
+        parsed = ControlPlaneApprovalRequestV1.from_json_dict(data)
+        assert parsed.message is None
+        assert parsed.schema_version == 1
 
     def test_worker_and_cp_hash_match_explicit(self):
         issuer = SigningKey.generate()

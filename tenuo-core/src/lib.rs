@@ -107,8 +107,9 @@ pub use wire::MAX_WARRANT_SIZE;
 // Re-export approval gate types
 pub use approval_gate::{
     encode_approval_gate_map, evaluate_approval_gates, merge_approval_gate_maps,
-    parse_approval_gate_map, propagate_approval_gates, ApprovalGateError, ApprovalGateMap,
-    ArgApprovalGate, ToolApprovalGate,
+    normalize_approval_gate_message, parse_approval_gate_map, propagate_approval_gates,
+    resolve_approval_required_message, ApprovalGateError, ApprovalGateMap, ArgApprovalGate,
+    ToolApprovalGate, APPROVAL_GATE_MESSAGE_MAX_CHARS,
 };
 
 // Re-export approval request

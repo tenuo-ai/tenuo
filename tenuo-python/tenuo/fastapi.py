@@ -523,7 +523,7 @@ class TenuoGuard:
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "error": "approval_required",
-                    "message": str(approval_required),
+                    "message": req.message or str(approval_required),
                     "tool": req.tool,
                     "request_hash": req.request_hash.hex(),
                     "min_approvals": req.min_approvals or 1,
@@ -534,7 +534,7 @@ class TenuoGuard:
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "error": "approval_required",
-                    "message": str(gate),
+                    "message": gate.message,
                     "tool": gate.tool,
                     "request_id": gate.request_id,
                     "request_hash": gate.request_hash,

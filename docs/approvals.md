@@ -20,7 +20,9 @@ approver_key = SigningKey.generate()
 # 1. Warrant: capabilities, gates, approvers, threshold
 warrant = (Warrant.mint_builder()
     .capability("transfer")
-    .approval_gates({"transfer": None})       # this tool needs approval
+    .approval_gates({
+        "transfer": {"args": None, "message": "A human must confirm this transfer."},
+    })
     .required_approvers([approver_key.public_key])
     .min_approvals(1)
     .holder(agent_key.public_key)
@@ -69,7 +71,8 @@ warrant = (Warrant.mint_builder()
     .capability("restart_service")
     .approval_gates({
         "restart_service": {"environment": Exact("production")},  # prod only
-        # whole-tool gate: "transfer": None
+        # whole-tool + display text:
+        # "transfer": {"args": None, "message": "A human must confirm this transfer."}
     })
     .required_approvers([approver_key.public_key])
     .min_approvals(1)
@@ -78,6 +81,17 @@ warrant = (Warrant.mint_builder()
     .mint(control_key)
 )
 ```
+
+An optional `message` on a gate is display text only. It is resolved once when
+the gate fires and copied onto every adapter (`ApprovalRequired`, FastAPI 409
+`message`, MCP `denial_reason`, Temporal `ApplicationError`, authorizer JSON,
+A2A, control-plane request). It is not part of `request_hash` or receipts.
+Empty strings are omitted; values longer than 200 characters are truncated.
+There is no argument interpolation.
+
+MCP clients still retry by attaching signatures in `_meta.tenuo.approvals`;
+that instruction is documented here rather than rewritten into the denial
+reason.
 
 ---
 

@@ -197,8 +197,8 @@ class TestExceptions:
             tool="transfer", arguments={}, warrant_id="wrt_123", request_hash=b"\x00" * 32
         )
         exc = ApprovalRequired(req)
+        assert str(exc) == "Approval required for tool 'transfer'"
         assert "transfer" in str(exc)
-        assert "wrt_123" in str(exc)
 
     def test_verification_error_not_approval_denied(self):
         assert not issubclass(ApprovalVerificationError, ApprovalDenied)

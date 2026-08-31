@@ -1597,6 +1597,7 @@ async fn handle_request(
             match &e {
                 tenuo::Error::ApprovalRequired { request, .. } => {
                     if let Some(obj) = body.as_object_mut() {
+                        obj.insert("message".to_string(), json!(request.message.clone()));
                         obj.insert(
                             "request_hash".to_string(),
                             json!(hex::encode(request.request_hash)),
@@ -2071,6 +2072,53 @@ routes:
             approvers[0].as_str().unwrap(),
             hex::encode(approver_key.public_key().to_bytes())
         );
+        assert_eq!(body["message"], "Approval required for tool 'deploy'");
+    }
+
+    #[tokio::test]
+    async fn approval_required_response_copies_gate_message() {
+        let root_key = SigningKey::generate();
+        let approver_key = SigningKey::generate();
+        let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+        let app = build_test_app(authorizer);
+
+        let mut gates = ApprovalGateMap::new();
+        gates.insert(
+            "deploy".to_string(),
+            ToolApprovalGate::whole_tool().with_message("A human must confirm this deploy."),
+        );
+        let warrant = tenuo::Warrant::builder()
+            .capability("deploy", ConstraintSet::new())
+            .ttl(std::time::Duration::from_secs(300))
+            .required_approvers(vec![approver_key.public_key()])
+            .min_approvals(1)
+            .holder(root_key.public_key())
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .build(&root_key)
+            .unwrap();
+
+        let args: HashMap<String, ConstraintValue> = [(
+            "service".to_string(),
+            ConstraintValue::String("api".to_string()),
+        )]
+        .into();
+        let pop = warrant.sign(&root_key, "deploy", &args).unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/deploy/api")
+            .header("X-Tenuo-Warrant", encode_warrant_header(&warrant))
+            .header("X-Tenuo-PoP", encode_pop_header(&pop))
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        let body = parse_body(resp).await;
+        assert_eq!(body["error"], "approval-required");
+        assert_eq!(body["message"], "A human must confirm this deploy.");
     }
 
     #[tokio::test]

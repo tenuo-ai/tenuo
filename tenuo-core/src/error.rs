@@ -624,7 +624,7 @@ pub enum Error {
     ///
     /// Contains the `ApprovalRequest` with all context needed by the
     /// approval engine to obtain human approval.
-    #[error("approval required for tool '{tool}'")]
+    #[error("{}", .request.message)]
     ApprovalRequired {
         tool: String,
         request: Box<crate::approval::ApprovalRequest>,
