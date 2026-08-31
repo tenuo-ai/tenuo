@@ -257,6 +257,123 @@ The matching warrant should constrain the Nexus route operation, for example
 `nexus:approvals-prod:ApprovalService:approve` with exact `workflow_id` and
 `tenant_id` fields and an allowed `decision` set.
 
+## Enterprise examples
+
+These examples mirror the main Nexus topologies documented by Temporal:
+cross-team service contracts, isolated Namespaces, workflow-backed async
+operations, and router Workers that expose safe self-service entry points.
+
+### AI agent requests a payment action
+
+An agent workflow in `finance-ai-prd` needs to request a refund from
+`finance-payments-prd`. Temporal Cloud can allow the AI Namespace to reach the
+`payments-prod` Nexus Endpoint, but the payments team still needs to know
+whether this specific agent run may refund this specific order for this amount.
+
+The caller presents a warrant for the public Nexus operation:
+
+```python
+await tenuo_execute_nexus_operation(
+    nexus_client,
+    PaymentService.refund,
+    RefundInput(order_id="ord_123", amount_cents=5000, tenant_id="acme"),
+    warrant=refund_warrant,
+    key_id="finance-agent-key",
+)
+```
+
+The handler verifies the Nexus request, then mints a narrower workflow warrant
+held by a payments-owned key. The backing workflow can use that attenuated
+authority to call internal payment activities without giving the agent
+Namespace payment credentials:
+
+```python
+@nexus.workflow_run_operation
+async def refund(self, ctx, input: RefundInput):
+    verify_nexus_operation(ctx, input, config, endpoint="payments-prod")
+
+    workflow_id = f"refund-{input.tenant_id}-{input.order_id}"
+    workflow_warrant = (
+        Warrant.mint_builder()
+        .holder(payments_workflow_key.public_key)
+        .capability(
+            "payment_gateway.refund",
+            tenant_id=Exact(input.tenant_id),
+            order_id=Exact(input.order_id),
+            amount_cents=Range(0, input.amount_cents),
+        )
+        .ttl(900)
+        .mint(payments_root_key)
+    )
+    envelope = tenuo_create_nexus_workflow_envelope(
+        workflow_warrant,
+        "payments-workflow-key",
+        workflow_id=workflow_id,
+        source_ctx=ctx,
+        source_endpoint="payments-prod",
+    )
+    return await ctx.start_workflow(
+        RefundWorkflow.run,
+        RefundWorkflowInput(input, tenuo=envelope),
+        id=workflow_id,
+    )
+```
+
+This is the cleanest Tenuo/Nexus story: Temporal routes the durable
+cross-namespace operation; Tenuo proves least-privilege authority over the
+business action and its arguments.
+
+### Developer portal routes approved infrastructure changes
+
+A platform Namespace exposes a self-service Nexus Endpoint such as
+`cloud-ops-prod`. Product teams can request operations like resizing a
+service, rotating a credential, or creating an environment without direct
+access to the platform Namespace.
+
+For quick operations that map to an existing platform workflow, use the router
+helper shape:
+
+```python
+@nexus.sync_operation
+async def resize_service(self, ctx, input: ResizeServiceInput) -> None:
+    handle = temporal_client.get_workflow_handle(input.platform_workflow_id)
+    await tenuo_nexus_execute_update(
+        ctx,
+        input,
+        config,
+        handle,
+        PlatformWorkflow.resize_service,
+        input.service_name,
+        input.target_size,
+        endpoint="cloud-ops-prod",
+    )
+```
+
+The warrant should constrain `tenant_id`, `service_name`, environment, and the
+allowed size range. The platform team keeps ownership of the workflow and IAM
+credentials, while product teams receive a durable self-service contract.
+
+### Multi-hop service composition
+
+Nexus allows one handler workflow to call another Nexus operation. A production
+flow might look like:
+
+```text
+AgentWorkflow
+  -> payments-prod:PaymentService.refund
+  -> compliance-prod:ReviewService.screen_refund
+  -> fulfillment-prod:FulfillmentService.release_credit
+```
+
+Each hop should attenuate authority rather than forwarding a broad original
+warrant. For example, the payments handler can verify that the agent may ask
+for a refund, then mint a narrower warrant allowing compliance to screen only
+that refund record. After approval, payments can mint a separate warrant for
+fulfillment to release only the resulting credit.
+
+That keeps the chain auditable and prevents a warrant intended for one team or
+resource from becoming ambient authority across the whole platform.
+
 ## Enterprise operating guidance
 
 ### Endpoint names are part of the security boundary
