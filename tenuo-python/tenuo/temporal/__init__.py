@@ -88,6 +88,9 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "tenuo_nexus_execute_update": ("tenuo.temporal._nexus", "tenuo_nexus_execute_update"),
     "tenuo_nexus_start_update": ("tenuo.temporal._nexus", "tenuo_nexus_start_update"),
     "nexus_tool_name": ("tenuo.temporal._nexus", "nexus_tool_name"),
+    # Re-exported from tenuo.templates so the whole Nexus surface is reachable
+    # from one module; tenuo.templates stays the canonical definition site.
+    "TemporalNexusOperation": ("tenuo.templates", "TemporalNexusOperation"),
     "TenuoNexusWorkflowEnvelope": ("tenuo.temporal._nexus", "TenuoNexusWorkflowEnvelope"),
     "tenuo_forward_nexus_authority": ("tenuo.temporal._nexus", "tenuo_forward_nexus_authority"),
     "tenuo_create_nexus_workflow_envelope": ("tenuo.temporal._nexus", "tenuo_create_nexus_workflow_envelope"),
