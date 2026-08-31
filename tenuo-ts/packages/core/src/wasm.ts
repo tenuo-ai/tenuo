@@ -60,6 +60,7 @@ export type WasmContext = {
     args: unknown,
     approvals?: unknown,
     toolAllow?: unknown,
+    requestId?: string,
   ): WasmDecision;
   authorizeAsOf(
     session: WasmSession,
@@ -79,6 +80,7 @@ export type WasmContext = {
     pop: string,
     approvals?: unknown,
     toolAllow?: unknown,
+    requestId?: string,
   ): WasmDecision;
 };
 

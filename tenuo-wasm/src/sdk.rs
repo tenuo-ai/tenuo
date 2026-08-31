@@ -371,8 +371,17 @@ impl SdkContext {
         args_json: JsValue,
         approvals: JsValue,
         tool_allow: JsValue,
+        request_id: Option<String>,
     ) -> JsValue {
-        self.authorize_inner(session, tool, args_json, approvals, tool_allow, None)
+        self.authorize_inner(
+            session,
+            tool,
+            args_json,
+            approvals,
+            tool_allow,
+            None,
+            request_id,
+        )
     }
 
     /// Test / replay seam. Not exposed on `createTenuo` or `execute`.
@@ -393,6 +402,7 @@ impl SdkContext {
             approvals,
             tool_allow,
             Some(as_of as i64),
+            None,
         )
     }
 
@@ -426,8 +436,18 @@ impl SdkContext {
         pop: &str,
         approvals: JsValue,
         tool_allow: JsValue,
+        request_id: Option<String>,
     ) -> JsValue {
-        self.authorize_presented_inner(warrants, tool, args_json, pop, approvals, tool_allow, None)
+        self.authorize_presented_inner(
+            warrants,
+            tool,
+            args_json,
+            pop,
+            approvals,
+            tool_allow,
+            None,
+            request_id,
+        )
     }
 }
 
@@ -655,10 +675,16 @@ impl SdkContext {
         approvals_json: JsValue,
         tool_allow: JsValue,
         as_of: Option<i64>,
+        request_id: Option<String>,
     ) -> JsValue {
         init_panic_hook();
         let timestamp = as_of.unwrap_or_else(|| Utc::now().timestamp());
-        let request_id = format!("{tool}:{timestamp}");
+        // The host's own identifier when it has one, so a receipt can be
+        // matched against its logs. The derived fallback is a correlation aid,
+        // not an identity: repeats within a second collide, which is why
+        // distinguishing them is the chain link's job.
+        let request_id =
+            request_id.unwrap_or_else(|| format!("{tool}:{timestamp}"));
         let policy_hash = policy_digest(&tool_allow);
 
         let args = match js_to_args(&args_json) {
@@ -847,10 +873,16 @@ impl SdkContext {
         approvals_json: JsValue,
         tool_allow: JsValue,
         as_of: Option<i64>,
+        request_id: Option<String>,
     ) -> JsValue {
         init_panic_hook();
         let timestamp = as_of.unwrap_or_else(|| Utc::now().timestamp());
-        let request_id = format!("{tool}:{timestamp}");
+        // The host's own identifier when it has one, so a receipt can be
+        // matched against its logs. The derived fallback is a correlation aid,
+        // not an identity: repeats within a second collide, which is why
+        // distinguishing them is the chain link's job.
+        let request_id =
+            request_id.unwrap_or_else(|| format!("{tool}:{timestamp}"));
         let policy_hash = policy_digest(&tool_allow);
         let empty: Vec<Warrant> = Vec::new();
 

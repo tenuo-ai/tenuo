@@ -776,3 +776,64 @@ describe("consumer e2e", () => {
     );
   });
 });
+
+describe("request correlation", () => {
+  it("writes the host's own identifier into the receipt", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        requestId: "trace-abc-123",
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+
+    expect(verifyReceipt(wire).request_id).toBe("trace-abc-123");
+  });
+
+  it("falls back to a derived handle when the host supplies none", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+
+    // A correlation aid, not an identity — repeats within a second collide,
+    // which is why the chain link is what distinguishes them.
+    expect(verifyReceipt(wire).request_id).toMatch(/^read_file:\d+$/);
+  });
+
+  it("does not leak the handle into the wrapped tool", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: {} } });
+    let seen: unknown;
+    const tool = tenuo.tool(
+      { execute: async (_args: { path: string }, options?: unknown) => { seen = options; return "ok"; } },
+      { capability: "read_file", allow: {} },
+    );
+
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, { requestId: "trace-abc-123" } as never),
+    );
+
+    expect(seen).toBeUndefined();
+  });
+});

@@ -18,7 +18,14 @@ export function createMcp(context: WasmContext, decide: (decision: WasmDecision,
       }
       const native = nativeSession(session as Session);
       const wireArgs = stripNulls(args);
-      const local = context.authorize(native, name, wireArgs, options?.approvals);
+      const local = context.authorize(
+        native,
+        name,
+        wireArgs,
+        options?.approvals,
+        undefined,
+        options?.requestId,
+      );
       emitReceipt(options?.onReceipt, local.receipt);
       decide(local, name);
       const signature = context.signPop(native, name, wireArgs);
@@ -56,6 +63,7 @@ export function createMcp(context: WasmContext, decide: (decision: WasmDecision,
         envelope.signature,
         envelope.approvals,
         options?.allow,
+        options?.requestId,
       );
       // Rust already signed this envelope. Emit before the nonce store can
       // refuse a replay — otherwise an attacker leaves no audit artifact.
@@ -139,9 +147,15 @@ function tenuoEnvelope(
 }
 
 const HANDLER_POLICY_KEYS = new Set(["allow", "onReceipt", "nonceStore", "onNonceStoreError"]);
-const VERIFY_OPTION_KEYS = new Set(["allow", "onReceipt", "nonceStore", "onNonceStoreError"]);
+const VERIFY_OPTION_KEYS = new Set([
+  "allow",
+  "onReceipt",
+  "nonceStore",
+  "onNonceStoreError",
+  "requestId",
+]);
 const REPLAY_STORE_UNAVAILABLE = "Replay store unavailable";
-const ATTACH_OPTION_KEYS = new Set(["approvals", "onReceipt"]);
+const ATTACH_OPTION_KEYS = new Set(["approvals", "onReceipt", "requestId"]);
 const MAX_STRIP_DEPTH = 32;
 const MAX_STRIP_LEN = 1024;
 

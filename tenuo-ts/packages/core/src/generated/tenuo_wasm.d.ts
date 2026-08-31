@@ -14,7 +14,7 @@ export class SdkContext {
      * `tool_allow` is the wrapper ceiling (`tenuo.tool(..., { allow })`). Null/undefined
      * means no extra ceiling. Session and ceiling are AND'd; Rust decides both.
      */
-    authorize(session: SdkSession, tool: string, args_json: any, approvals: any, tool_allow: any): any;
+    authorize(session: SdkSession, tool: string, args_json: any, approvals: any, tool_allow: any, request_id?: string | null): any;
     /**
      * Test / replay seam. Not exposed on `createTenuo` or `execute`.
      */
@@ -25,7 +25,7 @@ export class SdkContext {
      * `tool_allow` is the server host ceiling (`mcp.handler(..., { allow })`).
      * Null/undefined: no extra ceiling. Empty object: open.
      */
-    authorizePresented(warrants: any, tool: string, args_json: any, pop: string, approvals: any, tool_allow: any): any;
+    authorizePresented(warrants: any, tool: string, args_json: any, pop: string, approvals: any, tool_allow: any, request_id?: string | null): any;
     /**
      * Authorizer-only context. `mint()` fails; import a session from the wire.
      */

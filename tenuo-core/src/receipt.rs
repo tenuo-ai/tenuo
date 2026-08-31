@@ -155,8 +155,19 @@ pub struct ReceiptPayload {
     /// Key 8. The holder's proof-of-possession signature for this invocation.
     pub pop_signature: Option<[u8; 64]>,
 
-    /// Key 9. Invocation identity, distinguishing repeats that a
-    /// window-bound PoP cannot.
+    /// Key 9. Correlation handle for this decision.
+    ///
+    /// Set by the host from whatever identifier it already has — a JSON-RPC
+    /// request id, a trace or span id, a workflow activity id — so a receipt
+    /// can be matched against the host's own logs. Falls back to a derived
+    /// value when the host supplies nothing.
+    ///
+    /// Not an identity guarantee: two invocations may legitimately carry the
+    /// same handle, and nothing here enforces uniqueness. Distinguishing
+    /// repeats is [`Self::prev_receipt_hash`]'s job, and matching a decision to
+    /// the arguments it was made over is [`Self::request_hash`]'s — that one is
+    /// content-addressed, so a match proves the arguments rather than asserting
+    /// them.
     pub request_id: String,
 
     /// Key 10. Canonical kebab-case error name for a denial. Required when

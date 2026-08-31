@@ -219,6 +219,7 @@ class TenuoClient implements Tenuo {
         args,
         approvalsFrom(callOptions),
         policy.allow,
+        requestIdFrom(callOptions),
       );
       emitReceipt(callOptions, decision.receipt);
       if (decision.outcome === "allow") {
@@ -385,7 +386,12 @@ function forwardExecuteOptions(callOptions: unknown): unknown {
   }
   const rest: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(callOptions as Record<string, unknown>)) {
-    if (key === "session" || key === "approvals" || key === "onReceipt") {
+    if (
+      key === "session" ||
+      key === "approvals" ||
+      key === "onReceipt" ||
+      key === "requestId"
+    ) {
       continue;
     }
     rest[key] = value;
@@ -433,6 +439,16 @@ function emitReceipt(callOptions: unknown, receipt: string | undefined): void {
   } catch {
     // Receipt hooks must not deny or fail the tool.
   }
+}
+
+function requestIdFrom(callOptions: unknown): string | undefined {
+  if (callOptions !== null && typeof callOptions === "object" && "requestId" in callOptions) {
+    const value = (callOptions as { requestId?: unknown }).requestId;
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function approvalsFrom(callOptions: unknown): unknown {
