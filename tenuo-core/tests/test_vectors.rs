@@ -180,6 +180,115 @@ aa00010150019471f8000070008000000000000001020003a169726561645f66\
     );
 }
 
+/// A.1 envelope authorizes `read_file` at the published instant and is expired now.
+#[test]
+fn test_vector_a1_authorize_as_of() {
+    let envelope_hex = "\
+83015893aa00010150019471f8000070008000000000000001020003a1697265\
+61645f66696c65a16b636f6e73747261696e7473a164706174688210f6048201\
+58208139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9\
+b39405820158208a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3\
+748801b40f6f5c061a65920080071a65920e9008031200820158404396783e89\
+f37eebfa7d25ad7d61d6cddfbb6c58eade0e9ccc6e28759f1eb56b3c03873a62\
+32483d05f766481edf9f85560881aed03b6ef25771285409e6d800";
+
+    let warrant = wire::decode(&hex::decode(envelope_hex).unwrap()).expect("A.1 decode");
+    let orchestrator = orchestrator_key();
+    let as_of = (ISSUED_AT + 60) as i64;
+    let mut args = std::collections::HashMap::new();
+    args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/q3.pdf".into()),
+    );
+    let pop = warrant
+        .sign_with_timestamp(&orchestrator, "read_file", &args, Some(as_of))
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(control_plane_key().public_key());
+    authorizer
+        .authorize_one_as_of(&warrant, "read_file", &args, Some(&pop), &[], as_of)
+        .expect("A.1 must allow at issued_at+60");
+
+    let now_pop = warrant.sign(&orchestrator, "read_file", &args).unwrap();
+    let live = authorizer.authorize_one(&warrant, "read_file", &args, Some(&now_pop), &[]);
+    assert!(live.is_err(), "A.1 must expire against the wall clock");
+}
+
+fn warrant_from_hex(payload_hex: &str, sig_hex: &str) -> Warrant {
+    let payload_bytes = hex::decode(payload_hex).unwrap();
+    let sig_vec = hex::decode(sig_hex).unwrap();
+    let sig_arr: [u8; 64] = sig_vec.try_into().expect("64-byte signature");
+    let payload: payload::WarrantPayload =
+        ciborium::de::from_reader(payload_bytes.as_slice()).expect("payload");
+    Warrant {
+        payload,
+        signature: Signature::from_bytes(&sig_arr).unwrap(),
+        payload_bytes,
+        envelope_version: 1,
+    }
+}
+
+/// A.3 leaf Exact("/data/reports/q3.pdf") allows only that path at issued_at+60.
+#[test]
+fn test_vector_a3_authorize_as_of() {
+    let l0 = warrant_from_hex(
+        "aa00010150019471f8000070008000000000000010020003a169726561645f66\
+         696c65a16b636f6e73747261696e7473a164706174688202a167706174746572\
+         6e672f646174612f2a04820158208139770ea87d175f56a35466c34c7ecccb8d\
+         8a91b4ee37a25df60f5b8fc9b39405820158208a88e3dd7409f195fd52db2d3c\
+         ba5d72ca6709bf1d94121bf3748801b40f6f5c061a65920080071a65920e9008\
+         031200",
+        "98bcd71626112aded9d4d1aa728580934d908611ea15fb90a44b4efb00ad5114\
+         5dbe1c5ee1b2ba5790bc1215bd9805b2b06449b271f5a8fd080564cba2335a09",
+    );
+    let l1 = warrant_from_hex(
+        "ab00010150019471f8000070008000000000000011020003a169726561645f66\
+         696c65a16b636f6e73747261696e7473a164706174688202a167706174746572\
+         6e6f2f646174612f7265706f7274732f2a0482015820ed4928c628d1c2c6eae9\
+         0338905995612959273a5c63f93636c14614ac8737d105820158208139770ea8\
+         7d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394061a659200\
+         80071a65920e9008030998201870185e187918411868182318ef1881189a0818\
+         e018c5189f18ec18cb185d184b18ae18d418a718eb18ca18ca18290b01184112\
+         18ce18c518fc18641201",
+        "a3ec5b753afad510ffa1145ce686f930470976dd93b5da08a6bf26fdaaac60d7\
+         c3420d5c87021fe63713e06f1a2a60360dea7f3776a0f28da0bb3d42c3319906",
+    );
+    let l2 = warrant_from_hex(
+        "ab00010150019471f8000070008000000000000012020003a169726561645f66\
+         696c65a16b636f6e73747261696e7473a164706174688201a16576616c756574\
+         2f646174612f7265706f7274732f71332e7064660482015820ca93ac17051870\
+         71d67b83c7ff0efe8108e8ec4530575d7726879333dbdabe7c0582015820ed49\
+         28c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1061a\
+         65920080071a65920e900803099820184a189418bb18941877181e184e18d418\
+         4c18c40a18cb187f188b01186418cd18b00818af1894188c18b1189518900618\
+         3718ff186e189818f9189b1202",
+        "f47307c756b98144fd4eeac30c157e317a307da7630db619001f531c479128fd\
+         1997c666baf0d020e8d60619bb8644f79a5a0038836d49b2a1f676fc7ee8d307",
+    );
+
+    let as_of = (ISSUED_AT + 60) as i64;
+    let mut allow = std::collections::HashMap::new();
+    allow.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/reports/q3.pdf".into()),
+    );
+    let pop = l2
+        .sign_with_timestamp(&worker2_key(), "read_file", &allow, Some(as_of))
+        .unwrap();
+    let authorizer = Authorizer::new().with_trusted_root(control_plane_key().public_key());
+    authorizer
+        .check_chain_with_pop_args_as_of(
+            &[l0, l1, l2],
+            "read_file",
+            &allow,
+            &allow,
+            Some(&pop),
+            &[],
+            as_of,
+        )
+        .expect("A.3 must allow the exact leaf path at issued_at+60");
+}
+
 /// Test Vector A.3 Level 0: 3-Level Chain Root
 #[test]
 fn test_vector_a3_level0_chain_root() {

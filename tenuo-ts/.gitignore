@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+packages/core/LICENSE
+packages/mcp/LICENSE
+packages/core/src/generated/README.md
+packages/core/src/generated/.gitignore
+packages/core/src/generated/.npmignore
+packages/core/src/generated/LICENSE*

@@ -1,0 +1,65 @@
+{
+  "name": "@tenuo/mcp",
+  "version": "0.2.3",
+  "description": "Optional adapter: guard @modelcontextprotocol/server v2 tools with @tenuo/core.",
+  "license": "Apache-2.0",
+  "author": "Tenuo Contributors",
+  "homepage": "https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts/packages/mcp",
+  "bugs": {
+    "url": "https://github.com/tenuo-ai/tenuo/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tenuo-ai/tenuo.git",
+    "directory": "tenuo-ts/packages/mcp"
+  },
+  "keywords": [
+    "tenuo",
+    "mcp",
+    "modelcontextprotocol",
+    "authorization"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json && cp ../../../LICENSE LICENSE",
+    "pack:smoke": "node scripts/pack-smoke.mjs",
+    "publish:npm": "npm publish --access public --provenance"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@tenuo/core": ">=0.2.3"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "@tenuo/core": "workspace:*",
+    "@types/node": "^22.13.10",
+    "typescript": "~5.8.2",
+    "vitest": "^3.0.9",
+    "zod": "^4.2.0"
+  }
+}

@@ -50,6 +50,7 @@ pub mod gateway_config;
 pub mod mcp;
 pub mod payload;
 pub mod planes;
+pub mod receipt;
 pub mod revocation;
 pub mod revocation_manager;
 pub mod warrant;
@@ -94,6 +95,7 @@ pub use planes::{
     Authorizer, AuthorizerBuilder, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,
     VerifiedApproval, DEFAULT_CLOCK_TOLERANCE_SECS,
 };
+pub use receipt::{Receipt, ReceiptPayload};
 pub use revocation::{
     RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,
 };

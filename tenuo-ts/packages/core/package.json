@@ -1,0 +1,64 @@
+{
+  "name": "@tenuo/core",
+  "version": "0.2.3",
+  "description": "Tenuo TypeScript SDK — authorization decisions run in the Rust core (WASM).",
+  "license": "Apache-2.0",
+  "author": "Tenuo Contributors",
+  "homepage": "https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts/packages/core",
+  "bugs": {
+    "url": "https://github.com/tenuo-ai/tenuo/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tenuo-ai/tenuo.git",
+    "directory": "tenuo-ts/packages/core"
+  },
+  "keywords": [
+    "tenuo",
+    "authorization",
+    "agents",
+    "mcp",
+    "wasm",
+    "capabilities"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "sideEffects": [
+    "./dist/generated/**"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/generated && cp src/generated/package.json src/generated/tenuo_wasm.js src/generated/tenuo_wasm.d.ts src/generated/tenuo_wasm_bg.wasm src/generated/tenuo_wasm_bg.wasm.d.ts dist/generated/ && cp ../../../LICENSE LICENSE",
+    "pack:smoke": "node scripts/pack-smoke.mjs",
+    "publish:npm": "npm publish --access public --provenance",
+    "build:wasm": "pnpm --dir ../.. build:wasm"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.25.1",
+    "@types/node": "^22.13.10",
+    "typescript": "~5.8.2",
+    "vitest": "^3.0.9",
+    "zod": "3.25.76"
+  }
+}
