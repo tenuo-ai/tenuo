@@ -6,7 +6,7 @@ use crate::heartbeat::{
     AuthorizationEvent, EnvironmentInfo, HeartbeatConfig,
 };
 #[cfg(feature = "python-server")]
-use crate::python::{PyChainVerificationResult, PySigningKey};
+use crate::python::{to_py_err, PyChainVerificationResult, PySigningKey};
 #[cfg(feature = "python-server")]
 use pyo3::exceptions::PyValueError;
 #[cfg(feature = "python-server")]
@@ -88,6 +88,22 @@ pub struct PyControlPlaneClient {
     sender: AuditEventSender,
     authorizer_id_py: Arc<Mutex<Option<String>>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
+    /// The key this enforcement point already authenticates with. Reused as the
+    /// receipt signer so a deployment has one identity, not two.
+    receipt_signer: crate::crypto::SigningKey,
+    /// Trust context copied from the authorizer by `bind_authorizer`. Read from
+    /// the authorizer rather than configured separately, so a receipt cannot
+    /// commit to roots or a revocation list the enforcement point never had.
+    trust: Arc<Mutex<Option<TrustContext>>>,
+    /// Digest of the last receipt emitted, for the chain link (key 14).
+    last_receipt_hash: Arc<Mutex<Option<[u8; 32]>>>,
+}
+
+#[cfg(feature = "python-server")]
+#[derive(Clone, Copy)]
+struct TrustContext {
+    trusted_roots_hash: [u8; 32],
+    srl_commitment: Option<(Option<u64>, [u8; 32])>,
 }
 
 #[cfg(feature = "python-server")]
@@ -148,10 +164,12 @@ impl PyControlPlaneClient {
                 .unwrap_or_else(|| "default".to_string())
         });
 
+        let receipt_signer;
         let resolved_signing_key = match signing_key {
             Some(sk) => sk.inner.clone(),
             None => crate::crypto::SigningKey::generate(),
         };
+        receipt_signer = resolved_signing_key.clone();
 
         let agent_id = parsed_token.as_ref().and_then(|t| t.agent_id.clone());
 
@@ -224,6 +242,9 @@ impl PyControlPlaneClient {
         });
 
         Ok(Self {
+            receipt_signer,
+            trust: Arc::new(Mutex::new(None)),
+            last_receipt_hash: Arc::new(Mutex::new(None)),
             sender: audit_tx,
             authorizer_id_py,
             shutdown_tx,
@@ -304,6 +325,108 @@ impl PyControlPlaneClient {
             None,
         )
         .map(Some)
+    }
+
+    /// Copy the enforcement point's trust context from its authorizer.
+    ///
+    /// Receipts commit to the trusted root set and the revocation list in force
+    /// (payload keys 15, 12 and 13). Those values are read from the authorizer
+    /// itself rather than configured here, so a receipt cannot claim a trust
+    /// context this enforcement point never had. Call again after installing a
+    /// new revocation list.
+    ///
+    /// Until this is called, `issue_receipt` returns None: an enforcement point
+    /// that cannot say what it trusted has nothing worth signing.
+    fn bind_authorizer(&self, authorizer: &crate::python::PyAuthorizer) -> PyResult<()> {
+        let context = TrustContext {
+            trusted_roots_hash: authorizer.trusted_roots_hash_bytes(),
+            srl_commitment: authorizer.srl_commitment_value(),
+        };
+        let mut guard = self
+            .trust
+            .lock()
+            .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned"))?;
+        *guard = Some(context);
+        Ok(())
+    }
+
+    /// Public key receipts from this enforcement point are signed under.
+    ///
+    /// The same key the control plane already knows this authorizer by, so
+    /// resolving a receipt's signer against the registry needs no new material.
+    #[getter]
+    fn receipt_signer_key(&self) -> String {
+        hex::encode(self.receipt_signer.public_key().to_bytes())
+    }
+
+    /// Build and sign a receipt for a decision, advancing the chain.
+    ///
+    /// Returns the receipt as hex, or None when the client is not bound to an
+    /// authorizer or the verification carries no warrant stack. Every
+    /// trust-critical field comes from `chain_result`; Python supplies only the
+    /// framing.
+    #[pyo3(signature = (chain_result, tool, allowed, timestamp, request_id, decision_code=None))]
+    fn issue_receipt(
+        &self,
+        chain_result: &PyChainVerificationResult,
+        tool: &str,
+        allowed: bool,
+        timestamp: i64,
+        request_id: &str,
+        decision_code: Option<&str>,
+    ) -> PyResult<Option<String>> {
+        let trust = {
+            let guard = self
+                .trust
+                .lock()
+                .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned"))?;
+            match *guard {
+                Some(t) => t,
+                None => return Ok(None),
+            }
+        };
+
+        let outcome = if allowed {
+            crate::receipt::Outcome::Allow
+        } else {
+            crate::receipt::Outcome::Deny
+        };
+
+        let mut payload = match chain_result.inner.to_receipt_payload(
+            tool,
+            outcome,
+            timestamp,
+            request_id,
+            decision_code,
+        ) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        payload.trusted_roots_hash = Some(trust.trusted_roots_hash);
+        if let Some((version, digest)) = trust.srl_commitment {
+            payload.srl_version = version;
+            payload.srl_hash = Some(digest);
+        }
+
+        let mut link = self
+            .last_receipt_hash
+            .lock()
+            .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("receipt chain lock poisoned"))?;
+        payload.prev_receipt_hash = *link;
+
+        let receipt =
+            crate::receipt::Receipt::create(&payload, &self.receipt_signer).map_err(to_py_err)?;
+        let digest = receipt.digest().map_err(to_py_err)?;
+
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&receipt, &mut bytes)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("failed to encode receipt: {e}")))?;
+
+        // Advance only once the receipt actually encoded, so a failure cannot
+        // silently break every later link.
+        *link = Some(digest);
+        Ok(Some(hex::encode(bytes)))
     }
 
     /// Emit an allow event to the control plane.

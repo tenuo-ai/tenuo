@@ -39,7 +39,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-fn to_py_err(e: crate::error::Error) -> PyErr {
+pub(crate) fn to_py_err(e: crate::error::Error) -> PyErr {
     Python::attach(|py| {
         let exceptions = match py.import("tenuo.exceptions") {
             Ok(m) => m,
@@ -5561,6 +5561,25 @@ impl PyApprovalMetadata {
 #[pyclass(name = "Authorizer")]
 pub struct PyAuthorizer {
     inner: RustAuthorizer,
+    /// Receipt key 15. Tracked here as the authorizer is built rather than read
+    /// back off `Authorizer`, so the commitment can only describe roots this
+    /// object actually installed.
+    trusted_roots: Vec<[u8; 32]>,
+    /// Receipt keys 12 and 13. `None` until a list is installed, which is the
+    /// honest claim that revocation was never consulted.
+    srl_commitment: Option<(Option<u64>, [u8; 32])>,
+}
+
+impl PyAuthorizer {
+    /// Receipt key 15, for callers inside the crate.
+    pub(crate) fn trusted_roots_hash_bytes(&self) -> [u8; 32] {
+        crate::trusted_roots_digest(&self.trusted_roots)
+    }
+
+    /// Receipt keys 12 and 13, for callers inside the crate.
+    pub(crate) fn srl_commitment_value(&self) -> Option<(Option<u64>, [u8; 32])> {
+        self.srl_commitment
+    }
 }
 
 #[pymethods]
@@ -5607,13 +5626,19 @@ impl PyAuthorizer {
             .with_clock_tolerance(chrono::Duration::seconds(clock_tolerance_secs))
             .with_pop_window(pop_window_secs, pop_max_windows);
 
+        let mut root_bytes = Vec::new();
         if let Some(roots) = trusted_roots {
             for key in roots {
+                root_bytes.push(key.inner.to_bytes());
                 authorizer = authorizer.with_trusted_root(key.inner.clone());
             }
         }
 
-        Ok(Self { inner: authorizer })
+        Ok(Self {
+            inner: authorizer,
+            trusted_roots: root_bytes,
+            srl_commitment: None,
+        })
     }
 
     // =========================================================================
@@ -5625,7 +5650,21 @@ impl PyAuthorizer {
     /// Args:
     ///     key: The public key to trust
     fn add_trusted_root(&mut self, key: &PyPublicKey) {
+        self.trusted_roots.push(key.inner.to_bytes());
         self.inner.add_trusted_root(key.inner.clone());
+    }
+
+    /// Commitment to the trusted root set, for receipt payload key 15.
+    #[getter]
+    fn trusted_roots_hash(&self) -> [u8; 32] {
+        crate::trusted_roots_digest(&self.trusted_roots)
+    }
+
+    /// `(version, digest)` of the installed revocation list, for receipt
+    /// payload keys 12 and 13. `None` when no list was installed.
+    #[getter]
+    fn srl_commitment(&self) -> Option<(Option<u64>, [u8; 32])> {
+        self.srl_commitment
     }
 
     /// Install a signed revocation list from an already-trusted root.
@@ -5635,7 +5674,12 @@ impl PyAuthorizer {
     fn set_revocation_list(&mut self, srl: &PySignedRevocationList) -> PyResult<()> {
         self.inner
             .set_revocation_list_from_trusted_issuer(srl.inner.clone())
-            .map_err(to_py_err)
+            .map_err(to_py_err)?;
+        // Recorded only after the authorizer accepted it, so a receipt never
+        // commits to a list this enforcement point rejected.
+        let bytes = srl.inner.to_bytes().map_err(to_py_err)?;
+        self.srl_commitment = Some((None, crate::srl_commitment_digest(&bytes)));
+        Ok(())
     }
 
     /// Set the clock tolerance for expiration checks.

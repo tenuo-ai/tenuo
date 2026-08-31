@@ -7,10 +7,13 @@ process-level singleton for integrations that don't manage lifecycle.
 import json
 import logging
 import os
+import time
 import uuid
 import atexit
 import platform
 from typing import Optional, Any
+
+from tenuo import receipts as _receipts
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +90,8 @@ class ControlPlaneClient:
     ``emit_for_enforcement``.
     """
     def __init__(self, *, token=None, url=None, api_key=None,
-                 authorizer_name=None, signing_key=None, **kwargs):
+                 authorizer_name=None, signing_key=None,
+                 receipt_sink=None, on_receipt_error=None, **kwargs):
         try:
             from tenuo_core import ControlPlaneClient as _Rust
         except ImportError:
@@ -148,6 +152,11 @@ class ControlPlaneClient:
 
         # Delegate everything to Rust core: token parsing, key generation,
         # agent claiming, and heartbeat loop startup.
+        # Receipts are evidence and go to their own outlet, not the
+        # best-effort audit channel: a dropped audit event costs a data point,
+        # a dropped receipt costs the ability to prove what happened.
+        self._receipt_sink = receipt_sink
+        self._on_receipt_error = on_receipt_error
         self._inner = _Rust(
             url=resolved_url,
             api_key=resolved_key,
@@ -172,6 +181,29 @@ class ControlPlaneClient:
         )):
             return None
         return cls()
+
+    def bind_authorizer(self, authorizer) -> None:
+        """Copy the enforcement point's trust context from its authorizer.
+
+        Receipts commit to the trusted root set and the revocation list in
+        force. Reading those from the authorizer rather than accepting them as
+        configuration is what stops a receipt claiming a trust context this
+        enforcement point never had. Call again after installing a new
+        revocation list, or receipts will keep committing to the old one.
+
+        Until this is called no receipts are produced: an enforcement point
+        that cannot say what it trusted has nothing worth signing.
+        """
+        self._inner.bind_authorizer(authorizer)
+
+    @property
+    def receipt_signer_key(self) -> str:
+        """Hex public key receipts from this enforcement point are signed under.
+
+        The same key the control plane already knows this authorizer by, so
+        resolving a receipt's signer needs no separate registration.
+        """
+        return self._inner.receipt_signer_key
 
     def emit_for_enforcement(
         self,
@@ -216,6 +248,7 @@ class ControlPlaneClient:
                 chain_result, tool, arguments_json,
                 latency_us, request_id,
             )
+            self._emit_receipt(chain_result, tool, True, request_id, None)
             return
 
         # Fallback path: no chain_result (e.g., require_warrant=False allows,
@@ -247,6 +280,26 @@ class ControlPlaneClient:
                 chain_depth, root_principal, warrant_stack,
                 latency_us, request_id, arguments_json,
             )
+            self._emit_receipt(chain_result, tool, False, request_id, deny_reason or None)
+
+    def _emit_receipt(self, chain_result, tool, allowed, request_id, decision_code) -> None:
+        """Sign a receipt for this decision and hand it to the sink.
+
+        Returns quietly when no sink is configured, when the client is not
+        bound to an authorizer, or when the verification carries no warrant
+        stack — a receipt without the chain it decided over is not worth
+        signing.
+        """
+        if self._receipt_sink is None or chain_result is None:
+            return
+        try:
+            wire = self._inner.issue_receipt(
+                chain_result, tool, allowed, int(time.time()), request_id, decision_code,
+            )
+        except Exception as exc:  # noqa: BLE001 - must not fail the caller
+            logger.warning("failed to sign receipt for %r", tool, exc_info=exc)
+            return
+        _receipts.deliver(self._receipt_sink, wire, self._on_receipt_error)
 
     def shutdown(self, timeout_secs: float = 5.0) -> None:
         self._inner.shutdown(timeout_secs)
