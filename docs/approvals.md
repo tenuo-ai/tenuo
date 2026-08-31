@@ -89,6 +89,12 @@ A2A, control-plane request). It is not part of `request_hash` or receipts.
 Empty strings are omitted; values longer than 200 characters are truncated.
 There is no argument interpolation.
 
+Because the message is not a security property, approval UIs should treat it as
+context, not authority. A delegated child can replace display text, so approvers
+and automated workflows should make decisions from the signed request fields
+(`tool`, `arguments`, `request_hash`, `warrant_id`, approver threshold) rather
+than from the wording alone.
+
 MCP clients still retry by attaching signatures in `_meta.tenuo.approvals`;
 that instruction is documented here rather than rewritten into the denial
 reason.
