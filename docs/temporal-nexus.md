@@ -6,8 +6,8 @@ description: Experimental Tenuo authorization across Temporal Nexus namespace bo
 # Temporal Nexus Authorization
 
 > Experimental surface. Tenuo can now emit and verify authorization headers for
-> Temporal Nexus operations. Workflow-backed Nexus propagation is still a
-> follow-up design area.
+> Temporal Nexus operations, and can carry verified authority into
+> workflow-backed Nexus operations through an explicit envelope/bootstrap path.
 
 Temporal Nexus lets one Temporal namespace expose a service contract that
 workflows in another namespace can call through a named endpoint. That is the
@@ -109,21 +109,65 @@ The supported APIs are:
 
 ### Workflow-backed Nexus operations
 
-Workflow-backed Nexus operations need one extra design decision. Python Nexus
-handlers commonly call `ctx.start_workflow(...)` from a
+Python Nexus handlers commonly call `ctx.start_workflow(...)` from a
 `@nexus.workflow_run_operation`. In the Python SDK version exercised by this
-branch, that method does not expose a workflow `headers=` parameter. Tenuo has
-two plausible follow-up paths:
+branch, that method does not expose a workflow `headers=` parameter, so Tenuo
+uses an explicit workflow-input envelope plus a bootstrap helper in the
+handler workflow.
 
-- seed the existing `TenuoClientInterceptor` for the backing workflow id before
-  calling `ctx.start_workflow(...)`; or
-- pass an explicit signed envelope in workflow input, plus a bootstrap helper
-  in the handler workflow.
+Two modes are supported:
 
-The first path fits the current Temporal integration, but it also means the
-handler worker client must include the Tenuo client interceptor and the caller
-warrant must be appropriate for any backing-workflow work it will authorize.
-The second path is more explicit, but introduces a new product surface.
+- `tenuo_forward_nexus_authority(...)` forwards the exact verified caller
+  warrant/key context into the backing workflow. This is the escape hatch for
+  workflows that only need to inspect caller authority, or whose worker can
+  resolve the caller holder key for downstream PoP signing.
+- `tenuo_create_nexus_workflow_envelope(...)` carries a handler-created,
+  attenuated, or freshly minted workflow warrant. This is the preferred
+  production shape: the handler verifies the Nexus operation, decides what
+  internal workflow work is allowed, and passes a narrower warrant held by a
+  key the handler namespace can resolve.
+
+The backing workflow calls `tenuo_bootstrap_nexus_workflow(input.tenuo)` before
+`current_warrant()`, `current_key_id()`, or `tenuo_execute_activity(...)`.
+
+Example preferred shape:
+
+```python
+@nexus.workflow_run_operation
+async def minted_refund(self, ctx, input):
+    verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+    workflow_warrant = (
+        Warrant.mint_builder()
+        .holder(handler_key.public_key)
+        .capability(
+            "payment_gateway.refund",
+            order_id=Exact(input.order_id),
+            amount_cents=Range(0, input.amount_cents),
+        )
+        .ttl(3600)
+        .mint(control_key)
+    )
+    envelope = tenuo_create_nexus_workflow_envelope(
+        workflow_warrant,
+        "handler-workflow-key",
+        workflow_id=workflow_id,
+        source_ctx=ctx,
+        source_endpoint="billing-prod",
+    )
+    return await ctx.start_workflow(
+        RefundWorkflow.run,
+        RefundWorkflowInput(input.order_id, input.amount_cents, tenuo=envelope),
+        id=workflow_id,
+    )
+
+@workflow.defn
+class RefundWorkflow:
+    @workflow.run
+    async def run(self, input):
+        tenuo_bootstrap_nexus_workflow(input.tenuo)
+        return await tenuo_execute_activity(...)
+```
 
 The product goal is still the same: authorize both the incoming Nexus operation
 and the work it starts.
@@ -144,10 +188,12 @@ and the work it starts.
    - Document cross-namespace setup and denial behavior.
 
 3. **Workflow-run operation support**
-   - Propagate verified authority into handler workflows through SDK workflow
-     headers if possible.
-   - Otherwise, design a signed workflow-input envelope and explicit workflow
-     bootstrap helper.
+   - Add `tenuo_forward_nexus_authority(...)` for exact caller authority
+     forwarding.
+   - Add `tenuo_create_nexus_workflow_envelope(...)` for handler-created or
+     attenuated workflow authority.
+   - Add `tenuo_bootstrap_nexus_workflow(...)` so backing workflows can install
+     the envelope into normal Tenuo workflow context.
 
 4. **Production rollout guide**
    - Cover endpoint naming, namespace boundaries, revocation providers, trusted
@@ -159,8 +205,9 @@ and the work it starts.
   namespace/task queue when available?
 - Should operation constraints use the service contract operation name, the
   Python handler method name, or an explicit Tenuo tool mapping?
-- Should workflow-backed propagation seed `TenuoClientInterceptor` for the
-  backing workflow id, or use an explicit signed workflow-input envelope?
+- Should the workflow envelope grow an additional handler signature over the
+  target workflow binding, or is Temporal's handler-created input boundary
+  sufficient for the first experimental surface?
 - What durable replay/dedup key is available for sync Nexus operations?
 - Should a denied Nexus operation be represented as `UNAUTHORIZED` or as a
   Tenuo-specific non-retryable operation error with structured details?

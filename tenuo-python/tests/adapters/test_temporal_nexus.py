@@ -16,11 +16,16 @@ import tenuo  # noqa: F401, E402 - installs Warrant.mint_builder()
 from tenuo_core import Exact, Range, SigningKey, Warrant  # noqa: E402
 
 from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
+from tenuo.temporal._workflow import current_key_id  # noqa: E402
 from tenuo.temporal._headers import tenuo_headers  # noqa: E402
 from tenuo.temporal._nexus import (  # noqa: E402
+    TenuoNexusWorkflowEnvelope,
     nexus_input_args,
     nexus_tool_name,
+    tenuo_bootstrap_nexus_workflow,
+    tenuo_create_nexus_workflow_envelope,
     tenuo_execute_nexus_operation,
+    tenuo_forward_nexus_authority,
     tenuo_nexus_headers,
     tenuo_nexus_operation,
     verify_nexus_operation,
@@ -60,6 +65,17 @@ class FakeNexusClient:
     async def execute_operation(self, operation: Any, input: Any, **kwargs: Any) -> str:
         self.execute_call = (operation, input, kwargs)
         return "accepted"
+
+
+@pytest.fixture(autouse=True)
+def clean_workflow_stores() -> None:
+    with _store_lock:
+        _workflow_headers_store.clear()
+        _workflow_config_store.clear()
+    yield
+    with _store_lock:
+        _workflow_headers_store.clear()
+        _workflow_config_store.clear()
 
 
 @pytest.fixture
@@ -259,3 +275,172 @@ async def test_tenuo_nexus_operation_decorator_maps_denial_to_handler_error(
 
     assert exc.value.type == nexusrpc.HandlerErrorType.UNAUTHORIZED
     assert handler.called is False
+
+
+def test_forward_nexus_authority_creates_bootstrap_envelope(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    ctx = SimpleNamespace(
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+
+    envelope = tenuo_forward_nexus_authority(
+        ctx,
+        input,
+        config,
+        endpoint="billing-prod",
+        workflow_id="refund-wf-001",
+        workflow_type="RefundWorkflow",
+    )
+
+    assert isinstance(envelope, TenuoNexusWorkflowEnvelope)
+    assert envelope.mode == "forwarded"
+    assert envelope.source_operation == "refund"
+    assert envelope.target_workflow_id == "refund-wf-001"
+
+
+def test_create_nexus_workflow_envelope_supports_handler_minted_authority(
+    nexus_keys: tuple[Any, Any],
+) -> None:
+    root_key, handler_key = nexus_keys
+    workflow_warrant = (
+        Warrant.mint_builder()
+        .holder(handler_key.public_key)
+        .capability("record_refund", order_id=Exact("ord_123"))
+        .ttl(3600)
+        .mint(root_key)
+    )
+
+    envelope = tenuo_create_nexus_workflow_envelope(
+        workflow_warrant,
+        "handler-key",
+        workflow_id="refund-wf-002",
+        workflow_type="RefundWorkflow",
+        source_endpoint="billing-prod",
+        source_service="BillingService",
+        source_operation="refund",
+    )
+
+    assert envelope.mode == "minted"
+    assert envelope.source_endpoint == "billing-prod"
+    assert envelope.target_workflow_id == "refund-wf-002"
+
+
+def test_bootstrap_nexus_workflow_installs_envelope_headers(
+    monkeypatch: pytest.MonkeyPatch,
+    nexus_keys: tuple[Any, Any],
+) -> None:
+    root_key, handler_key = nexus_keys
+    workflow_warrant = (
+        Warrant.mint_builder()
+        .holder(handler_key.public_key)
+        .capability("record_refund", order_id=Exact("ord_123"))
+        .ttl(3600)
+        .mint(root_key)
+    )
+    envelope = tenuo_create_nexus_workflow_envelope(
+        workflow_warrant,
+        "handler-key",
+        workflow_id="refund-wf-003",
+        workflow_type="RefundWorkflow",
+    )
+    run_key = "run-nexus-bootstrap"
+    monkeypatch.setattr("tenuo.temporal._nexus._current_run_key", lambda: run_key)
+    monkeypatch.setattr(
+        "temporalio.workflow.info",
+        lambda: SimpleNamespace(
+            workflow_id="refund-wf-003",
+            workflow_type="RefundWorkflow",
+            run_id=run_key,
+        ),
+    )
+    with _store_lock:
+        _workflow_config_store[run_key] = TenuoPluginConfig(
+            key_resolver=StaticResolver(handler_key),
+            trusted_roots=[root_key.public_key],
+        )
+
+    tenuo_bootstrap_nexus_workflow(envelope)
+
+    with _store_lock:
+        raw_headers = dict(_workflow_headers_store[run_key])
+    assert raw_headers
+    assert raw_headers["x-tenuo-key-id"] == b"handler-key"
+    assert current_key_id() == "handler-key"
+
+
+def test_bootstrap_nexus_workflow_rejects_wrong_workflow_id(
+    monkeypatch: pytest.MonkeyPatch,
+    nexus_keys: tuple[Any, Any],
+) -> None:
+    root_key, handler_key = nexus_keys
+    workflow_warrant = (
+        Warrant.mint_builder()
+        .holder(handler_key.public_key)
+        .capability("record_refund", order_id=Exact("ord_123"))
+        .ttl(3600)
+        .mint(root_key)
+    )
+    envelope = tenuo_create_nexus_workflow_envelope(
+        workflow_warrant,
+        "handler-key",
+        workflow_id="refund-wf-expected",
+    )
+    monkeypatch.setattr(
+        "temporalio.workflow.info",
+        lambda: SimpleNamespace(
+            workflow_id="refund-wf-actual",
+            workflow_type="RefundWorkflow",
+            run_id="run-nexus-bootstrap-mismatch",
+        ),
+    )
+
+    with pytest.raises(TenuoContextError, match="target_workflow_id mismatch"):
+        tenuo_bootstrap_nexus_workflow(envelope)
+
+
+def test_bootstrap_nexus_workflow_requires_worker_config(
+    monkeypatch: pytest.MonkeyPatch,
+    nexus_keys: tuple[Any, Any],
+) -> None:
+    root_key, handler_key = nexus_keys
+    workflow_warrant = (
+        Warrant.mint_builder()
+        .holder(handler_key.public_key)
+        .capability("record_refund", order_id=Exact("ord_123"))
+        .ttl(3600)
+        .mint(root_key)
+    )
+    envelope = tenuo_create_nexus_workflow_envelope(
+        workflow_warrant,
+        "handler-key",
+        workflow_id="refund-wf-no-config",
+    )
+    monkeypatch.setattr(
+        "temporalio.workflow.info",
+        lambda: SimpleNamespace(
+            workflow_id="refund-wf-no-config",
+            workflow_type="RefundWorkflow",
+            run_id="run-nexus-no-config",
+        ),
+    )
+
+    with pytest.raises(TenuoContextError, match="requires TenuoWorkerInterceptor"):
+        tenuo_bootstrap_nexus_workflow(envelope)
