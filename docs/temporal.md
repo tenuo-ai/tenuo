@@ -22,7 +22,8 @@ For cross-namespace workflows, Tenuo also supports an experimental
 team expose a durable service contract through a named Endpoint; Tenuo carries
 delegated warrants across that Endpoint so the handler can verify the exact
 operation, input, holder key, expiry, approvals, and revocation state instead
-of relying only on namespace-level access.
+of relying only on namespace-level access. For customer-facing scenarios, see
+[Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md).
 
 ## Prerequisites
 
@@ -388,6 +389,7 @@ These scripts under [`tenuo-python/examples/temporal/`](https://github.com/tenuo
 ## Next steps
 
 - **[Temporal Integration Reference](./temporal-reference.md)** — production checklist, key management (Vault, AWS, GCP), sandbox details, PoP mechanics, configuration reference, constraint types, troubleshooting, and the full threat model.
+- **[Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md)** — practical cross-team, multi-hop, and cross-organization examples.
 - **[Temporal Nexus Authorization](./temporal-nexus.md)** — experimental cross-namespace authorization for Nexus operations and workflow-backed handlers.
 - [Tenuo Core Concepts](./concepts.md)
 - [Security Model](./security.md)
