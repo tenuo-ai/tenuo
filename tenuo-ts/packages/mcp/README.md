@@ -4,10 +4,13 @@ Optional adapter for the official MCP TypeScript **v2** server
 (`@modelcontextprotocol/server`). `@tenuo/core` stays free of MCP frameworks.
 Decisions still run in Rust via `tenuo.mcp.verify()`.
 
+> Beta: install this package from the npm `beta` dist-tag. The TypeScript MCP
+> adapter API may still change before the first stable npm tag.
+
 Requires **Node 20+**. Peers are required at install time:
 
 ```bash
-npm i @tenuo/mcp @tenuo/core @modelcontextprotocol/server
+npm i @tenuo/mcp@beta @tenuo/core@beta @modelcontextprotocol/server
 ```
 
 ```ts
@@ -20,7 +23,7 @@ const tenuo = createTenuo({
   trustedRoots: [createTenuo.publicKeyFromEnv("TENUO_ROOT_PUBLIC_KEY")],
 });
 
-const server = new McpServer({ name: "reports", version: "0.2.3" });
+const server = new McpServer({ name: "reports", version: "0.2.4" });
 const tools = guardTools(tenuo, server);
 
 tools.register(

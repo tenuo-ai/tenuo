@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-31
+
 ### Breaking
 
 - **Temporal `TenuoPluginConfig` now rejects two previously ignored SRL settings.**
@@ -24,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MCP `denial_reason`, Temporal `ApplicationError` body, authorizer JSON
   `message`, A2A error data, and control-plane request JSON. Not part of
   `request_hash`, receipts, or error codes. Retry wording stays in the docs.
+- **TypeScript SDK beta.** Published `@tenuo/core@0.2.4-beta.0` and
+  `@tenuo/mcp@0.2.4-beta.0` under the npm `beta` dist-tag. The packages ship
+  generated WASM glue from `tenuo-wasm`, run authorization decisions in the
+  Rust core, and include MCP attach/verify plus the optional MCP v2 server
+  adapter. The TypeScript API remains beta even though the Python/Rust/Docker
+  release is stable.
 - **Temporal Nexus authorization.**
   Added `tenuo_execute_nexus_operation()`,
   `tenuo_start_nexus_operation()`, `tenuo_nexus_headers()`,

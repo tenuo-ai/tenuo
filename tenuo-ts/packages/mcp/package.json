@@ -1,6 +1,6 @@
 {
   "name": "@tenuo/mcp",
-  "version": "0.2.3",
+  "version": "0.2.4-beta.0",
   "description": "Optional adapter: guard @modelcontextprotocol/server v2 tools with @tenuo/core.",
   "license": "Apache-2.0",
   "author": "Tenuo Contributors",
@@ -44,14 +44,14 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && cp ../../../LICENSE LICENSE",
     "pack:smoke": "node scripts/pack-smoke.mjs",
-    "publish:npm": "npm publish --access public --provenance"
+    "publish:npm": "npm publish --access public --provenance --tag beta"
   },
   "engines": {
     "node": ">=20"
   },
   "peerDependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
-    "@tenuo/core": ">=0.2.3"
+    "@tenuo/core": ">=0.2.4-beta.0 <0.2.5"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",

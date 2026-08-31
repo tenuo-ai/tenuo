@@ -2,6 +2,10 @@
 
 TypeScript SDK for Tenuo. Authorization decisions run in the Rust core (WASM).
 
+> Beta: the TypeScript packages ship as `0.2.4-beta.0` under the npm `beta`
+> dist-tag while the Python/Rust/Docker release is `0.2.4`. Install with
+> `@beta`; the TypeScript API may still move before its first stable npm tag.
+
 What ships today:
 
 - `createTenuo`, `tenuo.tool()`, `session` / `sessionFromWire`, `narrow`, `toWire`
@@ -173,3 +177,6 @@ Publish from GitHub Actions (`id-token: write`) so npm can attach provenance:
 pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core publish:npm
 pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp publish:npm
 ```
+
+The `publish:npm` scripts publish with `--tag beta`; do not move either package
+to npm `latest` until the TypeScript surface is declared stable.

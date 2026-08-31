@@ -2,13 +2,17 @@
 
 TypeScript SDK for Tenuo. Authorization decisions run in the Rust core (WASM).
 
+> Beta: install this package from the npm `beta` dist-tag. The authorization
+> semantics match Tenuo, but the TypeScript API may still change before the
+> first stable npm tag.
+
 Requires **Node 20+**. This package is not a browser or Workers runtime. There is
 no Vercel AI SDK adapter and no Mastra adapter. `tenuo.tool()` wraps any
 `{ execute }` object, including a Vercel `tool()`, but that is not a supported
 integration.
 
 ```bash
-npm i @tenuo/core
+npm i @tenuo/core@beta
 ```
 
 ```ts

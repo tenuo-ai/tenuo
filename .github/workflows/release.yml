@@ -148,6 +148,79 @@ jobs:
           packages-dir: dist/
           skip-existing: true
 
+  # Publish the TypeScript SDK as a beta while the Python/Rust release remains stable.
+  publish-npm-beta:
+    name: Publish TypeScript beta to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9.15.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: tenuo-ts/pnpm-lock.yaml
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install
+        working-directory: tenuo-ts
+        run: pnpm install --frozen-lockfile
+
+      - name: Build WASM
+        working-directory: tenuo-ts
+        run: pnpm build:wasm
+
+      - name: Typecheck
+        working-directory: tenuo-ts
+        run: pnpm typecheck
+
+      - name: Test
+        working-directory: tenuo-ts
+        run: pnpm test
+
+      - name: Pack smoke
+        working-directory: tenuo-ts
+        run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
+
+      - name: Publish @tenuo/core beta
+        working-directory: tenuo-ts/packages/core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@tenuo/core@${VERSION}" version >/dev/null 2>&1; then
+            echo "@tenuo/core@${VERSION} already exists; skipping"
+          else
+            npm publish --access public --provenance --tag beta
+          fi
+
+      - name: Publish @tenuo/mcp beta
+        working-directory: tenuo-ts/packages/mcp
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@tenuo/mcp@${VERSION}" version >/dev/null 2>&1; then
+            echo "@tenuo/mcp@${VERSION} already exists; skipping"
+          else
+            npm publish --access public --provenance --tag beta
+          fi
+
   # Docker: native amd64 + arm64 per platform (no QEMU), then merge manifests.
   docker-authorizer-build:
     name: Docker Authorizer (${{ matrix.platform }})

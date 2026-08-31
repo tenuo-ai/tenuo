@@ -1,6 +1,6 @@
 [package]
 name = "tenuo"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "Agent Capability Flow Control - Rust core library"
