@@ -131,12 +131,13 @@ branch, that method does not expose a workflow `headers=` parameter, so Tenuo
 uses an explicit workflow-input envelope plus a bootstrap helper in the
 handler workflow.
 
-If your Temporal SDK/version routes Nexus workflow starts through a client with
-`TenuoClientInterceptor`, binding headers with
-`set_headers_for_workflow(workflow_id, ...)` before `ctx.start_workflow(...)`
-may be enough to use the normal workflow inbound path. Treat the envelope
-helpers as the portable experimental path until that wiring is verified for
-your worker/client setup.
+We prototyped replacing the envelope with `TenuoClientInterceptor`
+`set_headers_for_workflow(workflow_id, ...)` bindings before
+`ctx.start_workflow(...)`. On the Python SDK versions tested locally, the
+interceptor path was invoked and consumed the binding, but the Nexus backing
+workflow start timed out before creating the workflow. Treat the envelope
+helpers as the supported portable path for now; native header propagation for
+Nexus backing workflow starts remains future work.
 
 Two modes are supported:
 
