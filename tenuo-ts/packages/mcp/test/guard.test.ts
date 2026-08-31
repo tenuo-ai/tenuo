@@ -3,7 +3,13 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { createTenuo, memoryNonceStore, TenuoConfigurationError, under } from "@tenuo/core";
-import { guardHandler, guardTools, requestMeta, type InferToolArgs } from "../src/index.ts";
+import {
+  guardHandler,
+  guardTools,
+  requestMeta,
+  type GuardToolConfig,
+  type InferToolArgs,
+} from "../src/index.ts";
 
 type Rpc = { code: number; data?: { tenuo?: { code: string } } };
 
@@ -95,7 +101,7 @@ describe("@tenuo/mcp v2 adapter", () => {
       guardHandler(issuer, "read_file", { allow: { path: under("/data") } }, async ({ path }) => {
         executed.push(path);
         return { content: [{ type: "text", text: path }] };
-      }) as never,
+      }),
     );
     const host = await connect(server);
     harnesses.push(host);
@@ -200,9 +206,9 @@ describe("@tenuo/mcp v2 adapter", () => {
       },
     );
     const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
-    const result = await handler(call.arguments as { path: string }, {
+    const result = await handler(call.arguments, {
       mcpReq: { _meta: call._meta },
-    } as never);
+    });
     expect(result).toMatchObject({
       isError: true,
       content: [{ type: "text", text: "Tool execution failed" }],
@@ -235,7 +241,7 @@ describe("@tenuo/mcp v2 adapter", () => {
     const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
     const result = await handler(call.arguments as { path: string }, {
       mcpReq: { _meta: call._meta },
-    } as never);
+    });
     expect(String(result.content?.[0]?.text)).toMatch(/Replay store unavailable/);
     expect(String(result.content?.[0]?.text)).not.toMatch(/secret/);
     expect(seen).toEqual([expect.objectContaining({ message: "redis://user:secret@host/0" })]);
@@ -267,6 +273,89 @@ describe("@tenuo/mcp v2 adapter", () => {
     type Schema = ReturnType<typeof z.object<{ path: z.ZodString }>>;
     expectTypeOf<InferToolArgs<z.ZodObject<{ path: z.ZodString }>>>().toMatchTypeOf<{ path: string }>();
     expectTypeOf<InferToolArgs<Schema>>().toHaveProperty("path");
+  });
+
+  it("infers guardHandler args from the callback, not a schema generic", () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const withOptions = guardHandler(
+      issuer,
+      "read_file",
+      { allow: { path: under("/data") } },
+      async ({ path }: { path: string }) => ({ content: [{ type: "text", text: path }] }),
+    );
+    const withoutOptions = guardHandler(
+      issuer,
+      "read_file",
+      async ({ path }: { path: string }) => ({ content: [{ type: "text", text: path }] }),
+    );
+    expectTypeOf(withOptions).parameter(0).toEqualTypeOf<{ path: string }>();
+    expectTypeOf(withOptions).parameter(1).toMatchTypeOf<{ mcpReq?: { _meta?: unknown } } | undefined>();
+    expectTypeOf(withoutOptions).parameter(0).toEqualTypeOf<{ path: string }>();
+    expectTypeOf<GuardToolConfig>().toHaveProperty("allow");
+    expectTypeOf<GuardToolConfig>().toHaveProperty("inputSchema");
+    expectTypeOf<GuardToolConfig>().not.toHaveProperty("execution");
+  });
+
+  it("authorizes a guardHandler invoked as official (ctx) only", async () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const session = issuer.session({
+      allow: { ping: {} },
+    });
+    const executed: string[] = [];
+    const handler = guardHandler(issuer, "ping", { allow: {} }, async () => {
+      executed.push("ping");
+      return { content: [{ type: "text", text: "pong" }] };
+    });
+    const call = issuer.mcp.attach(session, "ping", {});
+    const result = await handler({ mcpReq: { _meta: call._meta } });
+    expect(result).toMatchObject({
+      content: [{ type: "text", text: "pong" }],
+    });
+    expect("isError" in result && result.isError).not.toBe(true);
+    expect(executed).toEqual(["ping"]);
+  });
+
+  it("does not advertise host keys on the official registerTool config", () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const advertised: object[] = [];
+    const tools = guardTools(issuer, {
+      registerTool(_name, config) {
+        advertised.push(config);
+        return { enabled: true } as never;
+      },
+    });
+    tools.register(
+      "read_file",
+      {
+        title: "Read",
+        description: "Read a file",
+        inputSchema: z.object({ path: z.string() }),
+        allow: { path: under("/data") },
+        onReceipt: () => undefined,
+      },
+      async () => ({ content: [] }),
+    );
+    expect(advertised).toHaveLength(1);
+    expect(advertised[0]).toEqual({
+      title: "Read",
+      description: "Read a file",
+      inputSchema: expect.any(Object),
+    });
+    expect(advertised[0]).not.toHaveProperty("allow");
+    expect(advertised[0]).not.toHaveProperty("onReceipt");
+    expect(advertised[0]).not.toHaveProperty("execution");
+  });
+
+  it("rejects execution on register config until the official API preserves it", () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const tools = guardTools(issuer, new McpServer({ name: "tenuo-exec", version: "0.2.3" }));
+    expect(() =>
+      tools.register(
+        "read_file",
+        { allow: { path: under("/data") }, execution: { taskSupport: "forbidden" } } as never,
+        async () => ({ content: [] }),
+      ),
+    ).toThrow(/unknown key 'execution'/);
   });
 
   it("rejects a replayed envelope when nonceStore is set", async () => {

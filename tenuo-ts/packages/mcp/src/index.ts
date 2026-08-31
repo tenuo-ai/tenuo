@@ -1,4 +1,6 @@
 export type {
+  GuardCallContext,
+  GuardHandlerCallback,
   GuardToolConfig,
   GuardToolOptions,
   GuardedToolHandler,

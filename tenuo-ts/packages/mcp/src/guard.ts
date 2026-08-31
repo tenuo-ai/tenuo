@@ -9,8 +9,6 @@ import type {
   ServerContext,
   StandardSchemaWithJSON,
   ToolAnnotations,
-  ToolCallback,
-  ToolExecution,
 } from "@modelcontextprotocol/server";
 
 export type McpToolResult = CallToolResult | InputRequiredResult;
@@ -24,7 +22,17 @@ export type GuardToolOptions = {
    * Isolated. Called when the tool handler throws. The client only ever sees
    * "Tool execution failed".
    */
-  readonly onHandlerError?: (error: unknown, ctx: ServerContext) => void | Promise<void>;
+  readonly onHandlerError?: (error: unknown, ctx: GuardCallContext) => void | Promise<void>;
+};
+
+/**
+ * Enough context for `requestMeta()` and isolated hooks.
+ * Official `registerTool` still passes a full `ServerContext`.
+ */
+export type GuardCallContext = {
+  readonly mcpReq?: { readonly _meta?: unknown };
+  readonly _meta?: unknown;
+  readonly extra?: { readonly _meta?: unknown };
 };
 
 /** Infer handler args from an official Standard Schema (Zod v4 included). */
@@ -42,7 +50,6 @@ export type GuardToolConfig<TSchema extends StandardSchemaWithJSON | undefined =
   readonly outputSchema?: StandardSchemaWithJSON;
   readonly annotations?: ToolAnnotations;
   readonly icons?: Icon[];
-  readonly execution?: ToolExecution;
   readonly _meta?: Readonly<Record<string, unknown>>;
 } & GuardToolOptions;
 
@@ -53,6 +60,12 @@ export type GuardedToolHandler<TSchema extends StandardSchemaWithJSON | undefine
         ctx: ServerContext,
       ) => McpToolResult | Promise<McpToolResult>
     : (ctx: ServerContext) => McpToolResult | Promise<McpToolResult>;
+
+/** Low-level `guardHandler` callback. Prefer `guardTools().register()` for schema inference. */
+export type GuardHandlerCallback<TArgs extends Record<string, unknown> = Record<string, unknown>> = (
+  args: TArgs,
+  ctx: GuardCallContext,
+) => McpToolResult | Promise<McpToolResult>;
 
 const APPLICATION_ERROR_TEXT = "Tool execution failed";
 
@@ -73,38 +86,27 @@ export function requestMeta(ctx: unknown): unknown {
 }
 
 /**
- * Wrap a v2 `registerTool` callback. Official no-schema tools are invoked as
- * `(ctx)` only — this wrapper accepts that calling convention.
- * Handler exceptions become a sanitized `{ isError: true }` result.
+ * Low-level `registerTool` wrapper. Infers args from the callback.
+ * Schema-typed registration belongs on `guardTools().register()`.
+ * Official no-schema tools invoke this as `(ctx)` only; that is detected at runtime.
  */
-export function guardHandler(
+export function guardHandler<TArgs extends Record<string, unknown>>(
   tenuo: Tenuo,
   name: string,
-  handler: GuardedToolHandler<undefined>,
-): ToolCallback<undefined>;
-export function guardHandler<TSchema extends StandardSchemaWithJSON>(
-  tenuo: Tenuo,
-  name: string,
-  handler: GuardedToolHandler<TSchema>,
-): ToolCallback<TSchema>;
-export function guardHandler(
+  handler: GuardHandlerCallback<TArgs>,
+): (args: TArgs, ctx?: GuardCallContext) => Promise<McpToolResult>;
+export function guardHandler<TArgs extends Record<string, unknown>>(
   tenuo: Tenuo,
   name: string,
   options: GuardToolOptions,
-  handler: GuardedToolHandler<undefined>,
-): ToolCallback<undefined>;
-export function guardHandler<TSchema extends StandardSchemaWithJSON>(
+  handler: GuardHandlerCallback<TArgs>,
+): (args: TArgs, ctx?: GuardCallContext) => Promise<McpToolResult>;
+export function guardHandler<TArgs extends Record<string, unknown>>(
   tenuo: Tenuo,
   name: string,
-  options: GuardToolOptions,
-  handler: GuardedToolHandler<TSchema>,
-): ToolCallback<TSchema>;
-export function guardHandler(
-  tenuo: Tenuo,
-  name: string,
-  optionsOrHandler: GuardToolOptions | GuardedToolHandler<StandardSchemaWithJSON | undefined>,
-  maybeHandler?: GuardedToolHandler<StandardSchemaWithJSON | undefined>,
-): ToolCallback<StandardSchemaWithJSON | undefined> {
+  optionsOrHandler: GuardToolOptions | GuardHandlerCallback<TArgs>,
+  maybeHandler?: GuardHandlerCallback<TArgs>,
+): (args: TArgs, ctx?: GuardCallContext) => Promise<McpToolResult> {
   const options = isGuardOptions(optionsOrHandler) ? optionsOrHandler : undefined;
   const handler = isGuardOptions(optionsOrHandler) ? maybeHandler : optionsOrHandler;
   if (isTaskHandler(optionsOrHandler) || isTaskHandler(maybeHandler)) {
@@ -113,12 +115,12 @@ export function guardHandler(
   if (typeof handler !== "function") {
     throw new TenuoConfigurationError("guardHandler() requires a tool handler");
   }
-  return (async (argsOrCtx: unknown, maybeCtx?: unknown) => {
+  return async (argsOrCtx, maybeCtx) => {
     const ctxOnly = isCtxOnlyCall(argsOrCtx, maybeCtx);
-    const args = ctxOnly ? {} : asRecord(argsOrCtx);
-    const ctx = (ctxOnly ? argsOrCtx : maybeCtx) as ServerContext;
-    return runGuarded(tenuo, name, options, handler, args, ctx, ctxOnly);
-  }) as ToolCallback<StandardSchemaWithJSON | undefined>;
+    const args = (ctxOnly ? {} : asRecord(argsOrCtx)) as TArgs;
+    const ctx = (ctxOnly ? argsOrCtx : maybeCtx) as GuardCallContext;
+    return runGuarded(tenuo, name, options, handler as GuardHandlerCallback, args, ctx, false);
+  };
 }
 
 /**
@@ -158,9 +160,9 @@ async function runGuarded(
   tenuo: Tenuo,
   name: string,
   options: GuardToolOptions | undefined,
-  handler: GuardedToolHandler<StandardSchemaWithJSON | undefined>,
+  handler: GuardHandlerCallback | GuardedToolHandler<StandardSchemaWithJSON | undefined>,
   args: Record<string, unknown>,
-  ctx: ServerContext,
+  ctx: GuardCallContext,
   ctxOnly: boolean,
 ): Promise<McpToolResult> {
   let authorized: Record<string, unknown>;
@@ -179,12 +181,9 @@ async function runGuarded(
   }
   try {
     if (ctxOnly) {
-      return await (handler as GuardedToolHandler<undefined>)(ctx);
+      return await (handler as GuardedToolHandler<undefined>)(ctx as ServerContext);
     }
-    return await (handler as GuardedToolHandler<StandardSchemaWithJSON>)(
-      authorized as StandardSchemaWithJSON.InferOutput<StandardSchemaWithJSON>,
-      ctx,
-    );
+    return await (handler as GuardHandlerCallback)(authorized, ctx);
   } catch (error) {
     emitHandlerError(options?.onHandlerError, error, ctx);
     return {
@@ -195,9 +194,9 @@ async function runGuarded(
 }
 
 function emitHandlerError(
-  hook: ((error: unknown, ctx: ServerContext) => void | Promise<void>) | undefined,
+  hook: ((error: unknown, ctx: GuardCallContext) => void | Promise<void>) | undefined,
   error: unknown,
-  ctx: ServerContext,
+  ctx: GuardCallContext,
 ): void {
   if (hook === undefined) {
     return;
@@ -234,7 +233,6 @@ const REGISTER_KEYS = new Set([
   "outputSchema",
   "annotations",
   "icons",
-  "execution",
   "_meta",
   "allow",
   "onReceipt",
