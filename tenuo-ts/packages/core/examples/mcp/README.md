@@ -9,8 +9,7 @@ workspace.ts   in-memory reports / HR / drafts
 server.ts      trusted root + tools/call JSON-RPC (no SDK)
 host.ts        official MCP SDK server + in-memory client
 client.ts      issuer, per-agent narrow, attach
-scenario.ts    orchestrator → researcher → writer → finance email
-smoke.ts       in-process wire smoke for CI
+scenario.ts    orchestrator → researcher → writer → finance email + smoke
 ```
 
 `@tenuo/core` does not depend on the official MCP SDK. The quarterly-close
@@ -46,7 +45,7 @@ From `tenuo-ts`:
 pnpm example:mcp
 ```
 
-`pnpm test` imports `runMcpSmoke()` so CI hits the same path.
+`pnpm test` imports `runMcpSmoke()` from `scenario.ts` so CI hits the same path.
 
 The official-SDK host smoke (`pnpm example:mcp:host`) covers discover, allow,
 deny-at-attach, narrow, `sessionFromWire`, approvals, revocation, forged args,

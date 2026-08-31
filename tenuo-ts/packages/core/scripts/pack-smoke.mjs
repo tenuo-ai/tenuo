@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const coreDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+copyFileSync(join(coreDir, "..", "..", "..", "LICENSE"), join(coreDir, "LICENSE"));
 const packDir = mkdtempSync(join(tmpdir(), "tenuo-core-pack-"));
 const installDir = mkdtempSync(join(tmpdir(), "tenuo-core-smoke-"));
 

@@ -46,7 +46,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json && mkdir -p dist/generated && cp src/generated/package.json src/generated/tenuo_wasm.js src/generated/tenuo_wasm.d.ts src/generated/tenuo_wasm_bg.wasm src/generated/tenuo_wasm_bg.wasm.d.ts dist/generated/",
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/generated && cp src/generated/package.json src/generated/tenuo_wasm.js src/generated/tenuo_wasm.d.ts src/generated/tenuo_wasm_bg.wasm src/generated/tenuo_wasm_bg.wasm.d.ts dist/generated/ && cp ../../../LICENSE LICENSE",
     "pack:smoke": "node scripts/pack-smoke.mjs",
     "publish:npm": "npm publish --access public --provenance",
     "build:wasm": "pnpm --dir ../.. build:wasm"
