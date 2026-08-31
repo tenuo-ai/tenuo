@@ -1,6 +1,6 @@
 # Integration Compatibility Matrix
 
-**Last Updated**: 2026-04-03
+**Last Updated**: 2026-08-31
 
 Tracks compatibility between Tenuo and upstream integration libraries.
 
@@ -15,7 +15,7 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 | **LangGraph** | 0.2.0 | 0.2+ latest | 1.1.3 | Stable | Validated in [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744) |
 | **MCP** | 1.0.0 | 1.1+ | 1.1.3 | Stable | Model Context Protocol |
 | **Google ADK** | 0.1.0 | 0.1+ | 0.1.2 | Beta | Early access |
-| **Temporal** | 1.23.0 | 1.x latest | 1.23.0+ | Stable | `tenuo[temporal]` requires `temporalio>=1.23` for `TenuoTemporalPlugin` (`SimplePlugin`); tested weekly via compatibility matrix (minimum + latest); replay safety verified across SDK versions |
+| **Temporal** | 1.23.0 | 1.x latest | 1.23.0+ | Stable | `tenuo[temporal]` requires `temporalio>=1.23` for `TenuoTemporalPlugin` (`SimplePlugin`); tested weekly via compatibility matrix (minimum + latest); replay safety verified across SDK versions; Nexus authorization is experimental and additionally requires Temporal SDK/server Nexus support |
 
 > **Version Philosophy**: Tenuo uses **permissive constraints** in `pyproject.toml` to maximize compatibility. We **warn at runtime** (not fail) if you have a version with known issues. This lets you try Tenuo without upgrading your entire stack.
 >
@@ -93,6 +93,11 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 - **1.23.0**: Minimum required version. Introduces `SimplePlugin` API used by `TenuoTemporalPlugin`.
 - **<1.23.0**: `TenuoTemporalPlugin` is not available. Manual `TenuoWorkerInterceptor` + `Worker(interceptors=[...])` pattern works.
 - Replay safety (determinism of PoP signatures, `workflow.now()` usage) is verified on both minimum and latest.
+- **Nexus authorization**: Experimental. Requires a Temporal Python SDK and
+  Temporal Server/Cloud environment with Nexus enabled. The compatibility
+  matrix covers core workflow/activity authorization; Nexus is additionally
+  covered by focused live cross-namespace tests when the local test server
+  supports Nexus endpoints.
 
 **Replay Safety Testing**:
 - PoP signatures are deterministic across replays (same inputs → same output).

@@ -17,6 +17,13 @@ Access control in Temporal typically relies on worker identity or task queue tok
 
 Tenuo adds that task-scoped authorization layer. A signed warrant travels with each workflow and is verified by the worker interceptor before every Activity runs. Agents are **constrained by design**: an agent can only execute what its warrant permits, and every action is cryptographically attributable to the entity that authorized it. Activity definitions require no changes, and verification runs in-process with no external service dependency.
 
+For cross-namespace workflows, Tenuo also supports an experimental
+[Temporal Nexus authorization surface](./temporal-nexus.md). Nexus lets one
+team expose a durable service contract through a named Endpoint; Tenuo carries
+delegated warrants across that Endpoint so the handler can verify the exact
+operation, input, holder key, expiry, approvals, and revocation state instead
+of relying only on namespace-level access.
+
 ## Prerequisites
 
 - Familiarity with Temporal Workflows, Activities, and Workers ([What is Temporal](#what-is-temporal) above, or [Temporal learning resources](https://learn.temporal.io/getting_started/)).
@@ -291,6 +298,32 @@ class ParentWorkflow:
 
 > **Important:** `workflow.execute_child_workflow()` does **not** propagate warrant headers. Always use `tenuo_execute_child_workflow()` for authorized children.
 
+## Cross-namespace calls with Temporal Nexus
+
+When workflows in one Namespace need to invoke capabilities owned by another
+team or Namespace, use [Temporal Nexus authorization](./temporal-nexus.md).
+The Nexus helpers mirror the Activity helper shape:
+
+```python
+await tenuo_execute_nexus_operation(
+    nexus_client,
+    PaymentService.refund,
+    RefundInput(order_id="ord_123", amount_cents=5000),
+    warrant=refund_warrant,
+    key_id="agent1",
+)
+```
+
+On the handler side, `@tenuo_nexus_operation(config, endpoint="payments-prod")`
+or `verify_nexus_operation(...)` verifies the signed warrant, proof of
+possession, endpoint/service/operation binding, input constraints, approvals,
+expiry, and revocation before user code runs.
+
+For workflow-backed Nexus operations, use the explicit envelope/bootstrap
+helpers documented in the Nexus guide. They carry verified or attenuated
+authority into the backing workflow without exposing handler Namespace
+credentials to the caller Namespace.
+
 ## Security
 
 **Fail-closed by default.** Missing or invalid warrants block execution. Each activity dispatch includes a Proof-of-Possession (PoP) signature binding the tool name and arguments to the holder key. Enforcement is in-process (no Tenuo network hop at verify time).
@@ -355,7 +388,7 @@ These scripts under [`tenuo-python/examples/temporal/`](https://github.com/tenuo
 ## Next steps
 
 - **[Temporal Integration Reference](./temporal-reference.md)** — production checklist, key management (Vault, AWS, GCP), sandbox details, PoP mechanics, configuration reference, constraint types, troubleshooting, and the full threat model.
-- **[Temporal Nexus Authorization](./temporal-nexus.md)** — design preview for carrying delegated Tenuo authority across Nexus namespace boundaries.
+- **[Temporal Nexus Authorization](./temporal-nexus.md)** — experimental cross-namespace authorization for Nexus operations and workflow-backed handlers.
 - [Tenuo Core Concepts](./concepts.md)
 - [Security Model](./security.md)
 - [Example Code](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal)
