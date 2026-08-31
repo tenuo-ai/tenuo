@@ -334,7 +334,9 @@ organizations, the remaining challenge is operational control: issuer
 ownership, trusted-root distribution, revocation rollout, approvals, key
 rotation, and audit search across the fleet. Tenuo can be self-hosted for those
 pieces; teams that want that control plane operated centrally can use a managed
-Tenuo deployment. See [Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md#enterprise-scale-control-across-teams).
+Tenuo deployment. See [Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md#enterprise-scale-control-across-teams),
+or [schedule a demo](https://tenuo.ai/early-access.html) to map this onto your
+Temporal topology.
 
 ## Security
 
