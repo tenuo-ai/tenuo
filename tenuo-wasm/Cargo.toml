@@ -17,7 +17,7 @@ serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1"
 
 # Tenuo Core (with CEL for Explorer constraint evaluation)
-tenuo = { path = "../tenuo-core", default-features = false, features = ["control-plane", "data-plane", "cel"] }
+tenuo = { path = "../tenuo-core", default-features = false, features = ["control-plane", "data-plane", "cel", "unstable-receipts"] }
 hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 serde_json = "1.0"

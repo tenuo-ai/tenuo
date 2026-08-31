@@ -50,6 +50,12 @@ pub mod gateway_config;
 pub mod mcp;
 pub mod payload;
 pub mod planes;
+/// Signed authorization receipts.
+///
+/// Unstable: gated behind the `unstable-receipts` feature so the 0.2.x
+/// public API does not commit to this surface. Consumed today only by
+/// `tenuo-wasm`. Enable explicitly if you depend on it.
+#[cfg(feature = "unstable-receipts")]
 pub mod receipt;
 pub mod revocation;
 pub mod revocation_manager;
@@ -95,6 +101,7 @@ pub use planes::{
     Authorizer, AuthorizerBuilder, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,
     VerifiedApproval, DEFAULT_CLOCK_TOLERANCE_SECS,
 };
+#[cfg(feature = "unstable-receipts")]
 pub use receipt::{Receipt, ReceiptPayload};
 pub use revocation::{
     RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,

@@ -31,6 +31,10 @@ control-plane = []
 # Data Plane - for edge agents and verifiers  
 data-plane = []
 
+# Signed authorization receipts. Unstable: the API may change in a patch
+# release. `tenuo-wasm` enables this; nothing else in the workspace does.
+unstable-receipts = []
+
 # Python bindings
 python = ["pyo3"]
 python-extension = ["pyo3/extension-module", "python"]
