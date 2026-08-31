@@ -170,7 +170,7 @@ def test_same_bytes_across_surfaces():
         app_err = _build_non_retryable_application_error(gate)
     except ImportError:
         pytest.skip("temporalio not installed")
-    assert str(app_err) == expected
+    assert app_err.message == expected
 
 
 def test_cli_prompt_prints_message(capsys):
