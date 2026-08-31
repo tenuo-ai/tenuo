@@ -4686,13 +4686,54 @@ class TestClientHeadersPendingMapBound:
         ci = TenuoClientInterceptor()
         original = {"x-tenuo-warrant": b"original"}
         rebound = {"x-tenuo-warrant": b"rebound"}
-        ci.set_headers_for_workflow("wf-1", original)
-        ci.set_headers_for_workflow("wf-1", rebound)
+        original_token = ci.set_headers_for_workflow("wf-1", original)
+        rebound_token = ci.set_headers_for_workflow("wf-1", rebound)
 
-        assert ci.discard_headers_for_workflow_if_match("wf-1", original) is False
+        assert (
+            ci.discard_headers_for_workflow_if_match(
+                "wf-1",
+                original,
+                original_token,
+            )
+            is False
+        )
         assert ci._headers_by_workflow_id["wf-1"][0] == rebound
-        assert ci.discard_headers_for_workflow_if_match("wf-1", rebound) is True
+        assert (
+            ci.discard_headers_for_workflow_if_match(
+                "wf-1",
+                rebound,
+                rebound_token,
+            )
+            is True
+        )
         assert "wf-1" not in ci._headers_by_workflow_id
+
+    def test_conditional_discard_preserves_identical_rebound_entry(self):
+        from tenuo.temporal._client import TenuoClientInterceptor
+
+        ci = TenuoClientInterceptor()
+        original = {"x-tenuo-warrant": b"same"}
+        rebound = {"x-tenuo-warrant": b"same"}
+        original_token = ci.set_headers_for_workflow("wf-1", original)
+        rebound_token = ci.set_headers_for_workflow("wf-1", rebound)
+
+        assert (
+            ci.discard_headers_for_workflow_if_match(
+                "wf-1",
+                original,
+                original_token,
+            )
+            is False
+        )
+        assert ci.pending_headers_match("wf-1", rebound, rebound_token) is True
+        assert (
+            ci.discard_headers_for_workflow_if_match(
+                "wf-1",
+                rebound,
+                rebound_token,
+            )
+            is True
+        )
 
     def test_ttl_evicts_stale_entries_on_next_set(self):
         from tenuo.temporal._client import TenuoClientInterceptor

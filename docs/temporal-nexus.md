@@ -441,15 +441,18 @@ Nexus delivery is at-least-once. Tenuo verifies authority, but replay
 suppression is not enabled by default because identical repeat calls can share
 the same PoP signature inside the core PoP time bucket. If you enable
 `TenuoPluginConfig.nexus_pop_replay_protection=True`, Tenuo rejects a captured
-PoP signature reused under a different Nexus `request_id`, while allowing the
-same signature with the same `request_id` as a Temporal redelivery. Use a
+PoP signature reused under a different handler namespace, task queue, or Nexus
+`request_id`, while allowing the same signature on the same namespace, task
+queue, and `request_id` as a Temporal redelivery. Namespace comes from the
+handler Temporal client; task queue comes from `temporalio.nexus.info()`. Use a
 shared owner-aware `pop_dedup_store` for multi-worker or multi-namespace
 deployments.
 
 Replay suppression still does not make arbitrary handler side effects
-idempotent, and a captured PoP replayed with the captured `request_id` is
-indistinguishable from Temporal redelivery. For workflow-backed operations,
-derive a stable workflow id from the business request and use Temporal's
+idempotent, and a captured PoP replayed with the same namespace, task queue,
+and `request_id` is indistinguishable from Temporal redelivery. For
+workflow-backed operations, derive a stable workflow id from the business
+request and use Temporal's
 workflow id conflict policy to dedupe retried or duplicated Nexus starts; sync
 operations need their own business idempotency if duplicate effects matter.
 `tenuo_create_nexus_workflow_envelope(...)` and
@@ -498,7 +501,8 @@ Ship a Tenuo Nexus worker only when all of these are true:
 - `audit_callback` is set if you need in-process Temporal audit events for
   Nexus allow/deny (control-plane emission is not a substitute).
 - Multi-worker fleets that enable `nexus_pop_replay_protection=True` also set
-  a shared owner-aware `pop_dedup_store`. Otherwise prefer stable backing
+  a shared owner-aware `pop_dedup_store`. Replay ownership includes handler
+  namespace, task queue, and `request_id`. Otherwise prefer stable backing
   `workflow_id` values and Temporal conflict policy for at-least-once delivery.
 - Polyglot callers share the same canonical tool string
   (`nexus:<endpoint>:<service>:<operation>`) and the same top-level input
@@ -539,11 +543,10 @@ Ship a Tenuo Nexus worker only when all of these are true:
 
 ## Open questions
 
-- Should Nexus PoP later also bind the resolved handler namespace or task
-  queue, or is the explicit endpoint name enough for this surface?
 - v1 decisions already locked: tool names use
   `nexus:<endpoint>:<service>:<operation>`; ambient header starts are preferred
-  over envelopes; handler denials use Nexus `UNAUTHORIZED`.
+  over envelopes; handler denials use Nexus `UNAUTHORIZED`; strict PoP replay
+  is owned by handler namespace + task queue + `request_id`.
 
 ## References
 

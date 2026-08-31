@@ -219,9 +219,10 @@ class TenuoPluginConfig:
     Opt-in strict Nexus PoP replay suppression.
 
     When enabled, ``verify_nexus_operation()`` rejects reuse of the same PoP
-    signature under a different Nexus ``request_id``. This detects captured
-    header replay across the Nexus boundary while allowing Temporal redelivery
-    of the same request id.
+    signature under a different handler namespace, task queue, or Nexus
+    ``request_id``. This detects captured header replay across the Nexus
+    boundary while allowing Temporal redelivery of the same request on the
+    same handler worker identity.
 
     Default is ``False`` because the core PoP signature can be identical for
     repeated identical calls inside the PoP time bucket, so strict suppression

@@ -62,6 +62,14 @@ _nexus_verified_warrant: ContextVar[Any] = ContextVar(
     "tenuo_nexus_verified_warrant",
     default=None,
 )
+_nexus_verified_tool_name: ContextVar[Optional[str]] = ContextVar(
+    "tenuo_nexus_verified_tool_name",
+    default=None,
+)
+_nexus_verified_args: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "tenuo_nexus_verified_args",
+    default=None,
+)
 
 
 class _NexusEndpointMismatch(TenuoContextError):
@@ -257,12 +265,24 @@ def verify_nexus_operation(
     """
     request_id = getattr(ctx, "request_id", None)
     cached_request_id = _nexus_verified_request_id.get()
+    cached_warrant = _nexus_verified_warrant.get()
     if (
         request_id is not None
         and cached_request_id == str(request_id)
-        and _nexus_verified_warrant.get() is not None
+        and cached_warrant is not None
     ):
-        return _nexus_verified_warrant.get()
+        try:
+            tool_name = _ctx_tool_name(ctx, endpoint, service, operation)
+            args = nexus_input_args(input)
+        except Exception as exc:
+            if raise_nexus_error:
+                raise _as_nexus_unauthorized(exc) from exc
+            raise
+        if (
+            _nexus_verified_tool_name.get() == tool_name
+            and _nexus_verified_args.get() == args
+        ):
+            return cached_warrant
     try:
         return _verify_nexus_operation(
             ctx,
@@ -648,7 +668,10 @@ async def tenuo_start_nexus_workflow(
         compress=compress,
         operation="tenuo_start_nexus_workflow",
     )
-    client_interceptor.set_headers_for_workflow(workflow_id, workflow_headers)
+    header_token = client_interceptor.set_headers_for_workflow(
+        workflow_id,
+        workflow_headers,
+    )
     try:
         if workflow_input is _UNSET:
             result = await ctx.start_workflow(
@@ -670,17 +693,21 @@ async def tenuo_start_nexus_workflow(
             None,
         )
         if callable(discard):
-            discard(workflow_id, workflow_headers)
+            discard(workflow_id, workflow_headers, header_token)
         raise
     still_pending = getattr(client_interceptor, "pending_headers_match", None)
-    if callable(still_pending) and still_pending(workflow_id, workflow_headers):
+    if callable(still_pending) and still_pending(
+        workflow_id,
+        workflow_headers,
+        header_token,
+    ):
         discard = getattr(
             client_interceptor,
             "discard_headers_for_workflow_if_match",
             None,
         )
         if callable(discard):
-            discard(workflow_id, workflow_headers)
+            discard(workflow_id, workflow_headers, header_token)
         raise TenuoContextError(
             "TenuoClientInterceptor did not consume pending headers for "
             f"workflow_id={workflow_id!r}. Pass the interceptor instance "
@@ -996,14 +1023,14 @@ def _check_nexus_pop_replay(
             "Nexus PoP replay protection requires pop_dedup_store to implement "
             "check_pop_replay_for_owner(dedup_key, owner_id, now, ttl_seconds, ...)."
         )
-    request_id = _ctx_request_id(ctx)
+    owner_id = _nexus_replay_owner_id(ctx)
     dedup_key = f"nexus-pop:{hashlib.sha256(pop_bytes).hexdigest()}"
     now = time.time()
     from tenuo_core import Warrant
 
     owner_method(
         dedup_key,
-        request_id,
+        owner_id,
         now,
         float(Warrant.dedup_ttl_secs()),
         activity_name=tool_name,
@@ -1018,6 +1045,59 @@ def _ctx_request_id(ctx: Any) -> str:
             "PoP replay protection."
         )
     return str(request_id)
+
+
+def _nexus_replay_owner_id(ctx: Any) -> str:
+    """Identify one permitted redelivery of a Nexus PoP signature.
+
+    Temporal redelivery keeps the same request id on the same handler
+    namespace and task queue. A captured PoP reused on a different
+    namespace or task queue is a different owner and is treated as replay.
+    """
+    return "\x1f".join(
+        (_ctx_namespace(ctx), _ctx_task_queue(ctx), _ctx_request_id(ctx))
+    )
+
+
+def _ctx_namespace(ctx: Any) -> str:
+    value = getattr(ctx, "namespace", None)
+    if value:
+        return str(value)
+    try:
+        from temporalio import nexus as temporal_nexus  # type: ignore[import-not-found]
+
+        info = temporal_nexus.info()
+        namespace = getattr(info, "namespace", None)
+        if namespace:
+            return str(namespace)
+    except Exception:
+        pass
+    try:
+        from temporalio import nexus as temporal_nexus  # type: ignore[import-not-found]
+
+        client = temporal_nexus.client()
+        namespace = getattr(client, "namespace", None)
+        if namespace:
+            return str(namespace)
+    except Exception:
+        pass
+    return ""
+
+
+def _ctx_task_queue(ctx: Any) -> str:
+    value = getattr(ctx, "task_queue", None)
+    if value:
+        return str(value)
+    try:
+        from temporalio import nexus as temporal_nexus  # type: ignore[import-not-found]
+
+        info = temporal_nexus.info()
+        task_queue = getattr(info, "task_queue", None)
+        if task_queue:
+            return str(task_queue)
+    except Exception:
+        pass
+    return ""
 
 
 def _nexus_auth_error_types() -> tuple[type[BaseException], ...]:

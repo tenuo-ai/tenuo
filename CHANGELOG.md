@@ -68,7 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TenuoPluginConfig.nexus_endpoint` is set, wires `control_plane` onto the
   shared config object used by verify/decorators, and emits `audit_callback`
   plus metrics for Nexus allow/deny. Ambient backing starts fail closed if the
-  client interceptor does not consume the pending header binding.
+  client interceptor does not consume the pending header binding. Strict Nexus
+  PoP replay is bound to handler namespace, task queue, and `request_id`.
 - **Temporal per-Activity warrant overrides.**
   `tenuo_execute_activity(..., warrant=..., key_id=...)` now applies a
   task-local warrant to one dispatch, including the active delegation chain.

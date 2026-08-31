@@ -49,10 +49,10 @@ class PopDedupStore(Protocol):
 class OwnerAwarePopDedupStore(PopDedupStore, Protocol):
     """Optional extension for Nexus PoP replay suppression.
 
-    Nexus uses the PoP signature as the replay key and the Nexus ``request_id``
-    as the owner: the same signature with the same request id is a permitted
-    redelivery, while the same signature with a different request id is a
-    replay.
+    Nexus uses the PoP signature as the replay key and
+    ``namespace + task_queue + request_id`` as the owner: the same signature
+    on the same handler namespace, task queue, and request id is a permitted
+    redelivery, while the same signature with a different owner is a replay.
     """
 
     def check_pop_replay_for_owner(
@@ -147,7 +147,7 @@ class InMemoryPopDedupStore:
                     raise PopVerificationError(
                         reason=(
                             "replay detected (PoP signature already used for "
-                            f"different request_id {existing_owner!r})"
+                            f"different request owner {existing_owner!r})"
                         ),
                         activity_name=activity_name,
                     )

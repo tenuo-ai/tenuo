@@ -676,8 +676,12 @@ class TenuoNexusOperationInboundInterceptor(_NexusOperationInboundInterceptor):
             raise_nexus_error=True,
         )
         from tenuo.temporal._nexus import (
+            _ctx_tool_name,
+            _nexus_verified_args,
             _nexus_verified_request_id,
+            _nexus_verified_tool_name,
             _nexus_verified_warrant,
+            nexus_input_args,
         )
 
         request_id = getattr(input.ctx, "request_id", None)
@@ -685,9 +689,15 @@ class TenuoNexusOperationInboundInterceptor(_NexusOperationInboundInterceptor):
             str(request_id) if request_id is not None else None
         )
         warrant_token = _nexus_verified_warrant.set(warrant)
+        tool_token = _nexus_verified_tool_name.set(
+            _ctx_tool_name(input.ctx, endpoint, None, None)
+        )
+        args_token = _nexus_verified_args.set(nexus_input_args(input.input))
         try:
             return await self.next.execute_nexus_operation_start(input)
         finally:
+            _nexus_verified_args.reset(args_token)
+            _nexus_verified_tool_name.reset(tool_token)
             _nexus_verified_request_id.reset(request_token)
             _nexus_verified_warrant.reset(warrant_token)
 

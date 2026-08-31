@@ -68,10 +68,12 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
         self._next_headers: Dict[str, bytes] = {}
         # ``OrderedDict`` so we can evict oldest-first when the bound grows
         # past ``_pending_headers_max_size``. Entry value is
-        # ``(headers, insert_monotonic_time)`` so TTL eviction is cheap.
-        self._headers_by_workflow_id: "OrderedDict[str, Tuple[Dict[str, bytes], float]]" = (
+        # ``(headers, insert_monotonic_time, generation)`` so TTL eviction is
+        # cheap and race-safe cleanup can distinguish identical rebindings.
+        self._headers_by_workflow_id: "OrderedDict[str, Tuple[Dict[str, bytes], float, int]]" = (
             OrderedDict()
         )
+        self._pending_headers_generation: int = 0
         self._lock = threading.Lock()
         self._pending_headers_max_size: int = (
             pending_headers_max_size
@@ -91,7 +93,7 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
             return
         now = time.monotonic()
         expired: List[str] = []
-        for wf_id, (_headers, inserted_at) in self._headers_by_workflow_id.items():
+        for wf_id, (_headers, inserted_at, _generation) in self._headers_by_workflow_id.items():
             if (now - inserted_at) < ttl:
                 # OrderedDict preserves insertion order; once we hit a fresh
                 # entry everything after is also fresh.
@@ -116,7 +118,7 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
         with self._lock:
             self._next_headers = dict(headers)
 
-    def set_headers_for_workflow(self, workflow_id: str, headers: Dict[str, bytes]) -> None:
+    def set_headers_for_workflow(self, workflow_id: str, headers: Dict[str, bytes]) -> int:
         """Set headers for a specific workflow ID.
 
         This is concurrency-safe and deterministic for multi-tenant clients.
@@ -129,16 +131,24 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
         comes first. This protects long-running clients from unbounded
         growth. Callers can also call :meth:`discard_headers_for_workflow`
         to drop an entry explicitly.
+
+        Returns a generation token that can be passed to
+        :meth:`discard_headers_for_workflow_if_match` or
+        :meth:`pending_headers_match` when cleanup must not race with a newer
+        binding for the same workflow id.
         """
         if not workflow_id:
             raise ValueError("workflow_id must be a non-empty string")
         with self._lock:
             self._evict_expired_locked()
+            self._pending_headers_generation += 1
+            generation = self._pending_headers_generation
             # Move-to-end semantics so explicit re-binding refreshes the TTL.
             self._headers_by_workflow_id.pop(workflow_id, None)
             self._headers_by_workflow_id[workflow_id] = (
                 dict(headers),
                 time.monotonic(),
+                generation,
             )
             max_size = self._pending_headers_max_size
             if max_size > 0:
@@ -152,6 +162,7 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
                         max_size,
                         evicted_id,
                     )
+            return generation
 
     def discard_headers_for_workflow(self, workflow_id: str) -> bool:
         """Drop any pending headers bound to *workflow_id*.
@@ -167,33 +178,40 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
         self,
         workflow_id: str,
         headers: Dict[str, bytes],
+        token: Optional[int] = None,
     ) -> bool:
         """Return True when *workflow_id* still has pending headers equal to *headers*."""
         with self._lock:
             existing = self._headers_by_workflow_id.get(workflow_id)
             if existing is None:
                 return False
-            existing_headers, _inserted_at = existing
-            return existing_headers == headers
+            existing_headers, _inserted_at, existing_token = existing
+            return existing_headers == headers and (
+                token is None or existing_token == token
+            )
 
     def discard_headers_for_workflow_if_match(
         self,
         workflow_id: str,
         headers: Dict[str, bytes],
+        token: Optional[int] = None,
     ) -> bool:
         """Drop pending headers only when they still match *headers*.
 
         Use this when a caller bound headers for a start attempt that failed
         before the interceptor consumed them. If another concurrent attempt has
-        since rebound the same workflow id, this method leaves that newer
-        binding intact.
+        since rebound the same workflow id, pass the generation token returned
+        by :meth:`set_headers_for_workflow` so this method leaves that newer
+        binding intact even when the header bytes are identical.
         """
         with self._lock:
             existing = self._headers_by_workflow_id.get(workflow_id)
             if existing is None:
                 return False
-            existing_headers, _inserted_at = existing
-            if existing_headers != headers:
+            existing_headers, _inserted_at, existing_token = existing
+            if existing_headers != headers or (
+                token is not None and existing_token != token
+            ):
                 return False
             self._headers_by_workflow_id.pop(workflow_id, None)
             return True

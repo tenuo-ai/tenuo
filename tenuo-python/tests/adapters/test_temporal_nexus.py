@@ -688,6 +688,103 @@ def test_verify_nexus_operation_strict_replay_scoped_by_request_id(
         verify_nexus_operation(replay_ctx, input, config, endpoint="billing-prod")
 
 
+def test_verify_nexus_operation_strict_replay_rejects_namespace_or_task_queue_drift(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    headers = tenuo_nexus_headers(
+        nexus_warrant,
+        "agent-key",
+        agent_key,
+        endpoint="billing-prod",
+        service="BillingService",
+        operation="refund",
+        input=input,
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        nexus_pop_replay_protection=True,
+    )
+    original = SimpleNamespace(
+        request_id="req-bound",
+        namespace="billing-prod-ns",
+        task_queue="billing-tq",
+        service="BillingService",
+        operation="refund",
+        headers=headers,
+    )
+
+    verify_nexus_operation(original, input, config, endpoint="billing-prod")
+    verify_nexus_operation(original, input, config, endpoint="billing-prod")
+
+    other_namespace = SimpleNamespace(
+        request_id="req-bound",
+        namespace="billing-staging-ns",
+        task_queue="billing-tq",
+        service="BillingService",
+        operation="refund",
+        headers=headers,
+    )
+    with pytest.raises(PopVerificationError, match="replay detected"):
+        verify_nexus_operation(other_namespace, input, config, endpoint="billing-prod")
+
+    other_queue = SimpleNamespace(
+        request_id="req-bound",
+        namespace="billing-prod-ns",
+        task_queue="billing-tq-canary",
+        service="BillingService",
+        operation="refund",
+        headers=headers,
+    )
+    with pytest.raises(PopVerificationError, match="replay detected"):
+        verify_nexus_operation(other_queue, input, config, endpoint="billing-prod")
+
+
+def test_verify_nexus_operation_strict_replay_uses_nexus_info_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    headers = tenuo_nexus_headers(
+        nexus_warrant,
+        "agent-key",
+        agent_key,
+        endpoint="billing-prod",
+        service="BillingService",
+        operation="refund",
+        input=input,
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        nexus_pop_replay_protection=True,
+    )
+    reported = SimpleNamespace(namespace="billing-prod-ns")
+    monkeypatch.setattr(
+        "temporalio.nexus.info",
+        lambda: SimpleNamespace(namespace=reported.namespace),
+    )
+    ctx = SimpleNamespace(
+        request_id="req-bound",
+        task_queue="billing-tq",
+        service="BillingService",
+        operation="refund",
+        headers=headers,
+    )
+
+    verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+    verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+    reported.namespace = "billing-staging-ns"
+
+    with pytest.raises(PopVerificationError, match="replay detected"):
+        verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+
 def test_execute_nexus_operation_rejects_reserved_header_case_insensitive(
     monkeypatch: pytest.MonkeyPatch,
     nexus_keys: tuple[Any, Any],
@@ -1812,6 +1909,48 @@ async def test_verify_nexus_operation_skips_duplicate_emit_inside_inbound_interc
     assert seen[0].to_bytes() == nexus_warrant.to_bytes()
     assert len(control_plane.allow_events) == 1
     assert len(events) == 1
+
+
+async def test_inbound_interceptor_cache_still_checks_explicit_binding(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    ctx = SimpleNamespace(
+        request_id="req-cache-binding",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        nexus_endpoint="billing-prod",
+    )
+
+    class _Next:
+        async def execute_nexus_operation_start(self, inbound_input: Any) -> Any:
+            verify_nexus_operation(
+                inbound_input.ctx,
+                inbound_input.input,
+                config,
+                endpoint="billing-prod",
+                operation="capture",
+            )
+
+    inbound = TenuoNexusOperationInboundInterceptor(_Next(), config)
+
+    with pytest.raises(TenuoContextError, match="tool binding mismatch"):
+        await inbound.execute_nexus_operation_start(SimpleNamespace(ctx=ctx, input=input))
 
 
 async def test_nexus_inbound_interceptor_verifies_before_handler(
