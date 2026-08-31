@@ -1,7 +1,6 @@
 node_modules/
 dist/
 *.tsbuildinfo
-packages/core/src/generated/package.json
 packages/core/src/generated/README.md
 packages/core/src/generated/.gitignore
 packages/core/src/generated/.npmignore

@@ -46,6 +46,14 @@ export type WasmContext = {
   ): WasmDecision;
   loadRevocationList(srl: string): void;
   signRevocationList(ids: string[]): string;
+  signPop(session: WasmSession, tool: string, args: unknown): string;
+  authorizePresented(
+    warrants: unknown,
+    tool: string,
+    args: unknown,
+    pop: string,
+    approvals?: unknown,
+  ): WasmDecision;
 };
 
 type Generated = {

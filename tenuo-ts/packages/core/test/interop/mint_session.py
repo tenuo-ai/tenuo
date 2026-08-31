@@ -91,6 +91,46 @@ def mint(spec: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+def mcp_attach(payload: dict[str, Any]) -> dict[str, Any]:
+    """Build `_meta.tenuo` the way SecureMCPClient injects it."""
+    import base64
+
+    from tenuo import encode_warrant_stack
+    from tenuo._pop_canonicalize import strip_none_values
+
+    tokens = payload.get("warrants") or [payload["warrant"]]
+    chain = [Warrant.from_base64(token) for token in tokens]
+    holder = SigningKey.from_bytes(bytes.fromhex(payload["holder_hex"]))
+    tool = payload["tool"]
+    args = payload["args"]
+    stack = encode_warrant_stack(chain)
+    pop = chain[-1].sign(holder, tool, strip_none_values(args), now())
+    return {
+        "name": tool,
+        "arguments": args,
+        "_meta": {
+            "tenuo": {
+                "warrant": stack,
+                "signature": base64.b64encode(bytes(pop)).decode("utf-8"),
+            }
+        },
+    }
+
+
+def mcp_verify(payload: dict[str, Any]) -> dict[str, Any]:
+    """Verify a presented `_meta.tenuo` envelope via MCPVerifier."""
+    from tenuo.mcp.server import MCPVerifier
+
+    root = PublicKey.from_bytes(bytes.fromhex(payload["root_hex"]))
+    verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=[root]))
+    result = verifier.verify(payload["tool"], payload["args"], meta=payload.get("meta"))
+    return {
+        "allowed": bool(result.allowed),
+        "reason": result.denial_reason,
+        "code": result.jsonrpc_error_code,
+    }
+
+
 def verify(payload: dict[str, Any]) -> dict[str, Any]:
     tokens = payload.get("warrants") or [payload["warrant"]]
     chain = [Warrant.from_base64(token) for token in tokens]
@@ -129,6 +169,14 @@ def main() -> int:
         return 0
     if command == "verify":
         json.dump(verify(read_optional_json()), sys.stdout)
+        sys.stdout.write("\n")
+        return 0
+    if command == "mcp_attach":
+        json.dump(mcp_attach(read_optional_json()), sys.stdout)
+        sys.stdout.write("\n")
+        return 0
+    if command == "mcp_verify":
+        json.dump(mcp_verify(read_optional_json()), sys.stdout)
         sys.stdout.write("\n")
         return 0
     print(f"unknown command: {command}", file=sys.stderr)

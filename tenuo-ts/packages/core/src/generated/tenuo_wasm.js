@@ -53,6 +53,23 @@ class SdkContext {
         return ret;
     }
     /**
+     * Authorize a warrant + PoP presented on the wire. No holder secret.
+     * @param {any} warrants
+     * @param {string} tool
+     * @param {any} args_json
+     * @param {string} pop
+     * @param {any} approvals
+     * @returns {any}
+     */
+    authorizePresented(warrants, tool, args_json, pop, approvals) {
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(pop, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_authorizePresented(this.__wbg_ptr, warrants, ptr0, len0, args_json, ptr1, len1, approvals);
+        return ret;
+    }
+    /**
      * Authorizer-only context. `mint()` fails; import a session from the wire.
      * @param {any} roots
      * @returns {SdkContext}
@@ -113,6 +130,34 @@ class SdkContext {
         this.__wbg_ptr = ret;
         SdkContextFinalization.register(this, this.__wbg_ptr, this);
         return this;
+    }
+    /**
+     * Holder PoP only. Does not authorize. Used to fill `_meta.tenuo.signature`.
+     * @param {SdkSession} session
+     * @param {string} tool
+     * @param {any} args_json
+     * @returns {string}
+     */
+    signPop(session, tool, args_json) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            _assertClass(session, SdkSession);
+            const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.sdkcontext_signPop(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
     }
     /**
      * Test / host seam. Signs an SRL with the local issuer. Does not load it.
@@ -223,6 +268,28 @@ class SdkSession {
             throw takeFromExternrefTable0(ret[1]);
         }
         return SdkSession.__wrap(ret[0]);
+    }
+    /**
+     * CBOR warrant stack as standard base64. Matches Python `encode_warrant_stack`.
+     * @returns {string}
+     */
+    toStackWire() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.sdksession_toStackWire(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
     }
     /**
      * Warrant tokens, root first. Does not include the holder secret.

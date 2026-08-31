@@ -17,6 +17,10 @@ export class SdkContext {
      */
     authorizeAsOf(session: SdkSession, tool: string, args_json: any, as_of: number, approvals: any): any;
     /**
+     * Authorize a warrant + PoP presented on the wire. No holder secret.
+     */
+    authorizePresented(warrants: any, tool: string, args_json: any, pop: string, approvals: any): any;
+    /**
      * Authorizer-only context. `mint()` fails; import a session from the wire.
      */
     static fromTrustedRoots(roots: any): SdkContext;
@@ -37,6 +41,10 @@ export class SdkContext {
      */
     narrow(session: SdkSession, allow_json: any): SdkSession;
     constructor();
+    /**
+     * Holder PoP only. Does not authorize. Used to fill `_meta.tenuo.signature`.
+     */
+    signPop(session: SdkSession, tool: string, args_json: any): string;
     /**
      * Test / host seam. Signs an SRL with the local issuer. Does not load it.
      */
@@ -66,6 +74,10 @@ export class SdkSession {
      * Import a published warrant (base64 or envelope hex) plus the holder secret.
      */
     static fromWire(warrant: string, holder_secret: Uint8Array): SdkSession;
+    /**
+     * CBOR warrant stack as standard base64. Matches Python `encode_warrant_stack`.
+     */
+    toStackWire(): string;
     /**
      * Warrant tokens, root first. Does not include the holder secret.
      */

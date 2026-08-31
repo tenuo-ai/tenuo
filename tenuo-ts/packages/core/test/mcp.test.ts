@@ -1,0 +1,258 @@
+import { describe, expect, it } from "vitest";
+import {
+  ApprovalRequiredError,
+  AuthorizationDeniedError,
+  createTenuo,
+  TenuoConfigurationError,
+  TenuoError,
+  under,
+} from "../src/index.ts";
+import {
+  devContext,
+  exportSession,
+  signApproval,
+  signRevocationList,
+  verifyReceipt,
+  warrantIds,
+  wrapSession,
+} from "../src/testkit.ts";
+import { APPROVER1_PUB, APPROVER1_SECRET, APPROVER2_PUB, APPROVER2_SECRET } from "./vectors/spec.ts";
+
+function issuerAndServer() {
+  const issuer = createTenuo({ root: createTenuo.devRoot() });
+  const session = issuer.session({
+    allow: { read_file: { path: under("/data") } },
+  });
+  const leaked = exportSession(session);
+  const server = createTenuo({
+    trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)],
+  });
+  return { issuer, session, leaked, server };
+}
+
+function flipWire(value: string): string {
+  const last = value[value.length - 1] === "A" ? "B" : "A";
+  return `${value.slice(0, -1)}${last}`;
+}
+
+describe("tenuo.mcp", () => {
+  it("attaches a warrant and lets a second process verify before execute", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    expect(call.name).toBe("read_file");
+    expect(call._meta.tenuo.warrant.length).toBeGreaterThan(0);
+    expect(call._meta.tenuo.signature.length).toBeGreaterThan(0);
+
+    let executed: string | undefined;
+    const readFile = server.mcp.handler("read_file", async ({ path }: { path: string }) => {
+      executed = path;
+      return `ok:${path}`;
+    });
+    await expect(readFile(call.arguments as { path: string }, { _meta: call._meta })).resolves.toBe(
+      "ok:/data/q3.pdf",
+    );
+    expect(executed).toBe("/data/q3.pdf");
+  });
+
+  it("denies a path outside the warrant and never runs the handler", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    expect(() => issuer.mcp.attach(session, "read_file", { path: "/etc/passwd" })).toThrow(
+      AuthorizationDeniedError,
+    );
+
+    const allowed = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    const forged = { ...allowed, arguments: { path: "/etc/passwd" } };
+    let executed = false;
+    const readFile = server.mcp.handler("read_file", async () => {
+      executed = true;
+      return "leaked";
+    });
+    await expect(readFile(forged.arguments, { _meta: forged._meta })).rejects.toMatchObject({
+      code: "TENUO_INVALID_POP",
+    });
+    expect(executed).toBe(false);
+  });
+
+  it("fails closed without _meta.tenuo", () => {
+    const server = createTenuo({
+      trustedRoots: [
+        createTenuo.publicKeyFromHex("8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"),
+      ],
+    });
+    expect(() => server.mcp.verify("read_file", { path: "/data/q3.pdf" }, {})).toThrow(
+      TenuoConfigurationError,
+    );
+    expect(server.mcp.jsonRpcError(new TenuoConfigurationError("missing"))).toMatchObject({
+      code: -32001,
+    });
+  });
+
+  it("maps denial, approval-required, and canonicalization onto JSON-RPC codes", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    expect(tenuo.mcp.jsonRpcError(new ApprovalRequiredError("transfer", 2, 0))).toMatchObject({
+      code: -32002,
+      data: { tenuo: { code: "TENUO_APPROVAL_REQUIRED" } },
+    });
+    expect(
+      tenuo.mcp.jsonRpcError(new AuthorizationDeniedError("TENUO_INVALID_POP", "bad pop")),
+    ).toMatchObject({
+      code: -32001,
+      data: { tenuo: { code: "TENUO_INVALID_POP" } },
+    });
+    expect(
+      tenuo.mcp.jsonRpcError(new TenuoError("TENUO_CANONICALIZATION", "not a constraint value")),
+    ).toMatchObject({
+      code: -32602,
+      data: { tenuo: { code: "TENUO_CANONICALIZATION" } },
+    });
+  });
+
+  it("rejects the wrong tool name on a valid envelope", () => {
+    const { issuer, session, server } = issuerAndServer();
+    expect(() => issuer.mcp.attach(session, "write_file", { path: "/data/q3.pdf" })).toThrow(
+      AuthorizationDeniedError,
+    );
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    expect(() => server.mcp.verify("write_file", call.arguments, call._meta)).toThrow(TenuoError);
+  });
+
+  it("rejects a tampered warrant or signature", () => {
+    const { issuer, session, server } = issuerAndServer();
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    expect(() =>
+      server.mcp.verify(call.name, call.arguments, {
+        tenuo: { warrant: flipWire(call._meta.tenuo.warrant), signature: call._meta.tenuo.signature },
+      }),
+    ).toThrow(TenuoError);
+    expect(() =>
+      server.mcp.verify(call.name, call.arguments, {
+        tenuo: { warrant: call._meta.tenuo.warrant, signature: flipWire(call._meta.tenuo.signature) },
+      }),
+    ).toThrow(TenuoError);
+  });
+
+  it("verifies a narrowed chain from another process", () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const parent = issuer.session({
+      allow: { read_file: { path: under("/data") } },
+    });
+    const reports = issuer.narrow(parent, { path: under("/data/reports") });
+    const leaked = exportSession(reports);
+    expect(leaked.warrants).toHaveLength(2);
+    const server = createTenuo({
+      trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)],
+    });
+
+    const inside = issuer.mcp.attach(reports, "read_file", { path: "/data/reports/q3.pdf" });
+    expect(server.mcp.verify(inside.name, inside.arguments, inside._meta)).toMatchObject({
+      path: "/data/reports/q3.pdf",
+    });
+    expect(() => issuer.mcp.attach(reports, "read_file", { path: "/data/other.txt" })).toThrow(
+      AuthorizationDeniedError,
+    );
+    const parentCall = issuer.mcp.attach(parent, "read_file", { path: "/data/other.txt" });
+    expect(server.mcp.verify(parentCall.name, parentCall.arguments, parentCall._meta)).toMatchObject({
+      path: "/data/other.txt",
+    });
+  });
+
+  it("denies a revoked warrant on verify", () => {
+    const ctx = devContext();
+    const session = wrapSession(
+      ctx.mint({ read_file: { path: { kind: "under", root: "/data" } } }, 300),
+    );
+    const leaked = exportSession(session);
+    const leafId = warrantIds(session)[0];
+    if (leafId === undefined) {
+      throw new Error("expected a warrant id");
+    }
+    const srl = signRevocationList(ctx, [leafId]);
+    const client = createTenuo({
+      trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)],
+    });
+    const imported = client.sessionFromWire({
+      warrant: leaked.warrants,
+      holderKey: createTenuo.holderKeyFromHex(leaked.holder_hex),
+    });
+    const call = client.mcp.attach(imported, "read_file", { path: "/data/q3.pdf" });
+    const server = createTenuo({
+      trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)],
+      revocationList: srl,
+    });
+    expect(() => server.mcp.verify(call.name, call.arguments, call._meta)).toThrow(
+      expect.objectContaining({ code: "TENUO_REVOKED" }),
+    );
+  });
+
+  it("attaches signed approvals so a gated tool verifies on the server", async () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const session = issuer.session({
+      allow: { read_file: { path: under("/data") } },
+      requireApproval: {
+        approvers: [
+          createTenuo.publicKeyFromHex(APPROVER1_PUB),
+          createTenuo.publicKeyFromHex(APPROVER2_PUB),
+        ],
+        min: 2,
+      },
+    });
+    const args = { path: "/data/q3.pdf" };
+    expect(() => issuer.mcp.attach(session, "read_file", args)).toThrow(ApprovalRequiredError);
+
+    const one = signApproval(session, "read_file", args, APPROVER1_SECRET);
+    expect(() => issuer.mcp.attach(session, "read_file", args, { approvals: [one] })).toThrow(
+      AuthorizationDeniedError,
+    );
+
+    const two = signApproval(session, "read_file", args, APPROVER2_SECRET);
+    const call = issuer.mcp.attach(session, "read_file", args, { approvals: [one, two] });
+    expect(call._meta.tenuo.approvals).toHaveLength(2);
+
+    const leaked = exportSession(session);
+    const server = createTenuo({
+      trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)],
+    });
+    const readFile = server.mcp.handler("read_file", async ({ path }: { path: string }) => path);
+    await expect(readFile(call.arguments as { path: string }, { _meta: call._meta })).resolves.toBe(
+      "/data/q3.pdf",
+    );
+  });
+
+  it("emits receipts on attach and verify without treating them as allow", () => {
+    const { issuer, session, server } = issuerAndServer();
+    const attached: string[] = [];
+    const verified: string[] = [];
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" }, {
+      onReceipt: (receipt) => attached.push(receipt),
+    });
+    server.mcp.verify(call.name, call.arguments, call._meta, {
+      onReceipt: (receipt) => verified.push(receipt),
+    });
+    expect(attached).toHaveLength(1);
+    expect(verified).toHaveLength(1);
+    expect(verifyReceipt(attached[0]!)).toMatchObject({ authentic: true, outcome: "allow" });
+    expect(verifyReceipt(verified[0]!)).toMatchObject({ authentic: true, outcome: "allow" });
+  });
+
+  it("reads _meta from extra.meta (MCP 1.x) as well as extra._meta", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    const readFile = server.mcp.handler("read_file", async ({ path }: { path: string }) => path);
+    await expect(readFile(call.arguments as { path: string }, { meta: call._meta })).resolves.toBe(
+      "/data/q3.pdf",
+    );
+  });
+
+  it("drops optional null args so attach and verify stay aligned", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const call = issuer.mcp.attach(session, "read_file", {
+      path: "/data/q3.pdf",
+      max_size: null,
+    });
+    expect(call.arguments).toEqual({ path: "/data/q3.pdf" });
+    const readFile = server.mcp.handler("read_file", async (args: { path: string }) => args);
+    await expect(
+      readFile({ path: "/data/q3.pdf", max_size: null } as { path: string }, { _meta: call._meta }),
+    ).resolves.toMatchObject({ path: "/data/q3.pdf" });
+  });
+});

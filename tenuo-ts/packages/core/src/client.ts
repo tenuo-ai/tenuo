@@ -8,8 +8,11 @@ import type {
   SessionFromWireInput,
   SessionInput,
   Tenuo,
+  TenuoErrorCode,
+  TenuoMcp,
   ToolPolicy,
 } from "./api.ts";
+import { createMcp } from "./mcp.ts";
 import { AuthorizationDeniedError, ApprovalRequiredError, TenuoConfigurationError } from "./errors.ts";
 import { Session, isSession, nativeSession } from "./session.ts";
 import {
@@ -163,6 +166,7 @@ function capabilityName(inner: object, policy: ToolPolicy): string {
 class TenuoClient implements Tenuo {
   private readonly context: WasmContext;
   private readonly canMint: boolean;
+  readonly mcp: TenuoMcp;
 
   constructor(options: CreateTenuoOptions) {
     if (options.root?.kind === "dev-root") {
@@ -175,6 +179,7 @@ class TenuoClient implements Tenuo {
     if (options.revocationList !== undefined) {
       this.context.loadRevocationList(normalizeWireBytes(options.revocationList));
     }
+    this.mcp = createMcp(this.context, (decision, tool) => applyDecision(decision, tool));
   }
 
   tool<T extends { execute: (args: never, options?: never) => unknown }>(
@@ -324,6 +329,25 @@ function requireApprovalJson(
     payload.tools = [...require.tools];
   }
   return payload;
+}
+
+function applyDecision(decision: { outcome: string; code?: string; field?: string; message?: string; tool?: string; required?: number; received?: number }, tool: string): void {
+  if (decision.outcome === "allow") {
+    return;
+  }
+  if (decision.outcome === "approval_required") {
+    throw new ApprovalRequiredError(
+      decision.tool ?? tool,
+      decision.required ?? 1,
+      decision.received ?? 0,
+      decision.message,
+    );
+  }
+  throw new AuthorizationDeniedError(
+    (decision.code as TenuoErrorCode | undefined) ?? "TENUO_TOOL_NOT_AUTHORIZED",
+    decision.message ?? "Authorization denied",
+    decision.field,
+  );
 }
 
 function normalizeWireBytes(value: string | Uint8Array): string {

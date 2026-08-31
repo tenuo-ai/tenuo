@@ -186,5 +186,62 @@ export interface Tenuo {
   narrow(session: Session, allow: NarrowInput): Session;
   /** Load a published SignedRevocationList. Rust verifies the issuer against trusted roots. */
   revoke(list: string | Uint8Array): void;
+  /** MCP `_meta.tenuo` attach / verify. No MCP SDK dependency. */
+  readonly mcp: TenuoMcp;
   ready(): void;
+}
+
+/** Wire envelope Python and TypeScript both read from `params._meta`. */
+export type TenuoMcpMeta = {
+  readonly tenuo: {
+    readonly warrant: string;
+    readonly signature: string;
+    readonly approvals?: readonly string[];
+  };
+};
+
+export type McpAttachOptions = {
+  readonly approvals?: readonly (string | Uint8Array)[];
+  readonly onReceipt?: (receipt: string) => void;
+};
+
+export type McpCallParams = {
+  readonly name: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly _meta: TenuoMcpMeta;
+};
+
+export type McpJsonRpcError = {
+  readonly code: -32602 | -32001 | -32002;
+  readonly message: string;
+  readonly data?: { readonly tenuo?: { readonly code: TenuoErrorCode } };
+};
+
+export interface TenuoMcp {
+  /** Local authorize, then put warrant + PoP on `_meta.tenuo`. */
+  attach(
+    session: Session,
+    name: string,
+    args: Readonly<Record<string, unknown>>,
+    options?: McpAttachOptions,
+  ): McpCallParams;
+  /**
+   * Server path. Verifies a presented warrant + PoP. Tool handler must not
+   * run unless this returns.
+   */
+  verify(
+    name: string,
+    args: Readonly<Record<string, unknown>>,
+    meta: unknown,
+    options?: { readonly onReceipt?: (receipt: string) => void },
+  ): Readonly<Record<string, unknown>>;
+  /** Wrap a handler: verify from `extra._meta` / `extra.meta`, then execute. */
+  handler<TArgs extends Record<string, unknown>, TResult>(
+    name: string,
+    execute: (args: TArgs) => TResult | Promise<TResult>,
+  ): (
+    args: TArgs,
+    extra?: { readonly _meta?: unknown; readonly meta?: unknown },
+  ) => Promise<TResult>;
+  jsonRpcError(error: unknown): McpJsonRpcError;
 }

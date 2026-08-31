@@ -1,23 +1,29 @@
 # `@tenuo/core`
 
-TypeScript SDK for Tenuo. Authorization decisions run in the Rust core (WASM). `createTenuo({ root: createTenuo.devRoot() })` can mint a session. Production loads an issued warrant with `sessionFromWire` and a trusted root.
+TypeScript SDK for Tenuo. Authorization decisions run in the Rust core (WASM).
 
-## Five-minute path (target API)
+What ships today:
+
+- `createTenuo`, `tenuo.tool()`, `session` / `sessionFromWire`, `narrow`, `toWire`
+- Allow / hard deny / approval-required — the original `execute` never runs unless Rust allowed
+- Signed revocation lists (`revocationList` / `tenuo.revoke`)
+- Signed receipts (`onReceipt`)
+- MCP attach / verify on `_meta.tenuo` (`tenuo.mcp`)
+
+There is no Vercel AI SDK adapter and no Mastra adapter. `tenuo.tool()` wraps any `{ execute }` object, including a Vercel `tool()`, but that is not a supported integration.
+
+## Five-minute path
 
 ```ts
 import { createTenuo, under } from "@tenuo/core";
-import { tool } from "ai";
-import { z } from "zod";
 
 const tenuo = createTenuo({ root: createTenuo.devRoot() });
 
 const readFile = tenuo.tool(
-  tool({
-    description: "Read a file",
-    parameters: z.object({ path: z.string() }),
-    execute: async ({ path }) => `contents of ${path}`,
-  }),
-  { allow: { path: under("/data") } },
+  {
+    execute: async ({ path }: { path: string }) => `contents of ${path}`,
+  },
+  { capability: "read_file", allow: { path: under("/data") } },
 );
 
 const session = tenuo.session({
@@ -30,9 +36,11 @@ await tenuo.withSession(session, async () => {
 });
 ```
 
-Zod answers **valid**. `allow` answers **allowed**. Only Rust can produce an allow.
+Host schemas (Zod or otherwise) answer **valid**. `allow` answers **allowed**. Only Rust can produce an allow.
 
-Production setup uses a real root, not `devRoot()`:
+`devRoot()` throws when `NODE_ENV=production` unless `TENUO_ALLOW_DEV=1`.
+
+Production loads an issued warrant and a trusted root:
 
 ```ts
 const tenuo = createTenuo({
@@ -48,7 +56,35 @@ const reports = tenuo.narrow(session, { path: under("/data/reports") });
 // send reports.toWire() to the next process; keep the holder secret here
 ```
 
-Production can pin a signed revocation list at construct time, or load one later. Rust verifies the issuer against the trusted roots; TypeScript does not decide revocation.
+## MCP
+
+The client attaches a warrant and a proof-of-possession to MCP `_meta.tenuo`. The server verifies that envelope in Rust before the tool handler runs. This is the same wire shape as the Python SDK (`warrant`, `signature`, optional `approvals`).
+
+```ts
+// Client process
+const call = tenuo.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+await mcp.callTool({ name: call.name, arguments: call.arguments, _meta: call._meta });
+
+// Server process — trusted root only, no holder secret
+const server = createTenuo({
+  trustedRoots: [createTenuo.publicKeyFromEnv("TENUO_ROOT_PUBLIC_KEY")],
+});
+
+const readFile = server.mcp.handler("read_file", async ({ path }) => {
+  return readFileFromDisk(path);
+});
+
+// extra._meta is params._meta from the MCP CallTool request
+await readFile(params.arguments, { _meta: params._meta });
+```
+
+`attach` authorizes locally first, so a denied call never leaves the client. `verify` / `handler` is the enforcement point on the server. A JSON-RPC mapping is available as `tenuo.mcp.jsonRpcError(error)` (`-32001` deny, `-32002` approval required, `-32602` canonicalization).
+
+There is no FastMCP / official MCP SDK dependency. Pass `_meta` through from whatever server you use.
+
+A two-file example and an in-process smoke live in `packages/core/examples/mcp/`. From this directory: `pnpm example:mcp`. `pnpm test` runs the same smoke.
+
+## Revocation and receipts
 
 ```ts
 const tenuo = createTenuo({
@@ -66,15 +102,13 @@ await readFile.execute(
 
 `onReceipt` is evidence of the decision. A receipt that verifies is not an allow.
 
-`devRoot()` throws when `NODE_ENV=production` unless `TENUO_ALLOW_DEV=1`.
-
 ## Outcomes
 
-| Core outcome | `execute` runs? | Default host behavior |
+| Core outcome | `execute` runs? | Host behavior |
 |---|---|---|
 | Allow | Yes, with normalized args | Return the tool output |
-| Hard deny | No | Tool-error channel (`onDeny: "tool-error"`) or abort the run |
-| Approval required | No | Suspend / interrupt — not a successful tool result |
+| Hard deny | No | Throw `AuthorizationDeniedError` |
+| Approval required | No | Throw `ApprovalRequiredError` — not a successful tool result |
 
 ## Refuse list
 
@@ -89,13 +123,12 @@ These patterns will not ship:
 - a mock authorizer in tests
 - a boolean “user clicked Approve” as a Tenuo approval
 
-Protocol types (`Warrant`, `mint`, `Authorizer`) will exist as aliases, not as the README API.
-
 ## Layout
 
 ```text
 tenuo-ts/
-  packages/core/     @tenuo/core
+  packages/core/             @tenuo/core
+  packages/core/examples/mcp attach / verify example + smoke
 ```
 
 ## Develop
@@ -106,6 +139,7 @@ pnpm install
 pnpm build:wasm   # requires wasm-pack + rustc
 pnpm typecheck
 pnpm test
+pnpm example:mcp
 ```
 
 Requires Node 20+. `pnpm build:wasm` writes the Node WASM glue into `packages/core/src/generated/`, which `@tenuo/core` ships so `npm i` does not need wasm-pack. Rebuild it when you change `tenuo-wasm`.

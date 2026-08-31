@@ -13,6 +13,7 @@
   },
   "files": [
     "src",
+    "src/generated/package.json",
     "src/generated/tenuo_wasm.js",
     "src/generated/tenuo_wasm.d.ts",
     "src/generated/tenuo_wasm_bg.wasm",

@@ -17,8 +17,8 @@ use tenuo::receipt::{Receipt, ReceiptPayload};
 use tenuo::wire::WarrantStack;
 use tenuo::{
     encode_approval_gate_map, wire, ApprovalGateMap, Authorizer, Constraint, ConstraintSet,
-    ConstraintValue, Error, Exact, OneOf, Pattern, PublicKey, Range, Signature, SignedRevocationList,
-    SigningKey, ToolApprovalGate, Warrant, APPROVAL_GATE_EXTENSION_KEY,
+    ConstraintValue, Error, Exact, OneOf, Pattern, PublicKey, Range, Signature,
+    SignedRevocationList, SigningKey, ToolApprovalGate, Warrant, APPROVAL_GATE_EXTENSION_KEY,
 };
 use wasm_bindgen::prelude::*;
 
@@ -114,8 +114,9 @@ impl SdkContext {
     #[wasm_bindgen(js_name = fromTrustedRoots)]
     pub fn from_trusted_roots(roots: JsValue) -> Result<SdkContext, JsError> {
         init_panic_hook();
-        let hexes: Vec<String> = serde_wasm_bindgen::from_value(roots)
-            .map_err(|e| JsError::new(&format!("trustedRoots must be an array of hex keys: {e}")))?;
+        let hexes: Vec<String> = serde_wasm_bindgen::from_value(roots).map_err(|e| {
+            JsError::new(&format!("trustedRoots must be an array of hex keys: {e}"))
+        })?;
         if hexes.is_empty() {
             return Err(JsError::new("trustedRoots must not be empty"));
         }
@@ -286,6 +287,36 @@ impl SdkContext {
     ) -> JsValue {
         self.authorize_inner(session, tool, args_json, approvals, Some(as_of as i64))
     }
+
+    /// Holder PoP only. Does not authorize. Used to fill `_meta.tenuo.signature`.
+    #[wasm_bindgen(js_name = signPop)]
+    pub fn sign_pop(
+        &self,
+        session: &SdkSession,
+        tool: &str,
+        args_json: JsValue,
+    ) -> Result<String, JsError> {
+        init_panic_hook();
+        let args = js_to_args(&args_json).map_err(|e| JsError::new(&e))?;
+        let leaf = session.leaf()?;
+        let signature = leaf
+            .sign(&session.holder, tool, &args)
+            .map_err(|e| JsError::new(&format!("failed to sign proof-of-possession: {e}")))?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()))
+    }
+
+    /// Authorize a warrant + PoP presented on the wire. No holder secret.
+    #[wasm_bindgen(js_name = authorizePresented)]
+    pub fn authorize_presented(
+        &self,
+        warrants: JsValue,
+        tool: &str,
+        args_json: JsValue,
+        pop: &str,
+        approvals: JsValue,
+    ) -> JsValue {
+        self.authorize_presented_inner(warrants, tool, args_json, pop, approvals, None)
+    }
 }
 
 #[wasm_bindgen]
@@ -305,7 +336,10 @@ impl SdkSession {
         holder_secret: &[u8],
     ) -> Result<SdkSession, JsError> {
         init_panic_hook();
-        session_from_chain(vec![warrant_from_parts(payload_hex, signature_hex)?], holder_secret)
+        session_from_chain(
+            vec![warrant_from_parts(payload_hex, signature_hex)?],
+            holder_secret,
+        )
     }
 
     /// Import a chain: string[] of wire tokens, or `{ payload_hex, signature_hex }[]`.
@@ -321,6 +355,15 @@ impl SdkSession {
         init_panic_hook();
         let ids: Vec<String> = self.chain.iter().map(|w| w.id().to_string()).collect();
         Ok(to_js_value(&ids))
+    }
+
+    /// CBOR warrant stack as standard base64. Matches Python `encode_warrant_stack`.
+    #[wasm_bindgen(js_name = toStackWire)]
+    pub fn to_stack_wire(&self) -> Result<String, JsError> {
+        init_panic_hook();
+        let bytes = wire::encode_stack(&WarrantStack(self.chain.clone()))
+            .map_err(|e| JsError::new(&format!("failed to encode warrant stack: {e}")))?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
     }
 
     /// Warrant tokens, root first. Does not include the holder secret.
@@ -426,7 +469,9 @@ pub fn sdk_sign_approval(
     let leaf = session.leaf()?;
     let args = js_to_args(&args_json).map_err(|e| JsError::new(&e))?;
     let approver = parse_holder_secret(approver_secret)?;
-    let now = as_of.map(|t| t as i64).unwrap_or_else(|| Utc::now().timestamp());
+    let now = as_of
+        .map(|t| t as i64)
+        .unwrap_or_else(|| Utc::now().timestamp());
     if now < 0 {
         return Err(JsError::new("asOf must be a non-negative unix timestamp"));
     }
@@ -479,7 +524,7 @@ impl SdkContext {
             Ok(a) => a,
             Err(e) => {
                 return self.finish_decision(
-                    session,
+                    &session.chain,
                     tool,
                     timestamp,
                     &request_id,
@@ -505,7 +550,7 @@ impl SdkContext {
             Ok(w) => w,
             Err(e) => {
                 return self.finish_decision(
-                    session,
+                    &session.chain,
                     tool,
                     timestamp,
                     &request_id,
@@ -535,7 +580,7 @@ impl SdkContext {
             Ok(s) => s,
             Err(e) => {
                 return self.finish_decision(
-                    session,
+                    &session.chain,
                     tool,
                     timestamp,
                     &request_id,
@@ -551,7 +596,7 @@ impl SdkContext {
             Ok(a) => a,
             Err(e) => {
                 return self.finish_decision(
-                    session,
+                    &session.chain,
                     tool,
                     timestamp,
                     &request_id,
@@ -600,7 +645,7 @@ impl SdkContext {
                     obj.insert(k.clone(), cv_to_json(v));
                 }
                 self.finish_decision(
-                    session,
+                    &session.chain,
                     tool,
                     timestamp,
                     &request_id,
@@ -621,7 +666,207 @@ impl SdkContext {
                 )
             }
             Err(e) => self.finish_decision(
-                session,
+                &session.chain,
+                tool,
+                timestamp,
+                &request_id,
+                deny_from_error(&e),
+                Some(&signature),
+                pop_established_before_error(&e),
+                Some(e.name()),
+            ),
+        }
+    }
+
+    fn authorize_presented_inner(
+        &self,
+        warrants: JsValue,
+        tool: &str,
+        args_json: JsValue,
+        pop: &str,
+        approvals_json: JsValue,
+        as_of: Option<i64>,
+    ) -> JsValue {
+        init_panic_hook();
+        let timestamp = as_of.unwrap_or_else(|| Utc::now().timestamp());
+        let request_id = format!("{tool}:{timestamp}");
+        let empty: Vec<Warrant> = Vec::new();
+
+        let chain = match parse_presented_chain(&warrants) {
+            Ok(c) if !c.is_empty() => c,
+            Ok(_) => {
+                return self.finish_decision(
+                    &empty,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    DecisionDto {
+                        outcome: "deny".into(),
+                        code: Some("TENUO_CONFIGURATION".into()),
+                        field: None,
+                        message: Some("warrant chain must not be empty".into()),
+                        args: None,
+                        tool: None,
+                        required: None,
+                        received: None,
+                        receipt: None,
+                    },
+                    None,
+                    false,
+                    Some("configuration"),
+                )
+            }
+            Err(e) => {
+                return self.finish_decision(
+                    &empty,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    DecisionDto {
+                        outcome: "deny".into(),
+                        code: Some("TENUO_CHAIN_INVALID".into()),
+                        field: None,
+                        message: Some(format!("{e:?}")),
+                        args: None,
+                        tool: None,
+                        required: None,
+                        received: None,
+                        receipt: None,
+                    },
+                    None,
+                    false,
+                    Some("chain-broken"),
+                )
+            }
+        };
+
+        let args = match js_to_args(&args_json) {
+            Ok(a) => a,
+            Err(e) => {
+                return self.finish_decision(
+                    &chain,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    DecisionDto {
+                        outcome: "deny".into(),
+                        code: Some("TENUO_CANONICALIZATION".into()),
+                        field: None,
+                        message: Some(e),
+                        args: None,
+                        tool: None,
+                        required: None,
+                        received: None,
+                        receipt: None,
+                    },
+                    None,
+                    false,
+                    Some("canonicalization"),
+                )
+            }
+        };
+
+        let signature = match parse_pop_signature(pop) {
+            Ok(s) => s,
+            Err(e) => {
+                return self.finish_decision(
+                    &chain,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    DecisionDto {
+                        outcome: "deny".into(),
+                        code: Some("TENUO_INVALID_POP".into()),
+                        field: None,
+                        message: Some(e),
+                        args: None,
+                        tool: None,
+                        required: None,
+                        received: None,
+                        receipt: None,
+                    },
+                    None,
+                    false,
+                    Some("pop-signature-invalid"),
+                )
+            }
+        };
+
+        let approvals = match parse_approvals(&approvals_json) {
+            Ok(a) => a,
+            Err(e) => {
+                return self.finish_decision(
+                    &chain,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    DecisionDto {
+                        outcome: "deny".into(),
+                        code: Some("TENUO_CANONICALIZATION".into()),
+                        field: None,
+                        message: Some(e),
+                        args: None,
+                        tool: None,
+                        required: None,
+                        received: None,
+                        receipt: None,
+                    },
+                    Some(&signature),
+                    false,
+                    Some("canonicalization"),
+                )
+            }
+        };
+
+        let result = match as_of {
+            Some(t) => self.authorizer.check_chain_with_pop_args_as_of(
+                &chain,
+                tool,
+                &args,
+                &args,
+                Some(&signature),
+                &approvals,
+                t,
+            ),
+            None => self.authorizer.check_chain_with_pop_args(
+                &chain,
+                tool,
+                &args,
+                &args,
+                Some(&signature),
+                &approvals,
+            ),
+        };
+
+        match result {
+            Ok(_) => {
+                let mut obj = serde_json::Map::new();
+                for (k, v) in &args {
+                    obj.insert(k.clone(), cv_to_json(v));
+                }
+                self.finish_decision(
+                    &chain,
+                    tool,
+                    timestamp,
+                    &request_id,
+                    DecisionDto {
+                        outcome: "allow".into(),
+                        code: None,
+                        field: None,
+                        message: None,
+                        args: Some(serde_json::Value::Object(obj)),
+                        tool: None,
+                        required: None,
+                        received: None,
+                        receipt: None,
+                    },
+                    Some(&signature),
+                    true,
+                    None,
+                )
+            }
+            Err(e) => self.finish_decision(
+                &chain,
                 tool,
                 timestamp,
                 &request_id,
@@ -636,7 +881,7 @@ impl SdkContext {
     #[allow(clippy::too_many_arguments)]
     fn finish_decision(
         &self,
-        session: &SdkSession,
+        chain: &[Warrant],
         tool: &str,
         timestamp: i64,
         request_id: &str,
@@ -647,7 +892,7 @@ impl SdkContext {
     ) -> JsValue {
         dto.receipt = encode_receipt(
             &self.receipt_signer,
-            &session.chain,
+            chain,
             tool,
             timestamp,
             request_id,
@@ -1058,7 +1303,9 @@ fn sign_srl_hex(ids: JsValue, issuer: &SigningKey) -> Result<String, JsError> {
     let revoked: Vec<String> = serde_wasm_bindgen::from_value(ids)
         .map_err(|e| JsError::new(&format!("revoked ids must be an array of strings: {e}")))?;
     if revoked.is_empty() {
-        return Err(JsError::new("revocation list must name at least one warrant id"));
+        return Err(JsError::new(
+            "revocation list must name at least one warrant id",
+        ));
     }
     let srl = SignedRevocationList::builder()
         .revoke_all(revoked)
@@ -1085,10 +1332,7 @@ struct PublishedSrl {
     signature: Vec<u8>,
 }
 
-fn verify_published_srl(
-    bytes: &[u8],
-    trusted_roots: &[PublicKey],
-) -> Result<Vec<String>, JsError> {
+fn verify_published_srl(bytes: &[u8], trusted_roots: &[PublicKey]) -> Result<Vec<String>, JsError> {
     let published: PublishedSrl = ciborium::from_reader(bytes)
         .map_err(|e| JsError::new(&format!("invalid revocation list: {e}")))?;
     if published.signature.len() != 64 {
@@ -1117,7 +1361,9 @@ fn verify_published_srl(
         .verify(&preimage, &signature)
         .map_err(|e| JsError::new(&format!("revocation list signature does not verify: {e}")))?;
     if published.payload.revoked_ids.is_empty() {
-        return Err(JsError::new("revocation list must name at least one warrant id"));
+        return Err(JsError::new(
+            "revocation list must name at least one warrant id",
+        ));
     }
     Ok(published.payload.revoked_ids)
 }
@@ -1157,7 +1403,9 @@ fn map_code(e: &Error) -> &'static str {
         | Error::PatternExpanded { .. }
         | Error::EmptyResultSet { .. }
         | Error::ExclusionRemoved { .. } => "TENUO_CHAIN_INVALID",
-        Error::ConstraintNotSatisfied { field, .. } if field == "tool" => "TENUO_TOOL_NOT_AUTHORIZED",
+        Error::ConstraintNotSatisfied { field, .. } if field == "tool" => {
+            "TENUO_TOOL_NOT_AUTHORIZED"
+        }
         Error::ConstraintNotSatisfied { .. }
         | Error::PathNotContained { .. }
         | Error::InvalidPath { .. }
@@ -1178,7 +1426,9 @@ fn parse_hex(input: &str) -> Result<Vec<u8>, JsError> {
 fn parse_public_key_hex(hex: &str) -> Result<PublicKey, JsError> {
     let bytes = parse_hex(hex)?;
     if bytes.len() != 32 {
-        return Err(JsError::new("trusted root must be a 32-byte hex public key"));
+        return Err(JsError::new(
+            "trusted root must be a 32-byte hex public key",
+        ));
     }
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
@@ -1223,7 +1473,46 @@ fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
             return Ok(stack.0);
         }
     }
+    let compact: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(compact.as_bytes()) {
+        if let Ok(stack) = wire::decode_stack(&bytes) {
+            if !stack.0.is_empty() {
+                return Ok(stack.0);
+            }
+        }
+    }
     Err(JsError::new("invalid warrant or warrant chain"))
+}
+
+fn parse_presented_chain(warrants: &JsValue) -> Result<Vec<Warrant>, JsError> {
+    if let Some(text) = warrants.as_string() {
+        return parse_chain(&text);
+    }
+    parse_chain_parts(warrants.clone())
+}
+
+fn parse_pop_signature(input: &str) -> Result<Signature, String> {
+    let compact: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = hex::decode(&compact)
+        .ok()
+        .filter(|b| b.len() == 64)
+        .or_else(|| {
+            base64::engine::general_purpose::STANDARD
+                .decode(compact.as_bytes())
+                .ok()
+        })
+        .or_else(|| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(compact.as_bytes())
+                .ok()
+        })
+        .ok_or_else(|| "invalid proof-of-possession encoding".to_string())?;
+    if bytes.len() != 64 {
+        return Err("proof-of-possession signature must be 64 bytes".into());
+    }
+    let mut arr = [0u8; 64];
+    arr.copy_from_slice(&bytes);
+    Signature::from_bytes(&arr).map_err(|e| format!("invalid proof-of-possession: {e}"))
 }
 
 fn parse_chain_parts(parts: JsValue) -> Result<Vec<Warrant>, JsError> {
@@ -1311,8 +1600,8 @@ fn constraint_set_from_fields(
 ) -> Result<ConstraintSet, JsError> {
     let mut set = ConstraintSet::new();
     for (field, expr) in fields {
-        let constraint = constraint_from_expr(expr)
-            .map_err(|e| JsError::new(&format!("allow.{field}: {e}")))?;
+        let constraint =
+            constraint_from_expr(expr).map_err(|e| JsError::new(&format!("allow.{field}: {e}")))?;
         set.insert(field.clone(), constraint);
     }
     Ok(set)
