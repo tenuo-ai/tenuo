@@ -41,6 +41,35 @@ Tenuo adds the business authorization boundary:
 In practice, Temporal decides where the request may go. Tenuo decides whether
 this request is allowed to do this thing.
 
+## Enterprise-scale control across teams
+
+As Nexus adoption grows, the hard part is usually not a single operation
+handler. It is the operating model around many teams sharing durable
+capabilities:
+
+- Security wants one place to define who may issue authority for production
+  operations.
+- Platform teams want to expose self-service workflows without giving every
+  caller direct cloud or database credentials.
+- Service owners want revocation and key rotation without redeploying every
+  worker.
+- Audit and compliance teams want a queryable trail across Namespaces, business
+  units, and external partners.
+- Approvers need a managed path for high-risk actions that still works with
+  long-running workflows.
+
+Tenuo can be run self-hosted with your own issuer service, trusted-root
+distribution, revocation-list publisher, approval service, and receipt store.
+For enterprise teams that want those controls operated centrally, a managed
+Tenuo control plane can provide the shared operational layer: warrant issuance,
+root distribution, revocation, approvals, key rotation, and audit indexing
+across the Temporal fleet.
+
+The product boundary stays the same either way: Nexus carries the durable
+cross-Namespace call, and Tenuo carries the signed, task-scoped authority. The
+managed control plane is about running that authority system consistently at
+enterprise scale.
+
 ## Example 1: AI agent requests a payment refund
 
 An AI workflow in `finance-ai-prd` identifies that a customer needs a refund.
@@ -255,6 +284,25 @@ Use Tenuo with Temporal's existing controls, not instead of them.
 For workflow-backed Nexus operations, prefer handler-minted or attenuated
 workflow warrants. Forward the caller's exact warrant only when the backing
 workflow genuinely needs the caller's original holder context.
+
+## Do we need a managed control plane?
+
+Not for every deployment. A single team can start with local keys, a small
+issuer service, static trusted roots, and self-hosted audit storage.
+
+Consider a managed control plane when the authorization boundary spans multiple
+teams, Namespaces, accounts, or organizations and you need centralized control
+over:
+
+- which systems may mint production warrants;
+- how trust roots and holder keys rotate;
+- how revocations reach every worker;
+- how human approvals are routed and recorded;
+- how auditors search receipts across workflows and partners.
+
+That is the point where the problem shifts from "can this handler verify a
+warrant?" to "can the enterprise operate warrant authority safely across all
+the teams using Nexus?"
 
 ## When this is the right fit
 

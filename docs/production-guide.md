@@ -111,18 +111,27 @@ auto_configure()  # Reads TENUO_* environment variables
 
 For Temporal-specific key management (e.g., `TENUO_KEY_<key_id>`), see the [Temporal Guide](./temporal).
 
-### Tenuo Cloud (Recommended)
+### Managed control plane for enterprise operations
 
-**[Tenuo Cloud](https://cloud.tenuo.ai)** handles key issuance, warrant minting, rotation, revocation (SRL), and audit as a managed control plane — so you don't have to build and operate these yourself. Connect your agents with a connect token:
+As more teams use Tenuo, the hard problem becomes operating authority
+consistently: who can mint production warrants, how trust roots and keys rotate,
+how revocation lists reach every worker, how approvals are routed, and how audit
+receipts are searched across services and business units.
+
+**[Tenuo Cloud](https://cloud.tenuo.ai)** provides that managed control plane
+for teams that want centralized enterprise control instead of building and
+operating those pieces themselves. Connect your agents with a connect token:
 
 ```bash
 export TENUO_CONNECT_TOKEN="tenuo_ct_..."   # From the Tenuo Cloud dashboard
 export TENUO_API_KEY="tc_..."               # Included in the connect token
 ```
 
-The SDK reads these automatically. Tenuo Cloud manages root keys, mints warrants on behalf of your orchestrators, rotates keys on schedule, publishes revocation lists, and indexes audit receipts across all workflows.
+The SDK reads these automatically. Tenuo Cloud manages root keys, mints warrants on behalf of your orchestrators, rotates keys on schedule, publishes revocation lists, routes approvals, and indexes audit receipts across all workflows.
 
-With Tenuo Cloud, you skip the manual key management, rotation, and audit infrastructure described below. The self-hosted patterns are for teams that need full control or have on-prem requirements.
+With a managed control plane, you skip the manual key management, rotation,
+approval, revocation, and audit infrastructure described below. The self-hosted
+patterns are for teams that need full control or have on-prem requirements.
 
 > **[Request early access →](https://tenuo.ai/early-access.html)**
 

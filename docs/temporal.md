@@ -329,6 +329,13 @@ helpers documented in the Nexus guide. They carry verified or attenuated
 authority into the backing workflow without exposing handler Namespace
 credentials to the caller Namespace.
 
+When Nexus becomes a shared enterprise surface across teams, accounts, or
+organizations, the remaining challenge is operational control: issuer
+ownership, trusted-root distribution, revocation rollout, approvals, key
+rotation, and audit search across the fleet. Tenuo can be self-hosted for those
+pieces; teams that want that control plane operated centrally can use a managed
+Tenuo deployment. See [Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md#enterprise-scale-control-across-teams).
+
 ## Security
 
 **Fail-closed by default.** Missing or invalid warrants block execution. Each activity dispatch includes a Proof-of-Possession (PoP) signature binding the tool name and arguments to the holder key. Enforcement is in-process (no Tenuo network hop at verify time).
