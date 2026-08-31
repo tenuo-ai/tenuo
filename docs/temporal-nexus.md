@@ -110,10 +110,12 @@ The handler-side surface verifies `ctx.headers` before user code runs:
 Authorization failures should raise Nexus-native non-retryable errors so
 Temporal does not retry permanent denials.
 
-Handlers must pass `endpoint=` explicitly. Temporal handler contexts do not
-reliably expose the endpoint name, and Tenuo intentionally refuses to fall back
-to a placeholder endpoint because endpoint names are part of the signed
-security boundary.
+Handlers must pass `endpoint=` explicitly so the signed tool string is stable
+and visible in application code. When the installed Temporal SDK exposes the
+live handler endpoint, Tenuo cross-checks it against the explicit value and
+rejects mismatches instead of accepting warrants scoped to the wrong endpoint.
+Tenuo intentionally refuses to fall back to a placeholder endpoint because
+endpoint names are part of the signed security boundary.
 
 The supported APIs are:
 
@@ -128,6 +130,13 @@ Python Nexus handlers commonly call `ctx.start_workflow(...)` from a
 branch, that method does not expose a workflow `headers=` parameter, so Tenuo
 uses an explicit workflow-input envelope plus a bootstrap helper in the
 handler workflow.
+
+If your Temporal SDK/version routes Nexus workflow starts through a client with
+`TenuoClientInterceptor`, binding headers with
+`set_headers_for_workflow(workflow_id, ...)` before `ctx.start_workflow(...)`
+may be enough to use the normal workflow inbound path. Treat the envelope
+helpers as the portable experimental path until that wiring is verified for
+your worker/client setup.
 
 Two modes are supported:
 

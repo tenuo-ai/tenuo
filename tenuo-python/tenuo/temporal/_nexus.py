@@ -1057,10 +1057,10 @@ def _ctx_tool_name(
 ) -> str:
     if not endpoint:
         raise TenuoContextError(
-            "verify_nexus_operation requires endpoint=; Nexus handler contexts "
-            "do not expose the endpoint name reliably enough to preserve "
-            "endpoint-bound warrants."
+            "verify_nexus_operation requires endpoint= so warrants are bound "
+            "to an explicit Nexus endpoint name."
         )
+    _validate_ctx_endpoint(ctx, endpoint)
     service_name = service or getattr(ctx, "service", None)
     operation_name = operation or getattr(ctx, "operation", None)
     return nexus_tool_name(
@@ -1068,6 +1068,33 @@ def _ctx_tool_name(
         operation_name or "unknown-operation",
         service=service_name,
     )
+
+
+def _validate_ctx_endpoint(ctx: Any, expected_endpoint: str) -> None:
+    observed_endpoint = _ctx_endpoint(ctx)
+    if observed_endpoint and observed_endpoint != expected_endpoint:
+        raise TenuoContextError(
+            "Nexus endpoint mismatch: configured endpoint="
+            f"{expected_endpoint!r}, but the handler context reports "
+            f"{observed_endpoint!r}."
+        )
+
+
+def _ctx_endpoint(ctx: Any) -> Optional[str]:
+    for attr in ("endpoint", "endpoint_name"):
+        value = getattr(ctx, attr, None)
+        if value:
+            return str(value)
+    try:
+        from temporalio import nexus as temporal_nexus  # type: ignore[import-not-found]
+
+        info = temporal_nexus.info()
+    except Exception:
+        return None
+    value = getattr(info, "endpoint", None)
+    if value:
+        return str(value)
+    return None
 
 
 def _operation_name(operation: Any) -> str:
