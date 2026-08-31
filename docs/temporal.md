@@ -31,6 +31,10 @@ of relying only on namespace-level access. For customer-facing scenarios, see
 - A running Temporal cluster (local `temporal server start-dev` or Temporal Cloud).
 - Python 3.10+ (inherited from `temporalio>=1.23.0`, which provides `SimplePlugin`).
 
+If you want the shortest copy-paste path first, start with the
+[Temporal Quickstart](./temporal-quickstart.md). It runs one authorized
+workflow locally and shows both an allowed Activity and a denied Activity.
+
 ## Install
 
 ```bash
@@ -388,6 +392,8 @@ These scripts under [`tenuo-python/examples/temporal/`](https://github.com/tenuo
 
 ## Next steps
 
+- **[Temporal Quickstart](./temporal-quickstart.md)** — copy-paste local
+  workflow with one allowed Activity and one denied Activity.
 - **[Temporal Integration Reference](./temporal-reference.md)** — production checklist, key management (Vault, AWS, GCP), sandbox details, PoP mechanics, configuration reference, constraint types, troubleshooting, and the full threat model.
 - **[Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md)** — practical cross-team, multi-hop, and cross-organization examples.
 - **[Temporal Nexus Authorization](./temporal-nexus.md)** — experimental cross-namespace authorization for Nexus operations and workflow-backed handlers.

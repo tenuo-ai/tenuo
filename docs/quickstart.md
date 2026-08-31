@@ -134,6 +134,9 @@ plugin = TenuoTemporalPlugin(TenuoPluginConfig(
 client = await Client.connect("localhost:7233", plugins=[plugin])
 ```
 
+For a copy-paste local workflow with one allowed Activity and one denied
+Activity, see the [Temporal Quickstart](./temporal-quickstart.md).
+
 Each framework guide includes a full working example, production configuration, and troubleshooting.
 
 ## Debugging Authorization Failures
