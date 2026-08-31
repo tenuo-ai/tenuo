@@ -13,7 +13,7 @@ import dataclasses as _dataclasses
 import functools
 import inspect
 import time
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 from tenuo.temporal._constants import (
     TENUO_CHAIN_HEADER,
@@ -308,7 +308,7 @@ async def tenuo_nexus_signal_workflow(
     endpoint: Optional[str] = None,
     service: Optional[str] = None,
     operation: Optional[Any] = None,
-    rpc_metadata: Optional[Mapping[str, str | bytes]] = None,
+    rpc_metadata: Optional[Mapping[str, Union[str, bytes]]] = None,
     rpc_timeout: Any = None,
 ) -> None:
     """Verify a Nexus request, then signal a Temporal workflow handle.
@@ -350,9 +350,9 @@ async def tenuo_nexus_query_workflow(
     endpoint: Optional[str] = None,
     service: Optional[str] = None,
     operation: Optional[Any] = None,
-    result_type: type | None = None,
+    result_type: Optional[type] = None,
     reject_condition: Any = None,
-    rpc_metadata: Optional[Mapping[str, str | bytes]] = None,
+    rpc_metadata: Optional[Mapping[str, Union[str, bytes]]] = None,
     rpc_timeout: Any = None,
 ) -> Any:
     """Verify a Nexus request, then query a Temporal workflow handle."""
@@ -389,9 +389,9 @@ async def tenuo_nexus_execute_update(
     endpoint: Optional[str] = None,
     service: Optional[str] = None,
     operation: Optional[Any] = None,
-    id: str | None = None,
-    result_type: type | None = None,
-    rpc_metadata: Optional[Mapping[str, str | bytes]] = None,
+    id: Optional[str] = None,
+    result_type: Optional[type] = None,
+    rpc_metadata: Optional[Mapping[str, Union[str, bytes]]] = None,
     rpc_timeout: Any = None,
 ) -> Any:
     """Verify a Nexus request, then execute a Temporal workflow update."""
@@ -429,9 +429,9 @@ async def tenuo_nexus_start_update(
     endpoint: Optional[str] = None,
     service: Optional[str] = None,
     operation: Optional[Any] = None,
-    id: str | None = None,
-    result_type: type | None = None,
-    rpc_metadata: Optional[Mapping[str, str | bytes]] = None,
+    id: Optional[str] = None,
+    result_type: Optional[type] = None,
+    rpc_metadata: Optional[Mapping[str, Union[str, bytes]]] = None,
     rpc_timeout: Any = None,
 ) -> Any:
     """Verify a Nexus request, then start a Temporal workflow update."""
