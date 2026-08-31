@@ -977,7 +977,7 @@ def _verify_nexus_operation(
     start_ns = time.perf_counter_ns()
     warrant = _extract_warrant_from_headers(raw_headers)
     if warrant is None:
-        exc = TemporalConstraintViolation(
+        denial = TemporalConstraintViolation(
             tool=tool_name,
             arguments=args,
             constraint="No warrant provided for Nexus operation",
@@ -991,9 +991,9 @@ def _verify_nexus_operation(
             tool_name,
             args,
             start_ns=start_ns,
-            exc=exc,
+            exc=denial,
         )
-        raise exc
+        raise denial
 
     chain: Optional[List[Any]] = None
     chain_header = raw_headers.get(TENUO_CHAIN_HEADER)
@@ -1026,7 +1026,7 @@ def _verify_nexus_operation(
 
     pop_header = raw_headers.get(TENUO_POP_HEADER)
     if not pop_header:
-        exc = PopVerificationError(
+        denial = PopVerificationError(
             reason="Missing PoP header for Nexus operation",
             activity_name=tool_name,
         )
@@ -1038,9 +1038,9 @@ def _verify_nexus_operation(
             tool_name,
             args,
             start_ns=start_ns,
-            exc=exc,
+            exc=denial,
         )
-        raise exc
+        raise denial
     try:
         pop_bytes = base64.b64decode(pop_header, validate=True)
     except Exception as exc:
