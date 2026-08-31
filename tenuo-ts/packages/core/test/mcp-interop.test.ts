@@ -52,7 +52,7 @@ function runPython<T>(bin: string, command: string, stdin: unknown): T {
 const pythonBin = python();
 
 describe.skipIf(pythonBin === undefined)("Python ↔ TypeScript MCP wire", () => {
-  it("verifies a Python-attached envelope in TypeScript", () => {
+  it("verifies a Python-attached envelope in TypeScript", async () => {
     const minted = runPython<WireSession>(pythonBin!, "mint", {
       allow: { read_file: { path: { kind: "under", root: "/data" } } },
     });
@@ -65,12 +65,10 @@ describe.skipIf(pythonBin === undefined)("Python ↔ TypeScript MCP wire", () =>
     const server = createTenuo({
       trustedRoots: [createTenuo.publicKeyFromHex(minted.root_hex)],
     });
-    expect(server.mcp.verify(call.name, call.arguments, call._meta)).toMatchObject({
+    await expect(server.mcp.verify(call.name, call.arguments, call._meta)).resolves.toMatchObject({
       path: "/data/q3.pdf",
     });
-    expect(() =>
-      server.mcp.verify(call.name, { path: "/etc/passwd" }, call._meta),
-    ).toThrow(TenuoError);
+    await expect(server.mcp.verify(call.name, { path: "/etc/passwd" }, call._meta)).rejects.toThrow(TenuoError);
   });
 
   it("verifies a TypeScript-attached envelope in Python", () => {

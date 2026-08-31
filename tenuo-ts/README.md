@@ -39,9 +39,11 @@ await tenuo.withSession(session, async () => {
 
 Host schemas (Zod or otherwise) answer **valid**. Tool `allow` is the host ceiling. The session is what this agent may do. Rust AND's both; TypeScript does not decide. `session({ tools })` mints from the wrappers so you do not write the same map twice.
 
-`allow` is **zero-trust**: every argument on the call must be named in the policy. `{ path: under("/data") }` rejects `{ path, encoding }` until `encoding` is in `allow` (for example `pattern("*")`). Empty `allow: {}` adds no extra ceiling. MCP `verify` / `handler` can take an optional `nonceStore` (`memoryNonceStore()`) to reject an exact replayed PoP; that is opt-in and in-memory only.
+`allow` is **zero-trust**: every argument on the call must be named in the policy. `{ path: under("/data") }` rejects `{ path, encoding }` until `encoding` is in `allow` (for example `pattern("*")`). Empty `allow: {}` adds no extra ceiling. MCP `verify` / `handler` can take an optional `nonceStore` (`memoryNonceStore()`, or an async Redis `checkAndRecord`) to reject an exact replayed PoP; that is opt-in. `verify()` is async so a Promise from the store cannot fail open.
 
-`devRoot()` throws when `NODE_ENV=production` unless `TENUO_ALLOW_DEV=1`.
+`devRoot()` is for development. It requires `NODE_ENV=development` or `test`, `devRoot({ allowInProduction: true })`, or `TENUO_ALLOW_DEV=1`. Unset `NODE_ENV` is not treated as development.
+
+`onReceipt` is evidence. If the hook throws, authorize and execute still proceed.
 
 Production loads an issued warrant and a trusted root:
 
@@ -118,6 +120,7 @@ await readFile.execute(
 ```
 
 `onReceipt` is evidence of the decision. A receipt that verifies is not an allow.
+Exceptions in the hook are isolated and never deny or fail the tool.
 
 ## Outcomes
 

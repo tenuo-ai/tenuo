@@ -13,6 +13,9 @@ import type { WasmContext, WasmDecision } from "./wasm.ts";
 export function createMcp(context: WasmContext, decide: (decision: WasmDecision, tool: string) => void): TenuoMcp {
   const mcp: TenuoMcp = {
     attach(session, name, args, options) {
+      if (options !== undefined) {
+        assertKnownKeys(options, ATTACH_OPTION_KEYS, "mcp.attach() options");
+      }
       const native = nativeSession(session as Session);
       const wireArgs = stripNulls(args);
       const local = context.authorize(native, name, wireArgs, options?.approvals);
@@ -36,7 +39,10 @@ export function createMcp(context: WasmContext, decide: (decision: WasmDecision,
       return { name, arguments: wireArgs, _meta: { tenuo } };
     },
 
-    verify(name, args, meta, options) {
+    async verify(name, args, meta, options) {
+      if (options !== undefined) {
+        assertKnownKeys(options, VERIFY_OPTION_KEYS, "mcp.verify() options");
+      }
       const envelope = tenuoEnvelope(meta);
       if (envelope === undefined) {
         throw new TenuoConfigurationError(
@@ -51,15 +57,8 @@ export function createMcp(context: WasmContext, decide: (decision: WasmDecision,
         envelope.approvals,
         options?.allow,
       );
-      if (
-        decision.outcome === "allow" &&
-        options?.nonceStore !== undefined &&
-        !options.nonceStore.checkAndRecord(envelope.signature)
-      ) {
-        throw new AuthorizationDeniedError(
-          "TENUO_INVALID_POP",
-          "PoP replay detected — this exact authorization token was already consumed.",
-        );
+      if (decision.outcome === "allow") {
+        await admitPop(options?.nonceStore, envelope.signature);
       }
       emitReceipt(options?.onReceipt, decision.receipt);
       decide(decision, name);
@@ -73,7 +72,7 @@ export function createMcp(context: WasmContext, decide: (decision: WasmDecision,
         throw new TenuoConfigurationError("mcp.handler() requires an execute function");
       }
       return async (args, extra) => {
-        const authorized = mcp.verify(name, args, extra?._meta ?? extra?.meta, {
+        const authorized = await mcp.verify(name, args, extra?._meta ?? extra?.meta, {
           ...(policy?.allow !== undefined ? { allow: policy.allow } : {}),
           ...(policy?.onReceipt !== undefined ? { onReceipt: policy.onReceipt } : {}),
           ...(policy?.nonceStore !== undefined ? { nonceStore: policy.nonceStore } : {}),
@@ -137,30 +136,87 @@ function tenuoEnvelope(
 }
 
 const HANDLER_POLICY_KEYS = new Set(["allow", "onReceipt", "nonceStore"]);
+const VERIFY_OPTION_KEYS = new Set(["allow", "onReceipt", "nonceStore"]);
+const ATTACH_OPTION_KEYS = new Set(["approvals", "onReceipt"]);
+const MAX_STRIP_DEPTH = 32;
+const MAX_STRIP_LEN = 1024;
+
+function assertKnownKeys(value: object, known: ReadonlySet<string>, label: string): void {
+  const unknown = Object.keys(value).filter((key) => !known.has(key));
+  if (unknown[0] !== undefined) {
+    throw new TenuoConfigurationError(
+      `${label} has unknown key '${unknown[0]}'. Use ${[...known].join(", ")}.`,
+    );
+  }
+}
 
 function isHandlerPolicy(value: unknown): value is McpHandlerPolicy {
   if (value === null || typeof value !== "object" || Array.isArray(value) || typeof value === "function") {
     return false;
   }
   const keys = Object.keys(value);
-  const known = keys.filter((key) => HANDLER_POLICY_KEYS.has(key));
-  const unknown = keys.filter((key) => !HANDLER_POLICY_KEYS.has(key));
-  if (unknown.length > 0 && known.length === 0) {
-    throw new TenuoConfigurationError(
-      `mcp.handler() policy has unknown key '${unknown[0]}'. Use allow, onReceipt, or nonceStore.`,
-    );
-  }
+  assertKnownKeys(value, HANDLER_POLICY_KEYS, "mcp.handler() policy");
   const record = value as { allow?: unknown; onReceipt?: unknown; nonceStore?: unknown };
   const hasAllow =
     "allow" in record && record.allow !== null && typeof record.allow === "object" && !Array.isArray(record.allow);
   const hasReceipt = "onReceipt" in record && typeof record.onReceipt === "function";
   const hasNonce = "nonceStore" in record && record.nonceStore !== null && typeof record.nonceStore === "object";
-  return hasAllow || hasReceipt || hasNonce;
+  return keys.length === 0 || hasAllow || hasReceipt || hasNonce;
 }
 
-function emitReceipt(onReceipt: ((receipt: string) => void) | undefined, receipt: string | undefined): void {
-  if (onReceipt !== undefined && receipt !== undefined) {
-    onReceipt(receipt);
+async function admitPop(
+  store: { checkAndRecord(popSignature: string): boolean | Promise<boolean> } | undefined,
+  signature: string,
+): Promise<void> {
+  if (store === undefined) {
+    return;
+  }
+  let admitted: boolean | Promise<boolean>;
+  try {
+    admitted = store.checkAndRecord(signature);
+  } catch (error) {
+    throw new TenuoConfigurationError(
+      `NonceStore.checkAndRecord() failed closed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (isThenable(admitted)) {
+    try {
+      admitted = await admitted;
+    } catch (error) {
+      throw new TenuoConfigurationError(
+        `NonceStore.checkAndRecord() failed closed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  if (typeof admitted !== "boolean") {
+    throw new TenuoConfigurationError("NonceStore.checkAndRecord() must return boolean or Promise<boolean>");
+  }
+  if (!admitted) {
+    throw new AuthorizationDeniedError(
+      "TENUO_INVALID_POP",
+      "PoP replay detected — this exact authorization token was already consumed.",
+    );
+  }
+}
+
+function isThenable(value: unknown): value is Promise<boolean> {
+  return value !== null && typeof value === "object" && "then" in value && typeof value.then === "function";
+}
+
+function emitReceipt(
+  onReceipt: ((receipt: string) => void | Promise<void>) | undefined,
+  receipt: string | undefined,
+): void {
+  if (onReceipt === undefined || receipt === undefined) {
+    return;
+  }
+  try {
+    const result = onReceipt(receipt);
+    if (isThenable(result)) {
+      void Promise.resolve(result).catch(() => undefined);
+    }
+  } catch {
+    // Receipt hooks must not deny or fail the tool.
   }
 }
 
@@ -176,23 +232,33 @@ function plainArgs(value: unknown): Record<string, unknown> {
 
 /** Same rule as Python `strip_none_values`: drop null so optional MCP args do not break PoP. */
 function stripNulls(args: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const keys = Object.keys(args);
+  if (keys.length > MAX_STRIP_LEN) {
+    throw new TenuoConfigurationError("arguments exceed the TypeScript input budget");
+  }
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(args)) {
     if (value === null || value === undefined) {
       continue;
     }
-    out[key] = Array.isArray(value) ? cleanList(value) : value;
+    out[key] = Array.isArray(value) ? cleanList(value, 1) : value;
   }
   return out;
 }
 
-function cleanList(value: readonly unknown[]): unknown[] {
+function cleanList(value: readonly unknown[], depth: number): unknown[] {
+  if (depth > MAX_STRIP_DEPTH) {
+    throw new TenuoConfigurationError("arguments exceed the TypeScript nesting budget");
+  }
+  if (value.length > MAX_STRIP_LEN) {
+    throw new TenuoConfigurationError("arguments exceed the TypeScript input budget");
+  }
   const cleaned: unknown[] = [];
   for (const item of value) {
     if (item === null || item === undefined) {
       continue;
     }
-    cleaned.push(Array.isArray(item) ? cleanList(item) : item);
+    cleaned.push(Array.isArray(item) ? cleanList(item, depth + 1) : item);
   }
   return cleaned;
 }

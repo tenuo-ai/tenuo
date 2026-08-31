@@ -81,29 +81,71 @@ describe("tenuo.mcp", () => {
     ).toThrow(/unknown key 'allowed'/);
   });
 
-  it("rejects an exact replayed PoP when a nonceStore is set", () => {
+  it("rejects an exact replayed PoP when a nonceStore is set", async () => {
     const { issuer, session, server } = issuerAndServer();
     const store = memoryNonceStore();
     const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
-    expect(server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store })).toEqual({
+    await expect(server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store })).resolves.toEqual({
       path: "/data/q3.pdf",
     });
-    expect(() => server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store })).toThrow(
-      expect.objectContaining({ code: "TENUO_INVALID_POP", message: expect.stringMatching(/replay/) }),
-    );
+    await expect(server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store })).rejects.toMatchObject({
+      code: "TENUO_INVALID_POP",
+      message: expect.stringMatching(/replay/),
+    });
     const other = issuer.mcp.attach(session, "read_file", { path: "/data/other.txt" });
-    expect(server.mcp.verify(other.name, other.arguments, other._meta, { nonceStore: store })).toEqual({
+    await expect(server.mcp.verify(other.name, other.arguments, other._meta, { nonceStore: store })).resolves.toEqual({
       path: "/data/other.txt",
     });
   });
 
-  it("fails closed without _meta.tenuo", () => {
+  it("awaits an async nonceStore and fails closed when it rejects", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const seen = new Set<string>();
+    const store = {
+      async checkAndRecord(popSignature: string) {
+        if (seen.has(popSignature)) {
+          return false;
+        }
+        seen.add(popSignature);
+        return true;
+      },
+    };
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    await expect(server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store })).resolves.toEqual({
+      path: "/data/q3.pdf",
+    });
+    await expect(server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store })).rejects.toMatchObject({
+      code: "TENUO_INVALID_POP",
+    });
+    const broken = {
+      async checkAndRecord() {
+        throw new Error("redis down");
+      },
+    };
+    const other = issuer.mcp.attach(session, "read_file", { path: "/data/other.txt" });
+    await expect(
+      server.mcp.verify(other.name, other.arguments, other._meta, { nonceStore: broken }),
+    ).rejects.toThrow(/failed closed/);
+  });
+
+  it("rejects a mixed option typo instead of ignoring it", () => {
+    const { server } = issuerAndServer();
+    expect(() =>
+      server.mcp.handler(
+        "read_file",
+        { allow: { path: under("/data") }, nonceStroe: memoryNonceStore() } as never,
+        async () => "",
+      ),
+    ).toThrow(/unknown key 'nonceStroe'/);
+  });
+
+  it("fails closed without _meta.tenuo", async () => {
     const server = createTenuo({
       trustedRoots: [
         createTenuo.publicKeyFromHex("8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"),
       ],
     });
-    expect(() => server.mcp.verify("read_file", { path: "/data/q3.pdf" }, {})).toThrow(
+    await expect(server.mcp.verify("read_file", { path: "/data/q3.pdf" }, {})).rejects.toThrow(
       TenuoConfigurationError,
     );
     expect(server.mcp.jsonRpcError(new TenuoConfigurationError("missing"))).toMatchObject({
@@ -131,31 +173,31 @@ describe("tenuo.mcp", () => {
     });
   });
 
-  it("rejects the wrong tool name on a valid envelope", () => {
+  it("rejects the wrong tool name on a valid envelope", async () => {
     const { issuer, session, server } = issuerAndServer();
     expect(() => issuer.mcp.attach(session, "write_file", { path: "/data/q3.pdf" })).toThrow(
       AuthorizationDeniedError,
     );
     const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
-    expect(() => server.mcp.verify("write_file", call.arguments, call._meta)).toThrow(TenuoError);
+    await expect(server.mcp.verify("write_file", call.arguments, call._meta)).rejects.toThrow(TenuoError);
   });
 
-  it("rejects a tampered warrant or signature", () => {
+  it("rejects a tampered warrant or signature", async () => {
     const { issuer, session, server } = issuerAndServer();
     const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
-    expect(() =>
+    await expect(
       server.mcp.verify(call.name, call.arguments, {
         tenuo: { warrant: flipWire(call._meta.tenuo.warrant), signature: call._meta.tenuo.signature },
       }),
-    ).toThrow(TenuoError);
-    expect(() =>
+    ).rejects.toThrow(TenuoError);
+    await expect(
       server.mcp.verify(call.name, call.arguments, {
         tenuo: { warrant: call._meta.tenuo.warrant, signature: flipWire(call._meta.tenuo.signature) },
       }),
-    ).toThrow(TenuoError);
+    ).rejects.toThrow(TenuoError);
   });
 
-  it("verifies a narrowed chain from another process", () => {
+  it("verifies a narrowed chain from another process", async () => {
     const issuer = createTenuo({ root: createTenuo.devRoot() });
     const parent = issuer.session({
       allow: { read_file: { path: under("/data") } },
@@ -168,19 +210,19 @@ describe("tenuo.mcp", () => {
     });
 
     const inside = issuer.mcp.attach(reports, "read_file", { path: "/data/reports/q3.pdf" });
-    expect(server.mcp.verify(inside.name, inside.arguments, inside._meta)).toMatchObject({
+    await expect(server.mcp.verify(inside.name, inside.arguments, inside._meta)).resolves.toMatchObject({
       path: "/data/reports/q3.pdf",
     });
     expect(() => issuer.mcp.attach(reports, "read_file", { path: "/data/other.txt" })).toThrow(
       AuthorizationDeniedError,
     );
     const parentCall = issuer.mcp.attach(parent, "read_file", { path: "/data/other.txt" });
-    expect(server.mcp.verify(parentCall.name, parentCall.arguments, parentCall._meta)).toMatchObject({
+    await expect(server.mcp.verify(parentCall.name, parentCall.arguments, parentCall._meta)).resolves.toMatchObject({
       path: "/data/other.txt",
     });
   });
 
-  it("denies a revoked warrant on verify", () => {
+  it("denies a revoked warrant on verify", async () => {
     const ctx = devContext();
     const session = wrapSession(
       ctx.mint({ read_file: { path: { kind: "under", root: "/data" } } }, 300),
@@ -203,9 +245,9 @@ describe("tenuo.mcp", () => {
       trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)],
       revocationList: srl,
     });
-    expect(() => server.mcp.verify(call.name, call.arguments, call._meta)).toThrow(
-      expect.objectContaining({ code: "TENUO_REVOKED" }),
-    );
+    await expect(server.mcp.verify(call.name, call.arguments, call._meta)).rejects.toMatchObject({
+      code: "TENUO_REVOKED",
+    });
   });
 
   it("attaches signed approvals so a gated tool verifies on the server", async () => {
@@ -242,15 +284,15 @@ describe("tenuo.mcp", () => {
     );
   });
 
-  it("emits receipts on attach and verify without treating them as allow", () => {
+  it("emits receipts on attach and verify without treating them as allow", async () => {
     const { issuer, session, server } = issuerAndServer();
     const attached: string[] = [];
     const verified: string[] = [];
     const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" }, {
-      onReceipt: (receipt) => attached.push(receipt),
+      onReceipt: (receipt) => { attached.push(receipt); },
     });
-    server.mcp.verify(call.name, call.arguments, call._meta, {
-      onReceipt: (receipt) => verified.push(receipt),
+    await server.mcp.verify(call.name, call.arguments, call._meta, {
+      onReceipt: (receipt) => { verified.push(receipt); },
     });
     expect(attached).toHaveLength(1);
     expect(verified).toHaveLength(1);
@@ -264,7 +306,7 @@ describe("tenuo.mcp", () => {
     const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
     const readFile = server.mcp.handler(
       "read_file",
-      { onReceipt: (receipt) => receipts.push(receipt) },
+      { onReceipt: (receipt) => { receipts.push(receipt); } },
       async ({ path }: { path: string }) => path,
     );
     await expect(readFile(call.arguments as { path: string }, { _meta: call._meta })).resolves.toBe(
@@ -307,20 +349,37 @@ describe("tenuo.mcp", () => {
     expect(executed).toBe(true);
   });
 
-  it("ANDs verify() allow with a broader presented warrant", () => {
+  it("ANDs verify() allow with a broader presented warrant", async () => {
     const { issuer, session, server } = issuerAndServer();
     const outside = issuer.mcp.attach(session, "read_file", { path: "/data/other.txt" });
-    expect(() =>
+    await expect(
       server.mcp.verify(outside.name, outside.arguments, outside._meta, {
         allow: { path: under("/data/reports") },
       }),
-    ).toThrow(AuthorizationDeniedError);
+    ).rejects.toThrow(AuthorizationDeniedError);
     const inside = issuer.mcp.attach(session, "read_file", { path: "/data/reports/q3.pdf" });
-    expect(
+    await expect(
       server.mcp.verify(inside.name, inside.arguments, inside._meta, {
         allow: { path: under("/data/reports") },
       }),
-    ).toEqual({ path: "/data/reports/q3.pdf" });
+    ).resolves.toEqual({ path: "/data/reports/q3.pdf" });
+  });
+
+  it("isolates a throwing onReceipt from authorize and execute", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" }, {
+      onReceipt: () => {
+        throw new Error("receipt hook exploded");
+      },
+    });
+    expect(call.name).toBe("read_file");
+    await expect(
+      server.mcp.verify(call.name, call.arguments, call._meta, {
+        onReceipt: () => {
+          throw new Error("verify receipt hook exploded");
+        },
+      }),
+    ).resolves.toEqual({ path: "/data/q3.pdf" });
   });
 
   it("treats an empty handler allow as no extra ceiling", async () => {

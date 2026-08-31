@@ -51,7 +51,7 @@ try {
           },
         );
         const call = tenuo.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
-        const verified = tenuo.mcp.verify(call.name, call.arguments, call._meta, {
+        const verified = await tenuo.mcp.verify(call.name, call.arguments, call._meta, {
           allow: { path: under("/data") },
         });
         if (verified.path !== "/data/q3.pdf") {

@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { createTenuo, memoryNonceStore, TenuoConfigurationError, under } from "@tenuo/core";
-import { guardHandler, guardTools, requestMeta } from "../src/index.ts";
+import { guardHandler, guardTools, requestMeta, type InferToolArgs } from "../src/index.ts";
 
 type Rpc = { code: number; data?: { tenuo?: { code: string } } };
 
@@ -121,7 +121,7 @@ describe("@tenuo/mcp v2 adapter", () => {
         description: "Read a file",
         inputSchema: z.object({ path: z.string() }),
         allow: { path: under("/data") },
-        onReceipt: (receipt) => receipts.push(receipt),
+        onReceipt: (receipt) => { receipts.push(receipt); },
       },
       async ({ path }: { path: string }) => ({ content: [{ type: "text", text: path }] }),
     );
@@ -132,18 +132,31 @@ describe("@tenuo/mcp v2 adapter", () => {
     expect(receipts).toHaveLength(1);
   });
 
-  it("does not map a handler throw to an authorization denial", async () => {
+  it("sanitizes a handler throw so the official transport cannot see it", async () => {
     const issuer = createTenuo({ root: createTenuo.devRoot() });
     const session = issuer.session({
       allow: { read_file: { path: under("/data") } },
     });
-    const handler = guardHandler(issuer, "read_file", { allow: { path: under("/data") } }, async () => {
-      throw new Error("DB password=hunter2 at /srv/internal/db.ts:88");
-    });
-    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
-    await expect(handler(call.arguments as { path: string }, { mcpReq: { _meta: call._meta } })).rejects.toThrow(
-      /DB password=hunter2/,
+    const server = new McpServer({ name: "tenuo-leak", version: "0.2.3" });
+    const tools = guardTools(issuer, server);
+    tools.register(
+      "read_file",
+      {
+        inputSchema: z.object({ path: z.string() }),
+        allow: { path: under("/data") },
+      },
+      async () => {
+        throw new Error("DB password=hunter2 at /srv/internal/db.ts:88");
+      },
     );
+    const host = await connect(server);
+    harnesses.push(host);
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    const result = await host.call(call.name, { ...call.arguments }, call._meta);
+    expect(result.isError).toBe(true);
+    expect(result.text).toBe("Tool execution failed");
+    expect(result.text).not.toMatch(/hunter2/);
+    expect(result.rpc).toBeUndefined();
   });
 
   it("rejects option typos instead of asking for a handler", () => {
@@ -158,6 +171,20 @@ describe("@tenuo/mcp v2 adapter", () => {
         content: [],
       })),
     ).toThrow(/unknown key 'allowed'/);
+    expect(() =>
+      guardHandler(
+        issuer,
+        "read_file",
+        { allow: { path: under("/data") }, nonceStroe: memoryNonceStore() } as never,
+        async () => ({ content: [] }),
+      ),
+    ).toThrow(/unknown key 'nonceStroe'/);
+  });
+
+  it("infers register handler args from a Zod inputSchema", () => {
+    type Schema = ReturnType<typeof z.object<{ path: z.ZodString }>>;
+    expectTypeOf<InferToolArgs<z.ZodObject<{ path: z.ZodString }>>>().toMatchTypeOf<{ path: string }>();
+    expectTypeOf<InferToolArgs<Schema>>().toHaveProperty("path");
   });
 
   it("rejects a replayed envelope when nonceStore is set", async () => {

@@ -43,13 +43,27 @@ function allowDev(): boolean {
   return process.env.TENUO_ALLOW_DEV === "1";
 }
 
-export function devRoot(): DevRoot {
-  if (nodeEnv() === "production" && !allowDev()) {
-    throw new TenuoConfigurationError(
-      "createTenuo.devRoot() is disabled when NODE_ENV=production. Set TENUO_ALLOW_DEV=1 only for explicit break-glass.",
-    );
+export function devRoot(options?: { readonly allowInProduction?: boolean }): DevRoot {
+  const root: DevRoot = {
+    kind: "dev-root",
+    ...(options?.allowInProduction === true ? { allowInProduction: true } : {}),
+  };
+  if (!devRootAllowed(root)) {
+    throw new TenuoConfigurationError(devRootBlockedMessage());
   }
-  return { kind: "dev-root" };
+  return root;
+}
+
+function devRootAllowed(root: DevRoot): boolean {
+  if (root.allowInProduction === true || allowDev()) {
+    return true;
+  }
+  const env = nodeEnv();
+  return env === "development" || env === "test";
+}
+
+function devRootBlockedMessage(): string {
+  return "createTenuo.devRoot() is for development. Set NODE_ENV=development or test, pass devRoot({ allowInProduction: true }), or TENUO_ALLOW_DEV=1. Unset NODE_ENV is not treated as development.";
 }
 
 function normalizeHex(value: string): string {
@@ -408,8 +422,16 @@ function emitReceipt(callOptions: unknown, receipt: string | undefined): void {
     return;
   }
   const onReceipt = (callOptions as { onReceipt?: unknown }).onReceipt;
-  if (typeof onReceipt === "function") {
-    onReceipt(receipt);
+  if (typeof onReceipt !== "function") {
+    return;
+  }
+  try {
+    const result = onReceipt(receipt);
+    if (result !== null && typeof result === "object" && "then" in result && typeof result.then === "function") {
+      void Promise.resolve(result).catch(() => undefined);
+    }
+  } catch {
+    // Receipt hooks must not deny or fail the tool.
   }
 }
 
@@ -480,10 +502,8 @@ function createTenuoImpl(options: CreateTenuoOptions = {}): Tenuo {
       "createTenuo() requires trustedRoots or root: createTenuo.devRoot(). An empty trust set is not a configuration.",
     );
   }
-  if (options.root?.kind === "dev-root" && nodeEnv() === "production" && !allowDev()) {
-    throw new TenuoConfigurationError(
-      "createTenuo.devRoot() is disabled when NODE_ENV=production. Set TENUO_ALLOW_DEV=1 only for explicit break-glass.",
-    );
+  if (options.root?.kind === "dev-root" && !devRootAllowed(options.root)) {
+    throw new TenuoConfigurationError(devRootBlockedMessage());
   }
   loadWasm();
   return new TenuoClient(options);

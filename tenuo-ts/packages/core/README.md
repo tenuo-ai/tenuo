@@ -30,7 +30,9 @@ await tenuo.withSession(session, async () => {
 Host schemas (Zod or otherwise) answer **valid**. Tool `allow` is the host ceiling.
 The session is what this agent may do. Rust AND's both. `allow` is zero-trust:
 every call argument must be named in the policy. `allow: {}` adds no extra
-ceiling. `devRoot()` throws when `NODE_ENV=production` unless `TENUO_ALLOW_DEV=1`.
+ceiling. `devRoot()` requires `NODE_ENV=development` or `test`,
+`devRoot({ allowInProduction: true })`, or `TENUO_ALLOW_DEV=1`. Unset
+`NODE_ENV` is not treated as development.
 
 Production loads an issued warrant and a trusted root:
 

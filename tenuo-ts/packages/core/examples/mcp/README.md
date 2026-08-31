@@ -71,7 +71,7 @@ const response = await server.dispatch(request);
 
 ```ts
 mcp.registerTool("read_file", { inputSchema: { path: z.string() } }, async (args, extra) => {
-  const authorized = tenuo.mcp.verify("read_file", args, extra._meta, {
+  const authorized = await tenuo.mcp.verify("read_file", args, extra._meta, {
     allow: { path: under("/workspace") },
   });
   return { content: [{ type: "text", text: await read(authorized.path) }] };

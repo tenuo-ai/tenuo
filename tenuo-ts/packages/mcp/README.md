@@ -45,8 +45,12 @@ Zod (or any host schema) is **valid**. `allow` is **allowed**, AND'd with the
 warrant in Rust, and zero-trust: every argument must be named. `allow` is
 stripped before `registerTool` so it is not advertised. Pass `nonceStore:
 memoryNonceStore()` to reject an exact replayed PoP (opt-in, in-process only).
-Handler failures, including Tenuo denials, become `{ isError: true }` tool results
-so the MCP host does not crash.
+Tenuo denials become `{ isError: true }` with a JSON-RPC body. Handler
+exceptions become `{ isError: true, content: [{ type: "text", text: "Tool execution failed" }] }`
+— the official transport must not see thrown messages. Pass
+`nonceStore: memoryNonceStore()` or an async Redis `checkAndRecord`
+(`Promise<boolean>`). Unknown option keys, including mixed typos like
+`{ allow, nonceStroe }`, throw at register time.
 
 There is no FastMCP adapter and no v1 adapter package. For
 `@modelcontextprotocol/sdk` v1, copy the recipe in

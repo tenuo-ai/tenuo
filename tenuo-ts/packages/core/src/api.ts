@@ -95,8 +95,12 @@ export type ExecuteOptions = {
   readonly session?: Session;
   /** Already-signed approval envelopes (hex, standard base64, or CBOR bytes). */
   readonly approvals?: readonly (string | Uint8Array)[];
-  /** Signed evidence of the decision. Not a security hook — the tool already ran or was denied. */
-  readonly onReceipt?: (receipt: string) => void;
+  /**
+   * Signed evidence of the decision. Not a security hook.
+   * Exceptions (sync or rejected Promise) are isolated and never deny or
+   * fail the tool.
+   */
+  readonly onReceipt?: (receipt: string) => void | Promise<void>;
 };
 
 type ExtraExecuteOptions<T extends { execute: (args: never) => unknown }> =
@@ -137,6 +141,11 @@ export type SessionInput = {
 
 export type DevRoot = {
   readonly kind: "dev-root";
+  /**
+   * Required when `NODE_ENV` is unset or is not `development` / `test`.
+   * Unset `NODE_ENV` is not treated as development.
+   */
+  readonly allowInProduction?: boolean;
 };
 
 export type PublicKeyHandle = {
@@ -216,26 +225,35 @@ export type TenuoMcpMeta = {
 
 export type McpAttachOptions = {
   readonly approvals?: readonly (string | Uint8Array)[];
-  readonly onReceipt?: (receipt: string) => void;
+  readonly onReceipt?: (receipt: string) => void | Promise<void>;
 };
 
 /** Host ceiling and optional receipt hook on `mcp.handler()`. */
 export type McpHandlerPolicy = {
   readonly allow?: AllowPolicy;
-  readonly onReceipt?: (receipt: string) => void;
+  readonly onReceipt?: (receipt: string) => void | Promise<void>;
   readonly nonceStore?: NonceStore;
 };
 
 export type McpVerifyOptions = {
   readonly allow?: AllowPolicy;
-  readonly onReceipt?: (receipt: string) => void;
-  /** Opt-in exact-PoP replay check. In-memory stores do not work across processes. */
+  readonly onReceipt?: (receipt: string) => void | Promise<void>;
+  /**
+   * Opt-in exact-PoP replay check. `checkAndRecord` may return a Promise
+   * (Redis). A rejected Promise fails closed. In-memory stores do not work
+   * across processes.
+   */
   readonly nonceStore?: NonceStore;
 };
 
-/** Returns true if the PoP is fresh and recorded; false if this exact token was already consumed. */
+/**
+ * Returns true if the PoP is fresh and recorded; false if this exact token
+ * was already consumed. Async stores (Redis) return `Promise<boolean>`.
+ * `verify()` / handlers await the result. Never return a Promise from a
+ * store that is only consulted synchronously — that used to fail open.
+ */
 export type NonceStore = {
-  checkAndRecord(popSignature: string): boolean;
+  checkAndRecord(popSignature: string): boolean | Promise<boolean>;
 };
 
 export type McpCallParams = {
@@ -267,7 +285,7 @@ export interface TenuoMcp {
     args: Readonly<Record<string, unknown>>,
     meta: unknown,
     options?: McpVerifyOptions,
-  ): Readonly<Record<string, unknown>>;
+  ): Promise<Readonly<Record<string, unknown>>>;
   /** Wrap a handler: verify from `extra._meta` / `extra.meta`, then execute. */
   handler<TArgs extends Record<string, unknown>, TResult>(
     name: string,

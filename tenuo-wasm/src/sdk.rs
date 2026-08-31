@@ -19,12 +19,20 @@ use tenuo::{
     encode_approval_gate_map, wire, ApprovalGateMap, Authorizer, Constraint, ConstraintSet,
     ConstraintValue, Error, Exact, OneOf, Pattern, PublicKey, Range, Signature,
     SignedRevocationList, SigningKey, ToolApprovalGate, Warrant, APPROVAL_GATE_EXTENSION_KEY,
+    MAX_CONSTRAINT_DEPTH, MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE,
 };
 use wasm_bindgen::prelude::*;
 
 use crate::init_panic_hook;
 
 const DEFAULT_TTL_SECS: u64 = 300;
+/// Bound JS values before they become Rust allocations. Core still enforces
+/// [`MAX_WARRANT_SIZE`] / [`MAX_CONSTRAINT_DEPTH`] after decode.
+const MAX_ARG_KEYS: usize = 256;
+const MAX_COLLECTION_LEN: usize = 1024;
+const MAX_POP_CHARS: usize = 256;
+const MAX_ENCODED_WARRANT_CHARS: usize = MAX_WARRANT_SIZE * 2;
+const MAX_ENCODED_CHAIN_CHARS: usize = MAX_WARRANT_SIZE * MAX_DELEGATION_DEPTH as usize * 2;
 
 #[derive(Serialize)]
 struct DecisionDto {
@@ -1122,14 +1130,19 @@ fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constraint, String> 
         }
         "exact" => {
             let value = expr.get("value").ok_or("exact requires value")?;
-            let cv = json_to_cv(value)?;
+            let cv = json_to_cv(value, 0)?;
             Ok(Exact::new(cv).into())
         }
         other => Err(format!("unknown constraint kind '{other}'")),
     }
 }
 
-fn json_to_cv(value: &serde_json::Value) -> Result<ConstraintValue, String> {
+fn json_to_cv(value: &serde_json::Value, depth: u32) -> Result<ConstraintValue, String> {
+    if depth > MAX_CONSTRAINT_DEPTH {
+        return Err(format!(
+            "value nesting exceeds maximum depth {MAX_CONSTRAINT_DEPTH}"
+        ));
+    }
     match value {
         serde_json::Value::Null => Ok(ConstraintValue::Null),
         serde_json::Value::Bool(b) => Ok(ConstraintValue::Boolean(*b)),
@@ -1142,15 +1155,20 @@ fn json_to_cv(value: &serde_json::Value) -> Result<ConstraintValue, String> {
                 Err("number is not a finite ConstraintValue".into())
             }
         }
-        serde_json::Value::String(s) => Ok(ConstraintValue::String(s.clone())),
+        serde_json::Value::String(s) => {
+            reject_string_budget(s.len())?;
+            Ok(ConstraintValue::String(s.clone()))
+        }
         serde_json::Value::Array(xs) => {
-            let vals: Result<Vec<_>, _> = xs.iter().map(json_to_cv).collect();
+            reject_collection_budget(xs.len())?;
+            let vals: Result<Vec<_>, _> = xs.iter().map(|v| json_to_cv(v, depth + 1)).collect();
             Ok(ConstraintValue::List(vals?))
         }
         serde_json::Value::Object(map) => {
+            reject_collection_budget(map.len())?;
             let mut out = BTreeMap::new();
             for (k, v) in map {
-                out.insert(k.clone(), json_to_cv(v)?);
+                out.insert(k.clone(), json_to_cv(v, depth + 1)?);
             }
             Ok(ConstraintValue::Object(out))
         }
@@ -1166,6 +1184,9 @@ fn js_to_args(value: &JsValue) -> Result<HashMap<String, ConstraintValue>, Strin
     }
     let obj = js_sys::Object::from(value.clone());
     let keys = js_sys::Object::keys(&obj);
+    if keys.length() as usize > MAX_ARG_KEYS {
+        return Err(format!("arguments exceed maximum of {MAX_ARG_KEYS} keys"));
+    }
     let mut out = HashMap::new();
     for i in 0..keys.length() {
         let key_js = keys.get(i);
@@ -1188,12 +1209,17 @@ fn js_to_args(value: &JsValue) -> Result<HashMap<String, ConstraintValue>, Strin
         if v.js_typeof().as_string().as_deref() == Some("symbol") {
             return Err(format!("symbols are not allowed for '{key}'"));
         }
-        out.insert(key, js_to_cv(&v)?);
+        out.insert(key, js_to_cv(&v, 0)?);
     }
     Ok(out)
 }
 
-fn js_to_cv(value: &JsValue) -> Result<ConstraintValue, String> {
+fn js_to_cv(value: &JsValue, depth: u32) -> Result<ConstraintValue, String> {
+    if depth > MAX_CONSTRAINT_DEPTH {
+        return Err(format!(
+            "argument nesting exceeds maximum depth {MAX_CONSTRAINT_DEPTH}"
+        ));
+    }
     if value.is_null() {
         return Ok(ConstraintValue::Null);
     }
@@ -1210,19 +1236,22 @@ fn js_to_cv(value: &JsValue) -> Result<ConstraintValue, String> {
         return Ok(ConstraintValue::Float(n));
     }
     if let Some(s) = value.as_string() {
+        reject_string_budget(s.len())?;
         return Ok(ConstraintValue::String(s));
     }
     if js_sys::Array::is_array(value) {
         let arr = js_sys::Array::from(value);
+        reject_collection_budget(arr.length() as usize)?;
         let mut vals = Vec::with_capacity(arr.length() as usize);
         for i in 0..arr.length() {
-            vals.push(js_to_cv(&arr.get(i))?);
+            vals.push(js_to_cv(&arr.get(i), depth + 1)?);
         }
         return Ok(ConstraintValue::List(vals));
     }
     if value.is_object() {
         let obj = js_sys::Object::from(value.clone());
         let keys = js_sys::Object::keys(&obj);
+        reject_collection_budget(keys.length() as usize)?;
         let mut map = BTreeMap::new();
         for i in 0..keys.length() {
             let key_js = keys.get(i);
@@ -1231,11 +1260,38 @@ fn js_to_cv(value: &JsValue) -> Result<ConstraintValue, String> {
                 .ok_or_else(|| "object keys must be strings".to_string())?;
             let v = js_sys::Reflect::get(&obj, &key_js)
                 .map_err(|_| format!("failed to read '{key}'"))?;
-            map.insert(key, js_to_cv(&v)?);
+            map.insert(key, js_to_cv(&v, depth + 1)?);
         }
         return Ok(ConstraintValue::Object(map));
     }
     Err("value cannot be represented as a ConstraintValue".into())
+}
+
+fn reject_string_budget(len: usize) -> Result<(), String> {
+    if len > MAX_WARRANT_SIZE {
+        return Err(format!(
+            "string exceeds the WASM input budget of {MAX_WARRANT_SIZE} bytes"
+        ));
+    }
+    Ok(())
+}
+
+fn reject_collection_budget(len: usize) -> Result<(), String> {
+    if len > MAX_COLLECTION_LEN {
+        return Err(format!(
+            "collection exceeds the WASM input budget of {MAX_COLLECTION_LEN} items"
+        ));
+    }
+    Ok(())
+}
+
+fn reject_encoded_budget(input: &str, max: usize, what: &str) -> Result<(), JsError> {
+    if input.len() > max {
+        return Err(JsError::new(&format!(
+            "TENUO_CHAIN_INVALID: {what} exceeds the WASM input budget"
+        )));
+    }
+    Ok(())
 }
 
 fn cv_to_json(value: &ConstraintValue) -> serde_json::Value {
@@ -1522,6 +1578,7 @@ fn map_code(e: &Error) -> &'static str {
 }
 
 fn parse_hex(input: &str) -> Result<Vec<u8>, JsError> {
+    reject_encoded_budget(input, MAX_ENCODED_CHAIN_CHARS, "hex")?;
     let clean: String = input.chars().filter(|c| !c.is_whitespace()).collect();
     hex::decode(clean).map_err(|e| JsError::new(&format!("invalid hex: {e}")))
 }
@@ -1562,6 +1619,7 @@ fn session_from_chain(chain: Vec<Warrant>, holder_secret: &[u8]) -> Result<SdkSe
 }
 
 fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
+    reject_encoded_budget(input, MAX_ENCODED_CHAIN_CHARS, "encoded warrant chain")?;
     let trimmed = input.trim();
     if let Ok(stack) = wire::decode_pem_chain(trimmed) {
         if !stack.0.is_empty() {
@@ -1597,6 +1655,9 @@ fn parse_presented_chain(warrants: &JsValue) -> Result<Vec<Warrant>, JsError> {
 }
 
 fn parse_pop_signature(input: &str) -> Result<Signature, String> {
+    if input.len() > MAX_POP_CHARS {
+        return Err("proof-of-possession exceeds the WASM input budget".into());
+    }
     let compact: String = input.chars().filter(|c| !c.is_whitespace()).collect();
     let bytes = hex::decode(&compact)
         .ok()
@@ -1628,6 +1689,11 @@ fn parse_chain_parts(parts: JsValue) -> Result<Vec<Warrant>, JsError> {
         .ok_or_else(|| JsError::new("chain must be an array"))?;
     if arr.is_empty() {
         return Err(JsError::new("chain must not be empty"));
+    }
+    if arr.len() > MAX_DELEGATION_DEPTH as usize {
+        return Err(JsError::new(
+            "TENUO_CHAIN_INVALID: chain exceeds the WASM input budget",
+        ));
     }
     let mut out = Vec::with_capacity(arr.len());
     for (i, item) in arr.iter().enumerate() {
@@ -1741,6 +1807,7 @@ fn constraint_set_from_fields(
 }
 
 fn parse_warrant(input: &str) -> Result<Warrant, JsError> {
+    reject_encoded_budget(input, MAX_ENCODED_WARRANT_CHARS, "encoded warrant")?;
     let trimmed = input.trim();
     if let Ok(warrant) = wire::decode_base64(trimmed) {
         return Ok(warrant);

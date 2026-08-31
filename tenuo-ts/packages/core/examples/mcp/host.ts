@@ -10,7 +10,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { createTenuo, email, pattern, under, type AllowPolicy, type Tenuo } from "../../src/index.ts";
+import {
+  createTenuo,
+  email,
+  pattern,
+  TenuoError,
+  under,
+  type AllowPolicy,
+  type Tenuo,
+} from "../../src/index.ts";
 import { createWorkspace, type Workspace } from "./workspace.ts";
 
 export type HostCallResult = {
@@ -140,7 +148,7 @@ function register(
     },
     async (args, extra) => {
       try {
-        const authorized = tenuo.mcp.verify(name, args as Record<string, unknown>, extra._meta, {
+        const authorized = await tenuo.mcp.verify(name, args as Record<string, unknown>, extra._meta, {
           allow,
           onReceipt: (receipt) => {
             receipts.push(receipt);
@@ -152,9 +160,15 @@ function register(
           content: [{ type: "text" as const, text: stringify(value) }],
         };
       } catch (error) {
+        if (error instanceof TenuoError) {
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: JSON.stringify(tenuo.mcp.jsonRpcError(error)) }],
+          };
+        }
         return {
           isError: true,
-          content: [{ type: "text" as const, text: JSON.stringify(tenuo.mcp.jsonRpcError(error)) }],
+          content: [{ type: "text" as const, text: "Tool execution failed" }],
         };
       }
     },

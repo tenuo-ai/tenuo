@@ -93,16 +93,22 @@ describe("createTenuo", () => {
     expect(() => tenuo.session({})).toThrow(/tools from tenuo\.tool\(\)|capability in allow/);
   });
 
-  it("disables devRoot in production unless TENUO_ALLOW_DEV=1", () => {
+  it("disables devRoot unless NODE_ENV is development or test", () => {
     const previousEnv = process.env.NODE_ENV;
     const previousAllow = process.env.TENUO_ALLOW_DEV;
-    process.env.NODE_ENV = "production";
     delete process.env.TENUO_ALLOW_DEV;
     try {
-      expect(() => createTenuo.devRoot()).toThrow(/disabled when NODE_ENV=production/);
+      process.env.NODE_ENV = "production";
+      expect(() => createTenuo.devRoot()).toThrow(/Unset NODE_ENV is not treated as development/);
       expect(() => createTenuo({ root: { kind: "dev-root" } })).toThrow(
-        /disabled when NODE_ENV=production/,
+        /Unset NODE_ENV is not treated as development/,
       );
+      delete process.env.NODE_ENV;
+      expect(() => createTenuo.devRoot()).toThrow(/Unset NODE_ENV is not treated as development/);
+      expect(createTenuo.devRoot({ allowInProduction: true })).toEqual({
+        kind: "dev-root",
+        allowInProduction: true,
+      });
       process.env.TENUO_ALLOW_DEV = "1";
       expect(createTenuo.devRoot()).toEqual({ kind: "dev-root" });
     } finally {
@@ -565,12 +571,12 @@ describe("revocation and receipts", () => {
     );
     await expect(
       tenuo.withSession(session, () =>
-        readFile.execute({ path: "/data/q3.pdf" }, { onReceipt: (r) => receipts.push(r) }),
+        readFile.execute({ path: "/data/q3.pdf" }, { onReceipt: (r) => { receipts.push(r); } }),
       ),
     ).resolves.toBe("ok:/data/q3.pdf");
     await expect(
       tenuo.withSession(session, () =>
-        readFile.execute({ path: "/etc/passwd" }, { onReceipt: (r) => receipts.push(r) }),
+        readFile.execute({ path: "/etc/passwd" }, { onReceipt: (r) => { receipts.push(r); } }),
       ),
     ).rejects.toMatchObject({ code: "TENUO_CONSTRAINT_VIOLATION" });
     expect(receipts).toHaveLength(2);
@@ -585,5 +591,63 @@ describe("revocation and receipts", () => {
       outcome: "deny",
       decision_code: "constraint-violation",
     });
+  });
+
+  it("does not fail execute when onReceipt throws", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({
+      allow: { read_file: { path: under("/data") } },
+    });
+    const readFile = tenuo.tool(
+      { execute: async ({ path }: { path: string }) => `ok:${path}` },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    await expect(
+      tenuo.withSession(session, () =>
+        readFile.execute(
+          { path: "/data/q3.pdf" },
+          {
+            onReceipt: () => {
+              throw new Error("receipt hook exploded");
+            },
+          },
+        ),
+      ),
+    ).resolves.toBe("ok:/data/q3.pdf");
+  });
+
+  it("rejects deeply nested arguments before they can allocate without bound", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({
+      allow: { read_file: { path: under("/data") } },
+    });
+    const readFile = tenuo.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    let nested: unknown = "/data/q3.pdf";
+    for (let i = 0; i < 40; i += 1) {
+      nested = { nested };
+    }
+    await expect(
+      tenuo.withSession(session, () => readFile.execute({ path: nested } as { path: string })),
+    ).rejects.toMatchObject({
+      code: "TENUO_CANONICALIZATION",
+      message: expect.stringMatching(/nesting exceeds maximum depth/),
+    });
+  });
+
+  it("rejects an oversized warrant string at the WASM boundary", () => {
+    const tenuo = createTenuo({
+      trustedRoots: [
+        createTenuo.publicKeyFromHex("8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"),
+      ],
+    });
+    expect(() =>
+      tenuo.sessionFromWire({
+        warrant: "A".repeat(64 * 1024 * 64 * 2 + 1),
+        holderKey: createTenuo.holderKeyFromHex("02".repeat(32)),
+      }),
+    ).toThrow(/WASM input budget|TENUO_CHAIN_INVALID/);
   });
 });
