@@ -539,27 +539,23 @@ def tenuo_create_nexus_workflow_envelope(
 ) -> TenuoNexusWorkflowEnvelope:
     """Create a workflow envelope for handler-minted or attenuated authority.
 
-    Use this as the preferred workflow-backed Nexus path: after verifying the
-    operation, the handler passes a narrower workflow warrant whose holder key
-    belongs to the handler/backing-workflow namespace.
+    Prefer ``tenuo_start_nexus_workflow`` when the handler namespace client has
+    ``TenuoClientInterceptor`` installed. Use this explicit envelope path for
+    manual transports, migration, or workflows that intentionally want
+    bootstrap data visible in ordinary workflow input.
     """
     if not workflow_id:
         raise TenuoContextError(
             "tenuo_create_nexus_workflow_envelope requires workflow_id= to bind "
             "the envelope to one backing workflow."
         )
-    raw_headers = tenuo_headers(warrant, key_id, compress=compress)
-    chain = list(warrant_chain) if warrant_chain is not None else [warrant]
-    _validate_chain_ends_with_warrant(
-        chain,
+    raw_headers = _workflow_headers_for_warrant(
         warrant,
+        key_id,
+        warrant_chain,
+        compress=compress,
         operation="tenuo_create_nexus_workflow_envelope",
     )
-    if len(chain) > 1:
-        from tenuo_core import encode_warrant_stack
-
-        raw_headers[TENUO_CHAIN_HEADER] = encode_warrant_stack(chain).encode("utf-8")
-
     return _workflow_envelope_from_raw_headers(
         raw_headers,
         ctx=source_ctx,
@@ -570,6 +566,94 @@ def tenuo_create_nexus_workflow_envelope(
         operation=source_operation,
         mode="minted",
     )
+
+
+async def tenuo_start_nexus_workflow(
+    ctx: Any,
+    input: Any,
+    config: Any,
+    client_interceptor: Any,
+    workflow_run_fn: Any,
+    workflow_input: Any = _UNSET,
+    *,
+    workflow_id: str,
+    workflow_warrant: Any,
+    workflow_key_id: str,
+    workflow_warrant_chain: Optional[List[Any]] = None,
+    endpoint: Optional[str] = None,
+    service: Optional[str] = None,
+    operation: Optional[Any] = None,
+    compress: bool = True,
+    **start_workflow_kwargs: Any,
+) -> Any:
+    """Verify a Nexus request, then start a backing workflow with Tenuo headers.
+
+    This is the ambient workflow-backed Nexus path for handler-minted or
+    attenuated authority. It avoids placing authority in ordinary workflow
+    input: the handler verifies the incoming Nexus operation, binds a workflow
+    warrant to the exact backing ``workflow_id`` through
+    ``TenuoClientInterceptor.set_headers_for_workflow()``, then starts the
+    workflow through the normal Temporal Nexus context.
+    """
+    if not workflow_id:
+        raise TenuoContextError(
+            "tenuo_start_nexus_workflow requires workflow_id= to bind Tenuo "
+            "headers to one backing workflow start."
+        )
+    if "id" in start_workflow_kwargs:
+        raise ValueError(
+            "Pass workflow_id via tenuo_start_nexus_workflow(..., workflow_id=...). "
+            "Do not also pass id= in start_workflow_kwargs."
+        )
+    if workflow_warrant is None:
+        raise TenuoContextError("tenuo_start_nexus_workflow requires workflow_warrant=.")
+    if not workflow_key_id:
+        raise TenuoContextError("tenuo_start_nexus_workflow requires workflow_key_id=.")
+    if not hasattr(client_interceptor, "set_headers_for_workflow"):
+        raise TenuoContextError(
+            "tenuo_start_nexus_workflow requires a TenuoClientInterceptor "
+            "installed on the handler namespace client."
+        )
+
+    verify_nexus_operation(
+        ctx,
+        input,
+        config,
+        endpoint=endpoint,
+        service=service,
+        operation=operation,
+        raise_nexus_error=True,
+    )
+    workflow_headers = _workflow_headers_for_warrant(
+        workflow_warrant,
+        workflow_key_id,
+        workflow_warrant_chain,
+        compress=compress,
+        operation="tenuo_start_nexus_workflow",
+    )
+    client_interceptor.set_headers_for_workflow(workflow_id, workflow_headers)
+    try:
+        if workflow_input is _UNSET:
+            return await ctx.start_workflow(
+                workflow_run_fn,
+                id=workflow_id,
+                **start_workflow_kwargs,
+            )
+        return await ctx.start_workflow(
+            workflow_run_fn,
+            workflow_input,
+            id=workflow_id,
+            **start_workflow_kwargs,
+        )
+    except Exception:
+        discard = getattr(
+            client_interceptor,
+            "discard_headers_for_workflow_if_match",
+            None,
+        )
+        if callable(discard):
+            discard(workflow_id, workflow_headers)
+        raise
 
 
 def tenuo_bootstrap_nexus_workflow(envelope: Any) -> None:
@@ -947,6 +1031,24 @@ def _workflow_envelope_from_raw_headers(
         target_workflow_type=workflow_type,
         mode=mode,
     )
+
+
+def _workflow_headers_for_warrant(
+    warrant: Any,
+    key_id: str,
+    warrant_chain: Optional[List[Any]],
+    *,
+    compress: bool,
+    operation: str,
+) -> Dict[str, bytes]:
+    raw_headers = tenuo_headers(warrant, key_id, compress=compress)
+    chain = list(warrant_chain) if warrant_chain is not None else [warrant]
+    _validate_chain_ends_with_warrant(chain, warrant, operation=operation)
+    if len(chain) > 1:
+        from tenuo_core import encode_warrant_stack
+
+        raw_headers[TENUO_CHAIN_HEADER] = encode_warrant_stack(chain).encode("utf-8")
+    return raw_headers
 
 
 def _coerce_workflow_envelope(envelope: Any) -> TenuoNexusWorkflowEnvelope:

@@ -163,6 +163,28 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
         with self._lock:
             return self._headers_by_workflow_id.pop(workflow_id, None) is not None
 
+    def discard_headers_for_workflow_if_match(
+        self,
+        workflow_id: str,
+        headers: Dict[str, bytes],
+    ) -> bool:
+        """Drop pending headers only when they still match *headers*.
+
+        Use this when a caller bound headers for a start attempt that failed
+        before the interceptor consumed them. If another concurrent attempt has
+        since rebound the same workflow id, this method leaves that newer
+        binding intact.
+        """
+        with self._lock:
+            existing = self._headers_by_workflow_id.get(workflow_id)
+            if existing is None:
+                return False
+            existing_headers, _inserted_at = existing
+            if existing_headers != headers:
+                return False
+            self._headers_by_workflow_id.pop(workflow_id, None)
+            return True
+
     def clear_headers(self) -> None:
         """Clear all pending headers."""
         with self._lock:

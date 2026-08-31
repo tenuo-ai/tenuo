@@ -56,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   denial; manual callers that omit these binding headers now fail closed. Added
   `TemporalNexusOperation.exact(...)` for minting canonical Nexus operation
   capabilities.
+- **Ambient Temporal Nexus backing workflow starts.**
+  `tenuo_start_nexus_workflow(...)` verifies a Nexus handler request, binds a
+  handler-minted workflow warrant to the backing `workflow_id` through
+  `TenuoClientInterceptor`, starts the workflow via `ctx.start_workflow(...)`,
+  and clears stale pending headers if startup fails before the interceptor
+  consumes them. The live Nexus test now exercises concurrent backing starts
+  over this interceptor path.
 - **Temporal per-Activity warrant overrides.**
   `tenuo_execute_activity(..., warrant=..., key_id=...)` now applies a
   task-local warrant to one dispatch, including the active delegation chain.
