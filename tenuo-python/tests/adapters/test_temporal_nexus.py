@@ -26,8 +26,12 @@ from tenuo.temporal._nexus import (  # noqa: E402
     tenuo_create_nexus_workflow_envelope,
     tenuo_execute_nexus_operation,
     tenuo_forward_nexus_authority,
+    tenuo_nexus_execute_update,
     tenuo_nexus_headers,
     tenuo_nexus_operation,
+    tenuo_nexus_query_workflow,
+    tenuo_nexus_signal_workflow,
+    tenuo_nexus_start_update,
     verify_nexus_operation,
 )
 from tenuo.temporal._state import (  # noqa: E402
@@ -42,6 +46,13 @@ from tenuo.temporal.exceptions import TenuoContextError  # noqa: E402
 class RefundInput:
     order_id: str
     amount_cents: int
+
+
+@dataclass
+class RouterInput:
+    workflow_id: str
+    action: str
+    value: str
 
 
 class StaticResolver:
@@ -65,6 +76,26 @@ class FakeNexusClient:
     async def execute_operation(self, operation: Any, input: Any, **kwargs: Any) -> str:
         self.execute_call = (operation, input, kwargs)
         return "accepted"
+
+
+class FakeWorkflowHandle:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, Any, Any, dict[str, Any]]] = []
+
+    async def signal(self, signal: Any, arg: Any = None, **kwargs: Any) -> None:
+        self.calls.append(("signal", signal, arg, kwargs))
+
+    async def query(self, query: Any, arg: Any = None, **kwargs: Any) -> str:
+        self.calls.append(("query", query, arg, kwargs))
+        return "query-result"
+
+    async def execute_update(self, update: Any, arg: Any = None, **kwargs: Any) -> str:
+        self.calls.append(("execute_update", update, arg, kwargs))
+        return "update-result"
+
+    async def start_update(self, update: Any, arg: Any = None, **kwargs: Any) -> str:
+        self.calls.append(("start_update", update, arg, kwargs))
+        return "update-handle"
 
 
 @pytest.fixture(autouse=True)
@@ -108,6 +139,51 @@ def test_nexus_input_args_exposes_dataclass_fields() -> None:
         "order_id": "ord_123",
         "amount_cents": 2500,
     }
+
+
+def _router_warrant(root_key: Any, agent_key: Any) -> Any:
+    return (
+        Warrant.mint_builder()
+        .holder(agent_key.public_key)
+        .capability(
+            nexus_tool_name(
+                "billing-prod",
+                "route_signal",
+                service="BillingService",
+            ),
+            workflow_id=Exact("refund-wf-001"),
+            action=Exact("approve"),
+            value=Exact("yes"),
+        )
+        .ttl(3600)
+        .mint(root_key)
+    )
+
+
+def _router_ctx_and_config(
+    root_key: Any,
+    agent_key: Any,
+    input: RouterInput,
+) -> tuple[Any, Any]:
+    warrant = _router_warrant(root_key, agent_key)
+    ctx = SimpleNamespace(
+        service="BillingService",
+        operation="route_signal",
+        headers=tenuo_nexus_headers(
+            warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="route_signal",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+    return ctx, config
 
 
 def test_tenuo_nexus_headers_round_trip_verifies_cross_namespace_operation(
@@ -275,6 +351,116 @@ async def test_tenuo_nexus_operation_decorator_maps_denial_to_handler_error(
 
     assert exc.value.type == nexusrpc.HandlerErrorType.UNAUTHORIZED
     assert handler.called is False
+
+
+async def test_nexus_signal_workflow_verifies_before_signaling(
+    nexus_keys: tuple[Any, Any],
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RouterInput("refund-wf-001", "approve", "yes")
+    ctx, config = _router_ctx_and_config(root_key, agent_key, input)
+    handle = FakeWorkflowHandle()
+
+    await tenuo_nexus_signal_workflow(
+        ctx,
+        input,
+        config,
+        handle,
+        "approve",
+        "yes",
+        endpoint="billing-prod",
+        rpc_metadata={"x-request-id": "req-123"},
+    )
+
+    assert handle.calls == [
+        (
+            "signal",
+            "approve",
+            "yes",
+            {"args": (), "rpc_metadata": {"x-request-id": "req-123"}},
+        )
+    ]
+
+
+async def test_nexus_signal_workflow_denial_does_not_signal(
+    nexus_keys: tuple[Any, Any],
+) -> None:
+    root_key, agent_key = nexus_keys
+    signed_input = RouterInput("refund-wf-001", "approve", "yes")
+    ctx, config = _router_ctx_and_config(root_key, agent_key, signed_input)
+    handle = FakeWorkflowHandle()
+
+    with pytest.raises(nexusrpc.HandlerError) as exc:
+        await tenuo_nexus_signal_workflow(
+            ctx,
+            RouterInput("refund-wf-999", "approve", "yes"),
+            config,
+            handle,
+            "approve",
+            "yes",
+            endpoint="billing-prod",
+        )
+
+    assert exc.value.type == nexusrpc.HandlerErrorType.UNAUTHORIZED
+    assert handle.calls == []
+
+
+async def test_nexus_query_and_update_helpers_preserve_sdk_kwargs(
+    nexus_keys: tuple[Any, Any],
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RouterInput("refund-wf-001", "approve", "yes")
+    ctx, config = _router_ctx_and_config(root_key, agent_key, input)
+    handle = FakeWorkflowHandle()
+
+    query_result = await tenuo_nexus_query_workflow(
+        ctx,
+        input,
+        config,
+        handle,
+        "status",
+        endpoint="billing-prod",
+        result_type=str,
+    )
+    update_result = await tenuo_nexus_execute_update(
+        ctx,
+        input,
+        config,
+        handle,
+        "approve",
+        "yes",
+        endpoint="billing-prod",
+        id="update-001",
+        result_type=str,
+    )
+    update_handle = await tenuo_nexus_start_update(
+        ctx,
+        input,
+        config,
+        handle,
+        "approve",
+        "yes",
+        endpoint="billing-prod",
+        wait_for_stage=object(),
+    )
+
+    assert query_result == "query-result"
+    assert update_result == "update-result"
+    assert update_handle == "update-handle"
+    assert handle.calls[0] == (
+        "query",
+        "status",
+        None,
+        {"args": (), "result_type": str, "rpc_metadata": {}},
+    )
+    assert handle.calls[1] == (
+        "execute_update",
+        "approve",
+        "yes",
+        {"args": (), "id": "update-001", "result_type": str, "rpc_metadata": {}},
+    )
+    assert handle.calls[2][0:3] == ("start_update", "approve", "yes")
+    assert "wait_for_stage" in handle.calls[2][3]
 
 
 def test_forward_nexus_authority_creates_bootstrap_envelope(
