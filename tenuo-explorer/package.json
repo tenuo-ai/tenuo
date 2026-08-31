@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "wasm": "cd ../tenuo-wasm && wasm-pack build --release --target web --out-dir pkg && cp pkg/* ../tenuo-explorer/src/wasm/",
+    "wasm": "mkdir -p src/wasm && cd ../tenuo-wasm && wasm-pack build --release --target web --out-dir pkg && cp pkg/* ../tenuo-explorer/src/wasm/",
     "dev": "vite",
     "dev:fresh": "npm run wasm && vite",
     "prebuild": "npm run wasm",

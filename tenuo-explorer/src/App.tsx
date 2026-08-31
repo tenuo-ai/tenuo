@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import init, { decode_warrant, check_access, check_chain_access, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm } from './wasm/tenuo_wasm'
+import init, { decode_warrant, check_access, check_chain_access, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkVerifyReceipt } from './wasm/tenuo_wasm'
 import wasmUrl from './wasm/tenuo_wasm_bg.wasm?url'
 import { cleanInput, truncate, generateId } from './utils';
 import packageJson from '../package.json';
@@ -2037,6 +2037,238 @@ const HistorySidebar = ({
 };
 
 // Main App
+// ============================================================================
+// Receipt Mode — verify signed authorization receipts
+//
+// A receipt says what an enforcement point decided. Verifying its signature
+// establishes only that the holder of `signer_key` made that statement, which
+// is a narrower claim than it looks: nothing here can tell you whether that key
+// legitimately speaks for a deployment. That resolution is out of band, against
+// a registry this page has no access to, so the limit is stated on screen
+// rather than left for a green checkmark to paper over.
+// ============================================================================
+
+export type VerifiedReceipt = {
+  authentic: boolean;
+  outcome: 'allow' | 'deny';
+  action: string;
+  request_id: string;
+  decision_code?: string;
+  srl_version?: number;
+  srl_hash?: string;
+  policy_definition_hash?: string;
+  prev_receipt_hash?: string;
+  trusted_roots_hash?: string;
+};
+
+export type ReceiptRow = {
+  line: number;
+  wire: string;
+  digest: string;
+  payload: VerifiedReceipt;
+};
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.trim();
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+/** One field, with a plain-language note when absence is itself a claim. */
+function ReceiptField({ label, value, absentNote }: { label: string; value?: string | number; absentNote?: string }) {
+  const missing = value === undefined || value === null || value === '';
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: '12px', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+      <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{label}</span>
+      {missing ? (
+        <span style={{ fontSize: '12px', color: absentNote ? '#d97706' : 'var(--muted)' }}>
+          {absentNote ?? '—'}
+        </span>
+      ) : (
+        <span style={{ fontSize: '12px', fontFamily: 'monospace', wordBreak: 'break-all' }}>{value}</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Resolve every chain link against the receipts actually present.
+ *
+ * A link pointing at something absent means a receipt was removed from the
+ * stream — the omission chaining exists to catch. More than one receipt without
+ * a predecessor means separate streams were merged, or chaining was off for
+ * some of them; links still resolve, so that has to be surfaced rather than
+ * counted as a clean run.
+ */
+export function analyzeReceiptChain(rows: Pick<ReceiptRow, 'line' | 'digest' | 'payload'>[]) {
+  const present = new Set(rows.map((r) => r.digest));
+  return {
+    breaks: rows.filter((r) => r.payload.prev_receipt_hash && !present.has(r.payload.prev_receipt_hash)),
+    roots: rows.filter((r) => !r.payload.prev_receipt_hash),
+  };
+}
+
+function ReceiptMode() {
+  const [input, setInput] = useState('');
+  const [rows, setRows] = useState<ReceiptRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const verify = async () => {
+    setError(null);
+    setRows([]);
+
+    const lines = input
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      // accept the JSONL a FileReceiptSink writes, or bare hex
+      .map((l) => (l.startsWith('{') ? (JSON.parse(l).receipt as string) : l));
+
+    if (lines.length === 0) {
+      setError('Paste a receipt — hex, or the JSONL a FileReceiptSink writes.');
+      return;
+    }
+
+    const verified: ReceiptRow[] = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const wire = lines[i];
+      try {
+        const payload = sdkVerifyReceipt(wire) as VerifiedReceipt;
+        verified.push({ line: i + 1, wire, digest: await sha256Hex(hexToBytes(wire)), payload });
+      } catch (e) {
+        setError(`Receipt on line ${i + 1} does not verify: ${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
+    }
+    setRows(verified);
+  };
+
+  // A link pointing at a receipt that is not present means one was removed from
+  // the stream. That is the omission chaining exists to catch.
+  const { breaks, roots } = analyzeReceiptChain(rows);
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+      <div className="panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+          <span style={{ fontSize: '18px' }}>🧾</span>
+          <h2 style={{ fontSize: '15px', fontWeight: 600 }}>1. Paste Receipt(s)</h2>
+        </div>
+        <label className="label">One receipt per line — hex, or FileReceiptSink JSONL</label>
+        <textarea
+          className="input"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="a46f7265636569707476657273696f6e01…"
+          rows={12}
+          style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
+        />
+        <button onClick={verify} className="btn" style={{ marginTop: '12px' }}>
+          Verify
+        </button>
+        <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '12px', lineHeight: 1.5 }}>
+          Paste a whole stream to check the chain. Everything runs locally in
+          WebAssembly — no receipt leaves your browser.
+        </p>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        {error && (
+          <div className="panel" style={{ borderColor: '#dc2626' }}>
+            <div style={{ color: '#dc2626', fontSize: '13px' }}>❌ {error}</div>
+          </div>
+        )}
+
+        {rows.length > 0 && (
+          <>
+            <div className="panel" style={{ borderColor: breaks.length ? '#dc2626' : undefined }}>
+              <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '12px' }}>
+                {breaks.length === 0 ? '✅' : '❌'} Chain
+              </h2>
+              <div style={{ fontSize: '13px', lineHeight: 1.6 }}>
+                {rows.length} receipt{rows.length === 1 ? '' : 's'}, all signatures verify.
+                {breaks.length === 0 ? (
+                  <div style={{ marginTop: '8px' }}>Every link resolves to a receipt you pasted.</div>
+                ) : (
+                  <div style={{ marginTop: '8px', color: '#dc2626' }}>
+                    {breaks.length} break{breaks.length === 1 ? '' : 's'} — a receipt is missing from this stream:
+                    <ul style={{ marginTop: '6px', paddingLeft: '18px' }}>
+                      {breaks.map((b) => (
+                        <li key={b.line} style={{ fontFamily: 'monospace', fontSize: '11px' }}>
+                          line {b.line} ({b.payload.request_id}) links to {b.payload.prev_receipt_hash?.slice(0, 16)}…, which is absent
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {roots.length > 1 && (
+                  <div style={{ marginTop: '8px', color: '#d97706' }}>
+                    ⚠️ {roots.length} receipts have no predecessor. Expect one per signer — more
+                    means separate streams were merged, or chaining was off for some.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {rows.map((row) => (
+              <div key={row.line} className="panel">
+                <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '12px' }}>
+                  {row.payload.outcome === 'allow' ? '✅ ALLOW' : '🚫 DENY'} · {row.payload.action}
+                </h2>
+                <ReceiptField label="request" value={row.payload.request_id} />
+                {row.payload.decision_code && <ReceiptField label="reason" value={row.payload.decision_code} />}
+                <ReceiptField
+                  label="revocation"
+                  value={row.payload.srl_hash && `${row.payload.srl_version !== undefined ? `v${row.payload.srl_version} ` : '(unversioned) '}${row.payload.srl_hash.slice(0, 24)}…`}
+                  absentNote="NOT consulted — cannot conclude the warrant was unrevoked"
+                />
+                <ReceiptField
+                  label="trust anchors"
+                  value={row.payload.trusted_roots_hash?.slice(0, 24)}
+                  absentNote="not recorded"
+                />
+                <ReceiptField
+                  label="host ceiling"
+                  value={row.payload.policy_definition_hash?.slice(0, 24)}
+                  absentNote="no ceiling was applied"
+                />
+                <ReceiptField
+                  label="chained to"
+                  value={row.payload.prev_receipt_hash?.slice(0, 24)}
+                  absentNote="nothing — first receipt, or chaining off"
+                />
+              </div>
+            ))}
+
+            <div className="panel" style={{ borderColor: '#d97706' }}>
+              <h2 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '8px', color: '#d97706' }}>
+                ⚠️ What this does not establish
+              </h2>
+              <p style={{ fontSize: '12px', lineHeight: 1.6 }}>
+                A verified signature proves only that the holder of the signing key made this
+                statement. It does <strong>not</strong> prove that key legitimately speaks for a
+                deployment — resolving it against an authorizer registry is out of band, and this
+                page has no access to one. Verifying the holder's proof-of-possession additionally
+                requires the original arguments, which a receipt commits to but does not carry.
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   // State
   const [wasmReady, setWasmReady] = useState(false);
@@ -2049,7 +2281,7 @@ function App() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showSamples, setShowSamples] = useState(false);
   const [activeTab, setActiveTab] = useState<'decode' | 'debug' | 'code'>('decode');
-  const [mode, setMode] = useState<'decoder' | 'builder' | 'chain' | 'diff'>('decoder');
+  const [mode, setMode] = useState<'decoder' | 'builder' | 'chain' | 'diff' | 'receipt'>('decoder');
   const [builderPreview, setBuilderPreview] = useState<unknown>(null);
   const [showBuilderJson, setShowBuilderJson] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(true);
@@ -2405,6 +2637,9 @@ function App() {
             <button onClick={() => setMode('chain')} className={`mode-btn ${mode === 'chain' ? 'active' : ''}`}>
               📚 Delegation
             </button>
+            <button onClick={() => setMode('receipt')} className={`mode-btn ${mode === 'receipt' ? 'active' : ''}`}>
+              🧾 Receipt
+            </button>
           </div>
 
         </header>
@@ -2546,6 +2781,8 @@ function App() {
           )}
 
           {/* Decoder Mode */}
+          {mode === 'receipt' && <ReceiptMode />}
+
           {mode === 'decoder' && (
             <>
               {/* Validation Warnings */}
