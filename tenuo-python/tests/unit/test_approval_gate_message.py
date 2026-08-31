@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -137,6 +139,76 @@ def test_shared_enforcement_raises_resolved_message():
 
     assert str(exc_info.value) == CUSTOM
     assert exc_info.value.request.message == CUSTOM
+
+
+def test_fastapi_and_mcp_share_resolved_message():
+    pytest.importorskip("fastapi")
+
+    from fastapi import FastAPI, HTTPException
+    from tenuo.fastapi import TenuoGuard, configure_tenuo
+
+    issuer = SigningKey.generate()
+    holder = SigningKey.generate()
+    approver = SigningKey.generate()
+    args = {"id": "42"}
+    w = _mint(
+        issuer,
+        holder,
+        approver,
+        {"email.delete": {"args": None, "message": CUSTOM}},
+    )
+    sig = w.sign(holder, "email.delete", args, int(time.time()))
+
+    app = FastAPI()
+    configure_tenuo(app, trusted_issuers=[issuer.public_key])
+    request = SimpleNamespace(
+        state=SimpleNamespace(tenuo_parents=[]),
+        path_params={},
+        query_params={},
+    )
+    guard = TenuoGuard("email.delete", extract_args=lambda _: args)
+
+    with pytest.raises(HTTPException) as fastapi_exc:
+        guard(
+            request,
+            warrant=w,
+            x_tenuo_pop=base64.b64encode(bytes(sig)).decode(),
+            x_tenuo_approvals=None,
+        )
+
+    authorizer = Authorizer(trusted_roots=[issuer.public_key])
+    meta = {
+        "tenuo": {
+            "warrant": w.to_base64(),
+            "signature": base64.b64encode(bytes(sig)).decode(),
+        }
+    }
+    mcp = MCPVerifier(authorizer=authorizer).verify("email.delete", args, meta=meta)
+
+    assert fastapi_exc.value.detail["message"] == CUSTOM
+    assert mcp.denial_reason == CUSTOM
+
+
+def test_a2a_and_control_plane_share_resolved_message():
+    issuer = SigningKey.generate()
+    holder = SigningKey.generate()
+    approver = SigningKey.generate()
+    args = {"id": "42"}
+    w = _mint(
+        issuer,
+        holder,
+        approver,
+        {"email.delete": {"args": None, "message": CUSTOM}},
+    )
+    rh = compute_request_hash(w.id, "email.delete", args, holder.public_key)
+    req = ApprovalRequest.for_warrant_gate("email.delete", args, w, rh)
+
+    a2a = ApprovalRequiredError("email.delete", message=req.message)
+    cp = build_control_plane_approval_request_v1(req, holder.public_key)
+
+    assert a2a.message == CUSTOM
+    assert a2a.data["message"] == CUSTOM
+    assert cp.to_json_dict()["message"] == CUSTOM
 
 
 def test_same_bytes_across_surfaces():
