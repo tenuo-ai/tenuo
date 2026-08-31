@@ -294,11 +294,12 @@ class ControlPlaneClient:
         invariant: receipts commit to the trust context the enforcement point
         actually used.
         """
-        if self._receipt_sink is None:
+        receipt_sink = getattr(self, "_receipt_sink", None)
+        if receipt_sink is None:
             return
         authorizer = getattr(result, "authorizer", None)
         if authorizer is None:
-            if not self._receipt_unbound_warned:
+            if not getattr(self, "_receipt_unbound_warned", False):
                 logger.warning(
                     "receipt sink is configured but no authorizer was available "
                     "for automatic trust binding; no receipt will be emitted for "
@@ -319,7 +320,8 @@ class ControlPlaneClient:
         stack — a receipt without the chain it decided over is not worth
         signing.
         """
-        if self._receipt_sink is None or chain_result is None:
+        receipt_sink = getattr(self, "_receipt_sink", None)
+        if receipt_sink is None or chain_result is None:
             return
         try:
             wire = self._inner.issue_receipt(
@@ -328,7 +330,7 @@ class ControlPlaneClient:
         except Exception as exc:  # noqa: BLE001 - must not fail the caller
             logger.warning("failed to sign receipt for %r", tool, exc_info=exc)
             return
-        _receipts.deliver(self._receipt_sink, wire, self._on_receipt_error)
+        _receipts.deliver(receipt_sink, wire, getattr(self, "_on_receipt_error", None))
 
     def shutdown(self, timeout_secs: float = 5.0) -> None:
         self._inner.shutdown(timeout_secs)

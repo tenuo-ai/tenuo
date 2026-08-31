@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Signed authorization receipts.** Rust now issues and verifies
+  tamper-evident receipts for authorization decisions, including receipt-chain
+  links, trust-context commitments, request hashes, optional proof-of-possession
+  signatures, and deny decision codes. Python adds `tenuo.receipts` sinks,
+  `ControlPlaneClient(..., receipt_sink=...)`, automatic receipt trust binding
+  from signed enforcement results, and `tenuo receipt verify|chain` CLI helpers
+  for inspecting individual receipts or append-only JSONL streams. Receipt
+  verification now rejects signed payloads that omit required allow/deny
+  evidence instead of accepting structurally incomplete receipts.
 - **Optional approval-gate display message.** `ToolApprovalGate` accepts
   `message` (max 200 UTF-8 characters). When a gate fires, Rust resolves the
   string once onto `ApprovalRequest.message` (default:
