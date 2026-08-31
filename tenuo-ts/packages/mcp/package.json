@@ -43,7 +43,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
-    "pack:smoke": "node scripts/pack-smoke.mjs"
+    "pack:smoke": "node scripts/pack-smoke.mjs",
+    "publish:npm": "npm publish --access public --provenance"
   },
   "engines": {
     "node": ">=20"

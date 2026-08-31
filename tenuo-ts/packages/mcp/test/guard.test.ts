@@ -85,6 +85,30 @@ describe("@tenuo/mcp v2 adapter", () => {
     expect(result.text).toBe("/data/other.txt");
   });
 
+  it("wraps a no-schema registerTool callback with guardHandler", async () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const session = issuer.session({
+      allow: { ping: {} },
+    });
+    const executed: string[] = [];
+    const server = new McpServer({ name: "tenuo-raw-ping", version: "0.2.3" });
+    server.registerTool(
+      "ping",
+      { description: "ping" },
+      guardHandler(issuer, "ping", { allow: {} }, async () => {
+        executed.push("ping");
+        return { content: [{ type: "text", text: "pong" }] };
+      }),
+    );
+    const host = await connect(server);
+    harnesses.push(host);
+    const call = issuer.mcp.attach(session, "ping", {});
+    const result = await host.call(call.name, { ...call.arguments }, call._meta);
+    expect(result.isError).toBe(false);
+    expect(result.text).toBe("pong");
+    expect(executed).toEqual(["ping"]);
+  });
+
   it("wraps a raw registerTool callback with guardHandler", async () => {
     const issuer = createTenuo({ root: createTenuo.devRoot() });
     const session = issuer.session({

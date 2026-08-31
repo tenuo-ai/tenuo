@@ -45,12 +45,16 @@ Zod (or any host schema) is **valid**. `allow` is **allowed**, AND'd with the
 warrant in Rust, and zero-trust: every argument must be named. `allow` is
 stripped before `registerTool` so it is not advertised. Pass `nonceStore:
 memoryNonceStore()` to reject an exact replayed PoP (opt-in, in-process only).
+PoP v1 is replayable in-window, including approval-gated calls; pass
+`nonceStore` on a gated tool if that approval must be one-use.
 Tenuo denials become `{ isError: true }` with a JSON-RPC body. Handler
 exceptions become `{ isError: true, content: [{ type: "text", text: "Tool execution failed" }] }`
 — the official transport must not see thrown messages. Pass `onHandlerError`
 to observe the original exception server-side. Tools without `inputSchema`
-are registered as `(ctx)` only, matching the official server. `guardTools().register()`
-is the schema-typed path; `guardHandler()` infers args from the callback.
+are registered as `(ctx)` only, matching the official server. `guardHandler()`
+without a schema returns that same `(ctx)` callback so a raw `registerTool`
+wrap typechecks. `guardTools().register()` is the schema-typed path;
+`guardHandler()` with a typed callback infers args from it.
 A nonce-store
 failure returns the constant "Replay store unavailable"; pass
 `onNonceStoreError` for the original cause. Unknown option keys, including

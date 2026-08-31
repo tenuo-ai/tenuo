@@ -9,6 +9,7 @@ import type {
   ServerContext,
   StandardSchemaWithJSON,
   ToolAnnotations,
+  ToolCallback,
 } from "@modelcontextprotocol/server";
 
 export type McpToolResult = CallToolResult | InputRequiredResult;
@@ -88,8 +89,20 @@ export function requestMeta(ctx: unknown): unknown {
 /**
  * Low-level `registerTool` wrapper. Infers args from the callback.
  * Schema-typed registration belongs on `guardTools().register()`.
- * Official no-schema tools invoke this as `(ctx)` only; that is detected at runtime.
+ * Official no-schema tools invoke this as `(ctx)` only; that overload returns
+ * `ToolCallback<undefined>` so `registerTool` accepts it without a cast.
  */
+export function guardHandler(
+  tenuo: Tenuo,
+  name: string,
+  handler: (ctx: GuardCallContext) => McpToolResult | Promise<McpToolResult>,
+): ToolCallback<undefined>;
+export function guardHandler(
+  tenuo: Tenuo,
+  name: string,
+  options: GuardToolOptions,
+  handler: (ctx: GuardCallContext) => McpToolResult | Promise<McpToolResult>,
+): ToolCallback<undefined>;
 export function guardHandler<TArgs extends Record<string, unknown>>(
   tenuo: Tenuo,
   name: string,
@@ -104,9 +117,16 @@ export function guardHandler<TArgs extends Record<string, unknown>>(
 export function guardHandler<TArgs extends Record<string, unknown>>(
   tenuo: Tenuo,
   name: string,
-  optionsOrHandler: GuardToolOptions | GuardHandlerCallback<TArgs>,
-  maybeHandler?: GuardHandlerCallback<TArgs>,
-): (args: TArgs, ctx?: GuardCallContext) => Promise<McpToolResult> {
+  optionsOrHandler:
+    | GuardToolOptions
+    | GuardHandlerCallback<TArgs>
+    | ((ctx: GuardCallContext) => McpToolResult | Promise<McpToolResult>),
+  maybeHandler?:
+    | GuardHandlerCallback<TArgs>
+    | ((ctx: GuardCallContext) => McpToolResult | Promise<McpToolResult>),
+):
+  | ToolCallback<undefined>
+  | ((args: TArgs, ctx?: GuardCallContext) => Promise<McpToolResult>) {
   const options = isGuardOptions(optionsOrHandler) ? optionsOrHandler : undefined;
   const handler = isGuardOptions(optionsOrHandler) ? maybeHandler : optionsOrHandler;
   if (isTaskHandler(optionsOrHandler) || isTaskHandler(maybeHandler)) {
@@ -115,12 +135,12 @@ export function guardHandler<TArgs extends Record<string, unknown>>(
   if (typeof handler !== "function") {
     throw new TenuoConfigurationError("guardHandler() requires a tool handler");
   }
-  return async (argsOrCtx, maybeCtx) => {
+  return (async (argsOrCtx: unknown, maybeCtx?: unknown) => {
     const ctxOnly = isCtxOnlyCall(argsOrCtx, maybeCtx);
     const args = (ctxOnly ? {} : asRecord(argsOrCtx)) as TArgs;
     const ctx = (ctxOnly ? argsOrCtx : maybeCtx) as GuardCallContext;
-    return runGuarded(tenuo, name, options, handler as GuardHandlerCallback, args, ctx, false);
-  };
+    return runGuarded(tenuo, name, options, handler as GuardHandlerCallback, args, ctx, ctxOnly);
+  }) as ToolCallback<undefined>;
 }
 
 /**

@@ -246,7 +246,8 @@ export type McpVerifyOptions = {
   /**
    * Opt-in exact-PoP replay check. `checkAndRecord` may return a Promise
    * (Redis). A rejected Promise fails closed. In-memory stores do not work
-   * across processes.
+   * across processes. PoP v1 is otherwise replayable in-window, including
+   * envelopes that already carry approvals.
    */
   readonly nonceStore?: NonceStore;
   /**

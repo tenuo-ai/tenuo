@@ -294,6 +294,45 @@ describe("tenuo.mcp", () => {
     );
   });
 
+  it("accepts a replayed approved envelope unless nonceStore is set", async () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const session = issuer.session({
+      allow: { read_file: { path: under("/data") } },
+      requireApproval: {
+        approvers: [
+          createTenuo.publicKeyFromHex(APPROVER1_PUB),
+          createTenuo.publicKeyFromHex(APPROVER2_PUB),
+        ],
+        min: 2,
+      },
+    });
+    const args = { path: "/data/q3.pdf" };
+    const call = issuer.mcp.attach(session, "read_file", args, {
+      approvals: [
+        signApproval(session, "read_file", args, APPROVER1_SECRET),
+        signApproval(session, "read_file", args, APPROVER2_SECRET),
+      ],
+    });
+    const leaked = exportSession(session);
+    const server = createTenuo({
+      trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)],
+    });
+
+    await expect(server.mcp.verify(call.name, call.arguments, call._meta)).resolves.toEqual(args);
+    await expect(server.mcp.verify(call.name, call.arguments, call._meta)).resolves.toEqual(args);
+
+    const store = memoryNonceStore();
+    await expect(
+      server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store }),
+    ).resolves.toEqual(args);
+    await expect(
+      server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store }),
+    ).rejects.toMatchObject({
+      code: "TENUO_INVALID_POP",
+      message: expect.stringMatching(/replay/),
+    });
+  });
+
   it("emits receipts on attach and verify without treating them as allow", async () => {
     const { issuer, session, server } = issuerAndServer();
     const attached: string[] = [];
