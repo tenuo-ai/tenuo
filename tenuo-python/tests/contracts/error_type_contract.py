@@ -108,6 +108,7 @@ def _rows() -> list[ErrorTypeContract]:
                     got_need_in_payload=True,
                 ),
                 "temporal": IntegrationExpectation(wire_type="insufficient_approvals"),
+                "nexus": IntegrationExpectation(raises=_exc("InsufficientApprovals")),
                 "autogen": IntegrationExpectation(raises=_exc("InsufficientApprovals")),
                 "langchain": IntegrationExpectation(raises=_exc("InsufficientApprovals")),
                 "guard": IntegrationExpectation(raises=_exc("InsufficientApprovals")),
@@ -129,6 +130,7 @@ def _rows() -> list[ErrorTypeContract]:
                 "langgraph": IntegrationExpectation(returns_tool_message=True),
                 "fastapi": IntegrationExpectation(http_status=401, http_error="warrant_expired"),
                 "temporal": IntegrationExpectation(wire_type="expired"),
+                "nexus": IntegrationExpectation(raises=_exc("ExpiredError")),
             },
         ),
         ErrorTypeContract(
@@ -148,6 +150,7 @@ def _rows() -> list[ErrorTypeContract]:
                 "fastapi": IntegrationExpectation(http_status=403, http_error="authorization_denied"),
                 "mcp": IntegrationExpectation(jsonrpc_code=-32001),
                 "temporal": IntegrationExpectation(wire_type="tool_not_authorized"),
+                "nexus": IntegrationExpectation(raises=_exc("ToolNotAuthorized")),
             },
         ),
         ErrorTypeContract(
@@ -166,6 +169,7 @@ def _rows() -> list[ErrorTypeContract]:
                 "langgraph": IntegrationExpectation(returns_tool_message=True),
                 "fastapi": IntegrationExpectation(http_status=403, http_error="authorization_denied"),
                 "temporal": IntegrationExpectation(wire_type="constraint_violation"),
+                "nexus": IntegrationExpectation(raises=_exc("ConstraintViolation")),
             },
         ),
         ErrorTypeContract(
@@ -179,6 +183,7 @@ def _rows() -> list[ErrorTypeContract]:
                 "langgraph": IntegrationExpectation(returns_tool_message=True),
                 "fastapi": IntegrationExpectation(http_status=403, http_error="authorization_denied"),
                 "temporal": IntegrationExpectation(wire_type="signature_invalid"),
+                "nexus": IntegrationExpectation(raises=_exc("SignatureInvalid")),
             },
         ),
     ]
@@ -210,6 +215,7 @@ INTEGRATION_SURFACES = frozenset(
         "mcp",
         "a2a",
         "temporal",
+        "nexus",
         "autogen",
         "langchain",
         "guard",

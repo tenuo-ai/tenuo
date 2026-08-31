@@ -74,6 +74,7 @@ boundary, even though the Nexus endpoint itself is reachable.
 - read the current workflow warrant, or accept a per-call `warrant=`;
 - require `key_id=` when a per-call warrant is supplied;
 - include the full delegated `warrant_chain`;
+- optionally carry pre-collected `SignedApproval` objects with `approvals=`;
 - sign proof-of-possession over Nexus-specific context; and
 - pass Tenuo material through the Nexus operation `headers=` argument.
 
@@ -87,12 +88,19 @@ The proof input currently binds:
 `tenuo_nexus_headers(...)` is also available as a lower-level escape hatch for
 advanced wiring and tests.
 
+For approval-gated warrants, collect `SignedApproval` objects out of band and
+pass them as `approvals=[...]` on the caller helper. Nexus uses the same
+`x-tenuo-approvals` payload as Temporal activities: a JSON list of base64 CBOR
+`SignedApproval` blobs inside the Nexus string-header envelope.
+
 ### Handler verifier
 
 The handler-side surface verifies `ctx.headers` before user code runs:
 
 - warrant chain roots, signatures, linkage, expiry, and revocation;
 - PoP against the caller's holder key;
+- PoP replay suppression through `TenuoPluginConfig.pop_dedup_store`;
+- pre-supplied approval signatures for approval-gated warrants;
 - service and operation binding;
 - operation input constraints; and
 - Nexus-native unauthorized errors via `tenuo_nexus_operation(...,
@@ -100,6 +108,11 @@ The handler-side surface verifies `ctx.headers` before user code runs:
 
 Authorization failures should raise Nexus-native non-retryable errors so
 Temporal does not retry permanent denials.
+
+Handlers must pass `endpoint=` explicitly. Temporal handler contexts do not
+reliably expose the endpoint name, and Tenuo intentionally refuses to fall back
+to a placeholder endpoint because endpoint names are part of the signed
+security boundary.
 
 The supported APIs are:
 
@@ -130,7 +143,16 @@ Two modes are supported:
 The backing workflow calls `tenuo_bootstrap_nexus_workflow(input.tenuo)` before
 `current_warrant()`, `current_key_id()`, or `tenuo_execute_activity(...)`.
 Both envelope constructors require `workflow_id=` so the bootstrap step can
-reject replay into a different backing workflow.
+reject replay into a different backing workflow. Bootstrap also resolves the
+envelope `key_id` and requires it to match the warrant holder key before the
+workflow can use that key for downstream PoP signing.
+
+Treat the backing workflow as an internal implementation detail of the Nexus
+handler. Do not expose it for direct starts by untrusted clients; ordinary
+workflow input is not a Nexus request boundary. If external clients can start
+the backing workflow directly, they can bypass the Nexus operation verifier and
+should instead be routed through a Nexus endpoint or an authorized workflow
+start helper.
 
 Example preferred shape:
 
@@ -237,10 +259,13 @@ old name.
 
 ### Use workflow ids and conflict policy for async dedupe
 
-Nexus delivery is at-least-once. Tenuo verifies authority, but it does not make
-an arbitrary handler side effect idempotent. For workflow-backed operations,
-derive a stable workflow id from the business request and use Temporal's
-workflow id conflict policy to dedupe retried or duplicated Nexus starts.
+Nexus delivery is at-least-once. Tenuo verifies authority and suppresses exact
+PoP replays through `pop_dedup_store`, but it does not make an arbitrary
+handler side effect idempotent. The default dedup store is process-local; use a
+shared store for multi-worker or multi-namespace deployments. For
+workflow-backed operations, derive a stable workflow id from the business
+request and use Temporal's workflow id conflict policy to dedupe retried or
+duplicated Nexus starts.
 `tenuo_create_nexus_workflow_envelope(...)` and
 `tenuo_forward_nexus_authority(...)` require `workflow_id=` so the envelope is
 bound to that exact backing workflow.

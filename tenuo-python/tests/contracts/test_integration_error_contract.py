@@ -258,6 +258,20 @@ def test_temporal_wire_type_matches_contract(row: ErrorTypeContract) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Temporal Nexus
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("row", _integration_rows("nexus"), ids=_row_ids)
+def test_nexus_preserves_python_auth_exception_contract(row: ErrorTypeContract) -> None:
+    from tenuo.temporal._nexus import _nexus_auth_error_types
+
+    exp = row.integrations["nexus"]
+    assert exp.raises is not None
+    assert issubclass(exp.raises, _nexus_auth_error_types())
+
+
+# ---------------------------------------------------------------------------
 # @guard (decorators._map_result_to_guard_error)
 # ---------------------------------------------------------------------------
 
