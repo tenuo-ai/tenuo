@@ -144,6 +144,20 @@ class TestEnforcementResult:
         with pytest.raises(ConstraintViolation):
             result.raise_if_denied()
 
+    def test_raise_if_denied_constraint_named_tool_is_constraint_violation(self):
+        """error_type is authoritative even when the argument is named tool."""
+        result = EnforcementResult(
+            allowed=False,
+            tool="dispatch",
+            arguments={"tool": "unsafe"},
+            denial_reason="Exact mismatch",
+            constraint_violated="tool",
+            error_type="constraint_violation",
+        )
+        with pytest.raises(ConstraintViolation) as exc_info:
+            result.raise_if_denied()
+        assert exc_info.value.details["field"] == "tool"
+
 
 # =============================================================================
 # DenialPolicy Tests
@@ -517,6 +531,10 @@ class TestEnforceToolCall:
         assert result.allowed is False
         assert result.error_type == "constraint_violation"
         assert result.constraint_violated == "tool"
+
+        with pytest.raises(ConstraintViolation) as exc_info:
+            result.raise_if_denied()
+        assert exc_info.value.details["field"] == "tool"
 
     def test_critical_tool_without_constraints_denied(self, signing_key):
         """Critical tools should require relevant constraints."""

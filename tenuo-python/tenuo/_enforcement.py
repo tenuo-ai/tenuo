@@ -145,12 +145,20 @@ class EnforcementResult:
         if error_type == "invalid_pop":
             raise SignatureInvalid(self.denial_reason or "Invalid proof-of-possession")
 
-        if error_type == "constraint_violation" or self.constraint_violated:
-            # Rust maps missing tool scope to constraint_violation on field "tool".
+        if error_type == "constraint_violation":
+            raise ConstraintViolation(
+                field=self.constraint_violated or "unknown",
+                reason=self.denial_reason or "Constraint violation",
+                value=None,
+            )
+
+        # Legacy results without error_type: a field named "tool" used to mean
+        # missing capability. Prefer error_type when present.
+        if self.constraint_violated:
             if self.constraint_violated == "tool":
                 raise ToolNotAuthorized(tool=self.tool)
             raise ConstraintViolation(
-                field=self.constraint_violated or "unknown",
+                field=self.constraint_violated,
                 reason=self.denial_reason or "Constraint violation",
                 value=None,
             )
