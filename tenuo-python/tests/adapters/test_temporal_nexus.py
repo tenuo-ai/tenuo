@@ -79,6 +79,33 @@ class StaticResolver:
         return self.key
 
 
+class RecordingControlPlane:
+    def __init__(self) -> None:
+        self.allow_events: list[dict[str, Any]] = []
+        self.deny_events: list[dict[str, Any]] = []
+
+    def emit_for_enforcement(
+        self,
+        result: Any,
+        chain_result: Any = None,
+        *,
+        latency_us: int = 0,
+        request_id: Optional[str] = None,
+        warrant_stack_override: Optional[str] = None,
+    ) -> None:
+        event = {
+            "result": result,
+            "chain_result": chain_result,
+            "latency_us": latency_us,
+            "request_id": request_id,
+            "warrant_stack_override": warrant_stack_override,
+        }
+        if result.allowed:
+            self.allow_events.append(event)
+        else:
+            self.deny_events.append(event)
+
+
 class FakeNexusClient:
     endpoint = "billing-prod"
     service_name = "BillingService"
@@ -232,6 +259,91 @@ def test_tenuo_nexus_headers_round_trip_verifies_cross_namespace_operation(
 
     verified = verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
     assert verified.to_bytes() == nexus_warrant.to_bytes()
+
+
+def test_verify_nexus_operation_emits_control_plane_allow(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    control_plane = RecordingControlPlane()
+    ctx = SimpleNamespace(
+        request_id="req-control-plane-allow",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        control_plane=control_plane,
+    )
+
+    verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+    assert len(control_plane.allow_events) == 1
+    entry = control_plane.allow_events[0]
+    assert entry["request_id"] == "req-control-plane-allow"
+    assert entry["chain_result"] is not None
+    assert entry["result"].allowed is True
+    assert entry["result"].tool == nexus_tool_name(
+        "billing-prod", "refund", service="BillingService"
+    )
+    assert entry["result"].arguments == {
+        "order_id": "[REDACTED]",
+        "amount_cents": "[REDACTED]",
+    }
+
+
+def test_verify_nexus_operation_emits_control_plane_deny_before_reraising(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    bad_input = RefundInput("ord_999", 2500)
+    control_plane = RecordingControlPlane()
+    ctx = SimpleNamespace(
+        request_id="req-control-plane-deny",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=bad_input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        control_plane=control_plane,
+    )
+
+    with pytest.raises(ConstraintViolation):
+        verify_nexus_operation(ctx, bad_input, config, endpoint="billing-prod")
+
+    assert len(control_plane.deny_events) == 1
+    entry = control_plane.deny_events[0]
+    assert entry["request_id"] == "req-control-plane-deny"
+    assert entry["warrant_stack_override"] is not None
+    assert entry["result"].allowed is False
+    assert entry["result"].error_type == "constraint_violation"
+    assert entry["result"].arguments == {
+        "order_id": "[REDACTED]",
+        "amount_cents": "[REDACTED]",
+    }
 
 
 def test_verify_nexus_operation_rejects_missing_endpoint(
