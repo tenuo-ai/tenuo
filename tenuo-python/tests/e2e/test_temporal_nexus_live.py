@@ -359,6 +359,7 @@ async def test_live_cross_namespace_nexus_operation_authorizes_headers() -> None
                 ),
                 trusted_roots=[control_key.public_key],
                 activity_fns=[record_refund],
+                nexus_endpoint=endpoint_name,
             )
 
             @nexus_handler.service_handler(service=BillingService)
@@ -558,6 +559,7 @@ async def test_live_nexus_backing_start_can_use_interceptor_bound_headers() -> N
                     }
                 ),
                 trusted_roots=[control_key.public_key],
+                nexus_endpoint=endpoint_name,
             )
             warrant = (
                 Warrant.mint_builder()

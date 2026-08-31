@@ -121,12 +121,21 @@ except ImportError:
 
 # Temporal interceptor base classes — fallback to object when not installed
 _TemporalWorkerInterceptor: Any
+_NexusOperationInboundInterceptor: Any
 try:
     from temporalio.worker import Interceptor as _tw_interceptor
 
     _TemporalWorkerInterceptor = _tw_interceptor
 except ImportError:  # pragma: no cover
     _TemporalWorkerInterceptor = object
+try:
+    from temporalio.worker import (
+        NexusOperationInboundInterceptor as _nx_inbound,
+    )
+
+    _NexusOperationInboundInterceptor = _nx_inbound
+except ImportError:  # pragma: no cover
+    _NexusOperationInboundInterceptor = object
 
 
 # ── Utility helpers ──────────────────────────────────────────────────────
@@ -537,15 +546,10 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
 
         if config.control_plane is None:
             from tenuo.control_plane import get_or_create
-            # NB: we deliberately avoid ``dataclasses.replace(config, ...)``
-            # here: ``replace`` re-runs ``__post_init__``, which would fail
-            # for configs built with ``trusted_roots_provider=`` because
-            # the first post-init has already seeded ``trusted_roots`` from
-            # the provider and the second run would see both fields
-            # populated and raise ``ConfigurationError``. A shallow copy
-            # preserves the already-resolved state.
-            import copy as _copy
-            config = _copy.copy(config)
+            # Mutate the caller's config in place so Nexus verify/decorators
+            # that captured this object see the same control-plane client.
+            # Do not use ``dataclasses.replace``: it re-runs ``__post_init__``
+            # and fails configs built with ``trusted_roots_provider=``.
             config.control_plane = get_or_create()
         self._config = config
         self._version = self._get_version()
@@ -622,6 +626,10 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
             self._version,
         )
 
+    def intercept_nexus_operation(self, next: Any) -> Any:
+        """Authorize every inbound Nexus start before handler code runs."""
+        return TenuoNexusOperationInboundInterceptor(next, self._config)
+
     def workflow_interceptor_class(
         self,
         input: Any,
@@ -634,6 +642,64 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
             {"_config": bound_config},
         )
         return interceptor_cls
+
+
+# ── Nexus Inbound Interceptor ────────────────────────────────────────────
+
+
+class TenuoNexusOperationInboundInterceptor(_NexusOperationInboundInterceptor):
+    """Verify Tenuo headers on every inbound Nexus operation start."""
+
+    def __init__(self, next_interceptor: Any, config: Any) -> None:
+        if _NexusOperationInboundInterceptor is object:
+            self.next = next_interceptor
+        else:
+            super().__init__(next_interceptor)
+        self._config = config
+
+    async def execute_nexus_operation_start(self, input: Any) -> Any:
+        from tenuo.temporal.exceptions import TenuoContextError
+        from tenuo.temporal._nexus import verify_nexus_operation
+
+        endpoint = getattr(self._config, "nexus_endpoint", None)
+        if not endpoint:
+            raise TenuoContextError(
+                "TenuoPluginConfig.nexus_endpoint is required when this worker "
+                "handles Nexus operations. Set it to the endpoint name this "
+                "worker serves so inbound Nexus calls are authorized by default."
+            )
+        warrant = verify_nexus_operation(
+            input.ctx,
+            input.input,
+            self._config,
+            endpoint=endpoint,
+            raise_nexus_error=True,
+        )
+        from tenuo.temporal._nexus import (
+            _ctx_tool_name,
+            _nexus_verified_args,
+            _nexus_verified_request_id,
+            _nexus_verified_tool_name,
+            _nexus_verified_warrant,
+            nexus_input_args,
+        )
+
+        request_id = getattr(input.ctx, "request_id", None)
+        request_token = _nexus_verified_request_id.set(
+            str(request_id) if request_id is not None else None
+        )
+        warrant_token = _nexus_verified_warrant.set(warrant)
+        tool_token = _nexus_verified_tool_name.set(
+            _ctx_tool_name(input.ctx, endpoint, None, None)
+        )
+        args_token = _nexus_verified_args.set(nexus_input_args(input.input))
+        try:
+            return await self.next.execute_nexus_operation_start(input)
+        finally:
+            _nexus_verified_args.reset(args_token)
+            _nexus_verified_tool_name.reset(tool_token)
+            _nexus_verified_request_id.reset(request_token)
+            _nexus_verified_warrant.reset(warrant_token)
 
 
 # ── Activity Inbound Interceptor ─────────────────────────────────────────

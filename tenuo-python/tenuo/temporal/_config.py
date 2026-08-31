@@ -219,16 +219,28 @@ class TenuoPluginConfig:
     Opt-in strict Nexus PoP replay suppression.
 
     When enabled, ``verify_nexus_operation()`` rejects reuse of the same PoP
-    signature under a different Nexus ``request_id``. This detects captured
-    header replay across the Nexus boundary while allowing Temporal redelivery
-    of the same request id.
+    signature under a different handler namespace, task queue, or Nexus
+    ``request_id``. This detects captured header replay across the Nexus
+    boundary while allowing Temporal redelivery of the same request on the
+    same handler worker identity.
 
     Default is ``False`` because the core PoP signature can be identical for
     repeated identical calls inside the PoP time bucket, so strict suppression
     can reject legitimate rapid repeats. High-value Nexus operations should
     prefer workflow-backed idempotency via stable workflow ids/conflict policy;
     enable this flag only when duplicate identical operation/input calls within
-    the PoP bucket are not expected or are acceptable to reject.
+    the PoP bucket are not expected or are acceptable to reject. Multi-worker
+    deployments that enable this flag must also set ``pop_dedup_store`` to a
+    shared owner-aware backend.
+    """
+
+    nexus_endpoint: Optional[str] = None
+    """
+    Endpoint name this worker serves for inbound Nexus authorization.
+
+    Required when the worker handles Nexus operations. ``TenuoWorkerInterceptor``
+    verifies every Nexus start against this endpoint by default so a missing
+    ``@tenuo_nexus_operation`` decorator cannot skip authorization.
     """
 
     authorized_signals: Optional[List[str]] = None
