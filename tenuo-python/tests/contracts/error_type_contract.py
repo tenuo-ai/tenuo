@@ -137,8 +137,7 @@ def _rows() -> list[ErrorTypeContract]:
             error_type="tool_not_allowed",
             core_exception=_exc("ToolNotAuthorized"),
             result_factory=lambda: make_denial(
-                "constraint_violation",
-                constraint_violated="tool",
+                "tool_not_allowed",
                 denial_reason="warrant does not authorize tool 'read_file'",
                 tool="read_file",
             ),
