@@ -48,6 +48,10 @@ Checklist for moving past local demos (each item stands alone; links go deeper):
 6. **Authorized child workflows** — Use only `tenuo_execute_child_workflow()`; the stock `workflow.execute_child_workflow()` does not propagate warrant headers.
 7. **Replicas and PoP replay** — If more than one worker replica can observe the same first activity attempt, use a shared [`PopDedupStore`](#pop-replay-protection); if Temporal retries span longer than your PoP time window, tune [`retry_pop_max_windows`](#temporal-activity-retries-and-pop-time-drift).
 8. **Issuer rotation without full redeploy** — Use a [`trusted_roots_provider`](#trusted-root-rotation) with a short refresh interval so new issuer keys propagate quickly.
+9. **Cross-namespace Nexus calls** — For Temporal Nexus, use the dedicated
+   [`Temporal Nexus Authorization`](./temporal-nexus.md) helpers. Nexus has
+   different retry and idempotency semantics from Activities, so do not assume
+   Activity replay controls are enough at a Nexus Endpoint boundary.
 
 ---
 
@@ -61,6 +65,7 @@ All documented symbols can be imported from the top-level package (`from tenuo.t
 | `tenuo.temporal._resolvers` | `KeyResolver`, `EnvKeyResolver`, `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, `GCPSecretManagerKeyResolver`, `CompositeKeyResolver` |
 | `tenuo.temporal._headers` | `tenuo_headers` |
 | `tenuo.temporal._workflow` | `execute_workflow_authorized`, `start_workflow_authorized`, `tenuo_execute_activity`, `tenuo_execute_child_workflow`, `AuthorizedWorkflow`, `current_warrant`, `current_key_id`, `workflow_grant`, `set_activity_approvals` |
+| `tenuo.temporal._nexus` | `tenuo_execute_nexus_operation`, `tenuo_start_nexus_operation`, `tenuo_nexus_headers`, `verify_nexus_operation`, `tenuo_nexus_operation`, `tenuo_forward_nexus_authority`, `tenuo_create_nexus_workflow_envelope`, `tenuo_bootstrap_nexus_workflow`, `tenuo_nexus_signal_workflow`, `tenuo_nexus_query_workflow`, `tenuo_nexus_execute_update`, `tenuo_nexus_start_update`, `nexus_tool_name`, `TenuoNexusWorkflowEnvelope` |
 | `tenuo.temporal._client` | `TenuoClientInterceptor`, `TenuoWarrantContextPropagator`, `tenuo_warrant_context` |
 | `tenuo.temporal._interceptors` | `TenuoWorkerInterceptor` |
 | `tenuo.temporal._dedup` | `PopDedupStore`, `InMemoryPopDedupStore` |
@@ -594,6 +599,14 @@ For strict Nexus replay suppression, a custom shared store should also expose
 activity_name)`. Nexus uses the PoP signature as `dedup_key` and the Nexus
 `request_id` as `owner_id`, allowing same-request redelivery while rejecting
 the same captured PoP on a different request.
+
+Unlike Activities, Nexus handlers may be invoked more than once for the same
+operation before the handler's workflow-id conflict policy or business
+idempotency runs. Keep workflow-backed Nexus operations idempotent with stable
+business workflow IDs, and give synchronous Nexus handlers their own
+idempotency key if duplicate side effects matter. See
+[`Temporal Nexus Authorization`](./temporal-nexus.md#use-workflow-ids-and-conflict-policy-for-async-dedupe)
+for the Nexus-specific guidance.
 
 ### Trusted root rotation
 
