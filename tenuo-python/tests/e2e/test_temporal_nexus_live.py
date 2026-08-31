@@ -77,11 +77,21 @@ class BackingRefundInput:
     tenuo: Any
 
 
+@dataclass
+class HeaderProbeInput:
+    message: str
+
+
 @nexusrpc.service
 class BillingService:
     refund: nexusrpc.Operation[RefundInput, RefundOutput]
     forwarded_refund: nexusrpc.Operation[RefundInput, RefundOutput]
     minted_refund: nexusrpc.Operation[RefundInput, RefundOutput]
+
+
+@nexusrpc.service
+class HeaderProbeService:
+    header_probe: nexusrpc.Operation[HeaderProbeInput, str]
 
 
 @activity.defn
@@ -119,6 +129,28 @@ class NexusCallerWorkflow:
             schedule_to_close_timeout=timedelta(seconds=10),
         )
         return result.status
+
+
+@workflow.defn
+class NexusRawCallerWorkflow:
+    @workflow.run
+    async def run(self, endpoint: str, message: str) -> str:
+        nexus_client = workflow.create_nexus_client(
+            service=HeaderProbeService,
+            endpoint=endpoint,
+        )
+        return await nexus_client.execute_operation(
+            HeaderProbeService.header_probe,
+            HeaderProbeInput(message=message),
+            schedule_to_close_timeout=timedelta(seconds=10),
+        )
+
+
+@workflow.defn
+class HeaderProbeWorkflow:
+    @workflow.run
+    async def run(self, input: HeaderProbeInput) -> str:
+        return f"{current_key_id()}:{input.message}"
 
 
 @workflow.defn
@@ -448,6 +480,113 @@ async def test_live_cross_namespace_nexus_operation_authorizes_headers() -> None
             assert result == "refunded:ord_123"
             assert forwarded_result == "forwarded:agent1:ord_123"
             assert minted_result == "recorded:ord_123:2500"
+        finally:
+            try:
+                await _delete_nexus_endpoint(env.client, endpoint_id, endpoint_version)
+            except Exception:
+                pass
+
+
+@pytest.mark.temporal_live
+@pytest.mark.asyncio
+async def test_live_nexus_backing_start_can_use_interceptor_bound_headers() -> None:
+    control_key = SigningKey.generate()
+    handler_key = SigningKey.generate()
+
+    suffix = uuid.uuid4().hex[:10]
+    caller_namespace = f"tenuo-caller-{suffix}"
+    handler_namespace = f"tenuo-handler-{suffix}"
+    caller_task_queue = f"tenuo-caller-tq-{suffix}"
+    handler_task_queue = f"tenuo-handler-tq-{suffix}"
+    endpoint_name = f"tenuo-nexus-{suffix}"
+    caller_workflow_id = f"tenuo-nexus-header-probe-{suffix}"
+
+    async with await WorkflowEnvironment.start_local() as env:
+        try:
+            await _register_namespace(env.client, caller_namespace)
+            await _register_namespace(env.client, handler_namespace)
+            endpoint_id, endpoint_version = await _create_nexus_endpoint(
+                env.client,
+                endpoint_name=endpoint_name,
+                handler_namespace=handler_namespace,
+                handler_task_queue=handler_task_queue,
+            )
+        except Exception as exc:
+            _nexus_supported_or_skip(exc)
+
+        try:
+            target = env.client.service_client.config.target_host
+            caller_client = await Client.connect(target, namespace=caller_namespace)
+            handler_headers = TenuoClientInterceptor()
+            handler_client = await Client.connect(
+                target,
+                namespace=handler_namespace,
+                interceptors=[handler_headers],  # type: ignore[list-item]
+            )
+            config = TenuoPluginConfig(
+                key_resolver=DictKeyResolver({"handler1": handler_key}),
+                trusted_roots=[control_key.public_key],
+            )
+
+            @nexus_handler.service_handler(service=HeaderProbeService)
+            class HeaderProbeServiceHandler:
+                @temporal_nexus.workflow_run_operation
+                async def header_probe(
+                    self,
+                    ctx: temporal_nexus.WorkflowRunOperationContext,
+                    input: HeaderProbeInput,
+                ) -> temporal_nexus.WorkflowHandle[str]:
+                    workflow_id = f"header-probe-{ctx.request_id}"
+                    warrant = (
+                        Warrant.mint_builder()
+                        .holder(handler_key.public_key)
+                        .capability(
+                            "HeaderProbeWorkflow",
+                            message=Exact(input.message),
+                        )
+                        .ttl(3600)
+                        .mint(control_key)
+                    )
+                    handler_headers.set_headers_for_workflow(
+                        workflow_id,
+                        tenuo_headers(warrant, "handler1"),
+                    )
+                    return await ctx.start_workflow(
+                        HeaderProbeWorkflow.run,
+                        input,
+                        id=workflow_id,
+                    )
+
+            sandbox_runner = SandboxedWorkflowRunner(
+                restrictions=SandboxRestrictions.default.with_passthrough_modules(
+                    "tenuo",
+                    "tenuo_core",
+                )
+            )
+
+            async with Worker(
+                handler_client,
+                task_queue=handler_task_queue,
+                workflows=[HeaderProbeWorkflow],
+                interceptors=[TenuoWorkerInterceptor(config, task_queue=handler_task_queue)],
+                workflow_runner=sandbox_runner,
+                nexus_service_handlers=[HeaderProbeServiceHandler()],
+            ), Worker(
+                caller_client,
+                task_queue=caller_task_queue,
+                workflows=[NexusRawCallerWorkflow],
+                workflow_runner=sandbox_runner,
+            ):
+                result = await caller_client.execute_workflow(
+                    NexusRawCallerWorkflow.run,
+                    args=[endpoint_name, "hello"],
+                    id=caller_workflow_id,
+                    task_queue=caller_task_queue,
+                    execution_timeout=timedelta(seconds=20),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+
+            assert result == "handler1:hello"
         finally:
             try:
                 await _delete_nexus_endpoint(env.client, endpoint_id, endpoint_version)
