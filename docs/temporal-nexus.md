@@ -374,6 +374,10 @@ fulfillment to release only the resulting credit.
 That keeps the chain auditable and prevents a warrant intended for one team or
 resource from becoming ambient authority across the whole platform.
 
+For a customer-facing walkthrough of these scenarios, including cross-team,
+multi-hop, and cross-organization examples, see
+[Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md).
+
 ## Enterprise operating guidance
 
 ### Endpoint names are part of the security boundary
@@ -480,4 +484,5 @@ against the decoded argument shape.
 
 - [Temporal Nexus overview](https://docs.temporal.io/nexus)
 - [Temporal Python Nexus feature guide](https://docs.temporal.io/develop/python/nexus/feature-guide)
+- [Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md)
 - [Tenuo Temporal integration](./temporal.md)
