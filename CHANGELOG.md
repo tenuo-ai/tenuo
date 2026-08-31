@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Temporal Nexus authorization design preview.**
+  Added a cross-namespace Nexus design note that scopes the caller helper,
+  handler verifier, workflow-backed operation questions, and phased path toward
+  carrying delegated Tenuo authority across Nexus endpoints.
 - **Temporal per-Activity warrant overrides.**
   `tenuo_execute_activity(..., warrant=..., key_id=...)` now applies a
   task-local warrant to one dispatch, including the active delegation chain.
