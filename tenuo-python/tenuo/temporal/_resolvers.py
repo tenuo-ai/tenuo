@@ -34,6 +34,13 @@ class KeyResolver(ABC):
     with a synchronous implementation (e.g. read from a pre-loaded in-memory
     cache populated before the worker starts).  ``EnvKeyResolver`` does this
     via ``preload_keys()``.
+
+    For workflow-backed Nexus operations,
+    ``tenuo_bootstrap_nexus_workflow()`` also compares the resolved signer's
+    ``.public_key`` to the envelope warrant holder before allowing the workflow
+    to sign downstream PoPs. Custom KMS/HSM signer wrappers used with Nexus
+    bootstrap must therefore expose a ``public_key`` object with ``to_bytes()``
+    matching the warrant holder key.
     """
 
     @abstractmethod

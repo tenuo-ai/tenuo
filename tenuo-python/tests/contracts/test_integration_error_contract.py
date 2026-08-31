@@ -263,12 +263,76 @@ def test_temporal_wire_type_matches_contract(row: ErrorTypeContract) -> None:
 
 
 @pytest.mark.parametrize("row", _integration_rows("nexus"), ids=_row_ids)
-def test_nexus_preserves_python_auth_exception_contract(row: ErrorTypeContract) -> None:
-    from tenuo.temporal._nexus import _nexus_auth_error_types
+def test_nexus_preserves_python_auth_exception_contract(
+    row: ErrorTypeContract,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tenuo  # noqa: F401 - installs Warrant.mint_builder()
+    from types import SimpleNamespace
+
+    from tenuo.temporal._config import TenuoPluginConfig
+    from tenuo.temporal._nexus import (
+        nexus_tool_name,
+        tenuo_nexus_headers,
+        verify_nexus_operation,
+    )
+    from tenuo_core import Exact, SigningKey, Warrant
 
     exp = row.integrations["nexus"]
     assert exp.raises is not None
-    assert issubclass(exp.raises, _nexus_auth_error_types())
+
+    root_key = SigningKey.generate()
+    holder_key = SigningKey.generate()
+    tool_name = nexus_tool_name("billing-prod", "refund", service="BillingService")
+    warrant = (
+        Warrant.mint_builder()
+        .holder(holder_key.public_key)
+        .capability(tool_name, order_id=Exact("ord_123"))
+        .ttl(3600)
+        .mint(root_key)
+    )
+    input = {"order_id": "ord_123"}
+    ctx = SimpleNamespace(
+        request_id=f"req-contract-{row.error_type}",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            warrant,
+            "holder-key",
+            holder_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=MagicMock(),
+        trusted_roots=[root_key.public_key],
+    )
+
+    class RaisingAuthorizer:
+        def authorize_one(self, *args: object, **kwargs: object) -> None:
+            raise _contract_exception_instance(row)
+
+    monkeypatch.setattr(
+        "tenuo.temporal._nexus._build_authorizer",
+        lambda *args, **kwargs: RaisingAuthorizer(),
+    )
+
+    with pytest.raises(exp.raises):
+        verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+
+
+def _contract_exception_instance(row: ErrorTypeContract) -> Exception:
+    exc = row.core_exception
+    if row.error_type == "insufficient_approvals":
+        return exc(required=2, received=1)
+    if row.error_type == "tool_not_allowed":
+        return exc(tool="transfer")
+    if row.error_type == "constraint_violation":
+        return exc(field="amount", reason="bad", value=999)
+    return exc("contract sweep")
 
 
 # ---------------------------------------------------------------------------

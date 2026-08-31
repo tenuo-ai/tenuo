@@ -99,7 +99,8 @@ The handler-side surface verifies `ctx.headers` before user code runs:
 
 - warrant chain roots, signatures, linkage, expiry, and revocation;
 - PoP against the caller's holder key;
-- PoP replay suppression through `TenuoPluginConfig.pop_dedup_store`;
+- optional strict PoP replay suppression through
+  `TenuoPluginConfig.nexus_pop_replay_protection`;
 - pre-supplied approval signatures for approval-gated warrants;
 - service and operation binding;
 - operation input constraints; and
@@ -259,13 +260,19 @@ old name.
 
 ### Use workflow ids and conflict policy for async dedupe
 
-Nexus delivery is at-least-once. Tenuo verifies authority and suppresses exact
-PoP replays through `pop_dedup_store`, but it does not make an arbitrary
-handler side effect idempotent. The default dedup store is process-local; use a
-shared store for multi-worker or multi-namespace deployments. For
-workflow-backed operations, derive a stable workflow id from the business
-request and use Temporal's workflow id conflict policy to dedupe retried or
-duplicated Nexus starts.
+Nexus delivery is at-least-once. Tenuo verifies authority, but replay
+suppression is not enabled by default because identical repeat calls can share
+the same PoP signature inside the core PoP time bucket. If you enable
+`TenuoPluginConfig.nexus_pop_replay_protection=True`, Tenuo rejects a captured
+PoP signature reused under a different Nexus `request_id`, while allowing the
+same signature with the same `request_id` as a Temporal redelivery. Use a
+shared owner-aware `pop_dedup_store` for multi-worker or multi-namespace
+deployments.
+
+Replay suppression still does not make arbitrary handler side effects
+idempotent. For workflow-backed operations, derive a stable workflow id from
+the business request and use Temporal's workflow id conflict policy to dedupe
+retried or duplicated Nexus starts.
 `tenuo_create_nexus_workflow_envelope(...)` and
 `tenuo_forward_nexus_authority(...)` require `workflow_id=` so the envelope is
 bound to that exact backing workflow.

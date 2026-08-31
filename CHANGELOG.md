@@ -38,9 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Temporal Nexus hardening.** Nexus handler verification now requires an
   explicit endpoint, rejects caller-supplied reserved headers
   case-insensitively, preserves typed Tenuo authorization exceptions for
-  Python callers, accepts pre-supplied approval signatures, checks PoP replay
-  through `pop_dedup_store`, and binds workflow-envelope `key_id` values to the
-  warrant holder before backing workflows can sign downstream PoPs.
+  Python callers, accepts pre-supplied approval signatures, adds opt-in strict
+  PoP replay checks with Nexus `request_id` scoping, and binds
+  workflow-envelope `key_id` values to the warrant holder before backing
+  workflows can sign downstream PoPs.
 - **Temporal per-Activity warrant overrides.**
   `tenuo_execute_activity(..., warrant=..., key_id=...)` now applies a
   task-local warrant to one dispatch, including the active delegation chain.

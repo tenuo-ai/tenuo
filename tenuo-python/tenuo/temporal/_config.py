@@ -214,6 +214,23 @@ class TenuoPluginConfig:
     ``PopDedupStore``.
     """
 
+    nexus_pop_replay_protection: bool = False
+    """
+    Opt-in strict Nexus PoP replay suppression.
+
+    When enabled, ``verify_nexus_operation()`` rejects reuse of the same PoP
+    signature under a different Nexus ``request_id``. This detects captured
+    header replay across the Nexus boundary while allowing Temporal redelivery
+    of the same request id.
+
+    Default is ``False`` because the core PoP signature can be identical for
+    repeated identical calls inside the PoP time bucket, so strict suppression
+    can reject legitimate rapid repeats. High-value Nexus operations should
+    prefer workflow-backed idempotency via stable workflow ids/conflict policy;
+    enable this flag only when duplicate identical operation/input calls within
+    the PoP bucket are not expected or are acceptable to reject.
+    """
+
     authorized_signals: Optional[List[str]] = None
     """
     When set, only signals whose name is in this list are accepted.
