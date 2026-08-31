@@ -53,6 +53,11 @@ The `billing-namespace` handler verifies the Tenuo warrant before performing
 the refund:
 
 ```python
+config = TenuoPluginConfig(
+    ...,
+    nexus_endpoint="billing-prod",
+)
+
 class BillingServiceHandler:
     @tenuo_nexus_operation(config, endpoint="billing-prod")
     async def refund(self, ctx, input: RefundInput) -> RefundOutput:
@@ -102,6 +107,12 @@ pass them as `approvals=[...]` on the caller helper. Nexus uses the same
 
 ### Handler verifier
 
+`TenuoWorkerInterceptor` authorizes inbound Nexus starts by default. Set
+`TenuoPluginConfig.nexus_endpoint` to the endpoint name this worker serves.
+A missing `@tenuo_nexus_operation` decorator can no longer skip authorization
+on a Tenuo worker. The decorator remains useful for tests and for making the
+endpoint explicit in handler source.
+
 The handler-side surface verifies `ctx.headers` before user code runs:
 
 - warrant chain roots, signatures, linkage, expiry, and revocation;
@@ -117,12 +128,13 @@ The handler-side surface verifies `ctx.headers` before user code runs:
 Authorization failures should raise Nexus-native non-retryable errors so
 Temporal does not retry permanent denials.
 
-Handlers must pass `endpoint=` explicitly so the signed tool string is stable
-and visible in application code. When the installed Temporal SDK exposes the
-live handler endpoint, Tenuo cross-checks it against the explicit value and
-rejects mismatches instead of accepting warrants scoped to the wrong endpoint.
-Tenuo intentionally refuses to fall back to a placeholder endpoint because
-endpoint names are part of the signed security boundary.
+Set `TenuoPluginConfig.nexus_endpoint` (and pass the same value as
+`endpoint=` on helpers) so the signed tool string is stable. When the
+installed Temporal SDK exposes the live handler endpoint, Tenuo cross-checks
+it against the configured value and rejects mismatches instead of accepting
+warrants scoped to the wrong endpoint. Tenuo intentionally refuses to fall
+back to a placeholder endpoint because endpoint names are part of the signed
+security boundary.
 
 The supported APIs are:
 
@@ -179,10 +191,11 @@ Three modes are supported:
   migration, or cases where making bootstrap explicit in the workflow input is
   desirable.
 
-The ambient helper requires a `TenuoClientInterceptor` installed on the handler
-namespace client. If `ctx.start_workflow(...)` fails before the interceptor
-consumes the pending header binding, Tenuo discards that binding so stale
-authority does not sit in memory until TTL eviction.
+The ambient helper requires the `TenuoClientInterceptor` instance installed on
+the handler namespace client. After a successful `ctx.start_workflow(...)`,
+Tenuo fails closed if that interceptor did not consume the pending header
+binding. If start fails before consume, Tenuo discards only the matching
+binding so a concurrent rebound of the same `workflow_id` stays intact.
 
 Envelope-backed workflows call `tenuo_bootstrap_nexus_workflow(input.tenuo)`
 before `current_warrant()`, `current_key_id()`, or
@@ -466,7 +479,30 @@ Tenuo normalizes the decoded Nexus operation input before checking warrant
 constraints. Python-to-Python callers can usually rely on dataclass or mapping
 field names. Polyglot services should define explicit JSON or protobuf field
 names and keep those names stable, because warrant constraints are written
-against the decoded argument shape.
+against the decoded argument shape. Non-Python callers must send the same
+`x-tenuo-*` headers that `tenuo_nexus_headers(...)` emits, including
+`x-tenuo-tool-name` and `x-tenuo-arg-keys`.
+
+## Production checklist
+
+Ship a Tenuo Nexus worker only when all of these are true:
+
+- `TenuoPluginConfig.nexus_endpoint` is set to the endpoint this worker serves.
+- The worker is constructed with `TenuoWorkerInterceptor` or
+  `TenuoTemporalPlugin`, so inbound Nexus starts are authorized by default.
+- Backing workflow starts use `tenuo_start_nexus_workflow(...)` with the
+  `TenuoClientInterceptor` instance installed on the handler client.
+- Backing workflows are not startable by untrusted clients.
+- `control_plane` is set, or you rely on the interceptor to attach
+  `get_or_create()` to the same config object used by verify/decorators.
+- `audit_callback` is set if you need in-process Temporal audit events for
+  Nexus allow/deny (control-plane emission is not a substitute).
+- Multi-worker fleets that enable `nexus_pop_replay_protection=True` also set
+  a shared owner-aware `pop_dedup_store`. Otherwise prefer stable backing
+  `workflow_id` values and Temporal conflict policy for at-least-once delivery.
+- Polyglot callers share the same canonical tool string
+  (`nexus:<endpoint>:<service>:<operation>`) and the same top-level input
+  field names the warrant constrains.
 
 ## Phased implementation
 
@@ -492,8 +528,9 @@ against the decoded argument shape.
      the envelope into normal Tenuo workflow context.
 
 4. **Production rollout guide**
-   - Cover endpoint naming, namespace boundaries, revocation providers, trusted
-     roots, operation naming, input normalization, retries, and observability.
+   - Covered above: interceptor-default Nexus authorization, shared
+     control-plane/audit wiring, ambient backing starts, endpoint naming,
+     replay vs workflow-id idempotency, and polyglot header contracts.
 
 5. **Enterprise router helpers**
    - Add first-class helpers for Nexus handlers that authorize the incoming
@@ -502,16 +539,11 @@ against the decoded argument shape.
 
 ## Open questions
 
-- Should Nexus PoP bind the endpoint name only, or endpoint + resolved handler
-  namespace/task queue when available?
-- Should operation constraints use the service contract operation name, the
-  Python handler method name, or an explicit Tenuo tool mapping?
-- Should the workflow envelope grow an additional handler signature over the
-  target workflow binding, or is mandatory `workflow_id` binding plus
-  Temporal's handler-created input boundary sufficient for the first
-  surface?
-- Should a denied Nexus operation be represented as `UNAUTHORIZED` or as a
-  Tenuo-specific non-retryable operation error with structured details?
+- Should Nexus PoP later also bind the resolved handler namespace or task
+  queue, or is the explicit endpoint name enough for this surface?
+- v1 decisions already locked: tool names use
+  `nexus:<endpoint>:<service>:<operation>`; ambient header starts are preferred
+  over envelopes; handler denials use Nexus `UNAUTHORIZED`.
 
 ## References
 

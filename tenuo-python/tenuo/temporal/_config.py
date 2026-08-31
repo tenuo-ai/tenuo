@@ -228,7 +228,18 @@ class TenuoPluginConfig:
     can reject legitimate rapid repeats. High-value Nexus operations should
     prefer workflow-backed idempotency via stable workflow ids/conflict policy;
     enable this flag only when duplicate identical operation/input calls within
-    the PoP bucket are not expected or are acceptable to reject.
+    the PoP bucket are not expected or are acceptable to reject. Multi-worker
+    deployments that enable this flag must also set ``pop_dedup_store`` to a
+    shared owner-aware backend.
+    """
+
+    nexus_endpoint: Optional[str] = None
+    """
+    Endpoint name this worker serves for inbound Nexus authorization.
+
+    Required when the worker handles Nexus operations. ``TenuoWorkerInterceptor``
+    verifies every Nexus start against this endpoint by default so a missing
+    ``@tenuo_nexus_operation`` decorator cannot skip authorization.
     """
 
     authorized_signals: Optional[List[str]] = None

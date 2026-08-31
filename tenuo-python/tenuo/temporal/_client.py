@@ -163,6 +163,19 @@ class TenuoClientInterceptor(_TemporalClientInterceptor):
         with self._lock:
             return self._headers_by_workflow_id.pop(workflow_id, None) is not None
 
+    def pending_headers_match(
+        self,
+        workflow_id: str,
+        headers: Dict[str, bytes],
+    ) -> bool:
+        """Return True when *workflow_id* still has pending headers equal to *headers*."""
+        with self._lock:
+            existing = self._headers_by_workflow_id.get(workflow_id)
+            if existing is None:
+                return False
+            existing_headers, _inserted_at = existing
+            return existing_headers == headers
+
     def discard_headers_for_workflow_if_match(
         self,
         workflow_id: str,

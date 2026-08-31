@@ -19,6 +19,10 @@ from tenuo_core import Exact, Range, SigningKey, Warrant, py_compute_request_has
 
 from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
 from tenuo.temporal._client import TenuoClientInterceptor  # noqa: E402
+from tenuo.temporal._interceptors import (  # noqa: E402
+    TenuoNexusOperationInboundInterceptor,
+    TenuoWorkerInterceptor,
+)
 from tenuo.temporal._constants import (  # noqa: E402
     TENUO_ARG_KEYS_HEADER,
     TENUO_KEY_ID_HEADER,
@@ -140,6 +144,7 @@ class FakeNexusWorkflowRunContext:
         operation: str = "refund",
         fail_start: bool = False,
         on_start: Optional[Callable[[], None]] = None,
+        consume_interceptor: Any = None,
     ) -> None:
         self.request_id = request_id
         self.service = service
@@ -147,6 +152,7 @@ class FakeNexusWorkflowRunContext:
         self.headers = headers
         self.fail_start = fail_start
         self.on_start = on_start
+        self.consume_interceptor = consume_interceptor
         self.start_calls: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
 
     async def start_workflow(self, workflow_run_fn: Any, *args: Any, **kwargs: Any) -> str:
@@ -155,6 +161,9 @@ class FakeNexusWorkflowRunContext:
             self.on_start()
         if self.fail_start:
             raise RuntimeError("start failed")
+        workflow_id = kwargs.get("id")
+        if self.consume_interceptor is not None and workflow_id:
+            self.consume_interceptor.discard_headers_for_workflow(workflow_id)
         return "workflow-handle"
 
 
@@ -1459,6 +1468,7 @@ async def test_start_nexus_workflow_binds_headers_and_starts_backing_workflow(
         .mint(root_key)
     )
     client_interceptor = TenuoClientInterceptor()
+    ctx.consume_interceptor = client_interceptor
 
     result = await tenuo_start_nexus_workflow(
         ctx,
@@ -1481,8 +1491,7 @@ async def test_start_nexus_workflow_binds_headers_and_starts_backing_workflow(
             {"id": "refund-wf-ambient"},
         )
     ]
-    bound_headers = client_interceptor._headers_by_workflow_id["refund-wf-ambient"][0]
-    assert bound_headers[TENUO_KEY_ID_HEADER] == b"handler-key"
+    assert "refund-wf-ambient" not in client_interceptor._headers_by_workflow_id
 
 
 async def test_start_nexus_workflow_does_not_start_when_nexus_verification_fails(
@@ -1634,6 +1643,236 @@ async def test_start_nexus_workflow_does_not_discard_newer_rebound_headers(
 
     rebound_headers = client_interceptor._headers_by_workflow_id["refund-wf-rebound"][0]
     assert rebound_headers == newer_headers
+
+
+async def test_start_nexus_workflow_rejects_unconsumed_pending_headers(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    handler_key = SigningKey.generate()
+    input = RefundInput("ord_123", 2500)
+    ctx = FakeNexusWorkflowRunContext(
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        )
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+    workflow_warrant = (
+        Warrant.mint_builder()
+        .holder(handler_key.public_key)
+        .capability("RefundWorkflow", order_id=Exact("ord_123"))
+        .ttl(3600)
+        .mint(root_key)
+    )
+    client_interceptor = TenuoClientInterceptor()
+
+    with pytest.raises(TenuoContextError, match="did not consume pending headers"):
+        await tenuo_start_nexus_workflow(
+            ctx,
+            input,
+            config,
+            client_interceptor,
+            "RefundWorkflow.run",
+            workflow_id="refund-wf-wrong-interceptor",
+            workflow_warrant=workflow_warrant,
+            workflow_key_id="handler-key",
+            endpoint="billing-prod",
+        )
+
+    assert "refund-wf-wrong-interceptor" not in client_interceptor._headers_by_workflow_id
+
+
+def test_worker_interceptor_wires_control_plane_on_shared_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = object()
+    monkeypatch.setattr("tenuo.control_plane.get_or_create", lambda: sentinel)
+    root_key = SigningKey.generate()
+    config = TenuoPluginConfig(
+        signing_key=root_key,
+        trusted_roots=[root_key.public_key],
+    )
+    assert config.control_plane is None
+
+    interceptor = TenuoWorkerInterceptor(config)
+
+    assert interceptor._config is config
+    assert config.control_plane is sentinel
+
+
+def test_verify_nexus_operation_emits_audit_callback_on_allow_and_deny(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    events: list[Any] = []
+    input = RefundInput("ord_123", 2500)
+    allow_ctx = SimpleNamespace(
+        request_id="req-audit-allow",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    allow_config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        audit_callback=events.append,
+    )
+
+    verify_nexus_operation(allow_ctx, input, allow_config, endpoint="billing-prod")
+
+    deny_ctx = SimpleNamespace(
+        request_id="req-audit-deny",
+        service="BillingService",
+        operation="refund",
+        headers=allow_ctx.headers,
+    )
+    deny_config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        audit_callback=events.append,
+    )
+    with pytest.raises(SignatureInvalid):
+        verify_nexus_operation(
+            deny_ctx,
+            RefundInput("ord_999", 2500),
+            deny_config,
+            endpoint="billing-prod",
+        )
+
+    assert [event.decision for event in events] == ["ALLOW", "DENY"]
+    assert events[0].workflow_type == "nexus"
+    assert events[0].tool == "nexus:billing-prod:BillingService:refund"
+
+
+async def test_verify_nexus_operation_skips_duplicate_emit_inside_inbound_interceptor(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    control_plane = RecordingControlPlane()
+    events: list[Any] = []
+    input = RefundInput("ord_123", 2500)
+    ctx = SimpleNamespace(
+        request_id="req-dedup-verify",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        control_plane=control_plane,
+        audit_callback=events.append,
+        nexus_endpoint="billing-prod",
+    )
+    seen: list[Any] = []
+
+    class _Next:
+        async def execute_nexus_operation_start(self, inbound_input: Any) -> Any:
+            seen.append(
+                verify_nexus_operation(
+                    inbound_input.ctx,
+                    inbound_input.input,
+                    config,
+                    endpoint="billing-prod",
+                )
+            )
+            return "ok"
+
+    inbound = TenuoNexusOperationInboundInterceptor(_Next(), config)
+    await inbound.execute_nexus_operation_start(SimpleNamespace(ctx=ctx, input=input))
+
+    assert seen[0].to_bytes() == nexus_warrant.to_bytes()
+    assert len(control_plane.allow_events) == 1
+    assert len(events) == 1
+
+
+async def test_nexus_inbound_interceptor_verifies_before_handler(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    ctx = SimpleNamespace(
+        request_id="req-inbound-interceptor",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        nexus_endpoint="billing-prod",
+    )
+    started: list[Any] = []
+
+    class _Next:
+        async def execute_nexus_operation_start(self, inbound_input: Any) -> str:
+            started.append(inbound_input)
+            return "ok"
+
+    inbound = TenuoNexusOperationInboundInterceptor(_Next(), config)
+    result = await inbound.execute_nexus_operation_start(
+        SimpleNamespace(ctx=ctx, input=input)
+    )
+
+    assert result == "ok"
+    assert len(started) == 1
+
+
+async def test_nexus_inbound_interceptor_requires_endpoint(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    _root_key, agent_key = nexus_keys
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[nexus_keys[0].public_key],
+    )
+    inbound = TenuoNexusOperationInboundInterceptor(SimpleNamespace(), config)
+
+    with pytest.raises(TenuoContextError, match="nexus_endpoint is required"):
+        await inbound.execute_nexus_operation_start(
+            SimpleNamespace(
+                ctx=SimpleNamespace(request_id="req-missing-endpoint"),
+                input=RefundInput("ord_123", 2500),
+            )
+        )
 
 
 def test_bootstrap_nexus_workflow_installs_envelope_headers(

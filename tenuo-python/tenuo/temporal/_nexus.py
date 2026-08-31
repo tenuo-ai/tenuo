@@ -16,6 +16,7 @@ import inspect
 import json
 import logging
 import time
+from contextvars import ContextVar
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 from tenuo.temporal._constants import (
@@ -53,6 +54,14 @@ TENUO_NEXUS_TOOL_HEADER = "x-tenuo-tool-name"
 _TENUO_NEXUS_HEADER_ENCODING_V1 = "base64-v1"
 _TENUO_NEXUS_WORKFLOW_ENVELOPE_VERSION = "tenuo-nexus-workflow-envelope/v1"
 _UNSET = object()
+_nexus_verified_request_id: ContextVar[Optional[str]] = ContextVar(
+    "tenuo_nexus_verified_request_id",
+    default=None,
+)
+_nexus_verified_warrant: ContextVar[Any] = ContextVar(
+    "tenuo_nexus_verified_warrant",
+    default=None,
+)
 
 
 class _NexusEndpointMismatch(TenuoContextError):
@@ -246,6 +255,14 @@ def verify_nexus_operation(
     Returns the verified warrant. When ``raise_nexus_error=True``, failures are
     translated to a Nexus ``HandlerError`` with type ``UNAUTHORIZED``.
     """
+    request_id = getattr(ctx, "request_id", None)
+    cached_request_id = _nexus_verified_request_id.get()
+    if (
+        request_id is not None
+        and cached_request_id == str(request_id)
+        and _nexus_verified_warrant.get() is not None
+    ):
+        return _nexus_verified_warrant.get()
     try:
         return _verify_nexus_operation(
             ctx,
@@ -634,17 +651,18 @@ async def tenuo_start_nexus_workflow(
     client_interceptor.set_headers_for_workflow(workflow_id, workflow_headers)
     try:
         if workflow_input is _UNSET:
-            return await ctx.start_workflow(
+            result = await ctx.start_workflow(
                 workflow_run_fn,
                 id=workflow_id,
                 **start_workflow_kwargs,
             )
-        return await ctx.start_workflow(
-            workflow_run_fn,
-            workflow_input,
-            id=workflow_id,
-            **start_workflow_kwargs,
-        )
+        else:
+            result = await ctx.start_workflow(
+                workflow_run_fn,
+                workflow_input,
+                id=workflow_id,
+                **start_workflow_kwargs,
+            )
     except Exception:
         discard = getattr(
             client_interceptor,
@@ -654,6 +672,21 @@ async def tenuo_start_nexus_workflow(
         if callable(discard):
             discard(workflow_id, workflow_headers)
         raise
+    still_pending = getattr(client_interceptor, "pending_headers_match", None)
+    if callable(still_pending) and still_pending(workflow_id, workflow_headers):
+        discard = getattr(
+            client_interceptor,
+            "discard_headers_for_workflow_if_match",
+            None,
+        )
+        if callable(discard):
+            discard(workflow_id, workflow_headers)
+        raise TenuoContextError(
+            "TenuoClientInterceptor did not consume pending headers for "
+            f"workflow_id={workflow_id!r}. Pass the interceptor instance "
+            "installed on the handler namespace Client, not a new instance."
+        )
+    return result
 
 
 def tenuo_bootstrap_nexus_workflow(envelope: Any) -> None:
@@ -1262,17 +1295,19 @@ def _emit_nexus_control_plane_event(
     chain_result: Optional[Any] = None,
     exc: Optional[BaseException] = None,
 ) -> None:
-    try:
-        control_plane = getattr(config, "control_plane", None)
-        if not control_plane:
-            return
+    latency_s = (time.perf_counter_ns() - start_ns) / 1e9
+    redacted_args = _redact_nexus_args(config, args)
+    request_id = getattr(ctx, "request_id", None)
+    _record_nexus_metrics(config, tool_name, latency_s, exc)
+    _emit_nexus_audit_event(config, ctx, warrant, tool_name, redacted_args, exc)
 
+    control_plane = getattr(config, "control_plane", None)
+    if not control_plane:
+        return
+    try:
         from tenuo._enforcement import EnforcementResult
 
-        latency_us = int((time.perf_counter_ns() - start_ns) / 1000)
-        redacted_args = _redact_nexus_args(config, args)
-        request_id = getattr(ctx, "request_id", None)
-
+        latency_us = int(latency_s * 1e6)
         if exc is None:
             result = EnforcementResult(
                 allowed=True,
@@ -1304,6 +1339,112 @@ def _emit_nexus_control_plane_event(
             "Control plane emission failed for Nexus %s '%s'; audit event lost",
             outcome,
             tool_name,
+            exc_info=True,
+        )
+
+
+def _record_nexus_metrics(
+    config: Any,
+    tool_name: str,
+    latency_s: float,
+    exc: Optional[BaseException],
+) -> None:
+    metrics = getattr(config, "metrics", None)
+    if metrics is None:
+        return
+    try:
+        if exc is None:
+            metrics.record_authorized(
+                tool=tool_name,
+                workflow_type="nexus",
+                latency_seconds=latency_s,
+            )
+        else:
+            metrics.record_denied(
+                tool=tool_name,
+                reason=str(exc),
+                workflow_type="nexus",
+                latency_seconds=latency_s,
+            )
+    except Exception:
+        logger.warning(
+            "Nexus metrics emission failed for '%s'",
+            tool_name,
+            exc_info=True,
+        )
+
+
+def _emit_nexus_audit_event(
+    config: Any,
+    ctx: Any,
+    warrant: Optional[Any],
+    tool_name: str,
+    redacted_args: Dict[str, Any],
+    exc: Optional[BaseException],
+) -> None:
+    callback = getattr(config, "audit_callback", None)
+    if not callback:
+        return
+    allowed = exc is None
+    if allowed and not getattr(config, "audit_allow", True):
+        return
+    if not allowed and not getattr(config, "audit_deny", True):
+        return
+
+    from tenuo.temporal._observability import TemporalAuditEvent
+
+    request_id = str(getattr(ctx, "request_id", "") or "")
+    task_queue = ""
+    try:
+        from temporalio import nexus as temporal_nexus  # type: ignore[import-not-found]
+
+        task_queue = str(getattr(temporal_nexus.info(), "task_queue", "") or "")
+    except Exception:
+        pass
+
+    expires_at = None
+    capabilities: List[str] = []
+    if warrant is not None:
+        expires_fn = getattr(warrant, "expires_at", None)
+        if callable(expires_fn):
+            try:
+                expires_at = expires_fn()
+            except Exception:
+                expires_at = None
+        capabilities = list(getattr(warrant, "tools", None) or [])
+
+    try:
+        from tenuo import __version__ as tenuo_version
+    except ImportError:
+        tenuo_version = "unknown"
+
+    event = TemporalAuditEvent(
+        workflow_id=request_id,
+        workflow_type="nexus",
+        workflow_run_id=request_id,
+        activity_name=tool_name,
+        activity_id=request_id,
+        task_queue=task_queue,
+        decision="ALLOW" if allowed else "DENY",
+        tool=tool_name,
+        arguments=redacted_args,
+        warrant_id=getattr(warrant, "id", None) or "none",
+        warrant_expires_at=expires_at,
+        warrant_capabilities=capabilities,
+        denial_reason=None if allowed else str(exc),
+        constraint_violated=(
+            getattr(exc, "constraint", None) if exc is not None else None
+        ),
+        tenuo_version=tenuo_version,
+    )
+    try:
+        callback(event)
+    except Exception as callback_exc:
+        logger.error(
+            "Audit callback failed for Nexus %s event (tool=%s): %s",
+            "ALLOW" if allowed else "DENY",
+            tool_name,
+            callback_exc,
             exc_info=True,
         )
 
