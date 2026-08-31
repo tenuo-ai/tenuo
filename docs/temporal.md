@@ -17,12 +17,12 @@ Access control in Temporal typically relies on worker identity or task queue tok
 
 Tenuo adds that task-scoped authorization layer. A signed warrant travels with each workflow and is verified by the worker interceptor before every Activity runs. Agents are **constrained by design**: an agent can only execute what its warrant permits, and every action is cryptographically attributable to the entity that authorized it. Activity definitions require no changes, and verification runs in-process with no external service dependency.
 
-For cross-namespace workflows, Tenuo also supports an experimental
-[Temporal Nexus authorization surface](./temporal-nexus.md). Nexus lets one
-team expose a durable service contract through a named Endpoint; Tenuo carries
-delegated warrants across that Endpoint so the handler can verify the exact
-operation, input, holder key, expiry, approvals, and revocation state instead
-of relying only on namespace-level access. For customer-facing scenarios, see
+For cross-namespace workflows, Tenuo also supports
+[Temporal Nexus authorization](./temporal-nexus.md). Nexus lets one team expose
+a durable service contract through a named Endpoint; Tenuo carries delegated
+warrants across that Endpoint so the handler can verify the exact operation,
+input, holder key, expiry, approvals, and revocation state instead of relying
+only on namespace-level access. For customer-facing scenarios, see
 [Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md).
 
 ## Prerequisites
@@ -396,7 +396,7 @@ These scripts under [`tenuo-python/examples/temporal/`](https://github.com/tenuo
   workflow with one allowed Activity and one denied Activity.
 - **[Temporal Integration Reference](./temporal-reference.md)** — production checklist, key management (Vault, AWS, GCP), sandbox details, PoP mechanics, configuration reference, constraint types, troubleshooting, and the full threat model.
 - **[Tenuo for Temporal Nexus](./temporal-nexus-use-cases.md)** — practical cross-team, multi-hop, and cross-organization examples.
-- **[Temporal Nexus Authorization](./temporal-nexus.md)** — experimental cross-namespace authorization for Nexus operations and workflow-backed handlers.
+- **[Temporal Nexus Authorization](./temporal-nexus.md)** — cross-namespace authorization for Nexus operations and workflow-backed handlers.
 - [Tenuo Core Concepts](./concepts.md)
 - [Security Model](./security.md)
 - [Example Code](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal)

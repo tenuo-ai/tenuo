@@ -21,7 +21,7 @@ Activity definitions require no changes. Authorization is transparent to user wo
 |---|---|
 | `_interceptors.py` | Activity-inbound authorization (warrant extract → chain check → PoP verify → dedup → execute) and workflow-outbound PoP signing. The `execute_activity` method has phase markers for navigation. |
 | `_workflow.py` | User-facing helpers (`execute_workflow_authorized`, `AuthorizedWorkflow`, `tenuo_execute_activity`, `tenuo_execute_child_workflow`, `workflow_grant`, `set_activity_approvals`, `tenuo_continue_as_new`), and the `_tenuo_internal_mint_activity` that delegations dispatch into. |
-| `_nexus.py` | Experimental Temporal Nexus helpers: caller-side string header emission, handler-side operation verification/decorator support, and workflow-backed Nexus envelope/bootstrap helpers. |
+| `_nexus.py` | Temporal Nexus helpers: caller-side string header emission, handler-side operation verification/decorator support, sync router helpers, and workflow-backed Nexus envelope/bootstrap helpers. |
 | `_client.py` | Client-side header injection, keyed by `workflow_id`, via `TenuoClientInterceptor` and `execute_workflow_authorized`. |
 | `_headers.py` | Serialize / extract warrant bytes across the Temporal header boundary (raw CBOR, optional gzip). |
 | `_config.py` | `TenuoPluginConfig`: the single configuration surface. |
@@ -50,11 +50,11 @@ These are non-obvious from the code alone; each has a corresponding test guard c
   bytes are otherwise the same payloads used for Temporal activity headers.
   _Guard:_ `tests/adapters/test_temporal_nexus.py`.
 - **Nexus workflow envelope.** Workflow-backed Nexus operations use an explicit
-  serializable envelope because the Python SDK's
-  `WorkflowRunOperationContext.start_workflow(...)` does not expose workflow
-  headers. Backing workflows must call `tenuo_bootstrap_nexus_workflow(...)`
-  before reading Tenuo context or scheduling protected activities. _Guards:_
-  `tests/adapters/test_temporal_nexus.py`,
+  serializable envelope so forwarding, attenuation, target workflow binding,
+  and bootstrap validation are visible in application code. Backing workflows
+  must call `tenuo_bootstrap_nexus_workflow(...)` before reading Tenuo context
+  or scheduling protected activities. Interceptor-bound Nexus backing workflow
+  starts are also covered. _Guards:_ `tests/adapters/test_temporal_nexus.py`,
   `tests/e2e/test_temporal_nexus_live.py`.
 - **Per-Activity overrides are task-local.** `tenuo_execute_activity(warrant=...)`
   stores override headers in a `ContextVar`, not a run-level "next dispatch"
