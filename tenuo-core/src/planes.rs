@@ -2751,7 +2751,8 @@ impl Authorizer {
             Some(s) => crate::verification::RevocationState::Snapshot(s),
             None => crate::verification::RevocationState::NotConfigured,
         };
-        let as_of_dt = chrono::DateTime::from_timestamp(as_of, 0).unwrap_or_else(chrono::Utc::now);
+        let as_of_dt = chrono::DateTime::from_timestamp(as_of, 0)
+            .ok_or_else(|| crate::error::Error::InvalidEvaluationInstant(as_of))?;
         let context = crate::verification::VerificationContext::new(as_of_dt, revocation);
         self.check_chain_with_context(
             chain,
@@ -5678,5 +5679,27 @@ mod tests {
         // Only admin1 should appear (rando was not authorized)
         assert_eq!(cvr.verified_approvals.len(), 1);
         assert_eq!(cvr.verified_approvals[0].external_id, "admin1");
+    }
+
+    #[test]
+    fn replay_as_of_out_of_range_is_an_error() {
+        let control = ControlPlane::generate();
+        let authorizer = Authorizer::new().with_trusted_root(control.public_key());
+        let warrant = control
+            .issue_warrant("read", &[], Duration::from_secs(60))
+            .unwrap();
+        let args = HashMap::new();
+        let err = authorizer
+            .check_chain_with_pop_args_as_of(
+                std::slice::from_ref(&warrant),
+                "read",
+                &args,
+                &args,
+                None,
+                &[],
+                i64::MAX,
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidEvaluationInstant(i64::MAX)));
     }
 }

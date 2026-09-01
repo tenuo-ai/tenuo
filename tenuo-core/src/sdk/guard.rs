@@ -428,7 +428,14 @@ impl Guard {
 
         let invocation_id = uuid::Uuid::new_v4().to_string();
         let decision_id = uuid::Uuid::new_v4().to_string();
-        let dedup_key = format!("{}:{}", call.capability(), invocation_id);
+        let leaf = chain.last().ok_or_else(|| {
+            Denial::sdk(
+                SdkDenialKind::AuthorityMalformed,
+                Retryability::No,
+                "authority chain is empty",
+            )
+        })?;
+        let dedup_key = leaf.dedup_key(call.capability(), call.pop_args());
 
         Ok(AuthorizedCall {
             invocation_id,
@@ -816,6 +823,14 @@ mod tests {
         assert_eq!(runs.load(Ordering::SeqCst), 1);
         assert_eq!(guarded.decision.metadata.capability, "read");
         assert_eq!(guarded.decision.metadata.chain_depth, 1);
+        let expected = authority.leaf().dedup_key("read", &args);
+        assert_eq!(guarded.decision.metadata.dedup_key, expected);
+        let again = guard.check(&authority, &call).expect("second allow");
+        assert_eq!(again.metadata.dedup_key, expected);
+        assert_ne!(
+            again.metadata.invocation_id,
+            guarded.decision.metadata.invocation_id
+        );
     }
 
     #[test]

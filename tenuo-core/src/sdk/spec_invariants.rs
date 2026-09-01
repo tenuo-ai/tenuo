@@ -2,7 +2,7 @@
 
 use super::authority::{AuthorityError, PresentedAuthority, ReceivedAuthorization};
 use super::call::{Call, VerifiedProjection};
-use super::decision::{Denial, GuardError, Retryability, SdkDenialKind};
+use super::decision::{Denial, DenialReporting, GuardError, Retryability, SdkDenialKind};
 use super::guard::{Guard, GuardBuildError, RevocationMode};
 use super::observe::{
     ObserveBuildError, ObservedOutcome, ObservingGuard, ObservingGuardBuilder, PresentedRequest,
@@ -345,7 +345,7 @@ fn s24_borrowed_and_owned_views_are_identical() {
     pop.insert("n".into(), ConstraintValue::from(1_i64));
     let mut constraints = HashMap::new();
     constraints.insert("n".into(), ConstraintValue::from(2_i64));
-    let projection = VerifiedProjection::split(pop, constraints);
+    let projection = VerifiedProjection::from_enforcement_point_unchecked(pop, constraints);
     let split = Call::from_transport("read", &projection);
     assert_ne!(split.pop_args(), split.constraint_args());
 }
@@ -833,4 +833,329 @@ fn s28_fixed_clock_determines_expiry() {
     let call = Call::borrowed("read", &args);
     let denial = guard.check(&presented, &call).err().unwrap();
     assert_eq!(denial.protocol_code(), Some(ErrorCode::WarrantExpired));
+}
+
+/// S4: a chain that is not linked is denied.
+#[test]
+fn s4_unlinked_chain_denied() {
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let a = mint(&issuer, &holder, "read", Duration::from_secs(300));
+    let b = mint(&issuer, &holder, "read", Duration::from_secs(300));
+    let presented = authority(vec![a, b], holder);
+    let args = HashMap::new();
+    let call = Call::borrowed("read", &args);
+    let runs = AtomicUsize::new(0);
+    let _ = deny_runs(
+        guard_for(&issuer)
+            .guard(&presented, &call, |_| {
+                runs.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, &str>(())
+            })
+            .err()
+            .unwrap(),
+        &runs,
+    );
+}
+
+/// S6: capability view is presentation; it cannot authorize a tool the leaf lacks.
+#[test]
+fn s6_capability_view_does_not_authorize() {
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let presented = authority(
+        vec![mint(&issuer, &holder, "read", Duration::from_secs(300))],
+        holder,
+    );
+    assert!(presented.capabilities().contains("read"));
+    assert!(!presented.capabilities().contains("write"));
+    let args = HashMap::new();
+    let call = Call::borrowed("write", &args);
+    assert!(guard_for(&issuer).check(&presented, &call).is_err());
+}
+
+/// S11: allow runs the operation once; deny never does.
+#[test]
+fn s11_operation_runs_at_most_once() {
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let presented = authority(
+        vec![mint(&issuer, &holder, "read", Duration::from_secs(300))],
+        holder,
+    );
+    let guard = guard_for(&issuer);
+    let args = HashMap::new();
+    let allow = Call::borrowed("read", &args);
+    let deny = Call::borrowed("write", &args);
+    let runs = AtomicUsize::new(0);
+    let _ = guard
+        .guard(&presented, &allow, |_| {
+            runs.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, &str>(())
+        })
+        .unwrap();
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+    let deny_runs_count = AtomicUsize::new(0);
+    let _ = deny_runs(
+        guard
+            .guard(&presented, &deny, |_| {
+                deny_runs_count.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, &str>(())
+            })
+            .err()
+            .unwrap(),
+        &deny_runs_count,
+    );
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+}
+
+/// S23: the live decision path reads time only through the guard clock.
+#[test]
+fn s23_attempt_does_not_read_the_clock_itself() {
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sdk/guard.rs"));
+    assert!(
+        !src.contains("Utc::now"),
+        "S23: Guard decision path must not call Utc::now"
+    );
+    assert!(src.contains("self.now()"));
+}
+
+/// S25: AuthorizedCall is not Clone / Serialize.
+#[test]
+fn s25_authorized_call_is_not_a_token() {
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sdk/guard.rs"));
+    let block = src
+        .split("pub struct AuthorizedCall")
+        .nth(1)
+        .expect("AuthorizedCall");
+    let impl_start = block.find("impl<'a> AuthorizedCall").unwrap_or(block.len());
+    let def = &block[..impl_start];
+    assert!(!def.contains("Clone"));
+    assert!(!def.contains("Serialize"));
+}
+
+/// S32: denial reporting does not change whether the operation runs.
+#[test]
+fn s32_denial_reporting_does_not_run_the_operation() {
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let presented = authority(
+        vec![mint(&issuer, &holder, "read", Duration::from_secs(300))],
+        holder,
+    );
+    let args = HashMap::new();
+    let call = Call::borrowed("write", &args);
+    for reporting in [
+        DenialReporting::Error,
+        DenialReporting::Warn,
+        DenialReporting::Debug,
+    ] {
+        let mut authorizer = Authorizer::new();
+        authorizer.add_trusted_root(issuer.public_key());
+        let guard = Guard::builder()
+            .authorizer(authorizer)
+            .revocation(RevocationMode::TtlOnly {
+                max_lifetime: Duration::from_secs(3600),
+            })
+            .denial_reporting(reporting)
+            .build()
+            .unwrap();
+        let runs = AtomicUsize::new(0);
+        let _ = deny_runs(
+            guard
+                .guard(&presented, &call, |_| {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    Ok::<_, &str>(())
+                })
+                .err()
+                .unwrap(),
+            &runs,
+        );
+    }
+}
+
+/// Every S1–S44 has an explicit coverage entry. Covered names must exist.
+#[test]
+fn s_invariant_coverage_map_is_complete() {
+    #[derive(Clone, Copy)]
+    enum Coverage {
+        Named(&'static str),
+        NamedIn(&'static str, &'static str),
+        Deferred(&'static str),
+    }
+    const MAP: &[(u8, Coverage)] = &[
+        (
+            1,
+            Coverage::Named("s1_empty_authority_never_reaches_operation"),
+        ),
+        (
+            2,
+            Coverage::Named("s2_empty_trust_and_self_signed_attacker"),
+        ),
+        (3, Coverage::Named("s3_expired_warrant_denied_at_call_time")),
+        (4, Coverage::Named("s4_unlinked_chain_denied")),
+        (
+            5,
+            Coverage::Named("s5_stolen_warrant_without_holder_key_rejected"),
+        ),
+        (6, Coverage::Named("s6_capability_view_does_not_authorize")),
+        (
+            7,
+            Coverage::Named("s7_approval_gate_not_satisfied_by_absence"),
+        ),
+        (8, Coverage::Named("s8_signed_srl_does_not_fallback")),
+        (9, Coverage::Named("s9_sync_surface_rejects_deadline")),
+        (
+            10,
+            Coverage::Named("s10_provider_outage_is_not_approval_required"),
+        ),
+        (11, Coverage::Named("s11_operation_runs_at_most_once")),
+        (
+            12,
+            Coverage::Named("s12_best_effort_receipt_failure_does_not_deny"),
+        ),
+        (
+            13,
+            Coverage::Deferred("retry-as-new-attempt under FixedClock"),
+        ),
+        (14, Coverage::Deferred("parallel-call isolation stress")),
+        (
+            15,
+            Coverage::NamedIn("src/sdk/delegation.rs", "three_hop_local_delegation"),
+        ),
+        (
+            16,
+            Coverage::NamedIn("src/sdk/delegation.rs", "cannot_widen_capability"),
+        ),
+        (
+            17,
+            Coverage::Named("s17_s33_no_key_or_diagnostic_leak_in_denial"),
+        ),
+        (18, Coverage::Deferred("feature-matrix compile in CI")),
+        (
+            19,
+            Coverage::NamedIn(
+                "src/verification.rs",
+                "pop_preimage_matches_verify_reconstruction",
+            ),
+        ),
+        (20, Coverage::Deferred("locked P3 _meta vectors")),
+        (
+            21,
+            Coverage::Deferred("unknown protocol constructs fail closed"),
+        ),
+        (22, Coverage::Named("s22_authority_is_an_explicit_argument")),
+        (
+            23,
+            Coverage::Named("s23_attempt_does_not_read_the_clock_itself"),
+        ),
+        (
+            24,
+            Coverage::Named("s24_borrowed_and_owned_views_are_identical"),
+        ),
+        (25, Coverage::Named("s25_authorized_call_is_not_a_token")),
+        (
+            26,
+            Coverage::Named("s26_s27_protocol_code_and_signer_outage"),
+        ),
+        (
+            27,
+            Coverage::Named("s26_s27_protocol_code_and_signer_outage"),
+        ),
+        (28, Coverage::Named("s28_fixed_clock_determines_expiry")),
+        (29, Coverage::Named("s29_s44_observer_is_not_a_guard")),
+        (30, Coverage::Named("s30_expired_observer_does_not_invoke")),
+        (
+            31,
+            Coverage::Named("s31_observe_matches_enforcement_and_is_labeled"),
+        ),
+        (
+            32,
+            Coverage::Named("s32_denial_reporting_does_not_run_the_operation"),
+        ),
+        (
+            33,
+            Coverage::Named("s17_s33_no_key_or_diagnostic_leak_in_denial"),
+        ),
+        (34, Coverage::Named("s8_s34_signed_srl_revokes_at_guard")),
+        (
+            35,
+            Coverage::Named("s35_s39_raw_signer_verifies_double_prefix_does_not"),
+        ),
+        (
+            36,
+            Coverage::NamedIn(
+                "src/revocation_tracker.rs",
+                "accept_then_rollback_and_equivocation",
+            ),
+        ),
+        (
+            37,
+            Coverage::Named("s37_ttl_only_ceiling_denies_overlong_warrant"),
+        ),
+        (
+            38,
+            Coverage::Deferred("approval retry through AuthorizationAttempt"),
+        ),
+        (
+            39,
+            Coverage::Named("s39_final_signing_bytes_are_context_plus_preimage"),
+        ),
+        (40, Coverage::Named("s40_received_path_does_not_sign")),
+        (41, Coverage::Named("s41_http_encode_reuses_authorized_pop")),
+        (
+            42,
+            Coverage::Deferred("check_chain_with_context clock isolation"),
+        ),
+        (
+            43,
+            Coverage::Named("s43_guard_cannot_select_not_configured"),
+        ),
+        (44, Coverage::Named("s29_s44_observer_is_not_a_guard")),
+    ];
+
+    let ids: Vec<u8> = MAP.iter().map(|(id, _)| *id).collect();
+    assert_eq!(ids, (1..=44).collect::<Vec<u8>>());
+
+    let spec = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/sdk/spec_invariants.rs"
+    ));
+    for (id, coverage) in MAP {
+        match coverage {
+            Coverage::Named(name) => {
+                assert!(
+                    spec.contains(&format!("fn {name}")),
+                    "S{id}: missing fn {name} in spec_invariants.rs"
+                );
+            }
+            Coverage::NamedIn(file, name) => {
+                let src = match *file {
+                    "src/sdk/delegation.rs" => {
+                        include_str!(concat!(
+                            env!("CARGO_MANIFEST_DIR"),
+                            "/src/sdk/delegation.rs"
+                        ))
+                    }
+                    "src/verification.rs" => {
+                        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/verification.rs"))
+                    }
+                    "src/revocation_tracker.rs" => {
+                        include_str!(concat!(
+                            env!("CARGO_MANIFEST_DIR"),
+                            "/src/revocation_tracker.rs"
+                        ))
+                    }
+                    other => panic!("S{id}: unlisted coverage file {other}"),
+                };
+                assert!(
+                    src.contains(&format!("fn {name}")),
+                    "S{id}: missing fn {name} in {file}"
+                );
+            }
+            Coverage::Deferred(reason) => {
+                assert!(!reason.is_empty(), "S{id}: deferred without a reason");
+            }
+        }
+    }
 }

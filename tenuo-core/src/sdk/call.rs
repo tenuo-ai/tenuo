@@ -168,7 +168,13 @@ impl VerifiedProjection {
         }
     }
 
-    pub fn split(
+    /// Build a split PoP / constraint view from an enforcement-point extraction.
+    ///
+    /// The two maps are not checked against each other. A narrower PoP view
+    /// paired with a friendlier constraint view is exactly the misuse S24
+    /// exists to make visible. Call this only after extraction rules produced
+    /// both views from one received message.
+    pub fn from_enforcement_point_unchecked(
         pop_args: HashMap<String, ConstraintValue>,
         constraint_args: HashMap<String, ConstraintValue>,
     ) -> Self {
