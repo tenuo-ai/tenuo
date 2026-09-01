@@ -2597,10 +2597,40 @@ impl Authorizer {
         )
     }
 
+    /// Live-chain check: one instant, one revocation state, no tool and no clock read.
+    ///
+    /// Used when minting a child (`Guard::delegate`). Does not consult the
+    /// authorizer's stored revocation list — the state in `context` decides.
+    pub fn verify_chain_with_context(
+        &self,
+        chain: &[Warrant],
+        context: &crate::verification::VerificationContext<'_>,
+    ) -> Result<ChainVerificationResult> {
+        if let crate::verification::RevocationState::TtlOnly { max_lifetime } = context.revocation()
+        {
+            for warrant in chain {
+                if warrant.lifetime_secs() > max_lifetime.as_secs() {
+                    return Err(Error::InvalidTtl(format!(
+                        "warrant '{}' lifetime {}s exceeds configured max_lifetime {}s",
+                        warrant.id(),
+                        warrant.lifetime_secs(),
+                        max_lifetime.as_secs()
+                    )));
+                }
+            }
+        }
+        self.verify_chain_with_options_inner(
+            chain,
+            false,
+            context.as_of_unix(),
+            context.revocation(),
+        )
+    }
+
     /// Authoritative decision: one instant, one revocation state, no clock read.
     ///
     /// Does not consult [`Authorizer`]'s stored revocation list. The state in
-    /// `context` is the state that decides (S34).
+    /// `context` is the state that decides (S34 / S42).
     #[allow(clippy::too_many_arguments)]
     pub fn check_chain_with_context(
         &self,

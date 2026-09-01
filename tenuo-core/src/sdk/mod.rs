@@ -17,6 +17,7 @@ mod guard;
 #[macro_use]
 mod macros;
 mod observe;
+pub mod prelude;
 mod signer;
 mod tenuo;
 
@@ -49,8 +50,9 @@ pub use guard::{
     RevocationMode,
 };
 pub use observe::{
-    ObservationRecord, ObserveBuildError, ObserveError, Observed, ObservedOutcome, ObservingGuard,
-    ObservingGuardBuilder, PresentedRequest,
+    ArgumentShape, ArgumentShapePolicy, ObservationRecord, ObservationVerdict, ObserveBuildError,
+    ObserveError, Observed, ObservedOutcome, ObservingGuard, ObservingGuardBuilder,
+    PresentedRequest, ValueClass,
 };
 pub use signer::{
     DelegationSigningRequest, HolderSigner, LocalSigner, PopSigningRequest, SignerError,
@@ -58,7 +60,9 @@ pub use signer::{
 pub use tenuo::{EnforcementBuilder, LocalBuilder, Tenuo, TenuoBuildError};
 
 #[cfg(feature = "async")]
-pub use async_api::{AsyncHolderSigner, AttemptControl};
+pub use async_api::{
+    AsyncHolderSigner, AsyncRevocationProvider, AttemptControl, PresentedAsyncAuthority,
+};
 #[cfg(feature = "receipts")]
 pub use evidence::{
     EvidencePolicy, LocalReceiptSigner, MemoryReceiptSink, ReceiptRef, ReceiptSigner,

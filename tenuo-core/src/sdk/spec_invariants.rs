@@ -3,7 +3,7 @@
 use super::authority::{AuthorityError, PresentedAuthority, ReceivedAuthorization};
 use super::call::{Call, VerifiedProjection};
 use super::decision::{Denial, DenialReporting, GuardError, Retryability, SdkDenialKind};
-use super::guard::{Guard, GuardBuildError, RevocationMode};
+use super::guard::{AuthorizationAttempt, Guard, GuardBuildError, RevocationMode};
 use super::observe::{
     ObserveBuildError, ObservedOutcome, ObservingGuard, ObservingGuardBuilder, PresentedRequest,
 };
@@ -675,8 +675,13 @@ fn s31_observe_matches_enforcement_and_is_labeled() {
         })
         .unwrap();
     assert!(matches!(allowed.outcome, ObservedOutcome::WouldAllow));
+    assert_eq!(
+        allowed.observation.verdict(),
+        super::observe::ObservationVerdict::WouldAllow
+    );
     assert!(allowed.observation.is_observe_only());
     assert_eq!(allowed.observation.policy_mode(), "observe");
+    assert!(allowed.observation.argument_shape().keys().is_empty());
 
     let denied = observer
         .observe(PresentedRequest::Holder(&presented), &deny_call, || {
@@ -974,6 +979,71 @@ fn s32_denial_reporting_does_not_run_the_operation() {
     }
 }
 
+/// S38: AuthorizationAttempt::with_approvals is the approval-retry carrier.
+#[test]
+fn s38_authorization_attempt_carries_approvals() {
+    use super::approvals::LocalApprovalSigner;
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let approver = SigningKey::generate();
+    let mut gates = ApprovalGateMap::new();
+    gates.insert("sensitive".into(), ToolApprovalGate::whole_tool());
+    let warrant = Warrant::builder()
+        .capability("sensitive", ConstraintSet::new())
+        .holder(holder.public_key())
+        .ttl(Duration::from_secs(300))
+        .required_approvers(vec![approver.public_key()])
+        .min_approvals(1)
+        .extension(
+            "tenuo.approval_gates",
+            encode_approval_gate_map(&gates).unwrap(),
+        )
+        .build(&issuer)
+        .unwrap();
+    let mut authorizer = Authorizer::new();
+    authorizer.add_trusted_root(issuer.public_key());
+    let guard = Guard::builder()
+        .authorizer(authorizer)
+        .revocation(RevocationMode::TtlOnly {
+            max_lifetime: Duration::from_secs(3600),
+        })
+        .approval_provider(Arc::new(LocalApprovalSigner::new(
+            approver,
+            "approver@test",
+        )))
+        .build()
+        .unwrap();
+    let presented = authority(vec![warrant], holder);
+    let args = HashMap::new();
+    let call = Call::borrowed("sensitive", &args);
+    let first = guard.check(&presented, &call).err().unwrap();
+    assert!(first.needs_approval());
+    let request = first.approval_request().cloned().expect("request");
+    let approvals = guard.resolve_approvals(&request).expect("provider");
+    let attempt = AuthorizationAttempt::with_approvals(&call, &approvals);
+    guard
+        .check_attempt(&presented, attempt)
+        .expect("S38: retry with approvals allows");
+}
+
+/// S42: check_chain_with_context does not read the clock.
+#[test]
+fn s42_check_chain_with_context_does_not_read_the_clock() {
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/planes.rs"));
+    let start = src
+        .find("pub fn check_chain_with_context")
+        .expect("check_chain_with_context");
+    let rest = &src[start..];
+    let end = rest
+        .find("pub fn check_chain_with_pop_args_as_of")
+        .unwrap_or(rest.len());
+    let body = &rest[..end];
+    assert!(
+        !body.contains("Utc::now"),
+        "S42: check_chain_with_context must not read the clock"
+    );
+}
+
 /// Every S1–S44 has an explicit coverage entry. Covered names must exist.
 #[test]
 fn s_invariant_coverage_map_is_complete() {
@@ -1095,7 +1165,7 @@ fn s_invariant_coverage_map_is_complete() {
         ),
         (
             38,
-            Coverage::Deferred("approval retry through AuthorizationAttempt"),
+            Coverage::Named("s38_authorization_attempt_carries_approvals"),
         ),
         (
             39,
@@ -1105,7 +1175,7 @@ fn s_invariant_coverage_map_is_complete() {
         (41, Coverage::Named("s41_http_encode_reuses_authorized_pop")),
         (
             42,
-            Coverage::Deferred("check_chain_with_context clock isolation"),
+            Coverage::Named("s42_check_chain_with_context_does_not_read_the_clock"),
         ),
         (
             43,

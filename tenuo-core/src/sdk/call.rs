@@ -19,6 +19,8 @@ enum ArgsStorage<'a> {
 
 impl<'a> Call<'a> {
     /// Borrowed common case: one view for both PoP and constraints.
+    ///
+    /// This is the constructor. There is no `Call::simple`.
     pub fn borrowed(capability: &'a str, args: &'a HashMap<String, ConstraintValue>) -> Self {
         Self {
             capability: Cow::Borrowed(capability),

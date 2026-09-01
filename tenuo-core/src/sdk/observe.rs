@@ -5,13 +5,17 @@ use super::call::Call;
 use super::decision::{Denial, Retryability, SdkDenialKind};
 use super::guard::Guard;
 use crate::approval::ApprovalRequest;
+use crate::constraints::ConstraintValue;
 use chrono::{DateTime, Utc};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// Assessment surface copied from a [`Guard`]. Cannot be used where `Guard` is required.
 pub struct ObservingGuard {
     guard: Guard,
     expires_at: DateTime<Utc>,
+    argument_shape: ArgumentShapePolicy,
 }
 
 impl Guard {
@@ -20,6 +24,7 @@ impl Guard {
         ObservingGuard {
             guard: self.snapshot_for_observe(),
             expires_at,
+            argument_shape: ArgumentShapePolicy::KeysAndClasses,
         }
     }
 }
@@ -31,6 +36,13 @@ impl ObservingGuard {
 
     pub fn expires_at(&self) -> DateTime<Utc> {
         self.expires_at
+    }
+
+    /// How argument information is summarized on each record. Default is
+    /// keys and value classes — enough to draft constraints, not raw values.
+    pub fn argument_shape_policy(mut self, policy: ArgumentShapePolicy) -> Self {
+        self.argument_shape = policy;
+        self
     }
 
     pub fn observe<T, E>(
@@ -73,6 +85,7 @@ impl ObservingGuard {
         }
 
         let value = op().map_err(ObserveError::Operation)?;
+        let verdict = ObservationVerdict::from(&outcome);
         Ok(Observed {
             value,
             outcome,
@@ -80,6 +93,8 @@ impl ObservingGuard {
                 observe_only: true,
                 expires_at: self.expires_at,
                 capability: call.capability().to_string(),
+                verdict,
+                argument_shape: summarize_args(call.constraint_args(), self.argument_shape),
             },
         })
     }
@@ -106,6 +121,7 @@ fn classify(result: Result<super::decision::Decision, Denial>) -> ObservedOutcom
 pub struct ObservingGuardBuilder {
     guard: Option<Guard>,
     expires_at: Option<DateTime<Utc>>,
+    argument_shape: ArgumentShapePolicy,
 }
 
 impl ObservingGuardBuilder {
@@ -113,7 +129,13 @@ impl ObservingGuardBuilder {
         Self {
             guard: Some(guard.snapshot_for_observe()),
             expires_at: None,
+            argument_shape: ArgumentShapePolicy::KeysAndClasses,
         }
+    }
+
+    pub fn argument_shape_policy(mut self, policy: ArgumentShapePolicy) -> Self {
+        self.argument_shape = policy;
+        self
     }
 
     pub fn expires_at(mut self, when: DateTime<Utc>) -> Self {
@@ -124,7 +146,11 @@ impl ObservingGuardBuilder {
     pub fn build(self) -> Result<ObservingGuard, ObserveBuildError> {
         let guard = self.guard.ok_or(ObserveBuildError::MissingGuard)?;
         let expires_at = self.expires_at.ok_or(ObserveBuildError::MissingExpiry)?;
-        Ok(ObservingGuard { guard, expires_at })
+        Ok(ObservingGuard {
+            guard,
+            expires_at,
+            argument_shape: self.argument_shape,
+        })
     }
 }
 
@@ -151,12 +177,80 @@ pub enum ObservedOutcome {
     WouldDenyNoAuthority,
 }
 
+/// Persistable would-outcome. The full [`ObservedOutcome`] stays on [`Observed`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObservationVerdict {
+    WouldAllow,
+    WouldDeny,
+    WouldRequireApproval,
+    WouldDenyNoAuthority,
+}
+
+impl From<&ObservedOutcome> for ObservationVerdict {
+    fn from(outcome: &ObservedOutcome) -> Self {
+        match outcome {
+            ObservedOutcome::WouldAllow => Self::WouldAllow,
+            ObservedOutcome::WouldDeny(_) => Self::WouldDeny,
+            ObservedOutcome::WouldRequireApproval(_) => Self::WouldRequireApproval,
+            ObservedOutcome::WouldDenyNoAuthority => Self::WouldDenyNoAuthority,
+        }
+    }
+}
+
+/// How much argument information an observation record may carry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ArgumentShapePolicy {
+    /// Key names only.
+    KeysOnly,
+    /// Key names and value classes. Default — enough to draft constraints.
+    #[default]
+    KeysAndClasses,
+    /// Key names, value classes, and SHA-256 of each value. Never raw values.
+    KeysClassesAndHashes,
+}
+
+/// Privacy-safe argument summary for an assessment window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArgumentShape {
+    keys: Vec<String>,
+    classes: BTreeMap<String, ValueClass>,
+    hashes: BTreeMap<String, String>,
+}
+
+impl ArgumentShape {
+    pub fn keys(&self) -> &[String] {
+        &self.keys
+    }
+
+    pub fn classes(&self) -> &BTreeMap<String, ValueClass> {
+        &self.classes
+    }
+
+    pub fn hashes(&self) -> &BTreeMap<String, String> {
+        &self.hashes
+    }
+}
+
+/// Coarse class of a constraint value. Not the value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueClass {
+    String,
+    Integer,
+    Float,
+    Boolean,
+    List,
+    Object,
+    Null,
+}
+
 /// Labeled observe-only record. Not an authorization receipt.
 #[derive(Clone, Debug)]
 pub struct ObservationRecord {
     observe_only: bool,
     expires_at: DateTime<Utc>,
     capability: String,
+    verdict: ObservationVerdict,
+    argument_shape: ArgumentShape,
 }
 
 impl ObservationRecord {
@@ -172,8 +266,100 @@ impl ObservationRecord {
         &self.capability
     }
 
+    pub fn verdict(&self) -> ObservationVerdict {
+        self.verdict
+    }
+
+    pub fn argument_shape(&self) -> &ArgumentShape {
+        &self.argument_shape
+    }
+
     pub fn policy_mode(&self) -> &'static str {
         "observe"
+    }
+}
+
+fn summarize_args(
+    args: &std::collections::HashMap<String, ConstraintValue>,
+    policy: ArgumentShapePolicy,
+) -> ArgumentShape {
+    let mut keys: Vec<String> = args.keys().cloned().collect();
+    keys.sort();
+    let mut classes = BTreeMap::new();
+    let mut hashes = BTreeMap::new();
+    if matches!(
+        policy,
+        ArgumentShapePolicy::KeysAndClasses | ArgumentShapePolicy::KeysClassesAndHashes
+    ) {
+        for (key, value) in args {
+            classes.insert(key.clone(), value_class(value));
+        }
+    }
+    if policy == ArgumentShapePolicy::KeysClassesAndHashes {
+        for (key, value) in args {
+            hashes.insert(key.clone(), hash_value(value));
+        }
+    }
+    ArgumentShape {
+        keys,
+        classes,
+        hashes,
+    }
+}
+
+fn value_class(value: &ConstraintValue) -> ValueClass {
+    match value {
+        ConstraintValue::String(_) => ValueClass::String,
+        ConstraintValue::Integer(_) => ValueClass::Integer,
+        ConstraintValue::Float(_) => ValueClass::Float,
+        ConstraintValue::Boolean(_) => ValueClass::Boolean,
+        ConstraintValue::List(_) => ValueClass::List,
+        ConstraintValue::Object(_) => ValueClass::Object,
+        ConstraintValue::Null => ValueClass::Null,
+    }
+}
+
+fn hash_value(value: &ConstraintValue) -> String {
+    let mut hasher = Sha256::new();
+    hash_into(&mut hasher, value);
+    hex::encode(hasher.finalize())
+}
+
+fn hash_into(hasher: &mut Sha256, value: &ConstraintValue) {
+    match value {
+        ConstraintValue::String(s) => {
+            hasher.update([1]);
+            hasher.update(s.as_bytes());
+        }
+        ConstraintValue::Integer(i) => {
+            hasher.update([2]);
+            hasher.update(i.to_be_bytes());
+        }
+        ConstraintValue::Float(f) => {
+            hasher.update([3]);
+            hasher.update(f.to_bits().to_be_bytes());
+        }
+        ConstraintValue::Boolean(b) => {
+            hasher.update([4]);
+            hasher.update([u8::from(*b)]);
+        }
+        ConstraintValue::List(items) => {
+            hasher.update([5]);
+            hasher.update((items.len() as u32).to_be_bytes());
+            for item in items {
+                hash_into(hasher, item);
+            }
+        }
+        ConstraintValue::Object(map) => {
+            hasher.update([6]);
+            hasher.update((map.len() as u32).to_be_bytes());
+            for (key, item) in map {
+                hasher.update(key.as_bytes());
+                hasher.update([0]);
+                hash_into(hasher, item);
+            }
+        }
+        ConstraintValue::Null => hasher.update([7]),
     }
 }
 
@@ -413,6 +599,37 @@ mod tests {
             .build()
             .unwrap();
         assert!(observer.expires_at() > Utc::now());
+    }
+
+    #[test]
+    fn argument_shape_summarizes_without_raw_values() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let presented = authority(vec![mint(&issuer, &holder, "read")], holder);
+        let mut args = HashMap::new();
+        args.insert(
+            "cluster".into(),
+            crate::constraints::ConstraintValue::String("staging-web".into()),
+        );
+        let call = Call::borrowed("read", &args);
+        let observed = live(&guard_for(&issuer))
+            .observe(PresentedRequest::Holder(&presented), &call, || {
+                Ok::<_, &str>(())
+            })
+            .unwrap();
+        let shape = observed.observation.argument_shape();
+        assert_eq!(shape.keys(), &["cluster".to_string()]);
+        assert_eq!(shape.classes().get("cluster"), Some(&ValueClass::String));
+        assert!(shape.hashes().is_empty());
+        let debug = format!("{shape:?}");
+        assert!(
+            !debug.contains("staging-web"),
+            "observe must not persist raw argument values: {debug}"
+        );
+        assert_eq!(
+            observed.observation.verdict(),
+            ObservationVerdict::WouldAllow
+        );
     }
 
     #[test]

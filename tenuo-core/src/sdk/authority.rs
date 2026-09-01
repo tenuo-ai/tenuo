@@ -60,6 +60,16 @@ impl PresentedAuthority {
         self.signer.as_ref()
     }
 
+    #[cfg(feature = "async")]
+    pub(crate) fn signer_arc(&self) -> Arc<dyn HolderSigner> {
+        self.signer.clone()
+    }
+
+    #[cfg(feature = "async")]
+    pub(crate) fn chain_arc(&self) -> Arc<[Warrant]> {
+        self.chain.clone()
+    }
+
     pub(crate) fn signer_matches_leaf(&self) -> bool {
         self.signer.public_key() == *self.leaf().authorized_holder()
     }

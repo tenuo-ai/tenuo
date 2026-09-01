@@ -47,6 +47,12 @@ impl DelegationProfile {
 
 impl PresentedAuthority {
     /// Local child: mint a fresh ephemeral key and return a usable authority.
+    ///
+    /// This does not consult trust, revocation, or clearance. A revoked parent
+    /// can still mint here. Prefer [`crate::sdk::Guard::delegate`] when a
+    /// [`crate::sdk::Guard`] is in scope — that path checks the parent under
+    /// current policy before signing. The child is only as good as the
+    /// receiving enforcement point's fresh revocation state.
     pub fn delegate_local(
         &self,
         profile: &DelegationProfile,
@@ -57,6 +63,9 @@ impl PresentedAuthority {
     }
 
     /// Remote child: this process has no signer for the child.
+    ///
+    /// Unguarded, same as [`Self::delegate_local`]. Use [`crate::sdk::Guard::delegate_to`]
+    /// to refuse minting from a parent that is not live under current policy.
     pub fn delegate_to(
         &self,
         child_holder: &PublicKey,
@@ -98,6 +107,7 @@ impl PresentedAuthority {
 pub enum DelegationError {
     EmptyProfile,
     ChildMustBeDistinct,
+    Denied(super::decision::Denial),
     Signer(SignerError),
     Authority(AuthorityError),
     Core(Error),
@@ -121,11 +131,18 @@ impl From<AuthorityError> for DelegationError {
     }
 }
 
+impl From<super::decision::Denial> for DelegationError {
+    fn from(value: super::decision::Denial) -> Self {
+        Self::Denied(value)
+    }
+}
+
 impl fmt::Display for DelegationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyProfile => write!(f, "delegation profile has no capabilities"),
             Self::ChildMustBeDistinct => write!(f, "child holder must differ from the parent"),
+            Self::Denied(err) => write!(f, "{err}"),
             Self::Signer(err) => write!(f, "{err}"),
             Self::Authority(err) => write!(f, "{err}"),
             Self::Core(err) => write!(f, "{err}"),
@@ -224,6 +241,56 @@ mod tests {
             root.delegate_to(root.holder(), &profile).err().unwrap(),
             DelegationError::ChildMustBeDistinct
         ));
+    }
+
+    #[test]
+    fn guard_delegate_refuses_revoked_parent() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let root = authority(&issuer, holder, "read");
+        let srl = crate::revocation::SignedRevocationList::builder()
+            .revoke(root.leaf().id().to_string())
+            .version(1)
+            .build(&issuer)
+            .unwrap();
+        let mut authorizer = Authorizer::new();
+        authorizer.add_trusted_root(issuer.public_key());
+        authorizer
+            .set_revocation_list(srl, &issuer.public_key())
+            .unwrap();
+        let guard = Guard::builder()
+            .authorizer(authorizer)
+            .revocation(RevocationMode::SignedSrl)
+            .build()
+            .unwrap();
+        let profile = DelegationProfile::new().capability("read", ConstraintSet::new());
+        assert!(matches!(
+            guard.delegate(&root, &profile).err().unwrap(),
+            DelegationError::Denied(_)
+        ));
+        assert!(root.delegate_local(&profile).is_ok());
+    }
+
+    #[test]
+    fn guard_delegate_allows_live_parent() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let root = authority(&issuer, holder, "read");
+        let mut authorizer = Authorizer::new();
+        authorizer.add_trusted_root(issuer.public_key());
+        let guard = Guard::builder()
+            .authorizer(authorizer)
+            .revocation(RevocationMode::TtlOnly {
+                max_lifetime: Duration::from_secs(3600),
+            })
+            .build()
+            .unwrap();
+        let profile = DelegationProfile::new().capability("read", ConstraintSet::new());
+        let child = guard.delegate(&root, &profile).unwrap();
+        assert_eq!(child.chain().len(), 2);
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        guard.check(&child, &call).expect("child live");
     }
 
     #[test]

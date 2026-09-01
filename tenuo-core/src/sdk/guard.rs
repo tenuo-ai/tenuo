@@ -5,11 +5,12 @@ use super::clock::{Clock, SystemClock};
 use super::decision::{
     Decision, DecisionMetadata, Denial, DenialReporting, GuardError, Retryability, SdkDenialKind,
 };
+use super::delegation::{DelegationError, DelegationProfile};
 use super::diagnostics::Diagnostics;
 use super::signer::PopSigningRequest;
 use crate::approval::{ApprovalRequest, SignedApproval};
 use crate::constraints::ConstraintValue;
-use crate::crypto::Signature;
+use crate::crypto::{PublicKey, Signature};
 use crate::planes::Authorizer;
 use crate::revocation_tracker::RevocationTracker;
 use crate::verification::{
@@ -46,6 +47,8 @@ pub struct Guard {
     denial_reporting: DenialReporting,
     clock: Arc<dyn Clock>,
     approval_provider: Option<Arc<dyn ApprovalProvider>>,
+    #[cfg(feature = "async")]
+    async_revocation: Option<Arc<dyn super::async_api::AsyncRevocationProvider>>,
     #[cfg(feature = "receipts")]
     evidence: EvidenceConfig,
 }
@@ -153,6 +156,49 @@ impl Guard {
         received: &'a ReceivedAuthorization<'a>,
     ) -> Diagnostics<'a> {
         Diagnostics::received(self, received)
+    }
+
+    /// Mint a local child after confirming the parent is live under this guard.
+    ///
+    /// Trust, expiry, TTL ceiling, and revocation are evaluated at `now()`.
+    /// [`PresentedAuthority::delegate_local`] skips that check.
+    pub fn delegate(
+        &self,
+        parent: &PresentedAuthority,
+        profile: &DelegationProfile,
+    ) -> Result<PresentedAuthority, DelegationError> {
+        self.confirm_parent_live(parent)?;
+        parent.delegate_local(profile)
+    }
+
+    /// Mint a remote child after confirming the parent is live under this guard.
+    pub fn delegate_to(
+        &self,
+        parent: &PresentedAuthority,
+        child_holder: &PublicKey,
+        profile: &DelegationProfile,
+    ) -> Result<Vec<Warrant>, DelegationError> {
+        self.confirm_parent_live(parent)?;
+        parent.delegate_to(child_holder, profile)
+    }
+
+    fn confirm_parent_live(&self, parent: &PresentedAuthority) -> Result<(), DelegationError> {
+        let instant = VerificationInstant::new(self.now());
+        let loaded = self
+            .load_revocation(instant.as_datetime())
+            .map_err(|denial| {
+                self.record_deny(&denial);
+                DelegationError::Denied(denial)
+            })?;
+        let context = VerificationContext::new(instant.as_datetime(), loaded.as_state());
+        self.authorizer
+            .verify_chain_with_context(parent.chain(), &context)
+            .map_err(|err| {
+                let denial = Denial::from_core(err);
+                self.record_deny(&denial);
+                DelegationError::Denied(denial)
+            })?;
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -355,6 +401,59 @@ impl Guard {
         )
     }
 
+    #[cfg(feature = "async")]
+    pub(crate) async fn authorize_holder_async<'a>(
+        &'a self,
+        authority: &'a super::async_api::PresentedAsyncAuthority,
+        attempt: &AuthorizationAttempt<'a, 'a>,
+        control: &super::async_api::AttemptControl,
+    ) -> Result<AuthorizedCall<'a>, Denial> {
+        let as_of = self.now();
+        let instant = VerificationInstant::new(as_of);
+
+        if !authority.signer_matches_leaf() {
+            return Err(Denial::sdk(
+                SdkDenialKind::SignerUnavailable,
+                Retryability::AfterBackoff,
+                "holder signer does not match leaf",
+            ));
+        }
+
+        let call = attempt.call;
+        let leaf = authority.leaf();
+        let (window_secs, _) = self.authorizer.pop_window_config();
+        let preimage = leaf
+            .pop_preimage(
+                call.capability(),
+                call.pop_args(),
+                as_of.timestamp(),
+                window_secs,
+            )
+            .map_err(Denial::from_core)?;
+        let request = PopSigningRequest::new(preimage, call.capability(), leaf.id().to_string());
+        let pop_signature = authority
+            .signer()
+            .sign_pop(&request, control)
+            .await
+            .map_err(|_| {
+                Denial::sdk(
+                    SdkDenialKind::SignerUnavailable,
+                    Retryability::AfterBackoff,
+                    "holder signer unavailable",
+                )
+            })?;
+
+        self.decide_async(
+            authority.chain(),
+            pop_signature,
+            attempt.approvals,
+            call,
+            instant,
+            control,
+        )
+        .await
+    }
+
     pub(crate) fn authorize_received<'a>(
         &'a self,
         received: &'a ReceivedAuthorization<'a>,
@@ -378,41 +477,37 @@ impl Guard {
         call: &'a Call<'a>,
         instant: VerificationInstant,
     ) -> Result<AuthorizedCall<'a>, Denial> {
+        let loaded = self.load_revocation(instant.as_datetime())?;
+        self.finish_decide(chain, pop_signature, approvals, call, instant, &loaded)
+    }
+
+    #[cfg(feature = "async")]
+    async fn decide_async<'a>(
+        &'a self,
+        chain: &'a [Warrant],
+        pop_signature: Signature,
+        approvals: &'a [SignedApproval],
+        call: &'a Call<'a>,
+        instant: VerificationInstant,
+        control: &super::async_api::AttemptControl,
+    ) -> Result<AuthorizedCall<'a>, Denial> {
+        let loaded = self
+            .load_revocation_async(instant.as_datetime(), control)
+            .await?;
+        self.finish_decide(chain, pop_signature, approvals, call, instant, &loaded)
+    }
+
+    fn finish_decide<'a>(
+        &'a self,
+        chain: &'a [Warrant],
+        pop_signature: Signature,
+        approvals: &'a [SignedApproval],
+        call: &'a Call<'a>,
+        instant: VerificationInstant,
+        loaded: &LoadedRevocation,
+    ) -> Result<AuthorizedCall<'a>, Denial> {
         let _ = self.denial_reporting;
-        let tracker_snapshot;
-        let revocation = match &self.revocation {
-            ResolvedRevocation::TtlOnly { max_lifetime } => RevocationState::TtlOnly {
-                max_lifetime: *max_lifetime,
-            },
-            ResolvedRevocation::Snapshot(snapshot) => {
-                if !snapshot.is_fresh_at(instant.as_datetime()) {
-                    return Err(Denial::sdk(
-                        SdkDenialKind::RevocationStateUnavailable,
-                        Retryability::AfterBackoff,
-                        "revocation snapshot is stale",
-                    ));
-                }
-                RevocationState::Snapshot(snapshot)
-            }
-            ResolvedRevocation::Tracker(tracker) => {
-                tracker_snapshot = tracker.latest(instant.as_datetime()).map_err(|_| {
-                    Denial::sdk(
-                        SdkDenialKind::RevocationStateUnavailable,
-                        Retryability::AfterBackoff,
-                        "revocation state unavailable",
-                    )
-                })?;
-                if !tracker_snapshot.is_fresh_at(instant.as_datetime()) {
-                    return Err(Denial::sdk(
-                        SdkDenialKind::RevocationStateUnavailable,
-                        Retryability::AfterBackoff,
-                        "revocation snapshot is stale",
-                    ));
-                }
-                RevocationState::Snapshot(tracker_snapshot.as_ref())
-            }
-        };
-        let context = VerificationContext::new(instant.as_datetime(), revocation);
+        let context = VerificationContext::new(instant.as_datetime(), loaded.as_state());
 
         self.authorizer
             .check_chain_with_context(
@@ -450,6 +545,121 @@ impl Guard {
             approvals,
         })
     }
+
+    fn load_revocation(&self, at: DateTime<Utc>) -> Result<LoadedRevocation, Denial> {
+        match &self.revocation {
+            ResolvedRevocation::TtlOnly { max_lifetime } => Ok(LoadedRevocation::TtlOnly {
+                max_lifetime: *max_lifetime,
+            }),
+            ResolvedRevocation::Snapshot(snapshot) => {
+                if !snapshot.is_fresh_at(at) {
+                    return Err(Denial::sdk(
+                        SdkDenialKind::RevocationStateUnavailable,
+                        Retryability::AfterBackoff,
+                        "revocation snapshot is stale",
+                    ));
+                }
+                Ok(LoadedRevocation::Snapshot(snapshot.clone()))
+            }
+            ResolvedRevocation::Tracker(tracker) => {
+                let snapshot = tracker.latest(at).map_err(|_| {
+                    Denial::sdk(
+                        SdkDenialKind::RevocationStateUnavailable,
+                        Retryability::AfterBackoff,
+                        "revocation state unavailable",
+                    )
+                })?;
+                if !snapshot.is_fresh_at(at) {
+                    return Err(Denial::sdk(
+                        SdkDenialKind::RevocationStateUnavailable,
+                        Retryability::AfterBackoff,
+                        "revocation snapshot is stale",
+                    ));
+                }
+                Ok(LoadedRevocation::Snapshot((*snapshot).clone()))
+            }
+        }
+    }
+
+    #[cfg(feature = "async")]
+    async fn load_revocation_async(
+        &self,
+        at: DateTime<Utc>,
+        control: &super::async_api::AttemptControl,
+    ) -> Result<LoadedRevocation, Denial> {
+        match self.load_revocation(at) {
+            Ok(loaded) => Ok(loaded),
+            Err(denial)
+                if matches!(
+                    denial.sdk_kind(),
+                    Some(SdkDenialKind::RevocationStateUnavailable)
+                ) =>
+            {
+                let Some(provider) = &self.async_revocation else {
+                    return Err(denial);
+                };
+                if control.is_cancelled() {
+                    return Err(Denial::sdk(
+                        SdkDenialKind::Cancelled,
+                        Retryability::AfterBackoff,
+                        "authorization cancelled",
+                    ));
+                }
+                if control
+                    .deadline()
+                    .is_some_and(|deadline| self.now() >= deadline)
+                {
+                    return Err(Denial::sdk(
+                        SdkDenialKind::DeadlineExceeded,
+                        Retryability::AfterBackoff,
+                        "authorization deadline exceeded",
+                    ));
+                }
+                let ResolvedRevocation::Tracker(tracker) = &self.revocation else {
+                    return Err(denial);
+                };
+                let update = provider.fetch(control).await.map_err(|_| {
+                    Denial::sdk(
+                        SdkDenialKind::RevocationStateUnavailable,
+                        Retryability::AfterBackoff,
+                        "revocation state unavailable",
+                    )
+                })?;
+                let snapshot = tracker.accept(update, at).map_err(|_| {
+                    Denial::sdk(
+                        SdkDenialKind::RevocationStateUnavailable,
+                        Retryability::AfterBackoff,
+                        "revocation state unavailable",
+                    )
+                })?;
+                if !snapshot.is_fresh_at(at) {
+                    return Err(Denial::sdk(
+                        SdkDenialKind::RevocationStateUnavailable,
+                        Retryability::AfterBackoff,
+                        "revocation snapshot is stale",
+                    ));
+                }
+                Ok(LoadedRevocation::Snapshot((*snapshot).clone()))
+            }
+            Err(denial) => Err(denial),
+        }
+    }
+}
+
+enum LoadedRevocation {
+    TtlOnly { max_lifetime: Duration },
+    Snapshot(RevocationSnapshot),
+}
+
+impl LoadedRevocation {
+    fn as_state(&self) -> RevocationState<'_> {
+        match self {
+            Self::TtlOnly { max_lifetime } => RevocationState::TtlOnly {
+                max_lifetime: *max_lifetime,
+            },
+            Self::Snapshot(snapshot) => RevocationState::Snapshot(snapshot),
+        }
+    }
 }
 
 #[cfg(feature = "receipts")]
@@ -471,13 +681,20 @@ impl EvidenceConfig {
     }
 }
 
-/// Zero-approval or approval-bearing holder attempt.
+/// One holder-sign attempt, including approvals carried into a retry.
+///
+/// [`Guard::check`] / [`Guard::guard`] construct this with no approvals.
+/// After an `approval-required` denial, resolve signatures and retry through
+/// [`Guard::check_attempt`] / [`Guard::guard_attempt`] with
+/// [`AuthorizationAttempt::with_approvals`]. That is the §7.4 state machine;
+/// it is not a second way to do the common path.
 pub struct AuthorizationAttempt<'attempt, 'args> {
     call: &'attempt Call<'args>,
     approvals: &'attempt [SignedApproval],
 }
 
 impl<'attempt, 'args> AuthorizationAttempt<'attempt, 'args> {
+    /// First attempt: the call, no approvals yet.
     pub fn new(call: &'attempt Call<'args>) -> Self {
         Self {
             call,
@@ -485,6 +702,7 @@ impl<'attempt, 'args> AuthorizationAttempt<'attempt, 'args> {
         }
     }
 
+    /// Retry after [`Denial::needs_approval`]: the same call plus resolved approvals.
     pub fn with_approvals(
         call: &'attempt Call<'args>,
         approvals: &'attempt [SignedApproval],
@@ -585,6 +803,8 @@ pub struct GuardBuilder {
     denial_reporting: DenialReporting,
     clock: Option<Arc<dyn Clock>>,
     approval_provider: Option<Arc<dyn ApprovalProvider>>,
+    #[cfg(feature = "async")]
+    async_revocation: Option<Arc<dyn super::async_api::AsyncRevocationProvider>>,
     #[cfg(feature = "receipts")]
     evidence: EvidencePolicy,
     #[cfg(feature = "receipts")]
@@ -619,6 +839,17 @@ impl GuardBuilder {
 
     pub fn approval_provider(mut self, provider: Arc<dyn ApprovalProvider>) -> Self {
         self.approval_provider = Some(provider);
+        self
+    }
+
+    /// Remote SRL fetch used by the async decision path when the tracker has no
+    /// fresh snapshot. The sync path never calls this.
+    #[cfg(feature = "async")]
+    pub fn async_revocation_provider(
+        mut self,
+        provider: Arc<dyn super::async_api::AsyncRevocationProvider>,
+    ) -> Self {
+        self.async_revocation = Some(provider);
         self
     }
 
@@ -717,6 +948,8 @@ impl GuardBuilder {
             denial_reporting: self.denial_reporting,
             clock: self.clock.unwrap_or_else(|| Arc::new(SystemClock)),
             approval_provider: self.approval_provider,
+            #[cfg(feature = "async")]
+            async_revocation: self.async_revocation,
             #[cfg(feature = "receipts")]
             evidence,
         })
