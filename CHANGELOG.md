@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Receipt emission postures.** Receipts can be emitted deferred or
+  journaled, chosen at `ControlPlaneClient` construction. A bare
+  `receipt_sink=` now defaults to `DeferredEmitter(sink, maxsize=256)`:
+  ~0.5 µs on the hot path, emission is asynchronous, and a crash loses at
+  most `maxsize` receipts — call `flush_receipts()` to wait for delivery
+  (`shutdown()` drains). Pass
+  `receipt_emitter=JournalEmitter(path)` when SIGKILL loss must be zero:
+  ~17 µs p50 on the hot path, the receipt is in the page cache before the
+  call returns, and the file is readable by `tenuo receipt chain`. The
+  chain and the artifact are identical under both; only the loss contract
+  differs. The unbounded deferred queue is not constructible.
+
+### Changed
+
+- **Receipt emission for sink users is now asynchronous** (see above). Code
+  that emitted and then immediately read its sink must call
+  `flush_receipts()` first.
+
 ## [0.2.4] - 2026-08-31
 
 ### Breaking

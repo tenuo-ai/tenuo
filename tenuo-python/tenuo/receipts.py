@@ -167,14 +167,20 @@ def deliver(
 # verifier cannot tell which posture produced a receipt. Only the loss
 # contract differs, one line each:
 #
-#   DeferredEmitter  nothing added to the hot path (~0.5 µs enqueue); a crash
-#                    may take up to ``maxsize`` receipts with it.
-#   JournalEmitter   ~13 µs (Rust) per decision on the hot path; a process
-#                    crash takes nothing — the flush reaches the page cache.
+#   DeferredEmitter  ~0.5 µs on the hot path (measured through
+#                    ControlPlaneClient); a crash may take up to ``maxsize``
+#                    receipts with it.
+#   JournalEmitter   ~17 µs p50 on the hot path (measured through
+#                    ControlPlaneClient; the Rust signing floor is ~13 µs);
+#                    a process crash takes nothing — the append reaches the
+#                    page cache before emit returns.
 
 
 class DeferredEmitter:
-    """Latency-strict posture: snapshot the decision, sign off-thread.
+    """Latency-strict posture: hand the decision to a worker, sign off-thread.
+
+    The decision context is queued **by reference** — do not mutate the
+    ``chain_result`` after emitting it.
 
     The hot path pays a blocking enqueue. A single worker signs in FIFO
     order — which is what preserves the receipt chain — and hands the wire
@@ -200,7 +206,6 @@ class DeferredEmitter:
         self._q: "_queue.Queue" = _queue.Queue(maxsize)
         self._inner = None
         self._on_error = None
-        self._busy = False
         self._worker: Optional[threading.Thread] = None
 
     # Called by ControlPlaneClient: the emitter signs with the client's own
@@ -226,7 +231,6 @@ class DeferredEmitter:
             if item is None:
                 self._q.task_done()
                 return
-            self._busy = True
             try:
                 if item[0] == "allow":
                     _, chain_result, tool, allowed, ts, request_id, code = item
@@ -242,16 +246,23 @@ class DeferredEmitter:
             except Exception as exc:  # noqa: BLE001 — one bad item must not kill the worker
                 logger.warning("deferred receipt emission failed", exc_info=exc)
             finally:
-                self._busy = False
                 self._q.task_done()
 
     def flush(self, timeout: float = 10.0) -> bool:
-        """Wait until everything enqueued so far is signed and delivered."""
+        """Wait until everything enqueued so far is signed and delivered.
+
+        Uses the queue's own unfinished-task accounting (the counter
+        ``task_done`` maintains), which counts an item from ``put`` until its
+        delivery completes — so an item the worker has popped but not finished
+        still holds the flush. An emptiness poll cannot say that.
+        """
         deadline = time.monotonic() + timeout
-        while not self._q.empty() or self._busy:
-            if time.monotonic() > deadline:
-                return False
-            time.sleep(0.002)
+        with self._q.all_tasks_done:
+            while self._q.unfinished_tasks:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._q.all_tasks_done.wait(remaining)
         return True
 
     def close(self, timeout: float = 10.0) -> None:
@@ -281,6 +292,7 @@ class JournalEmitter:
         self._fd = os.open(str(self._path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
         self._inner = None
         self._on_error = None
+        self._write_lock = threading.Lock()
         self._stop = threading.Event()
         if fsync_interval_s is not None:
             def _fsyncer() -> None:
@@ -303,7 +315,15 @@ class JournalEmitter:
         if wire is None:
             return
         try:
-            os.write(self._fd, (wire + "\n").encode("ascii"))
+            data = (wire + "\n").encode("ascii")
+            # Serialized: concurrent appends of multi-KB lines interleave
+            # without a lock, and os.write may return short — a torn line in
+            # an evidence file is worse than a slightly slower one.
+            with self._write_lock:
+                view = memoryview(data)
+                while view:
+                    written = os.write(self._fd, view)
+                    view = view[written:]
         except BaseException as exc:  # noqa: BLE001 — must not fail the tool call
             if self._on_error is not None:
                 try:

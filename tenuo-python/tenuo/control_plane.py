@@ -208,9 +208,10 @@ class ControlPlaneClient:
         self._on_receipt_error = on_receipt_error
         # Emission posture. The two differ only in when signing happens; the
         # chain and the artifact are identical. A bare sink defaults to the
-        # deferred posture (~0.5 µs on the hot path, crash loss bounded by its
-        # maxsize=256); pass JournalEmitter(...) for the evidence-strict one
-        # (~13 µs per decision, zero process-crash loss).
+        # deferred posture (~0.5 µs on the hot path measured through this
+        # client, crash loss bounded by its maxsize=256); pass
+        # JournalEmitter(...) for the evidence-strict one (~17 µs p50 measured
+        # through this client, ~13 µs Rust floor, zero process-crash loss).
         if receipt_emitter is None and receipt_sink is not None:
             receipt_emitter = _receipts.DeferredEmitter(receipt_sink)
         self._receipt_emitter = receipt_emitter
@@ -440,8 +441,10 @@ class ControlPlaneClient:
     def flush_receipts(self, timeout: float = 10.0) -> bool:
         """Wait until every receipt emitted so far is signed and delivered.
 
-        A no-op for the journal posture, which is durable before ``emit``
-        returns. Returns False on timeout rather than raising.
+        For the journal posture the receipts are already durable against
+        process death before ``emit`` returns; flush additionally fsyncs, so
+        machine death cannot take the tail either. Returns False on timeout
+        rather than raising.
         """
         emitter = getattr(self, "_receipt_emitter", None)
         return True if emitter is None else emitter.flush(timeout)

@@ -179,3 +179,56 @@ def test_shutdown_drains_the_deferred_queue(decision):
     client._receipt_emitter.close(timeout=10.0)
 
     assert len(sink.receipts) == 10
+
+
+def test_flush_waits_for_a_receipt_already_in_the_workers_hands(decision):
+    """The race the review caught: an item the worker has popped but not
+    delivered must still hold the flush. Queue emptiness cannot see it;
+    unfinished-task accounting can."""
+    authorizer, result = decision
+
+    class SlowSink:
+        def __init__(self):
+            self.receipts = []
+
+        def handle(self, wire):
+            time.sleep(0.08)
+            self.receipts.append(wire)
+
+    sink = SlowSink()
+    client = _client(receipt_emitter=DeferredEmitter(sink, maxsize=16))
+    client.bind_authorizer(authorizer)
+
+    client._emit_receipt(result, "read_file", True, "req-0", None)
+    t0 = time.monotonic()
+    assert client.flush_receipts(timeout=5.0)
+    waited = time.monotonic() - t0
+
+    assert len(sink.receipts) == 1
+    assert waited >= 0.05, "flush returned while the receipt was in flight"
+
+
+def test_journal_survives_concurrent_producer_threads(decision, tmp_path):
+    """Interleaved multi-KB appends tear lines without a lock; every line in
+    an evidence file must verify."""
+    import threading as _threading
+
+    authorizer, result = decision
+    path = tmp_path / "concurrent.wal"
+    client = _client(receipt_emitter=JournalEmitter(path, fsync_interval_s=None))
+    client.bind_authorizer(authorizer)
+
+    def produce(tid):
+        for i in range(40):
+            client._emit_receipt(result, "read_file", True, f"t{tid}-{i}", None)
+
+    threads = [_threading.Thread(target=produce, args=(t,)) for t in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    lines = path.read_text().splitlines()
+    assert len(lines) == 160
+    for line in lines:
+        tenuo_core.verify_receipt(line)  # a torn line would fail here
