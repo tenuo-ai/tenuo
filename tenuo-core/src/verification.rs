@@ -72,20 +72,52 @@ pub enum RevocationState<'a> {
 
 /// Opaque proof that one signed SRL was accepted for a decision.
 ///
-/// No public constructor. The wrapper mints one from an SRL already installed
-/// via [`crate::Authorizer::set_revocation_list`]. Freshness is a later
-/// tracker concern and is not applied here.
+/// No public constructor. Installed lists have no freshness bound.
+/// Tracker-accepted lists carry `fetched_at` / `fresh_until`.
 pub struct RevocationSnapshot {
     srl: SignedRevocationList,
+    fetched_at: Option<DateTime<Utc>>,
+    fresh_until: Option<DateTime<Utc>>,
 }
 
 impl RevocationSnapshot {
     pub(crate) fn from_accepted_list(srl: SignedRevocationList) -> Self {
-        Self { srl }
+        Self {
+            srl,
+            fetched_at: None,
+            fresh_until: None,
+        }
+    }
+
+    pub(crate) fn from_tracker(
+        srl: SignedRevocationList,
+        fetched_at: DateTime<Utc>,
+        fresh_until: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            srl,
+            fetched_at: Some(fetched_at),
+            fresh_until: Some(fresh_until),
+        }
     }
 
     pub(crate) fn is_revoked(&self, warrant: &Warrant) -> bool {
         self.srl.is_revoked(&warrant.id().to_string())
+    }
+
+    pub fn is_fresh_at(&self, at: DateTime<Utc>) -> bool {
+        match self.fresh_until {
+            None => true,
+            Some(until) => at <= until,
+        }
+    }
+
+    pub fn fetched_at(&self) -> Option<DateTime<Utc>> {
+        self.fetched_at
+    }
+
+    pub fn fresh_until(&self) -> Option<DateTime<Utc>> {
+        self.fresh_until
     }
 }
 

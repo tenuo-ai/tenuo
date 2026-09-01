@@ -139,9 +139,9 @@ impl std::error::Error for DelegationError {}
 mod tests {
     use super::*;
     use crate::constraints::ConstraintSet;
+    use crate::planes::Authorizer;
     use crate::sdk::signer::{HolderSigner, LocalSigner};
     use crate::sdk::{Call, Guard, RevocationMode};
-    use crate::planes::Authorizer;
     use crate::SigningKey;
     use std::collections::HashMap;
     use std::time::Duration;
@@ -201,8 +201,7 @@ mod tests {
         let chain = root.delegate_to(&remote.public_key(), &profile).unwrap();
         assert_eq!(chain.len(), 2);
         assert_eq!(chain[1].authorized_holder(), &remote.public_key());
-        let child =
-            PresentedAuthority::new(chain, Arc::new(LocalSigner::new(remote))).unwrap();
+        let child = PresentedAuthority::new(chain, Arc::new(LocalSigner::new(remote))).unwrap();
         assert_ne!(child.holder(), root.holder());
     }
 
@@ -212,9 +211,12 @@ mod tests {
         let holder = SigningKey::generate();
         let root = authority(&issuer, holder, "read");
         assert!(matches!(
-            root.delegate_to(&SigningKey::generate().public_key(), &DelegationProfile::new())
-                .err()
-                .unwrap(),
+            root.delegate_to(
+                &SigningKey::generate().public_key(),
+                &DelegationProfile::new()
+            )
+            .err()
+            .unwrap(),
             DelegationError::EmptyProfile
         ));
         let profile = DelegationProfile::new().capability("read", ConstraintSet::new());
@@ -271,8 +273,7 @@ mod tests {
         let issuer = SigningKey::generate();
         let holder = SigningKey::generate();
         let warrant = mint_root(&issuer, &holder, "read");
-        let parent =
-            PresentedAuthority::new(vec![warrant], Arc::new(Raw(holder))).unwrap();
+        let parent = PresentedAuthority::new(vec![warrant], Arc::new(Raw(holder))).unwrap();
         let remote = SigningKey::generate();
         let profile = DelegationProfile::new().capability("read", ConstraintSet::new());
         let chain = parent.delegate_to(&remote.public_key(), &profile).unwrap();

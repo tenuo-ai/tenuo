@@ -5,8 +5,8 @@
 
 mod authority;
 mod call;
-mod delegation;
 mod decision;
+mod delegation;
 mod diagnostics;
 mod guard;
 #[macro_use]
@@ -22,10 +22,10 @@ pub use authority::{
     ReceivedAuthorization,
 };
 pub use call::{ArgumentError, Call, VerifiedProjection};
-pub use delegation::{DelegationError, DelegationProfile};
 pub use decision::{
     Decision, DecisionMetadata, Denial, DenialReporting, GuardError, Retryability, SdkDenialKind,
 };
+pub use delegation::{DelegationError, DelegationProfile};
 pub use diagnostics::Diagnostics;
 pub use guard::{
     AuthorizationAttempt, AuthorizedCall, Guard, GuardBuildError, GuardBuilder, Guarded,

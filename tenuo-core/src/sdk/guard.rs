@@ -9,6 +9,7 @@ use crate::approval::SignedApproval;
 use crate::constraints::ConstraintValue;
 use crate::crypto::Signature;
 use crate::planes::Authorizer;
+use crate::revocation_tracker::RevocationTracker;
 use crate::verification::{
     RevocationSnapshot, RevocationState, VerificationContext, VerificationInstant,
 };
@@ -35,6 +36,7 @@ pub struct Guard {
 enum ResolvedRevocation {
     TtlOnly { max_lifetime: Duration },
     Snapshot(RevocationSnapshot),
+    Tracker(std::sync::Arc<RevocationTracker>),
 }
 
 impl Guard {
@@ -191,11 +193,38 @@ impl Guard {
         instant: VerificationInstant,
     ) -> Result<AuthorizedCall<'a>, Denial> {
         let _ = self.denial_reporting;
+        let tracker_snapshot;
         let revocation = match &self.revocation {
             ResolvedRevocation::TtlOnly { max_lifetime } => RevocationState::TtlOnly {
                 max_lifetime: *max_lifetime,
             },
-            ResolvedRevocation::Snapshot(snapshot) => RevocationState::Snapshot(snapshot),
+            ResolvedRevocation::Snapshot(snapshot) => {
+                if !snapshot.is_fresh_at(instant.as_datetime()) {
+                    return Err(Denial::sdk(
+                        SdkDenialKind::RevocationStateUnavailable,
+                        Retryability::AfterBackoff,
+                        "revocation snapshot is stale",
+                    ));
+                }
+                RevocationState::Snapshot(snapshot)
+            }
+            ResolvedRevocation::Tracker(tracker) => {
+                tracker_snapshot = tracker.latest(instant.as_datetime()).map_err(|_| {
+                    Denial::sdk(
+                        SdkDenialKind::RevocationStateUnavailable,
+                        Retryability::AfterBackoff,
+                        "revocation state unavailable",
+                    )
+                })?;
+                if !tracker_snapshot.is_fresh_at(instant.as_datetime()) {
+                    return Err(Denial::sdk(
+                        SdkDenialKind::RevocationStateUnavailable,
+                        Retryability::AfterBackoff,
+                        "revocation snapshot is stale",
+                    ));
+                }
+                RevocationState::Snapshot(tracker_snapshot.as_ref())
+            }
         };
         let context = VerificationContext::new(instant.as_datetime(), revocation);
 
@@ -338,6 +367,7 @@ impl<T> Guarded<T> {
 pub struct GuardBuilder {
     authorizer: Option<Authorizer>,
     revocation: Option<RevocationMode>,
+    tracker: Option<std::sync::Arc<RevocationTracker>>,
     denial_reporting: DenialReporting,
 }
 
@@ -349,6 +379,12 @@ impl GuardBuilder {
 
     pub fn revocation(mut self, mode: RevocationMode) -> Self {
         self.revocation = Some(mode);
+        self
+    }
+
+    /// Production SignedSrl path: snapshots come from the tracker, not a fallback.
+    pub fn revocation_tracker(mut self, tracker: std::sync::Arc<RevocationTracker>) -> Self {
+        self.tracker = Some(tracker);
         self
     }
 
@@ -370,11 +406,15 @@ impl GuardBuilder {
                 ResolvedRevocation::TtlOnly { max_lifetime }
             }
             RevocationMode::SignedSrl => {
-                let list = authorizer
-                    .installed_revocation_list()
-                    .cloned()
-                    .ok_or(GuardBuildError::SignedSrlUnavailable)?;
-                ResolvedRevocation::Snapshot(RevocationSnapshot::from_accepted_list(list))
+                if let Some(tracker) = self.tracker {
+                    ResolvedRevocation::Tracker(tracker)
+                } else {
+                    let list = authorizer
+                        .installed_revocation_list()
+                        .cloned()
+                        .ok_or(GuardBuildError::SignedSrlUnavailable)?;
+                    ResolvedRevocation::Snapshot(RevocationSnapshot::from_accepted_list(list))
+                }
             }
         };
         Ok(Guard {
@@ -856,6 +896,50 @@ mod tests {
                     ),
                     "expected a PoP/signature denial, got {:?}",
                     denial.protocol_code()
+                );
+            }
+            GuardError::Operation(_) => panic!("operation must not run"),
+        }
+    }
+
+    #[test]
+    fn tracker_signed_srl_without_accept_denies() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = mint(&issuer, &holder, "read");
+        let tracker = std::sync::Arc::new(
+            crate::RevocationTracker::with_in_memory_floors(
+                vec![issuer.public_key()],
+                Duration::from_secs(60),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
+        );
+        let mut authorizer = Authorizer::new();
+        authorizer.add_trusted_root(issuer.public_key());
+        let guard = Guard::builder()
+            .authorizer(authorizer)
+            .revocation(RevocationMode::SignedSrl)
+            .revocation_tracker(tracker)
+            .build()
+            .unwrap();
+        let authority = authority(vec![warrant], holder);
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        let runs = AtomicUsize::new(0);
+        let err = guard
+            .guard(&authority, &call, |_| {
+                runs.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, &str>(())
+            })
+            .err()
+            .unwrap();
+        assert_eq!(runs.load(Ordering::SeqCst), 0);
+        match err {
+            GuardError::Denied(denial) => {
+                assert_eq!(
+                    denial.sdk_kind(),
+                    Some(SdkDenialKind::RevocationStateUnavailable)
                 );
             }
             GuardError::Operation(_) => panic!("operation must not run"),

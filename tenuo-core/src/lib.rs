@@ -53,6 +53,7 @@ pub mod planes;
 pub mod receipt;
 pub mod revocation;
 pub mod revocation_manager;
+pub mod revocation_tracker;
 #[cfg(feature = "sdk")]
 pub mod sdk;
 pub mod verification;
@@ -104,23 +105,26 @@ pub use revocation::{
     RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,
 };
 pub use revocation_manager::RevocationManager;
+pub use revocation_tracker::{
+    FileFloorStore, InMemoryFloorStore, RevocationError, RevocationFloorStore, RevocationTracker,
+    RevocationUpdate,
+};
 #[cfg(any(feature = "mcp-transport", feature = "http-transport"))]
 pub use sdk::transport::TransportError;
 #[cfg(feature = "sdk")]
 pub use sdk::{
     AuthorizationAttempt, AuthorizedCall, Call, Decision, DecisionMetadata, DelegationProfile,
-    Denial,
-    DenialReporting, Diagnostics, Guard, GuardBuildError, GuardError, HolderSigner, LocalSigner,
-    OwnedReceivedAuthorization, PresentedAuthority, ReceivedAuthorization, Retryability,
-    RevocationMode, SdkDenialKind, Tenuo, TenuoBuildError, VerifiedProjection,
+    Denial, DenialReporting, Diagnostics, Guard, GuardBuildError, GuardError, HolderSigner,
+    LocalSigner, OwnedReceivedAuthorization, PresentedAuthority, ReceivedAuthorization,
+    Retryability, RevocationMode, SdkDenialKind, Tenuo, TenuoBuildError, VerifiedProjection,
 };
 pub use verification::{
     RevocationSnapshot, RevocationState, VerificationContext, VerificationInstant,
 };
 pub use warrant::{
     Clearance, OwnedAttenuationBuilder, OwnedIssuanceBuilder, PreparedDelegation, Warrant,
-    WarrantBuilder, WarrantId,
-    WarrantType, POP_MAX_WINDOWS, POP_TIMESTAMP_WINDOW_SECS, WARRANT_ID_PREFIX,
+    WarrantBuilder, WarrantId, WarrantType, POP_MAX_WINDOWS, POP_TIMESTAMP_WINDOW_SECS,
+    WARRANT_ID_PREFIX,
 };
 pub use wire::MAX_WARRANT_SIZE;
 
