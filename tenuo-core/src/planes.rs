@@ -1118,9 +1118,14 @@ impl DataPlane {
         }
 
         result.leaf_depth = chain.last().map(|w| w.depth()).unwrap_or(0);
-        // Populated here rather than only on the invocation path so a denial
-        // reached during chain verification — expired, revoked, untrusted root
-        // — can still be receipted. Those are the denials most worth recording.
+        // Populated here rather than only on the invocation path so any caller
+        // holding a result has the stack, not just check_chain's.
+        //
+        // This does not make failing verifications receiptable: expiry,
+        // revocation and an untrusted root all return Err before this line, so
+        // there is no result to build from. Receipting those needs the chain
+        // that was presented — see `issue_denial_receipt`, and `encode_receipt`
+        // in the wasm SDK, both of which take the chain directly.
         result.warrant_stack_b64 = encode_warrant_stack_b64(chain);
         Ok(result)
     }
@@ -2982,6 +2987,10 @@ mod receipt_plumbing_tests {
     /// A denial can legitimately precede possession, and that shape is exactly
     /// what distinguishes "an authenticated party was refused" from "we could
     /// not establish who was asking".
+    ///
+    /// Note this builds from a *successful* verify_chain: a verification that
+    /// fails returns Err, so there is no result to build from at all. Receipts
+    /// for failing verifications come from the presented chain instead.
     #[test]
     fn builds_a_deny_before_pop_receipt_when_possession_was_never_proven() {
         let (warrant, _holder, _args, authorizer) = invocation();

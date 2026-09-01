@@ -2392,7 +2392,7 @@ fn py_dict_to_constraint_set(
 }
 
 /// Convert a Python value to a ConstraintValue.
-fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
+pub(crate) fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
     // Extraction order matters for canonicalization parity with the Rust
     // core: Python ``bool`` inherits from ``int`` (``True == 1``), so
     // ``extract::<i64>()`` succeeds for ``True``/``False`` and would
@@ -3705,6 +3705,14 @@ pub struct PyWarrant {
     inner: RustWarrant,
 }
 
+#[cfg(feature = "python")]
+impl PyWarrant {
+    /// In-crate access to the wrapped warrant, for receipt construction.
+    pub(crate) fn inner_warrant(&self) -> &RustWarrant {
+        &self.inner
+    }
+}
+
 #[pymethods]
 impl PyWarrant {
     /// Create a Warrant from a base64 string.
@@ -4570,6 +4578,14 @@ impl PyPublicKey {
 #[pyclass(name = "Signature")]
 pub struct PySignature {
     inner: RustSignature,
+}
+
+#[cfg(feature = "python")]
+impl PySignature {
+    /// In-crate access to the wrapped signature, for receipt construction.
+    pub(crate) fn inner_signature(&self) -> &RustSignature {
+        &self.inner
+    }
 }
 
 #[pymethods]

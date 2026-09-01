@@ -427,6 +427,113 @@ impl PyControlPlaneClient {
         Ok(Some(hex::encode(bytes)))
     }
 
+    /// Build and sign a receipt for a denial, from the chain that was presented.
+    ///
+    /// Denials cannot go through `issue_receipt`: `check_chain` returns `Err`
+    /// for expiry, revocation, an untrusted root or a constraint miss, so there
+    /// is no `ChainVerificationResult` to build from. The chain was still
+    /// presented, though, and a denial over presented authority is exactly the
+    /// decision most worth recording — without this the receipt stream is a
+    /// contiguous run of allows with every refusal silently absent, which is
+    /// the incompleteness the chain link exists to make visible.
+    ///
+    /// `verified_pop` is the holder's signature, supplied only when possession
+    /// was established before the failure — that is what separates "an
+    /// authenticated party was refused" from "we could not establish who was
+    /// asking". It is not inferred: asserting a proof-of-possession that was
+    /// never checked and denying one that was are both false claims, so the
+    /// caller says which happened by supplying the signature or omitting it.
+    ///
+    /// Returns None when the client is not bound to an authorizer, or when no
+    /// chain was presented at all — a request that carried no authority was
+    /// refused at the door rather than authorized against anything, and there
+    /// is no chain for a receipt to commit to.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        warrants, tool, args, timestamp, request_id, decision_code, verified_pop=None
+    ))]
+    fn issue_denial_receipt(
+        &self,
+        warrants: Vec<PyRef<crate::python::PyWarrant>>,
+        tool: &str,
+        args: &Bound<'_, pyo3::types::PyDict>,
+        timestamp: i64,
+        request_id: &str,
+        decision_code: &str,
+        verified_pop: Option<&crate::python::PySignature>,
+    ) -> PyResult<Option<String>> {
+        let trust = {
+            let guard = self.trust.lock().map_err(|_| {
+                pyo3::exceptions::PyRuntimeError::new_err("trust context lock poisoned")
+            })?;
+            match *guard {
+                Some(t) => t,
+                None => return Ok(None),
+            }
+        };
+
+        let chain: Vec<crate::warrant::Warrant> =
+            warrants.iter().map(|w| w.inner_warrant().clone()).collect();
+        let Some(leaf) = chain.last() else {
+            return Ok(None);
+        };
+
+        let warrant_chain = crate::wire::encode_stack(&crate::wire::WarrantStack(chain.clone()))
+            .map_err(to_py_err)?;
+
+        let mut payload = match verified_pop {
+            Some(pop) => crate::receipt::ReceiptPayload::deny(
+                warrant_chain,
+                tool,
+                timestamp,
+                request_id,
+                decision_code,
+                pop.inner_signature().to_bytes(),
+            ),
+            None => crate::receipt::ReceiptPayload::deny_before_pop(
+                warrant_chain,
+                tool,
+                timestamp,
+                request_id,
+                decision_code,
+            ),
+        };
+
+        let mut rust_args = std::collections::HashMap::new();
+        for (key, value) in args.iter() {
+            let k: String = key.extract()?;
+            rust_args.insert(k, crate::python::py_to_constraint_value(&value)?);
+        }
+        payload.request_hash = Some(crate::approval::compute_request_hash(
+            &leaf.id().to_string(),
+            tool,
+            &rust_args,
+            Some(leaf.authorized_holder()),
+        ));
+        payload.root_principal = chain.first().map(|w| hex::encode(w.issuer().to_bytes()));
+        payload.trusted_roots_hash = Some(trust.trusted_roots_hash);
+        if let Some((version, digest)) = trust.srl_commitment {
+            payload.srl_version = version;
+            payload.srl_hash = Some(digest);
+        }
+
+        let mut link = self.last_receipt_hash.lock().map_err(|_| {
+            pyo3::exceptions::PyRuntimeError::new_err("receipt chain lock poisoned")
+        })?;
+        payload.prev_receipt_hash = *link;
+
+        let receipt =
+            crate::receipt::Receipt::create(&payload, &self.receipt_signer).map_err(to_py_err)?;
+        let digest = receipt.digest().map_err(to_py_err)?;
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&receipt, &mut bytes).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("failed to encode receipt: {e}"))
+        })?;
+
+        *link = Some(digest);
+        Ok(Some(hex::encode(bytes)))
+    }
+
     /// Emit an allow event to the control plane.
     ///
     /// For authorized calls with a `ChainVerificationResult`, prefer

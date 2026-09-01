@@ -95,6 +95,12 @@ class EnforcementResult:
             Pass to ``emit_for_enforcement(chain_result=...)`` so receipts
             are signed with Rust-attested fields (approvals, warrant stack,
             root issuer) instead of Python-supplied metadata.
+        presented_chain: Warrants presented with the call, kept on denials so a
+            refusal can still be receipted. Structural refusals — no warrant at
+            all, or bytes that would not decode — have nothing to present and
+            leave this ``None``.
+        verified_pop: Holder proof-of-possession, only when it verified before
+            the failure.
         authorizer: Rust ``Authorizer`` instance that produced ``chain_result``.
             ControlPlaneClient uses this to bind receipt trust commitments
             automatically, so hosts do not need a separate manual
@@ -114,6 +120,16 @@ class EnforcementResult:
     warrant_id: Optional[str] = None
     chain_result: Optional[Any] = None
     authorizer: Optional[Any] = None
+    # The chain that was presented, kept on denials as well as allows.
+    # check_chain raises for expiry, revocation, an untrusted root or a
+    # constraint miss, so a denial has no chain_result to build a receipt from
+    # — but the chain was still presented, and a refusal over presented
+    # authority is the decision most worth recording.
+    presented_chain: Optional[Any] = None
+    # The holder's PoP, kept only when possession was established before the
+    # failure. Absent means we could not establish who was asking, which is a
+    # different claim and must not be conflated.
+    verified_pop: Optional[Any] = None
     approval_metadata: Optional[Dict[str, Any]] = None
 
     def raise_if_denied(self) -> None:
@@ -429,6 +445,9 @@ def _enforcement_result_from_chain_error_with_logging(
     *,
     constraint_auth_args: Optional[Dict[str, Any]] = None,
     warrant: Optional[Any] = None,
+    presented_chain: Optional[Any] = None,
+    authorizer: Optional[Any] = None,
+    verified_pop: Optional[Any] = None,
 ) -> EnforcementResult:
     result = _enforcement_result_from_chain_error(
         exc,
@@ -438,6 +457,13 @@ def _enforcement_result_from_chain_error_with_logging(
         constraint_auth_args=constraint_auth_args,
         warrant=warrant,
     )
+    # Stamped here rather than in the mapper, which has seven return sites.
+    # Without these a denial reaches emit_for_enforcement with nothing to build
+    # a receipt from, and the stream becomes a contiguous run of allows with
+    # every refusal silently missing.
+    result.presented_chain = presented_chain
+    result.authorizer = authorizer
+    result.verified_pop = verified_pop
     _log_chain_enforcement_denial(tool_name, exc, result.error_type)
     return result
 
@@ -1042,6 +1068,10 @@ def enforce_tool_call(
                     warrant_id,
                     constraint_auth_args=_constraint_auth_args,
                     warrant=_warrant,
+                    presented_chain=(
+                        list(warrant_chain) + [_warrant] if warrant_chain else [_warrant]
+                    ),
+                    authorizer=_auth,
                 )
         else:
             # verify_mode == "verify"
@@ -1397,6 +1427,10 @@ async def enforce_tool_call_async(
                     warrant_id,
                     constraint_auth_args=_constraint_auth_args,
                     warrant=_warrant,
+                    presented_chain=(
+                        list(warrant_chain) + [_warrant] if warrant_chain else [_warrant]
+                    ),
+                    authorizer=_auth,
                 )
         else:
             if authorizer is None:

@@ -192,3 +192,93 @@ def test_a_failing_sink_never_reaches_the_caller():
 def test_delivery_is_a_no_op_without_a_sink_or_a_receipt():
     deliver(None, "deadbeef", None)
     deliver(InMemoryReceiptSink(), None, None)
+
+
+def _expired_denial():
+    """A real denial: check_chain raises, so there is no chain_result."""
+    import pytest as _pytest
+
+    root, worker = SigningKey.generate(), SigningKey.generate()
+    authorizer = Authorizer(trusted_roots=[root.public_key])
+    warrant = (
+        Warrant.mint_builder()
+        .capability("read_file", path=Pattern("/data/*"))
+        .holder(worker.public_key)
+        .ttl(1)
+        .mint(root)
+    )
+    args = {"path": "/data/q3.pdf"}
+    pop = warrant.sign(worker, "read_file", args, int(time.time()))
+
+    # Verify well past expiry so the chain genuinely fails.
+    with _pytest.raises(Exception):
+        authorizer.check_chain(
+            [warrant], "read_file", args, pop, [], as_of=int(time.time()) + 86_400
+        )
+    return authorizer, [warrant], args
+
+
+def test_a_real_denial_has_no_chain_result_to_build_from():
+    """The reason denials need their own path: check_chain raises."""
+    authorizer, chain, args = _expired_denial()
+
+    # There is no ChainVerificationResult here at all — that is the whole
+    # problem issue_denial_receipt exists to solve.
+    assert chain and authorizer is not None
+
+
+def test_an_expired_warrant_is_receipted_from_the_presented_chain():
+    authorizer, chain, args = _expired_denial()
+    client = _client()
+    client.bind_authorizer(authorizer)
+
+    wire = client.issue_denial_receipt(
+        chain, "read_file", args, 1_700_000_000, "req-deny", "warrant-expired"
+    )
+    payload = tenuo_core.verify_receipt(wire)
+
+    assert payload.outcome == "deny"
+    assert payload.decision_code == "warrant-expired"
+    assert payload.action == "read_file"
+    # Possession was not asserted, because expiry is reached before the PoP is
+    # trusted — claiming it would be a false claim.
+    assert payload.pop_signature is None
+    # The refusal still commits to what was asked for.
+    assert payload.request_hash is not None
+    assert payload.trusted_roots_hash is not None
+
+
+def test_denials_and_allows_share_one_chain():
+    """The point of receipting denials: no silent gaps between allows."""
+    import hashlib
+
+    authorizer, result = _decision()
+    client = _client()
+    client.bind_authorizer(authorizer)
+
+    allow = client.issue_receipt(result, "read_file", True, 1_700_000_000, "req-1")
+    _, chain, args = _expired_denial()
+    deny = client.issue_denial_receipt(
+        chain, "read_file", args, 1_700_000_001, "req-2", "warrant-expired"
+    )
+
+    p_deny = tenuo_core.verify_receipt(deny)
+    assert p_deny.prev_receipt_hash == hashlib.sha256(bytes.fromhex(allow)).hexdigest()
+
+
+def test_a_structural_refusal_is_not_receipted():
+    """No warrant presented means no chain for a receipt to commit to.
+
+    Signing these would also let an unauthenticated caller compel signature and
+    sink work. They stay in the audit stream instead.
+    """
+    authorizer, _ = _decision()
+    client = _client()
+    client.bind_authorizer(authorizer)
+
+    assert (
+        client.issue_denial_receipt(
+            [], "read_file", {}, 1_700_000_000, "req", "no-warrant"
+        )
+        is None
+    )

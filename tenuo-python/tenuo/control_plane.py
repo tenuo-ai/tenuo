@@ -104,6 +104,20 @@ _DECISION_CODE_BY_ERROR_TYPE = {
 }
 
 
+# Failures that can only be reached once possession was established. Mirrors
+# `pop_established_before_error` in the wasm SDK: a receipt asserting a
+# proof-of-possession that was never checked, or denying one that was, are both
+# false claims, so the PoP is attached only for this set.
+_POP_ESTABLISHED_ERROR_TYPES = frozenset(
+    {
+        "constraint_violation",
+        "policy_violation",
+        "insufficient_approvals",
+        "approval_gate_misconfigured",
+    }
+)
+
+
 def _decision_code(result) -> str:
     """Canonical kebab-case name for a denial, for receipt payload key 10."""
     error_type = getattr(result, "error_type", None)
@@ -315,7 +329,7 @@ class ControlPlaneClient:
                 latency_us, request_id, arguments_json,
             )
             self._bind_for_receipts_from_result(result)
-            self._emit_receipt(chain_result, tool, False, request_id, _decision_code(result))
+            self._emit_denial_receipt(result, tool, request_id)
 
     def _bind_for_receipts_from_result(self, result: Any) -> None:
         """Best-effort receipt trust binding from the authorizer that decided.
@@ -343,6 +357,47 @@ class ControlPlaneClient:
             self.bind_authorizer(authorizer)
         except Exception as exc:  # noqa: BLE001 - receipt setup must not fail auth
             logger.warning("failed to bind authorizer for receipt emission", exc_info=exc)
+
+    def _emit_denial_receipt(self, result, tool, request_id) -> None:
+        """Sign a receipt for a denial, from the chain that was presented.
+
+        Denials have no ``chain_result`` — ``check_chain`` raises for expiry,
+        revocation, an untrusted root or a constraint miss — so this builds from
+        the presented chain instead. Without it the receipt stream is a
+        contiguous run of allows with every refusal silently absent, which is
+        the incompleteness the chain link exists to make visible.
+
+        Structural refusals are deliberately not receipted: a call carrying no
+        warrant, or bytes that would not decode, was turned away at the door
+        rather than authorized against anything, so there is no chain for a
+        receipt to commit to. Signing them would also let an unauthenticated
+        caller compel signatures and sink writes. They stay in the audit
+        stream, and the boundary is that receipts cover decisions made over
+        presented authority.
+        """
+        if getattr(self, "_receipt_sink", None) is None:
+            return
+        chain = getattr(result, "presented_chain", None)
+        if not chain:
+            return
+        try:
+            wire = self._inner.issue_denial_receipt(
+                list(chain),
+                tool,
+                getattr(result, "arguments", None) or {},
+                int(time.time()),
+                request_id,
+                _decision_code(result),
+                (
+                    getattr(result, "verified_pop", None)
+                    if getattr(result, "error_type", None) in _POP_ESTABLISHED_ERROR_TYPES
+                    else None
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - must not fail the caller
+            logger.warning("failed to sign denial receipt for %r", tool, exc_info=exc)
+            return
+        _receipts.deliver(self._receipt_sink, wire, getattr(self, "_on_receipt_error", None))
 
     def _emit_receipt(self, chain_result, tool, allowed, request_id, decision_code) -> None:
         """Sign a receipt for this decision and hand it to the sink.
