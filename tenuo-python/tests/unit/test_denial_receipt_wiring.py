@@ -109,3 +109,55 @@ def test_key_10_uses_the_canonical_vocabulary():
     assert _DECISION_CODE_BY_ERROR_TYPE["constraint_violation"] == "constraint-violation"
     assert _DECISION_CODE_BY_ERROR_TYPE["untrusted_issuer"] == "untrusted-root"
     assert _DECISION_CODE_BY_ERROR_TYPE["approval_gate_misconfigured"] == "approval-invalid"
+
+
+def test_a_split_view_denial_commits_to_what_the_holder_signed(bound, signing_key):
+    """Key 7 must hash the PoP view, not the host's original tool_args.
+
+    Allows hash the pop_args view inside check_chain. A None-valued argument
+    makes the stripped PoP view differ from tool_args, so hashing the wrong
+    view here would produce a receipt that fails a later --args check against
+    the wire payload — a genuine receipt, rejected.
+    """
+    from tenuo.receipts import InMemoryReceiptSink
+
+    raw_args = {"path": "/etc/passwd", "note": None}
+    result = enforce_tool_call(
+        "read_file",
+        raw_args,
+        bound,
+        trusted_roots=[signing_key.public_key],
+    )
+    assert not result.allowed
+    assert result.pop_auth_args == {"path": "/etc/passwd"}, (
+        "the denial must carry the stripped view the holder signed over"
+    )
+
+    from tenuo.control_plane import ControlPlaneClient as PyControlPlaneClient
+
+    sink = InMemoryReceiptSink()
+    client = PyControlPlaneClient(
+        url="http://127.0.0.1:1",
+        api_key="k",
+        authorizer_name="t",
+        receipt_sink=sink,
+    )
+    client.bind_authorizer(result.authorizer)
+    client.emit_for_enforcement(result)
+
+    assert len(sink.receipts) == 1
+    payload = tenuo_core.verify_receipt(sink.receipts[0])
+
+    leaf = result.presented_chain[-1]
+    holder = leaf.authorized_holder() if callable(leaf.authorized_holder) else leaf.authorized_holder
+    leaf_id = leaf.id() if callable(leaf.id) else leaf.id
+
+    pop_view_hash = tenuo_core.py_compute_request_hash(
+        leaf_id, "read_file", {"path": "/etc/passwd"}, holder
+    ).hex()
+
+    # The raw view is not even hashable — py_compute_request_hash rejects the
+    # None value — which is its own proof that hashing result.arguments here
+    # could never have matched what allows commit to.
+    assert result.arguments != result.pop_auth_args
+    assert payload.request_hash == pop_view_hash

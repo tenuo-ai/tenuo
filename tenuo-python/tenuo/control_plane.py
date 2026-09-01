@@ -382,11 +382,19 @@ class ControlPlaneClient:
         chain = getattr(result, "presented_chain", None)
         if not chain:
             return
+        # Key 7 must commit to what the holder signed over. Allows hash the
+        # pop_args view inside check_chain; a denial hashing the original
+        # tool_args instead would fail a later --args check against the wire
+        # payload on any split-view path. An empty stripped view is a real
+        # value, so this is an explicit None test, not a truthiness fallback.
+        args_for_hash = getattr(result, "pop_auth_args", None)
+        if args_for_hash is None:
+            args_for_hash = getattr(result, "arguments", None) or {}
         try:
             wire = self._inner.issue_denial_receipt(
                 list(chain),
                 tool,
-                getattr(result, "arguments", None) or {},
+                args_for_hash,
                 int(time.time()),
                 request_id,
                 _decision_code(result),

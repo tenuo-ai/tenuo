@@ -437,6 +437,11 @@ impl PyControlPlaneClient {
     /// contiguous run of allows with every refusal silently absent, which is
     /// the incompleteness the chain link exists to make visible.
     ///
+    /// `args` must be the PoP-view arguments — what the holder signed over —
+    /// not the host's original tool arguments. Key 7 on allows is hashed over
+    /// that view inside chain verification, and a denial committing to a
+    /// different view would fail verification against the wire payload.
+    ///
     /// `verified_pop` is the holder's signature, supplied only when possession
     /// was established before the failure — that is what separates "an
     /// authenticated party was refused" from "we could not establish who was
