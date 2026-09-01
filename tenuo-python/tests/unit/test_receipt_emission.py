@@ -89,6 +89,7 @@ def test_python_emission_auto_binds_receipt_trust_context():
     )
 
     client.emit_for_enforcement(decision, chain_result=result, request_id="req-auto")
+    assert client.flush_receipts(), "deferred emitter must drain"
 
     assert len(sink.receipts) == 1
     payload = tenuo_core.verify_receipt(sink.receipts[0])

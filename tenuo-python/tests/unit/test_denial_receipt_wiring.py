@@ -144,6 +144,7 @@ def test_a_split_view_denial_commits_to_what_the_holder_signed(bound, signing_ke
     )
     client.bind_authorizer(result.authorizer)
     client.emit_for_enforcement(result)
+    assert client.flush_receipts(), 'deferred emitter must drain'
 
     assert len(sink.receipts) == 1
     payload = tenuo_core.verify_receipt(sink.receipts[0])
@@ -225,6 +226,7 @@ def test_a_qualifying_denial_is_receipted_without_explicit_binding(bound, signin
     sink = InMemoryReceiptSink()
     client = _py_client(sink=sink)  # never bind_authorizer()ed
     client.emit_for_enforcement(result)
+    assert client.flush_receipts(), 'deferred emitter must drain'
 
     assert len(sink.receipts) == 1
     assert tenuo_core.verify_receipt(sink.receipts[0]).outcome == "deny"
@@ -246,6 +248,7 @@ def test_unbound_with_no_authorizer_on_the_result_warns_once(caplog):
 
     with caplog.at_level(logging.WARNING):
         client.emit_for_enforcement(bare)
+        assert client.flush_receipts(), 'deferred emitter must drain'
         client.emit_for_enforcement(bare)
 
     assert len(sink.receipts) == 0
@@ -278,7 +281,9 @@ def test_presented_but_untrusted_authority_still_qualifies(signing_key):
     assert result.presented_chain
 
     sink = InMemoryReceiptSink()
-    _py_client(sink=sink).emit_for_enforcement(result)
+    client = _py_client(sink=sink)
+    client.emit_for_enforcement(result)
+    assert client.flush_receipts(), "deferred emitter must drain"
 
     assert len(sink.receipts) == 1
     payload = tenuo_core.verify_receipt(sink.receipts[0])

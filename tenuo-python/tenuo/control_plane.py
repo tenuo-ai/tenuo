@@ -139,7 +139,8 @@ class ControlPlaneClient:
     """
     def __init__(self, *, token=None, url=None, api_key=None,
                  authorizer_name=None, signing_key=None,
-                 receipt_sink=None, on_receipt_error=None, **kwargs):
+                 receipt_sink=None, on_receipt_error=None,
+                 receipt_emitter=None, **kwargs):
         try:
             from tenuo_core import ControlPlaneClient as _Rust
         except ImportError:
@@ -205,6 +206,14 @@ class ControlPlaneClient:
         # a dropped receipt costs the ability to prove what happened.
         self._receipt_sink = receipt_sink
         self._on_receipt_error = on_receipt_error
+        # Emission posture. The two differ only in when signing happens; the
+        # chain and the artifact are identical. A bare sink defaults to the
+        # deferred posture (~0.5 µs on the hot path, crash loss bounded by its
+        # maxsize=256); pass JournalEmitter(...) for the evidence-strict one
+        # (~13 µs per decision, zero process-crash loss).
+        if receipt_emitter is None and receipt_sink is not None:
+            receipt_emitter = _receipts.DeferredEmitter(receipt_sink)
+        self._receipt_emitter = receipt_emitter
         self._receipt_unbound_warned = False
         self._inner = _Rust(
             url=resolved_url,
@@ -215,6 +224,9 @@ class ControlPlaneClient:
             metadata=meta,
             **kwargs,
         )
+
+        if self._receipt_emitter is not None:
+            self._receipt_emitter._attach(self._inner, on_receipt_error)
 
     @classmethod
     def from_env(cls) -> Optional["ControlPlaneClient"]:
@@ -342,8 +354,7 @@ class ControlPlaneClient:
         invariant: receipts commit to the trust context the enforcement point
         actually used.
         """
-        receipt_sink = getattr(self, "_receipt_sink", None)
-        if receipt_sink is None:
+        if getattr(self, "_receipt_emitter", None) is None:
             return
         authorizer = getattr(result, "authorizer", None)
         if authorizer is None:
@@ -377,7 +388,8 @@ class ControlPlaneClient:
         stream, and the boundary is that receipts cover decisions made over
         presented authority.
         """
-        if getattr(self, "_receipt_sink", None) is None:
+        emitter = getattr(self, "_receipt_emitter", None)
+        if emitter is None:
             return
         chain = getattr(result, "presented_chain", None)
         if not chain:
@@ -391,7 +403,7 @@ class ControlPlaneClient:
         if args_for_hash is None:
             args_for_hash = getattr(result, "arguments", None) or {}
         try:
-            wire = self._inner.issue_denial_receipt(
+            emitter.emit_denial(
                 list(chain),
                 tool,
                 args_for_hash,
@@ -405,9 +417,7 @@ class ControlPlaneClient:
                 ),
             )
         except Exception as exc:  # noqa: BLE001 - must not fail the caller
-            logger.warning("failed to sign denial receipt for %r", tool, exc_info=exc)
-            return
-        _receipts.deliver(self._receipt_sink, wire, getattr(self, "_on_receipt_error", None))
+            logger.warning("failed to emit denial receipt for %r", tool, exc_info=exc)
 
     def _emit_receipt(self, chain_result, tool, allowed, request_id, decision_code) -> None:
         """Sign a receipt for this decision and hand it to the sink.
@@ -417,19 +427,32 @@ class ControlPlaneClient:
         stack — a receipt without the chain it decided over is not worth
         signing.
         """
-        receipt_sink = getattr(self, "_receipt_sink", None)
-        if receipt_sink is None or chain_result is None:
+        emitter = getattr(self, "_receipt_emitter", None)
+        if emitter is None or chain_result is None:
             return
         try:
-            wire = self._inner.issue_receipt(
+            emitter.emit_allow(
                 chain_result, tool, allowed, int(time.time()), request_id, decision_code,
             )
         except Exception as exc:  # noqa: BLE001 - must not fail the caller
-            logger.warning("failed to sign receipt for %r", tool, exc_info=exc)
-            return
-        _receipts.deliver(receipt_sink, wire, getattr(self, "_on_receipt_error", None))
+            logger.warning("failed to emit receipt for %r", tool, exc_info=exc)
+
+    def flush_receipts(self, timeout: float = 10.0) -> bool:
+        """Wait until every receipt emitted so far is signed and delivered.
+
+        A no-op for the journal posture, which is durable before ``emit``
+        returns. Returns False on timeout rather than raising.
+        """
+        emitter = getattr(self, "_receipt_emitter", None)
+        return True if emitter is None else emitter.flush(timeout)
 
     def shutdown(self, timeout_secs: float = 5.0) -> None:
+        emitter = getattr(self, "_receipt_emitter", None)
+        if emitter is not None:
+            try:
+                emitter.close(timeout_secs)
+            except Exception:  # noqa: BLE001 - shutdown must not raise
+                logger.warning("receipt emitter did not drain cleanly")
         self._inner.shutdown(timeout_secs)
 
     @property

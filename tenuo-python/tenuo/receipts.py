@@ -43,6 +43,7 @@ import json
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Callable, List, Optional, Protocol, runtime_checkable
 
@@ -52,6 +53,8 @@ __all__ = [
     "ReceiptSink",
     "InMemoryReceiptSink",
     "FileReceiptSink",
+    "DeferredEmitter",
+    "JournalEmitter",
     "deliver",
 ]
 
@@ -155,3 +158,178 @@ def deliver(
             except BaseException:  # noqa: BLE001
                 pass
         logger.warning("receipt sink failed; evidence for this decision was not stored", exc_info=exc)
+
+
+# ── emission postures ────────────────────────────────────────────────────────
+#
+# The two postures differ in exactly one decision: when signing happens.
+# The chain, the qualification rules, and the artifact are identical — a
+# verifier cannot tell which posture produced a receipt. Only the loss
+# contract differs, one line each:
+#
+#   DeferredEmitter  nothing added to the hot path (~0.5 µs enqueue); a crash
+#                    may take up to ``maxsize`` receipts with it.
+#   JournalEmitter   ~13 µs (Rust) per decision on the hot path; a process
+#                    crash takes nothing — the flush reaches the page cache.
+
+
+class DeferredEmitter:
+    """Latency-strict posture: snapshot the decision, sign off-thread.
+
+    The hot path pays a blocking enqueue. A single worker signs in FIFO
+    order — which is what preserves the receipt chain — and hands the wire
+    to the sink. ``maxsize`` is the loss budget: a SIGKILL loses at most the
+    queued decisions, and under sustained overload the enqueue blocks rather
+    than sheds, because anonymous interior gaps are the one thing the chain
+    cannot expose. Size it as ``rate × the longest outage to ride out``.
+
+    ``maxsize`` is required to be positive. The unbounded configuration lost
+    five million receipts in one measured crash and is not constructible.
+    """
+
+    def __init__(self, sink, maxsize: int = 256) -> None:
+        if sink is None:
+            raise ValueError("DeferredEmitter requires a sink")
+        if not isinstance(maxsize, int) or maxsize <= 0:
+            raise ValueError(
+                "maxsize is the crash-loss budget and must be a positive int"
+            )
+        import queue as _queue
+
+        self._sink = sink
+        self._q: "_queue.Queue" = _queue.Queue(maxsize)
+        self._inner = None
+        self._on_error = None
+        self._busy = False
+        self._worker: Optional[threading.Thread] = None
+
+    # Called by ControlPlaneClient: the emitter signs with the client's own
+    # key so both postures share one identity and one chain.
+    def _attach(self, inner, on_error) -> None:
+        self._inner = inner
+        self._on_error = on_error
+        self._worker = threading.Thread(target=self._run, daemon=True)
+        self._worker.start()
+
+    def emit_allow(self, chain_result, tool, allowed, ts, request_id, decision_code) -> None:
+        self._q.put(("allow", chain_result, tool, allowed, ts, request_id, decision_code))
+
+    def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop) -> None:
+        self._q.put(("deny", chain, tool, args, ts, request_id, decision_code, verified_pop))
+
+    def qsize(self) -> int:
+        return self._q.qsize()
+
+    def _run(self) -> None:
+        while True:
+            item = self._q.get()
+            if item is None:
+                self._q.task_done()
+                return
+            self._busy = True
+            try:
+                if item[0] == "allow":
+                    _, chain_result, tool, allowed, ts, request_id, code = item
+                    wire = self._inner.issue_receipt(
+                        chain_result, tool, allowed, ts, request_id, code
+                    )
+                else:
+                    _, chain, tool, args, ts, request_id, code, pop = item
+                    wire = self._inner.issue_denial_receipt(
+                        chain, tool, args, ts, request_id, code, pop
+                    )
+                deliver(self._sink, wire, self._on_error)
+            except Exception as exc:  # noqa: BLE001 — one bad item must not kill the worker
+                logger.warning("deferred receipt emission failed", exc_info=exc)
+            finally:
+                self._busy = False
+                self._q.task_done()
+
+    def flush(self, timeout: float = 10.0) -> bool:
+        """Wait until everything enqueued so far is signed and delivered."""
+        deadline = time.monotonic() + timeout
+        while not self._q.empty() or self._busy:
+            if time.monotonic() > deadline:
+                return False
+            time.sleep(0.002)
+        return True
+
+    def close(self, timeout: float = 10.0) -> None:
+        if self._worker is None:
+            return
+        self._q.put(None)
+        self._worker.join(timeout)
+        self._worker = None
+
+
+class JournalEmitter:
+    """Evidence-strict posture: sign and persist on the request thread.
+
+    The receipt is appended (one hex line, readable by ``tenuo receipt
+    chain``) and flushed into the page cache before the call returns, so a
+    process crash loses nothing. The residual window is machine death, which
+    the optional periodic fsync bounds — at a cost: fsync contends with the
+    hot-path append on the same inode, and the measured worst co-stall was
+    232 ms at full saturation. Segmented rotation removes that structurally
+    and is the planned follow-up; until then, size ``fsync_interval_s``
+    generously on write-heavy deployments.
+    """
+
+    def __init__(self, path: "str | Path", *, fsync_interval_s: Optional[float] = 0.5) -> None:
+        self._path = Path(path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(str(self._path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        self._inner = None
+        self._on_error = None
+        self._stop = threading.Event()
+        if fsync_interval_s is not None:
+            def _fsyncer() -> None:
+                while not self._stop.wait(fsync_interval_s):
+                    try:
+                        os.fsync(self._fd)
+                    except OSError:
+                        pass
+            threading.Thread(target=_fsyncer, daemon=True).start()
+
+    def _attach(self, inner, on_error) -> None:
+        self._inner = inner
+        self._on_error = on_error
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def _append(self, wire: Optional[str]) -> None:
+        if wire is None:
+            return
+        try:
+            os.write(self._fd, (wire + "\n").encode("ascii"))
+        except BaseException as exc:  # noqa: BLE001 — must not fail the tool call
+            if self._on_error is not None:
+                try:
+                    self._on_error(exc)
+                    return
+                except BaseException:  # noqa: BLE001
+                    pass
+            logger.warning("journal append failed; evidence not stored", exc_info=exc)
+
+    def emit_allow(self, chain_result, tool, allowed, ts, request_id, decision_code) -> None:
+        self._append(self._inner.issue_receipt(
+            chain_result, tool, allowed, ts, request_id, decision_code
+        ))
+
+    def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop) -> None:
+        self._append(self._inner.issue_denial_receipt(
+            chain, tool, args, ts, request_id, decision_code, verified_pop
+        ))
+
+    def flush(self, timeout: float = 10.0) -> bool:  # noqa: ARG002 — nothing pending
+        os.fsync(self._fd)
+        return True
+
+    def close(self, timeout: float = 10.0) -> None:  # noqa: ARG002
+        self._stop.set()
+        try:
+            os.fsync(self._fd)
+        finally:
+            os.close(self._fd)
