@@ -1022,6 +1022,20 @@ impl Warrant {
         now >= self.payload.expires_at
     }
 
+    /// True when `issued_at` is after `as_of` beyond `tolerance`.
+    pub fn is_issued_in_future_as_of(&self, as_of: i64, tolerance: chrono::Duration) -> bool {
+        let now = as_of.max(0) as u64;
+        let tol_secs = tolerance.num_seconds().max(0) as u64;
+        self.payload.issued_at > now.saturating_add(tol_secs)
+    }
+
+    /// Lifetime of this warrant in seconds (`expires_at - issued_at`).
+    pub fn lifetime_secs(&self) -> u64 {
+        self.payload
+            .expires_at
+            .saturating_sub(self.payload.issued_at)
+    }
+
     /// Check if this warrant is terminal (cannot delegate further).
     pub fn is_terminal(&self) -> bool {
         self.depth() >= self.effective_max_depth()
@@ -1251,6 +1265,43 @@ impl Warrant {
         constraints.matches(args)
     }
 
+    /// Canonical PoP preimage: `POP_CONTEXT || CBOR((warrant_id_hex, tool, sorted_args, window_ts))`.
+    ///
+    /// `timestamp` is a unix-seconds instant, not a pre-windowed value. This
+    /// function floors it the same way verification does:
+    /// `window_ts = (timestamp / window_secs) * window_secs`.
+    /// There is no clock read inside this function.
+    ///
+    /// The returned bytes are the preimage, not the final Ed25519 message.
+    /// The final message is `SIGNATURE_CONTEXT || preimage`.
+    pub fn pop_preimage(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        timestamp: i64,
+        window_secs: i64,
+    ) -> Result<Vec<u8>> {
+        if window_secs <= 0 {
+            return Err(Error::Validation(
+                "PoP window_secs must be greater than zero".to_string(),
+            ));
+        }
+
+        let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
+        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-pop-sign-sort.
+        sorted_args.sort_by_key(|(k, _)| *k);
+
+        let window_ts = (timestamp / window_secs) * window_secs;
+        let challenge_data = (self.payload.id.to_hex(), tool, sorted_args, window_ts);
+        let mut challenge_bytes = Vec::new();
+        ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes)
+            .map_err(|e| Error::SerializationError(e.to_string()))?;
+
+        let mut preimage = POP_CONTEXT.to_vec();
+        preimage.extend_from_slice(&challenge_bytes);
+        Ok(preimage)
+    }
+
     /// Verify PoP signature with configurable window.
     ///
     /// Uses **bidirectional** window checking to handle clock skew in both directions:
@@ -1277,7 +1328,27 @@ impl Warrant {
         )
     }
 
-    /// Verify PoP against a committed evaluation instant.
+    /// Verify PoP against windows derived from `as_of`. Does not read a clock.
+    pub fn verify_pop_at(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+        window_secs: i64,
+        max_windows: u32,
+        as_of: DateTime<Utc>,
+    ) -> Result<()> {
+        self.verify_pop_as_of(
+            tool,
+            args,
+            signature,
+            window_secs,
+            max_windows,
+            as_of.timestamp(),
+        )
+    }
+
+    /// Verify PoP against a committed unix-seconds instant.
     pub fn verify_pop_as_of(
         &self,
         tool: &str,
@@ -1290,18 +1361,14 @@ impl Warrant {
         let signature = signature
             .ok_or_else(|| Error::MissingSignature("Proof-of-Possession required".to_string()))?;
 
+        if window_secs <= 0 {
+            return Err(Error::Validation(
+                "PoP window_secs must be greater than zero".to_string(),
+            ));
+        }
+
         let now = as_of;
-
-        let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
-        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-pop-verify-sort.
-        sorted_args.sort_by_key(|(k, _)| *k);
-
         let mut verified = false;
-
-        // Hoist loop-invariant values: id hex and buffers are reused across windows
-        let id_hex = self.payload.id.to_hex();
-        let mut challenge_bytes = Vec::with_capacity(256);
-        let mut preimage = Vec::with_capacity(256);
 
         // Bidirectional window checking: check current window first, then alternate
         // between past and future windows. This handles clock skew in both directions.
@@ -1328,15 +1395,10 @@ impl Warrant {
             }
 
             let window_ts = (now / window_secs + offset) * window_secs;
-            let challenge_data = (&id_hex, tool, &sorted_args, window_ts);
-            challenge_bytes.clear();
-            if ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes).is_err() {
-                continue;
-            }
-
-            preimage.clear();
-            preimage.extend_from_slice(POP_CONTEXT);
-            preimage.extend_from_slice(&challenge_bytes);
+            let preimage = match self.pop_preimage(tool, args, window_ts, window_secs) {
+                Ok(bytes) => bytes,
+                Err(_) => continue,
+            };
 
             if self.payload.holder.verify(&preimage, signature).is_ok() {
                 verified = true;
@@ -1374,22 +1436,8 @@ impl Warrant {
         args: &HashMap<String, ConstraintValue>,
         timestamp: Option<i64>,
     ) -> Result<Signature> {
-        let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
-        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-pop-sign-sort.
-        sorted_args.sort_by_key(|(k, _)| *k);
-
         let now = timestamp.unwrap_or_else(|| Utc::now().timestamp());
-        let window_ts = (now / POP_TIMESTAMP_WINDOW_SECS) * POP_TIMESTAMP_WINDOW_SECS;
-
-        let challenge_data = (self.payload.id.to_hex(), tool, sorted_args, window_ts);
-        let mut challenge_bytes = Vec::new();
-        ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes)
-            .map_err(|e| Error::SerializationError(e.to_string()))?;
-
-        // Prepend domain separation context
-        let mut preimage = POP_CONTEXT.to_vec();
-        preimage.extend_from_slice(&challenge_bytes);
-
+        let preimage = self.pop_preimage(tool, args, now, POP_TIMESTAMP_WINDOW_SECS)?;
         Ok(keypair.sign(&preimage))
     }
 

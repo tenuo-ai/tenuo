@@ -53,6 +53,7 @@ pub mod planes;
 pub mod receipt;
 pub mod revocation;
 pub mod revocation_manager;
+pub mod verification;
 pub mod warrant;
 pub mod wire;
 
@@ -100,6 +101,7 @@ pub use revocation::{
     RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,
 };
 pub use revocation_manager::RevocationManager;
+pub use verification::{RevocationSnapshot, RevocationState, VerificationContext};
 pub use warrant::{
     Clearance, OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant, WarrantBuilder, WarrantId,
     WarrantType, POP_MAX_WINDOWS, POP_TIMESTAMP_WINDOW_SECS, WARRANT_ID_PREFIX,
