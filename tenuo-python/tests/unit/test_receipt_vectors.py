@@ -228,3 +228,39 @@ def test_a_withheld_receipt_leaves_a_dangling_successor():
     # pointing at something absent.
     assert kept.prev_receipt_hash is not None
     assert kept.prev_receipt_hash not in []
+
+
+# ── A.31 derivations ────────────────────────────────────────────────────────
+# Python must reproduce the same bytes as Rust, or a receipt's keys 7 and 11
+# are opaque here rather than checkable.
+
+A31_REQUEST_HASH = "59f290af000b9331df93a643f48fd530f43510243507cd8bfc8aa12623dbab4b"
+A31_POLICY_CBOR = "a268656e636f64696e67a2646b696e64656f6e654f666676616c7565738264757466386561736369696470617468a2646b696e6465756e64657264726f6f74652f64617461"
+A31_POLICY_HASH = "9b53b570975500172890f86347a3338c8ac4ca2b75501d582a2cc0eef152059d"
+
+
+def test_request_hash_matches_the_published_derivation():
+    holder_hex = "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1"
+    holder = tenuo_core.PublicKey.from_bytes(bytes.fromhex(holder_hex))
+
+    digest = tenuo_core.py_compute_request_hash(
+        "tnu_wrt_019471f8000070008000000000003100",
+        "read_file",
+        {
+            "path": "/data/q3.pdf",
+            "limit": 10,
+            "dry_run": True,
+            "tags": ["b", "a"],
+        },
+        holder,
+    )
+
+    assert digest.hex() == A31_REQUEST_HASH
+
+
+def test_policy_commitment_matches_the_published_derivation():
+    # The commitment describes the policy, not the order it was built in.
+    assert (
+        tenuo_core.policy_commitment_digest(bytes.fromhex(A31_POLICY_CBOR)).hex()
+        == A31_POLICY_HASH
+    )

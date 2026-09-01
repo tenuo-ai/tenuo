@@ -1648,8 +1648,8 @@ fn encode_receipt(
 ///
 /// `None` when no ceiling was supplied, which is a different claim from an
 /// empty ceiling: the first says the host imposed nothing, the second says it
-/// deliberately imposed an open policy. serde_json's object map is sorted, so
-/// the CBOR encoding is stable for a given policy.
+/// deliberately imposed an open policy. The encoding is canonical_policy_bytes,
+/// so a verifier can reproduce the digest from the same policy.
 fn policy_digest(tool_allow: &JsValue) -> Option<[u8; 32]> {
     if tool_allow.is_null() || tool_allow.is_undefined() {
         return None;
@@ -1658,8 +1658,7 @@ fn policy_digest(tool_allow: &JsValue) -> Option<[u8; 32]> {
     if raw.is_null() {
         return None;
     }
-    let mut bytes = Vec::new();
-    ciborium::into_writer(&raw, &mut bytes).ok()?;
+    let bytes = tenuo::canonical_policy_bytes(&raw)?;
     Some(tenuo::policy_commitment_digest(&bytes))
 }
 

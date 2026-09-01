@@ -2128,21 +2128,6 @@ Keys 12 and 13 commit to the revocation list in force. Absent means no
 list was loaded, which is a different claim from a loaded list that
 revoked nothing.
 
-**Signing Preimage:**
-```
-b"tenuo-receipt-v1" || receipt_version || payload_bytes
-```
-
-`receipt_version` is the artifact's own byte (key 0 of the payload must equal
-it, and verification rejects a mismatch). `payload_bytes` are the deterministic
-CBOR of the payload map, carried opaquely in the artifact so a verifier checks
-the signature over exactly the bytes it received rather than over a
-re-encoding.
-
-**Verification** additionally rejects a receipt whose claims are not
-self-consistent, even when the signature is valid: an allow must carry key 8,
-and a denial must carry key 10.
-
 ### A.30.1 Allow, No Revocation Data
 
 Keys 12 and 13 are both absent: the enforcement point never consulted revocation. A verifier cannot conclude the warrant was unrevoked.
@@ -2346,4 +2331,81 @@ f3c97e6a7369676e65725f6b6579820158201ba4075b77c9e3fb3ecde15cdaf5
 221f3c10373e623f7b0e1ef76366b0af7137697369676e617475726582015840
 2abc6b9738d742aa79294b6db464e67495c9fd4ba2ab22b5696119cd82f8eba9
 3227249df96b603a23b8cb92409868f5eb5d91275bd5568ae6cad567a76c8e03
+
+
+---
+
+## A.31 Receipt Derivations
+
+The two values a receipt commits to that are computed rather than
+carried. An implementation that cannot reproduce these cannot check
+payload keys 7 and 11 against anything.
+
+### A.31.1 Request Hash (payload key 7)
+
+`SHA-256` over a CBOR 4-element array. The arguments are canonicalized
+separately and embedded as a CBOR **byte string**, so the boundary
+between them and the outer array is unambiguous.
+
+```
+args_cbor = deterministic CBOR of the arguments map, keys sorted
+preimage  = CBOR([ text(warrant_id), text(tool), bytes(args_cbor), bytes(holder) ])
+key 7     = SHA-256(preimage)
+```
+
+An absent holder contributes a zero-length byte string, not an omission.
+
+| Input | Value |
+| --- | --- |
+| warrant_id | `tnu_wrt_019471f8000070008000000000003100` |
+| tool | `read_file` |
+| holder | `ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1` |
+| args | `dry_run=true`, `limit=10`, `path="/data/q3.pdf"`, `tags=["b","a"]` |
+
+**Canonical args CBOR (sorted keys, list order preserved):**
+
+a4676472795f72756ef5656c696d69740a64706174686c2f646174612f71332e
+70646664746167738261626161
+
+**Request hash:**
+
+59f290af000b9331df93a643f48fd530f43510243507cd8bfc8aa12623dbab4b
+
+### A.31.2 Policy Commitment (payload key 11)
+
+`SHA-256` over deterministic CBOR of the host allow-policy, keys sorted.
+Sorting is what lets two implementations agree: the commitment describes
+the policy, not the order a host happened to build it in.
+
+```
+key 11 = SHA-256(deterministic CBOR of the field -> constraint map)
+```
+
+**Policy (given here out of order, to exercise the sort):**
+
+```json
+{
+  "encoding": {
+    "kind": "oneOf",
+    "values": [
+      "utf8",
+      "ascii"
+    ]
+  },
+  "path": {
+    "kind": "under",
+    "root": "/data"
+  }
+}
+```
+
+**Canonical policy CBOR:**
+
+a268656e636f64696e67a2646b696e64656f6e654f666676616c756573826475
+7466386561736369696470617468a2646b696e6465756e64657264726f6f7465
+2f64617461
+
+**Policy commitment:**
+
+9b53b570975500172890f86347a3338c8ac4ca2b75501d582a2cc0eef152059d
 

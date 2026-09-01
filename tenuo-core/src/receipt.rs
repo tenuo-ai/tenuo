@@ -58,12 +58,33 @@ pub fn trusted_roots_digest(roots: &[[u8; 32]]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Canonical encoding of a host allow-policy, for
+/// [`policy_commitment_digest`].
+///
+/// Deterministic CBOR of the field → constraint-expression map with keys
+/// sorted, so the commitment describes the policy and not the order a host
+/// happened to build it in.
+///
+/// The encoding is pinned here rather than left to callers. A caller-chosen
+/// encoding is enough for one producer comparing against itself and useless
+/// the moment a second implementation — a verifier, another runtime, a control
+/// plane checking for drift — has to reproduce the digest from the same policy.
+pub fn canonical_policy_bytes(policy: &serde_json::Value) -> Option<Vec<u8>> {
+    use std::collections::BTreeMap;
+
+    let object = policy.as_object()?;
+    let sorted: BTreeMap<&String, &serde_json::Value> = object.iter().collect();
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&sorted, &mut bytes).ok()?;
+    Some(bytes)
+}
+
 /// SHA-256 over the host policy ceiling, for
 /// [`ReceiptPayload::policy_definition_hash`].
 ///
-/// Takes the already-encoded policy so the caller owns the encoding decision;
-/// what matters is that one deployment encodes it the same way every time, or
-/// the commitment cannot be compared against anything.
+/// Takes bytes produced by [`canonical_policy_bytes`]. Hashing a different
+/// encoding produces a commitment nothing else can reproduce, which makes key
+/// 11 unverifiable rather than merely inconvenient.
 pub fn policy_commitment_digest(policy_bytes: &[u8]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();

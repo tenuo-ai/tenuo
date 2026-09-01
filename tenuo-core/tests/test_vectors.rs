@@ -3945,3 +3945,96 @@ fn a30_removing_a_receipt_from_the_stream_is_detectable() {
     );
     assert_eq!(dropped_predecessor.request_id, "req-a30");
 }
+
+// =============================================================================
+// A.31 Receipt Derivations
+//
+// The two values a receipt commits to that are computed rather than carried.
+// An implementation that cannot reproduce these cannot check payload keys 7
+// and 11 against anything, which is the difference between a commitment and an
+// opaque 32 bytes.
+// =============================================================================
+
+const A31_ARGS_CBOR: &str =
+    "a4676472795f72756ef5656c696d69740a64706174686c2f646174612f71332e70646664746167738261626161";
+const A31_REQUEST_HASH: &str = "59f290af000b9331df93a643f48fd530f43510243507cd8bfc8aa12623dbab4b";
+const A31_POLICY_CBOR: &str = "a268656e636f64696e67a2646b696e64656f6e654f666676616c7565738264757466386561736369696470617468a2646b696e6465756e64657264726f6f74652f64617461";
+const A31_POLICY_HASH: &str = "9b53b570975500172890f86347a3338c8ac4ca2b75501d582a2cc0eef152059d";
+
+fn a31_args() -> std::collections::HashMap<String, tenuo::ConstraintValue> {
+    use tenuo::ConstraintValue;
+    let mut args = std::collections::HashMap::new();
+    args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/q3.pdf".to_string()),
+    );
+    args.insert("limit".to_string(), ConstraintValue::Integer(10));
+    args.insert("dry_run".to_string(), ConstraintValue::Boolean(true));
+    args.insert(
+        "tags".to_string(),
+        ConstraintValue::List(vec![
+            ConstraintValue::String("b".to_string()),
+            ConstraintValue::String("a".to_string()),
+        ]),
+    );
+    args
+}
+
+#[test]
+fn a31_1_canonical_args_sort_keys_and_preserve_list_order() {
+    let encoded = tenuo::approval::canonical_tool_args_cbor(&a31_args()).expect("canonicalizes");
+
+    // Sorting the map is what lets two implementations agree; sorting the list
+    // would change the invocation, so it must not happen.
+    assert_eq!(hex::encode(encoded), A31_ARGS_CBOR);
+}
+
+#[test]
+fn a31_1_request_hash_matches_the_published_derivation() {
+    let holder_bytes =
+        hex::decode("ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1")
+            .expect("decodes");
+    let holder = tenuo::PublicKey::from_bytes(&holder_bytes.try_into().unwrap()).expect("key");
+
+    let hash = tenuo::approval::compute_request_hash(
+        "tnu_wrt_019471f8000070008000000000003100",
+        "read_file",
+        &a31_args(),
+        Some(&holder),
+    );
+
+    assert_eq!(hex::encode(hash), A31_REQUEST_HASH);
+}
+
+#[test]
+fn a31_2_policy_encoding_sorts_and_matches_the_published_derivation() {
+    // Given out of order on purpose: the commitment describes the policy, not
+    // the order a host happened to build it in.
+    let policy = serde_json::json!({
+        "path": {"kind": "under", "root": "/data"},
+        "encoding": {"kind": "oneOf", "values": ["utf8", "ascii"]},
+    });
+
+    let bytes = tenuo::canonical_policy_bytes(&policy).expect("canonicalizes");
+    assert_eq!(hex::encode(&bytes), A31_POLICY_CBOR);
+    assert_eq!(
+        hex::encode(tenuo::policy_commitment_digest(&bytes)),
+        A31_POLICY_HASH
+    );
+}
+
+#[test]
+fn a31_2_a_different_policy_commits_differently() {
+    let tight = serde_json::json!({"path": {"kind": "under", "root": "/data"}});
+    let open = serde_json::json!({});
+
+    let tight_bytes = tenuo::canonical_policy_bytes(&tight).expect("canonicalizes");
+    let open_bytes = tenuo::canonical_policy_bytes(&open).expect("canonicalizes");
+
+    // The whole point of key 11: an allow under a tight ceiling must not look
+    // like one under an open ceiling.
+    assert_ne!(
+        tenuo::policy_commitment_digest(&tight_bytes),
+        tenuo::policy_commitment_digest(&open_bytes)
+    );
+}

@@ -3166,6 +3166,117 @@ fn main() {
          receipt pointing at nothing, which is what turns \"this decision \
          happened\" into \"these are all the decisions\".",
     );
+
+    print_derivation_vectors(&control_plane, &worker);
+}
+
+fn print_derivation_vectors(control_plane: &SigningKey, worker: &SigningKey) {
+    use tenuo::approval::{canonical_tool_args_cbor, compute_request_hash};
+
+    println!();
+    println!("---");
+    println!();
+    println!("## A.31 Receipt Derivations");
+    println!();
+    println!("The two values a receipt commits to that are computed rather than");
+    println!("carried. An implementation that cannot reproduce these cannot check");
+    println!("payload keys 7 and 11 against anything.");
+    println!();
+
+    // ---- A.31.1 request hash (key 7) ----
+    const ID_A31: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x31,
+        0x00,
+    ];
+    let warrant_id = WarrantId::from_bytes(ID_A31).to_string();
+
+    // Mixed value kinds and out-of-order keys: the encoding sorts, so the
+    // commitment describes the invocation and not the caller's map order.
+    let mut args: HashMap<String, ConstraintValue> = HashMap::new();
+    args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/q3.pdf".to_string()),
+    );
+    args.insert("limit".to_string(), ConstraintValue::Integer(10));
+    args.insert("dry_run".to_string(), ConstraintValue::Boolean(true));
+    args.insert(
+        "tags".to_string(),
+        ConstraintValue::List(vec![
+            ConstraintValue::String("b".to_string()),
+            ConstraintValue::String("a".to_string()),
+        ]),
+    );
+
+    let args_cbor = canonical_tool_args_cbor(&args).expect("args canonicalize");
+    let holder = worker.public_key();
+    let request_hash = compute_request_hash(&warrant_id, "read_file", &args, Some(&holder));
+
+    println!("### A.31.1 Request Hash (payload key 7)");
+    println!();
+    println!("`SHA-256` over a CBOR 4-element array. The arguments are canonicalized");
+    println!("separately and embedded as a CBOR **byte string**, so the boundary");
+    println!("between them and the outer array is unambiguous.");
+    println!();
+    println!("```");
+    println!("args_cbor = deterministic CBOR of the arguments map, keys sorted");
+    println!("preimage  = CBOR([ text(warrant_id), text(tool), bytes(args_cbor), bytes(holder) ])");
+    println!("key 7     = SHA-256(preimage)");
+    println!("```");
+    println!();
+    println!("An absent holder contributes a zero-length byte string, not an omission.");
+    println!();
+    println!("| Input | Value |");
+    println!("| --- | --- |");
+    println!("| warrant_id | `{}` |", warrant_id);
+    println!("| tool | `read_file` |");
+    println!("| holder | `{}` |", hex::encode(holder.to_bytes()));
+    println!(
+        "| args | `dry_run=true`, `limit=10`, `path=\"/data/q3.pdf\"`, `tags=[\"b\",\"a\"]` |"
+    );
+    println!();
+    println!("**Canonical args CBOR (sorted keys, list order preserved):**");
+    println!();
+    print_hex_block(&args_cbor);
+    println!();
+    println!("**Request hash:**");
+    println!();
+    print_hex_block(&request_hash);
+    println!();
+
+    // ---- A.31.2 policy digest (key 11) ----
+    let policy = serde_json::json!({
+        "path": {"kind": "under", "root": "/data"},
+        "encoding": {"kind": "oneOf", "values": ["utf8", "ascii"]},
+    });
+    let policy_bytes = tenuo::canonical_policy_bytes(&policy).expect("policy canonicalizes");
+    let policy_hash = tenuo::policy_commitment_digest(&policy_bytes);
+
+    println!("### A.31.2 Policy Commitment (payload key 11)");
+    println!();
+    println!("`SHA-256` over deterministic CBOR of the host allow-policy, keys sorted.");
+    println!("Sorting is what lets two implementations agree: the commitment describes");
+    println!("the policy, not the order a host happened to build it in.");
+    println!();
+    println!("```");
+    println!("key 11 = SHA-256(deterministic CBOR of the field -> constraint map)");
+    println!("```");
+    println!();
+    println!("**Policy (given here out of order, to exercise the sort):**");
+    println!();
+    println!("```json");
+    println!("{}", serde_json::to_string_pretty(&policy).unwrap());
+    println!("```");
+    println!();
+    println!("**Canonical policy CBOR:**");
+    println!();
+    print_hex_block(&policy_bytes);
+    println!();
+    println!("**Policy commitment:**");
+    println!();
+    print_hex_block(&policy_hash);
+    println!();
+
+    let _ = control_plane;
 }
 
 /// Emit one receipt vector: the artifact bytes plus the fields a verifier
