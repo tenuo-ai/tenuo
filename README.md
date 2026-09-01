@@ -34,9 +34,12 @@ pip install tenuo
 
 # TypeScript SDK (beta, Node 20+)
 npm i @tenuo/core@beta
+
+# Rust (core crate)
+cargo add tenuo
 ```
 
-See [`tenuo-ts/README.md`](tenuo-ts/README.md). The TypeScript API may still move before its first stable tag.
+TypeScript details: [`tenuo-ts/README.md`](tenuo-ts/README.md). Rust details: the [Rust section](#rust) below.
 
 Or try it without installing:
 
