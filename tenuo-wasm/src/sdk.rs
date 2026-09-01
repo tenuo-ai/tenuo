@@ -108,11 +108,33 @@ struct InspectDto {
 #[derive(Serialize)]
 struct ReceiptInspectDto {
     authentic: bool,
+    /// Hex key the receipt is signed under — the only field trust may be keyed
+    /// on, resolved against the verifier's own authorizer set.
+    signer_key: String,
     outcome: String,
     action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     decision_code: Option<String>,
     request_id: String,
+    /// Absent when the enforcement point held no revocation data at all —
+    /// a different claim from holding a list that revoked nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    srl_version: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    srl_hash: Option<String>,
+    /// Commitment to the host ceiling applied to this decision.
+    /// Commitment to the canonical invocation this decision was made over.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    policy_definition_hash: Option<String>,
+    /// Link to the previous receipt from this signer. Absent on the first, or
+    /// when the deployment does not chain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prev_receipt_hash: Option<String>,
+    /// Commitment to the trusted root set in force.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trusted_roots_hash: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -130,6 +152,20 @@ pub struct SdkContext {
     authorizer: Authorizer,
     trusted_roots: Vec<PublicKey>,
     receipt_signer: SigningKey,
+    /// `(version, sha256(wire bytes))` of the revocation list currently loaded.
+    /// `None` until one is installed — receipts then omit keys 12 and 13, which
+    /// is the honest claim that revocation was never consulted.
+    srl_commitment: Option<(Option<u64>, [u8; 32])>,
+    /// Commitment to the trusted root set (receipt key 15). Fixed at
+    /// construction because the trust anchors do not change over a context's
+    /// life.
+    trusted_roots_hash: [u8; 32],
+    /// Digest of the last receipt this context emitted (receipt key 14).
+    ///
+    /// `Cell` because authorization takes `&self` and chaining is inherently
+    /// stateful. Single-threaded by construction: wasm has no threads, and one
+    /// context serves one enforcement point.
+    last_receipt_hash: std::cell::Cell<Option<[u8; 32]>>,
 }
 
 /// Opaque warrant chain (root first) + leaf holder key. Not JSON-serializable from JS.
@@ -154,6 +190,9 @@ impl SdkContext {
         let root = issuer.public_key();
         let authorizer = Authorizer::new().with_trusted_root(root.clone());
         SdkContext {
+            srl_commitment: None,
+            trusted_roots_hash: tenuo::trusted_roots_digest(&[root.to_bytes()]),
+            last_receipt_hash: std::cell::Cell::new(None),
             issuer: Some(issuer.clone()),
             authorizer,
             trusted_roots: vec![root],
@@ -179,6 +218,11 @@ impl SdkContext {
             trusted_roots.push(key);
         }
         Ok(SdkContext {
+            srl_commitment: None,
+            trusted_roots_hash: tenuo::trusted_roots_digest(
+                &trusted_roots.iter().map(|r| r.to_bytes()).collect::<Vec<_>>(),
+            ),
+            last_receipt_hash: std::cell::Cell::new(None),
             issuer: None,
             authorizer,
             trusted_roots,
@@ -191,12 +235,16 @@ impl SdkContext {
     pub fn load_revocation_list(&mut self, wire: &str) -> Result<(), JsError> {
         init_panic_hook();
         let bytes = parse_srl_bytes(wire)?;
+        let digest = tenuo::srl_commitment_digest(&bytes);
         match SignedRevocationList::from_bytes(&bytes) {
             Ok(srl) => {
                 let mut last = None;
                 for root in &self.trusted_roots {
                     match self.authorizer.set_revocation_list(srl.clone(), root) {
-                        Ok(()) => return Ok(()),
+                        Ok(()) => {
+                            self.srl_commitment = Some((None, digest));
+                            return Ok(());
+                        }
                         Err(e) => last = Some(e),
                     }
                 }
@@ -208,9 +256,12 @@ impl SdkContext {
             }
             Err(_) => {
                 let published = verify_published_srl(&bytes, &self.trusted_roots)?;
+                let version = published.version;
                 self.authorizer
-                    .install_verified_revocation_ids(published.revoked_ids, published.version)
-                    .map_err(|e| JsError::new(&format!("failed to install revocation list: {e}")))
+                    .install_verified_revocation_ids(published.revoked_ids, version)
+                    .map_err(|e| JsError::new(&format!("failed to install revocation list: {e}")))?;
+                self.srl_commitment = Some((Some(version), digest));
+                Ok(())
             }
         }
     }
@@ -326,8 +377,17 @@ impl SdkContext {
         args_json: JsValue,
         approvals: JsValue,
         tool_allow: JsValue,
+        request_id: Option<String>,
     ) -> JsValue {
-        self.authorize_inner(session, tool, args_json, approvals, tool_allow, None)
+        self.authorize_inner(
+            session,
+            tool,
+            args_json,
+            approvals,
+            tool_allow,
+            None,
+            request_id,
+        )
     }
 
     /// Test / replay seam. Not exposed on `createTenuo` or `execute`.
@@ -348,6 +408,7 @@ impl SdkContext {
             approvals,
             tool_allow,
             Some(as_of as i64),
+            None,
         )
     }
 
@@ -381,8 +442,18 @@ impl SdkContext {
         pop: &str,
         approvals: JsValue,
         tool_allow: JsValue,
+        request_id: Option<String>,
     ) -> JsValue {
-        self.authorize_presented_inner(warrants, tool, args_json, pop, approvals, tool_allow, None)
+        self.authorize_presented_inner(
+            warrants,
+            tool,
+            args_json,
+            pop,
+            approvals,
+            tool_allow,
+            None,
+            request_id,
+        )
     }
 }
 
@@ -534,6 +605,7 @@ pub fn sdk_verify_receipt(wire: &str) -> Result<JsValue, JsError> {
         .map_err(|e| JsError::new(&format!("receipt signature does not verify: {e}")))?;
     Ok(to_js_value(&ReceiptInspectDto {
         authentic: true,
+        signer_key: hex::encode(receipt.signer_key.to_bytes()),
         outcome: match payload.outcome {
             tenuo::receipt::Outcome::Allow => "allow".into(),
             tenuo::receipt::Outcome::Deny => "deny".into(),
@@ -541,6 +613,102 @@ pub fn sdk_verify_receipt(wire: &str) -> Result<JsValue, JsError> {
         action: payload.action,
         decision_code: payload.decision_code,
         request_id: payload.request_id,
+        srl_version: payload.srl_version,
+        srl_hash: payload.srl_hash.map(hex::encode),
+        request_hash: payload.request_hash.map(hex::encode),
+        policy_definition_hash: payload.policy_definition_hash.map(hex::encode),
+        prev_receipt_hash: payload.prev_receipt_hash.map(hex::encode),
+        trusted_roots_hash: payload.trusted_roots_hash.map(hex::encode),
+    }))
+}
+
+#[derive(Serialize)]
+struct ReceiptChainDto {
+    /// Hex key the receipt is signed under. Membership in the verifier's
+    /// authorizer set is the caller's check — this function has no opinion on
+    /// who is a legitimate signer.
+    signer_key: String,
+    outcome: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    decision_code: Option<String>,
+    timestamp: i64,
+    /// The embedded chain verifies to one of the supplied roots at the
+    /// receipt's decision instant.
+    chain_valid: bool,
+    /// Canonical error name when the chain does not verify.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain_error: Option<String>,
+    /// Deny receipts only: the chain failure matches the stated decision_code,
+    /// so the embedded authority independently corroborates the refusal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    corroborates_denial: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root_issuer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    leaf_holder: Option<String>,
+}
+
+/// Verify a receipt's embedded warrant chain against trusted roots, at the
+/// receipt's own decision instant.
+///
+/// This is the root-anchored half of receipt verification: it needs no trust
+/// in `signer_key` at all, because the chain is signed by the root and the
+/// holder, not by the enforcement point. The signature over the receipt is
+/// still checked first — an unauthenticated payload is never parsed into a
+/// chain to verify.
+///
+/// A deny receipt whose chain fails with the same error it states is
+/// *corroborated*: the embedded authority independently supports the refusal.
+/// A deny whose chain verifies is not inconsistent — constraint and
+/// possession failures deny over a valid chain, and chain-level verification
+/// does not evaluate those.
+#[wasm_bindgen(js_name = sdkVerifyReceiptChain)]
+pub fn sdk_verify_receipt_chain(wire: &str, roots: JsValue) -> Result<JsValue, JsError> {
+    init_panic_hook();
+    let root_hexes: Vec<String> = serde_wasm_bindgen::from_value(roots)
+        .map_err(|e| JsError::new(&format!("roots must be an array of hex keys: {e}")))?;
+    if root_hexes.is_empty() {
+        return Err(JsError::new("at least one trusted root is required"));
+    }
+    let mut authorizer = Authorizer::new();
+    for hex_key in &root_hexes {
+        authorizer = authorizer.with_trusted_root(parse_public_key_hex(hex_key)?);
+    }
+
+    let bytes = parse_srl_bytes(wire)?;
+    let receipt: Receipt = ciborium::from_reader(bytes.as_slice())
+        .map_err(|e| JsError::new(&format!("invalid receipt: {e}")))?;
+    let payload = receipt
+        .verify_signature()
+        .map_err(|e| JsError::new(&format!("receipt signature does not verify: {e}")))?;
+
+    let stack = wire::decode_stack(&payload.warrant_chain)
+        .map_err(|e| JsError::new(&format!("embedded warrant chain does not decode: {e}")))?;
+    let chain = stack.0;
+
+    let outcome = payload.outcome.as_str().to_string();
+    let verification = authorizer.verify_chain_as_of(&chain, payload.timestamp);
+    let (chain_valid, chain_error) = match &verification {
+        Ok(_) => (true, None),
+        Err(e) => (false, Some(e.name().to_string())),
+    };
+    let corroborates_denial = match (&payload.outcome, &chain_error) {
+        (tenuo::receipt::Outcome::Deny, Some(err)) => {
+            Some(payload.decision_code.as_deref() == Some(err.as_str()))
+        }
+        _ => None,
+    };
+
+    Ok(to_js_value(&ReceiptChainDto {
+        signer_key: hex::encode(receipt.signer_key.to_bytes()),
+        outcome,
+        decision_code: payload.decision_code,
+        timestamp: payload.timestamp,
+        chain_valid,
+        chain_error,
+        corroborates_denial,
+        root_issuer: chain.first().map(|w| hex::encode(w.issuer().to_bytes())),
+        leaf_holder: chain.last().map(|w| hex::encode(w.authorized_holder().to_bytes())),
     }))
 }
 
@@ -605,10 +773,21 @@ impl SdkContext {
         approvals_json: JsValue,
         tool_allow: JsValue,
         as_of: Option<i64>,
+        request_id: Option<String>,
     ) -> JsValue {
         init_panic_hook();
         let timestamp = as_of.unwrap_or_else(|| Utc::now().timestamp());
-        let request_id = format!("{tool}:{timestamp}");
+        // The host's own identifier when it has one, so a receipt can be
+        // matched against its logs. The derived fallback is a correlation aid,
+        // not an identity: repeats within a second collide, which is why
+        // distinguishing them is the chain link's job.
+        let request_id =
+            request_id.unwrap_or_else(|| format!("{tool}:{timestamp}"));
+        let policy_hash = policy_digest(&tool_allow);
+        // Filled once the leaf and arguments resolve. Stays None when the
+        // arguments could not be canonicalized — a receipt must not claim to
+        // commit to arguments it never parsed.
+        let mut request_hash: Option<[u8; 32]> = None;
 
         let args = match js_to_args(&args_json) {
             Ok(a) => a,
@@ -618,6 +797,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -644,6 +825,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CONFIGURATION".into()),
@@ -662,6 +845,13 @@ impl SdkContext {
             }
         };
 
+        request_hash = Some(compute_request_hash(
+            &leaf.id().to_string(),
+            tool,
+            &args,
+            Some(leaf.authorized_holder()),
+        ));
+
         let signature = match as_of {
             Some(t) => leaf.sign_with_timestamp(&session.holder, tool, &args, Some(t)),
             None => leaf.sign(&session.holder, tool, &args),
@@ -674,6 +864,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    request_hash,
+            policy_hash,
                     deny_from_error(&e),
                     None,
                     false,
@@ -690,6 +882,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -736,6 +930,8 @@ impl SdkContext {
                         tool,
                         timestamp,
                         &request_id,
+                        request_hash,
+            policy_hash,
                         deny_from_error(&e),
                         Some(&signature),
                         true,
@@ -751,6 +947,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "allow".into(),
                         code: None,
@@ -772,6 +970,8 @@ impl SdkContext {
                 tool,
                 timestamp,
                 &request_id,
+                request_hash,
+            policy_hash,
                 deny_from_error(&e),
                 Some(&signature),
                 pop_established_before_error(&e),
@@ -789,10 +989,21 @@ impl SdkContext {
         approvals_json: JsValue,
         tool_allow: JsValue,
         as_of: Option<i64>,
+        request_id: Option<String>,
     ) -> JsValue {
         init_panic_hook();
         let timestamp = as_of.unwrap_or_else(|| Utc::now().timestamp());
-        let request_id = format!("{tool}:{timestamp}");
+        // The host's own identifier when it has one, so a receipt can be
+        // matched against its logs. The derived fallback is a correlation aid,
+        // not an identity: repeats within a second collide, which is why
+        // distinguishing them is the chain link's job.
+        let request_id =
+            request_id.unwrap_or_else(|| format!("{tool}:{timestamp}"));
+        let policy_hash = policy_digest(&tool_allow);
+        // Filled once the leaf and arguments resolve. Stays None when the
+        // arguments could not be canonicalized — a receipt must not claim to
+        // commit to arguments it never parsed.
+        let mut request_hash: Option<[u8; 32]> = None;
         let empty: Vec<Warrant> = Vec::new();
 
         let chain = match parse_presented_chain(&warrants) {
@@ -803,6 +1014,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CONFIGURATION".into()),
@@ -825,6 +1038,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CHAIN_INVALID".into()),
@@ -851,6 +1066,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -869,6 +1086,17 @@ impl SdkContext {
             }
         };
 
+        // Key 7 for the presented path too: without it an MCP-host receipt
+        // records that a decision happened but not what it was made over.
+        if let Some(leaf) = chain.last() {
+            request_hash = Some(compute_request_hash(
+                &leaf.id().to_string(),
+                tool,
+                &args,
+                Some(leaf.authorized_holder()),
+            ));
+        }
+
         let signature = match parse_pop_signature(pop) {
             Ok(s) => s,
             Err(e) => {
@@ -877,6 +1105,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_INVALID_POP".into()),
@@ -903,6 +1133,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "deny".into(),
                         code: Some("TENUO_CANONICALIZATION".into()),
@@ -949,6 +1181,8 @@ impl SdkContext {
                         tool,
                         timestamp,
                         &request_id,
+                        request_hash,
+            policy_hash,
                         deny_from_error(&e),
                         Some(&signature),
                         true,
@@ -964,6 +1198,8 @@ impl SdkContext {
                     tool,
                     timestamp,
                     &request_id,
+                    request_hash,
+            policy_hash,
                     DecisionDto {
                         outcome: "allow".into(),
                         code: None,
@@ -985,6 +1221,8 @@ impl SdkContext {
                 tool,
                 timestamp,
                 &request_id,
+                request_hash,
+            policy_hash,
                 deny_from_error(&e),
                 Some(&signature),
                 pop_established_before_error(&e),
@@ -1000,12 +1238,14 @@ impl SdkContext {
         tool: &str,
         timestamp: i64,
         request_id: &str,
+        request_hash: Option<[u8; 32]>,
+        policy_hash: Option<[u8; 32]>,
         mut dto: DecisionDto,
         pop: Option<&Signature>,
         after_pop: bool,
         decision_code: Option<&str>,
     ) -> JsValue {
-        dto.receipt = encode_receipt(
+        let emitted = encode_receipt(
             &self.receipt_signer,
             chain,
             tool,
@@ -1015,7 +1255,18 @@ impl SdkContext {
             after_pop,
             pop,
             decision_code,
+            self.srl_commitment,
+            request_hash,
+            policy_hash,
+            self.trusted_roots_hash,
+            self.last_receipt_hash.get(),
         );
+        // Advance the chain only on a receipt that was actually emitted; a
+        // failure to encode must not silently break every later link.
+        if let Some((wire, link)) = emitted {
+            self.last_receipt_hash.set(Some(link));
+            dto.receipt = Some(wire);
+        }
         to_js(&dto)
     }
 }
@@ -1446,9 +1697,14 @@ fn encode_receipt(
     after_pop: bool,
     pop: Option<&Signature>,
     decision_code: Option<&str>,
-) -> Option<String> {
+    srl_commitment: Option<(Option<u64>, [u8; 32])>,
+    request_hash: Option<[u8; 32]>,
+    policy_hash: Option<[u8; 32]>,
+    trusted_roots_hash: [u8; 32],
+    prev_receipt_hash: Option<[u8; 32]>,
+) -> Option<(String, [u8; 32])> {
     let warrant_chain = wire::encode_stack(&WarrantStack(chain.to_vec())).unwrap_or_default();
-    let payload = if allowed {
+    let mut payload = if allowed {
         let pop = pop?;
         ReceiptPayload::allow(
             warrant_chain,
@@ -1476,10 +1732,39 @@ fn encode_receipt(
             decision_code.unwrap_or("denied").to_string(),
         )
     };
+    if let Some((version, digest)) = srl_commitment {
+        payload.srl_version = version;
+        payload.srl_hash = Some(digest);
+    }
+    // Key 7. Without it a receipt records that a decision happened but not what
+    // it was made over, which is most of what makes it evidence.
+    payload.request_hash = request_hash;
+    payload.policy_definition_hash = policy_hash;
+    payload.trusted_roots_hash = Some(trusted_roots_hash);
+    payload.prev_receipt_hash = prev_receipt_hash;
     let receipt = Receipt::create(&payload, signer).ok()?;
+    let link = receipt.digest().ok()?;
     let mut buf = Vec::new();
     ciborium::into_writer(&receipt, &mut buf).ok()?;
-    Some(hex::encode(buf))
+    Some((hex::encode(buf), link))
+}
+
+/// Commitment to the host ceiling applied to this decision (receipt key 11).
+///
+/// `None` when no ceiling was supplied, which is a different claim from an
+/// empty ceiling: the first says the host imposed nothing, the second says it
+/// deliberately imposed an open policy. The encoding is canonical_policy_bytes,
+/// so a verifier can reproduce the digest from the same policy.
+fn policy_digest(tool_allow: &JsValue) -> Option<[u8; 32]> {
+    if tool_allow.is_null() || tool_allow.is_undefined() {
+        return None;
+    }
+    let raw: serde_json::Value = serde_wasm_bindgen::from_value(tool_allow.clone()).ok()?;
+    if raw.is_null() {
+        return None;
+    }
+    let bytes = tenuo::canonical_policy_bytes(&raw)?;
+    Some(tenuo::policy_commitment_digest(&bytes))
 }
 
 fn sign_srl_hex(ids: JsValue, issuer: &SigningKey) -> Result<String, JsError> {
@@ -1611,7 +1896,7 @@ fn map_code(e: &Error) -> &'static str {
     match e {
         Error::WarrantExpired { .. } => "TENUO_WARRANT_EXPIRED",
         Error::WarrantRevoked(_) => "TENUO_REVOKED",
-        Error::SignatureInvalid(msg) if msg.contains("not trusted") => "TENUO_UNTRUSTED_ROOT",
+        Error::UntrustedRoot => "TENUO_UNTRUSTED_ROOT",
         Error::SignatureInvalid(msg) if msg.contains("Proof-of-Possession") => "TENUO_INVALID_POP",
         Error::MissingSignature(_) => "TENUO_INVALID_POP",
         Error::SignatureInvalid(_) => "TENUO_SIGNATURE_INVALID",

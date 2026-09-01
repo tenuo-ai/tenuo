@@ -8,11 +8,13 @@
 //! Run with: cargo run --bin generate_test_vectors
 
 use base64::Engine;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use tenuo::{
-    constraints::{Constraint, ConstraintSet, Exact, Pattern},
+    constraints::{Constraint, ConstraintSet, ConstraintValue, Exact, Pattern},
     payload::WarrantPayload,
+    receipt::{Receipt, ReceiptPayload},
     warrant::{Warrant, WarrantId, WarrantType, WARRANT_VERSION},
+    wire::{self, WarrantStack},
     SigningKey,
 };
 
@@ -2988,6 +2990,372 @@ fn main() {
     println!("| Invalid Input | `path = \"/secret/keys.txt\"` |");
     println!();
     println!("**Expected:** Constraint passes only when inner constraint fails (negation).");
+
+    // =========================================================================
+    // A.30 Authorization Receipts
+    // =========================================================================
+    println!();
+    println!("---");
+    println!();
+    println!("## A.30 Authorization Receipts");
+    println!();
+    println!("Signed record of one decision. The signer is the enforcement point,");
+    println!("not a warrant issuer: resolving `signer_key` to a legitimate");
+    println!("enforcement point is out of band and outside these vectors.");
+    println!();
+    println!("Keys 12 and 13 commit to the revocation list in force. Absent means no");
+    println!("list was loaded, which is a different claim from a loaded list that");
+    println!("revoked nothing.");
+    println!();
+
+    const ID_A30: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30,
+        0x00,
+    ];
+    let authorizer_seed: [u8; 32] = [0x30; 32];
+    let authorizer = SigningKey::from_bytes(&authorizer_seed);
+
+    let mut tools_a30 = BTreeMap::new();
+    let mut cs_a30 = ConstraintSet::new();
+    cs_a30.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_a30.insert("read_file".to_string(), cs_a30);
+
+    let payload_a30 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A30),
+        tools: tools_a30,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a30 = sign_payload(&payload_a30, &control_plane);
+    let chain_a30 =
+        wire::encode_stack(&WarrantStack(vec![warrant_a30.clone()])).expect("A.30 chain encodes");
+
+    let mut args_a30: HashMap<String, ConstraintValue> = HashMap::new();
+    args_a30.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/q3.pdf".to_string()),
+    );
+    let pop_a30 = warrant_a30
+        .sign_with_timestamp(&worker, "read_file", &args_a30, Some(ISSUED_AT as i64))
+        .expect("A.30 PoP signs");
+
+    // Key 13 commits to whatever bytes the enforcement point loaded. A real
+    // SignedRevocationList stamps issued_at from the wall clock, so building one
+    // here would make these vectors non-reproducible. The SRL wire format is
+    // already pinned by A.22; what this vector fixes is how a 32-byte digest
+    // occupies key 13. The input is a fixed ASCII string so an implementer can
+    // recompute the digest and confirm their srl_commitment_digest agrees.
+    const SRL_DIGEST_INPUT_A30: &[u8] = b"tenuo-test-vector-a30-revocation-list";
+    let srl_digest_a30 = tenuo::srl_commitment_digest(SRL_DIGEST_INPUT_A30);
+
+    // Key 15 commits to the trusted root set. Sorted and deduplicated before
+    // hashing, so it describes the set rather than the load order.
+    let roots_digest_a30 = tenuo::trusted_roots_digest(&[control_plane.public_key().to_bytes()]);
+
+    // Key 11 commits to the host ceiling. The input is fixed CBOR so an
+    // implementer can reproduce it; a deployment hashes its own policy.
+    const POLICY_INPUT_A30: &[u8] = b"tenuo-test-vector-a30-policy";
+    let policy_digest_a30 = tenuo::policy_commitment_digest(POLICY_INPUT_A30);
+
+    let base_a30 = || {
+        let mut p = ReceiptPayload::allow(
+            chain_a30.clone(),
+            "read_file",
+            ISSUED_AT as i64,
+            "req-a30",
+            pop_a30.to_bytes(),
+        );
+        // Present on every receipt a real enforcement point emits: it always
+        // knows which roots it trusts.
+        p.trusted_roots_hash = Some(roots_digest_a30);
+        p
+    };
+
+    // A.30.1 — no revocation data loaded
+    let receipt_a30_1 = Receipt::create(&base_a30(), &authorizer).expect("A.30.1 signs");
+    print_receipt_vector(
+        "A.30.1 Allow, No Revocation Data",
+        &receipt_a30_1,
+        "Keys 12 and 13 are both absent: the enforcement point never consulted \
+         revocation. A verifier cannot conclude the warrant was unrevoked.",
+    );
+
+    // A.30.2 — unversioned list: key 13 only
+    let mut payload_a30_2 = base_a30();
+    payload_a30_2.srl_hash = Some(srl_digest_a30);
+    let receipt_a30_2 = Receipt::create(&payload_a30_2, &authorizer).expect("A.30.2 signs");
+    println!(
+        "**Key 13 input:** `SHA-256(\"{}\")`",
+        String::from_utf8_lossy(SRL_DIGEST_INPUT_A30)
+    );
+    println!();
+    print_receipt_vector(
+        "A.30.2 Allow, Unversioned Revocation Commitment",
+        &receipt_a30_2,
+        "Key 13 present, key 12 absent: a plain SignedRevocationList carries no \
+         version. Key 13 is SHA-256 over the list bytes exactly as loaded.",
+    );
+
+    // A.30.3 — versioned list: keys 12 and 13
+    let mut payload_a30_3 = base_a30();
+    payload_a30_3.srl_version = Some(47);
+    payload_a30_3.srl_hash = Some(srl_digest_a30);
+    payload_a30_3.policy_definition_hash = Some(policy_digest_a30);
+    let receipt_a30_3 = Receipt::create(&payload_a30_3, &authorizer).expect("A.30.3 signs");
+    print_receipt_vector(
+        "A.30.3 Allow, Versioned Revocation Commitment",
+        &receipt_a30_3,
+        "Both keys present. A verifier can ask whether version 47 should have \
+         listed this warrant, and separately whether 47 was acceptably fresh.",
+    );
+
+    // A.30.4 — denial reached before PoP verification
+    let mut payload_a30_4 = ReceiptPayload::deny_before_pop(
+        chain_a30.clone(),
+        "read_file",
+        ISSUED_AT as i64,
+        "req-a30-deny",
+        "tool-not-authorized",
+    );
+    payload_a30_4.srl_hash = Some(srl_digest_a30);
+    // A denial still happened under a known trust set.
+    payload_a30_4.trusted_roots_hash = Some(roots_digest_a30);
+    let receipt_a30_4 = Receipt::create(&payload_a30_4, &authorizer).expect("A.30.4 signs");
+    print_receipt_vector(
+        "A.30.4 Deny Before Proof-of-Possession",
+        &receipt_a30_4,
+        "Key 8 absent because possession was never established, so this attests \
+         only that some party was refused. Key 10 is required for a denial.",
+    );
+
+    // A.30.5 — the chain link. Individually verifiable receipts do not make a
+    // set trustworthy; this is what makes a removed receipt detectable.
+    let mut payload_a30_5 = base_a30();
+    payload_a30_5.request_id = "req-a30-second".to_string();
+    payload_a30_5.srl_hash = Some(srl_digest_a30);
+    payload_a30_5.prev_receipt_hash = Some(receipt_a30_2.digest().expect("A.30.2 digests"));
+    let receipt_a30_5 = Receipt::create(&payload_a30_5, &authorizer).expect("A.30.5 signs");
+    println!(
+        "**Key 14 input:** SHA-256 over the complete A.30.2 receipt bytes, `{}`",
+        hex::encode(receipt_a30_2.digest().unwrap())
+    );
+    println!();
+    print_receipt_vector(
+        "A.30.5 Chained Receipt",
+        &receipt_a30_5,
+        "Key 14 links to A.30.2. Removing A.30.2 from a stream leaves this \
+         receipt pointing at nothing, which is what turns \"this decision \
+         happened\" into \"these are all the decisions\".",
+    );
+
+    print_derivation_vectors(&control_plane, &worker);
+}
+
+fn print_derivation_vectors(control_plane: &SigningKey, worker: &SigningKey) {
+    use tenuo::approval::{canonical_tool_args_cbor, compute_request_hash};
+
+    println!();
+    println!("---");
+    println!();
+    println!("## A.31 Receipt Derivations");
+    println!();
+    println!("The two values a receipt commits to that are computed rather than");
+    println!("carried. An implementation that cannot reproduce these cannot check");
+    println!("payload keys 7 and 11 against anything.");
+    println!();
+
+    // ---- A.31.1 request hash (key 7) ----
+    const ID_A31: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x31,
+        0x00,
+    ];
+    let warrant_id = WarrantId::from_bytes(ID_A31).to_string();
+
+    // Mixed value kinds and out-of-order keys: the encoding sorts, so the
+    // commitment describes the invocation and not the caller's map order.
+    let mut args: HashMap<String, ConstraintValue> = HashMap::new();
+    args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/q3.pdf".to_string()),
+    );
+    args.insert("limit".to_string(), ConstraintValue::Integer(10));
+    args.insert("dry_run".to_string(), ConstraintValue::Boolean(true));
+    args.insert(
+        "tags".to_string(),
+        ConstraintValue::List(vec![
+            ConstraintValue::String("b".to_string()),
+            ConstraintValue::String("a".to_string()),
+        ]),
+    );
+
+    let args_cbor = canonical_tool_args_cbor(&args).expect("args canonicalize");
+    let holder = worker.public_key();
+    let request_hash = compute_request_hash(&warrant_id, "read_file", &args, Some(&holder));
+
+    println!("### A.31.1 Request Hash (payload key 7)");
+    println!();
+    println!("`SHA-256` over a CBOR 4-element array. The arguments are canonicalized");
+    println!("separately and embedded as a CBOR **byte string**, so the boundary");
+    println!("between them and the outer array is unambiguous.");
+    println!();
+    println!("```");
+    println!("args_cbor = deterministic CBOR of the arguments map, keys sorted");
+    println!("preimage  = CBOR([ text(warrant_id), text(tool), bytes(args_cbor), bytes(holder) ])");
+    println!("key 7     = SHA-256(preimage)");
+    println!("```");
+    println!();
+    println!("An absent holder contributes a zero-length byte string, not an omission.");
+    println!();
+    println!("| Input | Value |");
+    println!("| --- | --- |");
+    println!("| warrant_id | `{}` |", warrant_id);
+    println!("| tool | `read_file` |");
+    println!("| holder | `{}` |", hex::encode(holder.to_bytes()));
+    println!(
+        "| args | `dry_run=true`, `limit=10`, `path=\"/data/q3.pdf\"`, `tags=[\"b\",\"a\"]` |"
+    );
+    println!();
+    println!("**Canonical args CBOR (sorted keys, list order preserved):**");
+    println!();
+    print_hex_block(&args_cbor);
+    println!();
+    println!("**Request hash:**");
+    println!();
+    print_hex_block(&request_hash);
+    println!();
+
+    // ---- A.31.2 policy digest (key 11) ----
+    let policy = serde_json::json!({
+        "path": {"kind": "under", "root": "/data"},
+        "encoding": {"kind": "oneOf", "values": ["utf8", "ascii"]},
+    });
+    let policy_bytes = tenuo::canonical_policy_bytes(&policy).expect("policy canonicalizes");
+    let policy_hash = tenuo::policy_commitment_digest(&policy_bytes);
+
+    println!("### A.31.2 Policy Commitment (payload key 11)");
+    println!();
+    println!("`SHA-256` over deterministic CBOR of the host allow-policy, keys sorted.");
+    println!("Sorting is what lets two implementations agree: the commitment describes");
+    println!("the policy, not the order a host happened to build it in.");
+    println!();
+    println!("```");
+    println!("key 11 = SHA-256(deterministic CBOR of the field -> constraint map)");
+    println!("```");
+    println!();
+    println!("**Policy (given here out of order, to exercise the sort):**");
+    println!();
+    println!("```json");
+    println!("{}", serde_json::to_string_pretty(&policy).unwrap());
+    println!("```");
+    println!();
+    println!("**Canonical policy CBOR:**");
+    println!();
+    print_hex_block(&policy_bytes);
+    println!();
+    println!("**Policy commitment:**");
+    println!();
+    print_hex_block(&policy_hash);
+    println!();
+
+    let _ = control_plane;
+}
+
+/// Emit one receipt vector: the artifact bytes plus the fields a verifier
+/// checks. Receipts are not warrants, so `print_vector` does not apply.
+fn print_receipt_vector(label: &str, receipt: &Receipt, note: &str) {
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(receipt, &mut bytes).expect("receipt encodes");
+    let payload = receipt.verify_signature().expect("receipt verifies");
+
+    println!("### {}", label);
+    println!();
+    println!("{}", note);
+    println!();
+    println!("| Field | Value |");
+    println!("| --- | --- |");
+    println!("| Key 0 version | `{}` |", payload.version);
+    println!("| Key 3 action | `{}` |", payload.action);
+    println!("| Key 4 outcome | `{}` |", payload.outcome.as_str());
+    println!("| Key 5 timestamp | `{}` |", payload.timestamp);
+    println!("| Key 9 request_id | `{}` |", payload.request_id);
+    println!(
+        "| Key 8 pop_signature | {} |",
+        match payload.pop_signature {
+            Some(_) => "present",
+            None => "absent",
+        }
+    );
+    println!(
+        "| Key 10 decision_code | {} |",
+        payload
+            .decision_code
+            .as_deref()
+            .map(|c| format!("`{}`", c))
+            .unwrap_or_else(|| "absent".to_string())
+    );
+    println!(
+        "| Key 12 srl_version | {} |",
+        payload
+            .srl_version
+            .map(|v| format!("`{}`", v))
+            .unwrap_or_else(|| "absent".to_string())
+    );
+    println!(
+        "| Key 11 policy_definition_hash | {} |",
+        payload
+            .policy_definition_hash
+            .map(hex::encode)
+            .map(|h| format!("`{}`", h))
+            .unwrap_or_else(|| "absent".to_string())
+    );
+    println!(
+        "| Key 14 prev_receipt_hash | {} |",
+        payload
+            .prev_receipt_hash
+            .map(hex::encode)
+            .map(|h| format!("`{}`", h))
+            .unwrap_or_else(|| "absent".to_string())
+    );
+    println!(
+        "| Key 15 trusted_roots_hash | {} |",
+        payload
+            .trusted_roots_hash
+            .map(hex::encode)
+            .map(|h| format!("`{}`", h))
+            .unwrap_or_else(|| "absent".to_string())
+    );
+    println!(
+        "| Key 13 srl_hash | {} |",
+        payload
+            .srl_hash
+            .map(hex::encode)
+            .map(|h| format!("`{}`", h))
+            .unwrap_or_else(|| "absent".to_string())
+    );
+    println!();
+    println!("**Receipt (hex):**");
+    println!();
+    print_hex_block(&bytes);
+    println!();
 }
 
 fn sign_payload(payload: &WarrantPayload, signing_key: &SigningKey) -> Warrant {

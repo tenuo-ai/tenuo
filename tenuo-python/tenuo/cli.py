@@ -654,6 +654,414 @@ def _parse_ttl(ttl: str) -> int:
         return int(ttl)
 
 
+def _load_receipt_arg(value: str) -> str:
+    """Accept a receipt inline or as a path. Returns the receipt text.
+
+    A receipt is longer than any filename the OS will accept, so probing it as
+    a path raises rather than returning False. Treat that as "not a path".
+    """
+    from pathlib import Path
+
+    value = value.strip()
+    try:
+        candidate = Path(value)
+        if candidate.exists():
+            return candidate.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    return value
+
+
+def _print_receipt(payload, indent: str = "") -> None:
+    """Render a verified receipt, naming what each field does and does not say."""
+    mark = "✅" if payload.outcome == "allow" else "🚫"
+    print(f"{indent}{mark} {payload.outcome.upper()}  {payload.action}")
+    print(f"{indent}   request       {payload.request_id}")
+    print(f"{indent}   decided at    {payload.timestamp}")
+    if payload.decision_code:
+        print(f"{indent}   reason        {payload.decision_code}")
+
+    print(f"{indent}   signer        {payload.signer_key}")
+    if payload.authorizer_id:
+        print(f"{indent}   authorizer    {payload.authorizer_id} (label only)")
+
+    if payload.pop_signature:
+        print(f"{indent}   possession    proven by the holder")
+    else:
+        print(f"{indent}   possession    NOT established — this attests only that "
+              "some party was refused")
+
+    if payload.request_hash:
+        print(f"{indent}   arguments     committed as {payload.request_hash[:16]}…")
+        print(f"{indent}                 (supply the arguments to check the commitment)")
+
+    if payload.srl_hash:
+        version = f" v{payload.srl_version}" if payload.srl_version is not None else " (unversioned)"
+        print(f"{indent}   revocation    list{version} {payload.srl_hash[:16]}…")
+    else:
+        print(f"{indent}   revocation    NOT consulted — cannot conclude the warrant "
+              "was unrevoked")
+
+    if payload.trusted_roots_hash:
+        print(f"{indent}   trust anchors {payload.trusted_roots_hash[:16]}…")
+    else:
+        print(f"{indent}   trust anchors NOT recorded")
+
+    if payload.policy_definition_hash:
+        print(f"{indent}   host ceiling  {payload.policy_definition_hash[:16]}…")
+
+    if payload.prev_receipt_hash:
+        print(f"{indent}   chained to    {payload.prev_receipt_hash[:16]}…")
+    else:
+        print(f"{indent}   chained to    nothing (first receipt, or chaining off)")
+
+
+# Exception class → Error::name(), for corroborating a deny receipt against
+# its own embedded chain. Keys are the classes to_py_err actually raises.
+_CHAIN_ERROR_CODES = {
+    "ExpiredError": "warrant-expired",
+    "RevokedError": "warrant-revoked",
+    "UntrustedRoot": "untrusted-root",
+    "InvalidSignature": "signature-invalid",
+    "SignatureInvalid": "signature-invalid",
+}
+
+
+def _attr(obj, name):
+    """Read a value that may be a getter or a method across binding versions."""
+    value = getattr(obj, name)
+    return value() if callable(value) else value
+
+
+def check_receipt_claims(payload, *, roots=None, authorizers=None, args=None, srl_bytes=None):
+    """Check a verified receipt's claims against verifier-supplied context.
+
+    Each claim is independent, and each names what it does and does not
+    establish. The chain claims need no trust in the signer at all — the
+    embedded chain is signed by the root and the holder, not the enforcement
+    point. The signer claim is the verifier's own judgment against an
+    out-of-band set, which is the trust decision this tool cannot make for
+    them.
+
+    Returns (claims, ok): a list of (name, status, detail) where status is
+    one of ok/fail/warn/info, and an overall verdict that fails only on hard
+    mismatches.
+    """
+    import tenuo_core
+
+    claims = []
+
+    if authorizers:
+        wanted = {a.strip().lower().removeprefix("0x") for a in authorizers}
+        if payload.signer_key.lower() in wanted:
+            claims.append(("authorizer", "ok", "signer is in your trusted set"))
+        else:
+            claims.append((
+                "authorizer",
+                "fail",
+                f"signer {payload.signer_key[:16]}… is NOT in your trusted set",
+            ))
+
+    chain = None
+    if roots or args is not None:
+        try:
+            chain = tenuo_core.decode_warrant_stack_base64(payload.warrant_chain)
+        except Exception as exc:  # noqa: BLE001
+            claims.append(("chain", "fail", f"embedded chain does not decode: {exc}"))
+
+    authorizer = None
+    if roots and chain:
+        keys = [tenuo_core.PublicKey.from_bytes(bytes.fromhex(r)) for r in roots]
+        authorizer = tenuo_core.Authorizer(trusted_roots=keys)
+        chain_code = None
+        chain_name = None
+        try:
+            authorizer.verify_chain(chain, as_of=payload.timestamp)
+            chain_ok = True
+        except Exception as exc:  # noqa: BLE001
+            chain_ok = False
+            chain_name = type(exc).__name__
+            chain_code = _CHAIN_ERROR_CODES.get(chain_name)
+
+        if payload.outcome == "allow":
+            if chain_ok:
+                claims.append((
+                    "chain",
+                    "ok",
+                    "embedded chain verifies to your root at the decision instant",
+                ))
+            else:
+                claims.append((
+                    "chain",
+                    "fail",
+                    f"embedded chain does not verify ({chain_code or chain_name}) — "
+                    "an allow over authority you cannot validate",
+                ))
+        else:
+            if chain_ok:
+                claims.append((
+                    "chain",
+                    "info",
+                    f"chain verifies to your root; the denial was for "
+                    f"{payload.decision_code}, which chain-level verification does "
+                    "not evaluate",
+                ))
+            elif chain_code is not None and chain_code == payload.decision_code:
+                claims.append((
+                    "chain",
+                    "ok",
+                    f"chain fails with {chain_code} — the embedded authority "
+                    "independently corroborates the stated reason",
+                ))
+            else:
+                claims.append((
+                    "chain",
+                    "info",
+                    f"chain fails ({chain_code or chain_name}); the receipt states "
+                    f"{payload.decision_code}",
+                ))
+
+        anchor = tenuo_core.trusted_roots_digest([bytes.fromhex(r) for r in roots]).hex()
+        if payload.trusted_roots_hash is None:
+            claims.append(("anchors", "info", "receipt does not commit to a trust anchor set"))
+        elif anchor == payload.trusted_roots_hash:
+            claims.append(("anchors", "ok", "the authorizer's trust anchors match yours exactly"))
+        else:
+            claims.append((
+                "anchors",
+                "warn",
+                "the authorizer's trust anchor set differs from the roots you supplied",
+            ))
+
+    if args is not None and chain:
+        leaf = chain[-1]
+        expected = tenuo_core.py_compute_request_hash(
+            _attr(leaf, "id"), payload.action, args, _attr(leaf, "authorized_holder")
+        ).hex()
+        if payload.request_hash is None:
+            claims.append(("request", "fail", "receipt carries no request commitment"))
+        elif expected == payload.request_hash:
+            claims.append((
+                "request",
+                "ok",
+                "arguments match the committed request hash — these are the "
+                "arguments this decision was made over",
+            ))
+        else:
+            claims.append((
+                "request",
+                "fail",
+                "arguments do NOT match the committed request hash",
+            ))
+
+        if authorizer is not None and payload.pop_signature and payload.outcome == "allow":
+            try:
+                authorizer.check_chain(
+                    chain,
+                    payload.action,
+                    args,
+                    signature=bytes.fromhex(payload.pop_signature),
+                    as_of=payload.timestamp,
+                )
+                claims.append((
+                    "possession",
+                    "ok",
+                    "holder proof-of-possession verifies over these arguments — the "
+                    "decision instant is corroborated by a key the signer does not hold",
+                ))
+            except Exception as exc:  # noqa: BLE001
+                claims.append((
+                    "possession",
+                    "fail",
+                    f"holder proof-of-possession does not verify: {exc}",
+                ))
+
+    if srl_bytes is not None:
+        if payload.srl_hash is None:
+            claims.append((
+                "revocation",
+                "fail",
+                "you supplied a revocation list but the receipt committed to none",
+            ))
+        elif tenuo_core.srl_commitment_digest(srl_bytes).hex() == payload.srl_hash:
+            version = (
+                f" (v{payload.srl_version})" if payload.srl_version is not None else ""
+            )
+            claims.append((
+                "revocation",
+                "ok",
+                f"commitment matches the revocation list you supplied{version}",
+            ))
+        else:
+            claims.append((
+                "revocation",
+                "fail",
+                "commitment does NOT match the revocation list you supplied",
+            ))
+
+    ok = not any(status == "fail" for _, status, _ in claims)
+    return claims, ok
+
+
+_CLAIM_MARKS = {"ok": "✅", "fail": "❌", "warn": "⚠️", "info": "ℹ️"}
+
+
+def _print_claims(claims, indent: str = "") -> None:
+    for name, status, detail in claims:
+        print(f"{indent}{_CLAIM_MARKS[status]} {name:<12} {detail}")
+
+
+def _load_srl_arg(value: str):
+    """Read an SRL from a file (raw, hex, or base64) or an inline string."""
+    import base64 as _b64
+    from pathlib import Path
+
+    raw = None
+    try:
+        candidate = Path(value)
+        if candidate.exists():
+            raw = candidate.read_bytes()
+    except OSError:
+        pass
+    if raw is None:
+        raw = value.strip().encode()
+    text = raw.decode("utf-8", errors="ignore").strip()
+    try:
+        return bytes.fromhex(text)
+    except ValueError:
+        pass
+    try:
+        return _b64.b64decode(text, validate=True)
+    except Exception:  # noqa: BLE001
+        return raw
+
+
+def verify_receipt_cli(
+    value: str,
+    *,
+    roots=None,
+    authorizers=None,
+    args=None,
+    srl_bytes=None,
+) -> bool:
+    """Verify one receipt's signature, then check its claims against whatever
+    verifier context was supplied: trusted roots, an authorizer set, the
+    invocation arguments, the revocation list."""
+    try:
+        import tenuo_core
+    except ImportError:
+        print("❌ tenuo_core is not available")
+        return False
+
+    try:
+        payload = tenuo_core.verify_receipt(_load_receipt_arg(value))
+    except Exception as exc:  # noqa: BLE001
+        print(f"❌ Receipt does not verify: {exc}")
+        return False
+
+    print("Signature verifies.\n")
+    _print_receipt(payload)
+
+    claims, ok = check_receipt_claims(
+        payload,
+        roots=roots,
+        authorizers=authorizers,
+        args=args,
+        srl_bytes=srl_bytes,
+    )
+    if claims:
+        print()
+        _print_claims(claims)
+
+    if not authorizers:
+        print(
+            "\nSignature and chain say what was decided and over what authority. "
+            "\nWhether the signer speaks for your deployment is your judgment — "
+            "\npass --authorizer with the keys you recognize."
+        )
+    return ok
+
+
+def verify_receipt_chain(path: str, *, verbose: bool = False, authorizers=None) -> bool:
+    """Walk a receipt chain and report breaks.
+
+    Reads the JSONL a FileReceiptSink writes. Each receipt links to the one
+    before it, so a link that resolves to nothing means a receipt was removed
+    from the stream — which is the whole reason the link exists.
+    """
+    import hashlib
+    import json
+    from pathlib import Path
+
+    try:
+        import tenuo_core
+    except ImportError:
+        print("❌ tenuo_core is not available")
+        return False
+
+    lines = [line for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not lines:
+        print(f"❌ No receipts in {path}")
+        return False
+
+    seen: dict = {}
+    order: list = []
+    for number, line in enumerate(lines, start=1):
+        try:
+            wire = json.loads(line)["receipt"] if line.lstrip().startswith("{") else line.strip()
+            payload = tenuo_core.verify_receipt(wire)
+        except Exception as exc:  # noqa: BLE001
+            print(f"❌ line {number}: receipt does not verify: {exc}")
+            return False
+        digest = hashlib.sha256(bytes.fromhex(wire)).hexdigest()
+        seen[digest] = number
+        order.append((number, payload, digest))
+
+    breaks = []
+    for number, payload, _ in order:
+        link = payload.prev_receipt_hash
+        if link is None:
+            continue
+        if link not in seen:
+            breaks.append((number, payload, link))
+
+    print(f"{len(order)} receipt(s), all signatures verify.")
+
+    if authorizers:
+        wanted = {a.strip().lower().removeprefix("0x") for a in authorizers}
+        strangers = [
+            (number, payload)
+            for number, payload, _ in order
+            if payload.signer_key.lower() not in wanted
+        ]
+        if strangers:
+            print(f"❌ {len(strangers)} receipt(s) signed by keys outside your trusted set:")
+            for number, payload in strangers:
+                print(f"   line {number} ({payload.request_id}) signer {payload.signer_key[:16]}…")
+            return False
+        print("✅ Every receipt is signed by a key in your trusted set.")
+    if verbose:
+        for _, payload, _ in order:
+            print()
+            _print_receipt(payload, indent="  ")
+
+    if not breaks:
+        first_unlinked = sum(1 for _, p, _ in order if p.prev_receipt_hash is None)
+        print("✅ Chain intact — every link resolves to a receipt in this file.")
+        if first_unlinked > 1:
+            print(
+                f"⚠️  {first_unlinked} receipts have no predecessor. Expect one per "
+                "signer; more than that means separate streams were merged, or "
+                "chaining was off for some of them."
+            )
+        return True
+
+    print(f"\n❌ {len(breaks)} break(s) — a receipt is missing from this stream:")
+    for number, payload, link in breaks:
+        print(f"   line {number} ({payload.request_id}) links to {link[:16]}…, which is absent")
+    return False
+
+
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -702,6 +1110,70 @@ def main():
     decode_parser.add_argument(
         "warrant",
         help="Base64-encoded warrant string",
+    )
+
+    # receipt command
+    receipt_parser = subparsers.add_parser(
+        "receipt",
+        help="Verify signed authorization receipts",
+    )
+    receipt_sub = receipt_parser.add_subparsers(dest="receipt_command")
+    receipt_verify = receipt_sub.add_parser(
+        "verify",
+        help="Verify one receipt and describe what it establishes",
+    )
+    receipt_verify.add_argument(
+        "receipt",
+        help="Receipt as hex/base64, or a path to a file containing one",
+    )
+    receipt_verify.add_argument(
+        "--root",
+        action="append",
+        default=None,
+        metavar="HEX",
+        help="Trusted root public key; repeatable. Verifies the embedded chain "
+        "at the decision instant — no trust in the signer required.",
+    )
+    receipt_verify.add_argument(
+        "--authorizer",
+        action="append",
+        default=None,
+        metavar="HEX",
+        help="Enforcement-point key you recognize; repeatable. The signer must "
+        "be in this set.",
+    )
+    receipt_verify.add_argument(
+        "--args",
+        default=None,
+        metavar="JSON",
+        help="Invocation arguments. Checked against the request commitment, and "
+        "used to verify the holder's proof-of-possession when --root is given.",
+    )
+    receipt_verify.add_argument(
+        "--srl",
+        default=None,
+        metavar="PATH",
+        help="Revocation list the deployment published (file: raw, hex, or "
+        "base64). Checked against the receipt's commitment.",
+    )
+    receipt_chain = receipt_sub.add_parser(
+        "chain",
+        help="Walk a receipt chain and report missing receipts",
+    )
+    receipt_chain.add_argument(
+        "path",
+        help="JSONL file written by FileReceiptSink",
+    )
+    receipt_chain.add_argument(
+        "--verbose", "-v", action="store_true", help="Print every receipt"
+    )
+    receipt_chain.add_argument(
+        "--authorizer",
+        action="append",
+        default=None,
+        metavar="HEX",
+        help="Enforcement-point key you recognize; repeatable. Every receipt "
+        "in the stream must be signed by one.",
     )
 
     # mint command
@@ -821,6 +1293,39 @@ def main():
             sys.exit(1)
         success = verify_warrant(args.warrant, args.tool, tool_args)
         sys.exit(0 if success else 1)
+
+    elif args.command == "receipt":
+        if args.receipt_command == "verify":
+            call_args = None
+            if args.args is not None:
+                try:
+                    call_args = json.loads(args.args)
+                except json.JSONDecodeError as exc:
+                    print(f"❌ Invalid JSON for --args: {exc}")
+                    sys.exit(1)
+            srl_bytes = _load_srl_arg(args.srl) if args.srl is not None else None
+            sys.exit(
+                0
+                if verify_receipt_cli(
+                    args.receipt,
+                    roots=args.root,
+                    authorizers=args.authorizer,
+                    args=call_args,
+                    srl_bytes=srl_bytes,
+                )
+                else 1
+            )
+        elif args.receipt_command == "chain":
+            sys.exit(
+                0
+                if verify_receipt_chain(
+                    args.path, verbose=args.verbose, authorizers=args.authorizer
+                )
+                else 1
+            )
+        else:
+            receipt_parser.print_help()
+            sys.exit(1)
 
     elif args.command == "init":
         init_project()

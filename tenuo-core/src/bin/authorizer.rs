@@ -1831,6 +1831,9 @@ fn parse_deny_reason(
         Error::SignatureInvalid(msg) => {
             deny = deny.with_reason(format!("signature_invalid: {}", msg));
         }
+        Error::UntrustedRoot => {
+            deny = deny.with_reason("untrusted_root: root warrant issuer not trusted".to_string());
+        }
         Error::MissingSignature(msg) => {
             deny = deny.with_reason(format!("missing_pop: {}", msg));
         }

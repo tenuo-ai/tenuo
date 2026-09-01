@@ -80,7 +80,7 @@ class TestDenialTaxonomy:
             tool, args, bound, trusted_roots=[untrusted.public_key]
         )
         assert result.allowed is False
-        assert result.error_type in KNOWN_ERROR_TYPES
+        assert result.error_type == "untrusted_issuer"
 
 
 # ---------------------------------------------------------------------------

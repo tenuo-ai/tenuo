@@ -15,6 +15,15 @@
 //!   via `iter_batched` so the caches cannot fully warm on a single value pair.
 //!   These are the numbers to cite when comparing to Cedar / OPA or describing
 //!   realistic policy evaluation cost.
+//! - `receipt_issue_inline` is the full hot-path cost of producing a signed,
+//!   chained receipt from an already-verified decision: payload construction
+//!   from the `ChainVerificationResult`, the trust-anchor commitment, the
+//!   chain link, `Receipt::create` (one Ed25519 sign), and the digest for the
+//!   next link. It is what the journal/inline emission postures add per
+//!   decision; the deferred posture pays only an enqueue and moves this cost
+//!   off-path. `receipt_verify` is the signature-authenticity check alone —
+//!   claim checks (chain-vs-root, request hash) are the existing verify
+//!   benches plus a hash.
 //! - `chain_verify` is measured in two variants: `shared_key` (every link signed
 //!   by the same keypair, which is the protocol *floor* because Ed25519 batch
 //!   verification can collapse scalars on repeated public keys) and
@@ -950,6 +959,85 @@ fn benchmark_url_safe_operations(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_receipts(c: &mut Criterion) {
+    use tenuo::planes::Authorizer;
+    use tenuo::receipt::{Outcome, Receipt};
+
+    let root = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let signer = SigningKey::generate();
+
+    let constraints = ConstraintSet::from_iter(vec![(
+        "path".to_string(),
+        Pattern::new("/data/*").unwrap().into(),
+    )]);
+    let warrant = Warrant::builder()
+        .capability("read_file", constraints)
+        .ttl(Duration::from_secs(600))
+        .holder(holder.public_key())
+        .build(&root)
+        .unwrap();
+
+    let mut args = HashMap::new();
+    args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/q3.pdf".to_string()),
+    );
+    let pop_sig = warrant.sign(&holder, "read_file", &args).unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+    let result = authorizer
+        .check_chain(
+            std::slice::from_ref(&warrant),
+            "read_file",
+            &args,
+            Some(&pop_sig),
+            &[],
+        )
+        .unwrap();
+    let trusted_roots_hash = tenuo::trusted_roots_digest(&[root.public_key().to_bytes()]);
+    let mut prev_link: Option<[u8; 32]> = None;
+
+    c.bench_function("receipt_issue_inline", |b| {
+        b.iter(|| {
+            let mut payload = result
+                .to_receipt_payload(
+                    black_box("read_file"),
+                    Outcome::Allow,
+                    black_box(1_700_000_000),
+                    black_box("req-bench"),
+                    None,
+                )
+                .unwrap();
+            payload.trusted_roots_hash = Some(trusted_roots_hash);
+            payload.prev_receipt_hash = prev_link;
+            let receipt = Receipt::create(&payload, &signer).unwrap();
+            prev_link = Some(receipt.digest().unwrap());
+            black_box(receipt)
+        })
+    });
+
+    let payload = result
+        .to_receipt_payload(
+            "read_file",
+            Outcome::Allow,
+            1_700_000_000,
+            "req-bench",
+            None,
+        )
+        .unwrap();
+    let receipt = Receipt::create(&payload, &signer).unwrap();
+    let mut wire_bytes = Vec::new();
+    ciborium::into_writer(&receipt, &mut wire_bytes).unwrap();
+
+    c.bench_function("receipt_verify", |b| {
+        b.iter(|| {
+            let parsed: Receipt = ciborium::from_reader(black_box(wire_bytes.as_slice())).unwrap();
+            black_box(parsed.verify_signature().unwrap())
+        })
+    });
+}
+
 criterion_group!(
     benches,
     benchmark_warrant_creation,
@@ -963,6 +1051,7 @@ criterion_group!(
     benchmark_chain_verification,
     benchmark_constraint_evaluation,
     benchmark_constraint_authorize_no_crypto,
+    benchmark_receipts,
     benchmark_cidr_operations,
     benchmark_url_pattern_operations,
     benchmark_subpath_operations,

@@ -911,7 +911,7 @@ class TestEnforceToolCallWithAuthorizer:
             authorizer=auth,
         )
         assert result.allowed is False
-        assert result.error_type == "invalid_pop"
+        assert result.error_type == "untrusted_issuer"
         assert "trusted" in result.denial_reason.lower() or "issuer" in result.denial_reason.lower()
 
     def test_authorizer_verify_mode_expired_warrant(self, keypair, authorizer):

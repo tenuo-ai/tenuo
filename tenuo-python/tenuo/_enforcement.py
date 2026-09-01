@@ -63,6 +63,7 @@ from .exceptions import (
     SignatureMismatch,
     TenuoError,
     ToolNotAuthorized,
+    UntrustedRoot,
 )
 from .schemas import TOOL_SCHEMAS, ToolSchema
 
@@ -95,6 +96,16 @@ class EnforcementResult:
             Pass to ``emit_for_enforcement(chain_result=...)`` so receipts
             are signed with Rust-attested fields (approvals, warrant stack,
             root issuer) instead of Python-supplied metadata.
+        presented_chain: Warrants presented with the call, kept on denials so a
+            refusal can still be receipted. Structural refusals — no warrant at
+            all, or bytes that would not decode — have nothing to present and
+            leave this ``None``.
+        verified_pop: Holder proof-of-possession, only when it verified before
+            the failure.
+        authorizer: Rust ``Authorizer`` instance that produced ``chain_result``.
+            ControlPlaneClient uses this to bind receipt trust commitments
+            automatically, so hosts do not need a separate manual
+            ``bind_authorizer()`` step before receipt emission.
         approval_metadata: Populated when ``error_type == "insufficient_approvals"``.
             Contains ``{"got": int, "need": int}`` so callers can tell "re-submit
             with more approvals" from a flat scope denial without parsing the
@@ -109,6 +120,23 @@ class EnforcementResult:
     error_type: Optional[str] = None
     warrant_id: Optional[str] = None
     chain_result: Optional[Any] = None
+    authorizer: Optional[Any] = None
+    # The chain that was presented, kept on denials as well as allows.
+    # check_chain raises for expiry, revocation, an untrusted root or a
+    # constraint miss, so a denial has no chain_result to build a receipt from
+    # — but the chain was still presented, and a refusal over presented
+    # authority is the decision most worth recording.
+    presented_chain: Optional[Any] = None
+    # The holder's PoP, kept only when possession was established before the
+    # failure. Absent means we could not establish who was asking, which is a
+    # different claim and must not be conflated.
+    verified_pop: Optional[Any] = None
+    # The PoP-view arguments — what the holder actually signed over. Key 7 on a
+    # denial receipt must commit to this view, not the original tool_args:
+    # allows hash the pop_args view inside check_chain, and MCP/FastAPI pass a
+    # different map there, so hashing tool_args would make a genuine denial
+    # receipt fail a later check against the wire payload.
+    pop_auth_args: Optional[Dict[str, Any]] = None
     approval_metadata: Optional[Dict[str, Any]] = None
 
     def raise_if_denied(self) -> None:
@@ -121,6 +149,7 @@ class EnforcementResult:
             ConstraintViolation: Argument violates a warrant constraint
             ToolNotAuthorized: Tool not granted by the warrant
             SignatureInvalid: PoP / signature verification failed
+            UntrustedRoot: Root warrant issuer is not in the trusted set
             ToolNotAuthorized: Generic authorization denial fallback
         """
         if self.allowed:
@@ -144,6 +173,9 @@ class EnforcementResult:
 
         if error_type == "invalid_pop":
             raise SignatureInvalid(self.denial_reason or "Invalid proof-of-possession")
+
+        if error_type == "untrusted_issuer":
+            raise UntrustedRoot()
 
         if error_type == "constraint_violation":
             raise ConstraintViolation(
@@ -353,6 +385,15 @@ def _enforcement_result_from_chain_error(
             error_type="tool_not_allowed",
             warrant_id=warrant_id,
         )
+    if isinstance(exc, UntrustedRoot):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            error_type="untrusted_issuer",
+            warrant_id=warrant_id,
+        )
     if isinstance(exc, (SignatureInvalid, MissingSignature, SignatureMismatch)):
         return EnforcementResult(
             allowed=False,
@@ -410,7 +451,7 @@ def _log_chain_enforcement_denial(
 ) -> None:
     """Log authorization denials from chain/sign paths at the right severity."""
     msg = f"Authorization denied for {tool_name}: {exc}"
-    if error_type in ("invalid_pop", "revoked"):
+    if error_type in ("invalid_pop", "revoked", "untrusted_issuer"):
         logger.warning(msg)
     else:
         logger.debug(msg)
@@ -424,6 +465,10 @@ def _enforcement_result_from_chain_error_with_logging(
     *,
     constraint_auth_args: Optional[Dict[str, Any]] = None,
     warrant: Optional[Any] = None,
+    presented_chain: Optional[Any] = None,
+    authorizer: Optional[Any] = None,
+    verified_pop: Optional[Any] = None,
+    pop_auth_args: Optional[Dict[str, Any]] = None,
 ) -> EnforcementResult:
     result = _enforcement_result_from_chain_error(
         exc,
@@ -433,6 +478,14 @@ def _enforcement_result_from_chain_error_with_logging(
         constraint_auth_args=constraint_auth_args,
         warrant=warrant,
     )
+    # Stamped here rather than in the mapper, which has seven return sites.
+    # Without these a denial reaches emit_for_enforcement with nothing to build
+    # a receipt from, and the stream becomes a contiguous run of allows with
+    # every refusal silently missing.
+    result.presented_chain = presented_chain
+    result.authorizer = authorizer
+    result.verified_pop = verified_pop
+    result.pop_auth_args = pop_auth_args
     _log_chain_enforcement_denial(tool_name, exc, result.error_type)
     return result
 
@@ -882,6 +935,16 @@ def enforce_tool_call(
     # - Constraint satisfaction
     # - Approval gate satisfaction (when gate fires + approvals provided)
     # =========================================================================
+    # Receipt context for the denial paths. Initialized before the try so
+    # every except arm — including ones reached before the sign/verify branch
+    # runs — can stamp the chain that was presented, and so a failure during
+    # PoP signing cannot leave `_auth` unbound in the handler reporting it.
+    _presented_chain = list(warrant_chain or []) + [bound_warrant.warrant]
+    _pop = None
+    _auth = None
+    # Overwritten with the stripped PoP view once derived; the fallback keeps
+    # except arms reached before that point from seeing an unbound local.
+    _pop_auth_args = tool_args
     try:
         # =================================================================
         # APPROVAL GATE EVALUATION (before validate — gates fire in Rust's
@@ -919,6 +982,9 @@ def enforce_tool_call(
                     ),
                     error_type="approval_gate_misconfigured",
                     warrant_id=warrant_id,
+                    presented_chain=_presented_chain,
+                    pop_auth_args=_pop_auth_args,
+                    authorizer=authorizer if authorizer is not None else _auth,
                 )
 
             # Collect and verify approvals — raises if missing or invalid.
@@ -1028,6 +1094,9 @@ def enforce_tool_call(
                         denial_reason="PoP replay detected — this exact authorization token was already consumed.",
                         error_type="invalid_pop",
                         warrant_id=warrant_id,
+                        presented_chain=_presented_chain,
+                        pop_auth_args=_pop_auth_args,
+                        authorizer=_auth,
                     )
             except Exception as _exc:
                 return _enforcement_result_from_chain_error_with_logging(
@@ -1037,6 +1106,10 @@ def enforce_tool_call(
                     warrant_id,
                     constraint_auth_args=_constraint_auth_args,
                     warrant=_warrant,
+                    presented_chain=_presented_chain,
+                    pop_auth_args=_pop_auth_args,
+                    authorizer=_auth,
+                    verified_pop=_pop,
                 )
         else:
             # verify_mode == "verify"
@@ -1061,6 +1134,9 @@ def enforce_tool_call(
                         constraint_violated=None,
                         error_type="expired",
                         warrant_id=warrant_id,
+                        presented_chain=_presented_chain,
+                        pop_auth_args=_pop_auth_args,
+                        authorizer=authorizer,
                     )
 
                 use_split_view = (
@@ -1093,6 +1169,10 @@ def enforce_tool_call(
                     warrant_id,
                     constraint_auth_args=_constraint_auth_args,
                     warrant=bound_warrant.warrant,
+                    presented_chain=_presented_chain,
+                    pop_auth_args=_pop_auth_args,
+                    authorizer=authorizer,
+                    verified_pop=precomputed_signature,
                 )
 
         # Success - log for audit trail
@@ -1111,6 +1191,7 @@ def enforce_tool_call(
             arguments=tool_args,
             warrant_id=warrant_id,
             chain_result=_chain_result,
+            authorizer=_auth if verify_mode == "sign" else authorizer,
         )
 
     except InsufficientApprovals as e:
@@ -1124,6 +1205,10 @@ def enforce_tool_call(
             denial_reason=str(e),
             error_type="insufficient_approvals",
             warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=authorizer if authorizer is not None else _auth,
+            verified_pop=_pop,
             approval_metadata={
                 "got": e.details.get("received", 0) if hasattr(e, "details") else 0,
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
@@ -1153,6 +1238,10 @@ def enforce_tool_call(
             constraint_violated=_constraint_field_for_authorization_error(e),
             error_type=err_type,
             warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=authorizer if authorizer is not None else _auth,
+            verified_pop=_pop,
         )
     except TenuoError as e:
         # Other Tenuo errors - log as warning
@@ -1164,6 +1253,10 @@ def enforce_tool_call(
             denial_reason=str(e),
             error_type="tenuo_error",
             warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=authorizer if authorizer is not None else _auth,
+            verified_pop=_pop,
         )
     except Exception as e:
         from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
@@ -1179,6 +1272,10 @@ def enforce_tool_call(
             denial_reason=f"Internal enforcement error: {str(e)}",
             error_type="internal_error",
             warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=authorizer if authorizer is not None else _auth,
+            verified_pop=_pop,
         )
 
 
@@ -1268,6 +1365,16 @@ async def enforce_tool_call_async(
             )
 
     # ── Rust core authorization (with async approval collection) ──
+    # Receipt context for the denial paths. Initialized before the try so
+    # every except arm — including ones reached before the sign/verify branch
+    # runs — can stamp the chain that was presented, and so a failure during
+    # PoP signing cannot leave `_auth` unbound in the handler reporting it.
+    _presented_chain = list(warrant_chain or []) + [bound_warrant.warrant]
+    _pop = None
+    _auth = None
+    # Overwritten with the stripped PoP view once derived; the fallback keeps
+    # except arms reached before that point from seeing an unbound local.
+    _pop_auth_args = tool_args
     try:
         from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
         from ._pop_canonicalize import strip_none_values as _strip_none_values
@@ -1293,6 +1400,9 @@ async def enforce_tool_call_async(
                         "no required_approvers configured"
                     ),
                     error_type="approval_gate_misconfigured", warrant_id=warrant_id,
+                    presented_chain=_presented_chain,
+                    pop_auth_args=_pop_auth_args,
+                    authorizer=authorizer if authorizer is not None else _auth,
                 )
 
             _gate_approvals = await _collect_approvals_for_approval_gate_async(
@@ -1382,6 +1492,9 @@ async def enforce_tool_call_async(
                         allowed=False, tool=tool_name, arguments=tool_args,
                         denial_reason="PoP replay detected — this exact authorization token was already consumed.",
                         error_type="invalid_pop", warrant_id=warrant_id,
+                        presented_chain=_presented_chain,
+                        pop_auth_args=_pop_auth_args,
+                        authorizer=_auth,
                     )
             except Exception as _exc:
                 return _enforcement_result_from_chain_error_with_logging(
@@ -1391,6 +1504,10 @@ async def enforce_tool_call_async(
                     warrant_id,
                     constraint_auth_args=_constraint_auth_args,
                     warrant=_warrant,
+                    presented_chain=_presented_chain,
+                    pop_auth_args=_pop_auth_args,
+                    authorizer=_auth,
+                    verified_pop=_pop,
                 )
         else:
             if authorizer is None:
@@ -1403,6 +1520,9 @@ async def enforce_tool_call_async(
                         allowed=False, tool=tool_name, arguments=tool_args,
                         denial_reason="Warrant has expired", constraint_violated=None,
                         error_type="expired", warrant_id=warrant_id,
+                        presented_chain=_presented_chain,
+                        pop_auth_args=_pop_auth_args,
+                        authorizer=authorizer,
                     )
 
                 use_split_view = (
@@ -1435,6 +1555,10 @@ async def enforce_tool_call_async(
                     warrant_id,
                     constraint_auth_args=_constraint_auth_args,
                     warrant=bound_warrant.warrant,
+                    presented_chain=_presented_chain,
+                    pop_auth_args=_pop_auth_args,
+                    authorizer=authorizer,
+                    verified_pop=precomputed_signature,
                 )
 
         logger.info(
@@ -1444,6 +1568,7 @@ async def enforce_tool_call_async(
         return EnforcementResult(
             allowed=True, tool=tool_name, arguments=tool_args,
             warrant_id=warrant_id, chain_result=_chain_result,
+            authorizer=_auth if verify_mode == "sign" else authorizer,
         )
 
     except InsufficientApprovals as e:
@@ -1453,6 +1578,10 @@ async def enforce_tool_call_async(
             denial_reason=str(e),
             error_type="insufficient_approvals",
             warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=authorizer if authorizer is not None else _auth,
+            verified_pop=_pop,
             approval_metadata={
                 "got": e.details.get("received", 0) if hasattr(e, "details") else 0,
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
@@ -1475,12 +1604,20 @@ async def enforce_tool_call_async(
             denial_reason=str(e),
             constraint_violated=_constraint_field_for_authorization_error(e),
             error_type=err_type, warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=authorizer if authorizer is not None else _auth,
+            verified_pop=_pop,
         )
     except TenuoError as e:
         logger.warning(f"Tenuo error during authorization for {tool_name}: {e}")
         return EnforcementResult(
             allowed=False, tool=tool_name, arguments=tool_args,
             denial_reason=str(e), error_type="tenuo_error", warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=authorizer if authorizer is not None else _auth,
+            verified_pop=_pop,
         )
     except Exception as e:
         from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
@@ -1491,6 +1628,10 @@ async def enforce_tool_call_async(
             allowed=False, tool=tool_name, arguments=tool_args,
             denial_reason=f"Internal enforcement error: {str(e)}",
             error_type="internal_error", warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=authorizer if authorizer is not None else _auth,
+            verified_pop=_pop,
         )
 
 

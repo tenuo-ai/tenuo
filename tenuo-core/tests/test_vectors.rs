@@ -3661,3 +3661,380 @@ fn test_vector_a29_missing_constrained_field_rejected() {
         "A.29 constrained field absent from call arguments must be rejected"
     );
 }
+
+// =============================================================================
+// A.30 Authorization Receipts
+//
+// A receipt is signed by the enforcement point, not by a warrant issuer.
+// Verifying the signature establishes only that the holder of `signer_key`
+// made this statement; whether that key legitimately speaks for a deployment
+// is out of band and deliberately outside these vectors.
+// =============================================================================
+
+/// A.30.1: no revocation data was loaded — keys 12 and 13 both absent.
+///
+/// This is the weakest honest claim a receipt can make about revocation, and
+/// it must stay distinguishable from a loaded list that matched nothing.
+const RECEIPT_A30_1: &str = concat!(
+    "a46f726563656970745f76657273696f6e01677061796c6f6164590179a80001",
+    "0258ec81830158a3aa00010150019471f8000070008000000000003000020003",
+    "a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202",
+    "a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9",
+    "0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74",
+    "09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200",
+    "80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce",
+    "f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac",
+    "51a36b53e547545338aba0c1cb83020369726561645f66696c650465616c6c6f",
+    "77051a659200800858404aa574e10e3e19223f987a17e16839b52ae597a2b56e",
+    "eaf051d14c773c30a3f790f9e24daedea9994d9618b61bd83fc76f7cf5c3764a",
+    "280200962fe537c39a0909677265712d6133300f582034750f98bd59fcfc946d",
+    "a45aaabe933be154a4b5094e1c4abf42866505f3c97e6a7369676e65725f6b65",
+    "79820158201ba4075b77c9e3fb3ecde15cdaf5221f3c10373e623f7b0e1ef763",
+    "66b0af7137697369676e6174757265820158403dae6ff6eac08c6454b1a97747",
+    "c7bff3f8dd691798e1eee681b17a9e2e2ffc8a74999ded362f707ebfe5a6734b",
+    "bbadeed0c96e51be97d2a37f8316a7d172bd08",
+);
+
+/// A.30.2: an unversioned SignedRevocationList — key 13 present, key 12 absent.
+const RECEIPT_A30_2: &str = concat!(
+    "a46f726563656970745f76657273696f6e01677061796c6f616459019ca90001",
+    "0258ec81830158a3aa00010150019471f8000070008000000000003000020003",
+    "a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202",
+    "a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9",
+    "0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74",
+    "09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200",
+    "80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce",
+    "f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac",
+    "51a36b53e547545338aba0c1cb83020369726561645f66696c650465616c6c6f",
+    "77051a659200800858404aa574e10e3e19223f987a17e16839b52ae597a2b56e",
+    "eaf051d14c773c30a3f790f9e24daedea9994d9618b61bd83fc76f7cf5c3764a",
+    "280200962fe537c39a0909677265712d6133300d5820e135dea2864c53a124c9",
+    "c42fcd7d0909f865aaf5b66d9ca5d1ee5278fffdc7120f582034750f98bd59fc",
+    "fc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e6a7369676e6572",
+    "5f6b6579820158201ba4075b77c9e3fb3ecde15cdaf5221f3c10373e623f7b0e",
+    "1ef76366b0af7137697369676e617475726582015840cf81c7873a9bc4b87be2",
+    "254b37222769dee384a36dde5645518f85dff76fc5f5a8fe50817b244c445720",
+    "e64fd89f2de9fba4e48312d63feffb8664f46ee1ca04",
+);
+
+/// A.30.3: a versioned list — keys 12 and 13 both present.
+const RECEIPT_A30_3: &str = concat!(
+    "a46f726563656970745f76657273696f6e01677061796c6f61645901c2ab0001",
+    "0258ec81830158a3aa00010150019471f8000070008000000000003000020003",
+    "a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202",
+    "a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9",
+    "0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74",
+    "09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200",
+    "80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce",
+    "f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac",
+    "51a36b53e547545338aba0c1cb83020369726561645f66696c650465616c6c6f",
+    "77051a659200800858404aa574e10e3e19223f987a17e16839b52ae597a2b56e",
+    "eaf051d14c773c30a3f790f9e24daedea9994d9618b61bd83fc76f7cf5c3764a",
+    "280200962fe537c39a0909677265712d6133300b5820a2de9b15bdc8095f2421",
+    "26aa369233e4f2cada0ee3852482cae5ac9b94b80ff80c182f0d5820e135dea2",
+    "864c53a124c9c42fcd7d0909f865aaf5b66d9ca5d1ee5278fffdc7120f582034",
+    "750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e6a",
+    "7369676e65725f6b6579820158201ba4075b77c9e3fb3ecde15cdaf5221f3c10",
+    "373e623f7b0e1ef76366b0af7137697369676e617475726582015840f7395fb6",
+    "7a2bf45c2da552e69e014e1851132558fdc460b941ad0357ab1eaa2a4ad58c79",
+    "931b1ee377116b3d7a109b9d50dbb29ec1e76cba872273e38eff6e0c",
+);
+
+/// A.30.4: denial reached before proof-of-possession — key 8 absent, key 10 required.
+const RECEIPT_A30_4: &str = concat!(
+    "a46f726563656970745f76657273696f6e01677061796c6f6164590172a90001",
+    "0258ec81830158a3aa00010150019471f8000070008000000000003000020003",
+    "a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202",
+    "a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9",
+    "0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74",
+    "09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200",
+    "80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce",
+    "f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac",
+    "51a36b53e547545338aba0c1cb83020369726561645f66696c65046464656e79",
+    "051a65920080096c7265712d6133302d64656e790a73746f6f6c2d6e6f742d61",
+    "7574686f72697a65640d5820e135dea2864c53a124c9c42fcd7d0909f865aaf5",
+    "b66d9ca5d1ee5278fffdc7120f582034750f98bd59fcfc946da45aaabe933be1",
+    "54a4b5094e1c4abf42866505f3c97e6a7369676e65725f6b6579820158201ba4",
+    "075b77c9e3fb3ecde15cdaf5221f3c10373e623f7b0e1ef76366b0af71376973",
+    "69676e61747572658201584077775a6ebefc4dca805c5826bc80046ceba63c46",
+    "78e8957b26d052139042109d40b791e83bf1c2252d0b6fa7c700be85043cb6c9",
+    "7f6d5a190274c4956a8f5c0b",
+);
+
+/// Digest input fixed by A.30 so an implementation can confirm its
+/// `srl_commitment_digest` agrees before trusting the receipt bytes.
+const A30_DIGEST_INPUT: &[u8] = b"tenuo-test-vector-a30-revocation-list";
+
+/// A.30.5: chained to A.30.2 via payload key 14.
+const RECEIPT_A30_5: &str = concat!(
+    "a46f726563656970745f76657273696f6e01677061796c6f61645901c6aa0001",
+    "0258ec81830158a3aa00010150019471f8000070008000000000003000020003",
+    "a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202",
+    "a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9",
+    "0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74",
+    "09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200",
+    "80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce",
+    "f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac",
+    "51a36b53e547545338aba0c1cb83020369726561645f66696c650465616c6c6f",
+    "77051a659200800858404aa574e10e3e19223f987a17e16839b52ae597a2b56e",
+    "eaf051d14c773c30a3f790f9e24daedea9994d9618b61bd83fc76f7cf5c3764a",
+    "280200962fe537c39a09096e7265712d6133302d7365636f6e640d5820e135de",
+    "a2864c53a124c9c42fcd7d0909f865aaf5b66d9ca5d1ee5278fffdc7120e5820",
+    "ac4582f55beda95c370e8f50ff3286790eef1fec12aee369fcd7fb636a4e9666",
+    "0f582034750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505",
+    "f3c97e6a7369676e65725f6b6579820158201ba4075b77c9e3fb3ecde15cdaf5",
+    "221f3c10373e623f7b0e1ef76366b0af7137697369676e617475726582015840",
+    "2abc6b9738d742aa79294b6db464e67495c9fd4ba2ab22b5696119cd82f8eba9",
+    "3227249df96b603a23b8cb92409868f5eb5d91275bd5568ae6cad567a76c8e03",
+);
+
+/// Fixed policy input A.30.3 commits to at key 11.
+const A30_POLICY_INPUT: &[u8] = b"tenuo-test-vector-a30-policy";
+
+fn decode_receipt(hex_str: &str) -> tenuo::receipt::ReceiptPayload {
+    let bytes = hex::decode(hex_str).expect("receipt vector decodes from hex");
+    let receipt: tenuo::receipt::Receipt =
+        ciborium::from_reader(bytes.as_slice()).expect("receipt vector parses as CBOR");
+    receipt
+        .verify_signature()
+        .expect("receipt vector signature verifies")
+}
+
+#[test]
+fn a30_1_omits_the_revocation_commitment_entirely() {
+    let payload = decode_receipt(RECEIPT_A30_1);
+
+    assert_eq!(payload.outcome, tenuo::receipt::Outcome::Allow);
+    assert_eq!(payload.action, "read_file");
+    assert!(
+        payload.pop_signature.is_some(),
+        "an allow without a PoP is evidence of nothing but the signer's word"
+    );
+    assert_eq!(payload.srl_version, None);
+    assert_eq!(
+        payload.srl_hash, None,
+        "absent means revocation was never consulted"
+    );
+}
+
+#[test]
+fn a30_2_commits_to_an_unversioned_list() {
+    let payload = decode_receipt(RECEIPT_A30_2);
+
+    assert_eq!(
+        payload.srl_hash,
+        Some(tenuo::srl_commitment_digest(A30_DIGEST_INPUT)),
+        "key 13 must be SHA-256 over the list bytes as loaded"
+    );
+    assert_eq!(
+        payload.srl_version, None,
+        "a plain SignedRevocationList carries no version, and the receipt must \
+         not invent one"
+    );
+}
+
+#[test]
+fn a30_3_commits_to_a_versioned_list() {
+    let payload = decode_receipt(RECEIPT_A30_3);
+
+    assert_eq!(payload.srl_version, Some(47));
+    assert_eq!(
+        payload.srl_hash,
+        Some(tenuo::srl_commitment_digest(A30_DIGEST_INPUT))
+    );
+}
+
+#[test]
+fn a30_4_records_a_denial_reached_before_possession_was_proven() {
+    let payload = decode_receipt(RECEIPT_A30_4);
+
+    assert_eq!(payload.outcome, tenuo::receipt::Outcome::Deny);
+    assert_eq!(
+        payload.pop_signature, None,
+        "possession was never established, so the receipt must not imply it was"
+    );
+    assert_eq!(
+        payload.decision_code.as_deref(),
+        Some("tool-not-authorized"),
+        "a denial must say why"
+    );
+    payload
+        .check_conditional_requirements()
+        .expect("a deny carrying decision_code satisfies the conditional requirements");
+}
+
+#[test]
+fn a30_receipts_reject_a_tampered_signature() {
+    let mut bytes = hex::decode(RECEIPT_A30_3).expect("decodes");
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0x01;
+
+    let receipt: tenuo::receipt::Receipt =
+        ciborium::from_reader(bytes.as_slice()).expect("still parses as CBOR");
+
+    assert!(
+        receipt.verify_signature().is_err(),
+        "a flipped bit in the signature must not verify"
+    );
+}
+
+#[test]
+fn a30_commits_to_the_trusted_root_set() {
+    // Every real enforcement point knows which roots it honours, so the
+    // commitment is present on allows and denials alike.
+    for wire in [RECEIPT_A30_1, RECEIPT_A30_3, RECEIPT_A30_4, RECEIPT_A30_5] {
+        let payload = decode_receipt(wire);
+        assert!(
+            payload.trusted_roots_hash.is_some(),
+            "a receipt that does not say which roots it trusted cannot show the \
+             chain was rooted in anything legitimate"
+        );
+    }
+}
+
+#[test]
+fn a30_3_commits_to_the_host_ceiling() {
+    let payload = decode_receipt(RECEIPT_A30_3);
+
+    assert_eq!(
+        payload.policy_definition_hash,
+        Some(tenuo::policy_commitment_digest(A30_POLICY_INPUT)),
+        "without key 11 a receipt cannot distinguish an allow under a tight \
+         ceiling from one under an open ceiling"
+    );
+}
+
+#[test]
+fn a30_5_links_to_its_predecessor() {
+    let previous = hex::decode(RECEIPT_A30_2).expect("decodes");
+    let previous: tenuo::receipt::Receipt =
+        ciborium::from_reader(previous.as_slice()).expect("parses");
+
+    let payload = decode_receipt(RECEIPT_A30_5);
+
+    assert_eq!(
+        payload.prev_receipt_hash,
+        Some(previous.digest().expect("digests")),
+        "the link must commit to the exact predecessor artifact"
+    );
+}
+
+#[test]
+fn a30_1_starts_a_chain_with_no_predecessor() {
+    let payload = decode_receipt(RECEIPT_A30_1);
+
+    // Omitted rather than zero-filled: a zero hash would be indistinguishable
+    // from a real link to a receipt nobody can produce.
+    assert_eq!(payload.prev_receipt_hash, None);
+}
+
+#[test]
+fn a30_removing_a_receipt_from_the_stream_is_detectable() {
+    // The point of chaining: an enforcement point that declines to emit a
+    // receipt leaves the next one pointing at something absent.
+    let stream = [RECEIPT_A30_2, RECEIPT_A30_5];
+    let kept = decode_receipt(stream[1]);
+    let dropped_predecessor = decode_receipt(stream[0]);
+
+    let present: Vec<[u8; 32]> = vec![];
+    let link = kept.prev_receipt_hash.expect("A.30.5 links backwards");
+
+    assert!(
+        !present.contains(&link),
+        "with A.30.2 withheld, its successor's link resolves to nothing"
+    );
+    assert_eq!(dropped_predecessor.request_id, "req-a30");
+}
+
+// =============================================================================
+// A.31 Receipt Derivations
+//
+// The two values a receipt commits to that are computed rather than carried.
+// An implementation that cannot reproduce these cannot check payload keys 7
+// and 11 against anything, which is the difference between a commitment and an
+// opaque 32 bytes.
+// =============================================================================
+
+const A31_ARGS_CBOR: &str =
+    "a4676472795f72756ef5656c696d69740a64706174686c2f646174612f71332e70646664746167738261626161";
+const A31_REQUEST_HASH: &str = "59f290af000b9331df93a643f48fd530f43510243507cd8bfc8aa12623dbab4b";
+const A31_POLICY_CBOR: &str = "a268656e636f64696e67a2646b696e64656f6e654f666676616c7565738264757466386561736369696470617468a2646b696e6465756e64657264726f6f74652f64617461";
+const A31_POLICY_HASH: &str = "9b53b570975500172890f86347a3338c8ac4ca2b75501d582a2cc0eef152059d";
+
+fn a31_args() -> std::collections::HashMap<String, tenuo::ConstraintValue> {
+    use tenuo::ConstraintValue;
+    let mut args = std::collections::HashMap::new();
+    args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/q3.pdf".to_string()),
+    );
+    args.insert("limit".to_string(), ConstraintValue::Integer(10));
+    args.insert("dry_run".to_string(), ConstraintValue::Boolean(true));
+    args.insert(
+        "tags".to_string(),
+        ConstraintValue::List(vec![
+            ConstraintValue::String("b".to_string()),
+            ConstraintValue::String("a".to_string()),
+        ]),
+    );
+    args
+}
+
+#[test]
+fn a31_1_canonical_args_sort_keys_and_preserve_list_order() {
+    let encoded = tenuo::approval::canonical_tool_args_cbor(&a31_args()).expect("canonicalizes");
+
+    // Sorting the map is what lets two implementations agree; sorting the list
+    // would change the invocation, so it must not happen.
+    assert_eq!(hex::encode(encoded), A31_ARGS_CBOR);
+}
+
+#[test]
+fn a31_1_request_hash_matches_the_published_derivation() {
+    let holder_bytes =
+        hex::decode("ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1")
+            .expect("decodes");
+    let holder = tenuo::PublicKey::from_bytes(&holder_bytes.try_into().unwrap()).expect("key");
+
+    let hash = tenuo::approval::compute_request_hash(
+        "tnu_wrt_019471f8000070008000000000003100",
+        "read_file",
+        &a31_args(),
+        Some(&holder),
+    );
+
+    assert_eq!(hex::encode(hash), A31_REQUEST_HASH);
+}
+
+#[test]
+fn a31_2_policy_encoding_sorts_and_matches_the_published_derivation() {
+    // Given out of order on purpose: the commitment describes the policy, not
+    // the order a host happened to build it in.
+    let policy = serde_json::json!({
+        "path": {"kind": "under", "root": "/data"},
+        "encoding": {"kind": "oneOf", "values": ["utf8", "ascii"]},
+    });
+
+    let bytes = tenuo::canonical_policy_bytes(&policy).expect("canonicalizes");
+    assert_eq!(hex::encode(&bytes), A31_POLICY_CBOR);
+    assert_eq!(
+        hex::encode(tenuo::policy_commitment_digest(&bytes)),
+        A31_POLICY_HASH
+    );
+}
+
+#[test]
+fn a31_2_a_different_policy_commits_differently() {
+    let tight = serde_json::json!({"path": {"kind": "under", "root": "/data"}});
+    let open = serde_json::json!({});
+
+    let tight_bytes = tenuo::canonical_policy_bytes(&tight).expect("canonicalizes");
+    let open_bytes = tenuo::canonical_policy_bytes(&open).expect("canonicalizes");
+
+    // The whole point of key 11: an allow under a tight ceiling must not look
+    // like one under an open ceiling.
+    assert_ne!(
+        tenuo::policy_commitment_digest(&tight_bytes),
+        tenuo::policy_commitment_digest(&open_bytes)
+    );
+}

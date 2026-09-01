@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   ApprovalRequiredError,
@@ -18,6 +19,7 @@ import {
   signApproval,
   signRevocationList,
   verifyReceipt,
+  verifyReceiptChain,
   warrantIds,
   wrapSession,
 } from "../src/testkit.ts";
@@ -508,6 +510,72 @@ describe("toWire", () => {
 });
 
 describe("revocation and receipts", () => {
+  it("commits to the revocation list in force at decision time", async () => {
+    const ctx = devContext();
+    const victim = wrapSession(ctx.mint({ read_file: { path: { kind: "under", root: "/data" } } }, 300));
+    const live = wrapSession(ctx.mint({ read_file: { path: { kind: "under", root: "/data" } } }, 300));
+    const leaked = exportSession(live);
+    const victimId = warrantIds(victim)[0];
+    if (victimId === undefined) {
+      throw new Error("expected a warrant id");
+    }
+    const srl = signRevocationList(ctx, [victimId]);
+
+    const tenuo = createTenuo({
+      trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)],
+      revocationList: srl,
+    });
+    const session = tenuo.sessionFromWire({
+      warrant: leaked.warrants,
+      holderKey: createTenuo.holderKeyFromHex(leaked.holder_hex),
+    });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+
+    const receipt = verifyReceipt(wire);
+    // The commitment is over the bytes as loaded, so a verifier can re-derive it
+    // from the published list without agreeing on a canonical re-encoding.
+    expect(receipt.srl_hash).toBe(createHash("sha256").update(Buffer.from(srl, "hex")).digest("hex"));
+    // A plain SignedRevocationList carries no version; the commitment says so
+    // rather than inventing one.
+    expect(receipt.srl_version).toBeUndefined();
+  });
+
+  it("omits the revocation commitment when no list was loaded", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+
+    // Absent, not zero-filled: "revocation was never consulted" is a distinct
+    // claim from "a list was consulted and matched nothing".
+    const receipt = verifyReceipt(wire);
+    expect(receipt.srl_hash).toBeUndefined();
+    expect(receipt.srl_version).toBeUndefined();
+  });
+
   it("revokes a live-minted session so execute never runs", async () => {
     const ctx = devContext();
     const session = wrapSession(
@@ -707,5 +775,175 @@ describe("consumer e2e", () => {
     await expect(readFile.execute({ path: "/data/q3.pdf" })).rejects.toBeInstanceOf(
       TenuoConfigurationError,
     );
+  });
+});
+
+describe("request correlation", () => {
+  it("writes the host's own identifier into the receipt", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        requestId: "trace-abc-123",
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+
+    expect(verifyReceipt(wire).request_id).toBe("trace-abc-123");
+  });
+
+  it("falls back to a derived handle when the host supplies none", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+
+    // A correlation aid, not an identity — repeats within a second collide,
+    // which is why the chain link is what distinguishes them.
+    expect(verifyReceipt(wire).request_id).toMatch(/^read_file:\d+$/);
+  });
+
+  it("does not leak the handle into the wrapped tool", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: {} } });
+    let seen: unknown;
+    const tool = tenuo.tool(
+      { execute: async (_args: { path: string }, options?: unknown) => { seen = options; return "ok"; } },
+      { capability: "read_file", allow: {} },
+    );
+
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, { requestId: "trace-abc-123" } as never),
+    );
+
+    expect(seen).toBeUndefined();
+  });
+});
+
+describe("receipt argument commitment", () => {
+  it("commits to the invocation the decision was made over", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+
+    // Without key 7 a receipt records that a decision happened but not what it
+    // was made over, which is most of what makes it evidence.
+    const receipt = verifyReceipt(wire);
+    expect(receipt.request_hash).toBeDefined();
+    expect(receipt.request_hash).toHaveLength(64);
+  });
+
+  it("commits to a different invocation differently", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+    const hashes: (string | undefined)[] = [];
+    for (const path of ["/data/a.txt", "/data/b.txt"]) {
+      await tenuo.withSession(session, () =>
+        tool.execute({ path }, {
+          onReceipt: (receipt: string) => {
+            hashes.push(verifyReceipt(receipt).request_hash);
+          },
+        } as never),
+      );
+    }
+
+    expect(hashes[0]).not.toBe(hashes[1]);
+  });
+});
+
+describe("root-anchored receipt verification", () => {
+  async function receiptAndRoot() {
+    const ctx = devContext();
+    const live = wrapSession(ctx.mint({ read_file: { path: { kind: "under", root: "/data" } } }, 300));
+    const leaked = exportSession(live);
+    const tenuo = createTenuo({
+      trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)],
+    });
+    const session = tenuo.sessionFromWire({
+      warrant: leaked.warrants,
+      holderKey: createTenuo.holderKeyFromHex(leaked.holder_hex),
+    });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+    return { wire, rootHex: leaked.root_hex };
+  }
+
+  it("verifies the embedded chain to the root that issued the authority", async () => {
+    const { wire, rootHex } = await receiptAndRoot();
+
+    // No trust in the signer needed: the chain is signed by the root and the
+    // holder, not the enforcement point.
+    const result = verifyReceiptChain(wire, [rootHex]);
+    expect(result.chain_valid).toBe(true);
+    expect(result.root_issuer).toBe(rootHex);
+    expect(result.leaf_holder).toBeDefined();
+    expect(result.corroborates_denial).toBeUndefined();
+  });
+
+  it("rejects the chain under a root that did not issue it", async () => {
+    const { wire } = await receiptAndRoot();
+    // A real key that simply is not the issuer.
+    const stranger = exportSession(
+      wrapSession(devContext().mint({ read_file: {} }, 300)),
+    ).root_hex;
+
+    const result = verifyReceiptChain(wire, [stranger]);
+    expect(result.chain_valid).toBe(false);
+    expect(result.chain_error).toBeDefined();
+  });
+
+  it("exposes the signer for the caller's own authorizer-set check", async () => {
+    const { wire, rootHex } = await receiptAndRoot();
+
+    // Membership is the verifier's judgment, made against an out-of-band set —
+    // this function deliberately has no opinion on who is a legitimate signer.
+    const result = verifyReceiptChain(wire, [rootHex]);
+    expect(result.signer_key).toHaveLength(64);
+    expect(result.signer_key).toBe(verifyReceipt(wire) && result.signer_key);
   });
 });

@@ -1330,15 +1330,16 @@ class A2AServer:
         except Exception as e:
             _msg = str(e)
             try:
-                from tenuo.exceptions import ChainError, ExpiredError, SignatureInvalid
+                from tenuo.exceptions import ChainError, ExpiredError, SignatureInvalid, UntrustedRoot
             except ImportError:
                 raise ChainValidationError(f"Chain verification error: {_msg}") from e
 
             if isinstance(e, ExpiredError):
                 raise WarrantExpiredError(_msg) from e
 
-            if isinstance(e, SignatureInvalid):
-                # "root warrant issuer not trusted" surfaces as SignatureInvalid
+            if isinstance(e, (UntrustedRoot, SignatureInvalid)):
+                # UntrustedRoot is the typed failure; SignatureInvalid remains
+                # only for a genuine signature miss on the same path.
                 root = all_warrants[0]
                 root_issuer = getattr(root, "iss", None) or getattr(root, "issuer", None)
                 root_issuer_str = self._normalize_key(root_issuer) if root_issuer else "unknown"

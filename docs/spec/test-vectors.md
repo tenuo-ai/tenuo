@@ -2115,3 +2115,297 @@ c598b333e34d6a09f41b3770566b4c621481440fe3ff4a3b2e14a7461c7ac10de5b92a4c5fe3786f
 | Invalid Input | `path = "/secret/keys.txt"` |
 
 **Expected:** Constraint passes only when inner constraint fails (negation).
+
+---
+
+## A.30 Authorization Receipts
+
+Signed record of one decision. The signer is the enforcement point,
+not a warrant issuer: resolving `signer_key` to a legitimate
+enforcement point is out of band and outside these vectors.
+
+Keys 12 and 13 commit to the revocation list in force. Absent means no
+list was loaded, which is a different claim from a loaded list that
+revoked nothing.
+
+### A.30.1 Allow, No Revocation Data
+
+Keys 12 and 13 are both absent: the enforcement point never consulted revocation. A verifier cannot conclude the warrant was unrevoked.
+
+| Field | Value |
+| --- | --- |
+| Key 0 version | `1` |
+| Key 3 action | `read_file` |
+| Key 4 outcome | `allow` |
+| Key 5 timestamp | `1704067200` |
+| Key 9 request_id | `req-a30` |
+| Key 8 pop_signature | present |
+| Key 10 decision_code | absent |
+| Key 12 srl_version | absent |
+| Key 11 policy_definition_hash | absent |
+| Key 14 prev_receipt_hash | absent |
+| Key 15 trusted_roots_hash | `34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e` |
+| Key 13 srl_hash | absent |
+
+**Receipt (hex):**
+
+a46f726563656970745f76657273696f6e01677061796c6f6164590179a80001
+0258ec81830158a3aa00010150019471f8000070008000000000003000020003
+a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202
+a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9
+0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74
+09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200
+80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce
+f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac
+51a36b53e547545338aba0c1cb83020369726561645f66696c650465616c6c6f
+77051a659200800858404aa574e10e3e19223f987a17e16839b52ae597a2b56e
+eaf051d14c773c30a3f790f9e24daedea9994d9618b61bd83fc76f7cf5c3764a
+280200962fe537c39a0909677265712d6133300f582034750f98bd59fcfc946d
+a45aaabe933be154a4b5094e1c4abf42866505f3c97e6a7369676e65725f6b65
+79820158201ba4075b77c9e3fb3ecde15cdaf5221f3c10373e623f7b0e1ef763
+66b0af7137697369676e6174757265820158403dae6ff6eac08c6454b1a97747
+c7bff3f8dd691798e1eee681b17a9e2e2ffc8a74999ded362f707ebfe5a6734b
+bbadeed0c96e51be97d2a37f8316a7d172bd08
+
+**Key 13 input:** `SHA-256("tenuo-test-vector-a30-revocation-list")`
+
+### A.30.2 Allow, Unversioned Revocation Commitment
+
+Key 13 present, key 12 absent: a plain SignedRevocationList carries no version. Key 13 is SHA-256 over the list bytes exactly as loaded.
+
+| Field | Value |
+| --- | --- |
+| Key 0 version | `1` |
+| Key 3 action | `read_file` |
+| Key 4 outcome | `allow` |
+| Key 5 timestamp | `1704067200` |
+| Key 9 request_id | `req-a30` |
+| Key 8 pop_signature | present |
+| Key 10 decision_code | absent |
+| Key 12 srl_version | absent |
+| Key 11 policy_definition_hash | absent |
+| Key 14 prev_receipt_hash | absent |
+| Key 15 trusted_roots_hash | `34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e` |
+| Key 13 srl_hash | `e135dea2864c53a124c9c42fcd7d0909f865aaf5b66d9ca5d1ee5278fffdc712` |
+
+**Receipt (hex):**
+
+a46f726563656970745f76657273696f6e01677061796c6f616459019ca90001
+0258ec81830158a3aa00010150019471f8000070008000000000003000020003
+a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202
+a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9
+0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74
+09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200
+80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce
+f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac
+51a36b53e547545338aba0c1cb83020369726561645f66696c650465616c6c6f
+77051a659200800858404aa574e10e3e19223f987a17e16839b52ae597a2b56e
+eaf051d14c773c30a3f790f9e24daedea9994d9618b61bd83fc76f7cf5c3764a
+280200962fe537c39a0909677265712d6133300d5820e135dea2864c53a124c9
+c42fcd7d0909f865aaf5b66d9ca5d1ee5278fffdc7120f582034750f98bd59fc
+fc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e6a7369676e6572
+5f6b6579820158201ba4075b77c9e3fb3ecde15cdaf5221f3c10373e623f7b0e
+1ef76366b0af7137697369676e617475726582015840cf81c7873a9bc4b87be2
+254b37222769dee384a36dde5645518f85dff76fc5f5a8fe50817b244c445720
+e64fd89f2de9fba4e48312d63feffb8664f46ee1ca04
+
+### A.30.3 Allow, Versioned Revocation Commitment
+
+Both keys present. A verifier can ask whether version 47 should have listed this warrant, and separately whether 47 was acceptably fresh.
+
+| Field | Value |
+| --- | --- |
+| Key 0 version | `1` |
+| Key 3 action | `read_file` |
+| Key 4 outcome | `allow` |
+| Key 5 timestamp | `1704067200` |
+| Key 9 request_id | `req-a30` |
+| Key 8 pop_signature | present |
+| Key 10 decision_code | absent |
+| Key 12 srl_version | `47` |
+| Key 11 policy_definition_hash | `a2de9b15bdc8095f242126aa369233e4f2cada0ee3852482cae5ac9b94b80ff8` |
+| Key 14 prev_receipt_hash | absent |
+| Key 15 trusted_roots_hash | `34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e` |
+| Key 13 srl_hash | `e135dea2864c53a124c9c42fcd7d0909f865aaf5b66d9ca5d1ee5278fffdc712` |
+
+**Receipt (hex):**
+
+a46f726563656970745f76657273696f6e01677061796c6f61645901c2ab0001
+0258ec81830158a3aa00010150019471f8000070008000000000003000020003
+a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202
+a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9
+0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74
+09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200
+80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce
+f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac
+51a36b53e547545338aba0c1cb83020369726561645f66696c650465616c6c6f
+77051a659200800858404aa574e10e3e19223f987a17e16839b52ae597a2b56e
+eaf051d14c773c30a3f790f9e24daedea9994d9618b61bd83fc76f7cf5c3764a
+280200962fe537c39a0909677265712d6133300b5820a2de9b15bdc8095f2421
+26aa369233e4f2cada0ee3852482cae5ac9b94b80ff80c182f0d5820e135dea2
+864c53a124c9c42fcd7d0909f865aaf5b66d9ca5d1ee5278fffdc7120f582034
+750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e6a
+7369676e65725f6b6579820158201ba4075b77c9e3fb3ecde15cdaf5221f3c10
+373e623f7b0e1ef76366b0af7137697369676e617475726582015840f7395fb6
+7a2bf45c2da552e69e014e1851132558fdc460b941ad0357ab1eaa2a4ad58c79
+931b1ee377116b3d7a109b9d50dbb29ec1e76cba872273e38eff6e0c
+
+### A.30.4 Deny Before Proof-of-Possession
+
+Key 8 absent because possession was never established, so this attests only that some party was refused. Key 10 is required for a denial.
+
+| Field | Value |
+| --- | --- |
+| Key 0 version | `1` |
+| Key 3 action | `read_file` |
+| Key 4 outcome | `deny` |
+| Key 5 timestamp | `1704067200` |
+| Key 9 request_id | `req-a30-deny` |
+| Key 8 pop_signature | absent |
+| Key 10 decision_code | `tool-not-authorized` |
+| Key 12 srl_version | absent |
+| Key 11 policy_definition_hash | absent |
+| Key 14 prev_receipt_hash | absent |
+| Key 15 trusted_roots_hash | `34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e` |
+| Key 13 srl_hash | `e135dea2864c53a124c9c42fcd7d0909f865aaf5b66d9ca5d1ee5278fffdc712` |
+
+**Receipt (hex):**
+
+a46f726563656970745f76657273696f6e01677061796c6f6164590172a90001
+0258ec81830158a3aa00010150019471f8000070008000000000003000020003
+a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202
+a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9
+0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74
+09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200
+80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce
+f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac
+51a36b53e547545338aba0c1cb83020369726561645f66696c65046464656e79
+051a65920080096c7265712d6133302d64656e790a73746f6f6c2d6e6f742d61
+7574686f72697a65640d5820e135dea2864c53a124c9c42fcd7d0909f865aaf5
+b66d9ca5d1ee5278fffdc7120f582034750f98bd59fcfc946da45aaabe933be1
+54a4b5094e1c4abf42866505f3c97e6a7369676e65725f6b6579820158201ba4
+075b77c9e3fb3ecde15cdaf5221f3c10373e623f7b0e1ef76366b0af71376973
+69676e61747572658201584077775a6ebefc4dca805c5826bc80046ceba63c46
+78e8957b26d052139042109d40b791e83bf1c2252d0b6fa7c700be85043cb6c9
+7f6d5a190274c4956a8f5c0b
+
+**Key 14 input:** SHA-256 over the complete A.30.2 receipt bytes, `ac4582f55beda95c370e8f50ff3286790eef1fec12aee369fcd7fb636a4e9666`
+
+### A.30.5 Chained Receipt
+
+Key 14 links to A.30.2. Removing A.30.2 from a stream leaves this receipt pointing at nothing, which is what turns "this decision happened" into "these are all the decisions".
+
+| Field | Value |
+| --- | --- |
+| Key 0 version | `1` |
+| Key 3 action | `read_file` |
+| Key 4 outcome | `allow` |
+| Key 5 timestamp | `1704067200` |
+| Key 9 request_id | `req-a30-second` |
+| Key 8 pop_signature | present |
+| Key 10 decision_code | absent |
+| Key 12 srl_version | absent |
+| Key 11 policy_definition_hash | absent |
+| Key 14 prev_receipt_hash | `ac4582f55beda95c370e8f50ff3286790eef1fec12aee369fcd7fb636a4e9666` |
+| Key 15 trusted_roots_hash | `34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e` |
+| Key 13 srl_hash | `e135dea2864c53a124c9c42fcd7d0909f865aaf5b66d9ca5d1ee5278fffdc712` |
+
+**Receipt (hex):**
+
+a46f726563656970745f76657273696f6e01677061796c6f61645901c6aa0001
+0258ec81830158a3aa00010150019471f8000070008000000000003000020003
+a169726561645f66696c65a16b636f6e73747261696e7473a164706174688202
+a1677061747465726e672f646174612f2a0482015820ed4928c628d1c2c6eae9
+0338905995612959273a5c63f93636c14614ac8737d105820158208a88e3dd74
+09f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c061a659200
+80071a65920e9008031200820158407c948aef75e62035b5a5e6ab1e07cbd5ce
+f372ec94ac0e514b320dbdb976a9f6fba98a81d5cbdbb3e28aca8f97f529f6ac
+51a36b53e547545338aba0c1cb83020369726561645f66696c650465616c6c6f
+77051a659200800858404aa574e10e3e19223f987a17e16839b52ae597a2b56e
+eaf051d14c773c30a3f790f9e24daedea9994d9618b61bd83fc76f7cf5c3764a
+280200962fe537c39a09096e7265712d6133302d7365636f6e640d5820e135de
+a2864c53a124c9c42fcd7d0909f865aaf5b66d9ca5d1ee5278fffdc7120e5820
+ac4582f55beda95c370e8f50ff3286790eef1fec12aee369fcd7fb636a4e9666
+0f582034750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505
+f3c97e6a7369676e65725f6b6579820158201ba4075b77c9e3fb3ecde15cdaf5
+221f3c10373e623f7b0e1ef76366b0af7137697369676e617475726582015840
+2abc6b9738d742aa79294b6db464e67495c9fd4ba2ab22b5696119cd82f8eba9
+3227249df96b603a23b8cb92409868f5eb5d91275bd5568ae6cad567a76c8e03
+
+
+---
+
+## A.31 Receipt Derivations
+
+The two values a receipt commits to that are computed rather than
+carried. An implementation that cannot reproduce these cannot check
+payload keys 7 and 11 against anything.
+
+### A.31.1 Request Hash (payload key 7)
+
+`SHA-256` over a CBOR 4-element array. The arguments are canonicalized
+separately and embedded as a CBOR **byte string**, so the boundary
+between them and the outer array is unambiguous.
+
+```
+args_cbor = deterministic CBOR of the arguments map, keys sorted
+preimage  = CBOR([ text(warrant_id), text(tool), bytes(args_cbor), bytes(holder) ])
+key 7     = SHA-256(preimage)
+```
+
+An absent holder contributes a zero-length byte string, not an omission.
+
+| Input | Value |
+| --- | --- |
+| warrant_id | `tnu_wrt_019471f8000070008000000000003100` |
+| tool | `read_file` |
+| holder | `ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1` |
+| args | `dry_run=true`, `limit=10`, `path="/data/q3.pdf"`, `tags=["b","a"]` |
+
+**Canonical args CBOR (sorted keys, list order preserved):**
+
+a4676472795f72756ef5656c696d69740a64706174686c2f646174612f71332e
+70646664746167738261626161
+
+**Request hash:**
+
+59f290af000b9331df93a643f48fd530f43510243507cd8bfc8aa12623dbab4b
+
+### A.31.2 Policy Commitment (payload key 11)
+
+`SHA-256` over deterministic CBOR of the host allow-policy, keys sorted.
+Sorting is what lets two implementations agree: the commitment describes
+the policy, not the order a host happened to build it in.
+
+```
+key 11 = SHA-256(deterministic CBOR of the field -> constraint map)
+```
+
+**Policy (given here out of order, to exercise the sort):**
+
+```json
+{
+  "encoding": {
+    "kind": "oneOf",
+    "values": [
+      "utf8",
+      "ascii"
+    ]
+  },
+  "path": {
+    "kind": "under",
+    "root": "/data"
+  }
+}
+```
+
+**Canonical policy CBOR:**
+
+a268656e636f64696e67a2646b696e64656f6e654f666676616c756573826475
+7466386561736369696470617468a2646b696e6465756e64657264726f6f7465
+2f64617461
+
+**Policy commitment:**
+
+9b53b570975500172890f86347a3338c8ac4ca2b75501d582a2cc0eef152059d
+

@@ -1084,7 +1084,7 @@ pub fn verify_approval_set(
 
     let mut valid_count = 0u32;
     let mut seen: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
-    for (i, b64) in approval_b64_list.iter().enumerate() {
+    for b64 in approval_b64_list.iter() {
         let bytes = match decode_b64(b64) {
             Ok(b) => b,
             Err(_) => continue,

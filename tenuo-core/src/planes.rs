@@ -265,6 +265,120 @@ pub struct ChainVerificationResult {
     /// Approvals that passed full verification and contributed to meeting
     /// the approval threshold. Empty when no approvals were required.
     pub verified_approvals: Vec<VerifiedApproval>,
+    /// The holder's proof-of-possession for this invocation, when one was
+    /// presented and verified.
+    ///
+    /// Carried out of verification so a receipt can record it. Without the PoP
+    /// a receipt attests only that the enforcement point claims a decision was
+    /// reached; with it, a key the enforcement point does not hold corroborates
+    /// that this holder asked for this invocation at this instant.
+    /// `None` on paths that verify a chain without an invocation.
+    ///
+    /// Not part of this type's serialized form: it is an in-process handoff to
+    /// receipt construction, and the receipt is where it acquires a pinned wire
+    /// encoding (payload key 8).
+    #[serde(skip)]
+    pub pop_signature: Option<[u8; 64]>,
+    /// Commitment to the canonical invocation: `H(warrant_id, tool, args,
+    /// holder)` over the PoP view of the arguments.
+    ///
+    /// Derived here rather than left to callers so the bytes a receipt commits
+    /// to come from the same code that authorized the call.
+    /// `None` on paths that verify a chain without an invocation.
+    ///
+    /// Skipped alongside [`Self::pop_signature`] for the same reason: receipts
+    /// (payload key 7) are where these acquire a pinned encoding.
+    #[serde(skip)]
+    pub request_hash: Option<[u8; 32]>,
+    /// The tool this verification actually authorized.
+    ///
+    /// Carried so a receipt names the decision that was reached rather than one
+    /// a caller supplies. Without it, `request_hash` commits to the authorized
+    /// tool while `action` could say something else — a receipt describing a
+    /// different decision than the one it proves.
+    #[serde(skip)]
+    pub tool: Option<String>,
+}
+
+/// Base64 CBOR of the presented chain, for audit transmission and receipts.
+fn encode_warrant_stack_b64(chain: &[Warrant]) -> Option<String> {
+    use base64::Engine;
+    crate::wire::encode_stack(&crate::wire::WarrantStack(chain.to_vec()))
+        .ok()
+        .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+}
+
+impl ChainVerificationResult {
+    /// Build the signed content of a receipt from this verification.
+    ///
+    /// Every trust-critical field comes from the verification that produced
+    /// this result, so a caller cannot describe a decision other than the one
+    /// that was reached. Callers supply only the framing a verification does
+    /// not know: when it happened, what to call the request, and — for a
+    /// denial — why.
+    ///
+    /// `srl_version` and `srl_hash` are left unset; the enforcement point knows
+    /// its revocation state and stamps them (payload keys 12 and 13).
+    ///
+    /// Returns `None` when the verification carries no warrant stack, which
+    /// happens on paths that authorize a single warrant rather than a chain.
+    /// A receipt without the chain it decided over is not worth signing.
+    pub fn to_receipt_payload(
+        &self,
+        tool: &str,
+        outcome: crate::receipt::Outcome,
+        timestamp: i64,
+        request_id: impl Into<String>,
+        decision_code: Option<&str>,
+    ) -> Option<crate::receipt::ReceiptPayload> {
+        use base64::Engine;
+
+        // The tool this verification authorized wins over the caller's string.
+        // `request_hash` commits to the authorized tool, so letting `action`
+        // disagree would sign a receipt describing a different decision than
+        // the one it proves.
+        let tool = self.tool.as_deref().unwrap_or(tool);
+
+        let warrant_chain = base64::engine::general_purpose::STANDARD
+            .decode(self.warrant_stack_b64.as_ref()?)
+            .ok()?;
+
+        let mut payload = match outcome {
+            crate::receipt::Outcome::Allow => crate::receipt::ReceiptPayload::allow(
+                warrant_chain,
+                tool,
+                timestamp,
+                request_id,
+                // An allow without a PoP is evidence of nothing but the
+                // signer's word, so refuse to build one.
+                self.pop_signature?,
+            ),
+            crate::receipt::Outcome::Deny => {
+                let code = decision_code.unwrap_or("denied");
+                match self.pop_signature {
+                    Some(pop) => crate::receipt::ReceiptPayload::deny(
+                        warrant_chain,
+                        tool,
+                        timestamp,
+                        request_id,
+                        code,
+                        pop,
+                    ),
+                    None => crate::receipt::ReceiptPayload::deny_before_pop(
+                        warrant_chain,
+                        tool,
+                        timestamp,
+                        request_id,
+                        code,
+                    ),
+                }
+            }
+        };
+
+        payload.request_hash = self.request_hash;
+        payload.root_principal = self.root_issuer.map(hex::encode);
+        Some(payload)
+    }
 }
 
 /// A single step in the verified chain.
@@ -919,15 +1033,16 @@ impl DataPlane {
             verified_steps: Vec::new(),
             warrant_stack_b64: None,
             verified_approvals: Vec::new(),
+            pop_signature: None,
+            request_hash: None,
+            tool: None,
         };
 
         // Step 1: Verify the root warrant is from a trusted key
         let root = &chain[0];
         let issuer = root.issuer();
         if !self.trusted_issuers.values().any(|k| k == issuer) {
-            return Err(Error::SignatureInvalid(
-                "root warrant issuer not trusted".to_string(),
-            ));
+            return Err(Error::UntrustedRoot);
         }
 
         // Batch verify all signatures in the chain. Each warrant's fully
@@ -1001,6 +1116,15 @@ impl DataPlane {
         }
 
         result.leaf_depth = chain.last().map(|w| w.depth()).unwrap_or(0);
+        // Populated here rather than only on the invocation path so any caller
+        // holding a result has the stack, not just check_chain's.
+        //
+        // This does not make failing verifications receiptable: expiry,
+        // revocation and an untrusted root all return Err before this line, so
+        // there is no result to build from. Receipting those needs the chain
+        // that was presented — see `issue_denial_receipt`, and `encode_receipt`
+        // in the wasm SDK, both of which take the chain directly.
+        result.warrant_stack_b64 = encode_warrant_stack_b64(chain);
         Ok(result)
     }
 
@@ -2167,14 +2291,15 @@ impl Authorizer {
             verified_steps: Vec::new(),
             warrant_stack_b64: None,
             verified_approvals: Vec::new(),
+            pop_signature: None,
+            request_hash: None,
+            tool: None,
         };
 
         // Root must be from a trusted key
         let issuer = root.issuer();
         if !self.trusted_keys.iter().any(|k| k == issuer) {
-            return Err(Error::SignatureInvalid(
-                "root warrant issuer not trusted".to_string(),
-            ));
+            return Err(Error::UntrustedRoot);
         }
 
         // Batch verify all signatures in the chain. Each warrant's fully
@@ -2247,6 +2372,10 @@ impl Authorizer {
         }
 
         result.leaf_depth = chain.last().map(|w| w.depth()).unwrap_or(0);
+        // Populated here rather than only on the invocation path so a denial
+        // reached during chain verification — expired, revoked, untrusted root
+        // — can still be receipted. Those are the denials most worth recording.
+        result.warrant_stack_b64 = encode_warrant_stack_b64(chain);
         Ok(result)
     }
 
@@ -2646,16 +2775,282 @@ impl Authorizer {
             // and no approval gate matched, or no approval gate map and no required_approvers)
         }
 
-        use base64::Engine;
-        let warrant_stack_b64 =
-            crate::wire::encode_stack(&crate::wire::WarrantStack(chain.to_vec()))
-                .ok()
-                .map(|b| base64::engine::general_purpose::STANDARD.encode(b));
         let mut result = result;
-        result.warrant_stack_b64 = warrant_stack_b64;
         result.verified_approvals = verified_approvals;
+        // Derived from the same leaf and args this authorization just ran
+        // against, so a receipt built from this result cannot disagree with the
+        // decision it records.
+        if let Some(leaf) = chain.last() {
+            result.tool = Some(tool.to_string());
+            result.pop_signature = signature.map(|s| s.to_bytes());
+            result.request_hash = Some(crate::approval::compute_request_hash(
+                &leaf.id().to_string(),
+                tool,
+                pop_args,
+                Some(leaf.authorized_holder()),
+            ));
+        }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod receipt_plumbing_tests {
+    use super::*;
+
+    use crate::constraints::{ConstraintValue, Pattern};
+    use crate::crypto::SigningKey;
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    fn invocation() -> (
+        Warrant,
+        SigningKey,
+        HashMap<String, ConstraintValue>,
+        Authorizer,
+    ) {
+        let root = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let control_plane = ControlPlane::new(root.clone());
+        let warrant = control_plane
+            .issue_bound_warrant(
+                "read_file",
+                &[("path", Pattern::new("/data/*").unwrap().into())],
+                Duration::from_secs(600),
+                &holder.public_key(),
+            )
+            .unwrap();
+
+        let mut args = HashMap::new();
+        args.insert(
+            "path".to_string(),
+            ConstraintValue::String("/data/q3.pdf".to_string()),
+        );
+
+        let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+        (warrant, holder, args, authorizer)
+    }
+
+    /// The PoP has to survive verification, otherwise a receipt can only relay
+    /// the enforcement point's own claim that a decision happened.
+    #[test]
+    fn carries_the_pop_out_of_a_verified_invocation() {
+        let (warrant, holder, args, authorizer) = invocation();
+        let pop = warrant.sign(&holder, "read_file", &args).unwrap();
+
+        let result = authorizer
+            .check_chain(&[warrant], "read_file", &args, Some(&pop), &[])
+            .expect("chain verifies");
+
+        assert_eq!(
+            result.pop_signature,
+            Some(pop.to_bytes()),
+            "the receipt must record the same PoP the authorization verified"
+        );
+    }
+
+    /// The commitment must be derived by the code that authorized the call, so
+    /// a receipt cannot end up committing to a different invocation than the
+    /// one that was allowed.
+    #[test]
+    fn derives_the_request_hash_from_the_authorized_invocation() {
+        let (warrant, holder, args, authorizer) = invocation();
+        let pop = warrant.sign(&holder, "read_file", &args).unwrap();
+        let expected = crate::approval::compute_request_hash(
+            &warrant.id().to_string(),
+            "read_file",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+
+        let result = authorizer
+            .check_chain(&[warrant], "read_file", &args, Some(&pop), &[])
+            .expect("chain verifies");
+
+        assert_eq!(result.request_hash, Some(expected));
+    }
+
+    /// Different arguments are a different invocation, and the commitment has
+    /// to say so or it cannot pin anything.
+    #[test]
+    fn a_different_invocation_commits_to_different_bytes() {
+        let (warrant, holder, args, authorizer) = invocation();
+        let pop = warrant.sign(&holder, "read_file", &args).unwrap();
+        let first = authorizer
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "read_file",
+                &args,
+                Some(&pop),
+                &[],
+            )
+            .expect("chain verifies");
+
+        let mut other = HashMap::new();
+        other.insert(
+            "path".to_string(),
+            ConstraintValue::String("/data/q4.pdf".to_string()),
+        );
+        let other_pop = warrant.sign(&holder, "read_file", &other).unwrap();
+        let second = authorizer
+            .check_chain(&[warrant], "read_file", &other, Some(&other_pop), &[])
+            .expect("chain verifies");
+
+        assert_ne!(first.request_hash, second.request_hash);
+    }
+
+    /// The whole point of building from a verification result: a caller cannot
+    /// describe a decision other than the one that was reached.
+    #[test]
+    fn builds_an_allow_receipt_from_the_verification_that_authorized_it() {
+        let (warrant, holder, args, authorizer) = invocation();
+        let pop = warrant.sign(&holder, "read_file", &args).unwrap();
+        let result = authorizer
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "read_file",
+                &args,
+                Some(&pop),
+                &[],
+            )
+            .expect("chain verifies");
+
+        let payload = result
+            .to_receipt_payload(
+                "read_file",
+                crate::receipt::Outcome::Allow,
+                1_700_000_000,
+                "req-1",
+                None,
+            )
+            .expect("a verified chain yields a payload");
+
+        assert_eq!(payload.outcome, crate::receipt::Outcome::Allow);
+        assert_eq!(payload.pop_signature, Some(pop.to_bytes()));
+        assert_eq!(payload.request_hash, result.request_hash);
+        assert!(payload.check_conditional_requirements().is_ok());
+        // Left for the enforcement point, which is what knows its revocation state.
+        assert_eq!(payload.srl_hash, None);
+    }
+
+    /// A signed receipt must survive the round trip a verifier will perform.
+    #[test]
+    fn the_built_payload_signs_and_verifies() {
+        let (warrant, holder, args, authorizer) = invocation();
+        let pop = warrant.sign(&holder, "read_file", &args).unwrap();
+        let result = authorizer
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "read_file",
+                &args,
+                Some(&pop),
+                &[],
+            )
+            .expect("chain verifies");
+        let payload = result
+            .to_receipt_payload(
+                "read_file",
+                crate::receipt::Outcome::Allow,
+                1_700_000_000,
+                "req-1",
+                None,
+            )
+            .unwrap();
+
+        let signer = SigningKey::generate();
+        let receipt = crate::receipt::Receipt::create(&payload, &signer).expect("signs");
+        let recovered = receipt.verify_signature().expect("verifies");
+
+        assert_eq!(recovered, payload);
+    }
+
+    /// An allow claims possession was proven. Without a PoP there is nothing to
+    /// back that claim, so refuse rather than emit a receipt that overstates.
+    #[test]
+    fn refuses_to_build_an_allow_without_a_pop() {
+        let (warrant, _holder, _args, authorizer) = invocation();
+        let result = authorizer.verify_chain(&[warrant]).expect("chain verifies");
+
+        assert!(
+            result
+                .to_receipt_payload("read_file", crate::receipt::Outcome::Allow, 1, "req", None)
+                .is_none(),
+            "an allow receipt without a PoP must not be constructible"
+        );
+    }
+
+    /// A denial can legitimately precede possession, and that shape is exactly
+    /// what distinguishes "an authenticated party was refused" from "we could
+    /// not establish who was asking".
+    ///
+    /// Note this builds from a *successful* verify_chain: a verification that
+    /// fails returns Err, so there is no result to build from at all. Receipts
+    /// for failing verifications come from the presented chain instead.
+    #[test]
+    fn builds_a_deny_before_pop_receipt_when_possession_was_never_proven() {
+        let (warrant, _holder, _args, authorizer) = invocation();
+        let result = authorizer.verify_chain(&[warrant]).expect("chain verifies");
+
+        let payload = result
+            .to_receipt_payload(
+                "read_file",
+                crate::receipt::Outcome::Deny,
+                1,
+                "req",
+                Some("tool-not-authorized"),
+            )
+            .expect("a denial without a PoP is still worth recording");
+
+        assert_eq!(payload.pop_signature, None);
+        assert_eq!(
+            payload.decision_code.as_deref(),
+            Some("tool-not-authorized")
+        );
+        assert!(payload.check_conditional_requirements().is_ok());
+    }
+
+    /// A caller-supplied tool name must not be able to rename the decision:
+    /// request_hash commits to the tool that was authorized, so `action` saying
+    /// something else would sign a receipt describing a different decision than
+    /// the one it proves.
+    #[test]
+    fn a_caller_cannot_rename_the_authorized_tool() {
+        let (warrant, holder, args, authorizer) = invocation();
+        let pop = warrant.sign(&holder, "read_file", &args).unwrap();
+        let result = authorizer
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "read_file",
+                &args,
+                Some(&pop),
+                &[],
+            )
+            .expect("chain verifies");
+
+        let payload = result
+            .to_receipt_payload(
+                "harmless_read",
+                crate::receipt::Outcome::Allow,
+                1,
+                "req",
+                None,
+            )
+            .expect("payload builds");
+
+        assert_eq!(payload.action, "read_file");
+    }
+
+    /// Chain verification with no invocation has no PoP and nothing to commit
+    /// to; inventing either would be a false claim.
+    #[test]
+    fn leaves_both_absent_when_there_is_no_invocation() {
+        let (warrant, _holder, _args, authorizer) = invocation();
+
+        let result = authorizer.verify_chain(&[warrant]).expect("chain verifies");
+
+        assert_eq!(result.pop_signature, None);
+        assert_eq!(result.request_hash, None);
     }
 }
 
