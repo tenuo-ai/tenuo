@@ -104,11 +104,14 @@ pub use revocation::{
     RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,
 };
 pub use revocation_manager::RevocationManager;
+#[cfg(any(feature = "mcp-transport", feature = "http-transport"))]
+pub use sdk::transport::TransportError;
 #[cfg(feature = "sdk")]
 pub use sdk::{
     AuthorizationAttempt, AuthorizedCall, Call, Decision, DecisionMetadata, Denial,
     DenialReporting, Diagnostics, Guard, GuardBuildError, GuardError, HolderSigner, LocalSigner,
-    PresentedAuthority, Retryability, RevocationMode, SdkDenialKind,
+    OwnedReceivedAuthorization, PresentedAuthority, ReceivedAuthorization, Retryability,
+    RevocationMode, SdkDenialKind, VerifiedProjection,
 };
 pub use verification::{
     RevocationSnapshot, RevocationState, VerificationContext, VerificationInstant,

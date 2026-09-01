@@ -1,7 +1,7 @@
 //! Framework-independent enforcement surface.
 //!
-//! Default-off (`sdk` feature). Holder-sign path only in this milestone;
-//! received-verify and transport bindings follow.
+//! Default-off (`sdk` feature). Holder-sign and received-verify share one
+//! `Authorizer` decision. Transport bindings are extra features.
 
 mod authority;
 mod call;
@@ -10,8 +10,14 @@ mod diagnostics;
 mod guard;
 mod signer;
 
-pub use authority::{AuthorityError, CapabilityView, PresentedAuthority};
-pub use call::{ArgumentError, Call};
+#[cfg(any(feature = "mcp-transport", feature = "http-transport"))]
+pub mod transport;
+
+pub use authority::{
+    AuthorityError, CapabilityView, OwnedReceivedAuthorization, PresentedAuthority,
+    ReceivedAuthorization,
+};
+pub use call::{ArgumentError, Call, VerifiedProjection};
 pub use decision::{
     Decision, DecisionMetadata, Denial, DenialReporting, GuardError, Retryability, SdkDenialKind,
 };

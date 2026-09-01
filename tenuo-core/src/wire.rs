@@ -105,6 +105,12 @@ pub fn encode_pem(warrant: &Warrant) -> Result<String> {
 /// Header name for carrying warrants in HTTP requests.
 pub const WARRANT_HEADER: &str = "X-Tenuo-Warrant";
 
+/// Header name for carrying the raw Ed25519 PoP signature.
+pub const POP_HEADER: &str = "X-Tenuo-PoP";
+
+/// Header name for carrying a CBOR array of signed approvals.
+pub const APPROVALS_HEADER: &str = "X-Tenuo-Approvals";
+
 use std::borrow::Cow;
 
 /// Header name for carrying warrant IDs (for out-of-band transport).

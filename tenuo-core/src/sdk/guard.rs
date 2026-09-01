@@ -1,4 +1,4 @@
-use super::authority::PresentedAuthority;
+use super::authority::{PresentedAuthority, ReceivedAuthorization};
 use super::call::Call;
 use super::decision::{
     Decision, DecisionMetadata, Denial, DenialReporting, GuardError, Retryability, SdkDenialKind,
@@ -82,9 +82,39 @@ impl Guard {
         Ok(Guarded { value, decision })
     }
 
+    pub fn check_received(
+        &self,
+        received: &ReceivedAuthorization<'_>,
+        call: &Call<'_>,
+    ) -> Result<Decision, Denial> {
+        let authorized = self.authorize_received(received, call)?;
+        Ok(authorized.into_decision())
+    }
+
+    pub fn guard_received<T, E>(
+        &self,
+        received: &ReceivedAuthorization<'_>,
+        call: &Call<'_>,
+        op: impl FnOnce(&AuthorizedCall<'_>) -> Result<T, E>,
+    ) -> Result<Guarded<T>, GuardError<E>> {
+        let authorized = self
+            .authorize_received(received, call)
+            .map_err(GuardError::Denied)?;
+        let decision = authorized.as_decision();
+        let value = op(&authorized).map_err(GuardError::Operation)?;
+        Ok(Guarded { value, decision })
+    }
+
     /// Operator-side explanation. Never for caller-visible text.
     pub fn diagnostics<'a>(&'a self, authority: &'a PresentedAuthority) -> Diagnostics<'a> {
-        Diagnostics::new(self, authority)
+        Diagnostics::holder(self, authority)
+    }
+
+    pub fn diagnostics_received<'a>(
+        &'a self,
+        received: &'a ReceivedAuthorization<'a>,
+    ) -> Diagnostics<'a> {
+        Diagnostics::received(self, received)
     }
 
     #[allow(dead_code)]
@@ -97,7 +127,6 @@ impl Guard {
         authority: &'a PresentedAuthority,
         attempt: &AuthorizationAttempt<'a, 'a>,
     ) -> Result<AuthorizedCall<'a>, Denial> {
-        let _ = self.denial_reporting;
         let as_of = Utc::now();
         let instant = VerificationInstant::new(as_of);
 
@@ -115,7 +144,7 @@ impl Guard {
         let preimage = leaf
             .pop_preimage(
                 call.capability(),
-                call.args(),
+                call.pop_args(),
                 as_of.timestamp(),
                 window_secs,
             )
@@ -129,22 +158,55 @@ impl Guard {
             )
         })?;
 
+        self.decide(
+            authority.chain(),
+            pop_signature,
+            attempt.approvals,
+            call,
+            instant,
+        )
+    }
+
+    fn authorize_received<'a>(
+        &'a self,
+        received: &'a ReceivedAuthorization<'a>,
+        call: &'a Call<'a>,
+    ) -> Result<AuthorizedCall<'a>, Denial> {
+        let instant = VerificationInstant::new(Utc::now());
+        self.decide(
+            received.chain(),
+            received.signature().clone(),
+            received.approvals(),
+            call,
+            instant,
+        )
+    }
+
+    fn decide<'a>(
+        &'a self,
+        chain: &'a [Warrant],
+        pop_signature: Signature,
+        approvals: &'a [SignedApproval],
+        call: &'a Call<'a>,
+        instant: VerificationInstant,
+    ) -> Result<AuthorizedCall<'a>, Denial> {
+        let _ = self.denial_reporting;
         let revocation = match &self.revocation {
             ResolvedRevocation::TtlOnly { max_lifetime } => RevocationState::TtlOnly {
                 max_lifetime: *max_lifetime,
             },
             ResolvedRevocation::Snapshot(snapshot) => RevocationState::Snapshot(snapshot),
         };
-        let context = VerificationContext::new(as_of, revocation);
+        let context = VerificationContext::new(instant.as_datetime(), revocation);
 
         self.authorizer
             .check_chain_with_context(
-                authority.chain(),
+                chain,
                 call.capability(),
-                call.args(),
-                call.args(),
+                call.pop_args(),
+                call.constraint_args(),
                 Some(&pop_signature),
-                attempt.approvals,
+                approvals,
                 &context,
             )
             .map_err(Denial::from_core)?;
@@ -159,10 +221,10 @@ impl Guard {
             decision_id,
             capability: call.capability(),
             instant,
-            execution_args: call.args(),
+            execution_args: call.constraint_args(),
             pop_signature,
-            chain: authority.chain(),
-            approvals: attempt.approvals,
+            chain,
+            approvals,
         })
     }
 }
@@ -354,7 +416,7 @@ mod tests {
     use crate::crypto::SigningKey;
     use crate::error::ErrorCode;
     use crate::sdk::signer::{HolderSigner, LocalSigner, SignerError};
-    use crate::sdk::{Call, PresentedAuthority};
+    use crate::sdk::{Call, PresentedAuthority, ReceivedAuthorization, VerifiedProjection};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -706,5 +768,97 @@ mod tests {
     fn owned_call_rejects_empty_capability() {
         let err = Call::owned("", HashMap::new()).err().expect("empty");
         assert_eq!(err, crate::sdk::ArgumentError::EmptyCapability);
+    }
+
+    #[test]
+    fn received_empty_chain_rejected() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = mint(&issuer, &holder, "read");
+        let authority = authority(vec![warrant], holder);
+        let guard = guard_for(&issuer);
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        let pop = guard
+            .guard(&authority, &call, |authorized| {
+                Ok::<_, &str>(authorized.pop_signature().clone())
+            })
+            .unwrap()
+            .into_inner();
+        let err = ReceivedAuthorization::new(&[], &pop, &[])
+            .err()
+            .expect("empty");
+        assert_eq!(err, crate::sdk::AuthorityError::EmptyChain);
+    }
+
+    #[test]
+    fn received_allows_without_signing() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = mint(&issuer, &holder, "read");
+        let authority = authority(vec![warrant], holder);
+        let client = guard_for(&issuer);
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        let pop = client
+            .guard(&authority, &call, |authorized| {
+                Ok::<_, &str>(authorized.pop_signature().clone())
+            })
+            .unwrap()
+            .into_inner();
+
+        let received = ReceivedAuthorization::new(authority.chain(), &pop, &[]).unwrap();
+        let projection = VerifiedProjection::identical(HashMap::new());
+        let inbound = Call::from_transport("read", &projection);
+        let server = guard_for(&issuer);
+        let runs = AtomicUsize::new(0);
+        let _ = server
+            .guard_received(&received, &inbound, |_| {
+                runs.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, &str>(())
+            })
+            .expect("allow");
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn received_wrong_signature_denies_without_running() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let other = SigningKey::generate();
+        let warrant = mint(&issuer, &holder, "read");
+        let authority = authority(vec![warrant], holder);
+        let client = guard_for(&issuer);
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        client.check(&authority, &call).expect("holder allow");
+        let junk = other.sign_raw(b"not-the-pop");
+
+        let received = ReceivedAuthorization::new(authority.chain(), &junk, &[]).unwrap();
+        let projection = VerifiedProjection::identical(HashMap::new());
+        let inbound = Call::from_transport("read", &projection);
+        let server = guard_for(&issuer);
+        let runs = AtomicUsize::new(0);
+        let err = server
+            .guard_received(&received, &inbound, |_| {
+                runs.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, &str>(())
+            })
+            .err()
+            .expect("deny");
+        assert_eq!(runs.load(Ordering::SeqCst), 0);
+        match err {
+            GuardError::Denied(denial) => {
+                assert!(
+                    matches!(
+                        denial.protocol_code(),
+                        Some(ErrorCode::PopSignatureInvalid | ErrorCode::SignatureInvalid)
+                    ),
+                    "expected a PoP/signature denial, got {:?}",
+                    denial.protocol_code()
+                );
+            }
+            GuardError::Operation(_) => panic!("operation must not run"),
+        }
     }
 }

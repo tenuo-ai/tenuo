@@ -14,6 +14,7 @@ pub struct Call<'a> {
 enum ArgsStorage<'a> {
     Borrowed(&'a HashMap<String, ConstraintValue>),
     Owned(HashMap<String, ConstraintValue>),
+    Split(&'a VerifiedProjection),
 }
 
 impl<'a> Call<'a> {
@@ -25,14 +26,35 @@ impl<'a> Call<'a> {
         }
     }
 
+    /// Enforcement-point-only. Pairs with `check_received` / `guard_received`.
+    pub fn from_transport(capability: &'a str, projection: &'a VerifiedProjection) -> Self {
+        Self {
+            capability: Cow::Borrowed(capability),
+            args: ArgsStorage::Split(projection),
+        }
+    }
+
     pub fn capability(&self) -> &str {
         &self.capability
     }
 
     pub fn args(&self) -> &HashMap<String, ConstraintValue> {
+        self.pop_args()
+    }
+
+    pub fn pop_args(&self) -> &HashMap<String, ConstraintValue> {
         match &self.args {
             ArgsStorage::Borrowed(args) => args,
             ArgsStorage::Owned(args) => args,
+            ArgsStorage::Split(projection) => &projection.pop_args,
+        }
+    }
+
+    pub fn constraint_args(&self) -> &HashMap<String, ConstraintValue> {
+        match &self.args {
+            ArgsStorage::Borrowed(args) => args,
+            ArgsStorage::Owned(args) => args,
+            ArgsStorage::Split(projection) => &projection.constraint_args,
         }
     }
 }
@@ -54,6 +76,41 @@ impl Call<'static> {
             capability: Cow::Owned(capability),
             args: ArgsStorage::Owned(args),
         })
+    }
+}
+
+/// Split argument views produced from one received message.
+#[derive(Clone, Debug)]
+pub struct VerifiedProjection {
+    pop_args: HashMap<String, ConstraintValue>,
+    constraint_args: HashMap<String, ConstraintValue>,
+}
+
+impl VerifiedProjection {
+    /// Both views are the same map (typical HTTP / MCP without extraction).
+    pub fn identical(args: HashMap<String, ConstraintValue>) -> Self {
+        Self {
+            pop_args: args.clone(),
+            constraint_args: args,
+        }
+    }
+
+    pub fn split(
+        pop_args: HashMap<String, ConstraintValue>,
+        constraint_args: HashMap<String, ConstraintValue>,
+    ) -> Self {
+        Self {
+            pop_args,
+            constraint_args,
+        }
+    }
+
+    pub fn pop_args(&self) -> &HashMap<String, ConstraintValue> {
+        &self.pop_args
+    }
+
+    pub fn constraint_args(&self) -> &HashMap<String, ConstraintValue> {
+        &self.constraint_args
     }
 }
 

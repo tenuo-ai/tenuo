@@ -1,5 +1,6 @@
 use super::signer::HolderSigner;
-use crate::crypto::PublicKey;
+use crate::approval::SignedApproval;
+use crate::crypto::{PublicKey, Signature};
 use crate::warrant::Warrant;
 use chrono::{DateTime, Utc};
 use std::fmt;
@@ -88,6 +89,101 @@ impl CapabilityView {
 
     pub fn contains(&self, name: &str) -> bool {
         self.names.iter().any(|n| n == name)
+    }
+}
+
+/// Chain + caller PoP + approvals from one received message.
+///
+/// Construction rejects an empty chain. It does not verify linkage, trust,
+/// or the signature — that is the decision.
+pub struct ReceivedAuthorization<'a> {
+    chain: &'a [Warrant],
+    signature: &'a Signature,
+    approvals: &'a [SignedApproval],
+}
+
+impl<'a> ReceivedAuthorization<'a> {
+    pub fn new(
+        chain: &'a [Warrant],
+        signature: &'a Signature,
+        approvals: &'a [SignedApproval],
+    ) -> Result<Self, AuthorityError> {
+        if chain.is_empty() {
+            return Err(AuthorityError::EmptyChain);
+        }
+        Ok(Self {
+            chain,
+            signature,
+            approvals,
+        })
+    }
+
+    pub fn chain(&self) -> &'a [Warrant] {
+        self.chain
+    }
+
+    pub fn signature(&self) -> &'a Signature {
+        self.signature
+    }
+
+    pub fn approvals(&self) -> &'a [SignedApproval] {
+        self.approvals
+    }
+
+    pub fn leaf(&self) -> &Warrant {
+        self.chain.last().expect("non-empty chain")
+    }
+}
+
+impl fmt::Debug for ReceivedAuthorization<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReceivedAuthorization")
+            .field("leaf_id", &self.leaf().id().to_string())
+            .field("chain_depth", &self.chain.len())
+            .field("approvals", &self.approvals.len())
+            .finish()
+    }
+}
+
+/// Transport-owned received artifacts. Does not borrow the wire buffer.
+#[derive(Clone)]
+pub struct OwnedReceivedAuthorization {
+    chain: Vec<Warrant>,
+    signature: Signature,
+    approvals: Vec<SignedApproval>,
+}
+
+impl OwnedReceivedAuthorization {
+    #[cfg(any(feature = "mcp-transport", feature = "http-transport"))]
+    pub(crate) fn new(
+        chain: Vec<Warrant>,
+        signature: Signature,
+        approvals: Vec<SignedApproval>,
+    ) -> Result<Self, AuthorityError> {
+        if chain.is_empty() {
+            return Err(AuthorityError::EmptyChain);
+        }
+        Ok(Self {
+            chain,
+            signature,
+            approvals,
+        })
+    }
+
+    pub fn chain(&self) -> &[Warrant] {
+        &self.chain
+    }
+
+    pub fn signature(&self) -> &Signature {
+        &self.signature
+    }
+
+    pub fn approvals(&self) -> &[SignedApproval] {
+        &self.approvals
+    }
+
+    pub fn as_received(&self) -> Result<ReceivedAuthorization<'_>, AuthorityError> {
+        ReceivedAuthorization::new(&self.chain, &self.signature, &self.approvals)
     }
 }
 

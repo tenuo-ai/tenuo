@@ -33,6 +33,8 @@ data-plane = []
 
 # Framework-independent Rust SDK (default-off; no extra dependencies)
 sdk = []
+mcp-transport = ["sdk"]
+http-transport = ["sdk"]
 
 # Python bindings
 python = ["pyo3"]
