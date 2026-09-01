@@ -18,6 +18,7 @@ import {
   type WasmDecision,
   type WasmInspect,
   type WasmReceipt,
+  type WasmReceiptChain,
 } from "./wasm.ts";
 
 export type { WasmDecision, WasmInspect, WasmReceipt };
@@ -138,6 +139,15 @@ export function signPublishedRevocationList(
 /** Signature authenticity only. Not authorization. */
 export function verifyReceipt(wire: string): WasmReceipt {
   return loadWasm().sdkVerifyReceipt(wire);
+}
+
+/**
+ * Root-anchored verification: the embedded chain against trusted roots, at the
+ * receipt's own decision instant. Needs no trust in the signer — the chain is
+ * signed by the root and the holder, not the enforcement point.
+ */
+export function verifyReceiptChain(wire: string, roots: readonly string[]): WasmReceiptChain {
+  return loadWasm().sdkVerifyReceiptChain(wire, [...roots]);
 }
 
 export { inspectParts, inspectWarrant };

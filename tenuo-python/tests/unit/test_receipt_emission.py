@@ -195,7 +195,13 @@ def test_delivery_is_a_no_op_without_a_sink_or_a_receipt():
 
 
 def _expired_denial():
-    """A real denial: check_chain raises, so there is no chain_result."""
+    """A real denial: check_chain raises ExpiredError, so there is no chain_result.
+
+    An earlier version of this fixture passed as_of as a keyword the binding
+    did not accept, so pytest.raises was satisfied by a TypeError and the
+    "expired" denial was neither. The match= below pins that the failure is
+    the one this fixture claims to produce.
+    """
     import pytest as _pytest
 
     root, worker = SigningKey.generate(), SigningKey.generate()
@@ -204,16 +210,16 @@ def _expired_denial():
         Warrant.mint_builder()
         .capability("read_file", path=Pattern("/data/*"))
         .holder(worker.public_key)
-        .ttl(1)
+        .ttl(3600)
         .mint(root)
     )
     args = {"path": "/data/q3.pdf"}
     pop = warrant.sign(worker, "read_file", args, int(time.time()))
 
-    # Verify well past expiry so the chain genuinely fails.
-    with _pytest.raises(Exception):
+    # Verify well past expiry so the chain genuinely fails, on expiry.
+    with _pytest.raises(Exception, match="[Ee]xpire"):
         authorizer.check_chain(
-            [warrant], "read_file", args, pop, [], as_of=int(time.time()) + 86_400
+            [warrant], "read_file", args, signature=pop, as_of=int(time.time()) + 86_400
         )
     return authorizer, [warrant], args
 

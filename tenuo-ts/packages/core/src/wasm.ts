@@ -25,6 +25,8 @@ export type WasmInspect = {
 
 export type WasmReceipt = {
   authentic: true;
+  /** Hex key the receipt is signed under — resolve against your authorizer set. */
+  signer_key: string;
   outcome: "allow" | "deny";
   action: string;
   decision_code?: string;
@@ -53,6 +55,24 @@ export type WasmReceipt = {
   prev_receipt_hash?: string;
   /** SHA-256 (hex) of the trusted root set in force at decision time. */
   trusted_roots_hash?: string;
+};
+
+export type WasmReceiptChain = {
+  signer_key: string;
+  outcome: "allow" | "deny";
+  decision_code?: string;
+  timestamp: number;
+  /** The embedded chain verifies to a supplied root at the decision instant. */
+  chain_valid: boolean;
+  /** Canonical error name when it does not. */
+  chain_error?: string;
+  /**
+   * Deny receipts only: the chain failure matches the stated decision_code,
+   * so the embedded authority independently corroborates the refusal.
+   */
+  corroborates_denial?: boolean;
+  root_issuer?: string;
+  leaf_holder?: string;
 };
 
 export type WasmSession = object;
@@ -113,6 +133,7 @@ type Generated = {
   sdkSignRevocationList(ids: string[], issuerSecret: Uint8Array): string;
   sdkSignPublishedRevocationList(ids: string[], version: number, issuerSecret: Uint8Array): string;
   sdkVerifyReceipt(wire: string): WasmReceipt;
+  sdkVerifyReceiptChain(wire: string, roots: string[]): WasmReceiptChain;
 };
 
 let loaded: Generated | undefined;

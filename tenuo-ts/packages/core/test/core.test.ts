@@ -19,6 +19,7 @@ import {
   signApproval,
   signRevocationList,
   verifyReceipt,
+  verifyReceiptChain,
   warrantIds,
   wrapSession,
 } from "../src/testkit.ts";
@@ -882,5 +883,67 @@ describe("receipt argument commitment", () => {
     }
 
     expect(hashes[0]).not.toBe(hashes[1]);
+  });
+});
+
+describe("root-anchored receipt verification", () => {
+  async function receiptAndRoot() {
+    const ctx = devContext();
+    const live = wrapSession(ctx.mint({ read_file: { path: { kind: "under", root: "/data" } } }, 300));
+    const leaked = exportSession(live);
+    const tenuo = createTenuo({
+      trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)],
+    });
+    const session = tenuo.sessionFromWire({
+      warrant: leaked.warrants,
+      holderKey: createTenuo.holderKeyFromHex(leaked.holder_hex),
+    });
+    const tool = tenuo.tool({ execute: async (args: { path: string }) => args.path }, {
+      capability: "read_file",
+      allow: {},
+    });
+    let wire = "";
+    await tenuo.withSession(session, () =>
+      tool.execute({ path: "/data/a.txt" }, {
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      } as never),
+    );
+    return { wire, rootHex: leaked.root_hex };
+  }
+
+  it("verifies the embedded chain to the root that issued the authority", async () => {
+    const { wire, rootHex } = await receiptAndRoot();
+
+    // No trust in the signer needed: the chain is signed by the root and the
+    // holder, not the enforcement point.
+    const result = verifyReceiptChain(wire, [rootHex]);
+    expect(result.chain_valid).toBe(true);
+    expect(result.root_issuer).toBe(rootHex);
+    expect(result.leaf_holder).toBeDefined();
+    expect(result.corroborates_denial).toBeUndefined();
+  });
+
+  it("rejects the chain under a root that did not issue it", async () => {
+    const { wire } = await receiptAndRoot();
+    // A real key that simply is not the issuer.
+    const stranger = exportSession(
+      wrapSession(devContext().mint({ read_file: {} }, 300)),
+    ).root_hex;
+
+    const result = verifyReceiptChain(wire, [stranger]);
+    expect(result.chain_valid).toBe(false);
+    expect(result.chain_error).toBeDefined();
+  });
+
+  it("exposes the signer for the caller's own authorizer-set check", async () => {
+    const { wire, rootHex } = await receiptAndRoot();
+
+    // Membership is the verifier's judgment, made against an out-of-band set —
+    // this function deliberately has no opinion on who is a legitimate signer.
+    const result = verifyReceiptChain(wire, [rootHex]);
+    expect(result.signer_key).toHaveLength(64);
+    expect(result.signer_key).toBe(verifyReceipt(wire) && result.signer_key);
   });
 });

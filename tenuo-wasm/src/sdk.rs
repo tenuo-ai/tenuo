@@ -108,6 +108,9 @@ struct InspectDto {
 #[derive(Serialize)]
 struct ReceiptInspectDto {
     authentic: bool,
+    /// Hex key the receipt is signed under — the only field trust may be keyed
+    /// on, resolved against the verifier's own authorizer set.
+    signer_key: String,
     outcome: String,
     action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -602,6 +605,7 @@ pub fn sdk_verify_receipt(wire: &str) -> Result<JsValue, JsError> {
         .map_err(|e| JsError::new(&format!("receipt signature does not verify: {e}")))?;
     Ok(to_js_value(&ReceiptInspectDto {
         authentic: true,
+        signer_key: hex::encode(receipt.signer_key.to_bytes()),
         outcome: match payload.outcome {
             tenuo::receipt::Outcome::Allow => "allow".into(),
             tenuo::receipt::Outcome::Deny => "deny".into(),
@@ -615,6 +619,96 @@ pub fn sdk_verify_receipt(wire: &str) -> Result<JsValue, JsError> {
         policy_definition_hash: payload.policy_definition_hash.map(hex::encode),
         prev_receipt_hash: payload.prev_receipt_hash.map(hex::encode),
         trusted_roots_hash: payload.trusted_roots_hash.map(hex::encode),
+    }))
+}
+
+#[derive(Serialize)]
+struct ReceiptChainDto {
+    /// Hex key the receipt is signed under. Membership in the verifier's
+    /// authorizer set is the caller's check — this function has no opinion on
+    /// who is a legitimate signer.
+    signer_key: String,
+    outcome: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    decision_code: Option<String>,
+    timestamp: i64,
+    /// The embedded chain verifies to one of the supplied roots at the
+    /// receipt's decision instant.
+    chain_valid: bool,
+    /// Canonical error name when the chain does not verify.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain_error: Option<String>,
+    /// Deny receipts only: the chain failure matches the stated decision_code,
+    /// so the embedded authority independently corroborates the refusal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    corroborates_denial: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root_issuer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    leaf_holder: Option<String>,
+}
+
+/// Verify a receipt's embedded warrant chain against trusted roots, at the
+/// receipt's own decision instant.
+///
+/// This is the root-anchored half of receipt verification: it needs no trust
+/// in `signer_key` at all, because the chain is signed by the root and the
+/// holder, not by the enforcement point. The signature over the receipt is
+/// still checked first — an unauthenticated payload is never parsed into a
+/// chain to verify.
+///
+/// A deny receipt whose chain fails with the same error it states is
+/// *corroborated*: the embedded authority independently supports the refusal.
+/// A deny whose chain verifies is not inconsistent — constraint and
+/// possession failures deny over a valid chain, and chain-level verification
+/// does not evaluate those.
+#[wasm_bindgen(js_name = sdkVerifyReceiptChain)]
+pub fn sdk_verify_receipt_chain(wire: &str, roots: JsValue) -> Result<JsValue, JsError> {
+    init_panic_hook();
+    let root_hexes: Vec<String> = serde_wasm_bindgen::from_value(roots)
+        .map_err(|e| JsError::new(&format!("roots must be an array of hex keys: {e}")))?;
+    if root_hexes.is_empty() {
+        return Err(JsError::new("at least one trusted root is required"));
+    }
+    let mut authorizer = Authorizer::new();
+    for hex_key in &root_hexes {
+        authorizer = authorizer.with_trusted_root(parse_public_key_hex(hex_key)?);
+    }
+
+    let bytes = parse_srl_bytes(wire)?;
+    let receipt: Receipt = ciborium::from_reader(bytes.as_slice())
+        .map_err(|e| JsError::new(&format!("invalid receipt: {e}")))?;
+    let payload = receipt
+        .verify_signature()
+        .map_err(|e| JsError::new(&format!("receipt signature does not verify: {e}")))?;
+
+    let stack = wire::decode_stack(&payload.warrant_chain)
+        .map_err(|e| JsError::new(&format!("embedded warrant chain does not decode: {e}")))?;
+    let chain = stack.0;
+
+    let outcome = payload.outcome.as_str().to_string();
+    let verification = authorizer.verify_chain_as_of(&chain, payload.timestamp);
+    let (chain_valid, chain_error) = match &verification {
+        Ok(_) => (true, None),
+        Err(e) => (false, Some(e.name().to_string())),
+    };
+    let corroborates_denial = match (&payload.outcome, &chain_error) {
+        (tenuo::receipt::Outcome::Deny, Some(err)) => {
+            Some(payload.decision_code.as_deref() == Some(err.as_str()))
+        }
+        _ => None,
+    };
+
+    Ok(to_js_value(&ReceiptChainDto {
+        signer_key: hex::encode(receipt.signer_key.to_bytes()),
+        outcome,
+        decision_code: payload.decision_code,
+        timestamp: payload.timestamp,
+        chain_valid,
+        chain_error,
+        corroborates_denial,
+        root_issuer: chain.first().map(|w| hex::encode(w.issuer().to_bytes())),
+        leaf_holder: chain.last().map(|w| hex::encode(w.authorized_holder().to_bytes())),
     }))
 }
 

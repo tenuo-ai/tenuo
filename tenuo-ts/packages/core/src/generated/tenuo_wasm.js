@@ -769,6 +769,36 @@ function sdkVerifyReceipt(wire) {
 exports.sdkVerifyReceipt = sdkVerifyReceipt;
 
 /**
+ * Verify a receipt's embedded warrant chain against trusted roots, at the
+ * receipt's own decision instant.
+ *
+ * This is the root-anchored half of receipt verification: it needs no trust
+ * in `signer_key` at all, because the chain is signed by the root and the
+ * holder, not by the enforcement point. The signature over the receipt is
+ * still checked first — an unauthenticated payload is never parsed into a
+ * chain to verify.
+ *
+ * A deny receipt whose chain fails with the same error it states is
+ * *corroborated*: the embedded authority independently supports the refusal.
+ * A deny whose chain verifies is not inconsistent — constraint and
+ * possession failures deny over a valid chain, and chain-level verification
+ * does not evaluate those.
+ * @param {string} wire
+ * @param {any} roots
+ * @returns {any}
+ */
+function sdkVerifyReceiptChain(wire, roots) {
+    const ptr0 = passStringToWasm0(wire, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.sdkVerifyReceiptChain(ptr0, len0, roots);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkVerifyReceiptChain = sdkVerifyReceiptChain;
+
+/**
  * Create a Proof-of-Possession signature for a warrant
  * @param {string} private_key_hex
  * @param {string} warrant_b64

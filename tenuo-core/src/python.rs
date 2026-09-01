@@ -5953,7 +5953,12 @@ impl PyAuthorizer {
     ///     5. Monotonicity: chain[i+1].constraints ⊆ chain[i].constraints
     ///     6. Signatures: Each warrant has a valid signature
     ///     7. No Cycles: Each warrant ID appears exactly once
-    fn verify_chain(&self, chain: &Bound<'_, PySequence>) -> PyResult<PyChainVerificationResult> {
+    #[pyo3(signature = (chain, as_of=None))]
+    fn verify_chain(
+        &self,
+        chain: &Bound<'_, PySequence>,
+        as_of: Option<i64>,
+    ) -> PyResult<PyChainVerificationResult> {
         let len = chain.len()?;
         if len == 0 {
             return Err(py_validation_err("chain cannot be empty"));
@@ -5967,7 +5972,14 @@ impl PyAuthorizer {
             warrants.push(warrant.inner.clone());
         }
 
-        let result = self.inner.verify_chain(&warrants).map_err(to_py_err)?;
+        // as_of lets a verifier evaluate the chain at the instant a decision
+        // was made — a receipt's warrants may be long expired by the time
+        // anyone audits them, and "was it valid then" is the question.
+        let result = match as_of {
+            Some(t) => self.inner.verify_chain_as_of(&warrants, t),
+            None => self.inner.verify_chain(&warrants),
+        }
+        .map_err(to_py_err)?;
         Ok(PyChainVerificationResult { inner: result })
     }
 
@@ -5985,7 +5997,8 @@ impl PyAuthorizer {
     ///
     /// Returns:
     ///     ChainVerificationResult on success, raises exception on failure
-    #[pyo3(signature = (chain, tool, args, signature=None, approvals=None))]
+    #[pyo3(signature = (chain, tool, args, signature=None, approvals=None, as_of=None))]
+    #[allow(clippy::too_many_arguments)]
     fn check_chain(
         &self,
         chain: &Bound<'_, PySequence>,
@@ -5993,6 +6006,7 @@ impl PyAuthorizer {
         args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
         approvals: Option<Vec<PyRef<PySignedApproval>>>,
+        as_of: Option<i64>,
     ) -> PyResult<PyChainVerificationResult> {
         let len = chain.len()?;
         if len == 0 {
@@ -6030,10 +6044,22 @@ impl PyAuthorizer {
             .map(|a| a.inner.clone())
             .collect();
 
-        let result = self
-            .inner
-            .check_chain(&warrants, tool, &rust_args, sig.as_ref(), &rust_approvals)
-            .map_err(to_py_err)?;
+        let result = match as_of {
+            Some(t) => self.inner.check_chain_with_pop_args_as_of(
+                &warrants,
+                tool,
+                &rust_args,
+                &rust_args,
+                sig.as_ref(),
+                &rust_approvals,
+                t,
+            ),
+            None => {
+                self.inner
+                    .check_chain(&warrants, tool, &rust_args, sig.as_ref(), &rust_approvals)
+            }
+        }
+        .map_err(to_py_err)?;
         Ok(PyChainVerificationResult { inner: result })
     }
 

@@ -221,6 +221,24 @@ export function sdkSignRevocationList(ids: any, issuer_secret: Uint8Array): stri
 export function sdkVerifyReceipt(wire: string): any;
 
 /**
+ * Verify a receipt's embedded warrant chain against trusted roots, at the
+ * receipt's own decision instant.
+ *
+ * This is the root-anchored half of receipt verification: it needs no trust
+ * in `signer_key` at all, because the chain is signed by the root and the
+ * holder, not by the enforcement point. The signature over the receipt is
+ * still checked first — an unauthenticated payload is never parsed into a
+ * chain to verify.
+ *
+ * A deny receipt whose chain fails with the same error it states is
+ * *corroborated*: the embedded authority independently supports the refusal.
+ * A deny whose chain verifies is not inconsistent — constraint and
+ * possession failures deny over a valid chain, and chain-level verification
+ * does not evaluate those.
+ */
+export function sdkVerifyReceiptChain(wire: string, roots: any): any;
+
+/**
  * Create a Proof-of-Possession signature for a warrant
  */
 export function sign(private_key_hex: string, warrant_b64: string, tool: string, args_json: any): any;

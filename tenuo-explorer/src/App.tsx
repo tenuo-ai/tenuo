@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import init, { decode_warrant, check_access, check_chain_access, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkVerifyReceipt } from './wasm/tenuo_wasm'
+import init, { decode_warrant, check_access, check_chain_access, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkVerifyReceipt, sdkVerifyReceiptChain } from './wasm/tenuo_wasm'
 import wasmUrl from './wasm/tenuo_wasm_bg.wasm?url'
 import { cleanInput, truncate, generateId } from './utils';
 import packageJson from '../package.json';
@@ -2048,8 +2048,18 @@ const HistorySidebar = ({
 // rather than left for a green checkmark to paper over.
 // ============================================================================
 
+export type ReceiptChainCheck = {
+  signer_key: string;
+  chain_valid: boolean;
+  chain_error?: string;
+  corroborates_denial?: boolean;
+  root_issuer?: string;
+  leaf_holder?: string;
+};
+
 export type VerifiedReceipt = {
   authentic: boolean;
+  signer_key?: string;
   outcome: 'allow' | 'deny';
   action: string;
   request_id: string;
@@ -2066,6 +2076,10 @@ export type ReceiptRow = {
   wire: string;
   digest: string;
   payload: VerifiedReceipt;
+  /** Root-anchored chain verification, when the viewer supplied roots. */
+  chain?: ReceiptChainCheck;
+  /** Signer membership, when the viewer supplied an authorizer set. */
+  signerRecognized?: boolean;
 };
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -2120,6 +2134,8 @@ export function analyzeReceiptChain(rows: Pick<ReceiptRow, 'line' | 'digest' | '
 
 function ReceiptMode() {
   const [input, setInput] = useState('');
+  const [rootsText, setRootsText] = useState('');
+  const [authText, setAuthText] = useState('');
   const [rows, setRows] = useState<ReceiptRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -2139,12 +2155,26 @@ function ReceiptMode() {
       return;
     }
 
+    const roots = rootsText.split('\n').map((l) => l.trim().toLowerCase()).filter(Boolean);
+    const authSet = new Set(authText.split('\n').map((l) => l.trim().toLowerCase()).filter(Boolean));
+
     const verified: ReceiptRow[] = [];
     for (let i = 0; i < lines.length; i += 1) {
       const wire = lines[i];
       try {
         const payload = sdkVerifyReceipt(wire) as VerifiedReceipt;
-        verified.push({ line: i + 1, wire, digest: await sha256Hex(hexToBytes(wire)), payload });
+        const row: ReceiptRow = { line: i + 1, wire, digest: await sha256Hex(hexToBytes(wire)), payload };
+        // Root-anchored: the chain is signed by the root and the holder, not
+        // the enforcement point, so this claim needs no trust in the signer.
+        if (roots.length > 0) {
+          row.chain = sdkVerifyReceiptChain(wire, roots) as ReceiptChainCheck;
+        }
+        // Signer membership is the viewer's own judgment against a set this
+        // page cannot know — that is why it is an input, not a lookup.
+        if (authSet.size > 0 && payload.signer_key) {
+          row.signerRecognized = authSet.has(payload.signer_key.toLowerCase());
+        }
+        verified.push(row);
       } catch (e) {
         setError(`Receipt on line ${i + 1} does not verify: ${e instanceof Error ? e.message : String(e)}`);
         return;
@@ -2173,6 +2203,28 @@ function ReceiptMode() {
           rows={12}
           style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
         />
+        <div style={{ marginTop: '12px' }}>
+          <label className="label">Trusted roots (hex, one per line) — optional</label>
+          <textarea
+            className="input"
+            value={rootsText}
+            onChange={(e) => setRootsText(e.target.value)}
+            placeholder="verifies each embedded chain at its decision instant"
+            rows={2}
+            style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
+          />
+        </div>
+        <div style={{ marginTop: '8px' }}>
+          <label className="label">Authorizer keys you recognize (hex, one per line) — optional</label>
+          <textarea
+            className="input"
+            value={authText}
+            onChange={(e) => setAuthText(e.target.value)}
+            placeholder="each receipt's signer must be in this set"
+            rows={2}
+            style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
+          />
+        </div>
         <button onClick={verify} className="btn" style={{ marginTop: '12px' }}>
           Verify
         </button>
@@ -2226,6 +2278,28 @@ function ReceiptMode() {
                   {row.payload.outcome === 'allow' ? '✅ ALLOW' : '🚫 DENY'} · {row.payload.action}
                 </h2>
                 <ReceiptField label="request" value={row.payload.request_id} />
+                {row.signerRecognized !== undefined && (
+                  <ReceiptField
+                    label="authorizer"
+                    value={row.signerRecognized ? '✅ signer is in your set' : undefined}
+                    absentNote="❌ signer is NOT in your authorizer set"
+                  />
+                )}
+                {row.chain && (
+                  <ReceiptField
+                    label="chain vs root"
+                    value={
+                      row.chain.chain_valid
+                        ? `✅ verifies to ${row.chain.root_issuer?.slice(0, 16)}… at the decision instant`
+                        : row.chain.corroborates_denial
+                          ? `✅ fails with ${row.chain.chain_error} — corroborates the stated reason`
+                          : row.payload.outcome === 'deny'
+                            ? `ℹ️ fails (${row.chain.chain_error}); receipt states ${row.payload.decision_code}`
+                            : undefined
+                    }
+                    absentNote={`❌ does not verify (${row.chain.chain_error ?? 'unknown'}) — an allow over authority you cannot validate`}
+                  />
+                )}
                 {row.payload.decision_code && <ReceiptField label="reason" value={row.payload.decision_code} />}
                 <ReceiptField
                   label="revocation"
