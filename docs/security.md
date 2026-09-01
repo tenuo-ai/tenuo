@@ -15,7 +15,7 @@ This page covers what Tenuo protects against, how Proof-of-Possession works, int
 | **Temporal** | TTL checked on every authorization; expired warrants are rejected |
 | **Bound** | Proof-of-Possession (PoP) required; stolen warrant is useless without private key |
 | **Delegatable** | Parent warrants mint narrower children; signature chain proves lineage |
-| **Revocable** | Signed revocation lists (SRL) checked locally (Planned for v0.2) |
+| **Revocable** | Signed revocation lists (SRL) checked locally by the authorizer |
 
 ---
 
@@ -117,12 +117,9 @@ child = (parent.grant_builder()
 
 ## Revocation
 
-Tenuo's protocol includes signed revocation lists (SRLs) for emergency warrant cancellation. The revocation system allows the Control Plane, issuers, or warrant holders to revoke warrants before they expire.
+Tenuo's protocol includes signed revocation lists (SRLs) for emergency warrant cancellation. The authorizer checks an SRL locally: Python via `Authorizer.set_revocation_list()` / Temporal `revocation_list` + `revocation_list_provider`, Rust via `RevocationMode::SignedSrl` and `RevocationTracker`. Issuers sign the list; verifiers do not fetch it on the hot path.
 
-> [!NOTE]
-> **Development Status**: Revocation is currently in development and will be available in v0.2. The wire format types (`RevocationRequest`, `SignedRevocationList`) are defined in the spec but full SDK support is upcoming.
-
-**Design philosophy**: Tenuo favors **short TTLs (5-15 minutes) over revocation**. A warrant that expires naturally is simpler than one that requires emergency cancellation. Use revocation only when TTL alone cannot meet your security requirements (e.g., long-lived sessions where key compromise must be handled mid-session).
+**Design philosophy**: Tenuo favors **short TTLs (5-15 minutes) over revocation**. A warrant that expires naturally is simpler than one that requires emergency cancellation. Use revocation when TTL alone cannot meet your security requirements (e.g., long-lived sessions where key compromise must be handled mid-session).
 
 For technical details, see **[Revocation](./spec/protocol-spec-v1#11-revocation)** in the protocol specification (SRL wire layout, `RevocationRequest`, verifier rules).
 

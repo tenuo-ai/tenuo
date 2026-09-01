@@ -634,6 +634,7 @@ class TestTemporalControlPlane:
         entry = mock_cp.deny_events[0]
         assert entry["result"].allowed is False
         assert "Constraint violated" in entry["result"].denial_reason
+        assert entry["result"].error_type == "constraint_violation"
 
     @needs_encode_warrant_stack
     def test_emit_denial_carries_warrant_stack(

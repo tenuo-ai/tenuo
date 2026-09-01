@@ -718,6 +718,37 @@ def _constraint_label_from_auth_exc(auth_exc: Exception) -> Optional[str]:
     return None
 
 
+def _activity_denial_error_type(
+    exc: Optional[BaseException] = None,
+    constraint: Optional[str] = None,
+    error_type: Optional[str] = None,
+) -> Optional[str]:
+    """Receipt key 10 category for an activity denial.
+
+    Native receipt-v1 maps ``EnforcementResult.error_type`` to a decision
+    code. Without this, activity denials all land as ``authorization-failed``.
+    """
+    if error_type:
+        return error_type
+    if exc is not None:
+        if isinstance(exc, TemporalConstraintViolation):
+            return "constraint_violation"
+        if isinstance(exc, PopVerificationError):
+            return "invalid_pop"
+        if isinstance(exc, ChainValidationError):
+            return "chain_invalid"
+        if isinstance(exc, WarrantExpired):
+            return "expired"
+        from tenuo._enforcement import _enforcement_result_from_chain_error
+
+        return _enforcement_result_from_chain_error(exc, "", {}, None).error_type
+    if constraint in {"max_chain_depth_exceeded", "chain_header_invalid"}:
+        return "chain_invalid"
+    if constraint:
+        return "constraint_violation"
+    return None
+
+
 class TenuoActivityInboundInterceptor:
     """Activity-level interceptor that performs authorization checks."""
 
@@ -1173,6 +1204,7 @@ class TenuoActivityInboundInterceptor:
                 presented_chain=list(chain) if chain else [warrant],
                 verified_pop=pop_bytes,
                 pop_auth_args=args,
+                exc=auth_exc,
             )
             if _active_span is not None:
                 _active_span.set_attribute("tenuo.decision", "deny")
@@ -1208,6 +1240,7 @@ class TenuoActivityInboundInterceptor:
                     presented_chain=list(chain) if chain else [warrant],
                     verified_pop=pop_bytes,
                     pop_auth_args=args,
+                    exc=e,
                 )
                 if _active_span is not None:
                     _active_span.set_attribute("tenuo.decision", "deny")
@@ -1525,6 +1558,8 @@ class TenuoActivityInboundInterceptor:
         presented_chain: Optional[List[Any]] = None,
         verified_pop: Optional[bytes] = None,
         pop_auth_args: Optional[Dict[str, Any]] = None,
+        exc: Optional[BaseException] = None,
+        error_type: Optional[str] = None,
     ) -> None:
         """Emit audit event for denied action."""
         import time
@@ -1568,6 +1603,9 @@ class TenuoActivityInboundInterceptor:
                 ),
                 verified_pop=verified_pop,
                 pop_auth_args=pop_auth_args if pop_auth_args is not None else args,
+                error_type=_activity_denial_error_type(
+                    exc=exc, constraint=constraint, error_type=error_type
+                ),
             )
             try:
                 self._config.control_plane.emit_for_enforcement(
