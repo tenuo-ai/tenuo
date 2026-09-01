@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Untrusted root is no longer a signature failure.** Authorizer and
+  DataPlane now raise `Error::UntrustedRoot` (wire 1406 / `untrusted-root`)
+  when the root issuer is not in the trusted set. Python maps this to
+  `UntrustedRoot` / `error_type="untrusted_issuer"`, and denial receipts
+  write key 10 as `untrusted-root`. Hosts that caught `SignatureInvalid`
+  for a foreign issuer, or correlated receipts on `pop-signature-invalid`,
+  must switch.
 - **Temporal `TenuoPluginConfig` now rejects two previously ignored SRL settings.**
   `revocation_refresh_secs` without `revocation_list_provider`, and passing both
   `revocation_list` and `revocation_list_provider`, raise `ConfigurationError`

@@ -932,7 +932,7 @@ class UntrustedRoot(ChainError):
     """Root warrant is not signed by a trusted issuer."""
 
     error_code = "untrusted_root"
-    rust_variant = "SignatureInvalid"
+    rust_variant = "UntrustedRoot"
 
     def __init__(self, issuer_fingerprint: Optional[str] = None, hint: Optional[str] = None):
         details: dict[str, Any] = {}

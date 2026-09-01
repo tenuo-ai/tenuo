@@ -1042,9 +1042,7 @@ impl DataPlane {
         let root = &chain[0];
         let issuer = root.issuer();
         if !self.trusted_issuers.values().any(|k| k == issuer) {
-            return Err(Error::SignatureInvalid(
-                "root warrant issuer not trusted".to_string(),
-            ));
+            return Err(Error::UntrustedRoot);
         }
 
         // Batch verify all signatures in the chain. Each warrant's fully
@@ -2301,9 +2299,7 @@ impl Authorizer {
         // Root must be from a trusted key
         let issuer = root.issuer();
         if !self.trusted_keys.iter().any(|k| k == issuer) {
-            return Err(Error::SignatureInvalid(
-                "root warrant issuer not trusted".to_string(),
-            ));
+            return Err(Error::UntrustedRoot);
         }
 
         // Batch verify all signatures in the chain. Each warrant's fully

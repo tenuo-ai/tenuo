@@ -375,6 +375,7 @@ pub fn auth_error_to_jsonrpc(error: &crate::error::Error) -> (i32, String) {
         ),
         Error::WarrantExpired { .. } => (-32001, "Access denied: Warrant expired".to_string()),
         Error::SignatureInvalid(_) => (-32001, "Access denied: Invalid signature".to_string()),
+        Error::UntrustedRoot => (-32001, "Access denied: Root issuer not trusted".to_string()),
         Error::ToolMismatch { .. } => (-32001, "Access denied: Tool not authorized".to_string()),
         Error::ApprovalRequired { request, .. } => (-32002, request.message.clone()),
         _ => (-32001, format!("Access denied: {}", error)),

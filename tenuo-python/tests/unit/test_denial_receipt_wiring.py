@@ -283,8 +283,6 @@ def test_presented_but_untrusted_authority_still_qualifies(signing_key):
     assert len(sink.receipts) == 1
     payload = tenuo_core.verify_receipt(sink.receipts[0])
     assert payload.outcome == "deny"
-    # The enforcement mapper folds "root issuer not trusted" — which Rust
-    # reports as a signature-verification failure — into invalid_pop, so the
-    # code is pop-signature-invalid rather than untrusted-root. What this test
-    # pins is the qualification boundary: the refusal is receipted at all.
-    assert payload.decision_code == "pop-signature-invalid"
+    # The refusal is receipted, and key 10 names the trust failure rather
+    # than folding it into a PoP miss.
+    assert payload.decision_code == "untrusted-root"

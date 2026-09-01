@@ -63,6 +63,7 @@ from .exceptions import (
     SignatureMismatch,
     TenuoError,
     ToolNotAuthorized,
+    UntrustedRoot,
 )
 from .schemas import TOOL_SCHEMAS, ToolSchema
 
@@ -148,6 +149,7 @@ class EnforcementResult:
             ConstraintViolation: Argument violates a warrant constraint
             ToolNotAuthorized: Tool not granted by the warrant
             SignatureInvalid: PoP / signature verification failed
+            UntrustedRoot: Root warrant issuer is not in the trusted set
             ToolNotAuthorized: Generic authorization denial fallback
         """
         if self.allowed:
@@ -171,6 +173,9 @@ class EnforcementResult:
 
         if error_type == "invalid_pop":
             raise SignatureInvalid(self.denial_reason or "Invalid proof-of-possession")
+
+        if error_type == "untrusted_issuer":
+            raise UntrustedRoot()
 
         if error_type == "constraint_violation":
             raise ConstraintViolation(
@@ -380,6 +385,15 @@ def _enforcement_result_from_chain_error(
             error_type="tool_not_allowed",
             warrant_id=warrant_id,
         )
+    if isinstance(exc, UntrustedRoot):
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            error_type="untrusted_issuer",
+            warrant_id=warrant_id,
+        )
     if isinstance(exc, (SignatureInvalid, MissingSignature, SignatureMismatch)):
         return EnforcementResult(
             allowed=False,
@@ -437,7 +451,7 @@ def _log_chain_enforcement_denial(
 ) -> None:
     """Log authorization denials from chain/sign paths at the right severity."""
     msg = f"Authorization denied for {tool_name}: {exc}"
-    if error_type in ("invalid_pop", "revoked"):
+    if error_type in ("invalid_pop", "revoked", "untrusted_issuer"):
         logger.warning(msg)
     else:
         logger.debug(msg)

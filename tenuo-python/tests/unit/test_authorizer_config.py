@@ -8,7 +8,7 @@ from tenuo import (
     Warrant,
 )
 from tenuo.constraints import Constraints
-from tenuo.exceptions import ExpiredError, SignatureInvalid, TenuoError
+from tenuo.exceptions import ExpiredError, TenuoError, UntrustedRoot
 
 
 def test_set_clock_tolerance_preserves_roots():
@@ -35,8 +35,8 @@ def test_set_clock_tolerance_preserves_roots():
     auth.verify(warrant)
 
 
-def test_error_mapping_signature_invalid():
-    """Verify that Rust SignatureInvalid maps to Python SignatureInvalid."""
+def test_error_mapping_untrusted_root():
+    """Verify that an untrusted issuer maps to Python UntrustedRoot."""
     kp = SigningKey.generate()
     wrong_kp = SigningKey.generate()
 
@@ -53,13 +53,9 @@ def test_error_mapping_signature_invalid():
         ttl_seconds=300,
     )
 
-    # Should raise ValidationError (issuer not trusted) or SignatureInvalid depending on check order
-    # The code checks trusted issuers first:
-    # if !self.trusted_keys.is_empty() && !self.trusted_keys.contains(issuer) { return Err(Error::Validation(...)) }
-
-    with pytest.raises(SignatureInvalid) as excinfo:
+    with pytest.raises(UntrustedRoot) as excinfo:
         auth.verify(warrant)
-    assert "root warrant issuer not trusted" in str(excinfo.value)
+    assert "trusted" in str(excinfo.value).lower()
 
 
 def test_error_mapping_expired():

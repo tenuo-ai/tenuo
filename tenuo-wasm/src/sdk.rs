@@ -1896,7 +1896,7 @@ fn map_code(e: &Error) -> &'static str {
     match e {
         Error::WarrantExpired { .. } => "TENUO_WARRANT_EXPIRED",
         Error::WarrantRevoked(_) => "TENUO_REVOKED",
-        Error::SignatureInvalid(msg) if msg.contains("not trusted") => "TENUO_UNTRUSTED_ROOT",
+        Error::UntrustedRoot => "TENUO_UNTRUSTED_ROOT",
         Error::SignatureInvalid(msg) if msg.contains("Proof-of-Possession") => "TENUO_INVALID_POP",
         Error::MissingSignature(_) => "TENUO_INVALID_POP",
         Error::SignatureInvalid(_) => "TENUO_SIGNATURE_INVALID",

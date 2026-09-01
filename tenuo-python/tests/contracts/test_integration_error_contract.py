@@ -520,8 +520,8 @@ def test_canonical_error_types_include_contract_rows() -> None:
 
 
 class TestEnforcementObservability:
-    def test_signature_trust_denial_logs_warning_and_invalid_pop(self):
-        """Trust/signature failures stay typed as invalid_pop and log at WARNING."""
+    def test_signature_trust_denial_logs_warning_and_untrusted_issuer(self):
+        """Untrusted-root denials stay typed as untrusted_issuer and log at WARNING."""
         import logging
 
         from tenuo import SigningKey, Warrant
@@ -562,9 +562,9 @@ class TestEnforcementObservability:
             log.setLevel(prev_level)
 
         assert not result.allowed
-        assert result.error_type == "invalid_pop"
+        assert result.error_type == "untrusted_issuer"
         assert any(r.levelno >= logging.WARNING for r in records), (
-            "Signature/trust denials must log at WARNING for operator visibility"
+            "Trust denials must log at WARNING for operator visibility"
         )
 
 

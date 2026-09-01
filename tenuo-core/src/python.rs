@@ -195,6 +195,7 @@ pub(crate) fn to_py_err(e: crate::error::Error) -> PyErr {
             crate::error::Error::ChainVerificationFailed(m) => {
                 ("ChainError", PyTuple::new(py, [m.as_str()]))
             } // ChainError takes message? Yes.
+            crate::error::Error::UntrustedRoot => ("UntrustedRoot", Ok(PyTuple::empty(py))),
             crate::error::Error::Validation(m) => {
                 ("ValidationError", PyTuple::new(py, [m.as_str()]))
             }
