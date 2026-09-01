@@ -31,13 +31,16 @@ class SdkContext {
      * @param {any} args_json
      * @param {any} approvals
      * @param {any} tool_allow
+     * @param {string | null} [request_id]
      * @returns {any}
      */
-    authorize(session, tool, args_json, approvals, tool_allow) {
+    authorize(session, tool, args_json, approvals, tool_allow, request_id) {
         _assertClass(session, SdkSession);
         const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.sdkcontext_authorize(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json, approvals, tool_allow);
+        var ptr1 = isLikeNone(request_id) ? 0 : passStringToWasm0(request_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_authorize(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json, approvals, tool_allow, ptr1, len1);
         return ret;
     }
     /**
@@ -68,14 +71,17 @@ class SdkContext {
      * @param {string} pop
      * @param {any} approvals
      * @param {any} tool_allow
+     * @param {string | null} [request_id]
      * @returns {any}
      */
-    authorizePresented(warrants, tool, args_json, pop, approvals, tool_allow) {
+    authorizePresented(warrants, tool, args_json, pop, approvals, tool_allow, request_id) {
         const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(pop, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.sdkcontext_authorizePresented(this.__wbg_ptr, warrants, ptr0, len0, args_json, ptr1, len1, approvals, tool_allow);
+        var ptr2 = isLikeNone(request_id) ? 0 : passStringToWasm0(request_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_authorizePresented(this.__wbg_ptr, warrants, ptr0, len0, args_json, ptr1, len1, approvals, tool_allow, ptr2, len2);
         return ret;
     }
     /**
@@ -761,6 +767,36 @@ function sdkVerifyReceipt(wire) {
     return takeFromExternrefTable0(ret[0]);
 }
 exports.sdkVerifyReceipt = sdkVerifyReceipt;
+
+/**
+ * Verify a receipt's embedded warrant chain against trusted roots, at the
+ * receipt's own decision instant.
+ *
+ * This is the root-anchored half of receipt verification: it needs no trust
+ * in `signer_key` at all, because the chain is signed by the root and the
+ * holder, not by the enforcement point. The signature over the receipt is
+ * still checked first — an unauthenticated payload is never parsed into a
+ * chain to verify.
+ *
+ * A deny receipt whose chain fails with the same error it states is
+ * *corroborated*: the embedded authority independently supports the refusal.
+ * A deny whose chain verifies is not inconsistent — constraint and
+ * possession failures deny over a valid chain, and chain-level verification
+ * does not evaluate those.
+ * @param {string} wire
+ * @param {any} roots
+ * @returns {any}
+ */
+function sdkVerifyReceiptChain(wire, roots) {
+    const ptr0 = passStringToWasm0(wire, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.sdkVerifyReceiptChain(ptr0, len0, roots);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkVerifyReceiptChain = sdkVerifyReceiptChain;
 
 /**
  * Create a Proof-of-Possession signature for a warrant

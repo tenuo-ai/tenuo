@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Untrusted root is no longer a signature failure.** Authorizer and
+  DataPlane now raise `Error::UntrustedRoot` (wire 1406 / `untrusted-root`)
+  when the root issuer is not in the trusted set. Python maps this to
+  `UntrustedRoot` / `error_type="untrusted_issuer"`, and denial receipts
+  write key 10 as `untrusted-root`. Hosts that caught `SignatureInvalid`
+  for a foreign issuer, or correlated receipts on `pop-signature-invalid`,
+  must switch.
 - **Temporal `TenuoPluginConfig` now rejects two previously ignored SRL settings.**
   `revocation_refresh_secs` without `revocation_list_provider`, and passing both
   `revocation_list` and `revocation_list_provider`, raise `ConfigurationError`
@@ -18,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Signed authorization receipts.** Rust now issues and verifies
+  tamper-evident receipts for authorization decisions, including receipt-chain
+  links, trust-context commitments, request hashes, optional proof-of-possession
+  signatures, and deny decision codes. Python adds `tenuo.receipts` sinks,
+  `ControlPlaneClient(..., receipt_sink=...)`, automatic receipt trust binding
+  from signed enforcement results, and `tenuo receipt verify|chain` CLI helpers
+  for inspecting individual receipts or append-only JSONL streams. A bare
+  `receipt_sink=` defaults to `DeferredEmitter(sink, maxsize=256)`: ~0.5 µs
+  on the hot path, emission is asynchronous, and a crash loses at most
+  `maxsize` receipts — call `flush_receipts()` to wait for delivery
+  (`shutdown()` drains). Pass `receipt_emitter=JournalEmitter(path)` when
+  SIGKILL loss must be zero: ~17 µs p50 on the hot path, the receipt is in
+  the page cache before the call returns, and the file is readable by
+  `tenuo receipt chain`. The chain and the artifact are identical under
+  both; only the loss contract differs. The unbounded deferred queue is
+  not constructible. Receipt verification now rejects signed payloads that
+  omit required allow/deny evidence instead of accepting structurally
+  incomplete receipts.
 - **Rust SDK (`sdk` feature, default off).** A framework-independent enforcement
   surface for native Rust processes: `Guard` (holder-sign and received-verify
   paths converging on one decision), `PresentedAuthority`, `HolderSigner` /
@@ -149,6 +174,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   revoked warrant chains before calling Temporal's completion handle. This
   helper is not a Temporal enforcement boundary and can be bypassed by callers
   that invoke the raw completion API directly.
+
+### Changed
+
+- **Receipt emission for sink users is asynchronous.** A bare
+  `receipt_sink=` enqueues onto a deferred worker (see above). Code that
+  emits and then immediately reads its sink must call `flush_receipts()`
+  first.
 
 ### Fixed
 

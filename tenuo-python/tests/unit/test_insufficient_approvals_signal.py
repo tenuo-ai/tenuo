@@ -515,6 +515,20 @@ class TestRaiseIfDenied:
         with pytest.raises(SignatureInvalid):
             result.raise_if_denied()
 
+    def test_untrusted_issuer_raises_untrusted_root(self):
+        from tenuo._enforcement import EnforcementResult
+        from tenuo.exceptions import UntrustedRoot
+
+        result = EnforcementResult(
+            allowed=False,
+            tool="transfer",
+            arguments={},
+            error_type="untrusted_issuer",
+            denial_reason="Root warrant issuer is not trusted",
+        )
+        with pytest.raises(UntrustedRoot):
+            result.raise_if_denied()
+
 
 class TestOpenAIEnforcementMapping:
     def test_insufficient_approvals_raises_typed_exception(self):

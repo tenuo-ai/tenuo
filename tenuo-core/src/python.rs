@@ -39,7 +39,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-fn to_py_err(e: crate::error::Error) -> PyErr {
+pub(crate) fn to_py_err(e: crate::error::Error) -> PyErr {
     Python::attach(|py| {
         let exceptions = match py.import("tenuo.exceptions") {
             Ok(m) => m,
@@ -199,6 +199,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             crate::error::Error::ChainVerificationFailed(m) => {
                 ("ChainError", PyTuple::new(py, [m.as_str()]))
             } // ChainError takes message? Yes.
+            crate::error::Error::UntrustedRoot => ("UntrustedRoot", Ok(PyTuple::empty(py))),
             crate::error::Error::Validation(m) => {
                 ("ValidationError", PyTuple::new(py, [m.as_str()]))
             }
@@ -2396,7 +2397,7 @@ fn py_dict_to_constraint_set(
 }
 
 /// Convert a Python value to a ConstraintValue.
-fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
+pub(crate) fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
     // Extraction order matters for canonicalization parity with the Rust
     // core: Python ``bool`` inherits from ``int`` (``True == 1``), so
     // ``extract::<i64>()`` succeeds for ``True``/``False`` and would
@@ -3707,6 +3708,14 @@ impl PyIssuanceBuilder {
 #[pyclass(name = "Warrant", subclass)]
 pub struct PyWarrant {
     inner: RustWarrant,
+}
+
+#[cfg(feature = "python")]
+impl PyWarrant {
+    /// In-crate access to the wrapped warrant, for receipt construction.
+    pub(crate) fn inner_warrant(&self) -> &RustWarrant {
+        &self.inner
+    }
 }
 
 #[pymethods]
@@ -5070,6 +5079,202 @@ fn py_compute_request_hash(
     ))
 }
 
+/// Verified content of an authorization receipt.
+///
+/// Only constructible by verifying a signature, so holding one of these means
+/// the signature checked out. Whether `signer_key` legitimately speaks for an
+/// enforcement point is a separate question this type does not answer — that
+/// resolution is out of band.
+#[pyclass(name = "ReceiptPayload")]
+#[derive(Clone)]
+pub struct PyReceiptPayload {
+    inner: crate::receipt::ReceiptPayload,
+    signer_key: [u8; 32],
+}
+
+#[pymethods]
+impl PyReceiptPayload {
+    #[getter]
+    fn version(&self) -> u8 {
+        self.inner.version
+    }
+
+    /// Descriptive operator label, never a trust key. See `signer_key`.
+    #[getter]
+    fn authorizer_id(&self) -> Option<String> {
+        self.inner.authorizer_id.clone()
+    }
+
+    /// Hex public key the receipt was signed under. The only field trust may
+    /// be keyed on.
+    #[getter]
+    fn signer_key(&self) -> String {
+        hex::encode(self.signer_key)
+    }
+
+    #[getter]
+    fn action(&self) -> String {
+        self.inner.action.clone()
+    }
+
+    #[getter]
+    fn outcome(&self) -> String {
+        self.inner.outcome.as_str().to_string()
+    }
+
+    #[getter]
+    fn timestamp(&self) -> i64 {
+        self.inner.timestamp
+    }
+
+    #[getter]
+    fn request_id(&self) -> String {
+        self.inner.request_id.clone()
+    }
+
+    #[getter]
+    fn decision_code(&self) -> Option<String> {
+        self.inner.decision_code.clone()
+    }
+
+    /// Base64 CBOR warrant stack the decision was made over.
+    #[getter]
+    fn warrant_chain(&self) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(&self.inner.warrant_chain)
+    }
+
+    #[getter]
+    fn request_hash(&self) -> Option<String> {
+        self.inner.request_hash.map(hex::encode)
+    }
+
+    /// The holder's proof-of-possession. Absent means possession was never
+    /// established, so the receipt attests only that some party was refused.
+    #[getter]
+    fn pop_signature(&self) -> Option<String> {
+        self.inner.pop_signature.map(hex::encode)
+    }
+
+    /// Version of the revocation list in force, when it carried one.
+    #[getter]
+    fn srl_version(&self) -> Option<u64> {
+        self.inner.srl_version
+    }
+
+    /// SHA-256 of the revocation list in force. `None` means no revocation data
+    /// was loaded — a different claim from a list that revoked nothing.
+    #[getter]
+    fn srl_hash(&self) -> Option<String> {
+        self.inner.srl_hash.map(hex::encode)
+    }
+
+    /// Commitment to the host ceiling applied to this decision.
+    #[getter]
+    fn policy_definition_hash(&self) -> Option<String> {
+        self.inner.policy_definition_hash.map(hex::encode)
+    }
+
+    /// Link to the previous receipt from this signer. A link that resolves to
+    /// nothing means a receipt was removed from the stream.
+    #[getter]
+    fn prev_receipt_hash(&self) -> Option<String> {
+        self.inner.prev_receipt_hash.map(hex::encode)
+    }
+
+    /// Commitment to the trusted root set in force at decision time.
+    #[getter]
+    fn trusted_roots_hash(&self) -> Option<String> {
+        self.inner.trusted_roots_hash.map(hex::encode)
+    }
+
+    /// Raise if a conditionally-required field is missing: `decision_code` on a
+    /// denial, `pop_signature` on an allow.
+    fn check_conditional_requirements(&self) -> PyResult<()> {
+        self.inner
+            .check_conditional_requirements()
+            .map_err(to_py_err)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ReceiptPayload(action='{}', outcome='{}', request_id='{}')",
+            self.inner.action,
+            self.inner.outcome.as_str(),
+            self.inner.request_id
+        )
+    }
+}
+
+/// Verify a receipt's signature and return its content.
+///
+/// Accepts CBOR bytes, hex, or standard base64. Raises `InvalidReceipt` when
+/// the signature does not check out — the payload is never parsed into a
+/// decision from an unauthenticated source.
+///
+/// This establishes only that the holder of `signer_key` made this statement.
+/// Resolving that key to a legitimate enforcement point is out of band.
+#[pyfunction]
+#[pyo3(name = "verify_receipt")]
+fn py_verify_receipt(wire: &Bound<'_, PyAny>) -> PyResult<PyReceiptPayload> {
+    let bytes: Vec<u8> = if let Ok(b) = wire.extract::<Vec<u8>>() {
+        b
+    } else {
+        let text: String = wire.extract()?;
+        let trimmed = text.trim();
+        match hex::decode(trimmed) {
+            Ok(b) => b,
+            Err(_) => {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD
+                    .decode(trimmed)
+                    .map_err(|e| {
+                        to_py_err(crate::error::Error::InvalidReceipt(format!(
+                            "receipt is not CBOR bytes, hex, or base64: {e}"
+                        )))
+                    })?
+            }
+        }
+    };
+
+    let receipt: crate::receipt::Receipt =
+        ciborium::from_reader(bytes.as_slice()).map_err(|e| {
+            to_py_err(crate::error::Error::InvalidReceipt(format!(
+                "invalid receipt: {e}"
+            )))
+        })?;
+    let signer_key = receipt.signer_key.to_bytes();
+    let inner = receipt.verify_signature().map_err(to_py_err)?;
+    Ok(PyReceiptPayload { inner, signer_key })
+}
+
+/// SHA-256 over revocation list bytes as loaded, for receipt payload key 13.
+///
+/// Exposed so a verifier can recompute the commitment from a published list
+/// and compare it against what a receipt claims.
+/// SHA-256 over the host policy ceiling, for receipt payload key 11.
+#[pyfunction]
+#[pyo3(name = "policy_commitment_digest")]
+fn py_policy_commitment_digest(policy_bytes: &[u8]) -> [u8; 32] {
+    crate::policy_commitment_digest(policy_bytes)
+}
+
+/// SHA-256 over the trusted root set, for receipt payload key 15.
+///
+/// Sorts and deduplicates, so the commitment describes the set rather than the
+/// order it was loaded in.
+#[pyfunction]
+#[pyo3(name = "trusted_roots_digest")]
+fn py_trusted_roots_digest(roots: Vec<[u8; 32]>) -> [u8; 32] {
+    crate::trusted_roots_digest(&roots)
+}
+
+#[pyfunction]
+#[pyo3(name = "srl_commitment_digest")]
+fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
+    crate::srl_commitment_digest(srl_bytes)
+}
+
 /// Verify a set of signed approvals against a request hash (m-of-n multi-sig).
 ///
 /// ALL approval verification must go through this function — it is the single
@@ -5369,6 +5574,25 @@ impl PyApprovalMetadata {
 #[pyclass(name = "Authorizer")]
 pub struct PyAuthorizer {
     inner: RustAuthorizer,
+    /// Receipt key 15. Tracked here as the authorizer is built rather than read
+    /// back off `Authorizer`, so the commitment can only describe roots this
+    /// object actually installed.
+    trusted_roots: Vec<[u8; 32]>,
+    /// Receipt keys 12 and 13. `None` until a list is installed, which is the
+    /// honest claim that revocation was never consulted.
+    srl_commitment: Option<(Option<u64>, [u8; 32])>,
+}
+
+impl PyAuthorizer {
+    /// Receipt key 15, for callers inside the crate.
+    pub(crate) fn trusted_roots_hash_bytes(&self) -> [u8; 32] {
+        crate::trusted_roots_digest(&self.trusted_roots)
+    }
+
+    /// Receipt keys 12 and 13, for callers inside the crate.
+    pub(crate) fn srl_commitment_value(&self) -> Option<(Option<u64>, [u8; 32])> {
+        self.srl_commitment
+    }
 }
 
 #[pymethods]
@@ -5415,13 +5639,19 @@ impl PyAuthorizer {
             .with_clock_tolerance(chrono::Duration::seconds(clock_tolerance_secs))
             .with_pop_window(pop_window_secs, pop_max_windows);
 
+        let mut root_bytes = Vec::new();
         if let Some(roots) = trusted_roots {
             for key in roots {
+                root_bytes.push(key.inner.to_bytes());
                 authorizer = authorizer.with_trusted_root(key.inner.clone());
             }
         }
 
-        Ok(Self { inner: authorizer })
+        Ok(Self {
+            inner: authorizer,
+            trusted_roots: root_bytes,
+            srl_commitment: None,
+        })
     }
 
     // =========================================================================
@@ -5433,7 +5663,21 @@ impl PyAuthorizer {
     /// Args:
     ///     key: The public key to trust
     fn add_trusted_root(&mut self, key: &PyPublicKey) {
+        self.trusted_roots.push(key.inner.to_bytes());
         self.inner.add_trusted_root(key.inner.clone());
+    }
+
+    /// Commitment to the trusted root set, for receipt payload key 15.
+    #[getter]
+    fn trusted_roots_hash(&self) -> [u8; 32] {
+        crate::trusted_roots_digest(&self.trusted_roots)
+    }
+
+    /// `(version, digest)` of the installed revocation list, for receipt
+    /// payload keys 12 and 13. `None` when no list was installed.
+    #[getter]
+    fn srl_commitment(&self) -> Option<(Option<u64>, [u8; 32])> {
+        self.srl_commitment
     }
 
     /// Install a signed revocation list from an already-trusted root.
@@ -5443,7 +5687,12 @@ impl PyAuthorizer {
     fn set_revocation_list(&mut self, srl: &PySignedRevocationList) -> PyResult<()> {
         self.inner
             .set_revocation_list_from_trusted_issuer(srl.inner.clone())
-            .map_err(to_py_err)
+            .map_err(to_py_err)?;
+        // Recorded only after the authorizer accepted it, so a receipt never
+        // commits to a list this enforcement point rejected.
+        let bytes = srl.inner.to_bytes().map_err(to_py_err)?;
+        self.srl_commitment = Some((None, crate::srl_commitment_digest(&bytes)));
+        Ok(())
     }
 
     /// Set the clock tolerance for expiration checks.
@@ -5701,7 +5950,12 @@ impl PyAuthorizer {
     ///     5. Monotonicity: chain[i+1].constraints ⊆ chain[i].constraints
     ///     6. Signatures: Each warrant has a valid signature
     ///     7. No Cycles: Each warrant ID appears exactly once
-    fn verify_chain(&self, chain: &Bound<'_, PySequence>) -> PyResult<PyChainVerificationResult> {
+    #[pyo3(signature = (chain, as_of=None))]
+    fn verify_chain(
+        &self,
+        chain: &Bound<'_, PySequence>,
+        as_of: Option<i64>,
+    ) -> PyResult<PyChainVerificationResult> {
         let len = chain.len()?;
         if len == 0 {
             return Err(py_validation_err("chain cannot be empty"));
@@ -5715,7 +5969,14 @@ impl PyAuthorizer {
             warrants.push(warrant.inner.clone());
         }
 
-        let result = self.inner.verify_chain(&warrants).map_err(to_py_err)?;
+        // as_of lets a verifier evaluate the chain at the instant a decision
+        // was made — a receipt's warrants may be long expired by the time
+        // anyone audits them, and "was it valid then" is the question.
+        let result = match as_of {
+            Some(t) => self.inner.verify_chain_as_of(&warrants, t),
+            None => self.inner.verify_chain(&warrants),
+        }
+        .map_err(to_py_err)?;
         Ok(PyChainVerificationResult { inner: result })
     }
 
@@ -5733,7 +5994,8 @@ impl PyAuthorizer {
     ///
     /// Returns:
     ///     ChainVerificationResult on success, raises exception on failure
-    #[pyo3(signature = (chain, tool, args, signature=None, approvals=None))]
+    #[pyo3(signature = (chain, tool, args, signature=None, approvals=None, as_of=None))]
+    #[allow(clippy::too_many_arguments)]
     fn check_chain(
         &self,
         chain: &Bound<'_, PySequence>,
@@ -5741,6 +6003,7 @@ impl PyAuthorizer {
         args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
         approvals: Option<Vec<PyRef<PySignedApproval>>>,
+        as_of: Option<i64>,
     ) -> PyResult<PyChainVerificationResult> {
         let len = chain.len()?;
         if len == 0 {
@@ -5778,10 +6041,22 @@ impl PyAuthorizer {
             .map(|a| a.inner.clone())
             .collect();
 
-        let result = self
-            .inner
-            .check_chain(&warrants, tool, &rust_args, sig.as_ref(), &rust_approvals)
-            .map_err(to_py_err)?;
+        let result = match as_of {
+            Some(t) => self.inner.check_chain_with_pop_args_as_of(
+                &warrants,
+                tool,
+                &rust_args,
+                &rust_args,
+                sig.as_ref(),
+                &rust_approvals,
+                t,
+            ),
+            None => {
+                self.inner
+                    .check_chain(&warrants, tool, &rust_args, sig.as_ref(), &rust_approvals)
+            }
+        }
+        .map_err(to_py_err)?;
         Ok(PyChainVerificationResult { inner: result })
     }
 
@@ -6235,6 +6510,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRevocationRequest>()?;
     m.add_class::<PySignedRevocationList>()?;
     m.add_class::<PySrlBuilder>()?;
+    m.add_class::<PyReceiptPayload>()?;
 
     #[cfg(feature = "python-server")]
     m.add_class::<crate::python_control_plane::PyControlPlaneClient>()?;
@@ -6256,6 +6532,10 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_build_approval_context_attestation, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approval_context_attestation, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(py_verify_receipt, m)?)?;
+    m.add_function(wrap_pyfunction!(py_srl_commitment_digest, m)?)?;
+    m.add_function(wrap_pyfunction!(py_policy_commitment_digest, m)?)?;
+    m.add_function(wrap_pyfunction!(py_trusted_roots_digest, m)?)?;
     m.add_function(wrap_pyfunction!(py_verify_approvals, m)?)?;
     m.add_function(wrap_pyfunction!(py_evaluate_approval_gates, m)?)?;
     m.add_function(wrap_pyfunction!(py_resolve_approval_required_message, m)?)?;

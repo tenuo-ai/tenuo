@@ -575,6 +575,10 @@ pub enum Error {
     #[error("chain verification failed: {0}")]
     ChainVerificationFailed(String),
 
+    /// Root warrant issuer is not in the trusted set.
+    #[error("root warrant issuer not trusted")]
+    UntrustedRoot,
+
     // =========================================================================
     // Issuance Errors (Issuer Warrant Operations)
     // =========================================================================
@@ -755,6 +759,7 @@ impl Error {
             // General Errors
             Self::MissingField(_) => ErrorCode::MissingRequiredField,
             Self::ChainVerificationFailed(_) => ErrorCode::ChainBroken,
+            Self::UntrustedRoot => ErrorCode::UntrustedRoot,
 
             // Issuance Errors
             Self::ClearanceLevelExceeded { .. } => ErrorCode::ToolNotAuthorized,
@@ -933,6 +938,11 @@ mod tests {
         assert_eq!(err.code(), ErrorCode::DepthExceeded);
         assert_eq!(err.name(), "depth-exceeded");
 
+        let err = Error::UntrustedRoot;
+        assert_eq!(err.code(), ErrorCode::UntrustedRoot);
+        assert_eq!(err.name(), "untrusted-root");
+        assert_eq!(err.http_status(), 403);
+
         // Capability errors
         let err = Error::ConstraintNotSatisfied {
             field: "amount".into(),
@@ -1024,6 +1034,7 @@ mod tests {
             Error::InvalidReceipt("test".into()),
             Error::MissingField("test".into()),
             Error::ChainVerificationFailed("test".into()),
+            Error::UntrustedRoot,
             Error::ApprovalExpired {
                 approved_at: chrono::Utc::now(),
                 expired_at: chrono::Utc::now(),

@@ -488,3 +488,44 @@ describe("mcp smoke", () => {
     ]);
   });
 });
+
+describe("presented-path receipts", () => {
+  it("commits to the invocation on the MCP host path too", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const call = tenuo.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+
+    let wire = "";
+    await tenuo.mcp.verify(call.name, call.arguments, call._meta, {
+      onReceipt: (receipt: string) => {
+        wire = receipt;
+      },
+    });
+
+    // authorizePresented had the invocation in hand and used to discard it —
+    // host receipts recorded that a decision happened without committing to
+    // what it was made over, and the verify surface hid the gap.
+    const receipt = verifyReceipt(wire);
+    expect(receipt.request_hash).toBeDefined();
+    expect(receipt.request_hash).toHaveLength(64);
+  });
+
+  it("commits to what was requested even on a denial", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const call = tenuo.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+
+    let wire = "";
+    await tenuo.mcp
+      .verify("wrong_tool", call.arguments, call._meta, {
+        onReceipt: (receipt: string) => {
+          wire = receipt;
+        },
+      })
+      .catch(() => undefined);
+
+    const receipt = verifyReceipt(wire);
+    expect(receipt.outcome).toBe("deny");
+    expect(receipt.request_hash).toBeDefined();
+  });
+});

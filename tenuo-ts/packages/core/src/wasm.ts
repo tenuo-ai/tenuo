@@ -25,10 +25,54 @@ export type WasmInspect = {
 
 export type WasmReceipt = {
   authentic: true;
+  /** Hex key the receipt is signed under — resolve against your authorizer set. */
+  signer_key: string;
   outcome: "allow" | "deny";
   action: string;
   decision_code?: string;
   request_id: string;
+  /** Version of the revocation list in force, when it carried one. */
+  srl_version?: number;
+  /**
+   * SHA-256 (hex) of the revocation list bytes in force at decision time.
+   * Absent means no revocation data was loaded — a different claim from a
+   * loaded list that revoked nothing.
+   */
+  srl_hash?: string;
+  /**
+   * SHA-256 (hex) commitment to the canonical invocation this decision was
+   * made over. Absent when the arguments could not be canonicalized — never
+   * zero-filled, so absence is a claim rather than a value.
+   */
+  request_hash?: string;
+  /** SHA-256 (hex) of the host ceiling applied to this decision. */
+  policy_definition_hash?: string;
+  /**
+   * SHA-256 (hex) of the previous receipt from this signer. Absent on the
+   * first receipt, or when the deployment does not chain. A broken link means
+   * a receipt was removed from the stream.
+   */
+  prev_receipt_hash?: string;
+  /** SHA-256 (hex) of the trusted root set in force at decision time. */
+  trusted_roots_hash?: string;
+};
+
+export type WasmReceiptChain = {
+  signer_key: string;
+  outcome: "allow" | "deny";
+  decision_code?: string;
+  timestamp: number;
+  /** The embedded chain verifies to a supplied root at the decision instant. */
+  chain_valid: boolean;
+  /** Canonical error name when it does not. */
+  chain_error?: string;
+  /**
+   * Deny receipts only: the chain failure matches the stated decision_code,
+   * so the embedded authority independently corroborates the refusal.
+   */
+  corroborates_denial?: boolean;
+  root_issuer?: string;
+  leaf_holder?: string;
 };
 
 export type WasmSession = object;
@@ -42,6 +86,7 @@ export type WasmContext = {
     args: unknown,
     approvals?: unknown,
     toolAllow?: unknown,
+    requestId?: string,
   ): WasmDecision;
   authorizeAsOf(
     session: WasmSession,
@@ -61,6 +106,7 @@ export type WasmContext = {
     pop: string,
     approvals?: unknown,
     toolAllow?: unknown,
+    requestId?: string,
   ): WasmDecision;
 };
 
@@ -87,6 +133,7 @@ type Generated = {
   sdkSignRevocationList(ids: string[], issuerSecret: Uint8Array): string;
   sdkSignPublishedRevocationList(ids: string[], version: number, issuerSecret: Uint8Array): string;
   sdkVerifyReceipt(wire: string): WasmReceipt;
+  sdkVerifyReceiptChain(wire: string, roots: string[]): WasmReceiptChain;
 };
 
 let loaded: Generated | undefined;

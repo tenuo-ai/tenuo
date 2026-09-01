@@ -534,6 +534,11 @@ def _reraise_if_crypto(
             expired_at=str(expires_at),
         )
 
+    if et == "untrusted_issuer":
+        from tenuo.exceptions import UntrustedRoot as _UntrustedRoot
+
+        raise _UntrustedRoot()
+
     # enforce_tool_call labels crypto failures "tenuo_error" (sign path)
     # or "authorization_failed" (verify path).  Inspect the denial_reason
     # to distinguish signature failures from policy denials.

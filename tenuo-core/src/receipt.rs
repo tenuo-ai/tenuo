@@ -28,6 +28,70 @@ use crate::error::{Error, Result};
 /// The receipt format version this module produces.
 pub const RECEIPT_VERSION: u8 = 1;
 
+/// SHA-256 over the revocation list bytes exactly as loaded, for
+/// [`ReceiptPayload::srl_hash`].
+///
+/// Hashes the wire bytes rather than a re-serialization so every
+/// implementation derives the same commitment without having to agree on a
+/// canonical re-encoding of a list it only ever received as bytes.
+pub fn srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(srl_bytes);
+    hasher.finalize().into()
+}
+
+/// SHA-256 over the trusted root set, for [`ReceiptPayload::trusted_roots_hash`].
+///
+/// Keys are sorted before hashing so the commitment depends on the set and not
+/// on the order an enforcement point happened to load it in. Duplicates are
+/// collapsed for the same reason.
+pub fn trusted_roots_digest(roots: &[[u8; 32]]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut sorted: Vec<[u8; 32]> = roots.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut hasher = Sha256::new();
+    for key in &sorted {
+        hasher.update(key);
+    }
+    hasher.finalize().into()
+}
+
+/// Canonical encoding of a host allow-policy, for
+/// [`policy_commitment_digest`].
+///
+/// Deterministic CBOR of the field → constraint-expression map with keys
+/// sorted, so the commitment describes the policy and not the order a host
+/// happened to build it in.
+///
+/// The encoding is pinned here rather than left to callers. A caller-chosen
+/// encoding is enough for one producer comparing against itself and useless
+/// the moment a second implementation — a verifier, another runtime, a control
+/// plane checking for drift — has to reproduce the digest from the same policy.
+pub fn canonical_policy_bytes(policy: &serde_json::Value) -> Option<Vec<u8>> {
+    use std::collections::BTreeMap;
+
+    let object = policy.as_object()?;
+    let sorted: BTreeMap<&String, &serde_json::Value> = object.iter().collect();
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&sorted, &mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// SHA-256 over the host policy ceiling, for
+/// [`ReceiptPayload::policy_definition_hash`].
+///
+/// Takes bytes produced by [`canonical_policy_bytes`]. Hashing a different
+/// encoding produces a commitment nothing else can reproduce, which makes key
+/// 11 unverifiable rather than merely inconvenient.
+pub fn policy_commitment_digest(policy_bytes: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(policy_bytes);
+    hasher.finalize().into()
+}
+
 /// The decision an enforcement point reached.
 ///
 /// Encoded as the text `"allow"` or `"deny"`. A boolean encoding is
@@ -78,8 +142,15 @@ pub struct ReceiptPayload {
     /// Key 0. Must equal [`RECEIPT_VERSION`] and the artifact's `receipt_version`.
     pub version: u8,
 
-    /// Key 1. Deployment-assigned label for the enforcement point. Descriptive
-    /// only — `signer_key` is the cryptographic identity.
+    /// Key 1. Deployment-assigned label for the enforcement point.
+    ///
+    /// Descriptive only, and deliberately so: `signer_key` is the
+    /// cryptographic identity and the only field a verifier may key trust on.
+    /// This is a human-readable aid for operators reading receipts, never a
+    /// lookup key into an authorizer registry — two enforcement points may
+    /// carry the same label, and the label may change without the key changing.
+    /// Resolving a `signer_key` to a legitimate enforcement point is an
+    /// out-of-band concern this artifact does not attempt to answer.
     pub authorizer_id: Option<String>,
 
     /// Key 2. CBOR-encoded warrant stack for the presented chain, as a byte string.
@@ -105,8 +176,19 @@ pub struct ReceiptPayload {
     /// Key 8. The holder's proof-of-possession signature for this invocation.
     pub pop_signature: Option<[u8; 64]>,
 
-    /// Key 9. Invocation identity, distinguishing repeats that a
-    /// window-bound PoP cannot.
+    /// Key 9. Correlation handle for this decision.
+    ///
+    /// Set by the host from whatever identifier it already has — a JSON-RPC
+    /// request id, a trace or span id, a workflow activity id — so a receipt
+    /// can be matched against the host's own logs. Falls back to a derived
+    /// value when the host supplies nothing.
+    ///
+    /// Not an identity guarantee: two invocations may legitimately carry the
+    /// same handle, and nothing here enforces uniqueness. Distinguishing
+    /// repeats is [`Self::prev_receipt_hash`]'s job, and matching a decision to
+    /// the arguments it was made over is [`Self::request_hash`]'s — that one is
+    /// content-addressed, so a match proves the arguments rather than asserting
+    /// them.
     pub request_id: String,
 
     /// Key 10. Canonical kebab-case error name for a denial. Required when
@@ -116,6 +198,44 @@ pub struct ReceiptPayload {
     /// Key 11. Commitment to the enforcement point's policy configuration in
     /// force at decision time.
     pub policy_definition_hash: Option<[u8; 32]>,
+
+    /// Key 12. Version of the revocation list in force at decision time.
+    ///
+    /// Present only when the loaded list carries a version — a published,
+    /// monotonic SRL. `None` alongside a present [`Self::srl_hash`] means the
+    /// enforcement point held an unversioned list.
+    pub srl_version: Option<u64>,
+
+    /// Key 13. SHA-256 over the canonical bytes of the revocation list in
+    /// force at decision time.
+    ///
+    /// Absent means the enforcement point had no revocation data loaded, which
+    /// is a different claim from having loaded a list that revoked nothing. A
+    /// verifier needs to tell those apart: the first says revocation was never
+    /// consulted, the second says it was consulted and did not match. Without
+    /// this field a stale or absent list is indistinguishable from a current
+    /// one, and "the warrant was not revoked when this ran" is unfalsifiable.
+    pub srl_hash: Option<[u8; 32]>,
+
+    /// Key 14. SHA-256 over the previous receipt this signer emitted.
+    ///
+    /// Individually verifiable receipts do not make a *set* of receipts
+    /// trustworthy: an enforcement point can decline to emit one for a decision
+    /// it would rather forget, and nothing reveals the omission. Chaining makes
+    /// deletion detectable — a missing link breaks every receipt after it — so
+    /// the claim rises from "this decision happened" to "these are all the
+    /// decisions". Absent on the first receipt from a signer, or when the
+    /// deployment does not chain.
+    pub prev_receipt_hash: Option<[u8; 32]>,
+
+    /// Key 15. Commitment to the trusted root set in force at decision time.
+    ///
+    /// The embedded chain shows which root issued the authority, but not that
+    /// the enforcement point had any business trusting that root when it
+    /// decided. Together with keys 12 and 13 this pins the world the authorizer
+    /// was operating in: which roots it honoured and which revocations it knew.
+    /// See [`trusted_roots_digest`].
+    pub trusted_roots_hash: Option<[u8; 32]>,
 }
 
 impl ReceiptPayload {
@@ -150,6 +270,10 @@ impl ReceiptPayload {
             request_id: request_id.into(),
             decision_code: None,
             policy_definition_hash: None,
+            srl_version: None,
+            srl_hash: None,
+            prev_receipt_hash: None,
+            trusted_roots_hash: None,
         }
     }
 
@@ -185,6 +309,10 @@ impl ReceiptPayload {
             request_id: request_id.into(),
             decision_code: Some(decision_code.into()),
             policy_definition_hash: None,
+            srl_version: None,
+            srl_hash: None,
+            prev_receipt_hash: None,
+            trusted_roots_hash: None,
         }
     }
 
@@ -220,15 +348,28 @@ impl ReceiptPayload {
             request_id: request_id.into(),
             decision_code: Some(decision_code.into()),
             policy_definition_hash: None,
+            srl_version: None,
+            srl_hash: None,
+            prev_receipt_hash: None,
+            trusted_roots_hash: None,
         }
     }
 
     /// Check the requirements that depend on other fields rather than on presence alone.
     ///
-    /// This is deliberately not called during deserialization: a verifier needs
-    /// to observe that a receipt omits a conditionally-required field in order
-    /// to report the corresponding claim as failed, which it cannot do if
-    /// parsing rejected the receipt outright.
+    /// An allow must carry a proof-of-possession and a denial must carry a
+    /// reason. Neither is a presence check on its own field, so neither can be
+    /// expressed in the payload's shape.
+    ///
+    /// Deserialization deliberately does not call this, so a malformed receipt
+    /// can still be parsed and inspected — a tool reporting *which* claim is
+    /// missing needs the payload in hand, which it cannot have if parsing
+    /// rejected it outright.
+    ///
+    /// [`Receipt::verify_signature`] does call it. Parsing is for looking at a
+    /// receipt; verification is for relying on one, and a signed allow that
+    /// never established possession must not pass as evidence merely because
+    /// the signature checks out.
     pub fn check_conditional_requirements(&self) -> Result<()> {
         if self.outcome == Outcome::Deny && self.decision_code.is_none() {
             return Err(Error::InvalidReceipt(
@@ -262,6 +403,10 @@ impl Serialize for ReceiptPayload {
             self.pop_signature.is_some(),
             self.decision_code.is_some(),
             self.policy_definition_hash.is_some(),
+            self.srl_version.is_some(),
+            self.srl_hash.is_some(),
+            self.prev_receipt_hash.is_some(),
+            self.trusted_roots_hash.is_some(),
         ]
         .iter()
         .filter(|present| **present)
@@ -293,6 +438,18 @@ impl Serialize for ReceiptPayload {
         }
         if let Some(policy_definition_hash) = &self.policy_definition_hash {
             map.serialize_entry(&11u8, serde_bytes::Bytes::new(policy_definition_hash))?;
+        }
+        if let Some(srl_version) = &self.srl_version {
+            map.serialize_entry(&12u8, srl_version)?;
+        }
+        if let Some(srl_hash) = &self.srl_hash {
+            map.serialize_entry(&13u8, serde_bytes::Bytes::new(srl_hash))?;
+        }
+        if let Some(prev_receipt_hash) = &self.prev_receipt_hash {
+            map.serialize_entry(&14u8, serde_bytes::Bytes::new(prev_receipt_hash))?;
+        }
+        if let Some(trusted_roots_hash) = &self.trusted_roots_hash {
+            map.serialize_entry(&15u8, serde_bytes::Bytes::new(trusted_roots_hash))?;
         }
         map.end()
     }
@@ -337,6 +494,10 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                 let mut request_id = None;
                 let mut decision_code = None;
                 let mut policy_definition_hash = None;
+                let mut srl_version = None;
+                let mut srl_hash = None;
+                let mut prev_receipt_hash = None;
+                let mut trusted_roots_hash = None;
 
                 while let Some(key) = map.next_key::<u8>()? {
                     if !seen.insert(key) {
@@ -368,6 +529,20 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                             policy_definition_hash =
                                 Some(fixed(bytes.into_vec(), "policy_definition_hash")?);
                         }
+                        12 => srl_version = Some(map.next_value()?),
+                        13 => {
+                            let bytes: serde_bytes::ByteBuf = map.next_value()?;
+                            srl_hash = Some(fixed(bytes.into_vec(), "srl_hash")?);
+                        }
+                        14 => {
+                            let bytes: serde_bytes::ByteBuf = map.next_value()?;
+                            prev_receipt_hash = Some(fixed(bytes.into_vec(), "prev_receipt_hash")?);
+                        }
+                        15 => {
+                            let bytes: serde_bytes::ByteBuf = map.next_value()?;
+                            trusted_roots_hash =
+                                Some(fixed(bytes.into_vec(), "trusted_roots_hash")?);
+                        }
                         _ => {
                             return Err(A::Error::custom(format!(
                                 "unknown receipt payload key {}",
@@ -391,6 +566,10 @@ impl<'de> Deserialize<'de> for ReceiptPayload {
                     request_id: request_id.ok_or_else(|| A::Error::custom("missing request_id"))?,
                     decision_code,
                     policy_definition_hash,
+                    srl_version,
+                    srl_hash,
+                    prev_receipt_hash,
+                    trusted_roots_hash,
                 })
             }
         }
@@ -436,6 +615,24 @@ impl Receipt {
         })
     }
 
+    /// SHA-256 over this receipt's CBOR encoding, for the next receipt's
+    /// [`ReceiptPayload::prev_receipt_hash`].
+    ///
+    /// Covers the signature as well as the payload, so a link commits to the
+    /// exact artifact that was emitted rather than to content that could have
+    /// been re-signed under a different key.
+    pub fn digest(&self) -> Result<[u8; 32]> {
+        use sha2::{Digest, Sha256};
+        let mut bytes = Vec::new();
+        ciborium::into_writer(self, &mut bytes)
+            .map_err(|e| Error::InvalidReceipt(format!("failed to encode receipt: {}", e)))?;
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        Ok(hasher.finalize().into())
+    }
+
+    /// Verify the signature and return the payload.
+    ///
     /// Verify the signature and return the parsed payload.
     ///
     /// This establishes *authenticity* only: that `signer_key` signed these
@@ -464,6 +661,7 @@ impl Receipt {
                 payload.version, self.receipt_version
             )));
         }
+        payload.check_conditional_requirements()?;
 
         Ok(payload)
     }
@@ -510,7 +708,155 @@ mod tests {
             request_id: "req-2".to_string(),
             decision_code: Some("tool-not-authorized".to_string()),
             policy_definition_hash: Some([3u8; 32]),
+            srl_version: Some(47),
+            srl_hash: Some([5u8; 32]),
+            prev_receipt_hash: Some([6u8; 32]),
+            trusted_roots_hash: Some([8u8; 32]),
         }
+    }
+
+    /// An unversioned list still commits: key 13 present, key 12 absent. This
+    /// is the shape produced by a plain `SignedRevocationList`, and it must not
+    /// be confused with having loaded nothing at all.
+    #[test]
+    fn round_trips_an_unversioned_revocation_commitment() {
+        let mut original = full_payload();
+        original.srl_version = None;
+        original.srl_hash = Some([5u8; 32]);
+
+        let bytes = original.to_cbor().unwrap();
+        let decoded: ReceiptPayload = ciborium::from_reader(&bytes[..]).unwrap();
+
+        assert_eq!(original, decoded);
+        assert_eq!(decoded.srl_version, None);
+        assert_eq!(decoded.srl_hash, Some([5u8; 32]));
+    }
+
+    /// No revocation data loaded omits both keys rather than encoding null, so
+    /// two implementations agree on the bytes of the same logical receipt.
+    #[test]
+    fn omits_revocation_keys_when_no_list_was_loaded() {
+        let original = payload();
+        assert_eq!(original.srl_version, None);
+        assert_eq!(original.srl_hash, None);
+
+        let bytes = original.to_cbor().unwrap();
+        let map: ciborium::Value = ciborium::from_reader(&bytes[..]).unwrap();
+        let keys: Vec<i128> = match map {
+            ciborium::Value::Map(entries) => entries
+                .iter()
+                .filter_map(|(k, _)| k.as_integer().map(i128::from))
+                .collect(),
+            other => panic!("payload must encode as a CBOR map, got {:?}", other),
+        };
+
+        assert!(!keys.contains(&12), "key 12 must be omitted, not null");
+        assert!(!keys.contains(&13), "key 13 must be omitted, not null");
+    }
+
+    #[test]
+    fn rejects_an_srl_hash_that_is_not_32_bytes() {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(
+            &ciborium::Value::Map(vec![(
+                ciborium::Value::Integer(13u8.into()),
+                ciborium::Value::Bytes(vec![0u8; 31]),
+            )]),
+            &mut bytes,
+        )
+        .unwrap();
+
+        let decoded: std::result::Result<ReceiptPayload, _> = ciborium::from_reader(&bytes[..]);
+        let message = decoded.unwrap_err().to_string();
+        assert!(
+            message.contains("srl_hash") && message.contains("32"),
+            "error must name the field and the expected length, got: {message}"
+        );
+    }
+
+    /// Chaining is what makes omission detectable, so the link has to survive
+    /// the round trip byte for byte.
+    #[test]
+    fn round_trips_the_chain_link_and_root_commitment() {
+        let original = full_payload();
+        let bytes = original.to_cbor().unwrap();
+        let decoded: ReceiptPayload = ciborium::from_reader(&bytes[..]).unwrap();
+
+        assert_eq!(decoded.prev_receipt_hash, Some([6u8; 32]));
+        assert_eq!(decoded.trusted_roots_hash, Some([8u8; 32]));
+    }
+
+    /// The first receipt from a signer has nothing to point at, and a
+    /// deployment that does not chain has nothing to say — both omit the key
+    /// rather than encoding a zero hash that would look like a real link.
+    #[test]
+    fn omits_the_chain_link_when_there_is_no_predecessor() {
+        let original = payload();
+        assert_eq!(original.prev_receipt_hash, None);
+
+        let bytes = original.to_cbor().unwrap();
+        let map: ciborium::Value = ciborium::from_reader(&bytes[..]).unwrap();
+        let keys: Vec<i128> = match map {
+            ciborium::Value::Map(entries) => entries
+                .iter()
+                .filter_map(|(k, _)| k.as_integer().map(i128::from))
+                .collect(),
+            other => panic!("payload must encode as a CBOR map, got {:?}", other),
+        };
+
+        assert!(
+            !keys.contains(&14),
+            "key 14 must be omitted, not zero-filled"
+        );
+        assert!(
+            !keys.contains(&15),
+            "key 15 must be omitted, not zero-filled"
+        );
+    }
+
+    /// The commitment must describe the set, not the order it was loaded in,
+    /// or two enforcement points with identical trust would disagree.
+    #[test]
+    fn the_root_commitment_is_order_and_duplicate_independent() {
+        let a = [1u8; 32];
+        let b = [2u8; 32];
+
+        assert_eq!(trusted_roots_digest(&[a, b]), trusted_roots_digest(&[b, a]));
+        assert_eq!(
+            trusted_roots_digest(&[a, b]),
+            trusted_roots_digest(&[b, a, a])
+        );
+        assert_ne!(trusted_roots_digest(&[a]), trusted_roots_digest(&[a, b]));
+    }
+
+    /// An empty trust set is a real, distinguishable state — an enforcement
+    /// point that trusts nothing is not the same as one that never said.
+    #[test]
+    fn an_empty_root_set_has_its_own_commitment() {
+        assert_ne!(
+            trusted_roots_digest(&[]),
+            trusted_roots_digest(&[[1u8; 32]])
+        );
+    }
+
+    #[test]
+    fn rejects_a_chain_link_that_is_not_32_bytes() {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(
+            &ciborium::Value::Map(vec![(
+                ciborium::Value::Integer(14u8.into()),
+                ciborium::Value::Bytes(vec![0u8; 31]),
+            )]),
+            &mut bytes,
+        )
+        .unwrap();
+
+        let decoded: std::result::Result<ReceiptPayload, _> = ciborium::from_reader(&bytes[..]);
+        let message = decoded.unwrap_err().to_string();
+        assert!(
+            message.contains("prev_receipt_hash") && message.contains("32"),
+            "error must name the field and expected length, got: {message}"
+        );
     }
 
     #[test]
@@ -559,7 +905,10 @@ mod tests {
             .iter()
             .map(|(k, _)| k.as_integer().unwrap().into())
             .collect();
-        assert_eq!(keys, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(
+            keys,
+            vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        );
     }
 
     #[test]
@@ -568,7 +917,7 @@ mod tests {
         let value: ciborium::Value = ciborium::from_reader(&bytes[..]).unwrap();
         let entries = value.as_map().unwrap();
 
-        for key in [2i128, 7, 8, 11] {
+        for key in [2i128, 7, 8, 11, 13, 14, 15] {
             let (_, field) = entries
                 .iter()
                 .find(|(k, _)| i128::from(k.as_integer().unwrap()) == key)
@@ -823,6 +1172,35 @@ mod tests {
 
         assert!(allowed.check_conditional_requirements().is_err());
         assert!(payload().check_conditional_requirements().is_ok());
+    }
+
+    #[test]
+    fn verification_rejects_a_signed_allow_without_pop_signature() {
+        let signer = SigningKey::generate();
+        let mut invalid = payload();
+        invalid.pop_signature = None;
+
+        let receipt = Receipt::create(&invalid, &signer).unwrap();
+        let err = receipt.verify_signature().unwrap_err();
+        assert!(
+            err.to_string().contains("pop_signature is required"),
+            "public verification must reject invalid receipt claims, got: {err}"
+        );
+    }
+
+    #[test]
+    fn verification_rejects_a_signed_deny_without_decision_code() {
+        let signer = SigningKey::generate();
+        let mut invalid = full_payload();
+        invalid.outcome = Outcome::Deny;
+        invalid.decision_code = None;
+
+        let receipt = Receipt::create(&invalid, &signer).unwrap();
+        let err = receipt.verify_signature().unwrap_err();
+        assert!(
+            err.to_string().contains("decision_code is required"),
+            "public verification must reject invalid receipt claims, got: {err}"
+        );
     }
 
     #[test]

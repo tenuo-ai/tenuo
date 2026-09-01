@@ -101,6 +101,13 @@ export type ExecuteOptions = {
    * fail the tool.
    */
   readonly onReceipt?: (receipt: string) => void | Promise<void>;
+  /**
+   * Correlation handle written to the receipt. Use whatever id the host
+   * already has — a JSON-RPC id, a trace or span id — so a receipt can be
+   * matched against your own logs. Not an identity: nothing enforces
+   * uniqueness, and distinguishing repeated calls is the receipt chain's job.
+   */
+  readonly requestId?: string;
 };
 
 type ExtraExecuteOptions<T extends { execute: (args: never) => unknown }> =
@@ -226,6 +233,13 @@ export type TenuoMcpMeta = {
 export type McpAttachOptions = {
   readonly approvals?: readonly (string | Uint8Array)[];
   readonly onReceipt?: (receipt: string) => void | Promise<void>;
+  /**
+   * Correlation handle written to the receipt. Use whatever id the host
+   * already has — a JSON-RPC id, a trace or span id — so a receipt can be
+   * matched against your own logs. Not an identity: nothing enforces
+   * uniqueness, and distinguishing repeated calls is the receipt chain's job.
+   */
+  readonly requestId?: string;
 };
 
 /** Host ceiling and optional receipt hook on `mcp.handler()`. */
@@ -255,6 +269,13 @@ export type McpVerifyOptions = {
    * The client only ever sees "Replay store unavailable".
    */
   readonly onNonceStoreError?: (error: unknown) => void | Promise<void>;
+  /**
+   * Correlation handle written to the receipt. Use whatever id the host
+   * already has — a JSON-RPC id, a trace or span id — so a receipt can be
+   * matched against your own logs. Not an identity: nothing enforces
+   * uniqueness, and distinguishing repeated calls is the receipt chain's job.
+   */
+  readonly requestId?: string;
 };
 
 /**

@@ -26,6 +26,7 @@ CANONICAL_ERROR_TYPES: FrozenSet[Optional[str]] = frozenset(
         "tenuo_error",
         "internal_error",
         "invalid_pop",
+        "untrusted_issuer",
         "approval_gate_misconfigured",
         "insufficient_approvals",
         "revoked",

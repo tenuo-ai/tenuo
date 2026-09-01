@@ -29,9 +29,10 @@ export const sdkSignApproval: (a: number, b: number, c: number, d: any, e: numbe
 export const sdkSignPublishedRevocationList: (a: any, b: number, c: number, d: number) => [number, number, number, number];
 export const sdkSignRevocationList: (a: any, b: number, c: number) => [number, number, number, number];
 export const sdkVerifyReceipt: (a: number, b: number) => [number, number, number];
-export const sdkcontext_authorize: (a: number, b: number, c: number, d: number, e: any, f: any, g: any) => any;
+export const sdkVerifyReceiptChain: (a: number, b: number, c: any) => [number, number, number];
+export const sdkcontext_authorize: (a: number, b: number, c: number, d: number, e: any, f: any, g: any, h: number, i: number) => any;
 export const sdkcontext_authorizeAsOf: (a: number, b: number, c: number, d: number, e: any, f: number, g: any, h: any) => any;
-export const sdkcontext_authorizePresented: (a: number, b: any, c: number, d: number, e: any, f: number, g: number, h: any, i: any) => any;
+export const sdkcontext_authorizePresented: (a: number, b: any, c: number, d: number, e: any, f: number, g: number, h: any, i: any, j: number, k: number) => any;
 export const sdkcontext_fromTrustedRoots: (a: any) => [number, number, number];
 export const sdkcontext_loadRevocationList: (a: number, b: number, c: number) => [number, number];
 export const sdkcontext_mint: (a: number, b: any, c: number, d: any) => [number, number, number];
