@@ -346,6 +346,10 @@ pub enum Error {
     #[error("warrant issued in the future (check system clock)")]
     IssuedInFuture,
 
+    /// Replay / `as_of` instant cannot be represented as a UTC datetime.
+    #[error("evaluation instant {0} is out of range")]
+    InvalidEvaluationInstant(i64),
+
     /// Warrant depth exceeds maximum allowed.
     #[error("delegation depth {0} exceeds maximum {1}")]
     DepthExceeded(u32, u32),
@@ -699,6 +703,7 @@ impl Error {
             Self::SRLContentChanged { .. } => ErrorCode::SRLContentChanged,
             Self::WarrantExpired { .. } => ErrorCode::WarrantExpired,
             Self::IssuedInFuture => ErrorCode::IssuedInFuture,
+            Self::InvalidEvaluationInstant(_) => ErrorCode::InvalidPayloadStructure,
             Self::DepthExceeded(_, _) => ErrorCode::DepthExceeded,
             Self::InvalidWarrantId(_) => ErrorCode::InvalidPayloadStructure,
             Self::InvalidTtl(_) => ErrorCode::TTLExceeded,

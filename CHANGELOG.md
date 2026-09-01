@@ -52,6 +52,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not constructible. Receipt verification now rejects signed payloads that
   omit required allow/deny evidence instead of accepting structurally
   incomplete receipts.
+- **Rust SDK (`sdk` feature, default off).** A framework-independent enforcement
+  surface for native Rust processes: `Guard` (holder-sign and received-verify
+  paths converging on one decision), `PresentedAuthority`, `HolderSigner` /
+  `LocalSigner`, `Call` with `args!` / `constraints!` / JSON conversions,
+  `Tenuo::local()` and `Tenuo::enforcement()` typestate quickstarts,
+  cryptographic delegation (`delegate_local`, `delegate_to`, and guard-checked
+  `Guard::delegate`), `Diagnostics` for operator-side denial explanation, and a
+  `prelude`. Every decision comes from `Authorizer`; the SDK adapts and never
+  decides. Adds no dependency to the default build.
+- **Deterministic decision context.** `Authorizer::check_chain_with_context()`
+  takes one `VerificationContext` carrying the evaluation instant and the
+  revocation state that decides it, so a guard's resolved snapshot is the state
+  the decision uses. `Warrant::pop_preimage()` exposes canonical PoP bytes for
+  an explicit timestamp, making external signers implementable. `Clock` /
+  `VerificationInstant` commit each attempt to a single instant.
+  `check_chain_with_pop_args()` remains as a thin wrapper.
+- **Revocation tracker.** `RevocationTracker` with `InMemoryFloorStore` and
+  `FileFloorStore` enforces issuer verification, freshness deadlines, rollback,
+  and equivocation against a floor that survives process restart.
+- **Explicit revocation policy.** `RevocationMode::{TtlOnly, SignedSrl}` is
+  required at guard construction; there is no default and no fallback from
+  `SignedSrl` to `TtlOnly`. `TtlOnly` enforces its lifetime ceiling on every
+  warrant in the chain.
+- **Observe mode (`ObservingGuard`).** Runs the full decision, records
+  would-allow / would-deny / would-require-approval / would-deny-no-authority
+  without gating execution, requires an explicit expiry, and refuses to run once
+  expired. Records carry a configurable `ArgumentShapePolicy` summary — keys,
+  value classes, optionally hashes, never raw values — and are `Serialize`.
+  A distinct type from `Guard`, with no conversion between them.
+- **Transports (`mcp-transport`, `http-transport`).** `params._meta.tenuo`
+  encode/decode with size limits enforced before decoding and `strip_tenuo` for
+  servers, plus signed HTTP header binding. Both reuse an authorized call's
+  existing proof of possession and never sign again.
+- **Async surface (`async`).** `AsyncHolderSigner`, `AsyncRevocationProvider`,
+  `PresentedAsyncAuthority`, and `AttemptControl` (deadline and cancellation),
+  with async guard methods sharing the synchronous decision path. Remote signers
+  and remote revocation refresh are supported here; the synchronous surface
+  rejects a deadline it could not enforce.
+- **Receipts and telemetry (`receipts`, `otel`).** Authorization receipts with
+  configurable evidence policy, and OpenTelemetry API spans with no exporter.
+  `receipt-v1` remains draft.
+- **Test scaffolding (`test-utils`).** `sdk::test_utils::local_guard()` and
+  `local_guard_with()` return a `TestHarness` so downstream code can test its
+  own enforcement without assembling a root, chain, signer, and guard by hand.
+  `FixedClock` makes time-dependent outcomes deterministic.
+- **`Error::InvalidEvaluationInstant`.** An unrepresentable `as_of` is an error
+  rather than a silent substitution of the current time.
+
 - **Optional approval-gate display message.** `ToolApprovalGate` accepts
   `message` (max 200 UTF-8 characters). When a gate fires, Rust resolves the
   string once onto `ApprovalRequest.message` (default:

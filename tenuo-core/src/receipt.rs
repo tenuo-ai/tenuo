@@ -605,7 +605,7 @@ impl Receipt {
     /// Sign a payload, producing a receipt.
     pub fn create(payload: &ReceiptPayload, signing_key: &SigningKey) -> Result<Self> {
         let payload_bytes = payload.to_cbor()?;
-        let preimage = Self::build_preimage(RECEIPT_VERSION, &payload_bytes);
+        let preimage = Self::signing_preimage(RECEIPT_VERSION, &payload_bytes);
 
         Ok(Self {
             receipt_version: RECEIPT_VERSION,
@@ -645,7 +645,7 @@ impl Receipt {
             return Err(Error::UnsupportedVersion(self.receipt_version));
         }
 
-        let preimage = Self::build_preimage(self.receipt_version, &self.payload);
+        let preimage = Self::signing_preimage(self.receipt_version, &self.payload);
         self.signer_key
             .verify(&preimage, &self.signature)
             .map_err(|e| Error::InvalidReceipt(format!("signature does not verify: {}", e)))?;
@@ -666,10 +666,11 @@ impl Receipt {
         Ok(payload)
     }
 
-    /// Build the domain-separated signing preimage.
+    /// Domain-separated signing preimage: `RECEIPT_CONTEXT || receipt_version || payload_bytes`.
     ///
-    /// Format: `RECEIPT_CONTEXT || receipt_version || payload_bytes`
-    fn build_preimage(receipt_version: u8, payload_bytes: &[u8]) -> Vec<u8> {
+    /// The Ed25519 message is `SIGNATURE_CONTEXT ||` this preimage. External
+    /// signers must call [`SigningKey::sign_raw`] on those concatenated bytes.
+    pub fn signing_preimage(receipt_version: u8, payload_bytes: &[u8]) -> Vec<u8> {
         let mut preimage = Vec::with_capacity(RECEIPT_CONTEXT.len() + 1 + payload_bytes.len());
         preimage.extend_from_slice(RECEIPT_CONTEXT);
         preimage.push(receipt_version);
@@ -1125,7 +1126,7 @@ mod tests {
         payload.version = 2;
 
         let payload_bytes = payload.to_cbor().unwrap();
-        let preimage = Receipt::build_preimage(RECEIPT_VERSION, &payload_bytes);
+        let preimage = Receipt::signing_preimage(RECEIPT_VERSION, &payload_bytes);
         let receipt = Receipt {
             receipt_version: RECEIPT_VERSION,
             payload: payload_bytes,

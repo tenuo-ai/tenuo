@@ -53,6 +53,11 @@ pub mod planes;
 pub mod receipt;
 pub mod revocation;
 pub mod revocation_manager;
+pub mod revocation_tracker;
+#[cfg(feature = "sdk")]
+#[deny(missing_docs)]
+pub mod sdk;
+pub mod verification;
 pub mod warrant;
 pub mod wire;
 
@@ -90,7 +95,8 @@ pub use constraints::{
     MAX_CONSTRAINT_DEPTH,
 };
 pub use crypto::{PublicKey, Signature, SigningKey};
-pub use error::{Error, Result};
+pub use error::{Error, ErrorCode, Result};
+
 pub use planes::{
     Authorizer, AuthorizerBuilder, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,
     VerifiedApproval, DEFAULT_CLOCK_TOLERANCE_SECS,
@@ -103,9 +109,41 @@ pub use revocation::{
     RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,
 };
 pub use revocation_manager::RevocationManager;
+pub use revocation_tracker::{
+    FileFloorStore, InMemoryFloorStore, RevocationError, RevocationFloorStore, RevocationTracker,
+    RevocationUpdate,
+};
+#[cfg(any(feature = "mcp-transport", feature = "http-transport"))]
+pub use sdk::transport::TransportError;
+#[cfg(feature = "test-utils")]
+pub use sdk::FixedClock;
+#[cfg(feature = "sdk")]
+pub use sdk::{
+    ApprovalError, ApprovalProvider, ArgumentShape, ArgumentShapePolicy, AuthorizationAttempt,
+    AuthorizedCall, Call, Clock, Decision, DecisionMetadata, DelegationError, DelegationProfile,
+    Denial, DenialReporting, Diagnostics, Guard, GuardBuildError, GuardError, HolderSigner,
+    LocalApprovalSigner, LocalSigner, ObservationRecord, ObservationVerdict, ObserveBuildError,
+    ObserveError, Observed, ObservedOutcome, ObservingGuard, ObservingGuardBuilder,
+    OwnedReceivedAuthorization, PresentedAuthority, PresentedRequest, ReceivedAuthorization,
+    Retryability, RevocationMode, SdkDenialKind, SystemClock, Tenuo, TenuoBuildError, ValueClass,
+    VerifiedProjection,
+};
+#[cfg(feature = "async")]
+pub use sdk::{
+    AsyncHolderSigner, AsyncRevocationProvider, AttemptControl, PresentedAsyncAuthority,
+};
+#[cfg(feature = "receipts")]
+pub use sdk::{
+    EvidencePolicy, LocalReceiptSigner, MemoryReceiptSink, ReceiptRef, ReceiptSigner,
+    ReceiptSignerError, ReceiptSigningRequest, ReceiptSink, ReceiptSinkError,
+};
+pub use verification::{
+    RevocationSnapshot, RevocationState, VerificationContext, VerificationInstant,
+};
 pub use warrant::{
-    Clearance, OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant, WarrantBuilder, WarrantId,
-    WarrantType, POP_MAX_WINDOWS, POP_TIMESTAMP_WINDOW_SECS, WARRANT_ID_PREFIX,
+    Clearance, OwnedAttenuationBuilder, OwnedIssuanceBuilder, PreparedDelegation, Warrant,
+    WarrantBuilder, WarrantId, WarrantType, POP_MAX_WINDOWS, POP_TIMESTAMP_WINDOW_SECS,
+    WARRANT_ID_PREFIX,
 };
 pub use wire::MAX_WARRANT_SIZE;
 

@@ -153,6 +153,10 @@ pub(crate) fn to_py_err(e: crate::error::Error) -> PyErr {
                 "ValidationError",
                 PyTuple::new(py, ["Warrant issued in the future (check system clock)"]),
             ),
+            crate::error::Error::InvalidEvaluationInstant(ts) => (
+                "ValidationError",
+                PyTuple::new(py, [&format!("evaluation instant {ts} is out of range")]),
+            ),
 
             // Constraints
             crate::error::Error::ToolNotAuthorized { tool } => {

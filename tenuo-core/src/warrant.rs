@@ -1022,6 +1022,20 @@ impl Warrant {
         now >= self.payload.expires_at
     }
 
+    /// True when `issued_at` is after `as_of` beyond `tolerance`.
+    pub fn is_issued_in_future_as_of(&self, as_of: i64, tolerance: chrono::Duration) -> bool {
+        let now = as_of.max(0) as u64;
+        let tol_secs = tolerance.num_seconds().max(0) as u64;
+        self.payload.issued_at > now.saturating_add(tol_secs)
+    }
+
+    /// Lifetime of this warrant in seconds (`expires_at - issued_at`).
+    pub fn lifetime_secs(&self) -> u64 {
+        self.payload
+            .expires_at
+            .saturating_sub(self.payload.issued_at)
+    }
+
     /// Check if this warrant is terminal (cannot delegate further).
     pub fn is_terminal(&self) -> bool {
         self.depth() >= self.effective_max_depth()
@@ -1251,6 +1265,43 @@ impl Warrant {
         constraints.matches(args)
     }
 
+    /// Canonical PoP preimage: `POP_CONTEXT || CBOR((warrant_id_hex, tool, sorted_args, window_ts))`.
+    ///
+    /// `timestamp` is a unix-seconds instant, not a pre-windowed value. This
+    /// function floors it the same way verification does:
+    /// `window_ts = (timestamp / window_secs) * window_secs`.
+    /// There is no clock read inside this function.
+    ///
+    /// The returned bytes are the preimage, not the final Ed25519 message.
+    /// The final message is `SIGNATURE_CONTEXT || preimage`.
+    pub fn pop_preimage(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        timestamp: i64,
+        window_secs: i64,
+    ) -> Result<Vec<u8>> {
+        if window_secs <= 0 {
+            return Err(Error::Validation(
+                "PoP window_secs must be greater than zero".to_string(),
+            ));
+        }
+
+        let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
+        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-pop-sign-sort.
+        sorted_args.sort_by_key(|(k, _)| *k);
+
+        let window_ts = (timestamp / window_secs) * window_secs;
+        let challenge_data = (self.payload.id.to_hex(), tool, sorted_args, window_ts);
+        let mut challenge_bytes = Vec::new();
+        ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes)
+            .map_err(|e| Error::SerializationError(e.to_string()))?;
+
+        let mut preimage = POP_CONTEXT.to_vec();
+        preimage.extend_from_slice(&challenge_bytes);
+        Ok(preimage)
+    }
+
     /// Verify PoP signature with configurable window.
     ///
     /// Uses **bidirectional** window checking to handle clock skew in both directions:
@@ -1277,7 +1328,27 @@ impl Warrant {
         )
     }
 
-    /// Verify PoP against a committed evaluation instant.
+    /// Verify PoP against windows derived from `as_of`. Does not read a clock.
+    pub fn verify_pop_at(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+        window_secs: i64,
+        max_windows: u32,
+        as_of: DateTime<Utc>,
+    ) -> Result<()> {
+        self.verify_pop_as_of(
+            tool,
+            args,
+            signature,
+            window_secs,
+            max_windows,
+            as_of.timestamp(),
+        )
+    }
+
+    /// Verify PoP against a committed unix-seconds instant.
     pub fn verify_pop_as_of(
         &self,
         tool: &str,
@@ -1290,18 +1361,14 @@ impl Warrant {
         let signature = signature
             .ok_or_else(|| Error::MissingSignature("Proof-of-Possession required".to_string()))?;
 
+        if window_secs <= 0 {
+            return Err(Error::Validation(
+                "PoP window_secs must be greater than zero".to_string(),
+            ));
+        }
+
         let now = as_of;
-
-        let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
-        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-pop-verify-sort.
-        sorted_args.sort_by_key(|(k, _)| *k);
-
         let mut verified = false;
-
-        // Hoist loop-invariant values: id hex and buffers are reused across windows
-        let id_hex = self.payload.id.to_hex();
-        let mut challenge_bytes = Vec::with_capacity(256);
-        let mut preimage = Vec::with_capacity(256);
 
         // Bidirectional window checking: check current window first, then alternate
         // between past and future windows. This handles clock skew in both directions.
@@ -1328,15 +1395,10 @@ impl Warrant {
             }
 
             let window_ts = (now / window_secs + offset) * window_secs;
-            let challenge_data = (&id_hex, tool, &sorted_args, window_ts);
-            challenge_bytes.clear();
-            if ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes).is_err() {
-                continue;
-            }
-
-            preimage.clear();
-            preimage.extend_from_slice(POP_CONTEXT);
-            preimage.extend_from_slice(&challenge_bytes);
+            let preimage = match self.pop_preimage(tool, args, window_ts, window_secs) {
+                Ok(bytes) => bytes,
+                Err(_) => continue,
+            };
 
             if self.payload.holder.verify(&preimage, signature).is_ok() {
                 verified = true;
@@ -1374,22 +1436,8 @@ impl Warrant {
         args: &HashMap<String, ConstraintValue>,
         timestamp: Option<i64>,
     ) -> Result<Signature> {
-        let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
-        // determinism: canonical iteration order required — see docs/determinism-audit.md#finding-pop-sign-sort.
-        sorted_args.sort_by_key(|(k, _)| *k);
-
         let now = timestamp.unwrap_or_else(|| Utc::now().timestamp());
-        let window_ts = (now / POP_TIMESTAMP_WINDOW_SECS) * POP_TIMESTAMP_WINDOW_SECS;
-
-        let challenge_data = (self.payload.id.to_hex(), tool, sorted_args, window_ts);
-        let mut challenge_bytes = Vec::new();
-        ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes)
-            .map_err(|e| Error::SerializationError(e.to_string()))?;
-
-        // Prepend domain separation context
-        let mut preimage = POP_CONTEXT.to_vec();
-        preimage.extend_from_slice(&challenge_bytes);
-
+        let preimage = self.pop_preimage(tool, args, now, POP_TIMESTAMP_WINDOW_SECS)?;
         Ok(keypair.sign(&preimage))
     }
 
@@ -2101,15 +2149,21 @@ impl<'a> AttenuationBuilder<'a> {
     /// # Errors
     /// Returns `DelegationAuthorityError` if the signing key doesn't match
     /// the parent warrant's holder.
-    pub fn build(mut self, signing_key: &SigningKey) -> Result<Warrant> {
-        // Delegation authority check: signer must be the parent's holder
+    /// Compatibility sugar: prepare, raw-sign, finalize.
+    pub fn build(self, signing_key: &SigningKey) -> Result<Warrant> {
         if signing_key.public_key() != *self.parent.authorized_holder() {
             return Err(Error::DelegationAuthorityError {
                 expected: self.parent.authorized_holder().fingerprint(),
                 actual: signing_key.public_key().fingerprint(),
             });
         }
+        let prepared = self.prepare()?;
+        let signature = signing_key.sign_raw(prepared.final_signing_bytes());
+        prepared.finalize(signature)
+    }
 
+    /// Freeze the child payload for an external or local parent signer.
+    pub fn prepare(mut self) -> Result<PreparedDelegation> {
         let new_depth = self.parent.depth() + 1;
         if new_depth > MAX_DELEGATION_DEPTH {
             return Err(Error::DepthExceeded(new_depth, MAX_DELEGATION_DEPTH));
@@ -2325,7 +2379,7 @@ impl<'a> AttenuationBuilder<'a> {
             depth: self.parent.depth() + 1, // Increment depth from parent
             session_id: self.session_id,
             agent_id: self.agent_id,
-            issuer: signing_key.public_key(),
+            issuer: self.parent.authorized_holder().clone(),
             parent_hash: Some(parent_hash),
             required_approvers: self.required_approvers,
             min_approvals: effective_min,
@@ -2342,39 +2396,73 @@ impl<'a> AttenuationBuilder<'a> {
         ciborium::ser::into_writer(&payload, &mut payload_bytes)
             .map_err(|e| Error::SerializationError(e.to_string()))?;
 
-        // Preimage: envelope_version || payload_bytes
-        let mut preimage = Vec::with_capacity(1 + payload_bytes.len());
-        preimage.push(1); // envelope_version
-        preimage.extend_from_slice(&payload_bytes);
+        let envelope_version = 1u8;
+        let mut final_bytes =
+            Vec::with_capacity(crate::SIGNATURE_CONTEXT.len() + 1 + payload_bytes.len());
+        final_bytes.extend_from_slice(crate::SIGNATURE_CONTEXT);
+        final_bytes.push(envelope_version);
+        final_bytes.extend_from_slice(&payload_bytes);
 
-        let signature = signing_key.sign(&preimage);
+        Ok(PreparedDelegation {
+            payload,
+            payload_bytes,
+            envelope_version,
+            final_bytes,
+            parent_holder: self.parent.authorized_holder().clone(),
+            parent_id: self.parent.id().clone(),
+        })
+    }
+}
+
+/// Unsigned child warrant. Payload is frozen after [`AttenuationBuilder::prepare`].
+pub struct PreparedDelegation {
+    payload: WarrantPayload,
+    payload_bytes: Vec<u8>,
+    envelope_version: u8,
+    final_bytes: Vec<u8>,
+    parent_holder: crate::crypto::PublicKey,
+    parent_id: WarrantId,
+}
+
+impl PreparedDelegation {
+    /// `SIGNATURE_CONTEXT || envelope_version || payload_bytes`.
+    pub fn final_signing_bytes(&self) -> &[u8] {
+        &self.final_bytes
+    }
+
+    /// Verify the parent-holder signature, bind it, and return the child warrant.
+    pub fn finalize(self, signature: Signature) -> Result<Warrant> {
+        self.parent_holder
+            .verify_raw(&self.final_bytes, &signature)
+            .map_err(|_| {
+                Error::SignatureInvalid("delegation signature does not match parent holder".into())
+            })?;
 
         let warrant = Warrant {
-            payload,
+            payload: self.payload,
             signature,
-            payload_bytes,
-            envelope_version: 1,
+            payload_bytes: self.payload_bytes,
+            envelope_version: self.envelope_version,
         };
 
-        // Audit: Log warrant attenuation
         log_event(AuditEvent {
             id: Uuid::new_v4().to_string(),
             event_type: AuditEventType::WarrantIssued,
             timestamp: Utc::now(),
             provider: "tenuo".to_string(),
             external_id: None,
-            public_key_hex: Some(hex::encode(signing_key.public_key().to_bytes())),
+            public_key_hex: Some(hex::encode(self.parent_holder.to_bytes())),
             actor: format!(
                 "delegator:{}",
-                hex::encode(&signing_key.public_key().to_bytes()[..8])
+                hex::encode(&self.parent_holder.to_bytes()[..8])
             ),
             details: Some(format!(
                 "warrant attenuated: type={:?}, depth={}, parent={}",
                 warrant.payload.warrant_type,
                 warrant.depth(),
-                self.parent.id()
+                self.parent_id
             )),
-            related_ids: Some(vec![warrant.id().to_string(), self.parent.id().to_string()]),
+            related_ids: Some(vec![warrant.id().to_string(), self.parent_id.to_string()]),
         });
 
         Ok(warrant)

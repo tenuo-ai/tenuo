@@ -58,6 +58,7 @@ fn verify_approvals_with_tolerance(
     args: &HashMap<String, ConstraintValue>,
     approvals: &[crate::approval::SignedApproval],
     clock_tolerance: chrono::Duration,
+    now: u64,
 ) -> Result<Vec<VerifiedApproval>> {
     // Check if multi-sig is required
     let required_approvers = match warrant.required_approvers() {
@@ -99,7 +100,6 @@ fn verify_approvals_with_tolerance(
 
     let mut valid_count = 0u32;
     let mut seen_approvers = std::collections::HashSet::new();
-    let now = chrono::Utc::now().timestamp() as u64;
     let tolerance_secs = clock_tolerance.num_seconds() as u64;
     let mut rejections: Vec<Rejection> = Vec::new();
     let mut verified: Vec<VerifiedApproval> = Vec::new();
@@ -1404,6 +1404,7 @@ impl DataPlane {
                         args,
                         approvals,
                         chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+                        chrono::Utc::now().timestamp() as u64,
                     )
                 } else {
                     Ok(Vec::new())
@@ -2076,11 +2077,23 @@ impl Authorizer {
         !self.trusted_keys.is_empty()
     }
 
+    /// Installed signed revocation list, if any.
+    ///
+    /// Guard snapshots this at build time. Decision-time checks use the
+    /// snapshot, not this field (S34).
+    #[cfg(feature = "sdk")]
+    pub(crate) fn installed_revocation_list(&self) -> Option<&SignedRevocationList> {
+        self.revocation_list.as_ref()
+    }
+
     // =========================================================================
     // Internal helpers
     // =========================================================================
 
-    /// Check if a warrant is revoked by ID.
+    /// Check if a warrant is revoked by the authorizer's stored list.
+    /// Kept for DataPlane-style callers; Guard/context decisions use
+    /// [`crate::verification::RevocationState`] instead.
+    #[allow(dead_code)]
     fn is_revoked(&self, warrant: &Warrant) -> bool {
         self.revocation_list
             .as_ref()
@@ -2163,6 +2176,7 @@ impl Authorizer {
     }
 
     /// Verify multi-sig approvals against a warrant.
+    #[allow(dead_code)]
     fn verify_approvals(
         &self,
         warrant: &Warrant,
@@ -2170,7 +2184,31 @@ impl Authorizer {
         args: &HashMap<String, ConstraintValue>,
         approvals: &[crate::approval::SignedApproval],
     ) -> Result<Vec<VerifiedApproval>> {
-        verify_approvals_with_tolerance(warrant, tool, args, approvals, self.clock_tolerance)
+        self.verify_approvals_as_of(
+            warrant,
+            tool,
+            args,
+            approvals,
+            chrono::Utc::now().timestamp(),
+        )
+    }
+
+    fn verify_approvals_as_of(
+        &self,
+        warrant: &Warrant,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        approvals: &[crate::approval::SignedApproval],
+        as_of: i64,
+    ) -> Result<Vec<VerifiedApproval>> {
+        verify_approvals_with_tolerance(
+            warrant,
+            tool,
+            args,
+            approvals,
+            self.clock_tolerance,
+            as_of.max(0) as u64,
+        )
     }
 
     /// Verify a complete delegation chain.
@@ -2222,13 +2260,25 @@ impl Authorizer {
         self.verify_chain_with_options_as_of(chain, enforce_session, chrono::Utc::now().timestamp())
     }
 
+    fn stored_revocation_snapshot(&self) -> Option<crate::verification::RevocationSnapshot> {
+        self.revocation_list
+            .as_ref()
+            .map(|srl| crate::verification::RevocationSnapshot::from_accepted_list(srl.clone()))
+    }
+
     fn verify_chain_with_options_as_of(
         &self,
         chain: &[Warrant],
         enforce_session: bool,
         as_of: i64,
     ) -> Result<ChainVerificationResult> {
-        let result = self.verify_chain_with_options_inner(chain, enforce_session, as_of);
+        let snapshot = self.stored_revocation_snapshot();
+        let revocation = match &snapshot {
+            Some(s) => crate::verification::RevocationState::Snapshot(s),
+            None => crate::verification::RevocationState::NotConfigured,
+        };
+        let result =
+            self.verify_chain_with_options_inner(chain, enforce_session, as_of, &revocation);
 
         // Audit: Log verification failures
         if let Err(ref e) = result {
@@ -2254,6 +2304,7 @@ impl Authorizer {
         chain: &[Warrant],
         enforce_session: bool,
         as_of: i64,
+        revocation: &crate::verification::RevocationState<'_>,
     ) -> Result<ChainVerificationResult> {
         if chain.is_empty() {
             return Err(Error::ChainVerificationFailed(
@@ -2261,10 +2312,10 @@ impl Authorizer {
             ));
         }
 
-        // CASCADING REVOCATION: Check if ANY warrant in the chain is revoked (from SRL)
-        // This must happen before any other validation to fail fast.
+        // CASCADING REVOCATION: the state supplied with this decision, not
+        // the authorizer's stored list (S34).
         for warrant in chain {
-            if self.is_revoked(warrant) {
+            if revocation.is_revoked(warrant) {
                 return Err(Error::WarrantRevoked(warrant.id().to_string()));
             }
         }
@@ -2324,6 +2375,9 @@ impl Authorizer {
                     expired_at: warrant.expires_at(),
                 });
             }
+            if warrant.is_issued_in_future_as_of(as_of, self.clock_tolerance) {
+                return Err(Error::IssuedInFuture);
+            }
             warrant.validate_structural().map_err(|e| {
                 Error::ChainVerificationFailed(format!(
                     "warrant '{}' failed structural validation: {}",
@@ -2381,10 +2435,7 @@ impl Authorizer {
 
     /// Verify a single link in a delegation chain.
     fn verify_link_as_of(&self, parent: &Warrant, child: &Warrant, _as_of: i64) -> Result<()> {
-        // Check revocation
-        if self.is_revoked(child) {
-            return Err(Error::WarrantRevoked(child.id().to_string()));
-        }
+        // Revocation is checked for every warrant before the walk (S34).
 
         // I1: Delegation Authority (wire-format-spec.md)
         // Child's issuer must be parent's authorized_holder (proves delegation was authorized).
@@ -2675,9 +2726,42 @@ impl Authorizer {
         )
     }
 
-    /// Verify a chain at a committed evaluation instant (test / replay seam).
+    /// Live-chain check: one instant, one revocation state, no tool and no clock read.
+    ///
+    /// Used when minting a child (`Guard::delegate`). Does not consult the
+    /// authorizer's stored revocation list — the state in `context` decides.
+    pub fn verify_chain_with_context(
+        &self,
+        chain: &[Warrant],
+        context: &crate::verification::VerificationContext<'_>,
+    ) -> Result<ChainVerificationResult> {
+        if let crate::verification::RevocationState::TtlOnly { max_lifetime } = context.revocation()
+        {
+            for warrant in chain {
+                if warrant.lifetime_secs() > max_lifetime.as_secs() {
+                    return Err(Error::InvalidTtl(format!(
+                        "warrant '{}' lifetime {}s exceeds configured max_lifetime {}s",
+                        warrant.id(),
+                        warrant.lifetime_secs(),
+                        max_lifetime.as_secs()
+                    )));
+                }
+            }
+        }
+        self.verify_chain_with_options_inner(
+            chain,
+            false,
+            context.as_of_unix(),
+            context.revocation(),
+        )
+    }
+
+    /// Authoritative decision: one instant, one revocation state, no clock read.
+    ///
+    /// Does not consult [`Authorizer`]'s stored revocation list. The state in
+    /// `context` is the state that decides (S34 / S42).
     #[allow(clippy::too_many_arguments)]
-    pub fn check_chain_with_pop_args_as_of(
+    pub fn check_chain_with_context(
         &self,
         chain: &[Warrant],
         tool: &str,
@@ -2685,9 +2769,25 @@ impl Authorizer {
         constraint_args: &HashMap<String, ConstraintValue>,
         signature: Option<&crate::crypto::Signature>,
         approvals: &[crate::approval::SignedApproval],
-        as_of: i64,
+        context: &crate::verification::VerificationContext<'_>,
     ) -> Result<ChainVerificationResult> {
-        let result = self.verify_chain_as_of(chain, as_of)?;
+        if let crate::verification::RevocationState::TtlOnly { max_lifetime } = context.revocation()
+        {
+            for warrant in chain {
+                if warrant.lifetime_secs() > max_lifetime.as_secs() {
+                    return Err(Error::InvalidTtl(format!(
+                        "warrant '{}' lifetime {}s exceeds configured max_lifetime {}s",
+                        warrant.id(),
+                        warrant.lifetime_secs(),
+                        max_lifetime.as_secs()
+                    )));
+                }
+            }
+        }
+
+        let as_of = context.as_of_unix();
+        let result =
+            self.verify_chain_with_options_inner(chain, false, as_of, context.revocation())?;
         let mut verified_approvals = Vec::new();
 
         if let Some(leaf) = chain.last() {
@@ -2769,7 +2869,8 @@ impl Authorizer {
                     });
                 }
                 // Approvals were provided — verify them over the wire-args view.
-                verified_approvals = self.verify_approvals(leaf, tool, pop_args, approvals)?;
+                verified_approvals =
+                    self.verify_approvals_as_of(leaf, tool, pop_args, approvals, as_of)?;
             }
             // needs_approval = false → tool is free (either approval gate map present
             // and no approval gate matched, or no approval gate map and no required_approvers)
@@ -2792,6 +2893,42 @@ impl Authorizer {
         }
 
         Ok(result)
+    }
+
+    /// Verify a chain at a committed evaluation instant (test / replay seam).
+    ///
+    /// Thin wrapper: reads the authorizer's configured list once, maps
+    /// `None` to [`crate::verification::RevocationState::NotConfigured`], and
+    /// calls [`Self::check_chain_with_context`]. Does not invent a `TtlOnly`
+    /// ceiling.
+    #[allow(clippy::too_many_arguments)]
+    pub fn check_chain_with_pop_args_as_of(
+        &self,
+        chain: &[Warrant],
+        tool: &str,
+        pop_args: &HashMap<String, ConstraintValue>,
+        constraint_args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::SignedApproval],
+        as_of: i64,
+    ) -> Result<ChainVerificationResult> {
+        let snapshot = self.stored_revocation_snapshot();
+        let revocation = match &snapshot {
+            Some(s) => crate::verification::RevocationState::Snapshot(s),
+            None => crate::verification::RevocationState::NotConfigured,
+        };
+        let as_of_dt = chrono::DateTime::from_timestamp(as_of, 0)
+            .ok_or(crate::error::Error::InvalidEvaluationInstant(as_of))?;
+        let context = crate::verification::VerificationContext::new(as_of_dt, revocation);
+        self.check_chain_with_context(
+            chain,
+            tool,
+            pop_args,
+            constraint_args,
+            signature,
+            approvals,
+            &context,
+        )
     }
 }
 
@@ -5967,5 +6104,27 @@ mod tests {
         // Only admin1 should appear (rando was not authorized)
         assert_eq!(cvr.verified_approvals.len(), 1);
         assert_eq!(cvr.verified_approvals[0].external_id, "admin1");
+    }
+
+    #[test]
+    fn replay_as_of_out_of_range_is_an_error() {
+        let control = ControlPlane::generate();
+        let authorizer = Authorizer::new().with_trusted_root(control.public_key());
+        let warrant = control
+            .issue_warrant("read", &[], Duration::from_secs(60))
+            .unwrap();
+        let args = HashMap::new();
+        let err = authorizer
+            .check_chain_with_pop_args_as_of(
+                std::slice::from_ref(&warrant),
+                "read",
+                &args,
+                &args,
+                None,
+                &[],
+                i64::MAX,
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidEvaluationInstant(i64::MAX)));
     }
 }

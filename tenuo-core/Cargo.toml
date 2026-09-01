@@ -31,6 +31,15 @@ control-plane = []
 # Data Plane - for edge agents and verifiers  
 data-plane = []
 
+# Framework-independent Rust SDK (default-off; no extra dependencies)
+sdk = []
+mcp-transport = ["sdk"]
+http-transport = ["sdk"]
+async = ["sdk", "dep:async-trait"]
+receipts = ["sdk"]
+otel = ["sdk", "dep:opentelemetry"]
+test-utils = ["sdk"]
+
 # Python bindings
 python = ["pyo3"]
 python-extension = ["pyo3/extension-module", "python"]
@@ -129,6 +138,10 @@ moka = { version = "0.12", features = ["sync"], optional = true }
 # Error handling
 thiserror = "2.0"
 
+# Optional SDK surfaces (never pulled by `sdk` alone)
+async-trait = { version = "0.1", optional = true }
+opentelemetry = { version = "0.30", optional = true }
+
 # UUID for warrant IDs (v4 for random, v7 for time-ordered)
 uuid = { version = "1.6", features = ["v4", "v7", "serde", "js"] }
 
@@ -175,6 +188,11 @@ ci_group = "0.1"
 [[bench]]
 name = "warrant_benchmarks"
 harness = false
+
+[[example]]
+name = "sdk_mcp_demo"
+path = "examples/sdk_mcp_demo.rs"
+required-features = ["sdk", "mcp-transport"]
 
 [profile.release]
 lto = "thin"        # Faster than "true" (fat LTO), still good optimization
