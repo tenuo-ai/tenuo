@@ -295,7 +295,7 @@ async def search(query: str, ctx: SecurityContext = Depends(TenuoGuard("search")
 | Component | Supported |
 |-----------|-----------|
 | **Python** | 3.9 - 3.14 |
-| **Node.js** | *Planned (TypeScript SDK - [help wanted](#contributing))* |
+| **Node.js** | **Beta** — Node 20+ (`npm i @tenuo/core@beta`) |
 | **OS** | Linux, macOS, Windows |
 | **Rust** | Not required (binary wheels for macOS, Linux, Windows) |
 
@@ -425,9 +425,15 @@ Authority starts broad at the root and is **attenuated** as it flows down the de
 
 Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### TypeScript SDK (Help Wanted)
+### TypeScript SDK (beta)
 
-We're planning a TypeScript/Node SDK. If you're interested in leading or contributing to this effort, open an issue or email us at [dev@tenuo.ai](mailto:dev@tenuo.ai).
+The TypeScript SDK is in beta on npm. See [`tenuo-ts/README.md`](tenuo-ts/README.md).
+
+```bash
+npm i @tenuo/core@beta
+```
+
+Requires Node 20+. The TypeScript API may still move before its first stable tag.
 
 **Security issues**: Email security@tenuo.ai with PGP ([key](./SECURITY_PUBKEY.asc), not public issues).
 

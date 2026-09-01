@@ -30,6 +30,7 @@ Complete API documentation for the Tenuo Python SDK. For wire format details, se
 - [Testing Utilities](#testing-utilities)
 - [CLI](#cli)
 - [Performance Benchmarks](#performance-benchmarks)
+- [Authorization receipts](#authorization-receipts)
 - [Exceptions](#exceptions)
 - [Audit Logging](#audit-logging)
 - [Type Protocols](#type-protocols)
@@ -1884,6 +1885,23 @@ capabilities:
     operation: Exact("SELECT")
 ```
 
+### `tenuo receipt verify`
+
+Verify one signed authorization receipt and describe what it establishes.
+
+```bash
+tenuo receipt verify <receipt-or-path> [--root HEX] [--authorizer HEX] [--args JSON]
+```
+
+### `tenuo receipt chain`
+
+Walk a JSONL receipt stream (as written by `FileReceiptSink` / `JournalEmitter`)
+and report missing links.
+
+```bash
+tenuo receipt chain receipts.jsonl [--authorizer HEX] [--verbose]
+```
+
 ### `tenuo extract`
 
 Test gateway argument extraction rules against a sample request.
@@ -1899,21 +1917,80 @@ tenuo extract \
 
 ---
 
+## Authorization receipts
+
+Signed authorization receipts are **opt-in**. Nothing is signed unless a
+`ControlPlaneClient` is constructed with a `receipt_sink` (or an explicit
+`receipt_emitter`). A configured sink never denies a tool call: authorization
+has already been decided.
+
+```python
+from tenuo.control_plane import ControlPlaneClient
+from tenuo.receipts import InMemoryReceiptSink, JournalEmitter
+
+sink = InMemoryReceiptSink()
+client = ControlPlaneClient(
+    url="https://cp.example",
+    api_key=api_key,
+    authorizer_name="payments-worker",
+    receipt_sink=sink,  # defaults to DeferredEmitter(sink, maxsize=256)
+)
+
+# ... enforcement runs; receipts enqueue asynchronously ...
+
+assert client.flush_receipts()  # wait for signing + delivery before reading
+for receipt_hex in sink.receipts:
+    print(receipt_hex)
+```
+
+| Parameter | Default | Contract |
+|-----------|---------|----------|
+| `receipt_sink=` | unset (no receipts) | Wraps in `DeferredEmitter(sink, maxsize=256)`. ~0.5 µs on the hot path. A crash loses at most `maxsize` receipts. |
+| `receipt_emitter=JournalEmitter(path)` | — | Crash-durable posture. The receipt is in the page cache before `emit` returns. Readable by `tenuo receipt chain`. |
+| `flush_receipts(timeout=10.0)` | — | Blocks until every receipt emitted so far is signed and delivered. Returns `False` on timeout. Call this before reading an in-memory sink. |
+| `shutdown()` | — | Drains the deferred worker. |
+
+Trust binding is automatic when the `EnforcementResult` carries the
+`authorizer` that decided. Without that (or a prior `bind_authorizer()`), a
+configured sink warns once and emits nothing.
+
+Receipts cover decisions made over **presented, parseable authority**. A call
+with no warrant, or bytes that would not decode, stays in the audit stream.
+
+Inspect artifacts with `tenuo receipt verify` and `tenuo receipt chain`.
+Byte-exact vectors live in [test-vectors A.30](./spec/test-vectors.md#a30-authorization-receipts).
+
+---
+
 ## Exceptions
 
 ```python
-from tenuo import TenuoError, ScopeViolation, WarrantViolation
+from tenuo import TenuoError, ScopeViolation, AuthorizationDenied, ConfigurationError
+from tenuo.exceptions import UntrustedRoot, ToolNotAuthorized, ConstraintViolation
 ```
 
 ### Exception Hierarchy
 
 ```
 TenuoError (base)
-├── ScopeViolation        # Authorization failed (formerly AuthorizationError)
-├── WarrantViolation      # Warrant creation/validation failed (formerly WarrantError)
-├── ConstraintError       # Invalid constraint definition
-└── ConfigurationError    # Invalid configuration
+├── ScopeViolation          # Authorization scope exceeded
+│   ├── ToolNotAuthorized   # error_type="tool_not_allowed" (not constraint_violation)
+│   ├── ConstraintViolation # argument failed a warrant constraint
+│   └── ...
+├── ChainError
+│   └── UntrustedRoot       # error_type="untrusted_issuer", wire 1406 / untrusted-root
+├── ConstraintError         # Invalid constraint definition
+└── ConfigurationError      # Invalid configuration
 ```
+
+`UntrustedRoot` is not a signature failure. Hosts that previously caught
+`SignatureInvalid` for a foreign issuer, or correlated receipts on
+`pop-signature-invalid`, must switch to `UntrustedRoot` /
+`error_type="untrusted_issuer"` / wire `1406`.
+
+A request for a tool the warrant does not grant is `tool_not_allowed`
+(`ToolNotAuthorized`), not `constraint_violation`. Argument mismatches stay
+`constraint_violation`.
 
 ### `AuthorizationDenied` (Diff-Style Errors)
 

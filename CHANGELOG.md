@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Explorer test lockfile: `undici` 7.28.0 → 7.29.0** via npm override.
   jsdom transitive; not shipped in the Python/Rust SDKs.
 
-## [0.2.4] - 2026-08-31
+## [0.2.4] - 2026-09-01
 
 ### Breaking
 
@@ -193,6 +193,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Nexus (and Temporal activity) enforcement results now carry receipt-v1
+  context.** `verify_nexus_operation` and the Temporal activity interceptor
+  attach `authorizer`, `presented_chain`, `verified_pop`, and `pop_auth_args`
+  on the `EnforcementResult` passed to `emit_for_enforcement`. Native
+  receipt-v1 artifacts can be issued from those decisions; previously only
+  signed-event-derived receipts were possible because the authorizer and
+  presented chain were dropped.
 - **Distinct missing-tool denial category.** Requests for tools outside a
   warrant's capabilities now surface as `tool_not_allowed` instead of
   `constraint_violation` in authorizer audit events and Python enforcement.

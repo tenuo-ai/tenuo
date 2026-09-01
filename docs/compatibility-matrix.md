@@ -1,6 +1,6 @@
 # Integration Compatibility Matrix
 
-**Last Updated**: 2026-08-31
+**Last Updated**: 2026-09-01
 
 Tracks compatibility between Tenuo and upstream integration libraries.
 
@@ -13,7 +13,7 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 | **AutoGen** | 0.7.0 | 0.7+ latest | 0.7.5 | Stable | Validated in [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744) |
 | **LangChain** | 0.2.0 | 0.2+ latest | 1.2.23 | Stable | Validated in [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744) |
 | **LangGraph** | 0.2.0 | 0.2+ latest | 1.1.3 | Stable | Validated in [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/23964271744) |
-| **MCP** | 1.0.0 | 1.1+ | 1.1.3 | Stable | Model Context Protocol |
+| **MCP** | 1.0.0 | 1.x or 2.x | 1.x and 2.x | Stable | Python `tenuo.mcp` supports MCP SDK 1.x and 2.x (`mcp>=1.0`). TypeScript `@tenuo/mcp` uses the MCP SDK 2.x server package. |
 | **Google ADK** | 0.1.0 | 0.1+ | 0.1.2 | Beta | Early access |
 | **Temporal** | 1.23.0 | 1.x latest | 1.23.0+ | Stable | `tenuo[temporal]` requires `temporalio>=1.23` for `TenuoTemporalPlugin` (`SimplePlugin`); tested weekly via compatibility matrix (minimum + latest); replay safety verified across SDK versions; Nexus authorization additionally requires Temporal SDK/server Nexus support |
 
@@ -133,6 +133,7 @@ Last tested: [Run #23964271744](https://github.com/tenuo-ai/tenuo/actions/runs/2
 | LangChain | Pass (0.2.0) | Pass (1.2.23) | Not tested |
 | LangGraph | Pass (0.2.0) | Pass (1.1.3) | Not tested |
 | Temporal | Pass (1.23.0) | Pass (latest) | Not tested |
+| MCP | Pass (1.0.0) | Pass (1.x and 2.x) | Not tested |
 
 **Testing Cadence**:
 - Minimum versions: Weekly

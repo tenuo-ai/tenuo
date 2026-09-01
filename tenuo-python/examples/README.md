@@ -100,7 +100,7 @@ This demo shows Tenuo's key capabilities:
 ### Multi-Agent Delegation
 - **[orchestrator_worker.py](orchestrator_worker.py)**: **Core delegation pattern** - Shows how orchestrators attenuate warrants for workers. Demonstrates Tenuo's key value: authority that shrinks as it flows through the system. Essential for understanding multi-agent workflows.
 - **[delegation_patterns.py](delegation_patterns.py)**: Advanced delegation patterns including multi-hop chains and constraint narrowing.
-- **[delegation_receipts.py](delegation_receipts.py)**: Cryptographic delegation receipts for audit trails.
+- **[delegation_receipts.py](delegation_receipts.py)**: Warrant **delegation diffs** (preview before attenuation, SIEM-style JSON of what changed on the child warrant). This is not `receipt-v1` / `tenuo.receipts` — those are signed authorization-decision receipts. See `tenuo.receipts` and the API reference.
 
 ### Approval Gates (Human-in-the-Loop)
 - **[jit_warrant_demo/](jit_warrant_demo/)**: **JIT Warrant Demo** - Complete just-in-time warrant issuance with human multi-sig approval. Run with `python jit_warrant_demo/demo.py --simulate`.

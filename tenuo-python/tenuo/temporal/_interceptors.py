@@ -999,6 +999,9 @@ class TenuoActivityInboundInterceptor:
                 reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
                 constraint="max_chain_depth_exceeded",
                 start_ns=start_ns,
+                authorizer=self._authorizer,
+                presented_chain=[warrant],
+                pop_auth_args=args,
             )
             if self._config.on_denial == "raise" and not self._config.dry_run:
                 raise self._wrap_as_non_retryable(ChainValidationError(
@@ -1033,6 +1036,9 @@ class TenuoActivityInboundInterceptor:
                     reason=reason,
                     constraint="chain_header_invalid",
                     start_ns=start_ns,
+                    authorizer=self._authorizer,
+                    presented_chain=[warrant],
+                    pop_auth_args=args,
                 )
                 if self._config.on_denial == "raise" and not self._config.dry_run:
                     raise self._wrap_as_non_retryable(ChainValidationError(
@@ -1071,6 +1077,8 @@ class TenuoActivityInboundInterceptor:
 
         # Phases 9–13 run inside a single try/except so every failure path
         # funnels into phase 14 for unified fail-closed error mapping.
+        authorizer = self._authorizer
+        pop_bytes = None
         try:
             # -- 9. Retry-Aware Authorizer Selection --
             if info.attempt > 1 and self._retry_authorizer is not None:
@@ -1086,7 +1094,6 @@ class TenuoActivityInboundInterceptor:
                 authorizer = self._authorizer
 
             # -- 10. Proof-of-Possession Extraction --
-            pop_bytes = None
             pop_header = headers.get(TENUO_POP_HEADER)
             if pop_header:
                 try:
@@ -1162,6 +1169,10 @@ class TenuoActivityInboundInterceptor:
                 reason=str(auth_exc),
                 constraint=_constraint_label_from_auth_exc(auth_exc),
                 start_ns=start_ns,
+                authorizer=authorizer,
+                presented_chain=list(chain) if chain else [warrant],
+                verified_pop=pop_bytes,
+                pop_auth_args=args,
             )
             if _active_span is not None:
                 _active_span.set_attribute("tenuo.decision", "deny")
@@ -1193,6 +1204,10 @@ class TenuoActivityInboundInterceptor:
                     args=args,
                     reason=str(e),
                     start_ns=start_ns,
+                    authorizer=authorizer,
+                    presented_chain=list(chain) if chain else [warrant],
+                    verified_pop=pop_bytes,
+                    pop_auth_args=args,
                 )
                 if _active_span is not None:
                     _active_span.set_attribute("tenuo.decision", "deny")
@@ -1258,6 +1273,10 @@ class TenuoActivityInboundInterceptor:
             args=args,
             start_ns=start_ns,
             chain_result=chain_result,
+            authorizer=authorizer,
+            presented_chain=list(chain) if chain else [warrant],
+            verified_pop=pop_bytes,
+            pop_auth_args=args,
         )
 
         return await self._next.execute_activity(input)
@@ -1364,6 +1383,10 @@ class TenuoActivityInboundInterceptor:
         args: Dict[str, Any],
         start_ns: Optional[int] = None,
         chain_result: Optional[Any] = None,
+        authorizer: Optional[Any] = None,
+        presented_chain: Optional[List[Any]] = None,
+        verified_pop: Optional[bytes] = None,
+        pop_auth_args: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Emit audit event for allowed action."""
         import time
@@ -1389,7 +1412,12 @@ class TenuoActivityInboundInterceptor:
                 # user setting the flag still leaks plaintext arguments
                 # off-host.
                 arguments=self._redact_args(args),
-                warrant_id=getattr(warrant, "id", None)
+                warrant_id=getattr(warrant, "id", None),
+                chain_result=chain_result,
+                authorizer=authorizer,
+                presented_chain=presented_chain,
+                verified_pop=verified_pop,
+                pop_auth_args=pop_auth_args if pop_auth_args is not None else args,
             )
             try:
                 self._config.control_plane.emit_for_enforcement(
@@ -1493,6 +1521,10 @@ class TenuoActivityInboundInterceptor:
         reason: str,
         constraint: Optional[str] = None,
         start_ns: Optional[int] = None,
+        authorizer: Optional[Any] = None,
+        presented_chain: Optional[List[Any]] = None,
+        verified_pop: Optional[bytes] = None,
+        pop_auth_args: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Emit audit event for denied action."""
         import time
@@ -1530,6 +1562,12 @@ class TenuoActivityInboundInterceptor:
                 denial_reason=reason,
                 constraint_violated=constraint,
                 warrant_id=getattr(warrant, "id", None),
+                authorizer=authorizer,
+                presented_chain=presented_chain if presented_chain is not None else (
+                    [warrant] if warrant is not None else None
+                ),
+                verified_pop=verified_pop,
+                pop_auth_args=pop_auth_args if pop_auth_args is not None else args,
             )
             try:
                 self._config.control_plane.emit_for_enforcement(

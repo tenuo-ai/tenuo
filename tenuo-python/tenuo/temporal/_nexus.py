@@ -1306,6 +1306,7 @@ def _verify_nexus_operation(
         )
         raise pop_exc from exc
 
+    authorizer = None
     try:
         from tenuo_core import Authorizer
 
@@ -1343,6 +1344,8 @@ def _verify_nexus_operation(
             args,
             start_ns=start_ns,
             chain_result=chain_result,
+            authorizer=authorizer,
+            verified_pop=pop_bytes,
         )
     except _nexus_auth_error_types() as exc:
         _emit_nexus_control_plane_event(
@@ -1354,6 +1357,8 @@ def _verify_nexus_operation(
             args,
             start_ns=start_ns,
             exc=exc,
+            authorizer=authorizer,
+            verified_pop=pop_bytes,
         )
         raise
     except Exception as exc:
@@ -1361,6 +1366,23 @@ def _verify_nexus_operation(
             f"Nexus operation authorization failed for {tool_name!r}: {exc}"
         ) from exc
     return warrant
+
+
+def _presented_nexus_chain(
+    warrant: Optional[Any],
+    chain: Optional[List[Any]],
+) -> Optional[List[Any]]:
+    """Warrants presented with the call, for native receipt-v1 emission.
+
+    Allows carry a ``chain_result``; denials do not. Receipts still need the
+    presented chain (and the authorizer that decided) so a Nexus refusal can
+    be signed as a receipt rather than only as a signed-event-derived record.
+    """
+    if chain:
+        return list(chain)
+    if warrant is not None:
+        return [warrant]
+    return None
 
 
 def _emit_nexus_control_plane_event(
@@ -1374,6 +1396,8 @@ def _emit_nexus_control_plane_event(
     start_ns: int,
     chain_result: Optional[Any] = None,
     exc: Optional[BaseException] = None,
+    authorizer: Optional[Any] = None,
+    verified_pop: Optional[bytes] = None,
 ) -> None:
     latency_s = (time.perf_counter_ns() - start_ns) / 1e9
     redacted_args = _redact_nexus_args(config, args)
@@ -1388,6 +1412,7 @@ def _emit_nexus_control_plane_event(
         from tenuo._enforcement import EnforcementResult
 
         latency_us = int(latency_s * 1e6)
+        presented_chain = _presented_nexus_chain(warrant, chain)
         if exc is None:
             result = EnforcementResult(
                 allowed=True,
@@ -1395,6 +1420,10 @@ def _emit_nexus_control_plane_event(
                 arguments=redacted_args,
                 warrant_id=getattr(warrant, "id", None),
                 chain_result=chain_result,
+                authorizer=authorizer,
+                presented_chain=presented_chain,
+                verified_pop=verified_pop,
+                pop_auth_args=args,
             )
             control_plane.emit_for_enforcement(
                 result,
@@ -1404,7 +1433,16 @@ def _emit_nexus_control_plane_event(
             )
             return
 
-        result = _nexus_denial_result(exc, tool_name, args, redacted_args, warrant)
+        result = _nexus_denial_result(
+            exc,
+            tool_name,
+            args,
+            redacted_args,
+            warrant,
+            authorizer=authorizer,
+            presented_chain=presented_chain,
+            verified_pop=verified_pop,
+        )
         warrant_stack_b64 = _encode_nexus_warrant_stack_for_denial(warrant, chain)
         control_plane.emit_for_enforcement(
             result,
@@ -1625,6 +1663,10 @@ def _nexus_denial_result(
     args: Dict[str, Any],
     redacted_args: Dict[str, Any],
     warrant: Optional[Any],
+    *,
+    authorizer: Optional[Any] = None,
+    presented_chain: Optional[List[Any]] = None,
+    verified_pop: Optional[bytes] = None,
 ) -> Any:
     from tenuo._enforcement import (
         EnforcementResult,
@@ -1632,6 +1674,12 @@ def _nexus_denial_result(
     )
 
     warrant_id = getattr(warrant, "id", None)
+    receipt_fields = {
+        "authorizer": authorizer,
+        "presented_chain": presented_chain,
+        "verified_pop": verified_pop,
+        "pop_auth_args": args,
+    }
     if isinstance(exc, TemporalConstraintViolation):
         return EnforcementResult(
             allowed=False,
@@ -1641,6 +1689,7 @@ def _nexus_denial_result(
             constraint_violated=exc.constraint,
             error_type="constraint_violation",
             warrant_id=warrant_id,
+            **receipt_fields,
         )
     if isinstance(exc, PopVerificationError):
         return EnforcementResult(
@@ -1650,6 +1699,7 @@ def _nexus_denial_result(
             denial_reason=str(exc),
             error_type="invalid_pop",
             warrant_id=warrant_id,
+            **receipt_fields,
         )
     if isinstance(exc, ChainValidationError):
         return EnforcementResult(
@@ -1659,6 +1709,7 @@ def _nexus_denial_result(
             denial_reason=str(exc),
             error_type="chain_invalid",
             warrant_id=warrant_id,
+            **receipt_fields,
         )
 
     result = _enforcement_result_from_chain_error_with_logging(
@@ -1670,6 +1721,10 @@ def _nexus_denial_result(
         warrant=warrant,
     )
     result.arguments = redacted_args
+    result.authorizer = authorizer
+    result.presented_chain = presented_chain
+    result.verified_pop = verified_pop
+    result.pop_auth_args = args
     return result
 
 

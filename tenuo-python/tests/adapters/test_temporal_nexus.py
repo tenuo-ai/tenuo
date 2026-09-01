@@ -351,6 +351,15 @@ def test_verify_nexus_operation_emits_control_plane_allow(
         "order_id": "[REDACTED]",
         "amount_cents": "[REDACTED]",
     }
+    assert entry["result"].authorizer is not None
+    assert entry["result"].presented_chain is not None
+    assert len(entry["result"].presented_chain) == 1
+    assert entry["result"].presented_chain[0].to_bytes() == nexus_warrant.to_bytes()
+    assert entry["result"].verified_pop is not None
+    assert entry["result"].pop_auth_args == {
+        "order_id": "ord_123",
+        "amount_cents": 2500,
+    }
 
 
 def test_verify_nexus_operation_control_plane_failure_does_not_deny_allow(
@@ -424,6 +433,102 @@ def test_verify_nexus_operation_emits_control_plane_deny_before_reraising(
         "order_id": "[REDACTED]",
         "amount_cents": "[REDACTED]",
     }
+    assert entry["result"].authorizer is not None
+    assert entry["result"].presented_chain is not None
+    assert len(entry["result"].presented_chain) == 1
+    assert entry["result"].presented_chain[0].to_bytes() == nexus_warrant.to_bytes()
+    assert entry["result"].verified_pop is not None
+    assert entry["result"].pop_auth_args == {
+        "order_id": "ord_999",
+        "amount_cents": 2500,
+    }
+
+
+def test_verify_nexus_operation_emits_native_receipt_v1(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    pytest.importorskip("tenuo_core")
+    import tenuo_core
+    from tenuo.control_plane import ControlPlaneClient
+    from tenuo.receipts import InMemoryReceiptSink
+
+    root_key, agent_key = nexus_keys
+    input = RefundInput("ord_123", 2500)
+    sink = InMemoryReceiptSink()
+    control_plane = ControlPlaneClient(
+        url="http://127.0.0.1:1",
+        api_key="k",
+        authorizer_name="nexus-receipt-test",
+        receipt_sink=sink,
+    )
+    ctx = SimpleNamespace(
+        request_id="req-nexus-native-receipt",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        control_plane=control_plane,
+    )
+
+    verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+    assert control_plane.flush_receipts(), "deferred emitter must drain"
+
+    assert len(sink.receipts) == 1
+    payload = tenuo_core.verify_receipt(sink.receipts[0])
+    assert payload.outcome == "allow"
+    assert payload.action == nexus_tool_name(
+        "billing-prod", "refund", service="BillingService"
+    )
+    assert payload.request_id == "req-nexus-native-receipt"
+
+    deny_sink = InMemoryReceiptSink()
+    deny_plane = ControlPlaneClient(
+        url="http://127.0.0.1:1",
+        api_key="k",
+        authorizer_name="nexus-receipt-deny",
+        receipt_sink=deny_sink,
+    )
+    bad_input = RefundInput("ord_999", 2500)
+    deny_ctx = SimpleNamespace(
+        request_id="req-nexus-native-receipt-deny",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=bad_input,
+        ),
+    )
+    deny_config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        control_plane=deny_plane,
+    )
+
+    with pytest.raises(ConstraintViolation):
+        verify_nexus_operation(deny_ctx, bad_input, deny_config, endpoint="billing-prod")
+    assert deny_plane.flush_receipts(), "deferred emitter must drain"
+
+    assert len(deny_sink.receipts) == 1
+    deny_payload = tenuo_core.verify_receipt(deny_sink.receipts[0])
+    assert deny_payload.outcome == "deny"
+    assert deny_payload.request_id == "req-nexus-native-receipt-deny"
 
 
 def test_verify_nexus_operation_rejects_missing_endpoint(
