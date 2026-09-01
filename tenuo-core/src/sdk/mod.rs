@@ -29,3 +29,6 @@ pub use guard::{
 pub use signer::{
     DelegationSigningRequest, HolderSigner, LocalSigner, PopSigningRequest, SignerError,
 };
+
+#[cfg(test)]
+mod spec_invariants;
