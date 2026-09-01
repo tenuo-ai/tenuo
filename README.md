@@ -35,8 +35,8 @@ pip install tenuo
 # TypeScript SDK (beta, Node 20+)
 npm i @tenuo/core@beta
 
-# Rust (core crate)
-cargo add tenuo
+# Rust SDK
+cargo add tenuo --features sdk
 ```
 
 TypeScript details: [`tenuo-ts/README.md`](tenuo-ts/README.md). Rust details: the [Rust section](#rust) below.
@@ -227,7 +227,7 @@ Tenuo uses the same warrant format and attenuation rules everywhere. Choose the 
 
 | Enforcement point | Use it when | Integrations | Start here |
 |-------------------|-------------|--------------|------------|
-| **Inside the agent runtime** | You own the application and want the shortest path to enforcement | Python functions, OpenAI, LangChain, LangGraph, Google ADK, CrewAI, AutoGen | [`@guard`](./docs/quickstart.md), [OpenAI](./docs/openai.md), [framework guides](#documentation) |
+| **Inside the agent runtime** | You own the application and want the shortest path to enforcement | Python functions, OpenAI, LangChain, LangGraph, Google ADK, CrewAI, AutoGen, Rust `Guard` | [`@guard`](./docs/quickstart.md), [OpenAI](./docs/openai.md), [Rust](#rust), [framework guides](#documentation) |
 | **At the MCP tool server** | Agents call tools across a process or vendor boundary | FastMCP, official MCP SDK, custom MCP servers | [MCP guide](./docs/mcp.md) |
 | **At an API or service edge** | Multiple agent runtimes share the same downstream services | FastAPI, authorizer sidecar, gateway, Kubernetes | [FastAPI](./docs/fastapi.md), [Kubernetes](./docs/kubernetes.md) |
 | **Inside a durable workflow** | Authority must survive retries, queues, and long-running execution | Temporal | [Temporal guide](./docs/temporal-reference.md) |
@@ -334,24 +334,42 @@ Self-hosted Tenuo already verifies warrants and signed revocation lists (SRLs) l
 
 ## Rust
 
-Building an authorizer sidecar, gateway, or high-throughput service in
-Rust? Use the core crate directly.
-
-What you get in Rust:
-
-- Warrant minting, derivation, and verification
-- Monotonic attenuation enforcement across delegation hops
-- Typed constraint evaluation at execution time
-- Holder Proof of Possession (PoP) verification
-- Signed receipt generation for allow/deny decisions (opt-in `receipts` feature)
+The core crate is the protocol. The `sdk` feature adds the enforcement surface: a guard that checks a call before it runs, an authority that binds a warrant chain to a signing key, cryptographic delegation, an observe mode for assessment periods, and MCP and HTTP transports.
 
 ```toml
 [dependencies]
-tenuo = "0.2.4"
+tenuo = { version = "0.2.4", features = ["sdk"] }
 ```
 
-Use the Rust API when you need a language-native enforcement boundary
-without Python runtime dependencies.
+```rust
+use std::time::Duration;
+use tenuo::sdk::prelude::*;
+use tenuo::{args, constraints};
+
+// `root` and `holder` are SigningKeys. In production the root key lives in
+// your control plane and the warrant arrives already minted.
+let warrant = Warrant::builder()
+    .capability("read_file", constraints! { "path" => Pattern::new("/data/*")? })
+    .holder(holder.public_key())
+    .ttl(Duration::from_secs(300))
+    .build(&root)?;
+
+let (guard, authority) = Tenuo::local()
+    .trusted_root(root.public_key())
+    .chain(vec![warrant])
+    .signer(holder)
+    .revocation(RevocationMode::TtlOnly { max_lifetime: Duration::from_secs(600) })
+    .build()?;
+
+let call = Call::owned("read_file", args! { "path" => "/data/report.csv" })?;
+let out = guard.guard(&authority, &call, |_| read_file("/data/report.csv"))?;
+```
+
+The closure runs only after an allow. A call outside the constraint is denied before it runs, with the same guarantees as the Python `@guard`. A guard with no trust root or no revocation policy does not compile.
+
+Features, all off by default: `sdk`, `mcp-transport`, `http-transport`, `async`, `receipts`, `otel`, `test-utils`. The default build gains no dependency.
+
+Use Rust for authorizer sidecars, gateways, MCP servers built on `rmcp`, and any service that needs enforcement without a Python runtime.
 
 - API docs: [docs.rs/tenuo](https://docs.rs/tenuo)
 - Security model: [tenuo.ai/security](https://tenuo.ai/security)
@@ -395,6 +413,7 @@ Tenuo is Apache-2.0 and built in the open. The core is Rust, with Python and Typ
 
 - **Framework integrations.** Adapters live in `tenuo-python/tenuo/`. The [integration guide](tenuo-python/docs/integration-guide.md) covers the required API patterns and invariant tests. [OpenAI](tenuo-python/tenuo/openai.py) and [Google ADK](tenuo-python/tenuo/google_adk/guard.py) are good templates.
 - **Constraint types.** There are 11 today. A new one has to parse input the same way the target system does.
+- **The Rust SDK.** New in 0.2.4. Adapters for Rust agent frameworks are open ground.
 - **The TypeScript SDK.** It is in beta and needs real-world use.
 - **Docs and examples.** If a guide confused you, that is a bug worth filing.
 
