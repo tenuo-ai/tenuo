@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **TypeScript MCP examples: `@modelcontextprotocol/sdk` 1.25.1 → 1.26.0.**
+  Clears GHSA-8r9q-7v3j-jr4g (ReDoS) and GHSA-345p-7cg4-v4c7 (cross-client
+  response leak when a server/transport is reused). DevDependency of
+  `@tenuo/core` only; `@tenuo/mcp` already uses the v2 server package.
+- **Explorer test lockfile: `undici` 7.28.0 → 7.29.0** via npm override.
+  jsdom transitive; not shipped in the Python/Rust SDKs.
+
 ## [0.2.4] - 2026-08-31
 
 ### Breaking
