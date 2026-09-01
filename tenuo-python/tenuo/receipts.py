@@ -10,6 +10,31 @@ A sink must never deny a tool call: authorization has already been decided by
 the time a receipt exists. Sink failures are therefore isolated, but unlike a
 dropped audit event they are *reported* — a silent evidence gap is the failure
 mode worth engineering against.
+
+What qualifies a decision for a receipt
+---------------------------------------
+
+All three, or no receipt is produced:
+
+1. **A sink is configured.** Receipts are opt-in.
+2. **The decision was made over presented, parseable authority** — a warrant
+   chain that decoded. Allows carry it as the verification result; denials as
+   ``presented_chain``. Presented is not the same as *valid*: a chain from an
+   untrusted root, an expired chain, a constraint miss — all qualify, and the
+   receipt's own embedded chain then corroborates the refusal. What does not
+   qualify is a call with no warrant at all, or bytes that would not decode:
+   those were turned away at the door, not decided over authority, and there
+   is nothing for a receipt to commit to. They stay in the audit stream.
+3. **The trust context is known** — the client is bound to the authorizer
+   that decided, automatically when the result carries it, or via
+   ``bind_authorizer``. A sink configured with no way to bind warns once and
+   emits nothing: an enforcement point that cannot say what it trusted has
+   nothing worth signing.
+
+Note the bar in (2) is a *parseable* warrant, which any caller can mint —
+denial-receipt volume is therefore attacker-influenceable, like audit-event
+volume. Unlike audit events, receipts do not drop under pressure by design;
+bound your sink accordingly (``InMemoryReceiptSink`` counts what it evicts).
 """
 
 from __future__ import annotations
