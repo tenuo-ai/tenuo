@@ -111,17 +111,20 @@ pub use revocation_tracker::{
 };
 #[cfg(any(feature = "mcp-transport", feature = "http-transport"))]
 pub use sdk::transport::TransportError;
-#[cfg(feature = "async")]
-pub use sdk::{AsyncHolderSigner, AttemptControl};
+#[cfg(feature = "test-utils")]
+pub use sdk::FixedClock;
 #[cfg(feature = "sdk")]
 pub use sdk::{
-    AuthorizationAttempt, AuthorizedCall, Call, Decision, DecisionMetadata, DelegationProfile,
-    Denial, DenialReporting, Diagnostics, Guard, GuardBuildError, GuardError, HolderSigner,
-    LocalSigner, ObservationRecord, ObserveBuildError, ObserveError, Observed, ObservedOutcome,
-    ObservingGuard, ObservingGuardBuilder, OwnedReceivedAuthorization, PresentedAuthority,
-    PresentedRequest, ReceivedAuthorization, Retryability, RevocationMode, SdkDenialKind, Tenuo,
+    ApprovalError, ApprovalProvider, AuthorizationAttempt, AuthorizedCall, Call, Clock, Decision,
+    DecisionMetadata, DelegationProfile, Denial, DenialReporting, Diagnostics, Guard,
+    GuardBuildError, GuardError, HolderSigner, LocalApprovalSigner, LocalSigner, ObservationRecord,
+    ObserveBuildError, ObserveError, Observed, ObservedOutcome, ObservingGuard,
+    ObservingGuardBuilder, OwnedReceivedAuthorization, PresentedAuthority, PresentedRequest,
+    ReceivedAuthorization, Retryability, RevocationMode, SdkDenialKind, SystemClock, Tenuo,
     TenuoBuildError, VerifiedProjection,
 };
+#[cfg(feature = "async")]
+pub use sdk::{AsyncHolderSigner, AttemptControl};
 #[cfg(feature = "receipts")]
 pub use sdk::{
     EvidencePolicy, LocalReceiptSigner, MemoryReceiptSink, ReceiptRef, ReceiptSigner,

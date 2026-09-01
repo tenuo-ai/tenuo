@@ -43,6 +43,44 @@ authorizer.verify_and_authorize(
 )?;
 ```
 
+## Rust SDK (`sdk` feature)
+
+Default-off. `Guard` enforces; `ObservingGuard` only assesses and is not a substitute.
+
+```rust
+use tenuo::{args, Call, RevocationMode, Tenuo};
+use std::time::Duration;
+
+let (guard, authority) = Tenuo::local()
+    .trusted_root(root)
+    .chain(chain)
+    .signer(holder_key)
+    .revocation(RevocationMode::TtlOnly { max_lifetime: Duration::from_secs(300) })
+    .build()?;
+
+let args = args! { "path" => "/data/report.txt" };
+let call = Call::borrowed("read_file", &args);
+guard.guard(&authority, &call, |_authorized| do_read())?;
+```
+
+An enforcement point uses `Tenuo::enforcement()` and `Guard::guard_received` on a `ReceivedAuthorization` decoded from `_meta.tenuo` or HTTP headers. The holder path always signs; the received path never does.
+
+| Feature | Description |
+|---------|-------------|
+| `sdk` | Guard, Call, delegation, observe |
+| `mcp-transport` | `params._meta.tenuo` encode/decode |
+| `http-transport` | Signed header binding |
+| `receipts` | Authorization receipts (draft `receipt-v1`) |
+| `async` | Async Guard methods and `AttemptControl` |
+| `otel` | OpenTelemetry API spans only; no exporter |
+| `test-utils` | `FixedClock` — not for production |
+
+Run the MCP hop demo:
+
+```bash
+cd tenuo-core && cargo run --example sdk_mcp_demo --features sdk,mcp-transport
+```
+
 ## Features
 
 | Feature | Description |

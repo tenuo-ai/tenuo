@@ -2,9 +2,14 @@
 //!
 //! Default-off (`sdk` feature). Holder-sign and received-verify share one
 //! `Authorizer` decision. Transport bindings are extra features.
+//!
+//! `ObservingGuard` is an assessment window, not enforcement. Receipts, async,
+//! and OpenTelemetry are separate default-off features.
 
+mod approvals;
 mod authority;
 mod call;
+mod clock;
 mod decision;
 mod delegation;
 mod diagnostics;
@@ -25,11 +30,15 @@ mod telemetry;
 #[cfg(any(feature = "mcp-transport", feature = "http-transport"))]
 pub mod transport;
 
+pub use approvals::{ApprovalError, ApprovalProvider, LocalApprovalSigner};
 pub use authority::{
     AuthorityError, CapabilityView, OwnedReceivedAuthorization, PresentedAuthority,
     ReceivedAuthorization,
 };
 pub use call::{ArgumentError, Call, VerifiedProjection};
+#[cfg(feature = "test-utils")]
+pub use clock::FixedClock;
+pub use clock::{Clock, SystemClock};
 pub use decision::{
     Decision, DecisionMetadata, Denial, DenialReporting, GuardError, Retryability, SdkDenialKind,
 };

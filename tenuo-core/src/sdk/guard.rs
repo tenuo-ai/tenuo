@@ -1,11 +1,13 @@
+use super::approvals::{ApprovalError, ApprovalProvider};
 use super::authority::{PresentedAuthority, ReceivedAuthorization};
 use super::call::Call;
+use super::clock::{Clock, SystemClock};
 use super::decision::{
     Decision, DecisionMetadata, Denial, DenialReporting, GuardError, Retryability, SdkDenialKind,
 };
 use super::diagnostics::Diagnostics;
 use super::signer::PopSigningRequest;
-use crate::approval::SignedApproval;
+use crate::approval::{ApprovalRequest, SignedApproval};
 use crate::constraints::ConstraintValue;
 use crate::crypto::Signature;
 use crate::planes::Authorizer;
@@ -14,9 +16,10 @@ use crate::verification::{
     RevocationSnapshot, RevocationState, VerificationContext, VerificationInstant,
 };
 use crate::warrant::Warrant;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(feature = "receipts")]
@@ -41,6 +44,8 @@ pub struct Guard {
     authorizer: Authorizer,
     revocation: ResolvedRevocation,
     denial_reporting: DenialReporting,
+    clock: Arc<dyn Clock>,
+    approval_provider: Option<Arc<dyn ApprovalProvider>>,
     #[cfg(feature = "receipts")]
     evidence: EvidenceConfig,
 }
@@ -188,10 +193,46 @@ impl Guard {
         Ok(authorized.as_decision())
     }
 
+    pub(crate) fn now(&self) -> DateTime<Utc> {
+        self.clock.now()
+    }
+
+    /// Local non-blocking lookup. Never invoked from `guard` / `check`.
+    pub fn resolve_approvals(
+        &self,
+        request: &ApprovalRequest,
+    ) -> Result<Vec<SignedApproval>, ApprovalError> {
+        let provider = self
+            .approval_provider
+            .as_ref()
+            .ok_or(ApprovalError::NoProvider)?;
+        provider.approvals_for(request)
+    }
+
+    #[cfg(feature = "async")]
+    pub async fn resolve_approvals_async(
+        &self,
+        request: &ApprovalRequest,
+        control: &super::async_api::AttemptControl,
+    ) -> Result<Vec<SignedApproval>, ApprovalError> {
+        if control.is_cancelled() {
+            return Err(ApprovalError::Unavailable);
+        }
+        self.resolve_approvals(request)
+    }
+
     pub(crate) fn record_deny(&self, denial: &Denial) {
+        match self.denial_reporting {
+            DenialReporting::Error => {
+                eprintln!("tenuo deny [{}]: {}", denial.code(), denial);
+            }
+            DenialReporting::Warn => {
+                eprintln!("tenuo deny [{}] (warn): {}", denial.code(), denial);
+            }
+            DenialReporting::Debug => {}
+        }
         #[cfg(feature = "otel")]
         super::telemetry::record_authorize("deny", denial.code(), false);
-        let _ = denial;
     }
 
     #[cfg(feature = "receipts")]
@@ -274,7 +315,7 @@ impl Guard {
         authority: &'a PresentedAuthority,
         attempt: &AuthorizationAttempt<'a, 'a>,
     ) -> Result<AuthorizedCall<'a>, Denial> {
-        let as_of = Utc::now();
+        let as_of = self.now();
         let instant = VerificationInstant::new(as_of);
 
         if !authority.signer_matches_leaf() {
@@ -319,7 +360,7 @@ impl Guard {
         received: &'a ReceivedAuthorization<'a>,
         call: &'a Call<'a>,
     ) -> Result<AuthorizedCall<'a>, Denial> {
-        let instant = VerificationInstant::new(Utc::now());
+        let instant = VerificationInstant::new(self.now());
         self.decide(
             received.chain(),
             received.signature().clone(),
@@ -535,6 +576,8 @@ pub struct GuardBuilder {
     revocation: Option<RevocationMode>,
     tracker: Option<std::sync::Arc<RevocationTracker>>,
     denial_reporting: DenialReporting,
+    clock: Option<Arc<dyn Clock>>,
+    approval_provider: Option<Arc<dyn ApprovalProvider>>,
     #[cfg(feature = "receipts")]
     evidence: EvidencePolicy,
     #[cfg(feature = "receipts")]
@@ -564,6 +607,18 @@ impl GuardBuilder {
 
     pub fn denial_reporting(mut self, reporting: DenialReporting) -> Self {
         self.denial_reporting = reporting;
+        self
+    }
+
+    pub fn approval_provider(mut self, provider: Arc<dyn ApprovalProvider>) -> Self {
+        self.approval_provider = Some(provider);
+        self
+    }
+
+    /// Test and forensic clocks only. Production uses [`SystemClock`].
+    #[cfg(feature = "test-utils")]
+    pub fn clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.clock = Some(clock);
         self
     }
 
@@ -653,6 +708,8 @@ impl GuardBuilder {
             authorizer,
             revocation,
             denial_reporting: self.denial_reporting,
+            clock: self.clock.unwrap_or_else(|| Arc::new(SystemClock)),
+            approval_provider: self.approval_provider,
             #[cfg(feature = "receipts")]
             evidence,
         })

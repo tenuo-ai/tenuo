@@ -750,3 +750,87 @@ fn s12_best_effort_receipt_failure_does_not_deny() {
     let decision = guard.check(&presented, &call).expect("S12: still allow");
     assert!(decision.receipt.is_some());
 }
+
+/// S10: a provider outage is not approval-required.
+#[test]
+fn s10_provider_outage_is_not_approval_required() {
+    use super::approvals::{ApprovalError, ApprovalProvider};
+    use crate::approval::{ApprovalRequest, SignedApproval};
+
+    struct Down;
+    impl ApprovalProvider for Down {
+        fn approvals_for(&self, _: &ApprovalRequest) -> Result<Vec<SignedApproval>, ApprovalError> {
+            Err(ApprovalError::Unavailable)
+        }
+    }
+
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let approver = SigningKey::generate();
+    let mut gates = ApprovalGateMap::new();
+    gates.insert("sensitive".into(), ToolApprovalGate::whole_tool());
+    let warrant = Warrant::builder()
+        .capability("sensitive", ConstraintSet::new())
+        .holder(holder.public_key())
+        .ttl(Duration::from_secs(300))
+        .required_approvers(vec![approver.public_key()])
+        .min_approvals(1)
+        .extension(
+            "tenuo.approval_gates",
+            encode_approval_gate_map(&gates).unwrap(),
+        )
+        .build(&issuer)
+        .unwrap();
+    let mut authorizer = Authorizer::new();
+    authorizer.add_trusted_root(issuer.public_key());
+    let guard = Guard::builder()
+        .authorizer(authorizer)
+        .revocation(RevocationMode::TtlOnly {
+            max_lifetime: Duration::from_secs(3600),
+        })
+        .approval_provider(Arc::new(Down))
+        .build()
+        .unwrap();
+    let presented = authority(vec![warrant], holder);
+    let args = HashMap::new();
+    let call = Call::borrowed("sensitive", &args);
+    let denial = guard.check(&presented, &call).err().unwrap();
+    let request = denial.approval_request().cloned().expect("core request");
+    let err = guard.resolve_approvals(&request).err().unwrap();
+    let mapped = Denial::from(err);
+    assert_eq!(
+        mapped.sdk_kind(),
+        Some(SdkDenialKind::ApprovalProviderUnavailable)
+    );
+    assert_eq!(mapped.retryability(), Retryability::AfterBackoff);
+    assert_ne!(mapped.protocol_code(), Some(ErrorCode::ApprovalRequired));
+    assert!(!mapped.needs_approval());
+}
+
+/// S28: a FixedClock determines expiry for the whole attempt.
+#[cfg(feature = "test-utils")]
+#[test]
+fn s28_fixed_clock_determines_expiry() {
+    use super::clock::FixedClock;
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let warrant = mint(&issuer, &holder, "read", Duration::from_secs(60));
+    let issued = warrant.issued_at();
+    let mut authorizer = Authorizer::new();
+    authorizer.add_trusted_root(issuer.public_key());
+    authorizer.set_clock_tolerance(chrono::Duration::zero());
+    let future = issued + chrono::Duration::hours(2);
+    let guard = Guard::builder()
+        .authorizer(authorizer)
+        .revocation(RevocationMode::TtlOnly {
+            max_lifetime: Duration::from_secs(3600),
+        })
+        .clock(Arc::new(FixedClock::new(future)))
+        .build()
+        .unwrap();
+    let presented = authority(vec![warrant], holder);
+    let args = HashMap::new();
+    let call = Call::borrowed("read", &args);
+    let denial = guard.check(&presented, &call).err().unwrap();
+    assert_eq!(denial.protocol_code(), Some(ErrorCode::WarrantExpired));
+}

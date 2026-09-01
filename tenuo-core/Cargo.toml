@@ -38,6 +38,7 @@ http-transport = ["sdk"]
 async = ["sdk", "dep:async-trait"]
 receipts = ["sdk"]
 otel = ["sdk", "dep:opentelemetry"]
+test-utils = ["sdk"]
 
 # Python bindings
 python = ["pyo3"]
@@ -187,6 +188,11 @@ ci_group = "0.1"
 [[bench]]
 name = "warrant_benchmarks"
 harness = false
+
+[[example]]
+name = "sdk_mcp_demo"
+path = "examples/sdk_mcp_demo.rs"
+required-features = ["sdk", "mcp-transport"]
 
 [profile.release]
 lto = "thin"        # Faster than "true" (fat LTO), still good optimization

@@ -145,6 +145,16 @@ impl Denial {
     }
 }
 
+impl From<super::approvals::ApprovalError> for Denial {
+    fn from(err: super::approvals::ApprovalError) -> Self {
+        Self::sdk(
+            SdkDenialKind::ApprovalProviderUnavailable,
+            Retryability::AfterBackoff,
+            &err.to_string(),
+        )
+    }
+}
+
 impl fmt::Display for Denial {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.retryability {

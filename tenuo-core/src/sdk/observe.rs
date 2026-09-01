@@ -39,7 +39,7 @@ impl ObservingGuard {
         call: &Call<'_>,
         op: impl FnOnce() -> Result<T, E>,
     ) -> Result<Observed<T>, ObserveError<E>> {
-        if Utc::now() >= self.expires_at {
+        if self.guard.now() >= self.expires_at {
             return Err(ObserveError::Expired);
         }
 
