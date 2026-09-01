@@ -1674,12 +1674,6 @@ def _nexus_denial_result(
     )
 
     warrant_id = getattr(warrant, "id", None)
-    receipt_fields = {
-        "authorizer": authorizer,
-        "presented_chain": presented_chain,
-        "verified_pop": verified_pop,
-        "pop_auth_args": args,
-    }
     if isinstance(exc, TemporalConstraintViolation):
         return EnforcementResult(
             allowed=False,
@@ -1689,7 +1683,10 @@ def _nexus_denial_result(
             constraint_violated=exc.constraint,
             error_type="constraint_violation",
             warrant_id=warrant_id,
-            **receipt_fields,
+            authorizer=authorizer,
+            presented_chain=presented_chain,
+            verified_pop=verified_pop,
+            pop_auth_args=args,
         )
     if isinstance(exc, PopVerificationError):
         return EnforcementResult(
@@ -1699,7 +1696,10 @@ def _nexus_denial_result(
             denial_reason=str(exc),
             error_type="invalid_pop",
             warrant_id=warrant_id,
-            **receipt_fields,
+            authorizer=authorizer,
+            presented_chain=presented_chain,
+            verified_pop=verified_pop,
+            pop_auth_args=args,
         )
     if isinstance(exc, ChainValidationError):
         return EnforcementResult(
@@ -1709,7 +1709,10 @@ def _nexus_denial_result(
             denial_reason=str(exc),
             error_type="chain_invalid",
             warrant_id=warrant_id,
-            **receipt_fields,
+            authorizer=authorizer,
+            presented_chain=presented_chain,
+            verified_pop=verified_pop,
+            pop_auth_args=args,
         )
 
     result = _enforcement_result_from_chain_error_with_logging(
