@@ -12,263 +12,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking
 
 - **Untrusted root is no longer a signature failure.** Authorizer and
-  DataPlane now raise `Error::UntrustedRoot` (wire 1406 / `untrusted-root`)
-  when the root issuer is not in the trusted set. Python maps this to
-  `UntrustedRoot` / `error_type="untrusted_issuer"`, and denial receipts
-  write key 10 as `untrusted-root`. Hosts that caught `SignatureInvalid`
-  for a foreign issuer, or correlated receipts on `pop-signature-invalid`,
-  must switch.
-- **Temporal `TenuoPluginConfig` now rejects two previously ignored SRL settings.**
-  `revocation_refresh_secs` without `revocation_list_provider`, and passing both
-  `revocation_list` and `revocation_list_provider`, raise `ConfigurationError`
-  at worker construction. Audit worker configs before upgrade.
+  DataPlane raise `Error::UntrustedRoot` (wire 1406 / `untrusted-root`).
+  Python maps this to `UntrustedRoot` / `error_type="untrusted_issuer"`;
+  denial receipts write key 10 as `untrusted-root`. Hosts that caught
+  `SignatureInvalid` for a foreign issuer must switch.
+- **Temporal `TenuoPluginConfig` rejects two previously ignored SRL
+  settings.** `revocation_refresh_secs` without a provider, or both
+  `revocation_list` and `revocation_list_provider`, raise
+  `ConfigurationError` at worker construction.
 
 ### Added
 
-- **Signed authorization receipts.** Rust now issues and verifies
-  tamper-evident receipts for authorization decisions, including receipt-chain
-  links, trust-context commitments, request hashes, optional proof-of-possession
-  signatures, and deny decision codes. Python adds `tenuo.receipts` sinks,
-  `ControlPlaneClient(..., receipt_sink=...)`, automatic receipt trust binding
-  from signed enforcement results, and `tenuo receipt verify|chain` CLI helpers
-  for inspecting individual receipts or append-only JSONL streams. A bare
-  `receipt_sink=` defaults to `DeferredEmitter(sink, maxsize=256)`: ~0.5 µs
-  on the hot path, emission is asynchronous, and a crash loses at most
-  `maxsize` receipts — call `flush_receipts()` to wait for delivery
-  (`shutdown()` drains). Pass `receipt_emitter=JournalEmitter(path)` when
-  SIGKILL loss must be zero: ~17 µs p50 on the hot path, the receipt is in
-  the page cache before the call returns, and the file is readable by
-  `tenuo receipt chain`. The chain and the artifact are identical under
-  both; only the loss contract differs. The unbounded deferred queue is
-  not constructible. Receipt verification now rejects signed payloads that
-  omit required allow/deny evidence instead of accepting structurally
-  incomplete receipts.
-- **Rust SDK (`sdk` feature, default off).** A framework-independent enforcement
-  surface for native Rust processes: `Guard` (holder-sign and received-verify
-  paths converging on one decision), `PresentedAuthority`, `HolderSigner` /
-  `LocalSigner`, `Call` with `args!` / `constraints!` / JSON conversions,
-  `Tenuo::local()` and `Tenuo::enforcement()` typestate quickstarts,
-  cryptographic delegation (`delegate_local`, `delegate_to`, and guard-checked
-  `Guard::delegate`), `Diagnostics` for operator-side denial explanation, and a
-  `prelude`. Every decision comes from `Authorizer`; the SDK adapts and never
-  decides. Adds no dependency to the default build.
-- **Deterministic decision context.** `Authorizer::check_chain_with_context()`
-  takes one `VerificationContext` carrying the evaluation instant and the
-  revocation state that decides it, so a guard's resolved snapshot is the state
-  the decision uses. `Warrant::pop_preimage()` exposes canonical PoP bytes for
-  an explicit timestamp, making external signers implementable. `Clock` /
-  `VerificationInstant` commit each attempt to a single instant.
-  `check_chain_with_pop_args()` remains as a thin wrapper.
-- **Revocation tracker.** `RevocationTracker` with `InMemoryFloorStore` and
-  `FileFloorStore` enforces issuer verification, freshness deadlines, rollback,
-  and equivocation against a floor that survives process restart.
-- **Explicit revocation policy.** `RevocationMode::{TtlOnly, SignedSrl}` is
-  required at guard construction; there is no default and no fallback from
-  `SignedSrl` to `TtlOnly`. `TtlOnly` enforces its lifetime ceiling on every
-  warrant in the chain.
-- **Observe mode (`ObservingGuard`).** Runs the full decision, records
-  would-allow / would-deny / would-require-approval / would-deny-no-authority
-  without gating execution, requires an explicit expiry, and refuses to run once
-  expired. Records carry a configurable `ArgumentShapePolicy` summary — keys,
-  value classes, optionally hashes, never raw values — and are `Serialize`.
-  A distinct type from `Guard`, with no conversion between them.
-- **Transports (`mcp-transport`, `http-transport`).** `params._meta.tenuo`
-  encode/decode with size limits enforced before decoding and `strip_tenuo` for
-  servers, plus signed HTTP header binding. Both reuse an authorized call's
-  existing proof of possession and never sign again.
-- **Async surface (`async`).** `AsyncHolderSigner`, `AsyncRevocationProvider`,
-  `PresentedAsyncAuthority`, and `AttemptControl` (deadline and cancellation),
-  with async guard methods sharing the synchronous decision path. Remote signers
-  and remote revocation refresh are supported here; the synchronous surface
-  rejects a deadline it could not enforce.
-- **Receipts and telemetry (`receipts`, `otel`).** Authorization receipts with
-  configurable evidence policy, and OpenTelemetry API spans with no exporter.
-  `receipt-v1` remains draft.
-- **Test scaffolding (`test-utils`).** `sdk::test_utils::local_guard()` and
-  `local_guard_with()` return a `TestHarness` so downstream code can test its
-  own enforcement without assembling a root, chain, signer, and guard by hand.
-  `FixedClock` makes time-dependent outcomes deterministic.
-- **`Error::InvalidEvaluationInstant`.** An unrepresentable `as_of` is an error
-  rather than a silent substitution of the current time.
-
-- **Optional approval-gate display message.** `ToolApprovalGate` accepts
-  `message` (max 200 UTF-8 characters). When a gate fires, Rust resolves the
-  string once onto `ApprovalRequest.message` (default:
-  `Approval required for tool '{tool}'`) and every adapter copies that field:
-  `ApprovalRequired` / `ApprovalGateTriggered`, FastAPI 409 `detail.message`,
-  MCP `denial_reason`, Temporal `ApplicationError` body, authorizer JSON
-  `message`, A2A error data, and control-plane request JSON. Not part of
-  `request_hash`, receipts, or error codes. Retry wording stays in the docs.
-- **TypeScript SDK beta.** Published `@tenuo/core@0.2.4-beta.0` and
-  `@tenuo/mcp@0.2.4-beta.0` under the npm `beta` dist-tag. The packages ship
-  generated WASM glue from `tenuo-wasm`, run authorization decisions in the
-  Rust core, and include MCP attach/verify plus the optional MCP v2 server
-  adapter. The TypeScript API remains beta even though the Python/Rust/Docker
-  release is stable.
-- **Temporal Nexus authorization.**
-  Added `tenuo_execute_nexus_operation()`,
-  `tenuo_start_nexus_operation()`, `tenuo_nexus_headers()`,
-  `verify_nexus_operation()`, `@tenuo_nexus_operation(...)`,
-  `tenuo_nexus_signal_workflow()`, `tenuo_nexus_query_workflow()`,
-  `tenuo_nexus_execute_update()`, `tenuo_nexus_start_update()`,
-  `tenuo_forward_nexus_authority()`,
-  `tenuo_create_nexus_workflow_envelope()`, and
-  `tenuo_bootstrap_nexus_workflow()` for carrying delegated Tenuo authority
-  across Nexus operation headers and into workflow-backed Nexus operations.
-  Supports caller-side PoP signing plus handler-side warrant, chain, expiry,
-  revocation, operation, approval, and input-constraint verification.
-  Workflow-backed Nexus supports both exact caller-authority forwarding and
-  handler-created/attenuated workflow authority. Added a live cross-namespace
-  Nexus allow/deny smoke test for the real SDK header boundary and both
-  workflow-backed propagation modes. The Nexus guide now documents endpoint
-  name binding, workflow-id dedupe, multi-hop attenuation, Temporal platform
-  controls, polyglot input contracts, and sync router handlers that signal,
-  query, or update existing workflows.
-- **Temporal Nexus hardening.** Nexus handler verification now requires an
-  explicit endpoint, rejects caller-supplied reserved headers
-  case-insensitively, preserves typed Tenuo authorization exceptions for
-  Python callers, accepts pre-supplied approval signatures, adds opt-in strict
-  PoP replay checks with Nexus `request_id` scoping, and binds
-  workflow-envelope `key_id` values to the warrant holder before backing
-  workflows can sign downstream PoPs.
-- **Temporal Nexus DX hardening.** Tenuo-generated Nexus calls now include the
-  exact PoP tool name and input field list so handlers can report
-  caller/handler contract drift as a wiring error instead of an opaque policy
-  denial; manual callers that omit these binding headers now fail closed. Added
-  `TemporalNexusOperation.exact(...)` for minting canonical Nexus operation
-  capabilities.
-- **Ambient Temporal Nexus backing workflow starts.**
-  `tenuo_start_nexus_workflow(...)` verifies a Nexus handler request, binds a
-  handler-minted workflow warrant to the backing `workflow_id` through
-  `TenuoClientInterceptor`, starts the workflow via `ctx.start_workflow(...)`,
-  and clears stale pending headers if startup fails before the interceptor
-  consumes them. The live Nexus test now exercises concurrent backing starts
-  over this interceptor path.
-- **Temporal Nexus production hardening.** `TenuoWorkerInterceptor` now
-  authorizes every inbound Nexus start by default, so a missing
-  `@tenuo_nexus_operation` decorator cannot skip authorization.
-  **`TenuoPluginConfig.nexus_endpoint` is now required on workers that serve
-  Nexus operations**: set it to the endpoint name the worker serves, or every
-  inbound Nexus request is denied. The interceptor also wires `control_plane`
-  onto the shared config object used by verify/decorators, and emits
-  `audit_callback` plus metrics for Nexus allow/deny. Ambient backing starts
-  fail closed if the client interceptor does not consume the pending header
-  binding. Strict Nexus PoP replay is bound to handler namespace, task queue,
-  and `request_id`.
-- **Temporal Nexus callers must send `x-tenuo-tool-name`.** Nexus handlers now
-  reject requests without it so a caller/handler disagreement on
-  endpoint/service/operation surfaces as a clear binding error instead of an
-  opaque PoP failure. `tenuo_nexus_headers(...)` emits it; non-Python and
-  older callers must be upgraded before the handler side rolls out.
-- **Temporal per-Activity warrant overrides.**
-  `tenuo_execute_activity(..., warrant=..., key_id=...)` now applies a
-  task-local warrant to one dispatch, including the active delegation chain.
-  This makes warrants returned by `workflow_grant()` and
-  `workflow_issue_execution()` usable without replacing the workflow's base
-  warrant and without cross-talk between concurrent workflow tasks.
-- **Supported Temporal Schedule and async-completion helpers.**
-  `create_scheduled_workflow_with_warrant()` and
-  `tenuo_complete_async_activity()` are now exported from `tenuo.temporal`.
-  Scheduled starts carry real `x-tenuo-*` headers, while async completion
-  performs a local preflight that rejects untrusted, malformed, expired, or
-  revoked warrant chains before calling Temporal's completion handle. This
-  helper is not a Temporal enforcement boundary and can be bypassed by callers
-  that invoke the raw completion API directly.
+- **Signed authorization receipts (opt-in).** Rust issues and verifies
+  tamper-evident allow/deny receipts. Python: `ControlPlaneClient(...,
+  receipt_sink=...)` defaults to `DeferredEmitter(sink, maxsize=256)` —
+  call `flush_receipts()` before reading the sink. Pass
+  `receipt_emitter=JournalEmitter(path)` for crash-durable emission.
+  Inspect with `tenuo receipt verify|chain`. Incomplete signed payloads
+  are now rejected.
+- **Rust SDK (`sdk` feature, default off).** `Guard`, delegation,
+  `Diagnostics`, and a `prelude`. Optional `receipts`, `otel`,
+  `mcp-transport`, `http-transport`, `async`, and `test-utils`. Decisions
+  still come only from `Authorizer`. `RevocationMode::{TtlOnly, SignedSrl}`
+  is required at guard construction. `ObservingGuard` records would-allow /
+  would-deny without gating. `check_chain_with_context()` takes one
+  `VerificationContext`; an unrepresentable `as_of` is
+  `Error::InvalidEvaluationInstant`.
+- **TypeScript SDK beta.** `@tenuo/core@0.2.4-beta.0` and
+  `@tenuo/mcp@0.2.4-beta.0` on the npm `beta` tag (Node 20+). WASM-backed
+  decisions, MCP attach/verify, optional MCP v2 server adapter. API may
+  still move.
+- **Temporal Nexus authorization.** Caller helpers
+  (`tenuo_nexus_headers`, `tenuo_execute_nexus_operation`,
+  `tenuo_start_nexus_workflow`, …) plus handler verify
+  (`verify_nexus_operation`, `@tenuo_nexus_operation`). Workers that
+  serve Nexus must set `TenuoPluginConfig.nexus_endpoint`; inbound Nexus
+  starts are authorized by default. Callers must send `x-tenuo-tool-name`
+  and `x-tenuo-arg-keys`. Native receipt-v1 emits when a `receipt_sink` is
+  configured.
+- **Temporal dispatch helpers.** Per-activity warrant override
+  (`tenuo_execute_activity(..., warrant=, key_id=)`). Exported
+  `create_scheduled_workflow_with_warrant()` (headers, not memo) and
+  `tenuo_complete_async_activity()` (local preflight; not a Temporal
+  enforcement boundary).
+- **Optional approval-gate display message.** `ToolApprovalGate.message`
+  (max 200 UTF-8 chars) is copied onto adapter denial surfaces. Not part
+  of `request_hash`, receipts, or error codes.
 
 ### Changed
 
-- **Receipt emission for sink users is asynchronous.** A bare
-  `receipt_sink=` enqueues onto a deferred worker (see above). Code that
-  emits and then immediately reads its sink must call `flush_receipts()`
-  first.
+- **Receipt emission is asynchronous** for a bare `receipt_sink=`. Call
+  `flush_receipts()` before reading an in-memory sink.
+- **`tenuo.mcp` supports MCP SDK 1.x and 2.x** via `tenuo.mcp._compat`.
+- **IETF Draft**: `draft-niyikiza-oauth-attenuating-agent-tokens-01`.
 
 ### Fixed
 
-- **Nexus (and Temporal activity) enforcement results now carry receipt-v1
-  context.** `verify_nexus_operation` and the Temporal activity interceptor
-  attach `authorizer`, `presented_chain`, `verified_pop`, and `pop_auth_args`
-  on the `EnforcementResult` passed to `emit_for_enforcement`. Native
-  receipt-v1 artifacts can be issued from those decisions; previously only
-  signed-event-derived receipts were possible because the authorizer and
-  presented chain were dropped. Activity denials now also set `error_type`
-  so receipt key 10 is a typed decision code rather than a generic
-  `authorization-failed`.
-- **Distinct missing-tool denial category.** Requests for tools outside a
-  warrant's capabilities now surface as `tool_not_allowed` instead of
-  `constraint_violation` in authorizer audit events and Python enforcement.
-  MCP responses identify these as tool-authorization failures while argument
-  constraint failures retain their existing category and detail.
-- **Temporal scheduled warrants were written to memo instead of headers.**
-  Workers never read warrant material from memo, so scheduled workflows had no
-  Tenuo context. Schedule actions now use Temporal's workflow-header field.
-- **Temporal async completion discarded its best-effort PoP.** The helper no
-  longer computes an unused signature or silently completes without validation.
-  Temporal's async-completion RPC has no user-header field, so the previous
-  signature never left the process and could not be checked downstream.
-- **Root expiry and Python revocation enforcement.** `verify_chain()` now checks
-  current-time validity for every warrant, including singleton roots. Archival
-  or offline callers that previously used `verify_chain()` after expiry will
-  now receive `WarrantExpired`. Python's
-  `Authorizer` now exposes `set_revocation_list()` and accepts an SRL only when
-  its signature is valid and its issuer is an already-configured trusted root;
-  Temporal no longer silently skips SRL enforcement when the binding is absent.
-- **Temporal helper compatibility and failure handling.** Deprecated Schedule
-  `workflow_kwargs` continue to be forwarded as action options, and omitted
-  async-completion `task_queue` values remain supported when exactly one worker
-  config is registered. Delegated completions require an explicit chain, and
-  trusted-root provider failures retain the last accepted root snapshot.
-  Revocation providers are installed at startup and fail worker construction
-  with `ConfigurationError` if the initial provider call fails; later failed
-  SRL refreshes no longer poison the config snapshot. SRL version rollback is
-  rejected; a different revoked-ID set at the same version is rejected as
-  `SRLContentChanged`. Re-signing the same revoked set at the same version is
-  accepted. Plugin workers now reject a missing task queue during setup instead
-  of failing later during completion or minting.
-
-- **MCP tool-call denials could be read as successes on MCP SDK 2.x.** The SDK
-  renamed `CallToolResult.isError` to `is_error`, so `SecureMCPClient`'s error
-  check silently evaluated to `False` and a server-side authorization denial was
-  returned to the caller as an apparent success. Both spellings are now probed,
-  so a denial is never mistaken for a success on either SDK line.
-- **`h2` bumped to 0.4.16 in `tenuo-python/Cargo.lock`** for RUSTSEC-2026-0258
-  (unbounded memory growth from empty `DATA` frames). The `tenuo-core` lockfile
-  was already updated in #501; this covers the second workspace.
-- **Pull-request dependency audits now cover both Rust workspaces.** The
-  PR-time audit checked only `tenuo-core`, and the job that checks both ran only
-  on push to `main`, so a vulnerable `tenuo-python/Cargo.lock` could not be
-  caught before merge.
-- **`MCPVerifier.verify()` accepts request `_meta` in either SDK shape.** MCP 1.x
-  parses `_meta` into a model while 2.x leaves it a dict, and `verify()` required
-  a dict — so a handler forwarding `params.meta` straight through raised
-  `AttributeError` on 1.x. Both shapes are now accepted.
-- **Corrected the server-side integration docs.** They instructed callers to read
-  `req.params._meta`, which raises `AttributeError` on both SDK lines; `_meta` is
-  the wire name and the parsed attribute is `meta`. The sample handler also used
-  the `@server.call_tool` decorator form, which never receives the request
-  object.
-
-### Changed
-
-- **`tenuo.mcp` now supports both MCP SDK 1.x and 2.x.** MCP 2.0 renamed
-  `CallToolResult` fields, replaced `RequestParams.Meta` with a
-  `RequestParamsMeta` `TypedDict`, and swapped `streamablehttp_client` for a
-  `streamable_http_client` that takes a caller-built HTTP client and yields two
-  streams rather than three. These differences are bridged in
-  `tenuo.mcp._compat`, so no minimum `mcp` version bump is required.
-- **`SecureMCPClient` keeps end-to-end test coverage on both SDK lines.** The
-  existing stdio fixtures drive the 1.x decorator API, so a 2.x fixture server
-  was added rather than leaving the client covered only by patched transports —
-  which is what let the renamed error field go unnoticed.
-- **IETF Draft**: Published `draft-niyikiza-oauth-attenuating-agent-tokens-01`.
+- **Missing-tool denials are `tool_not_allowed`**, not
+  `constraint_violation`.
+- **Temporal revocation and receipts.** SRL providers fail worker
+  construction on a bad first fetch; later refresh failures keep the last
+  good snapshot. Rollback / same-version content change is rejected.
+  Nexus and activity denials now carry `authorizer`, `presented_chain`,
+  and a typed `error_type` so native receipts get a real decision code.
+  `verify_chain()` expires singleton roots; Python
+  `Authorizer.set_revocation_list()` requires a trusted, valid SRL.
+- **MCP 2.x denials were readable as successes** (`isError` → `is_error`).
+  `MCPVerifier.verify()` accepts both SDK `_meta` shapes. Server docs
+  now use `params.meta`.
+- **`h2` 0.4.16** in `tenuo-python/Cargo.lock` (RUSTSEC-2026-0258).
+  PR-time dependency audits cover both Rust workspaces.
 
 ### Security
 
-- **TypeScript MCP examples: `@modelcontextprotocol/sdk` 1.25.1 → 1.26.0.**
-  Clears GHSA-8r9q-7v3j-jr4g (ReDoS) and GHSA-345p-7cg4-v4c7 (cross-client
-  response leak when a server/transport is reused). DevDependency of
-  `@tenuo/core` only; `@tenuo/mcp` already uses the v2 server package.
+- **TypeScript MCP examples: `@modelcontextprotocol/sdk` 1.25.1 → 1.26.0**
+  (GHSA-8r9q-7v3j-jr4g, GHSA-345p-7cg4-v4c7). DevDependency of
+  `@tenuo/core` only.
 - **Explorer test lockfile: `undici` 7.28.0 → 7.29.0** via npm override.
-  jsdom transitive; not shipped in the Python/Rust SDKs.
+  Not shipped in the Python/Rust SDKs.
 
 ## [0.2.3] - 2026-07-02
 
