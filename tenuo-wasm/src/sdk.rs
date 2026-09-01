@@ -1086,6 +1086,17 @@ impl SdkContext {
             }
         };
 
+        // Key 7 for the presented path too: without it an MCP-host receipt
+        // records that a decision happened but not what it was made over.
+        if let Some(leaf) = chain.last() {
+            request_hash = Some(compute_request_hash(
+                &leaf.id().to_string(),
+                tool,
+                &args,
+                Some(leaf.authorized_holder()),
+            ));
+        }
+
         let signature = match parse_pop_signature(pop) {
             Ok(s) => s,
             Err(e) => {

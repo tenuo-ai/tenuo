@@ -460,7 +460,7 @@ impl PyControlPlaneClient {
         timestamp: i64,
         request_id: &str,
         decision_code: &str,
-        verified_pop: Option<&crate::python::PySignature>,
+        verified_pop: Option<&[u8]>,
     ) -> PyResult<Option<String>> {
         let trust = {
             let guard = self.trust.lock().map_err(|_| {
@@ -481,6 +481,15 @@ impl PyControlPlaneClient {
         let warrant_chain = crate::wire::encode_stack(&crate::wire::WarrantStack(chain.clone()))
             .map_err(to_py_err)?;
 
+        let verified_pop = match verified_pop {
+            Some(bytes) => {
+                let arr: [u8; 64] = bytes.try_into().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err("verified_pop must be exactly 64 bytes")
+                })?;
+                Some(arr)
+            }
+            None => None,
+        };
         let mut payload = match verified_pop {
             Some(pop) => crate::receipt::ReceiptPayload::deny(
                 warrant_chain,
@@ -488,7 +497,7 @@ impl PyControlPlaneClient {
                 timestamp,
                 request_id,
                 decision_code,
-                pop.inner_signature().to_bytes(),
+                pop,
             ),
             None => crate::receipt::ReceiptPayload::deny_before_pop(
                 warrant_chain,

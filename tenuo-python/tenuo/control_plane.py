@@ -92,12 +92,14 @@ _DECISION_CODE_BY_ERROR_TYPE = {
     "expired": "warrant-expired",
     "revoked": "warrant-revoked",
     "invalid_pop": "pop-signature-invalid",
-    "constraint_violation": "constraint-not-satisfied",
+    "constraint_violation": "constraint-violation",
     "tool_not_allowed": "tool-not-authorized",
-    "policy_violation": "constraint-not-satisfied",
+    "policy_violation": "constraint-violation",
     "insufficient_approvals": "insufficient-approvals",
-    "approval_gate_misconfigured": "invalid-approval",
-    "untrusted_issuer": "untrusted-issuer",
+    "approval_gate_misconfigured": "approval-invalid",
+    "untrusted_issuer": "untrusted-root",
+    # Python-side categories with no Rust counterpart; not in Error::name()'s
+    # vocabulary, and kept kebab-case so they cannot be mistaken for it.
     "authorization_failed": "authorization-failed",
     "internal_error": "internal-error",
     "tenuo_error": "authorization-failed",

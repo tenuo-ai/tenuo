@@ -4580,14 +4580,6 @@ pub struct PySignature {
     inner: RustSignature,
 }
 
-#[cfg(feature = "python")]
-impl PySignature {
-    /// In-crate access to the wrapped signature, for receipt construction.
-    pub(crate) fn inner_signature(&self) -> &RustSignature {
-        &self.inner
-    }
-}
-
 #[pymethods]
 impl PySignature {
     #[staticmethod]

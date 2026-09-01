@@ -716,13 +716,13 @@ def _print_receipt(payload, indent: str = "") -> None:
         print(f"{indent}   chained to    nothing (first receipt, or chaining off)")
 
 
+# Exception class → Error::name(), for corroborating a deny receipt against
+# its own embedded chain. Keys are the classes to_py_err actually raises.
 _CHAIN_ERROR_CODES = {
     "ExpiredError": "warrant-expired",
     "RevokedError": "warrant-revoked",
-    "UntrustedIssuerError": "untrusted-issuer",
-    "UntrustedIssuer": "untrusted-issuer",
+    "UntrustedRoot": "untrusted-root",
     "InvalidSignature": "signature-invalid",
-    "InvalidSignatureError": "signature-invalid",
     "SignatureInvalid": "signature-invalid",
 }
 
