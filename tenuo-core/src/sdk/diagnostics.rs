@@ -32,9 +32,16 @@ impl<'a> Diagnostics<'a> {
     pub fn explain_denial(&self, denial: &Denial) -> String {
         let leaf = self.leaf_id();
         match (denial.protocol_code(), denial.sdk_kind()) {
-            (Some(code), _) => {
-                format!("denied {} ({}) for leaf {}", code.name(), code.code(), leaf)
-            }
+            (Some(code), _) => match denial.constraint_field() {
+                Some(field) => format!(
+                    "denied {} ({}) for leaf {} because field '{}' failed its constraint",
+                    code.name(),
+                    code.code(),
+                    leaf,
+                    field
+                ),
+                None => format!("denied {} ({}) for leaf {}", code.name(), code.code(), leaf),
+            },
             (None, Some(kind)) => format!("denied {:?} for leaf {}", kind, leaf),
             (None, None) => format!("denied for leaf {}", leaf),
         }

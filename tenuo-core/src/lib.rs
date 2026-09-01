@@ -111,7 +111,7 @@ pub use sdk::{
     AuthorizationAttempt, AuthorizedCall, Call, Decision, DecisionMetadata, Denial,
     DenialReporting, Diagnostics, Guard, GuardBuildError, GuardError, HolderSigner, LocalSigner,
     OwnedReceivedAuthorization, PresentedAuthority, ReceivedAuthorization, Retryability,
-    RevocationMode, SdkDenialKind, VerifiedProjection,
+    RevocationMode, SdkDenialKind, Tenuo, TenuoBuildError, VerifiedProjection,
 };
 pub use verification::{
     RevocationSnapshot, RevocationState, VerificationContext, VerificationInstant,

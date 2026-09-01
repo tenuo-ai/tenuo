@@ -8,7 +8,10 @@ mod call;
 mod decision;
 mod diagnostics;
 mod guard;
+#[macro_use]
+mod macros;
 mod signer;
+mod tenuo;
 
 #[cfg(any(feature = "mcp-transport", feature = "http-transport"))]
 pub mod transport;
@@ -29,6 +32,7 @@ pub use guard::{
 pub use signer::{
     DelegationSigningRequest, HolderSigner, LocalSigner, PopSigningRequest, SignerError,
 };
+pub use tenuo::{EnforcementBuilder, LocalBuilder, Tenuo, TenuoBuildError};
 
 #[cfg(test)]
 mod spec_invariants;

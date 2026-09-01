@@ -38,6 +38,7 @@ pub struct Denial {
     retryability: Retryability,
     message: String,
     approval_request: Option<Box<ApprovalRequest>>,
+    constraint_field: Option<String>,
 }
 
 impl Denial {
@@ -61,8 +62,34 @@ impl Denial {
         self.approval_request.as_deref()
     }
 
+    /// Canonical kebab-case name: protocol `ErrorCode` or SDK kind.
+    pub fn code(&self) -> &'static str {
+        if let Some(code) = self.protocol_code {
+            return code.name();
+        }
+        match self.sdk_kind {
+            Some(SdkDenialKind::ArgumentsRejected) => "arguments-rejected",
+            Some(SdkDenialKind::AuthorityMissing) => "authority-missing",
+            Some(SdkDenialKind::AuthorityMalformed) => "authority-malformed",
+            Some(SdkDenialKind::SignerUnavailable) => "signer-unavailable",
+            Some(SdkDenialKind::ApprovalProviderUnavailable) => "approval-provider-unavailable",
+            Some(SdkDenialKind::RevocationStateUnavailable) => "revocation-state-unavailable",
+            Some(SdkDenialKind::DeadlineExceeded) => "deadline-exceeded",
+            Some(SdkDenialKind::Cancelled) => "cancelled",
+            None => "denied",
+        }
+    }
+
+    pub fn is_policy(&self) -> bool {
+        self.protocol_code.is_some() && !self.is_infrastructure()
+    }
+
     pub fn needs_approval(&self) -> bool {
         self.protocol_code == Some(ErrorCode::ApprovalRequired)
+    }
+
+    pub(crate) fn constraint_field(&self) -> Option<&str> {
+        self.constraint_field.as_deref()
     }
 
     pub fn is_infrastructure(&self) -> bool {
@@ -79,6 +106,10 @@ impl Denial {
     }
 
     pub(crate) fn from_core(err: Error) -> Self {
+        let constraint_field = match &err {
+            Error::ConstraintNotSatisfied { field, .. } => Some(field.clone()),
+            _ => None,
+        };
         if let Error::ApprovalRequired { request, .. } = err {
             return Self {
                 protocol_code: Some(ErrorCode::ApprovalRequired),
@@ -86,6 +117,7 @@ impl Denial {
                 retryability: Retryability::AfterApproval,
                 message: ErrorCode::ApprovalRequired.description().to_string(),
                 approval_request: Some(request),
+                constraint_field: None,
             };
         }
         let code = err.code();
@@ -95,6 +127,7 @@ impl Denial {
             retryability: Retryability::No,
             message: code.description().to_string(),
             approval_request: None,
+            constraint_field,
         }
     }
 
@@ -105,6 +138,7 @@ impl Denial {
             retryability,
             message: message.to_string(),
             approval_request: None,
+            constraint_field: None,
         }
     }
 }
