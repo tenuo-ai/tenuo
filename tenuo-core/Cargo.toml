@@ -35,6 +35,9 @@ data-plane = []
 sdk = []
 mcp-transport = ["sdk"]
 http-transport = ["sdk"]
+async = ["sdk", "dep:async-trait"]
+receipts = ["sdk"]
+otel = ["sdk", "dep:opentelemetry"]
 
 # Python bindings
 python = ["pyo3"]
@@ -133,6 +136,10 @@ moka = { version = "0.12", features = ["sync"], optional = true }
 
 # Error handling
 thiserror = "2.0"
+
+# Optional SDK surfaces (never pulled by `sdk` alone)
+async-trait = { version = "0.1", optional = true }
+opentelemetry = { version = "0.30", optional = true }
 
 # UUID for warrant IDs (v4 for random, v7 for time-ordered)
 uuid = { version = "1.6", features = ["v4", "v7", "serde", "js"] }

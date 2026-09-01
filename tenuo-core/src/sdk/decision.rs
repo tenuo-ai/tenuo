@@ -76,6 +76,7 @@ impl Denial {
             Some(SdkDenialKind::RevocationStateUnavailable) => "revocation-state-unavailable",
             Some(SdkDenialKind::DeadlineExceeded) => "deadline-exceeded",
             Some(SdkDenialKind::Cancelled) => "cancelled",
+            Some(SdkDenialKind::EvidenceUnavailable) => "evidence-unavailable",
             None => "denied",
         }
     }
@@ -101,6 +102,7 @@ impl Denial {
                     | SdkDenialKind::RevocationStateUnavailable
                     | SdkDenialKind::DeadlineExceeded
                     | SdkDenialKind::Cancelled
+                    | SdkDenialKind::EvidenceUnavailable
             )
         )
     }
@@ -168,6 +170,7 @@ pub enum SdkDenialKind {
     RevocationStateUnavailable,
     DeadlineExceeded,
     Cancelled,
+    EvidenceUnavailable,
 }
 
 /// What the caller may usefully do next. Never authorizes execution.

@@ -18,7 +18,7 @@ impl Guard {
     /// Copies this guard's configuration. There is no reverse conversion.
     pub fn observe_until(&self, expires_at: DateTime<Utc>) -> ObservingGuard {
         ObservingGuard {
-            guard: self.clone(),
+            guard: self.snapshot_for_observe(),
             expires_at,
         }
     }
@@ -61,6 +61,16 @@ impl ObservingGuard {
                 },
             )),
         };
+        #[cfg(feature = "otel")]
+        {
+            let (otel_outcome, reason) = match &outcome {
+                ObservedOutcome::WouldAllow => ("allow", "allowed"),
+                ObservedOutcome::WouldDeny(denial) => ("deny", denial.code()),
+                ObservedOutcome::WouldRequireApproval(_) => ("deny", "approval-required"),
+                ObservedOutcome::WouldDenyNoAuthority => ("deny", "authority-missing"),
+            };
+            super::telemetry::record_authorize(otel_outcome, reason, true);
+        }
 
         let value = op().map_err(ObserveError::Operation)?;
         Ok(Observed {
@@ -101,7 +111,7 @@ pub struct ObservingGuardBuilder {
 impl ObservingGuardBuilder {
     pub fn from_guard(guard: &Guard) -> Self {
         Self {
-            guard: Some(guard.clone()),
+            guard: Some(guard.snapshot_for_observe()),
             expires_at: None,
         }
     }

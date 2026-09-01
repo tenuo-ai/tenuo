@@ -693,3 +693,60 @@ fn s31_observe_matches_enforcement_and_is_labeled() {
         ObservedOutcome::WouldDenyNoAuthority
     ));
 }
+
+/// S9: the sync builder rejects a deadline it cannot enforce.
+#[cfg(feature = "async")]
+#[test]
+fn s9_sync_surface_rejects_deadline() {
+    let issuer = SigningKey::generate();
+    let mut authorizer = Authorizer::new();
+    authorizer.add_trusted_root(issuer.public_key());
+    let err = Guard::builder()
+        .authorizer(authorizer)
+        .revocation(RevocationMode::TtlOnly {
+            max_lifetime: Duration::from_secs(3600),
+        })
+        .deadline(Duration::from_secs(30))
+        .build()
+        .err()
+        .unwrap();
+    assert_eq!(err, GuardBuildError::DeadlineNotEnforceable);
+}
+
+/// S12: BestEffort evidence failure does not change allow.
+#[cfg(feature = "receipts")]
+#[test]
+fn s12_best_effort_receipt_failure_does_not_deny() {
+    use super::evidence::{
+        EvidencePolicy, LocalReceiptSigner, ReceiptRef, ReceiptSink, ReceiptSinkError,
+    };
+    use crate::receipt::Receipt;
+    struct FailSink;
+    impl ReceiptSink for FailSink {
+        fn persist(&self, _: &Receipt) -> Result<ReceiptRef, ReceiptSinkError> {
+            Err(ReceiptSinkError::Unavailable)
+        }
+    }
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let presented = authority(
+        vec![mint(&issuer, &holder, "read", Duration::from_secs(300))],
+        holder,
+    );
+    let mut authorizer = Authorizer::new();
+    authorizer.add_trusted_root(issuer.public_key());
+    let guard = Guard::builder()
+        .authorizer(authorizer)
+        .revocation(RevocationMode::TtlOnly {
+            max_lifetime: Duration::from_secs(3600),
+        })
+        .evidence_policy(EvidencePolicy::BestEffort)
+        .receipt_signer(Arc::new(LocalReceiptSigner::for_development()))
+        .receipt_sink(Arc::new(FailSink))
+        .build()
+        .unwrap();
+    let args = HashMap::new();
+    let call = Call::borrowed("read", &args);
+    let decision = guard.check(&presented, &call).expect("S12: still allow");
+    assert!(decision.receipt.is_some());
+}

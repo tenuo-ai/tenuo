@@ -111,6 +111,8 @@ pub use revocation_tracker::{
 };
 #[cfg(any(feature = "mcp-transport", feature = "http-transport"))]
 pub use sdk::transport::TransportError;
+#[cfg(feature = "async")]
+pub use sdk::{AsyncHolderSigner, AttemptControl};
 #[cfg(feature = "sdk")]
 pub use sdk::{
     AuthorizationAttempt, AuthorizedCall, Call, Decision, DecisionMetadata, DelegationProfile,
@@ -119,6 +121,11 @@ pub use sdk::{
     ObservingGuard, ObservingGuardBuilder, OwnedReceivedAuthorization, PresentedAuthority,
     PresentedRequest, ReceivedAuthorization, Retryability, RevocationMode, SdkDenialKind, Tenuo,
     TenuoBuildError, VerifiedProjection,
+};
+#[cfg(feature = "receipts")]
+pub use sdk::{
+    EvidencePolicy, LocalReceiptSigner, MemoryReceiptSink, ReceiptRef, ReceiptSigner,
+    ReceiptSignerError, ReceiptSigningRequest, ReceiptSink, ReceiptSinkError,
 };
 pub use verification::{
     RevocationSnapshot, RevocationState, VerificationContext, VerificationInstant,

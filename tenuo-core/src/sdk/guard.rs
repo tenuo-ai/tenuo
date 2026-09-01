@@ -19,6 +19,15 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
 
+#[cfg(feature = "receipts")]
+use super::evidence::{sign_payload, EvidencePolicy, ReceiptSigner, ReceiptSink, ReceiptSinkError};
+#[cfg(feature = "receipts")]
+use crate::approval::compute_request_hash;
+#[cfg(feature = "receipts")]
+use crate::receipt::ReceiptPayload;
+#[cfg(feature = "receipts")]
+use crate::wire::{encode_stack, WarrantStack};
+
 /// Explicit revocation policy. No implicit fallback from SignedSrl to TtlOnly.
 #[derive(Clone, Debug)]
 pub enum RevocationMode {
@@ -32,6 +41,8 @@ pub struct Guard {
     authorizer: Authorizer,
     revocation: ResolvedRevocation,
     denial_reporting: DenialReporting,
+    #[cfg(feature = "receipts")]
+    evidence: EvidenceConfig,
 }
 
 #[derive(Clone)]
@@ -59,8 +70,13 @@ impl Guard {
         authority: &PresentedAuthority,
         attempt: AuthorizationAttempt<'_, '_>,
     ) -> Result<Decision, Denial> {
-        let authorized = self.authorize_holder(authority, &attempt)?;
-        Ok(authorized.into_decision())
+        match self.authorize_holder(authority, &attempt) {
+            Ok(authorized) => self.complete_allow(&authorized),
+            Err(denial) => {
+                self.record_deny(&denial);
+                Err(denial)
+            }
+        }
     }
 
     pub fn guard<T, E>(
@@ -80,8 +96,13 @@ impl Guard {
     ) -> Result<Guarded<T>, GuardError<E>> {
         let authorized = self
             .authorize_holder(authority, &attempt)
+            .map_err(|denial| {
+                self.record_deny(&denial);
+                GuardError::Denied(denial)
+            })?;
+        let decision = self
+            .complete_allow(&authorized)
             .map_err(GuardError::Denied)?;
-        let decision = authorized.as_decision();
         let value = op(&authorized).map_err(GuardError::Operation)?;
         Ok(Guarded { value, decision })
     }
@@ -91,8 +112,13 @@ impl Guard {
         received: &ReceivedAuthorization<'_>,
         call: &Call<'_>,
     ) -> Result<Decision, Denial> {
-        let authorized = self.authorize_received(received, call)?;
-        Ok(authorized.into_decision())
+        match self.authorize_received(received, call) {
+            Ok(authorized) => self.complete_allow(&authorized),
+            Err(denial) => {
+                self.record_deny(&denial);
+                Err(denial)
+            }
+        }
     }
 
     pub fn guard_received<T, E>(
@@ -101,10 +127,13 @@ impl Guard {
         call: &Call<'_>,
         op: impl FnOnce(&AuthorizedCall<'_>) -> Result<T, E>,
     ) -> Result<Guarded<T>, GuardError<E>> {
-        let authorized = self
-            .authorize_received(received, call)
+        let authorized = self.authorize_received(received, call).map_err(|denial| {
+            self.record_deny(&denial);
+            GuardError::Denied(denial)
+        })?;
+        let decision = self
+            .complete_allow(&authorized)
             .map_err(GuardError::Denied)?;
-        let decision = authorized.as_decision();
         let value = op(&authorized).map_err(GuardError::Operation)?;
         Ok(Guarded { value, decision })
     }
@@ -126,7 +155,121 @@ impl Guard {
         self.denial_reporting
     }
 
-    fn authorize_holder<'a>(
+    #[cfg(feature = "async")]
+    pub(crate) fn pop_window_config(&self) -> (i64, u32) {
+        self.authorizer.pop_window_config()
+    }
+
+    pub(crate) fn snapshot_for_observe(&self) -> Self {
+        let cloned = self.clone();
+        #[cfg(feature = "receipts")]
+        {
+            let mut cloned = cloned;
+            cloned.evidence = EvidenceConfig::disabled();
+            return cloned;
+        }
+        #[cfg(not(feature = "receipts"))]
+        cloned
+    }
+
+    pub(crate) fn complete_allow(
+        &self,
+        authorized: &AuthorizedCall<'_>,
+    ) -> Result<Decision, Denial> {
+        #[cfg(feature = "otel")]
+        super::telemetry::record_authorize("allow", "allowed", false);
+        #[cfg(feature = "receipts")]
+        {
+            let mut decision = authorized.as_decision();
+            decision.receipt = self.attach_receipt(authorized)?;
+            return Ok(decision);
+        }
+        #[cfg(not(feature = "receipts"))]
+        Ok(authorized.as_decision())
+    }
+
+    pub(crate) fn record_deny(&self, denial: &Denial) {
+        #[cfg(feature = "otel")]
+        super::telemetry::record_authorize("deny", denial.code(), false);
+        let _ = denial;
+    }
+
+    #[cfg(feature = "receipts")]
+    fn attach_receipt(
+        &self,
+        authorized: &AuthorizedCall<'_>,
+    ) -> Result<Option<crate::receipt::Receipt>, Denial> {
+        if self.evidence.policy == EvidencePolicy::Disabled {
+            return Ok(None);
+        }
+        let signer = self.evidence.signer.as_ref().ok_or_else(|| {
+            Denial::sdk(
+                SdkDenialKind::EvidenceUnavailable,
+                Retryability::AfterBackoff,
+                "receipt signer unavailable",
+            )
+        })?;
+        let stack = encode_stack(&WarrantStack(authorized.chain().to_vec())).map_err(|_| {
+            Denial::sdk(
+                SdkDenialKind::EvidenceUnavailable,
+                Retryability::AfterBackoff,
+                "receipt chain encoding failed",
+            )
+        })?;
+        let leaf = authorized.chain().last().ok_or_else(|| {
+            Denial::sdk(
+                SdkDenialKind::AuthorityMalformed,
+                Retryability::No,
+                "authority chain is empty",
+            )
+        })?;
+        let mut payload = ReceiptPayload::allow(
+            stack,
+            format!("tool:{}", authorized.capability()),
+            authorized.instant().as_datetime().timestamp(),
+            authorized.invocation_id(),
+            authorized.pop_signature().to_bytes(),
+        );
+        payload.request_hash = Some(compute_request_hash(
+            &leaf.id().to_string(),
+            authorized.capability(),
+            authorized.pop_args(),
+            Some(leaf.authorized_holder()),
+        ));
+        let bytes = payload.to_cbor().map_err(|_| {
+            Denial::sdk(
+                SdkDenialKind::EvidenceUnavailable,
+                Retryability::AfterBackoff,
+                "receipt payload encoding failed",
+            )
+        })?;
+        let receipt = sign_payload(&bytes, signer.as_ref()).map_err(|_| {
+            Denial::sdk(
+                SdkDenialKind::EvidenceUnavailable,
+                Retryability::AfterBackoff,
+                "receipt signer unavailable",
+            )
+        })?;
+        if let Some(sink) = &self.evidence.sink {
+            match sink.persist(&receipt) {
+                Ok(_) => Ok(Some(receipt)),
+                Err(ReceiptSinkError::Unavailable)
+                    if self.evidence.policy == EvidencePolicy::BestEffort =>
+                {
+                    Ok(Some(receipt))
+                }
+                Err(_) => Err(Denial::sdk(
+                    SdkDenialKind::EvidenceUnavailable,
+                    Retryability::AfterBackoff,
+                    "receipt persistence failed",
+                )),
+            }
+        } else {
+            Ok(Some(receipt))
+        }
+    }
+
+    pub(crate) fn authorize_holder<'a>(
         &'a self,
         authority: &'a PresentedAuthority,
         attempt: &AuthorizationAttempt<'a, 'a>,
@@ -171,7 +314,7 @@ impl Guard {
         )
     }
 
-    fn authorize_received<'a>(
+    pub(crate) fn authorize_received<'a>(
         &'a self,
         received: &'a ReceivedAuthorization<'a>,
         call: &'a Call<'a>,
@@ -253,10 +396,30 @@ impl Guard {
             capability: call.capability(),
             instant,
             execution_args: call.constraint_args(),
+            pop_args: call.pop_args(),
             pop_signature,
             chain,
             approvals,
         })
+    }
+}
+
+#[cfg(feature = "receipts")]
+#[derive(Clone)]
+struct EvidenceConfig {
+    policy: EvidencePolicy,
+    signer: Option<std::sync::Arc<dyn ReceiptSigner>>,
+    sink: Option<std::sync::Arc<dyn ReceiptSink>>,
+}
+
+#[cfg(feature = "receipts")]
+impl EvidenceConfig {
+    fn disabled() -> Self {
+        Self {
+            policy: EvidencePolicy::Disabled,
+            signer: None,
+            sink: None,
+        }
     }
 }
 
@@ -290,6 +453,7 @@ pub struct AuthorizedCall<'a> {
     capability: &'a str,
     instant: VerificationInstant,
     execution_args: &'a HashMap<String, ConstraintValue>,
+    pop_args: &'a HashMap<String, ConstraintValue>,
     pop_signature: Signature,
     chain: &'a [Warrant],
     approvals: &'a [SignedApproval],
@@ -320,6 +484,10 @@ impl<'a> AuthorizedCall<'a> {
         self.execution_args
     }
 
+    pub fn pop_args(&self) -> &HashMap<String, ConstraintValue> {
+        self.pop_args
+    }
+
     pub fn pop_signature(&self) -> &Signature {
         &self.pop_signature
     }
@@ -345,10 +513,6 @@ impl<'a> AuthorizedCall<'a> {
             receipt: None,
         }
     }
-
-    fn into_decision(self) -> Decision {
-        self.as_decision()
-    }
 }
 
 /// Result of an allowed guarded operation.
@@ -371,6 +535,14 @@ pub struct GuardBuilder {
     revocation: Option<RevocationMode>,
     tracker: Option<std::sync::Arc<RevocationTracker>>,
     denial_reporting: DenialReporting,
+    #[cfg(feature = "receipts")]
+    evidence: EvidencePolicy,
+    #[cfg(feature = "receipts")]
+    receipt_signer: Option<std::sync::Arc<dyn ReceiptSigner>>,
+    #[cfg(feature = "receipts")]
+    receipt_sink: Option<std::sync::Arc<dyn ReceiptSink>>,
+    #[cfg(feature = "async")]
+    declared_sync_deadline: bool,
 }
 
 impl GuardBuilder {
@@ -395,6 +567,31 @@ impl GuardBuilder {
         self
     }
 
+    #[cfg(feature = "receipts")]
+    pub fn evidence_policy(mut self, policy: EvidencePolicy) -> Self {
+        self.evidence = policy;
+        self
+    }
+
+    #[cfg(feature = "receipts")]
+    pub fn receipt_signer(mut self, signer: std::sync::Arc<dyn ReceiptSigner>) -> Self {
+        self.receipt_signer = Some(signer);
+        self
+    }
+
+    #[cfg(feature = "receipts")]
+    pub fn receipt_sink(mut self, sink: std::sync::Arc<dyn ReceiptSink>) -> Self {
+        self.receipt_sink = Some(sink);
+        self
+    }
+
+    /// Sync surface cannot enforce a deadline. Calling this makes `build` fail.
+    #[cfg(feature = "async")]
+    pub fn deadline(mut self, _deadline: Duration) -> Self {
+        self.declared_sync_deadline = true;
+        self
+    }
+
     pub fn build(self) -> Result<Guard, GuardBuildError> {
         let authorizer = self.authorizer.ok_or(GuardBuildError::MissingAuthorizer)?;
         if !authorizer.has_trusted_roots() {
@@ -403,6 +600,39 @@ impl GuardBuilder {
         let mode = self
             .revocation
             .ok_or(GuardBuildError::MissingRevocationMode)?;
+        #[cfg(feature = "async")]
+        if self.declared_sync_deadline {
+            return Err(GuardBuildError::DeadlineNotEnforceable);
+        }
+        #[cfg(feature = "receipts")]
+        let evidence = {
+            match self.evidence {
+                EvidencePolicy::Disabled => EvidenceConfig::disabled(),
+                EvidencePolicy::BestEffort => {
+                    if self.receipt_signer.is_none() {
+                        return Err(GuardBuildError::MissingReceiptSigner);
+                    }
+                    EvidenceConfig {
+                        policy: EvidencePolicy::BestEffort,
+                        signer: self.receipt_signer,
+                        sink: self.receipt_sink,
+                    }
+                }
+                EvidencePolicy::RequiredBeforeExecution => {
+                    if self.receipt_signer.is_none() {
+                        return Err(GuardBuildError::MissingReceiptSigner);
+                    }
+                    if self.receipt_sink.is_none() {
+                        return Err(GuardBuildError::MissingReceiptSink);
+                    }
+                    EvidenceConfig {
+                        policy: EvidencePolicy::RequiredBeforeExecution,
+                        signer: self.receipt_signer,
+                        sink: self.receipt_sink,
+                    }
+                }
+            }
+        };
         let revocation = match mode {
             RevocationMode::TtlOnly { max_lifetime } => {
                 ResolvedRevocation::TtlOnly { max_lifetime }
@@ -423,6 +653,8 @@ impl GuardBuilder {
             authorizer,
             revocation,
             denial_reporting: self.denial_reporting,
+            #[cfg(feature = "receipts")]
+            evidence,
         })
     }
 }
@@ -434,6 +666,12 @@ pub enum GuardBuildError {
     EmptyTrustStore,
     MissingRevocationMode,
     SignedSrlUnavailable,
+    #[cfg(feature = "receipts")]
+    MissingReceiptSigner,
+    #[cfg(feature = "receipts")]
+    MissingReceiptSink,
+    #[cfg(feature = "async")]
+    DeadlineNotEnforceable,
 }
 
 impl fmt::Display for GuardBuildError {
@@ -444,6 +682,18 @@ impl fmt::Display for GuardBuildError {
             Self::MissingRevocationMode => write!(f, "guard requires an explicit revocation mode"),
             Self::SignedSrlUnavailable => {
                 write!(f, "SignedSrl requires a revocation list on the authorizer")
+            }
+            #[cfg(feature = "receipts")]
+            Self::MissingReceiptSigner => {
+                write!(f, "receipts require an explicit ReceiptSigner")
+            }
+            #[cfg(feature = "receipts")]
+            Self::MissingReceiptSink => {
+                write!(f, "RequiredBeforeExecution requires a local ReceiptSink")
+            }
+            #[cfg(feature = "async")]
+            Self::DeadlineNotEnforceable => {
+                write!(f, "the synchronous guard cannot enforce a deadline")
             }
         }
     }

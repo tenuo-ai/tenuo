@@ -15,6 +15,13 @@ mod observe;
 mod signer;
 mod tenuo;
 
+#[cfg(feature = "async")]
+mod async_api;
+#[cfg(feature = "receipts")]
+mod evidence;
+#[cfg(feature = "otel")]
+mod telemetry;
+
 #[cfg(any(feature = "mcp-transport", feature = "http-transport"))]
 pub mod transport;
 
@@ -40,6 +47,14 @@ pub use signer::{
     DelegationSigningRequest, HolderSigner, LocalSigner, PopSigningRequest, SignerError,
 };
 pub use tenuo::{EnforcementBuilder, LocalBuilder, Tenuo, TenuoBuildError};
+
+#[cfg(feature = "async")]
+pub use async_api::{AsyncHolderSigner, AttemptControl};
+#[cfg(feature = "receipts")]
+pub use evidence::{
+    EvidencePolicy, LocalReceiptSigner, MemoryReceiptSink, ReceiptRef, ReceiptSigner,
+    ReceiptSignerError, ReceiptSigningRequest, ReceiptSink, ReceiptSinkError,
+};
 
 #[cfg(test)]
 mod spec_invariants;
