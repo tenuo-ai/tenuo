@@ -115,8 +115,10 @@ pub use sdk::transport::TransportError;
 pub use sdk::{
     AuthorizationAttempt, AuthorizedCall, Call, Decision, DecisionMetadata, DelegationProfile,
     Denial, DenialReporting, Diagnostics, Guard, GuardBuildError, GuardError, HolderSigner,
-    LocalSigner, OwnedReceivedAuthorization, PresentedAuthority, ReceivedAuthorization,
-    Retryability, RevocationMode, SdkDenialKind, Tenuo, TenuoBuildError, VerifiedProjection,
+    LocalSigner, ObservationRecord, ObserveBuildError, ObserveError, Observed, ObservedOutcome,
+    ObservingGuard, ObservingGuardBuilder, OwnedReceivedAuthorization, PresentedAuthority,
+    PresentedRequest, ReceivedAuthorization, Retryability, RevocationMode, SdkDenialKind, Tenuo,
+    TenuoBuildError, VerifiedProjection,
 };
 pub use verification::{
     RevocationSnapshot, RevocationState, VerificationContext, VerificationInstant,

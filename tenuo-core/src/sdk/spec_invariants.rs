@@ -1,12 +1,12 @@
-//! Spec S-invariants and security-model checks for the shipped M1–M3 surface.
-//!
-//! Later-milestone invariants (observe, receipts, async, delegation, tracker)
-//! are listed at the bottom as not-yet-shipped, not as passing claims.
+//! Spec S-invariants and security-model checks for the shipped SDK surface.
 
 use super::authority::{AuthorityError, PresentedAuthority, ReceivedAuthorization};
 use super::call::{Call, VerifiedProjection};
 use super::decision::{Denial, GuardError, Retryability, SdkDenialKind};
 use super::guard::{Guard, GuardBuildError, RevocationMode};
+use super::observe::{
+    ObserveBuildError, ObservedOutcome, ObservingGuard, ObservingGuardBuilder, PresentedRequest,
+};
 use super::signer::{HolderSigner, LocalSigner, PopSigningRequest, SignerError};
 use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
 use crate::constraints::{ConstraintSet, ConstraintValue, Exact};
@@ -609,4 +609,87 @@ fn pop_required_junk_signature_denied() {
             .unwrap(),
         &runs,
     );
+}
+
+/// S29 / S44: ObservingGuard is a distinct type with no reverse conversion.
+#[test]
+fn s29_s44_observer_is_not_a_guard() {
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sdk/observe.rs"));
+    let deref_impl = format!("impl {}::ops::{}", "std", "Deref");
+    let deref_fn = ["fn ", "deref("].concat();
+    assert!(!src.contains(&deref_impl) && !src.contains(&deref_fn));
+    assert!(!src.contains(&["fn into", "_guard"].concat()));
+    assert_eq!(
+        ObservingGuard::builder().build().err().unwrap(),
+        ObserveBuildError::MissingGuard
+    );
+}
+
+/// S30: construction requires an expiry; an expired observer does not invoke.
+#[test]
+fn s30_expired_observer_does_not_invoke() {
+    let issuer = SigningKey::generate();
+    let guard = guard_for(&issuer);
+    assert_eq!(
+        ObservingGuardBuilder::from_guard(&guard)
+            .build()
+            .err()
+            .unwrap(),
+        ObserveBuildError::MissingExpiry
+    );
+    let observer = guard.observe_until(chrono::Utc::now() - chrono::Duration::seconds(1));
+    let args = HashMap::new();
+    let call = Call::borrowed("read", &args);
+    let runs = AtomicUsize::new(0);
+    let err = observer
+        .observe(PresentedRequest::Missing, &call, || {
+            runs.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, &str>(())
+        })
+        .err()
+        .unwrap();
+    assert_eq!(runs.load(Ordering::SeqCst), 0);
+    assert!(matches!(err, super::observe::ObserveError::Expired));
+}
+
+/// S31: observe runs the same decision stages, labels observe-only, no receipt.
+#[test]
+fn s31_observe_matches_enforcement_and_is_labeled() {
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let presented = authority(
+        vec![mint(&issuer, &holder, "read", Duration::from_secs(300))],
+        holder,
+    );
+    let guard = guard_for(&issuer);
+    let args = HashMap::new();
+    let allow_call = Call::borrowed("read", &args);
+    let deny_call = Call::borrowed("write", &args);
+    assert!(guard.check(&presented, &allow_call).is_ok());
+    assert!(guard.check(&presented, &deny_call).is_err());
+
+    let observer = guard.observe_until(chrono::Utc::now() + chrono::Duration::hours(1));
+    let allowed = observer
+        .observe(PresentedRequest::Holder(&presented), &allow_call, || {
+            Ok::<_, &str>(())
+        })
+        .unwrap();
+    assert!(matches!(allowed.outcome, ObservedOutcome::WouldAllow));
+    assert!(allowed.observation.is_observe_only());
+    assert_eq!(allowed.observation.policy_mode(), "observe");
+
+    let denied = observer
+        .observe(PresentedRequest::Holder(&presented), &deny_call, || {
+            Ok::<_, &str>(())
+        })
+        .unwrap();
+    assert!(matches!(denied.outcome, ObservedOutcome::WouldDeny(_)));
+
+    let missing = observer
+        .observe(PresentedRequest::Missing, &allow_call, || Ok::<_, &str>(()))
+        .unwrap();
+    assert!(matches!(
+        missing.outcome,
+        ObservedOutcome::WouldDenyNoAuthority
+    ));
 }

@@ -74,6 +74,7 @@ pub enum RevocationState<'a> {
 ///
 /// No public constructor. Installed lists have no freshness bound.
 /// Tracker-accepted lists carry `fetched_at` / `fresh_until`.
+#[derive(Clone)]
 pub struct RevocationSnapshot {
     srl: SignedRevocationList,
     fetched_at: Option<DateTime<Utc>>,

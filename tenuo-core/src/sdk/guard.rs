@@ -27,12 +27,14 @@ pub enum RevocationMode {
 }
 
 /// Enforcement surface. Holds configuration, nothing per-call.
+#[derive(Clone)]
 pub struct Guard {
     authorizer: Authorizer,
     revocation: ResolvedRevocation,
     denial_reporting: DenialReporting,
 }
 
+#[derive(Clone)]
 enum ResolvedRevocation {
     TtlOnly { max_lifetime: Duration },
     Snapshot(RevocationSnapshot),

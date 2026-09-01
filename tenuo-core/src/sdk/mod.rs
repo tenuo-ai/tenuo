@@ -11,6 +11,7 @@ mod diagnostics;
 mod guard;
 #[macro_use]
 mod macros;
+mod observe;
 mod signer;
 mod tenuo;
 
@@ -30,6 +31,10 @@ pub use diagnostics::Diagnostics;
 pub use guard::{
     AuthorizationAttempt, AuthorizedCall, Guard, GuardBuildError, GuardBuilder, Guarded,
     RevocationMode,
+};
+pub use observe::{
+    ObservationRecord, ObserveBuildError, ObserveError, Observed, ObservedOutcome, ObservingGuard,
+    ObservingGuardBuilder, PresentedRequest,
 };
 pub use signer::{
     DelegationSigningRequest, HolderSigner, LocalSigner, PopSigningRequest, SignerError,
