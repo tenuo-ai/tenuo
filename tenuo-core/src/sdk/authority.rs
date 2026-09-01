@@ -17,6 +17,11 @@ pub struct PresentedAuthority {
 }
 
 impl PresentedAuthority {
+    /// Bind a chain to the signer that holds its leaf.
+    ///
+    /// Validates only that the chain is non-empty and that the signer's public key is the
+    /// leaf holder. Trust, linkage, expiry, and revocation are the guard's, evaluated on
+    /// every invocation.
     pub fn new(chain: Vec<Warrant>, signer: Arc<dyn HolderSigner>) -> Result<Self, AuthorityError> {
         if chain.is_empty() {
             return Err(AuthorityError::EmptyChain);
@@ -31,22 +36,31 @@ impl PresentedAuthority {
         })
     }
 
+    /// Last warrant in the chain — the one that authorizes calls.
     pub fn leaf(&self) -> &Warrant {
         self.chain.last().expect("non-empty chain")
     }
 
+    /// Full chain, root first.
     pub fn chain(&self) -> &[Warrant] {
         &self.chain
     }
 
+    /// Public key of the leaf holder.
     pub fn holder(&self) -> &PublicKey {
         self.leaf().authorized_holder()
     }
 
+    /// When the leaf expires.
     pub fn expires_at(&self) -> DateTime<Utc> {
         self.leaf().expires_at()
     }
 
+    /// Capability names this chain claims.
+    ///
+    /// Policy-sensitive: it reflects what the chain asserts, not what any enforcement
+    /// point will allow, and the set a principal holds is itself disclosive. Use it for
+    /// local UX filtering, not as an answer to an untrusted caller.
     pub fn capabilities(&self) -> CapabilityView {
         let names = self
             .leaf()
@@ -93,10 +107,12 @@ pub struct CapabilityView {
 }
 
 impl CapabilityView {
+    /// Capability names, sorted.
     pub fn names(&self) -> &[String] {
         &self.names
     }
 
+    /// Whether a capability name is present.
     pub fn contains(&self, name: &str) -> bool {
         self.names.iter().any(|n| n == name)
     }
@@ -113,6 +129,9 @@ pub struct ReceivedAuthorization<'a> {
 }
 
 impl<'a> ReceivedAuthorization<'a> {
+    /// Bind artifacts received from a peer.
+    ///
+    /// Validates only that the chain is non-empty. Verification is the decision.
     pub fn new(
         chain: &'a [Warrant],
         signature: &'a Signature,
@@ -128,18 +147,22 @@ impl<'a> ReceivedAuthorization<'a> {
         })
     }
 
+    /// Received chain, root first.
     pub fn chain(&self) -> &'a [Warrant] {
         self.chain
     }
 
+    /// Caller's proof of possession.
     pub fn signature(&self) -> &'a Signature {
         self.signature
     }
 
+    /// Approvals the caller supplied.
     pub fn approvals(&self) -> &'a [SignedApproval] {
         self.approvals
     }
 
+    /// Last warrant in the received chain.
     pub fn leaf(&self) -> &Warrant {
         self.chain.last().expect("non-empty chain")
     }
@@ -180,18 +203,22 @@ impl OwnedReceivedAuthorization {
         })
     }
 
+    /// Received chain, root first.
     pub fn chain(&self) -> &[Warrant] {
         &self.chain
     }
 
+    /// Caller's proof of possession.
     pub fn signature(&self) -> &Signature {
         &self.signature
     }
 
+    /// Approvals the caller supplied.
     pub fn approvals(&self) -> &[SignedApproval] {
         &self.approvals
     }
 
+    /// Borrow these owned artifacts as a [`ReceivedAuthorization`].
     pub fn as_received(&self) -> Result<ReceivedAuthorization<'_>, AuthorityError> {
         ReceivedAuthorization::new(&self.chain, &self.signature, &self.approvals)
     }
@@ -200,8 +227,11 @@ impl OwnedReceivedAuthorization {
 /// Structural failure constructing presented or received authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorityError {
+    /// The chain was empty.
     EmptyChain,
+    /// The signer's public key is not the leaf holder.
     SignerMismatch,
+    /// A proof of possession was expected and absent.
     MissingSignature,
 }
 

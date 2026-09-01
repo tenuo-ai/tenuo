@@ -14,6 +14,49 @@ pub struct Tenuo;
 
 impl Tenuo {
     /// Holder-sign quickstart: trusted root, chain, signer, explicit revocation.
+    ///
+    /// Returns a guard and the authority it will accept. Each required piece is
+    /// enforced by the type system, so a guard with no trust root or no
+    /// revocation policy does not compile.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use tenuo::sdk::prelude::*;
+    /// use tenuo::{args, constraints};
+    ///
+    /// // In production the root key lives in your control plane and the warrant
+    /// // arrives already minted. Both are generated here to keep the example runnable.
+    /// let root = SigningKey::generate();
+    /// let holder = SigningKey::generate();
+    ///
+    /// let warrant = Warrant::builder()
+    ///     .capability(
+    ///         "read_file",
+    ///         constraints! { "path" => Pattern::new("/data/*")? },
+    ///     )
+    ///     .holder(holder.public_key())
+    ///     .ttl(Duration::from_secs(300))
+    ///     .build(&root)?;
+    ///
+    /// let (guard, authority) = Tenuo::local()
+    ///     .trusted_root(root.public_key())
+    ///     .chain(vec![warrant])
+    ///     .signer(holder)
+    ///     .revocation(RevocationMode::TtlOnly {
+    ///         max_lifetime: Duration::from_secs(600),
+    ///     })
+    ///     .build()?;
+    ///
+    /// // Inside the constraint: the operation runs.
+    /// let allowed = Call::owned("read_file", args! { "path" => "/data/report.csv" })?;
+    /// let out = guard.guard(&authority, &allowed, |_| Ok::<_, std::io::Error>("read"))?;
+    /// assert_eq!(out.into_inner(), "read");
+    ///
+    /// // Outside it: denied, and the closure never runs.
+    /// let refused = Call::owned("read_file", args! { "path" => "/etc/shadow" })?;
+    /// assert!(guard.check(&authority, &refused).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn local() -> LocalBuilder<NeedRoot> {
         LocalBuilder {
             roots: Vec::new(),
@@ -43,6 +86,8 @@ pub struct NeedSigner;
 pub struct NeedRevocation;
 pub struct Ready;
 
+/// Builds a holder-side guard and its authority together. Typestate: each required
+/// piece moves the builder forward, and `build` exists only once all are supplied.
 pub struct LocalBuilder<S> {
     roots: Vec<PublicKey>,
     chain: Option<Vec<Warrant>>,
@@ -53,6 +98,7 @@ pub struct LocalBuilder<S> {
 }
 
 impl LocalBuilder<NeedRoot> {
+    /// Root this guard will trust. Required first.
     pub fn trusted_root(mut self, key: PublicKey) -> LocalBuilder<NeedChain> {
         self.roots.push(key);
         LocalBuilder {
@@ -67,11 +113,13 @@ impl LocalBuilder<NeedRoot> {
 }
 
 impl LocalBuilder<NeedChain> {
+    /// Add another trusted root.
     pub fn trusted_root(mut self, key: PublicKey) -> Self {
         self.roots.push(key);
         self
     }
 
+    /// Warrant chain the holder will present, root first. Required.
     pub fn chain(mut self, chain: Vec<Warrant>) -> LocalBuilder<NeedSigner> {
         self.chain = Some(chain);
         LocalBuilder {
@@ -86,6 +134,7 @@ impl LocalBuilder<NeedChain> {
 }
 
 impl LocalBuilder<NeedSigner> {
+    /// Key holding the chain's leaf. Required.
     pub fn signer(mut self, key: SigningKey) -> LocalBuilder<NeedRevocation> {
         self.signer = Some(key);
         LocalBuilder {
@@ -100,6 +149,7 @@ impl LocalBuilder<NeedSigner> {
 }
 
 impl LocalBuilder<NeedRevocation> {
+    /// Revocation policy. Required — there is no default; see [`RevocationMode`].
     pub fn revocation(mut self, mode: RevocationMode) -> LocalBuilder<Ready> {
         self.revocation = Some(mode);
         LocalBuilder {
@@ -114,11 +164,13 @@ impl LocalBuilder<NeedRevocation> {
 }
 
 impl LocalBuilder<Ready> {
+    /// Log level for denials. Never changes whether the operation runs.
     pub fn denial_reporting(mut self, reporting: DenialReporting) -> Self {
         self.denial_reporting = reporting;
         self
     }
 
+    /// Build the guard and its authority.
     pub fn build(self) -> Result<(Guard, PresentedAuthority), TenuoBuildError> {
         let mut authorizer = Authorizer::new();
         for root in self.roots {
@@ -139,6 +191,8 @@ impl LocalBuilder<Ready> {
     }
 }
 
+/// Builds an enforcement-point guard, which verifies what peers present and holds no
+/// chain or signer of its own.
 pub struct EnforcementBuilder<S> {
     roots: Vec<PublicKey>,
     revocation: Option<RevocationMode>,
@@ -147,6 +201,7 @@ pub struct EnforcementBuilder<S> {
 }
 
 impl EnforcementBuilder<NeedRoot> {
+    /// Root this guard will trust. Required first.
     pub fn trusted_root(mut self, key: PublicKey) -> EnforcementBuilder<NeedRevocation> {
         self.roots.push(key);
         EnforcementBuilder {
@@ -159,11 +214,13 @@ impl EnforcementBuilder<NeedRoot> {
 }
 
 impl EnforcementBuilder<NeedRevocation> {
+    /// Add another trusted root.
     pub fn trusted_root(mut self, key: PublicKey) -> Self {
         self.roots.push(key);
         self
     }
 
+    /// Revocation policy. Required — there is no default; see [`RevocationMode`].
     pub fn revocation(mut self, mode: RevocationMode) -> EnforcementBuilder<Ready> {
         self.revocation = Some(mode);
         EnforcementBuilder {
@@ -176,11 +233,13 @@ impl EnforcementBuilder<NeedRevocation> {
 }
 
 impl EnforcementBuilder<Ready> {
+    /// Log level for denials. Never changes whether the operation runs.
     pub fn denial_reporting(mut self, reporting: DenialReporting) -> Self {
         self.denial_reporting = reporting;
         self
     }
 
+    /// Build the guard.
     pub fn build(self) -> Result<Guard, TenuoBuildError> {
         let mut authorizer = Authorizer::new();
         for root in self.roots {
@@ -197,7 +256,9 @@ impl EnforcementBuilder<Ready> {
 /// Failure constructing a quickstart `Guard` / `PresentedAuthority`.
 #[derive(Debug)]
 pub enum TenuoBuildError {
+    /// The guard could not be built.
     Guard(GuardBuildError),
+    /// The authority could not be built.
     Authority(AuthorityError),
 }
 

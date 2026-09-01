@@ -36,14 +36,17 @@ impl<'a> Call<'a> {
         }
     }
 
+    /// Capability name this call names.
     pub fn capability(&self) -> &str {
         &self.capability
     }
 
+    /// The argument view, when both views are the same map.
     pub fn args(&self) -> &HashMap<String, ConstraintValue> {
         self.pop_args()
     }
 
+    /// Arguments the proof of possession is computed over — what the holder signs.
     pub fn pop_args(&self) -> &HashMap<String, ConstraintValue> {
         match &self.args {
             ArgsStorage::Borrowed(args) => args,
@@ -52,6 +55,10 @@ impl<'a> Call<'a> {
         }
     }
 
+    /// Arguments matched against the warrant's constraints.
+    ///
+    /// Equal to [`Self::pop_args`] unless the call came from a transport that extracts a
+    /// separate view; see [`VerifiedProjection`].
     pub fn constraint_args(&self) -> &HashMap<String, ConstraintValue> {
         match &self.args {
             ArgsStorage::Borrowed(args) => args,
@@ -186,10 +193,12 @@ impl VerifiedProjection {
         }
     }
 
+    /// Arguments the proof of possession covers.
     pub fn pop_args(&self) -> &HashMap<String, ConstraintValue> {
         &self.pop_args
     }
 
+    /// Arguments matched against constraints.
     pub fn constraint_args(&self) -> &HashMap<String, ConstraintValue> {
         &self.constraint_args
     }
@@ -198,12 +207,19 @@ impl VerifiedProjection {
 /// Structural failure constructing an owned call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArgumentError {
+    /// The capability name was empty.
     EmptyCapability,
+    /// More arguments than the configured bound.
     TooManyArguments,
+    /// The JSON value was not an object.
     NotAnObject,
+    /// Nesting exceeded the configured bound.
     TooDeep,
+    /// A value exceeded the configured size bound.
     ValueTooLarge,
+    /// A JSON number does not map losslessly onto the supported numeric domain.
     IntegerOutOfRange,
+    /// A JSON construct has no `ConstraintValue` representation.
     UnsupportedJson,
 }
 

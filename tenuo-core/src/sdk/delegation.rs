@@ -19,20 +19,24 @@ pub struct DelegationProfile {
 }
 
 impl DelegationProfile {
+    /// An empty profile. Capabilities must be added explicitly; a child starts with none.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Grant one capability to the child, under `constraints`.
     pub fn capability(mut self, tool: impl Into<String>, constraints: ConstraintSet) -> Self {
         self.tools.insert(tool.into(), constraints);
         self
     }
 
+    /// Child lifetime. Capped by the parent's remaining lifetime regardless.
     pub fn ttl(mut self, ttl: Duration) -> Self {
         self.ttl = Some(ttl);
         self
     }
 
+    /// Maximum depth the child may delegate to. Never wider than the parent's.
     pub fn max_depth(mut self, depth: u32) -> Self {
         self.max_depth = Some(depth);
         self
@@ -104,12 +108,20 @@ impl PresentedAuthority {
 }
 
 #[derive(Debug)]
+/// Why a child could not be minted.
 pub enum DelegationError {
+    /// The profile granted nothing. A child with no capabilities is a mistake, not a
+    /// restriction.
     EmptyProfile,
+    /// The child holder is the parent holder. Delegation must produce a distinct identity.
     ChildMustBeDistinct,
+    /// A guard refused to delegate from this parent under current policy.
     Denied(super::decision::Denial),
+    /// The parent's signer could not sign the child payload.
     Signer(SignerError),
+    /// The resulting child authority was not constructible.
     Authority(AuthorityError),
+    /// Core rejected the attenuation — the child was not narrower than the parent.
     Core(Error),
 }
 

@@ -33,9 +33,34 @@ use crate::receipt::ReceiptPayload;
 use crate::wire::{encode_stack, WarrantStack};
 
 /// Explicit revocation policy. No implicit fallback from SignedSrl to TtlOnly.
+///
+/// There is no default: the builder requires this choice, because the two
+/// modes accept different risk and neither is safe to pick silently.
 #[derive(Clone, Debug)]
 pub enum RevocationMode {
-    TtlOnly { max_lifetime: Duration },
+    /// No revocation list. A warrant stays valid until it expires, so the
+    /// only bound on a leaked or misissued warrant is its lifetime.
+    ///
+    /// Choose this when no signed revocation list is distributed to this
+    /// enforcement point, and keep `max_lifetime` short — minutes, not hours.
+    /// Every warrant in the chain must satisfy the ceiling or the decision
+    /// denies, so the ceiling is enforced rather than advisory.
+    ///
+    /// The residual risk is explicit: a warrant revoked centrally keeps
+    /// working here until it expires.
+    TtlOnly {
+        /// Maximum `expires_at - issued_at` any warrant in the chain may have.
+        max_lifetime: Duration,
+    },
+    /// A current, trusted signed revocation list decides.
+    ///
+    /// Choose this for production. Revocation takes effect as soon as this
+    /// enforcement point holds a fresh list. Missing, stale, untrusted, or
+    /// rolled-back state denies — it never degrades to `TtlOnly`.
+    ///
+    /// Supply the list through [`GuardBuilder::revocation_tracker`] (which
+    /// enforces freshness and a persistent rollback floor) or install one on
+    /// the `Authorizer` before building.
     SignedSrl,
 }
 
@@ -56,15 +81,20 @@ pub struct Guard {
 #[derive(Clone)]
 enum ResolvedRevocation {
     TtlOnly { max_lifetime: Duration },
-    Snapshot(RevocationSnapshot),
+    Snapshot(Arc<RevocationSnapshot>),
     Tracker(std::sync::Arc<RevocationTracker>),
 }
 
 impl Guard {
+    /// Start configuring a guard. Every required field must be supplied; there are no defaults for trust or revocation.
     pub fn builder() -> GuardBuilder {
         GuardBuilder::default()
     }
 
+    /// Decide without running anything.
+    ///
+    /// Returns the allow decision, or a [`Denial`] explaining why not. Use this when the
+    /// operation is performed elsewhere, or to test policy.
     pub fn check(
         &self,
         authority: &PresentedAuthority,
@@ -73,6 +103,9 @@ impl Guard {
         self.check_attempt(authority, AuthorizationAttempt::new(call))
     }
 
+    /// Decide for an attempt that may carry approvals.
+    ///
+    /// See [`AuthorizationAttempt::with_approvals`] for the approval retry flow.
     pub fn check_attempt(
         &self,
         authority: &PresentedAuthority,
@@ -87,6 +120,40 @@ impl Guard {
         }
     }
 
+    /// Authorize, then run `op` exactly once — and only after an allow.
+    ///
+    /// The closure receives the [`AuthorizedCall`] for this invocation, so it can tag an
+    /// outbound request or write an idempotency key. On denial the closure never runs.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use tenuo::sdk::prelude::*;
+    /// use tenuo::{args, constraints};
+    ///
+    /// let root = SigningKey::generate();
+    /// let holder = SigningKey::generate();
+    /// let warrant = Warrant::builder()
+    ///     .capability("read_file", constraints! { "path" => Pattern::new("/data/*")? })
+    ///     .holder(holder.public_key())
+    ///     .ttl(Duration::from_secs(300))
+    ///     .build(&root)?;
+    ///
+    /// let (guard, authority) = Tenuo::local()
+    ///     .trusted_root(root.public_key())
+    ///     .chain(vec![warrant])
+    ///     .signer(holder)
+    ///     .revocation(RevocationMode::TtlOnly { max_lifetime: Duration::from_secs(600) })
+    ///     .build()?;
+    ///
+    /// let call = Call::owned("read_file", args! { "path" => "/data/x" })?;
+    /// let out = guard.guard(&authority, &call, |authorized| {
+    ///     // Tag the downstream write with the decision that permitted it.
+    ///     let _idempotency_key = authorized.dedup_key();
+    ///     Ok::<_, std::io::Error>("ran")
+    /// })?;
+    /// assert_eq!(out.into_inner(), "ran");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn guard<T, E>(
         &self,
         authority: &PresentedAuthority,
@@ -96,6 +163,7 @@ impl Guard {
         self.guard_attempt(authority, AuthorizationAttempt::new(call), op)
     }
 
+    /// Authorize an attempt that may carry approvals, then run `op` once.
     pub fn guard_attempt<T, E>(
         &self,
         authority: &PresentedAuthority,
@@ -115,6 +183,10 @@ impl Guard {
         Ok(Guarded { value, decision })
     }
 
+    /// Decide over authorization received from a peer.
+    ///
+    /// This is the enforcement-point path: the chain, PoP, and approvals arrived on the
+    /// wire. Nothing is signed here.
     pub fn check_received(
         &self,
         received: &ReceivedAuthorization<'_>,
@@ -129,6 +201,7 @@ impl Guard {
         }
     }
 
+    /// Verify received authorization, then run `op` exactly once.
     pub fn guard_received<T, E>(
         &self,
         received: &ReceivedAuthorization<'_>,
@@ -151,6 +224,7 @@ impl Guard {
         Diagnostics::holder(self, authority)
     }
 
+    /// Operator-side explanation for received authorization. Never for caller-visible text.
     pub fn diagnostics_received<'a>(
         &'a self,
         received: &'a ReceivedAuthorization<'a>,
@@ -217,7 +291,7 @@ impl Guard {
         {
             let mut cloned = cloned;
             cloned.evidence = EvidenceConfig::disabled();
-            return cloned;
+            cloned
         }
         #[cfg(not(feature = "receipts"))]
         cloned
@@ -233,7 +307,7 @@ impl Guard {
         {
             let mut decision = authorized.as_decision();
             decision.receipt = self.attach_receipt(authorized)?;
-            return Ok(decision);
+            Ok(decision)
         }
         #[cfg(not(feature = "receipts"))]
         Ok(authorized.as_decision())
@@ -256,6 +330,10 @@ impl Guard {
     }
 
     #[cfg(feature = "async")]
+    /// Fetch approvals for a denial that requires them, using the configured provider.
+    ///
+    /// Call this after [`Denial::needs_approval`], then retry with
+    /// [`AuthorizationAttempt::with_approvals`].
     pub async fn resolve_approvals_async(
         &self,
         request: &ApprovalRequest,
@@ -576,7 +654,7 @@ impl Guard {
                         "revocation snapshot is stale",
                     ));
                 }
-                Ok(LoadedRevocation::Snapshot((*snapshot).clone()))
+                Ok(LoadedRevocation::Snapshot(snapshot))
             }
         }
     }
@@ -639,7 +717,7 @@ impl Guard {
                         "revocation snapshot is stale",
                     ));
                 }
-                Ok(LoadedRevocation::Snapshot((*snapshot).clone()))
+                Ok(LoadedRevocation::Snapshot(snapshot))
             }
             Err(denial) => Err(denial),
         }
@@ -648,7 +726,7 @@ impl Guard {
 
 enum LoadedRevocation {
     TtlOnly { max_lifetime: Duration },
-    Snapshot(RevocationSnapshot),
+    Snapshot(Arc<RevocationSnapshot>),
 }
 
 impl LoadedRevocation {
@@ -657,7 +735,7 @@ impl LoadedRevocation {
             Self::TtlOnly { max_lifetime } => RevocationState::TtlOnly {
                 max_lifetime: *max_lifetime,
             },
-            Self::Snapshot(snapshot) => RevocationState::Snapshot(snapshot),
+            Self::Snapshot(snapshot) => RevocationState::Snapshot(snapshot.as_ref()),
         }
     }
 }
@@ -726,42 +804,53 @@ pub struct AuthorizedCall<'a> {
 }
 
 impl<'a> AuthorizedCall<'a> {
+    /// Identifies this attempt. Fresh on every retry.
     pub fn invocation_id(&self) -> &str {
         &self.invocation_id
     }
 
+    /// Protocol deduplication key over the signed argument view. Stable across retries
+    /// of the same logical operation.
     pub fn dedup_key(&self) -> &str {
         &self.dedup_key
     }
 
+    /// Identifies the decision that permitted this invocation.
     pub fn decision_id(&self) -> &str {
         &self.decision_id
     }
 
+    /// Capability that was authorized.
     pub fn capability(&self) -> &str {
         self.capability
     }
 
+    /// The single instant this attempt committed to.
     pub fn instant(&self) -> VerificationInstant {
         self.instant
     }
 
+    /// Arguments matched against the warrant's constraints.
     pub fn execution_args(&self) -> &HashMap<String, ConstraintValue> {
         self.execution_args
     }
 
+    /// Arguments the proof of possession was computed over.
     pub fn pop_args(&self) -> &HashMap<String, ConstraintValue> {
         self.pop_args
     }
 
+    /// The proof of possession for this invocation.
     pub fn pop_signature(&self) -> &Signature {
         &self.pop_signature
     }
 
+    /// Warrant chain that authorized this invocation, root to leaf.
     pub fn chain(&self) -> &[Warrant] {
         self.chain
     }
 
+    /// Approvals that satisfied the gate, if one fired.
     pub fn approvals(&self) -> &[SignedApproval] {
         self.approvals
     }
@@ -784,11 +873,14 @@ impl<'a> AuthorizedCall<'a> {
 /// Result of an allowed guarded operation.
 #[must_use]
 pub struct Guarded<T> {
+    /// What the operation returned.
     pub value: T,
+    /// Evidence that the call was authorized.
     pub decision: Decision,
 }
 
 impl<T> Guarded<T> {
+    /// Discard the evidence and take the operation's value.
     pub fn into_inner(self) -> T {
         self.value
     }
@@ -816,11 +908,13 @@ pub struct GuardBuilder {
 }
 
 impl GuardBuilder {
+    /// The authorizer supplying trusted roots and clearance policy. Required.
     pub fn authorizer(mut self, authorizer: Authorizer) -> Self {
         self.authorizer = Some(authorizer);
         self
     }
 
+    /// Revocation policy. Required — there is no default; see [`RevocationMode`].
     pub fn revocation(mut self, mode: RevocationMode) -> Self {
         self.revocation = Some(mode);
         self
@@ -832,11 +926,13 @@ impl GuardBuilder {
         self
     }
 
+    /// Log level for denials. Never changes whether the operation runs.
     pub fn denial_reporting(mut self, reporting: DenialReporting) -> Self {
         self.denial_reporting = reporting;
         self
     }
 
+    /// Provider consulted only after a denial requires approval.
     pub fn approval_provider(mut self, provider: Arc<dyn ApprovalProvider>) -> Self {
         self.approval_provider = Some(provider);
         self
@@ -861,18 +957,21 @@ impl GuardBuilder {
     }
 
     #[cfg(feature = "receipts")]
+    /// Whether a receipt is best-effort evidence or a gate that denies on persistence failure.
     pub fn evidence_policy(mut self, policy: EvidencePolicy) -> Self {
         self.evidence = policy;
         self
     }
 
     #[cfg(feature = "receipts")]
+    /// Signer for authorization receipts.
     pub fn receipt_signer(mut self, signer: std::sync::Arc<dyn ReceiptSigner>) -> Self {
         self.receipt_signer = Some(signer);
         self
     }
 
     #[cfg(feature = "receipts")]
+    /// Sink receipts are written to.
     pub fn receipt_sink(mut self, sink: std::sync::Arc<dyn ReceiptSink>) -> Self {
         self.receipt_sink = Some(sink);
         self
@@ -885,6 +984,7 @@ impl GuardBuilder {
         self
     }
 
+    /// Build the guard, or fail if a required field is missing or unusable.
     pub fn build(self) -> Result<Guard, GuardBuildError> {
         let authorizer = self.authorizer.ok_or(GuardBuildError::MissingAuthorizer)?;
         if !authorizer.has_trusted_roots() {
@@ -938,7 +1038,9 @@ impl GuardBuilder {
                         .installed_revocation_list()
                         .cloned()
                         .ok_or(GuardBuildError::SignedSrlUnavailable)?;
-                    ResolvedRevocation::Snapshot(RevocationSnapshot::from_accepted_list(list))
+                    ResolvedRevocation::Snapshot(Arc::new(RevocationSnapshot::from_accepted_list(
+                        list,
+                    )))
                 }
             }
         };
@@ -959,15 +1061,23 @@ impl GuardBuilder {
 /// Failure constructing a [`Guard`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuardBuildError {
+    /// No authorizer was supplied.
     MissingAuthorizer,
+    /// The authorizer trusts no roots, so nothing could ever verify.
     EmptyTrustStore,
+    /// No revocation mode was chosen.
     MissingRevocationMode,
+    /// `SignedSrl` was chosen but no signed list or tracker is available.
     SignedSrlUnavailable,
     #[cfg(feature = "receipts")]
+    /// An evidence policy requires receipts but no signer was supplied.
     MissingReceiptSigner,
     #[cfg(feature = "receipts")]
+    /// An evidence policy requires receipts but no sink was supplied.
     MissingReceiptSink,
     #[cfg(feature = "async")]
+    /// A deadline was configured on the synchronous surface, where it cannot be enforced.
+    /// Use the async surface for enforceable deadlines.
     DeadlineNotEnforceable,
 }
 
@@ -1099,8 +1209,7 @@ mod tests {
     fn empty_chain_rejected() {
         let holder = SigningKey::generate();
         let err = PresentedAuthority::new(vec![], Arc::new(LocalSigner::new(holder)))
-            .err()
-            .expect("empty");
+            .expect_err("empty chain must be rejected");
         assert_eq!(err, crate::sdk::AuthorityError::EmptyChain);
     }
 
@@ -1111,8 +1220,7 @@ mod tests {
         let other = SigningKey::generate();
         let warrant = mint(&issuer, &holder, "read");
         let err = PresentedAuthority::new(vec![warrant], Arc::new(LocalSigner::new(other)))
-            .err()
-            .expect("mismatch");
+            .expect_err("signer mismatch must be rejected");
         assert_eq!(err, crate::sdk::AuthorityError::SignerMismatch);
     }
 
@@ -1382,9 +1490,8 @@ mod tests {
             })
             .unwrap()
             .into_inner();
-        let err = ReceivedAuthorization::new(&[], &pop, &[])
-            .err()
-            .expect("empty");
+        let err =
+            ReceivedAuthorization::new(&[], &pop, &[]).expect_err("empty chain must be rejected");
         assert_eq!(err, crate::sdk::AuthorityError::EmptyChain);
     }
 

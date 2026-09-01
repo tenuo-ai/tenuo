@@ -9,6 +9,7 @@ use serde_json::{Map, Value};
 /// Decoded `params._meta.tenuo` payload. Owns the artifacts.
 pub type TenuoMeta = OwnedReceivedAuthorization;
 
+/// Build the `_meta.tenuo` object for a chain, proof, and approvals.
 pub fn encode_meta(
     chain: &[Warrant],
     signature: &Signature,
@@ -31,10 +32,15 @@ pub fn encode_meta(
     Ok(Value::Object(object))
 }
 
+/// Build the `_meta.tenuo` object from an authorized call, reusing its existing proof
+/// of possession. Never signs again.
 pub fn encode_meta_from_authorized(call: &AuthorizedCall<'_>) -> Result<Value, TransportError> {
     encode_meta(call.chain(), call.pop_signature(), call.approvals())
 }
 
+/// Decode a `_meta.tenuo` object.
+///
+/// Size bounds are enforced before any decoding work.
 pub fn decode_meta(meta: &Value) -> Result<TenuoMeta, TransportError> {
     let object = meta.as_object().ok_or(TransportError::InvalidEncoding)?;
     let warrant = object
@@ -69,6 +75,10 @@ pub fn decode_meta(meta: &Value) -> Result<TenuoMeta, TransportError> {
     )
 }
 
+/// Remove `tenuo` from a `_meta` object.
+///
+/// A server MUST call this before forwarding the message to the handler, so tool code
+/// never sees authorization material.
 pub fn strip_tenuo(meta: &mut Value) {
     if let Some(object) = meta.as_object_mut() {
         object.remove("tenuo");

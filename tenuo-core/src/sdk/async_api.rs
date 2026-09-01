@@ -26,6 +26,7 @@ pub struct AttemptControl {
 }
 
 impl AttemptControl {
+    /// No deadline, not cancelled.
     pub fn new() -> Self {
         Self {
             deadline: None,
@@ -33,6 +34,7 @@ impl AttemptControl {
         }
     }
 
+    /// Cancelable, with a deadline for the whole attempt.
     pub fn with_deadline(deadline: DateTime<Utc>) -> Self {
         Self {
             deadline: Some(deadline),
@@ -40,14 +42,17 @@ impl AttemptControl {
         }
     }
 
+    /// The attempt deadline, if any.
     pub fn deadline(&self) -> Option<DateTime<Utc>> {
         self.deadline
     }
 
+    /// Request cancellation. Checked before the decision and before the operation runs.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
+    /// Whether cancellation has been requested.
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
     }
@@ -67,7 +72,12 @@ impl Default for AttemptControl {
 /// call.
 #[async_trait]
 pub trait AsyncHolderSigner: Send + Sync {
+    /// Public key of the holder this signer speaks for. Must equal the leaf holder.
     fn public_key(&self) -> PublicKey;
+    /// Sign a proof of possession, honoring `control`.
+    ///
+    /// A remote implementation is expected to observe the deadline itself; the host can
+    /// refuse before and after this call but cannot interrupt it.
     async fn sign_pop(
         &self,
         request: &PopSigningRequest<'_>,
@@ -79,6 +89,10 @@ pub trait AsyncHolderSigner: Send + Sync {
 /// no fresh snapshot.
 #[async_trait]
 pub trait AsyncRevocationProvider: Send + Sync {
+    /// Fetch a revocation update, honoring `control`.
+    ///
+    /// Called only when the local state is missing or stale. The result still passes the
+    /// tracker's issuer, rollback, and equivocation checks before it can decide anything.
     async fn fetch(&self, control: &AttemptControl) -> Result<RevocationUpdate, RevocationError>;
 }
 
@@ -90,6 +104,10 @@ pub struct PresentedAsyncAuthority {
 }
 
 impl PresentedAsyncAuthority {
+    /// Bind a chain to an async signer holding its leaf.
+    ///
+    /// Same validation as the synchronous form: non-empty chain, signer's key equals the
+    /// leaf holder.
     pub fn new(
         chain: Vec<Warrant>,
         signer: Arc<dyn AsyncHolderSigner>,
@@ -116,14 +134,17 @@ impl PresentedAsyncAuthority {
         }
     }
 
+    /// Last warrant in the chain.
     pub fn leaf(&self) -> &Warrant {
         self.chain.last().expect("non-empty chain")
     }
 
+    /// Full chain, root first.
     pub fn chain(&self) -> &[Warrant] {
         &self.chain
     }
 
+    /// Public key of the leaf holder.
     pub fn holder(&self) -> &PublicKey {
         self.leaf().authorized_holder()
     }
@@ -193,6 +214,7 @@ impl AsyncHolderSigner for LocalSigner {
 }
 
 impl Guard {
+    /// Decide, honoring deadline and cancellation.
     pub async fn check_async(
         &self,
         authority: &PresentedAsyncAuthority,
@@ -219,6 +241,7 @@ impl Guard {
         }
     }
 
+    /// Decide over received authorization, honoring deadline and cancellation.
     pub async fn check_received_async(
         &self,
         received: &ReceivedAuthorization<'_>,
@@ -238,6 +261,7 @@ impl Guard {
         }
     }
 
+    /// Authorize with an async signer, then run `op` exactly once.
     pub async fn guard_async<T, E>(
         &self,
         authority: &PresentedAsyncAuthority,
@@ -266,6 +290,7 @@ impl Guard {
         Ok(Guarded { value, decision })
     }
 
+    /// Verify received authorization, then run `op` exactly once.
     pub async fn guard_received_async<T, E>(
         &self,
         received: &ReceivedAuthorization<'_>,

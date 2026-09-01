@@ -6,12 +6,16 @@ use crate::wire::{APPROVALS_HEADER, POP_HEADER, WARRANT_HEADER};
 /// Encoded HTTP headers. Encode always emits a stack; approvals omitted when empty.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EncodedHeaders {
+    /// Encoded warrant chain.
     pub warrant: String,
+    /// Encoded proof of possession.
     pub pop: String,
+    /// Encoded approvals, when present.
     pub approvals: Option<String>,
 }
 
 impl EncodedHeaders {
+    /// Header name and value pairs, ready to attach to a request.
     pub fn header_pairs(&self) -> Vec<(&'static str, &str)> {
         let mut pairs = vec![
             (WARRANT_HEADER, self.warrant.as_str()),
@@ -24,6 +28,8 @@ impl EncodedHeaders {
     }
 }
 
+/// Build headers from an authorized call, reusing its existing proof of possession.
+/// Never signs again.
 pub fn headers_from_authorized(
     call: &AuthorizedCall<'_>,
 ) -> Result<EncodedHeaders, TransportError> {
@@ -35,6 +41,7 @@ pub fn headers_from_authorized(
     })
 }
 
+/// Read Tenuo headers from a map-like header collection.
 pub fn extract_headers(
     headers: &EncodedHeaders,
 ) -> Result<OwnedReceivedAuthorization, TransportError> {
@@ -46,6 +53,7 @@ pub fn extract_headers(
     )
 }
 
+/// Read Tenuo headers from an iterator of name and value pairs.
 pub fn extract_from_pairs<'a>(
     headers: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> Result<OwnedReceivedAuthorization, TransportError> {

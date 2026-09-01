@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 
 /// Time source for live authorization. Production uses [`SystemClock`].
 pub trait Clock: Send + Sync {
+    /// Current time. Called once per attempt, never inside one.
     fn now(&self) -> DateTime<Utc>;
 }
 
@@ -26,10 +27,12 @@ pub struct FixedClock {
 
 #[cfg(feature = "test-utils")]
 impl FixedClock {
+    /// A clock pinned to `instant`.
     pub fn new(instant: DateTime<Utc>) -> Self {
         Self { instant }
     }
 
+    /// The pinned instant.
     pub fn instant(&self) -> DateTime<Utc> {
         self.instant
     }

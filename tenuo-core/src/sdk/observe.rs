@@ -30,10 +30,12 @@ impl Guard {
 }
 
 impl ObservingGuard {
+    /// Start configuring an observer. An expiry is required.
     pub fn builder() -> ObservingGuardBuilder {
         ObservingGuardBuilder::default()
     }
 
+    /// When this assessment window closes.
     pub fn expires_at(&self) -> DateTime<Utc> {
         self.expires_at
     }
@@ -45,6 +47,11 @@ impl ObservingGuard {
         self
     }
 
+    /// Run the full decision, record what it would have been, and run `op` regardless.
+    ///
+    /// This is assessment, not enforcement: the operation runs on a would-deny. After
+    /// [`Self::expires_at`] it refuses to run at all, so a window cannot silently become
+    /// a permanent bypass.
     pub fn observe<T, E>(
         &self,
         request: PresentedRequest<'_>,
@@ -125,6 +132,7 @@ pub struct ObservingGuardBuilder {
 }
 
 impl ObservingGuardBuilder {
+    /// Observe using an existing guard's policy. Evidence is disabled on the copy.
     pub fn from_guard(guard: &Guard) -> Self {
         Self {
             guard: Some(guard.snapshot_for_observe()),
@@ -133,16 +141,20 @@ impl ObservingGuardBuilder {
         }
     }
 
+    /// How much argument information each record carries. Defaults to keys and value
+    /// classes — enough to draft constraints, never raw values.
     pub fn argument_shape_policy(mut self, policy: ArgumentShapePolicy) -> Self {
         self.argument_shape = policy;
         self
     }
 
+    /// When the assessment window closes. Required.
     pub fn expires_at(mut self, when: DateTime<Utc>) -> Self {
         self.expires_at = Some(when);
         self
     }
 
+    /// Build the observer, or fail if the guard or expiry is missing.
     pub fn build(self) -> Result<ObservingGuard, ObserveBuildError> {
         let guard = self.guard.ok_or(ObserveBuildError::MissingGuard)?;
         let expires_at = self.expires_at.ok_or(ObserveBuildError::MissingExpiry)?;
@@ -156,33 +168,49 @@ impl ObservingGuardBuilder {
 
 /// What the caller actually presented — including nothing at all.
 pub enum PresentedRequest<'a> {
+    /// A holder-side authority.
     Holder(&'a PresentedAuthority),
+    /// Authorization received from a peer.
     Received(&'a ReceivedAuthorization<'a>),
+    /// Authority was presented but failed structural validation.
     Malformed(AuthorityError),
+    /// No authority was presented at all — the case an assessment most needs to see.
     Missing,
 }
 
 /// Result of an observation. The operation ran regardless of the would-outcome.
 pub struct Observed<T> {
+    /// What the operation returned. It ran regardless of the verdict.
     pub value: T,
+    /// What an enforcing guard would have decided, with full detail.
     pub outcome: ObservedOutcome,
+    /// Persistable summary of the same decision.
     pub observation: ObservationRecord,
 }
 
 /// What enforcement would have decided. Never an allow token.
 pub enum ObservedOutcome {
+    /// The call would have been allowed.
     WouldAllow,
+    /// The call would have been denied.
     WouldDeny(Denial),
+    /// The call would have required approval, with the core's request descriptor.
     WouldRequireApproval(ApprovalRequest),
+    /// No authority was presented.
     WouldDenyNoAuthority,
 }
 
 /// Persistable would-outcome. The full [`ObservedOutcome`] stays on [`Observed`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ObservationVerdict {
+    /// The call would have been allowed.
     WouldAllow,
+    /// The call would have been denied.
     WouldDeny,
+    /// The call would have required approval.
     WouldRequireApproval,
+    /// No authority was presented.
     WouldDenyNoAuthority,
 }
 
@@ -210,7 +238,7 @@ pub enum ArgumentShapePolicy {
 }
 
 /// Privacy-safe argument summary for an assessment window.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArgumentShape {
     keys: Vec<String>,
     classes: BTreeMap<String, ValueClass>,
@@ -218,33 +246,45 @@ pub struct ArgumentShape {
 }
 
 impl ArgumentShape {
+    /// Argument names seen, sorted.
     pub fn keys(&self) -> &[String] {
         &self.keys
     }
 
+    /// Value class per argument. Empty under [`ArgumentShapePolicy::KeysOnly`].
     pub fn classes(&self) -> &BTreeMap<String, ValueClass> {
         &self.classes
     }
 
+    /// SHA-256 per argument value. Empty unless the policy is
+    /// [`ArgumentShapePolicy::KeysClassesAndHashes`].
     pub fn hashes(&self) -> &BTreeMap<String, String> {
         &self.hashes
     }
 }
 
 /// Coarse class of a constraint value. Not the value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ValueClass {
+    /// A string value.
     String,
+    /// An integer value.
     Integer,
+    /// A floating-point value.
     Float,
+    /// A boolean value.
     Boolean,
+    /// A list value.
     List,
+    /// An object value.
     Object,
+    /// A null value.
     Null,
 }
 
 /// Labeled observe-only record. Not an authorization receipt.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ObservationRecord {
     observe_only: bool,
     expires_at: DateTime<Utc>,
@@ -254,26 +294,32 @@ pub struct ObservationRecord {
 }
 
 impl ObservationRecord {
+    /// Always true. Present so a persisted record is never mistaken for enforcement.
     pub fn is_observe_only(&self) -> bool {
         self.observe_only
     }
 
+    /// When the assessment window closes.
     pub fn expires_at(&self) -> DateTime<Utc> {
         self.expires_at
     }
 
+    /// Capability that was called.
     pub fn capability(&self) -> &str {
         &self.capability
     }
 
+    /// What an enforcing guard would have decided.
     pub fn verdict(&self) -> ObservationVerdict {
         self.verdict
     }
 
+    /// Argument summary, at the configured policy level.
     pub fn argument_shape(&self) -> &ArgumentShape {
         &self.argument_shape
     }
 
+    /// The argument-shape policy this record was captured under.
     pub fn policy_mode(&self) -> &'static str {
         "observe"
     }
@@ -366,7 +412,9 @@ fn hash_into(hasher: &mut Sha256, value: &ConstraintValue) {
 /// Failure while observing an already-built [`ObservingGuard`].
 #[derive(Debug)]
 pub enum ObserveError<E> {
+    /// The assessment window has closed. The operation did not run.
     Expired,
+    /// The operation itself returned an error.
     Operation(E),
 }
 
@@ -384,7 +432,9 @@ impl<E: fmt::Debug + fmt::Display> std::error::Error for ObserveError<E> {}
 /// Failure constructing an [`ObservingGuard`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObserveBuildError {
+    /// No guard was supplied.
     MissingGuard,
+    /// No expiry was supplied. An observer cannot be unbounded.
     MissingExpiry,
 }
 
@@ -465,7 +515,6 @@ mod tests {
         ));
         assert!(observed.observation.is_observe_only());
         assert_eq!(observed.observation.policy_mode(), "observe");
-        assert!(observed.value == ());
     }
 
     #[test]

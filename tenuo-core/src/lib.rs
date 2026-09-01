@@ -55,6 +55,7 @@ pub mod revocation;
 pub mod revocation_manager;
 pub mod revocation_tracker;
 #[cfg(feature = "sdk")]
+#[deny(missing_docs)]
 pub mod sdk;
 pub mod verification;
 pub mod warrant;

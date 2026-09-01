@@ -312,7 +312,7 @@ mod tests {
         let holder = SigningKey::generate();
         let warrant = mint_bound(&issuer, &holder, "read", StdDuration::from_secs(300));
         let srl = crate::revocation::SignedRevocationList::builder()
-            .revoke(&warrant.id().to_string())
+            .revoke(warrant.id().to_string())
             .version(1)
             .build(&issuer)
             .unwrap();

@@ -10,14 +10,19 @@ use std::sync::Mutex;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EvidencePolicy {
     #[default]
+    /// Produce no receipts.
     Disabled,
+    /// Produce receipts; a persistence failure is observable but does not change the outcome.
     BestEffort,
+    /// Require durable evidence before the operation runs. Persistence failure denies.
     RequiredBeforeExecution,
 }
 
 /// Raw signature over a receipt's complete final signing bytes.
 pub trait ReceiptSigner: Send + Sync {
+    /// Public key receipts are signed under.
     fn public_key(&self) -> PublicKey;
+    /// Sign a receipt over the request's exact bytes.
     fn sign_receipt(
         &self,
         request: &ReceiptSigningRequest<'_>,
@@ -26,6 +31,7 @@ pub trait ReceiptSigner: Send + Sync {
 
 /// Local non-blocking persistence. Remote durable sinks belong on the async surface.
 pub trait ReceiptSink: Send + Sync {
+    /// Store a receipt and return a reference to it.
     fn persist(&self, receipt: &Receipt) -> Result<ReceiptRef, ReceiptSinkError>;
 }
 
@@ -39,10 +45,12 @@ impl<'a> ReceiptSigningRequest<'a> {
         Self { preimage }
     }
 
+    /// Constant `"receipt"`. Lets one signer route by purpose.
     pub fn purpose(&self) -> &'static str {
         "receipt"
     }
 
+    /// The exact message to sign, verbatim, with raw Ed25519.
     pub fn final_signing_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(SIGNATURE_CONTEXT.len() + self.preimage.len());
         out.extend_from_slice(SIGNATURE_CONTEXT);
@@ -57,6 +65,7 @@ pub struct LocalReceiptSigner {
 }
 
 impl LocalReceiptSigner {
+    /// Sign receipts with an in-process key.
     pub fn new(key: SigningKey) -> Self {
         Self { key }
     }
@@ -89,10 +98,12 @@ pub struct MemoryReceiptSink {
 }
 
 impl MemoryReceiptSink {
+    /// An empty in-memory sink. For tests.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Everything stored so far.
     pub fn stored(&self) -> Vec<Receipt> {
         self.stored.lock().map(|g| g.clone()).unwrap_or_default()
     }
@@ -114,11 +125,14 @@ impl ReceiptSink for MemoryReceiptSink {
 /// Handle returned by a sink. Not a capability.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReceiptRef {
+    /// Identifier the sink assigned to the stored receipt.
     pub id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Why a receipt could not be signed.
 pub enum ReceiptSignerError {
+    /// The receipt signer could not be reached.
     Unavailable,
 }
 
@@ -133,7 +147,9 @@ impl fmt::Display for ReceiptSignerError {
 impl std::error::Error for ReceiptSignerError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Why a receipt could not be stored.
 pub enum ReceiptSinkError {
+    /// The sink could not be reached.
     Unavailable,
 }
 

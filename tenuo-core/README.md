@@ -73,7 +73,7 @@ An enforcement point uses `Tenuo::enforcement()` and `Guard::guard_received` on 
 | `receipts` | Authorization receipts (draft `receipt-v1`) |
 | `async` | Async Guard methods and `AttemptControl` |
 | `otel` | OpenTelemetry API spans only; no exporter |
-| `test-utils` | `FixedClock` — not for production |
+| `test-utils` | `FixedClock` and `sdk::test_utils` scaffolding — not for production |
 
 Run the MCP hop demo:
 

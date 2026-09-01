@@ -28,9 +28,12 @@ pub trait RevocationFloorStore: Send + Sync {
     ) -> Result<(), RevocationError>;
 }
 
+/// Per-issuer monotonic floor: issuer key bytes to `(version, content_hash)`.
+type FloorMap = HashMap<[u8; 32], (u64, [u8; 32])>;
+
 /// In-memory floor. Development and tests only — not a production default.
 pub struct InMemoryFloorStore {
-    floors: Mutex<HashMap<[u8; 32], (u64, [u8; 32])>>,
+    floors: Mutex<FloorMap>,
 }
 
 impl InMemoryFloorStore {
@@ -120,7 +123,7 @@ fn apply_floor(
     }
 }
 
-fn read_floors(path: &Path) -> Result<HashMap<[u8; 32], (u64, [u8; 32])>, RevocationError> {
+fn read_floors(path: &Path) -> Result<FloorMap, RevocationError> {
     let raw = fs::read_to_string(path).map_err(|_| RevocationError::Unavailable)?;
     let encoded: HashMap<String, (u64, String)> =
         serde_json::from_str(&raw).map_err(|_| RevocationError::Unavailable)?;

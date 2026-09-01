@@ -10,23 +10,37 @@ use base64::Engine;
 use std::fmt;
 
 #[cfg(feature = "http-transport")]
+/// Header binding for HTTP-like transports.
 pub mod http;
 #[cfg(feature = "mcp-transport")]
+/// `params._meta.tenuo` binding for MCP.
 pub mod mcp_meta;
 
+/// Maximum approvals accepted on one message.
 pub const MAX_APPROVALS: usize = 64;
+/// Maximum decoded size of the approvals block.
 pub const MAX_APPROVALS_DECODED_BYTES: usize = 65_536;
+/// Maximum encoded warrant-chain string on an MCP message.
 pub const MCP_WARRANT_STRING_MAX: usize = 64 * 1024;
+/// Maximum encoded proof-of-possession string on an MCP message.
 pub const MCP_SIGNATURE_STRING_MAX: usize = 4 * 1024;
+/// Maximum encoded string for one approval on an MCP message.
 pub const MCP_APPROVAL_STRING_MAX: usize = 8 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Why a message could not be encoded or decoded. Checked before any decoding work.
 pub enum TransportError {
+    /// A required field was absent.
     MissingField(&'static str),
+    /// A field exceeded its size bound.
     PayloadTooLarge,
+    /// A field was not valid base64, CBOR, or the expected JSON shape.
     InvalidEncoding,
+    /// The proof of possession was not a well-formed signature.
     InvalidSignature,
+    /// More approvals than [`MAX_APPROVALS`].
     TooManyApprovals,
+    /// The decoded artifacts did not form a usable authorization.
     Authority(AuthorityError),
 }
 

@@ -7,6 +7,10 @@ use std::fmt;
 
 /// Local, non-blocking lookup. Remote or human review belongs on the async surface.
 pub trait ApprovalProvider: Send + Sync {
+    /// Fetch approvals for a core-produced request descriptor.
+    ///
+    /// Called only between attempts, never inside one, so blocking on human review is
+    /// safe here.
     fn approvals_for(
         &self,
         request: &ApprovalRequest,
@@ -20,6 +24,7 @@ pub struct LocalApprovalSigner {
 }
 
 impl LocalApprovalSigner {
+    /// An in-process approver. For tests and single-node deployments.
     pub fn new(key: SigningKey, external_id: impl Into<String>) -> Self {
         Self {
             key,
@@ -55,9 +60,13 @@ impl ApprovalProvider for LocalApprovalSigner {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Why approvals could not be obtained.
 pub enum ApprovalError {
+    /// No provider is configured on the guard.
     NoProvider,
+    /// The provider could not be reached or timed out. An outage, not a policy outcome.
     Unavailable,
+    /// The provider declined to approve this request.
     Unauthorized,
 }
 

@@ -21,6 +21,9 @@ pub mod prelude;
 mod signer;
 mod tenuo;
 
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
+
 #[cfg(feature = "async")]
 mod async_api;
 #[cfg(feature = "receipts")]

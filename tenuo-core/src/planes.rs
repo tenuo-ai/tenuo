@@ -2782,7 +2782,7 @@ impl Authorizer {
             None => crate::verification::RevocationState::NotConfigured,
         };
         let as_of_dt = chrono::DateTime::from_timestamp(as_of, 0)
-            .ok_or_else(|| crate::error::Error::InvalidEvaluationInstant(as_of))?;
+            .ok_or(crate::error::Error::InvalidEvaluationInstant(as_of))?;
         let context = crate::verification::VerificationContext::new(as_of_dt, revocation);
         self.check_chain_with_context(
             chain,

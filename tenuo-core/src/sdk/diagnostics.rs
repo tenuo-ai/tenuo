@@ -29,6 +29,10 @@ impl<'a> Diagnostics<'a> {
         }
     }
 
+    /// Explain a denial in operator terms, naming the responsible field when there is one.
+    ///
+    /// Operator-side only. This string MUST NOT be returned to the caller that was denied;
+    /// it deliberately discloses more than [`Denial::message`].
     pub fn explain_denial(&self, denial: &Denial) -> String {
         let leaf = self.leaf_id();
         match (denial.protocol_code(), denial.sdk_kind()) {
@@ -47,6 +51,7 @@ impl<'a> Diagnostics<'a> {
         }
     }
 
+    /// Explain why this call would be denied, without performing an authorization.
     pub fn why_denied(&self, call: &Call<'_>) -> Option<String> {
         let result = match self.subject {
             Subject::Holder(authority) => self.guard.check(authority, call),
@@ -58,6 +63,7 @@ impl<'a> Diagnostics<'a> {
         }
     }
 
+    /// Summarize the authority: leaf, depth, expiry, and claimed capabilities.
     pub fn explain_authority(&self) -> String {
         match self.subject {
             Subject::Holder(authority) => {
