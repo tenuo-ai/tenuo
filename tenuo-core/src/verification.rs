@@ -9,6 +9,26 @@ use crate::warrant::Warrant;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
 
+/// One captured instant for a single authorization attempt.
+///
+/// Not constructible by application code. `Guard` mints one from the clock
+/// at the start of each attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerificationInstant {
+    at: DateTime<Utc>,
+}
+
+impl VerificationInstant {
+    #[cfg_attr(not(feature = "sdk"), allow(dead_code))]
+    pub(crate) fn new(at: DateTime<Utc>) -> Self {
+        Self { at }
+    }
+
+    pub fn as_datetime(self) -> DateTime<Utc> {
+        self.at
+    }
+}
+
 /// One committed evaluation instant plus the revocation state that decides it.
 ///
 /// Fields are private. Application code does not construct a live historical

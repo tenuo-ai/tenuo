@@ -53,6 +53,8 @@ pub mod planes;
 pub mod receipt;
 pub mod revocation;
 pub mod revocation_manager;
+#[cfg(feature = "sdk")]
+pub mod sdk;
 pub mod verification;
 pub mod warrant;
 pub mod wire;
@@ -91,7 +93,8 @@ pub use constraints::{
     MAX_CONSTRAINT_DEPTH,
 };
 pub use crypto::{PublicKey, Signature, SigningKey};
-pub use error::{Error, Result};
+pub use error::{Error, ErrorCode, Result};
+
 pub use planes::{
     Authorizer, AuthorizerBuilder, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,
     VerifiedApproval, DEFAULT_CLOCK_TOLERANCE_SECS,
@@ -101,7 +104,15 @@ pub use revocation::{
     RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,
 };
 pub use revocation_manager::RevocationManager;
-pub use verification::{RevocationSnapshot, RevocationState, VerificationContext};
+#[cfg(feature = "sdk")]
+pub use sdk::{
+    AuthorizationAttempt, AuthorizedCall, Call, Decision, DecisionMetadata, Denial,
+    DenialReporting, Diagnostics, Guard, GuardBuildError, GuardError, HolderSigner, LocalSigner,
+    PresentedAuthority, Retryability, RevocationMode, SdkDenialKind,
+};
+pub use verification::{
+    RevocationSnapshot, RevocationState, VerificationContext, VerificationInstant,
+};
 pub use warrant::{
     Clearance, OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant, WarrantBuilder, WarrantId,
     WarrantType, POP_MAX_WINDOWS, POP_TIMESTAMP_WINDOW_SECS, WARRANT_ID_PREFIX,

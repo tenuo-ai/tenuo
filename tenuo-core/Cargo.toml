@@ -31,6 +31,9 @@ control-plane = []
 # Data Plane - for edge agents and verifiers  
 data-plane = []
 
+# Framework-independent Rust SDK (default-off; no extra dependencies)
+sdk = []
+
 # Python bindings
 python = ["pyo3"]
 python-extension = ["pyo3/extension-module", "python"]
