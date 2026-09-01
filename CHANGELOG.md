@@ -7,26 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **Receipt emission postures.** Receipts can be emitted deferred or
-  journaled, chosen at `ControlPlaneClient` construction. A bare
-  `receipt_sink=` now defaults to `DeferredEmitter(sink, maxsize=256)`:
-  ~0.5 µs on the hot path, emission is asynchronous, and a crash loses at
-  most `maxsize` receipts — call `flush_receipts()` to wait for delivery
-  (`shutdown()` drains). Pass
-  `receipt_emitter=JournalEmitter(path)` when SIGKILL loss must be zero:
-  ~17 µs p50 on the hot path, the receipt is in the page cache before the
-  call returns, and the file is readable by `tenuo receipt chain`. The
-  chain and the artifact are identical under both; only the loss contract
-  differs. The unbounded deferred queue is not constructible.
-
-### Changed
-
-- **Receipt emission for sink users is now asynchronous** (see above). Code
-  that emitted and then immediately read its sink must call
-  `flush_receipts()` first.
-
 ## [0.2.4] - 2026-08-31
 
 ### Breaking
@@ -51,9 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signatures, and deny decision codes. Python adds `tenuo.receipts` sinks,
   `ControlPlaneClient(..., receipt_sink=...)`, automatic receipt trust binding
   from signed enforcement results, and `tenuo receipt verify|chain` CLI helpers
-  for inspecting individual receipts or append-only JSONL streams. Receipt
-  verification now rejects signed payloads that omit required allow/deny
-  evidence instead of accepting structurally incomplete receipts.
+  for inspecting individual receipts or append-only JSONL streams. A bare
+  `receipt_sink=` defaults to `DeferredEmitter(sink, maxsize=256)`: ~0.5 µs
+  on the hot path, emission is asynchronous, and a crash loses at most
+  `maxsize` receipts — call `flush_receipts()` to wait for delivery
+  (`shutdown()` drains). Pass `receipt_emitter=JournalEmitter(path)` when
+  SIGKILL loss must be zero: ~17 µs p50 on the hot path, the receipt is in
+  the page cache before the call returns, and the file is readable by
+  `tenuo receipt chain`. The chain and the artifact are identical under
+  both; only the loss contract differs. The unbounded deferred queue is
+  not constructible. Receipt verification now rejects signed payloads that
+  omit required allow/deny evidence instead of accepting structurally
+  incomplete receipts.
 - **Optional approval-gate display message.** `ToolApprovalGate` accepts
   `message` (max 200 UTF-8 characters). When a gate fires, Rust resolves the
   string once onto `ApprovalRequest.message` (default:
@@ -137,6 +126,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   revoked warrant chains before calling Temporal's completion handle. This
   helper is not a Temporal enforcement boundary and can be bypassed by callers
   that invoke the raw completion API directly.
+
+### Changed
+
+- **Receipt emission for sink users is asynchronous.** A bare
+  `receipt_sink=` enqueues onto a deferred worker (see above). Code that
+  emits and then immediately reads its sink must call `flush_receipts()`
+  first.
 
 ### Fixed
 

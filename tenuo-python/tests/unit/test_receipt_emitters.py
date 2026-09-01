@@ -8,6 +8,7 @@ journal pays the signing inline and is durable before emit returns.
 
 from __future__ import annotations
 
+import threading
 import time
 
 import pytest
@@ -179,6 +180,32 @@ def test_shutdown_drains_the_deferred_queue(decision):
     client._receipt_emitter.close(timeout=10.0)
 
     assert len(sink.receipts) == 10
+
+
+def test_close_returns_when_the_queue_is_full_and_the_sink_is_stuck(decision):
+    """put(None) without a timeout hangs forever if the worker is blocked in
+    the sink and the queue is at maxsize. shutdown must not."""
+    authorizer, result = decision
+    entered = threading.Event()
+    release = threading.Event()
+
+    class StuckSink:
+        def handle(self, wire):
+            entered.set()
+            release.wait()
+
+    client = _client(receipt_emitter=DeferredEmitter(StuckSink(), maxsize=1))
+    client.bind_authorizer(authorizer)
+    client._emit_receipt(result, "read_file", True, "req-0", None)
+    assert entered.wait(timeout=2.0)
+    client._emit_receipt(result, "read_file", True, "req-1", None)
+
+    t0 = time.monotonic()
+    client._receipt_emitter.close(timeout=0.3)
+    elapsed = time.monotonic() - t0
+    release.set()
+
+    assert elapsed < 1.0, "close blocked on an untimed put into a full queue"
 
 
 def test_flush_waits_for_a_receipt_already_in_the_workers_hands(decision):

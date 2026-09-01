@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import threading
 import time
 from pathlib import Path
@@ -69,6 +70,20 @@ class ReceiptSink(Protocol):
     """
 
     def handle(self, receipt_hex: str) -> None: ...
+
+
+class _ReceiptIssuer(Protocol):
+    """The Rust client's receipt producers. Set by ``_attach``."""
+
+    def issue_receipt(
+        self, chain_result: object, tool: object, allowed: object, ts: object,
+        request_id: object, decision_code: object,
+    ) -> Optional[str]: ...
+
+    def issue_denial_receipt(
+        self, chain: object, tool: object, args: object, ts: object,
+        request_id: object, decision_code: object, verified_pop: object,
+    ) -> Optional[str]: ...
 
 
 class InMemoryReceiptSink:
@@ -200,17 +215,15 @@ class DeferredEmitter:
             raise ValueError(
                 "maxsize is the crash-loss budget and must be a positive int"
             )
-        import queue as _queue
-
         self._sink = sink
-        self._q: "_queue.Queue" = _queue.Queue(maxsize)
-        self._inner = None
-        self._on_error = None
+        self._q: queue.Queue = queue.Queue(maxsize)
+        self._inner: Optional[_ReceiptIssuer] = None
+        self._on_error: Optional[Callable[[BaseException], None]] = None
         self._worker: Optional[threading.Thread] = None
 
     # Called by ControlPlaneClient: the emitter signs with the client's own
     # key so both postures share one identity and one chain.
-    def _attach(self, inner, on_error) -> None:
+    def _attach(self, inner: _ReceiptIssuer, on_error) -> None:
         self._inner = inner
         self._on_error = on_error
         self._worker = threading.Thread(target=self._run, daemon=True)
@@ -232,14 +245,17 @@ class DeferredEmitter:
                 self._q.task_done()
                 return
             try:
+                inner = self._inner
+                if inner is None:
+                    raise RuntimeError("DeferredEmitter is not attached")
                 if item[0] == "allow":
                     _, chain_result, tool, allowed, ts, request_id, code = item
-                    wire = self._inner.issue_receipt(
+                    wire = inner.issue_receipt(
                         chain_result, tool, allowed, ts, request_id, code
                     )
                 else:
                     _, chain, tool, args, ts, request_id, code, pop = item
-                    wire = self._inner.issue_denial_receipt(
+                    wire = inner.issue_denial_receipt(
                         chain, tool, args, ts, request_id, code, pop
                     )
                 deliver(self._sink, wire, self._on_error)
@@ -268,7 +284,16 @@ class DeferredEmitter:
     def close(self, timeout: float = 10.0) -> None:
         if self._worker is None:
             return
-        self._q.put(None)
+        # put() without a timeout hangs forever when the queue is full and
+        # the worker is blocked in the sink — shutdown must not.
+        try:
+            self._q.put(None, timeout=timeout)
+        except queue.Full:
+            logger.warning(
+                "deferred receipt emitter did not accept close sentinel; "
+                "worker may still be draining"
+            )
+            return
         self._worker.join(timeout)
         self._worker = None
 
@@ -290,8 +315,8 @@ class JournalEmitter:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._fd = os.open(str(self._path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-        self._inner = None
-        self._on_error = None
+        self._inner: Optional[_ReceiptIssuer] = None
+        self._on_error: Optional[Callable[[BaseException], None]] = None
         self._write_lock = threading.Lock()
         self._stop = threading.Event()
         if fsync_interval_s is not None:
@@ -303,7 +328,7 @@ class JournalEmitter:
                         pass
             threading.Thread(target=_fsyncer, daemon=True).start()
 
-    def _attach(self, inner, on_error) -> None:
+    def _attach(self, inner: _ReceiptIssuer, on_error) -> None:
         self._inner = inner
         self._on_error = on_error
 
@@ -334,12 +359,18 @@ class JournalEmitter:
             logger.warning("journal append failed; evidence not stored", exc_info=exc)
 
     def emit_allow(self, chain_result, tool, allowed, ts, request_id, decision_code) -> None:
-        self._append(self._inner.issue_receipt(
+        inner = self._inner
+        if inner is None:
+            raise RuntimeError("JournalEmitter is not attached")
+        self._append(inner.issue_receipt(
             chain_result, tool, allowed, ts, request_id, decision_code
         ))
 
     def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop) -> None:
-        self._append(self._inner.issue_denial_receipt(
+        inner = self._inner
+        if inner is None:
+            raise RuntimeError("JournalEmitter is not attached")
+        self._append(inner.issue_denial_receipt(
             chain, tool, args, ts, request_id, decision_code, verified_pop
         ))
 
