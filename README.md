@@ -17,7 +17,7 @@
 
 Tenuo gives each task only the authority it needs. That authority travels across agents, tools, and workflows, can only narrow when delegated, and is verified where the action executes. It complements the identity and policy systems you already have.
 
-A **warrant** is a signed grant of which tools an agent can call, under what constraints, and for how long — a prepaid card for a task, not a corporate card with standing access. Sensitive actions can also require a [signed human approval](./docs/approvals.md). Deploy in-process or at a sidecar/gateway; the warrant semantics are the same.
+A **warrant** is a signed grant of which tools an agent can call, under what constraints, and for how long. It works like a prepaid card for one task. Sensitive actions can also require a [signed human approval](./docs/approvals.md). Deploy in-process or at a sidecar/gateway; the warrant semantics are the same.
 
 > **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](./CHANGELOG.md).
 >
@@ -84,11 +84,11 @@ Blocked before the function ran
 
 Even if the agent is prompt-injected, it cannot scale a production cluster or exceed ten replicas through this tool. The check happens before the function runs.
 
-When the `mint_sync` block exits, that task no longer has a warrant in scope. The warrant object's TTL is separate — short TTLs are still the production default. No revocation flow is required for a task that simply ended.
+When the `mint_sync` block exits, that task no longer has a warrant in scope. The warrant's own TTL is separate. Short TTLs are still the production default. A task that ended needs no revocation flow.
 
 ### 2. Enforce Across a Real Boundary
 
-The same check belongs on the MCP server, not in the agent. The server trusts the issuer's public key; the agent only presents a warrant and a proof of possession. Verification is local.
+Run the same check on the MCP server. The server trusts the issuer's public key; the agent only presents a warrant and a proof of possession. Verification is local.
 
 ```python
 # pip install "tenuo[fastmcp]"
@@ -96,7 +96,7 @@ from fastmcp import FastMCP
 from tenuo import Authorizer
 from tenuo.mcp import MCPVerifier, TenuoMiddleware
 
-authorizer = Authorizer(trusted_roots=[issuer_public_key])  # issuer, not the agent
+authorizer = Authorizer(trusted_roots=[issuer_public_key])  # trust the issuer's key
 verifier = MCPVerifier(authorizer=authorizer, require_warrant=True)
 mcp = FastMCP("infrastructure", middleware=[TenuoMiddleware(verifier)])
 
@@ -154,9 +154,42 @@ except MonotonicityError:
     print("Rejected: child cannot raise the replica cap")
 ```
 
-Adding tools, widening constraints, or outliving the parent fails the same way. The chain can travel over MCP, A2A, HTTP, or a workflow engine and is verified at the final tool boundary.
+Adding tools or widening constraints fails the same way. A child TTL longer than the parent's remaining lifetime is clamped to the parent's expiry. The chain can travel over MCP, A2A, HTTP, or a workflow engine and is verified at the final tool boundary.
 
 Runnable end-to-end: [MCP delegation demo](./tenuo-python/examples/mcp/mcp_delegation_demo.py).
+
+---
+
+## How It Works
+
+Tenuo is capability-based authorization. A warrant is a capability: a signed grant that lists the tools an agent may call, the argument values it may pass, the key that may use it, and when it expires. The warrant travels with the request. Whoever verifies the request only needs the issuer's public key.
+
+Four things follow from that design.
+
+**Holder-bound.** Every warrant names a public key. Every call carries a signature from that key over the warrant, the tool, the exact arguments, and a short time window. A copied warrant is useless without the key.
+
+**Verified offline.** The warrant carries its own authority and signature. Checking it needs no lookup and no network. Checks run in under 50 μs, and enforcement keeps working when the control plane is down.
+
+**Attenuates monotonically.** Delegation mints a child warrant signed by the parent's holder. The verifier walks the whole chain from a trusted root to the leaf. Each link may drop tools, tighten constraints, or shorten expiry. Nothing in the protocol can add authority. Tenuo calls this **Subtractive Delegation**.
+
+**Holds under prompt injection.** The model never sees the warrant. The check runs at the tool boundary, on the real arguments, after the model has chosen what to call. A hijacked agent can only make the calls its warrant already allowed.
+
+```
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  Control Plane   │     │  Orchestrator    │     │  Worker          │
+│                  │     │                  │     │                  │
+│  Issues root     │────▶│  Attenuates      │────▶│  Executes with   │
+│  warrant         │     │  for task        │     │  proof           │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+     Full scope     -->     Narrower      -->      Narrowest
+```
+
+1. **Control plane** issues a root warrant with broad capabilities
+2. **Orchestrator** attenuates it for a specific task; scope can only shrink
+3. **Worker** proves possession of the bound key and executes
+4. **Warrant expires**; no cleanup needed
+
+Tenuo builds on Macaroons and UCAN and implements the capability primitive from [CaMeL](https://arxiv.org/abs/2503.18813). See [Concepts](https://tenuo.ai/concepts) for the model and [Related Work](./docs/related-work.md) for comparisons with Biscuit, Macaroons, and UCAN.
 
 ---
 
@@ -172,7 +205,7 @@ IAM answers "who are you?" Tenuo adds "what can this workload do right now for t
 | Runtime policy calls add latency and dependency risk | Offline verification (under 50 μs) | Enforcement holds under load without network round-trips |
 | Teams need defensible audit evidence | Signed authorization receipts (opt-in) | Each decision is attributable and reviewable |
 
-Constraints parse inputs the way the target system will — [11 types](https://tenuo.ai/constraints) including `Subpath`, `UrlSafe`, `Shlex`, and `CEL` ([why this matters](https://niyikiza.com/posts/cve-2025-66032/)).
+Constraints parse inputs the way the target system will. There are [11 types](https://tenuo.ai/constraints), including `Subpath`, `UrlSafe`, `Shlex`, and `CEL` ([why this matters](https://niyikiza.com/posts/cve-2025-66032/)).
 
 ---
 
@@ -180,7 +213,7 @@ Constraints parse inputs the way the target system will — [11 types](https://t
 
 - **Not a sandbox**: Tenuo authorizes actions, it doesn't isolate execution. Pair with containers/sandboxes/VMs for defense in depth.
 - **Not prompt engineering**: Tenuo does not rely on model instructions for security decisions.
-- **Not an LLM filter**: Tenuo gates tool calls at execution time rather than filtering model text.
+- **Not an LLM filter**: Tenuo checks tool calls when they execute. It never reads model text.
 - **Not a replacement for IAM**: Tenuo *complements* IAM by adding task-scoped, attenuating capabilities on top of identity.
 
 ---
@@ -197,7 +230,7 @@ Tenuo uses the same warrant format and attenuation rules everywhere. Choose the 
 | **Inside a durable workflow** | Authority must survive retries, queues, and long-running execution | Temporal | [Temporal guide](./docs/temporal-reference.md) |
 | **At an agent handoff** | One agent delegates part of a task to another agent | A2A, MCP warrant stacks | [A2A guide](./docs/a2a.md), [delegation demo](./tenuo-python/examples/mcp/mcp_delegation_demo.py) |
 
-These are deployment choices, not separate authorization systems. A warrant issued in one identity domain remains verifiable when execution moves into another, and every delegated warrant must stay within its parent authority.
+These are all deployment choices for one authorization system. A warrant issued in one identity domain remains verifiable when execution moves into another, and every delegated warrant must stay within its parent authority.
 
 ---
 
@@ -285,7 +318,7 @@ Self-hosted Tenuo is free forever. The core library and sidecar run entirely in 
 
 **Self-hosted checklist:**
 
-- Store signing keys in a secrets manager (Vault, AWS Secrets Manager, GCP Secret Manager), not environment variables
+- Store signing keys in a secrets manager (Vault, AWS Secrets Manager, GCP Secret Manager). Keep them out of environment variables
 - Configure `trusted_roots` with your control plane's public keys
 - Ensure `dry_run` is disabled and warrants are required in all enforcement points
 - Enable audit callbacks and metrics for observability
@@ -355,9 +388,16 @@ Authority starts broad at the root and is **attenuated** as it flows down the de
 
 ## Contributing
 
-Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Tenuo is Apache-2.0 and built in the open. The core is Rust, with Python and TypeScript SDKs on top. Good places to start:
 
-**Security issues**: Email security@tenuo.ai with PGP ([key](./SECURITY_PUBKEY.asc), not public issues).
+- **Framework integrations.** Adapters live in `tenuo-python/tenuo/`. The [integration guide](tenuo-python/docs/integration-guide.md) covers the required API patterns and invariant tests. [OpenAI](tenuo-python/tenuo/openai.py) and [Google ADK](tenuo-python/tenuo/google_adk/guard.py) are good templates.
+- **Constraint types.** There are 11 today. A new one has to parse input the same way the target system does.
+- **The TypeScript SDK.** It is in beta and needs real-world use.
+- **Docs and examples.** If a guide confused you, that is a bug worth filing.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests, and the PR process.
+
+**Security issues**: Email security@tenuo.ai with PGP ([key](./SECURITY_PUBKEY.asc)). Please do not open public issues for these.
 
 ---
 
