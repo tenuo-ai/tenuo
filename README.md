@@ -96,10 +96,11 @@ Run the same check on the MCP server. The server trusts the issuer's public key;
 ```python
 # pip install "tenuo[fastmcp]"
 from fastmcp import FastMCP
-from tenuo import Authorizer
+from tenuo import Authorizer, SigningKey
 from tenuo.mcp import MCPVerifier, TenuoMiddleware
 
-authorizer = Authorizer(trusted_roots=[issuer_public_key])  # trust the issuer's key
+issuer = SigningKey.generate()  # mints warrants; agents never hold this key
+authorizer = Authorizer(trusted_roots=[issuer.public_key])
 verifier = MCPVerifier(authorizer=authorizer, require_warrant=True)
 mcp = FastMCP("infrastructure", middleware=[TenuoMiddleware(verifier)])
 
@@ -175,7 +176,7 @@ Four things follow from that design.
 
 **Attenuates monotonically.** Delegation mints a child warrant signed by the parent's holder. The verifier walks the whole chain from a trusted root to the leaf. Each link may drop tools, tighten constraints, or shorten expiry. Nothing in the protocol can add authority. Tenuo calls this **Subtractive Delegation**.
 
-**Holds under prompt injection.** The model never sees the warrant. The check runs at the tool boundary, on the real arguments, after the model has chosen what to call. A hijacked agent can only make the calls its warrant already allowed.
+**Holds under prompt injection.** The check never asks the model. It runs at the tool boundary, on the real arguments, after the model has chosen what to call. A hijacked agent can only make the calls its warrant already allowed.
 
 ```
 ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
@@ -190,7 +191,6 @@ Four things follow from that design.
 1. **Control plane** issues a root warrant with broad capabilities
 2. **Orchestrator** attenuates it for a specific task; scope can only shrink
 3. **Worker** proves possession of the bound key and executes
-4. **Warrant expires**; no cleanup needed
 
 Tenuo builds on Macaroons and UCAN and implements the capability primitive from [CaMeL](https://arxiv.org/abs/2503.18813). See [Concepts](https://tenuo.ai/concepts) for the model and [Related Work](./docs/related-work.md) for comparisons with Biscuit, Macaroons, and UCAN.
 
@@ -203,12 +203,8 @@ IAM answers "who are you?" Tenuo adds "what can this workload do right now for t
 | Failure mode in agent systems | Tenuo strength | Practical outcome |
 |------------------------------|----------------|-------------------|
 | Session roles outlive individual tasks | Task-scoped warrants with TTL | Authority is scoped to the task and expires with it |
-| Delegation chains increase blast radius | Monotonic attenuation at every hop | Scope only narrows, never expands |
-| Bearer credentials can be replayed | Holder-bound proofs (PoP) | Stolen warrants are unusable without the key |
-| Runtime policy calls add latency and dependency risk | Offline verification (under 50 μs) | Enforcement holds under load without network round-trips |
+| String checks that parse differently from the target system | [11 constraint types](https://tenuo.ai/constraints) including `Subpath`, `UrlSafe`, `Shlex`, and `CEL` | Arguments are parsed the way the target system parses them ([why this matters](https://niyikiza.com/posts/cve-2025-66032/)) |
 | Teams need defensible audit evidence | Signed authorization receipts (opt-in) | Each decision is attributable and reviewable |
-
-Constraints parse inputs the way the target system will. There are [11 types](https://tenuo.ai/constraints), including `Subpath`, `UrlSafe`, `Shlex`, and `CEL` ([why this matters](https://niyikiza.com/posts/cve-2025-66032/)).
 
 ---
 
@@ -346,8 +342,9 @@ use std::time::Duration;
 use tenuo::sdk::prelude::*;
 use tenuo::{args, constraints};
 
-// `root` and `holder` are SigningKeys. In production the root key lives in
-// your control plane and the warrant arrives already minted.
+let root = SigningKey::generate(); // in production this lives in your control plane
+let holder = SigningKey::generate();
+
 let warrant = Warrant::builder()
     .capability("read_file", constraints! { "path" => Pattern::new("/data/*")? })
     .holder(holder.public_key())
@@ -362,7 +359,10 @@ let (guard, authority) = Tenuo::local()
     .build()?;
 
 let call = Call::owned("read_file", args! { "path" => "/data/report.csv" })?;
-let out = guard.guard(&authority, &call, |_| read_file("/data/report.csv"))?;
+let out = guard.guard(&authority, &call, |_| std::fs::read_to_string("/data/report.csv"))?;
+
+let refused = Call::owned("read_file", args! { "path" => "/etc/shadow" })?;
+assert!(guard.check(&authority, &refused).is_err());
 ```
 
 The closure runs only after an allow. A call outside the constraint is denied before it runs, with the same guarantees as the Python `@guard`. A guard with no trust root or no revocation policy does not compile.
