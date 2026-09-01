@@ -5,6 +5,7 @@
 
 mod authority;
 mod call;
+mod delegation;
 mod decision;
 mod diagnostics;
 mod guard;
@@ -21,6 +22,7 @@ pub use authority::{
     ReceivedAuthorization,
 };
 pub use call::{ArgumentError, Call, VerifiedProjection};
+pub use delegation::{DelegationError, DelegationProfile};
 pub use decision::{
     Decision, DecisionMetadata, Denial, DenialReporting, GuardError, Retryability, SdkDenialKind,
 };
