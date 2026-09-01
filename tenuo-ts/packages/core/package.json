@@ -55,7 +55,7 @@
     "node": ">=20"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "1.25.1",
+    "@modelcontextprotocol/sdk": "1.26.0",
     "@types/node": "^22.13.10",
     "typescript": "~5.8.2",
     "vitest": "^3.0.9",
