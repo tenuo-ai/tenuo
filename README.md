@@ -15,9 +15,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
 </p>
 
-Tenuo gives each task only the authority it needs. That authority travels across agents, tools, and workflows, can only narrow when delegated, and is verified where the action executes. It complements the identity and policy systems you already have.
+Tenuo gives each task only the authority it needs. That authority travels with the work, can only shrink when handed off, and is checked where the action runs. It works alongside your existing identity and policy systems.
 
-A **warrant** is a signed grant of which tools an agent can call, under what constraints, and for how long. It works like a prepaid card for one task. Sensitive actions can also require a [signed human approval](./docs/approvals.md). Deploy in-process or at a sidecar/gateway; the warrant semantics are the same.
+A **warrant** is a signed grant of which tools an agent can call, under what constraints, and for how long. It works like a prepaid card for one task. Sensitive actions can also require a [signed human approval](./docs/approvals.md). Deploy in-process or at a sidecar/gateway.
 
 > **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](./CHANGELOG.md).
 >
@@ -39,7 +39,7 @@ npm i @tenuo/core@beta
 cargo add tenuo --features sdk
 ```
 
-TypeScript details: [`tenuo-ts/README.md`](tenuo-ts/README.md). Rust details: the [Rust section](#rust) below.
+See [`tenuo-ts/README.md`](tenuo-ts/README.md) for TypeScript. Rust is [below](#rust).
 
 Or try it without installing:
 
@@ -83,11 +83,11 @@ Scaled staging-web to 3 replicas
 Blocked before the function ran
 ```
 
-`dev_mode=True` is for local development only: it relaxes trust-root and audit-log requirements so the snippet is copy-paste-runnable. For production, follow the [Production Guide](./docs/production-guide.md).
+`dev_mode=True` is for local development only. It relaxes trust-root and audit-log checks so you can paste the snippet. For production, follow the [Production Guide](./docs/production-guide.md).
 
 Even if the agent is prompt-injected, it cannot scale a production cluster or exceed ten replicas through this tool. The check happens before the function runs.
 
-When the `mint_sync` block exits, that task no longer has a warrant in scope. The warrant's own TTL is separate. Short TTLs are still the production default. A task that ended needs no revocation flow.
+When the `mint_sync` block exits, that task no longer has a warrant in scope. The warrant still has its own TTL. Short TTLs are the production default. A finished task needs no revocation flow.
 
 ### 2. Enforce Across a Real Boundary
 
@@ -96,11 +96,11 @@ Run the same check on the MCP server. The server trusts the issuer's public key;
 ```python
 # pip install "tenuo[fastmcp]"
 from fastmcp import FastMCP
-from tenuo import Authorizer, SigningKey
+from tenuo import Authorizer
 from tenuo.mcp import MCPVerifier, TenuoMiddleware
 
-issuer = SigningKey.generate()  # mints warrants; agents never hold this key
-authorizer = Authorizer(trusted_roots=[issuer.public_key])
+# issuer_public_key is the control plane's key. The server only verifies.
+authorizer = Authorizer(trusted_roots=[issuer_public_key])
 verifier = MCPVerifier(authorizer=authorizer, require_warrant=True)
 mcp = FastMCP("infrastructure", middleware=[TenuoMiddleware(verifier)])
 
@@ -113,7 +113,7 @@ The caller attaches the warrant with `SecureMCPClient(..., inject_warrant=True)`
 
 ### 3. Delegate Without Expanding Authority
 
-An orchestrator can give a worker less authority, never more.
+An orchestrator can only narrow what it passes to a worker.
 
 ```python
 from tenuo import Pattern, Range, SigningKey, Warrant
@@ -158,7 +158,7 @@ except MonotonicityError:
     print("Rejected: child cannot raise the replica cap")
 ```
 
-Adding tools or widening constraints fails the same way. A child TTL longer than the parent's remaining lifetime is clamped to the parent's expiry. The chain can travel over MCP, A2A, HTTP, or a workflow engine and is verified at the final tool boundary.
+Adding tools or widening constraints fails the same way. A child TTL longer than the parent has left is clamped to the parent's expiry. The same chain works over MCP, A2A, HTTP, or a workflow engine. The last hop verifies it.
 
 Runnable end-to-end: [MCP delegation demo](./tenuo-python/examples/mcp/mcp_delegation_demo.py).
 
@@ -167,8 +167,6 @@ Runnable end-to-end: [MCP delegation demo](./tenuo-python/examples/mcp/mcp_deleg
 ## How It Works
 
 Tenuo is capability-based authorization. A warrant is a capability: a signed grant that lists the tools an agent may call, the argument values it may pass, the key that may use it, and when it expires. The warrant travels with the request. Whoever verifies the request only needs the issuer's public key.
-
-Four things follow from that design.
 
 **Holder-bound.** Every warrant names a public key. Every call carries a signature from that key over the warrant, the tool, the exact arguments, and a short time window. A copied warrant is useless without the key.
 
@@ -192,34 +190,34 @@ Four things follow from that design.
 2. **Orchestrator** attenuates it for a specific task; scope can only shrink
 3. **Worker** proves possession of the bound key and executes
 
-Tenuo builds on Macaroons and UCAN and implements the capability primitive from [CaMeL](https://arxiv.org/abs/2503.18813). See [Concepts](https://tenuo.ai/concepts) for the model and [Related Work](./docs/related-work.md) for comparisons with Biscuit, Macaroons, and UCAN.
+See [Concepts](https://tenuo.ai/concepts) for the model and [Related Work](./docs/related-work.md) for how this compares to Biscuit, Macaroons, UCAN, and [CaMeL](https://arxiv.org/abs/2503.18813).
 
 ---
 
 ## Why Tenuo?
 
-IAM answers "who are you?" Tenuo adds "what can this workload do right now for this task?" That gives teams a deterministic authorization boundary at agent speed, without reducing useful agents to a static menu of pre-baked behaviors.
+IAM answers who you are. Tenuo answers what this workload may do for this task, right now. Agents stay free to plan and pick tools. The warrant still applies after they choose.
 
 | Failure mode in agent systems | Tenuo strength | Practical outcome |
 |------------------------------|----------------|-------------------|
-| Session roles outlive individual tasks | Task-scoped warrants with TTL | Authority is scoped to the task and expires with it |
+| Session roles outlive individual tasks | Task-scoped warrants with TTL | The grant expires with the task |
 | String checks that parse differently from the target system | [11 constraint types](https://tenuo.ai/constraints) including `Subpath`, `UrlSafe`, `Shlex`, and `CEL` | Arguments are parsed the way the target system parses them ([why this matters](https://niyikiza.com/posts/cve-2025-66032/)) |
-| Teams need defensible audit evidence | Signed authorization receipts (opt-in) | Each decision is attributable and reviewable |
+| Teams need defensible audit evidence | Signed authorization receipts (opt-in) | You can show why a call was allowed or denied |
 
 ---
 
 ## What Tenuo Is Not
 
-- **Not a sandbox**: Tenuo authorizes actions, it doesn't isolate execution. Pair with containers/sandboxes/VMs for defense in depth.
-- **Not prompt engineering**: Tenuo does not rely on model instructions for security decisions.
-- **Not an LLM filter**: Tenuo checks tool calls when they execute. It never reads model text.
-- **Not a replacement for IAM**: Tenuo *complements* IAM by adding task-scoped, attenuating capabilities on top of identity.
+- **Not a sandbox**: Tenuo authorizes the call. Run the process in a container or VM if you need isolation.
+- **Not prompt engineering**: The tool boundary checks the warrant and the arguments.
+- **Not an LLM filter**: Checks happen at execution. They read tool name and arguments.
+- **Not a replacement for IAM**: Tenuo sits on top of identity.
 
 ---
 
 ## Integrate at the Boundary You Control
 
-Tenuo uses the same warrant format and attenuation rules everywhere. Choose the enforcement point that fits your architecture; authority can cross these boundaries without being translated into a new policy model.
+Tenuo uses the same warrant format and attenuation rules everywhere. Pick the enforcement point that fits. The warrant stays in that format at every hop.
 
 | Enforcement point | Use it when | Integrations | Start here |
 |-------------------|-------------|--------------|------------|
@@ -229,7 +227,7 @@ Tenuo uses the same warrant format and attenuation rules everywhere. Choose the 
 | **Inside a durable workflow** | Authority must survive retries, queues, and long-running execution | Temporal | [Temporal guide](./docs/temporal-reference.md) |
 | **At an agent handoff** | One agent delegates part of a task to another agent | A2A, MCP warrant stacks | [A2A guide](./docs/a2a.md), [delegation demo](./tenuo-python/examples/mcp/mcp_delegation_demo.py) |
 
-These are all deployment choices for one authorization system. A warrant issued in one identity domain remains verifiable when execution moves into another, and every delegated warrant must stay within its parent authority.
+These are deployment choices for one system. A warrant minted in one place still verifies in another. Every child must stay inside its parent.
 
 ---
 
@@ -245,7 +243,7 @@ These are all deployment choices for one authorization system. A warrant issued 
 | **[Google ADK](https://tenuo.ai/google-adk)** | ADK agent tool protection |
 | **[AutoGen](https://tenuo.ai/autogen)** | AgentChat tool protection |
 | **[A2A](https://tenuo.ai/a2a)** | Inter-agent delegation |
-| **[FastAPI](https://tenuo.ai/fastapi)** | Zero-boilerplate API protection |
+| **[FastAPI](https://tenuo.ai/fastapi)** | Protect FastAPI routes |
 | **[LangChain](https://tenuo.ai/langchain)** | Tool protection |
 | **[LangGraph](https://tenuo.ai/langgraph)** | Multi-agent graph security |
 | **[CrewAI](https://tenuo.ai/crewai)** | Multi-agent crew protection |
@@ -259,7 +257,7 @@ These are all deployment choices for one authorization system. A warrant issued 
 | Component | Supported |
 |-----------|-----------|
 | **Python** | 3.9 - 3.14 |
-| **Node.js** | **Beta** — Node 20+ (`npm i @tenuo/core@beta`) |
+| **Node.js** | **Beta**. Node 20+ (`npm i @tenuo/core@beta`) |
 | **OS** | Linux, macOS, Windows |
 | **Rust** | Not required (binary wheels for macOS, Linux, Windows) |
 
@@ -285,13 +283,13 @@ uv pip install "tenuo[cloud]"         # + Tenuo Cloud SDK (proprietary control-p
 
 ## Docker & Kubernetes
 
-**Try the Demo**: See the full delegation chain in action:
+**Try the Demo**:
 
 ```bash
 docker compose up
 ```
 
-This runs the [orchestrator -> worker -> authorizer demo](https://tenuo.ai/demo.html) showing warrant issuance, delegation, and verification.
+This runs the [orchestrator -> worker -> authorizer](https://tenuo.ai/demo.html) stack: issuance, delegation, and verification.
 
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
@@ -330,7 +328,7 @@ Self-hosted Tenuo already verifies warrants and signed revocation lists (SRLs) l
 
 ## Rust
 
-The core crate is the protocol. The `sdk` feature adds the enforcement surface: a guard that checks a call before it runs, an authority that binds a warrant chain to a signing key, cryptographic delegation, an observe mode for assessment periods, and MCP and HTTP transports.
+The core crate is the protocol. The `sdk` feature is the enforcement surface: a guard that checks a call before it runs, an authority that binds a warrant chain to a signing key, cryptographic delegation, an observe mode, and MCP and HTTP transports.
 
 ```toml
 [dependencies]
@@ -358,16 +356,17 @@ let (guard, authority) = Tenuo::local()
     .revocation(RevocationMode::TtlOnly { max_lifetime: Duration::from_secs(600) })
     .build()?;
 
-let call = Call::owned("read_file", args! { "path" => "/data/report.csv" })?;
-let out = guard.guard(&authority, &call, |_| std::fs::read_to_string("/data/report.csv"))?;
+let allowed = Call::owned("read_file", args! { "path" => "/data/report.csv" })?;
+let out = guard.guard(&authority, &allowed, |_| Ok::<_, std::io::Error>("read"))?;
+assert_eq!(out.into_inner(), "read");
 
 let refused = Call::owned("read_file", args! { "path" => "/etc/shadow" })?;
 assert!(guard.check(&authority, &refused).is_err());
 ```
 
-The closure runs only after an allow. A call outside the constraint is denied before it runs, with the same guarantees as the Python `@guard`. A guard with no trust root or no revocation policy does not compile.
+The closure runs only after an allow. A call outside the constraint is denied before it runs, same as Python `@guard`. A guard with no trust root or no revocation policy does not compile.
 
-Features, all off by default: `sdk`, `mcp-transport`, `http-transport`, `async`, `receipts`, `otel`, `test-utils`. The default build gains no dependency.
+Features, all off by default: `sdk`, `mcp-transport`, `http-transport`, `async`, `receipts`, `otel`, `test-utils`. The default build adds no extra crates.
 
 Use Rust for authorizer sidecars, gateways, MCP servers built on `rmcp`, and any service that needs enforcement without a Python runtime.
 
