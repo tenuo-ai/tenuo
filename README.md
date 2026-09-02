@@ -17,7 +17,7 @@
 
 Tenuo gives each task only the authority it needs. That authority travels with the work, can only shrink when handed off, and is checked where the action runs. It works alongside your existing identity and policy systems.
 
-A **warrant** is a signed grant of which tools an agent can call, under what constraints, and for how long. It works like a prepaid card for one task. Sensitive actions can also require a [signed human approval](./docs/approvals.md). Deploy in-process or at a sidecar/gateway.
+A **warrant** is a signed grant of which tools an agent can call, under what constraints, and for how long. It works like a prepaid card for one task. Sensitive actions can also require a [signed human approval](./docs/approvals.md). Deploy in-process, in a sidecar, or at a gateway.
 
 > **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](./CHANGELOG.md).
 >
@@ -87,19 +87,24 @@ Blocked before the function ran
 
 Even if the agent is prompt-injected, it cannot scale a production cluster or exceed ten replicas through this tool. The check happens before the function runs.
 
-When the `mint_sync` block exits, that task no longer has a warrant in scope. The warrant still has its own TTL. Short TTLs are the production default. A finished task needs no revocation flow.
+When the `mint_sync` block exits, that task no longer has a warrant in scope. The warrant still has its own TTL. Short TTLs limit any remaining lifetime.
 
 ### 2. Enforce Across a Real Boundary
 
-Run the same check on the MCP server. The server trusts the issuer's public key; the agent only presents a warrant and a proof of possession. Verification is local.
+Run the same check on the MCP server. The server trusts the issuer's public key; the agent sends a warrant and proof of possession with the tool call. Verification is local.
 
 ```python
 # pip install "tenuo[fastmcp]"
+import os
+
 from fastmcp import FastMCP
-from tenuo import Authorizer
+from tenuo import Authorizer, PublicKey
 from tenuo.mcp import MCPVerifier, TenuoMiddleware
 
-# issuer_public_key is the control plane's key. The server only verifies.
+# The server receives the issuer's public key, never its signing key.
+issuer_public_key = PublicKey.from_bytes(
+    bytes.fromhex(os.environ["TENUO_ISSUER_PUB"])
+)
 authorizer = Authorizer(trusted_roots=[issuer_public_key])
 verifier = MCPVerifier(authorizer=authorizer, require_warrant=True)
 mcp = FastMCP("infrastructure", middleware=[TenuoMiddleware(verifier)])
@@ -107,14 +112,27 @@ mcp = FastMCP("infrastructure", middleware=[TenuoMiddleware(verifier)])
 @mcp.tool()
 async def scale_cluster(cluster: str, replicas: int) -> str:
     return f"Scaled {cluster} to {replicas}"
+
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
 ```
 
 ```python
 # agent side: mint locally, send warrant + PoP with the tool call
-from tenuo import Capability, Pattern, Range, mint
+import sys
+
+from tenuo import Capability, Pattern, Range, SigningKey, configure, mint
 from tenuo.mcp import SecureMCPClient
 
-async with SecureMCPClient("python", ["server.py"], inject_warrant=True) as client:
+issuer_key = SigningKey.generate()
+configure(issuer_key=issuer_key, trusted_roots=[issuer_key.public_key])
+
+async with SecureMCPClient(
+    sys.executable,
+    ["server.py"],
+    inject_warrant=True,
+    env={"TENUO_ISSUER_PUB": bytes(issuer_key.public_key_bytes()).hex()},
+) as client:
     async with mint(Capability(
         "scale_cluster",
         cluster=Pattern("staging-*"),
@@ -214,11 +232,11 @@ IAM answers who you are. Tenuo answers what this workload may do for this task, 
 
 | Existing limitation | Tenuo |
 |---------------------|-------|
-| IAM grants standing authority to an identity | Warrants limit authority to the current task |
-| Agent handoffs lose the original authorization context | Authority travels with the work and can only narrow |
-| Bearer tokens can be copied or replayed | Every warrant is bound to the key using it |
+| IAM typically grants authority by identity or role | Warrants limit authority to the current task |
+| Conventional agent handoffs do not carry the original authorization context | Authority travels with the work and can only narrow |
+| Plain bearer tokens can be copied or replayed | Every warrant is bound to the key using it |
 | Central policy checks introduce a runtime dependency | Signed authority is verified locally at execution |
-| Generic string rules disagree with downstream systems | [Semantic constraints](https://tenuo.ai/constraints) interpret arguments as the target does ([why this matters](https://niyikiza.com/posts/cve-2025-66032/)) |
+| Generic string matching can disagree with downstream systems | [Semantic constraints](https://tenuo.ai/constraints) interpret arguments as the target does ([why this matters](https://niyikiza.com/posts/cve-2025-66032/)) |
 
 Signed authorization receipts are opt-in when you need to show why a call was allowed or denied.
 
@@ -235,7 +253,7 @@ Signed authorization receipts are opt-in when you need to show why a call was al
 
 ## Integrate at the Boundary You Control
 
-Tenuo uses the same warrant format and attenuation rules everywhere. Pick the enforcement point that fits. The warrant stays in that format at every hop.
+Tenuo uses the same warrant format and attenuation rules everywhere. Pick the enforcement point that fits. Authority crosses these boundaries without translation.
 
 | Enforcement point | Use it when | Integrations | Start here |
 |-------------------|-------------|--------------|------------|
@@ -245,7 +263,7 @@ Tenuo uses the same warrant format and attenuation rules everywhere. Pick the en
 | **Inside a durable workflow** | Authority must survive retries, queues, and long-running execution | Temporal | [Temporal guide](./docs/temporal-reference.md) |
 | **At an agent handoff** | One agent delegates part of a task to another agent | A2A, MCP warrant stacks | [A2A guide](./docs/a2a.md), [delegation demo](./tenuo-python/examples/mcp/mcp_delegation_demo.py) |
 
-These are deployment choices for one system. A warrant minted in one place still verifies in another. Every child must stay inside its parent.
+These are deployment choices for one authorization system. A warrant can be verified anywhere its issuer is trusted, and every delegated warrant must remain within its parent.
 
 ---
 
@@ -277,7 +295,7 @@ These are deployment choices for one system. A warrant minted in one place still
 | **Python** | 3.9 - 3.14 |
 | **Node.js** | **Beta**. Node 20+ (`npm i @tenuo/core@beta`) |
 | **OS** | Linux, macOS, Windows |
-| **Rust** | Not required (binary wheels for macOS, Linux, Windows) |
+| **Python installation** | Prebuilt wheels; no Rust toolchain required |
 
 ### Optional Dependencies
 
@@ -329,7 +347,7 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 
 ## Deploying to Production
 
-Self-hosted Tenuo is free forever. The core library and sidecar run entirely in your infrastructure, with no external calls at verification time.
+The self-hosted core and sidecar are Apache-2.0 and run entirely in your infrastructure, with no external calls at verification time.
 
 **Self-hosted checklist:**
 
