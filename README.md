@@ -87,7 +87,7 @@ Blocked before the function ran
 
 Even if the agent is prompt-injected, it cannot scale a production cluster or exceed ten replicas through this tool. The check happens before the function runs.
 
-When the `mint_sync` block exits, that task no longer has a warrant in scope. The warrant still has its own TTL; short TTLs limit any remaining lifetime. A finished task needs no revocation flow.
+When the `mint_sync` block exits, that task no longer has a warrant in scope. The signed warrant remains valid until its TTL expires, so keep TTLs short.
 
 ### 2. Enforce Across a Real Boundary
 
