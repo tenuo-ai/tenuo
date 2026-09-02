@@ -109,7 +109,21 @@ async def scale_cluster(cluster: str, replicas: int) -> str:
     return f"Scaled {cluster} to {replicas}"
 ```
 
-The caller attaches the warrant with `SecureMCPClient(..., inject_warrant=True)`. See the [MCP walkthrough](./docs/mcp.md) for runnable server and client files.
+```python
+# agent side: mint locally, send warrant + PoP with the tool call
+from tenuo import Capability, Pattern, Range, mint
+from tenuo.mcp import SecureMCPClient
+
+async with SecureMCPClient("python", ["server.py"], inject_warrant=True) as client:
+    async with mint(Capability(
+        "scale_cluster",
+        cluster=Pattern("staging-*"),
+        replicas=Range.max_value(10),
+    )):
+        await client.tools["scale_cluster"](cluster="staging-web", replicas=3)
+```
+
+See the [MCP walkthrough](./docs/mcp.md) for runnable server and client files.
 
 ### 3. Delegate Without Expanding Authority
 
@@ -166,13 +180,13 @@ Runnable end-to-end: [MCP delegation demo](./tenuo-python/examples/mcp/mcp_deleg
 
 ## How It Works
 
-Tenuo is capability-based authorization. A warrant is a capability: a signed grant that lists the tools an agent may call, the argument values it may pass, the key that may use it, and when it expires. The warrant travels with the request. Whoever verifies the request only needs the issuer's public key.
+Tenuo is capability-based authorization. A warrant is a capability: a signed grant that lists the tools an agent may call, the argument values it may pass, the key that may use it, and when it expires. The warrant travels with the request. The verifier uses the trusted issuer key and locally available revocation state.
 
 **Holder-bound.** Every warrant names a public key. Every call carries a signature from that key over the warrant, the tool, the exact arguments, and a short time window. A copied warrant is useless without the key.
 
 **Verified offline.** The warrant carries its own authority and signature. Checking it needs no lookup and no network. Checks run in under 50 μs, and enforcement keeps working when the control plane is down.
 
-**Attenuates monotonically.** Delegation mints a child warrant signed by the parent's holder. The verifier walks the whole chain from a trusted root to the leaf. Each link may drop tools, tighten constraints, or shorten expiry. Nothing in the protocol can add authority. Tenuo calls this **Subtractive Delegation**.
+**Attenuates monotonically.** Delegation mints a child warrant signed by the parent's holder. The verifier walks the whole chain from a trusted root to the leaf. Each link may drop tools, tighten constraints, or shorten expiry. No delegated warrant can exceed its parent. Tenuo calls this **Subtractive Delegation**.
 
 **Holds under prompt injection.** The check never asks the model. It runs at the tool boundary, on the real arguments, after the model has chosen what to call. A hijacked agent can only make the calls its warrant already allowed.
 
@@ -198,11 +212,15 @@ See [Concepts](https://tenuo.ai/concepts) for the model and [Related Work](./doc
 
 IAM answers who you are. Tenuo answers what this workload may do for this task, right now. Agents stay free to plan and pick tools. The warrant still applies after they choose.
 
-| Failure mode in agent systems | Tenuo strength | Practical outcome |
-|------------------------------|----------------|-------------------|
-| Session roles outlive individual tasks | Task-scoped warrants with TTL | The grant expires with the task |
-| String checks that parse differently from the target system | [11 constraint types](https://tenuo.ai/constraints) including `Subpath`, `UrlSafe`, `Shlex`, and `CEL` | Arguments are parsed the way the target system parses them ([why this matters](https://niyikiza.com/posts/cve-2025-66032/)) |
-| Teams need defensible audit evidence | Signed authorization receipts (opt-in) | You can show why a call was allowed or denied |
+| Existing limitation | Tenuo |
+|---------------------|-------|
+| IAM grants standing authority to an identity | Warrants limit authority to the current task |
+| Agent handoffs lose the original authorization context | Authority travels with the work and can only narrow |
+| Bearer tokens can be copied or replayed | Every warrant is bound to the key using it |
+| Central policy checks introduce a runtime dependency | Signed authority is verified locally at execution |
+| Generic string rules disagree with downstream systems | [Semantic constraints](https://tenuo.ai/constraints) interpret arguments as the target does ([why this matters](https://niyikiza.com/posts/cve-2025-66032/)) |
+
+Signed authorization receipts are opt-in when you need to show why a call was allowed or denied.
 
 ---
 
