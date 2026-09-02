@@ -87,14 +87,14 @@ Blocked before the function ran
 
 Even if the agent is prompt-injected, it cannot scale a production cluster or exceed ten replicas through this tool. The check happens before the function runs.
 
-When the `mint_sync` block exits, that task no longer has a warrant in scope. The warrant still has its own TTL. Short TTLs limit any remaining lifetime.
+When the `mint_sync` block exits, that task no longer has a warrant in scope. The warrant still has its own TTL; short TTLs limit any remaining lifetime. A finished task needs no revocation flow.
 
 ### 2. Enforce Across a Real Boundary
 
 Run the same check on the MCP server. The server trusts the issuer's public key; the agent sends a warrant and proof of possession with the tool call. Verification is local.
 
 ```python
-# pip install "tenuo[fastmcp]"
+# server.py  (pip install "tenuo[fastmcp]")
 import os
 
 from fastmcp import FastMCP
@@ -118,7 +118,8 @@ if __name__ == "__main__":
 ```
 
 ```python
-# agent side: mint locally, send warrant + PoP with the tool call
+# agent.py  (run from the same directory as server.py)
+import asyncio
 import sys
 
 from tenuo import Capability, Pattern, Range, SigningKey, configure, mint
@@ -127,21 +128,24 @@ from tenuo.mcp import SecureMCPClient
 issuer_key = SigningKey.generate()
 configure(issuer_key=issuer_key, trusted_roots=[issuer_key.public_key])
 
-async with SecureMCPClient(
-    sys.executable,
-    ["server.py"],
-    inject_warrant=True,
-    env={"TENUO_ISSUER_PUB": bytes(issuer_key.public_key_bytes()).hex()},
-) as client:
-    async with mint(Capability(
-        "scale_cluster",
-        cluster=Pattern("staging-*"),
-        replicas=Range.max_value(10),
-    )):
-        await client.tools["scale_cluster"](cluster="staging-web", replicas=3)
+async def main() -> None:
+    async with SecureMCPClient(
+        sys.executable,
+        ["server.py"],  # relative to the process cwd
+        inject_warrant=True,
+        env={"TENUO_ISSUER_PUB": bytes(issuer_key.public_key_bytes()).hex()},
+    ) as client:
+        async with mint(Capability(
+            "scale_cluster",
+            cluster=Pattern("staging-*"),
+            replicas=Range.max_value(10),
+        )):
+            await client.tools["scale_cluster"](cluster="staging-web", replicas=3)
+
+asyncio.run(main())
 ```
 
-See the [MCP walkthrough](./docs/mcp.md) for runnable server and client files.
+See the [MCP walkthrough](./docs/mcp.md) for the full server and client pair.
 
 ### 3. Delegate Without Expanding Authority
 
