@@ -218,7 +218,7 @@ helm install tenuo-authorizer ./charts/tenuo-authorizer \
 helm upgrade tenuo-authorizer ./charts/tenuo-authorizer -f new-values.yaml
 
 # Upgrade to a new chart version
-helm upgrade tenuo-authorizer ./charts/tenuo-authorizer --version 0.2.0
+helm upgrade tenuo-authorizer ./charts/tenuo-authorizer --version 0.2.4
 ```
 
 ## Troubleshooting
