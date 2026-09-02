@@ -84,7 +84,8 @@ jobs:
               pip install "openai==1.6.0" || pip install "openai==1.0.0"
               ;;
             crewai)
-              pip install "crewai==1.1.0" || pip install "crewai==1.0.0"
+              # crewai.hooks (GuardedCrew) first ships in 1.5.0
+              pip install "crewai==1.5.0"
               ;;
             autogen)
               pip install "autogen-agentchat==0.7.0" "autogen-ext[openai]==0.7.0"
@@ -96,17 +97,20 @@ jobs:
               pip install "langgraph==0.2.0" "langchain-core==0.2.27"
               ;;
             fastapi)
-              pip install "fastapi==0.100.0" "uvicorn==0.20.0" "httpx>=0.24"
+              # httpx 0.28 dropped Client(app=...), which starlette 0.27's TestClient uses
+              pip install "fastapi==0.100.0" "uvicorn==0.20.0" "httpx>=0.24,<0.28"
               ;;
             google_adk)
               pip install "google-adk==0.1.0" || pip install "google-adk==1.0.0" || pip install "google-adk"
               ;;
             mcp)
-              pip install "mcp==1.1.0" || pip install "mcp==1.0.0"
+              # 1.9.4: first release whose streamable-HTTP transport yields the
+              # (read, write, get_session_id) triple tenuo.mcp unpacks
+              pip install "mcp==1.9.4"
               ;;
             fastmcp)
               # Explicit dual-line floors: FastMCP 3 + MCP 1.x
-              pip install "mcp>=1.0,<2" "fastmcp==3.2.1"
+              pip install "mcp>=1.9.4,<2" "fastmcp==3.2.1"
               python scripts/check_installed_majors.py mcp=1 fastmcp=3
               ;;
           esac

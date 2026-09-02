@@ -5,7 +5,7 @@ Uses CrewAI's native hooks system for framework-level enforcement.
 All tool calls are intercepted via before_tool_call hooks - no wrapping needed.
 
 Compatibility:
-    CrewAI: 0.80.0+ (requires hooks API)
+    CrewAI: 1.5.0+ (requires the crewai.hooks API)
     Python: 3.9+
 
 Version History:
@@ -667,7 +667,7 @@ class CrewAIGuard:
             Self for chaining
 
         Raises:
-            ImportError: If CrewAI hooks API is not available (requires 0.80.0+)
+            ImportError: If CrewAI hooks API is not available (requires 1.5.0+)
 
         Example:
             guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
@@ -680,7 +680,7 @@ class CrewAIGuard:
         """
         if not HOOKS_AVAILABLE:
             raise ImportError(
-                "CrewAI hooks API not available. Requires crewai>=0.80.0. Install with: pip install 'crewai>=0.80.0'"
+                "CrewAI hooks API not available. Requires crewai>=1.5. Install with: pip install 'crewai>=1.5'"
             )
 
         if self._registered_hook is not None:
@@ -2182,8 +2182,8 @@ class _GuardedCrewImpl:
         if not HOOKS_AVAILABLE:
             raise ImportError(
                 "CrewAI hooks API not available. "
-                "GuardedCrew requires crewai>=0.80.0. "
-                "Install with: pip install 'crewai>=0.80.0'"
+                "GuardedCrew requires crewai>=1.5. "
+                "Install with: pip install 'crewai>=1.5'"
             )
 
         # Build guards for all agents

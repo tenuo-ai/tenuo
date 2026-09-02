@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Python extras declare the floors the code actually needs.** `tenuo[mcp]`
+  and `tenuo[fastmcp]` now require `mcp>=1.9.4` (streamable-HTTP transport
+  shape, `CallToolRequestParams.meta`); `tenuo[crewai]` requires `crewai>=1.5`
+  (`crewai.hooks`). Both were previously declared as `>=1.0` but failed at
+  import or first use on those versions.
+
+### Fixed
+
+- **FastMCP 4 middleware denials.** `TenuoMiddleware` returns a real
+  `ToolResult` (with `isError=True` on the wire) on FastMCP 3.2 through 4.x,
+  and version-pinned FastMCP 4 calls no longer lose the `_meta.tenuo` block.
+- **MCP SDK 2.x tool schemas.** `SecureMCPClient` and the LangChain bridge read
+  `Tool.input_schema` on SDK 2.x (previously an empty schema).
+
 ## [0.2.4] - 2026-09-01
 
 ### Breaking

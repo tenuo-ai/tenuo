@@ -46,8 +46,8 @@ def main():
     from tenuo.crewai import HOOKS_AVAILABLE, AuditEvent, CrewAIConstraintViolation, GuardBuilder
 
     if not args.unprotected and not HOOKS_AVAILABLE:
-        print(f"{R}❌ CrewAI hooks API not available. Requires crewai>=0.80.0{END}")
-        print(f"{Y}Install with: uv pip install 'crewai>=0.80.0'{END}")
+        print(f"{R}❌ CrewAI hooks API not available. Requires crewai>=1.5{END}")
+        print(f"{Y}Install with: uv pip install 'crewai>=1.5'{END}")
         sys.exit(1)
 
     # Setup temp files

@@ -265,7 +265,7 @@ jobs:
           # Latest 3.x (>=3.4 already has ToolResult.is_error); the weekly
           # compatibility matrix covers the 3.2.1 floor.
           - fastmcp-line: "3"
-            mcp_spec: "mcp>=1.0,<2"
+            mcp_spec: "mcp>=1.9.4,<2"
             fastmcp_spec: "fastmcp>=3,<4"
             expect_fastmcp_major: "3"
             expect_mcp_major: "1"

@@ -16,17 +16,19 @@ from tenuo_core import Authorizer, SigningKey, Warrant
 
 from tenuo import Pattern
 from tenuo._pop_canonicalize import strip_none_values
-from tenuo.mcp._compat import (
-    build_request_params_meta,
-    call_tool_result_is_error,
-    call_tool_result_structured_content,
-    request_params_meta_as_dict,
-)
 from tenuo.mcp.server import MCPVerifier
 
 pytest.importorskip("mcp")
 pytest.importorskip("fastmcp")
 pytest.importorskip("fastmcp.server.middleware.middleware", exc_type=ImportError)
+
+# ``tenuo.mcp._compat`` imports ``mcp.types`` at load, so it must follow the skips.
+from tenuo.mcp._compat import (  # noqa: E402
+    build_request_params_meta,
+    call_tool_result_is_error,
+    call_tool_result_structured_content,
+    request_params_meta_as_dict,
+)
 
 from mcp.types import (  # noqa: E402
     CallToolRequestParams,
