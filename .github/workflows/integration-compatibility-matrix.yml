@@ -59,13 +59,21 @@ jobs:
       - name: Install Rust toolchain (for tenuo wheel)
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: tenuo-python
+
       - name: Install base test harness (no integration extras)
         run: |
           python -m pip install --upgrade pip
           pip install maturin pytest pytest-asyncio hypothesis
-          # Build/install tenuo without pulling every optional extra so
-          # "latest" can actually resolve to current PyPI majors.
-          (cd tenuo-python && maturin develop --release)
+          # Build the wheel and install it without pulling every optional
+          # extra, so "latest" can actually resolve to current PyPI majors.
+          # (`maturin develop` needs an activated virtualenv, which the
+          # runner does not have.)
+          (cd tenuo-python && maturin build)
+          pip install tenuo-python/target/wheels/*.whl
           pip install "PyYAML>=6.0" "pydantic>=2.0"
 
       - name: Install minimum version
@@ -99,6 +107,7 @@ jobs:
             fastmcp)
               # Explicit dual-line floors: FastMCP 3 + MCP 1.x
               pip install "mcp>=1.0,<2" "fastmcp==3.2.1"
+              python scripts/check_installed_majors.py mcp=1 fastmcp=3
               ;;
           esac
 
@@ -134,13 +143,7 @@ jobs:
             fastmcp)
               # Explicit dual-line ceiling: FastMCP 4 + MCP 2.x
               pip install -U "fastmcp>=4" "mcp>=2"
-              python - <<'PY'
-              import importlib.metadata as m
-              fm, mcp = m.version("fastmcp"), m.version("mcp")
-              print(f"fastmcp={fm} mcp={mcp}")
-              assert fm.startswith("4."), fm
-              assert mcp.startswith("2."), mcp
-              PY
+              python scripts/check_installed_majors.py mcp=2 fastmcp=4
               ;;
           esac
 

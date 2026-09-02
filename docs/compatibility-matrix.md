@@ -15,7 +15,7 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 | **LangChain** | 0.2.0 | 1.x latest | 1.3.18 / core 1.6.1 | Stable | |
 | **LangGraph** | 0.2.0 | 1.x latest | 1.2.11 | Stable | Requires `langchain-core>=0.2.27`. |
 | **MCP** | 1.0.0 | 1.x or 2.x | 1.28.1 and 2.1.1 | Stable | Python `tenuo.mcp` supports MCP SDK 1.x and 2.x. |
-| **FastMCP** | 3.2.1 | 3.x or 4.x | 3.2.1 and 4.0.1 | Stable | FastMCP 4 requires MCP SDK 2.x. Denial path returns `ToolResult(is_error=True)`. |
+| **FastMCP** | 3.2.1 | 3.x or 4.x | 3.4.7 and 4.0.1 | Stable | FastMCP 4 requires MCP SDK 2.x. Denials are a real `ToolResult` subclass (`isError=True` on the wire) on every line. |
 | **Google ADK** | 0.1.0 | latest | 2.8.0 | Stable | GuardBuilder / before_tool covered in CI. |
 | **Temporal** | 1.23.0 | 1.x latest | 1.32.0 | Stable | `SimplePlugin` required for `TenuoTemporalPlugin`; replay + live jobs in matrix. |
 | **FastAPI** | 0.100.0 | latest | 0.141.1 | Stable | Works with Starlette 1.6.0. |
@@ -72,7 +72,8 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 
 **Version Notes**:
 - FastMCP 3.x historically paired with MCP SDK 1.x; FastMCP 4.x requires MCP SDK 2.x.
-- On FastMCP 4, middleware denials must return a real `ToolResult` (not a duck-typed wrapper).
+- Middleware denials are a `ToolResult` subclass on every line: FastMCP 4 only normalizes `ToolResult` returns, `ToolResult.is_error` exists from FastMCP 3.4 onward, and FastMCP's own caching / response-limiting middleware read `.content` / `.structured_content` directly.
+- FastMCP 4 stamps only `_meta.fastmcp.version` on the middleware params for version-pinned calls; the `tenuo` block is merged in from the request context.
 
 ### Google ADK
 **Current Status**: Stable (latest 2.8.0)
@@ -108,14 +109,14 @@ Last local probe: 2026-09-02 (adapter suites + expanded smoke tests)
 | LangChain | Pass (0.2.x) | Pass (1.3.18) | Not tested |
 | LangGraph | Pass (0.2.0) | Pass (1.2.11) | Not tested |
 | MCP | Pass (1.x) | Pass (2.1.1) | Not tested |
-| FastMCP | Pass (3.2.1) | Pass (4.0.1) | Not tested |
+| FastMCP | Pass (3.2.1) | Pass (3.4.7 / 4.0.1) | Not tested |
 | Google ADK | Pass (0.1+) | Pass (2.8.0) | Not tested |
 | Temporal | Pass (1.23.0) | Pass (1.32.0) | Not tested |
 | FastAPI | Pass (0.100+) | Pass (0.141.1) | Not tested |
 
 **Testing Cadence**:
 - Main CI: installs OpenAI, Agents SDK, AutoGen, Google ADK, LangChain/LangGraph, FastAPI, CrewAI, MCP, Temporal (where Python allows)
-- MCP / FastMCP 4: dedicated dual-line `mcp-smoke` CI jobs (`FastMCP 3` + `FastMCP 4`) with major-version gates so CrewAI's MCP 1.x pin cannot hide regressions
+- MCP / FastMCP: dedicated dual-line `mcp-smoke` CI jobs (latest `FastMCP 3` + MCP 1.x, `FastMCP 4` + MCP 2.x) gated by `scripts/check_installed_majors.py` so CrewAI's MCP 1.x pin cannot hide regressions; the 3.2.1 floor runs in the weekly matrix
 - Weekly compatibility matrix: minimum + latest per integration (including FastAPI, Google ADK, MCP, FastMCP, Temporal)
 
 ---

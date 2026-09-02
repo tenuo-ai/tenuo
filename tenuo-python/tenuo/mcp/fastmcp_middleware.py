@@ -6,12 +6,14 @@ Verification semantics (warrant decoding, PoP, constraints, approvals) are
 unchanged — this module only wires FastMCP's middleware hook to
 :meth:`MCPVerifier.verify` and normalizes request metadata.
 
-``CallToolRequestParams.meta`` (JSON ``_meta``) is the primary source. When
-FastMCP builds an internal ``CallToolRequestParams`` without ``meta`` (common
-on the wire path), metadata is taken from
-:attr:`fastmcp.server.context.Context.request_context` ``.meta`` (FastMCP 3:
-MCP SDK ``RequestContext``; FastMCP 4: ``FastMCPRequestContext`` wrapping the
-raw ``_meta`` dict).
+``CallToolRequestParams.meta`` (JSON ``_meta``) is read first. On the wire
+path FastMCP synthesizes the middleware's ``CallToolRequestParams`` without
+``meta`` (FastMCP 3) or with only ``{"fastmcp": {"version": ...}}`` (FastMCP 4,
+version-pinned calls), while the raw ``_meta`` — ``tenuo`` included — is
+exposed by :attr:`fastmcp.server.context.Context.request_context` ``.meta``
+(FastMCP 3: MCP SDK ``RequestContext``; FastMCP 4: ``FastMCPRequestContext``
+wrapping the raw dict). Whenever ``params.meta`` lacks ``tenuo``, the request
+context's meta is merged underneath it.
 """
 
 from __future__ import annotations
@@ -49,9 +51,25 @@ except ImportError as exc:
     ) from exc
 
 __all__ = [
+    "TOOLRESULT_HAS_IS_ERROR",
     "TenuoMiddleware",
     "resolve_tool_call_meta_for_verify",
 ]
+
+#: True when the installed FastMCP's ``ToolResult`` carries an ``is_error``
+#: flag (FastMCP >= 3.4 and every 4.x). Earlier 3.x has no error flag there.
+TOOLRESULT_HAS_IS_ERROR: bool = "is_error" in ToolResult.model_fields
+
+
+def _meta_as_dict(meta_obj: Any) -> Optional[dict[str, Any]]:
+    """Normalize a ``_meta`` object (SDK model, FastMCP 4 dict, or None)."""
+    if meta_obj is None:
+        return None
+    if hasattr(meta_obj, "model_dump"):
+        return meta_obj.model_dump(mode="python")
+    if isinstance(meta_obj, dict):
+        return dict(meta_obj)
+    return None
 
 
 def resolve_tool_call_meta_for_verify(
@@ -60,27 +78,23 @@ def resolve_tool_call_meta_for_verify(
 ) -> Optional[dict[str, Any]]:
     """Resolve ``params._meta`` as a plain dict for :meth:`MCPVerifier.verify`.
 
-    Order:
+    ``params.meta`` (MCP SDK alias for JSON ``_meta``) is read first. When it
+    is absent or has no ``tenuo`` key and a request context is active,
+    ``fastmcp_context.request_context.meta`` is merged underneath it (keys in
+    ``params.meta`` win). FastMCP 3 synthesizes wire ``CallToolRequestParams``
+    without ``meta``; FastMCP 4 stamps only ``{"fastmcp": {"version": ...}}``
+    on version-pinned calls — in both cases the client's ``tenuo`` block lives
+    only on the request context.
 
-    1. ``params.meta`` (MCP SDK alias for JSON ``_meta``).
-    2. Else ``fastmcp_context.request_context.meta`` when a request context is
-       active (wire ``tools/call`` often populates this while the synthesized
-       ``CallToolRequestParams`` omits ``meta``).
-
-    Returns ``None`` when no metadata object is present.
+    Returns ``None`` when no metadata object is present anywhere.
     """
-    meta_obj: Any = params.meta
-    if meta_obj is None and fastmcp_context is not None:
+    resolved = _meta_as_dict(params.meta)
+    if (resolved is None or "tenuo" not in resolved) and fastmcp_context is not None:
         rc = fastmcp_context.request_context
-        if rc is not None:
-            meta_obj = rc.meta
-    if meta_obj is None:
-        return None
-    if hasattr(meta_obj, "model_dump"):
-        return meta_obj.model_dump(mode="python")
-    if isinstance(meta_obj, dict):
-        return dict(meta_obj)
-    return None
+        ctx_meta = _meta_as_dict(rc.meta) if rc is not None else None
+        if ctx_meta:
+            resolved = {**ctx_meta, **(resolved or {})}
+    return resolved
 
 
 def _strip_tenuo_meta(
@@ -115,28 +129,36 @@ def _strip_tenuo_meta(
     )
 
 
-class _VerifierDenialToolReturn:
-    """Duck-typed FastMCP 3 denial: consumers call ``.to_mcp_result()`` for the wire shape.
+class _DenialToolResult(ToolResult):
+    """A real ``ToolResult`` that always serializes as an error ``CallToolResult``.
 
-    FastMCP 3's ``ToolResult`` has no ``is_error`` flag, and its ``to_mcp_result()``
-    only emits a ``CallToolResult`` when ``meta`` is set — so denials need this
-    wrapper. FastMCP 4 requires a real ``ToolResult`` (see ``_denial_tool_return``).
+    Subclassing (rather than duck-typing ``to_mcp_result()``) keeps every
+    consumer working on every FastMCP line: FastMCP 4 hands anything that is
+    not ``isinstance(..., ToolResult)`` straight to the SDK runner, and
+    FastMCP's bundled caching / response-limiting middleware read ``.content``,
+    ``.structured_content`` and ``.meta`` directly. Overriding
+    ``to_mcp_result()`` supplies ``isError`` on FastMCP < 3.4, whose
+    ``ToolResult`` has no error flag and only emits a ``CallToolResult`` when
+    ``meta`` is set.
     """
 
-    __slots__ = ("_result",)
-
-    def __init__(self, result: mt.CallToolResult) -> None:
-        self._result = result
-
-    def to_mcp_result(
+    def __init__(
         self,
-    ) -> mt.CallToolResult:
-        return self._result
+        *,
+        content: list[Any],
+        structured_content: dict[str, Any],
+    ) -> None:
+        flags: dict[str, Any] = {"is_error": True} if TOOLRESULT_HAS_IS_ERROR else {}
+        super().__init__(content=content, structured_content=structured_content, **flags)
+
+    def to_mcp_result(self) -> mt.CallToolResult:
+        return make_error_call_tool_result(
+            content=list(self.content),
+            structured_content=dict(self.structured_content or {}),
+        )
 
 
-def _denial_tool_return(
-    verification: MCPVerificationResult,
-) -> ToolResult | _VerifierDenialToolReturn:
+def _denial_tool_return(verification: MCPVerificationResult) -> ToolResult:
     code = verification.jsonrpc_error_code or -32001
     message = verification.denial_reason or "Authorization denied"
     tenuo_block: dict[str, Any] = {
@@ -151,23 +173,10 @@ def _denial_tool_return(
             tenuo_block["got"] = meta["got"]
         if "need" in meta:
             tenuo_block["need"] = meta["need"]
-    content = [TextContent(type="text", text=message)]
-    structured = {"tenuo": tenuo_block}
-    # FastMCP 4+: ToolResult(is_error=True) survives isinstance checks and
-    # serializes isError on the wire. FastMCP 3.x rejects the kwarg.
-    try:
-        return ToolResult(
-            content=content,
-            structured_content=structured,
-            is_error=True,
-        )
-    except TypeError:
-        return _VerifierDenialToolReturn(
-            make_error_call_tool_result(
-                content=content,
-                structured_content=structured,
-            )
-        )
+    return _DenialToolResult(
+        content=[TextContent(type="text", text=message)],
+        structured_content={"tenuo": tenuo_block},
+    )
 
 
 class TenuoMiddleware(Middleware):

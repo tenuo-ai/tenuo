@@ -262,9 +262,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Latest 3.x (>=3.4 already has ToolResult.is_error); the weekly
+          # compatibility matrix covers the 3.2.1 floor.
           - fastmcp-line: "3"
             mcp_spec: "mcp>=1.0,<2"
-            fastmcp_spec: "fastmcp==3.2.1"
+            fastmcp_spec: "fastmcp>=3,<4"
             expect_fastmcp_major: "3"
             expect_mcp_major: "1"
           - fastmcp-line: "4"
@@ -284,7 +286,6 @@ jobs:
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           workspaces: tenuo-python
-          key: mcp-smoke-fm${{ matrix.fastmcp-line }}
 
       - name: Setup Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -303,22 +304,9 @@ jobs:
           uv pip install --system pytest pytest-asyncio \
             "${{ matrix.mcp_spec }}" \
             "${{ matrix.fastmcp_spec }}"
-          python - <<'PY'
-          import importlib.metadata as m
-          import os
-          mcp_v = m.version("mcp")
-          fm_v = m.version("fastmcp")
-          print(f"mcp={mcp_v} fastmcp={fm_v}")
-          expect_mcp = os.environ["EXPECT_MCP_MAJOR"]
-          expect_fm = os.environ["EXPECT_FASTMCP_MAJOR"]
-          if not mcp_v.startswith(expect_mcp + "."):
-              raise SystemExit(f"expected mcp {expect_mcp}.x, got {mcp_v}")
-          if not fm_v.startswith(expect_fm + "."):
-              raise SystemExit(f"expected fastmcp {expect_fm}.x, got {fm_v}")
-          PY
-        env:
-          EXPECT_MCP_MAJOR: ${{ matrix.expect_mcp_major }}
-          EXPECT_FASTMCP_MAJOR: ${{ matrix.expect_fastmcp_major }}
+          python ../scripts/check_installed_majors.py \
+            "mcp=${{ matrix.expect_mcp_major }}" \
+            "fastmcp=${{ matrix.expect_fastmcp_major }}"
 
       - name: Run MCP smoke + FastMCP middleware/e2e
         working-directory: tenuo-python
@@ -326,8 +314,9 @@ jobs:
           pytest -v \
             tests/adapters/test_mcp_ci_smoke.py \
             tests/adapters/test_mcp_fastmcp_middleware.py \
-            tests/adapters/test_mcp_fastmcp_e2e.py
-          pytest -v tests/e2e/test_smoke.py -k "mcp or fastmcp"
+            tests/adapters/test_mcp_fastmcp_e2e.py \
+            tests/e2e/test_smoke.py::test_mcp_import \
+            tests/e2e/test_smoke.py::test_fastmcp_import
 
   # ============================================================================
   # TEMPORAL INTEGRATION (live Temporal server)

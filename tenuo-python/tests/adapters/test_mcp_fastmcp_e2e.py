@@ -15,6 +15,10 @@ import pytest
 
 try:
     from tenuo.mcp import MCP_AVAILABLE, SecureMCPClient
+    from tenuo.mcp._compat import (
+        call_tool_result_is_error,
+        call_tool_result_structured_content,
+    )
 
     from tenuo import Capability, SigningKey, configure, mint
 except ImportError:
@@ -152,11 +156,6 @@ async def test_e2e_middleware_denies_without_warrant_structured(e2e_server: Path
     ) as client:
         assert client.session is not None
         result = await client.session.call_tool("ping", {}, meta=None)
-
-    from tenuo.mcp._compat import (
-        call_tool_result_is_error,
-        call_tool_result_structured_content,
-    )
 
     assert call_tool_result_is_error(result) is True
     structured = call_tool_result_structured_content(result)

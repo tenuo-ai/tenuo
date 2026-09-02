@@ -20,6 +20,7 @@ from tenuo.mcp._compat import (
     build_request_params_meta,
     call_tool_result_is_error,
     call_tool_result_structured_content,
+    request_params_meta_as_dict,
 )
 from tenuo.mcp.server import MCPVerifier
 
@@ -37,6 +38,7 @@ from fastmcp.server.middleware.middleware import MiddlewareContext  # noqa: E402
 from fastmcp.tools.base import ToolResult  # noqa: E402
 
 from tenuo.mcp.fastmcp_middleware import (  # noqa: E402
+    TOOLRESULT_HAS_IS_ERROR,
     TenuoMiddleware,
     resolve_tool_call_meta_for_verify,
 )
@@ -129,6 +131,33 @@ def test_resolve_meta_fallback_request_context(
     assert resolved is not None and "tenuo" in resolved
 
 
+def test_resolve_meta_merges_request_context_when_params_meta_lacks_tenuo(
+    simple_warrant: Warrant, agent_key: SigningKey
+) -> None:
+    """Version-pinned FastMCP 4 calls: params carry only ``_meta.fastmcp.version``.
+
+    FastMCP 4 builds the middleware ``CallToolRequestParams`` with
+    ``_meta=_version_request_meta(version)``, so ``params.meta`` is non-None
+    but has no ``tenuo`` block; the client's raw ``_meta`` (with ``tenuo``) is
+    only on ``request_context.meta`` and must be merged in, not ignored.
+    """
+    args = {"path": "/data/x.txt"}
+    ctx_meta = request_params_meta_as_dict(
+        _make_meta(simple_warrant, agent_key, "read_file", args)
+    )
+    ctx_meta["fastmcp"] = {"version": "1.0.0"}
+    version_only = build_request_params_meta({"fastmcp": {"version": "1.0.0"}})
+    params = CallToolRequestParams(name="read_file", arguments=args, _meta=version_only)
+    ctx = MagicMock()
+    ctx.request_context.meta = ctx_meta
+
+    resolved = resolve_tool_call_meta_for_verify(params, ctx)
+
+    assert resolved is not None
+    assert "tenuo" in resolved
+    assert resolved["fastmcp"] == {"version": "1.0.0"}
+
+
 @pytest.mark.asyncio
 async def test_middleware_denies_without_warrant(authorizer: Authorizer) -> None:
     verifier = MCPVerifier(authorizer=authorizer, require_warrant=True)
@@ -163,16 +192,15 @@ async def test_middleware_denies_without_warrant(authorizer: Authorizer) -> None
 async def test_denial_return_matches_fastmcp_toolresult_contract(
     authorizer: Authorizer,
 ) -> None:
-    """Regression guard: FastMCP 4 requires a real ``ToolResult`` denial.
+    """Regression guard: denials must be a real ``ToolResult`` on every line.
 
     FastMCP 4's ``tools/call`` path only calls ``.to_mcp_result()`` when the
-    middleware return is ``isinstance(..., ToolResult)``. A duck-typed wrapper
-    is handed straight to the runner and raises
-    ``handler returned _VerifierDenialToolReturn``. FastMCP 3 has no
-    ``is_error`` on ``ToolResult``, so the duck-typed wrapper remains valid.
+    middleware return is ``isinstance(..., ToolResult)`` (anything else goes
+    straight to the SDK runner and fails), and FastMCP's bundled caching /
+    response-limiting middleware read ``.content`` and ``.structured_content``
+    directly. ``to_mcp_result()`` must carry ``isError`` even on FastMCP < 3.4,
+    whose ``ToolResult`` has no ``is_error`` flag.
     """
-    import inspect
-
     verifier = MCPVerifier(authorizer=authorizer, require_warrant=True)
     mw = TenuoMiddleware(verifier)
     params = CallToolRequestParams(
@@ -190,23 +218,23 @@ async def test_denial_return_matches_fastmcp_toolresult_contract(
         raise AssertionError("call_next should not run")
 
     out = await mw.on_call_tool(ctx, boom)
-    supports_is_error = "is_error" in inspect.signature(ToolResult.__init__).parameters
 
-    if supports_is_error:
-        assert isinstance(out, ToolResult), (
-            "FastMCP 4+ denials must be ToolResult so call_tool normalizes "
-            "via to_mcp_result(); duck-typed wrappers break the wire path"
-        )
+    assert isinstance(out, ToolResult), (
+        "denials must be a ToolResult: FastMCP 4 only normalizes ToolResult "
+        "returns, and FastMCP's own middleware reads its fields directly"
+    )
+    assert isinstance(out.content, list) and out.content
+    assert isinstance(out.structured_content, dict)
+    assert out.structured_content.get("tenuo", {}).get("code") == -32001
+    if TOOLRESULT_HAS_IS_ERROR:
         assert out.is_error is True
-        assert isinstance(out.structured_content, dict)
-        assert out.structured_content.get("tenuo", {}).get("code") == -32001
-    else:
-        # FastMCP 3: duck-typed wrapper with to_mcp_result() is required.
-        assert not isinstance(out, ToolResult)
-        assert hasattr(out, "to_mcp_result")
-        mcp_result = out.to_mcp_result()
-        assert isinstance(mcp_result, CallToolResult)
-        assert call_tool_result_is_error(mcp_result) is True
+
+    mcp_result = out.to_mcp_result()
+    assert isinstance(mcp_result, CallToolResult)
+    assert call_tool_result_is_error(mcp_result) is True
+    structured = call_tool_result_structured_content(mcp_result)
+    assert structured is not None
+    assert structured["tenuo"]["code"] == -32001
 
 
 @pytest.mark.asyncio

@@ -486,64 +486,32 @@ def test_temporal_import():
 
 def test_print_installed_versions():
     """Print installed versions for debugging."""
-    versions = {}
+    from importlib.metadata import PackageNotFoundError, version
 
-    packages = [
+    # (label, distribution name). Distribution metadata is read instead of
+    # importing each package: it is the same number, needs no heavy imports,
+    # and cannot trip on namespace packages (``google`` without ``google.adk``).
+    distributions = [
         ("openai", "openai"),
-        ("openai-agents", "agents"),
+        ("openai-agents", "openai-agents"),
         ("crewai", "crewai"),
-        ("autogen", "autogen_agentchat"),
-        ("langchain", "langchain_core"),
+        ("autogen", "autogen-agentchat"),
+        ("langchain", "langchain-core"),
         ("langgraph", "langgraph"),
         ("mcp", "mcp"),
         ("fastmcp", "fastmcp"),
-        ("google-adk", "google.adk"),
+        ("google-adk", "google-adk"),
         ("temporalio", "temporalio"),
         ("fastapi", "fastapi"),
         ("starlette", "starlette"),
     ]
 
-    for label, module_name in packages:
+    versions = {}
+    for label, dist in distributions:
         try:
-            mod = __import__(module_name.split(".")[0] if "." in module_name else module_name)
-            if "." in module_name:
-                parts = module_name.split(".")
-                for part in parts[1:]:
-                    mod = getattr(mod, part)
-            versions[label] = getattr(mod, "__version__", "unknown")
-        except ImportError:
+            versions[label] = version(dist)
+        except PackageNotFoundError:
             versions[label] = "not installed"
-
-    # Prefer distribution metadata when __version__ is missing/unknown
-    try:
-        from importlib.metadata import PackageNotFoundError, version
-
-        for label, dist in [
-            ("openai", "openai"),
-            ("openai-agents", "openai-agents"),
-            ("crewai", "crewai"),
-            ("autogen", "autogen-agentchat"),
-            ("langchain", "langchain-core"),
-            ("langgraph", "langgraph"),
-            ("mcp", "mcp"),
-            ("fastmcp", "fastmcp"),
-            ("google-adk", "google-adk"),
-            ("temporalio", "temporalio"),
-            ("fastapi", "fastapi"),
-            ("starlette", "starlette"),
-        ]:
-            if versions.get(label) in (None, "unknown", "not installed"):
-                try:
-                    versions[label] = version(dist)
-                except PackageNotFoundError:
-                    versions[label] = "not installed"
-            elif versions.get(label) == "unknown":
-                try:
-                    versions[label] = version(dist)
-                except PackageNotFoundError:
-                    pass
-    except ImportError:
-        pass
 
     print("\n=== Installed Integration Versions ===")
     for name, ver in versions.items():
