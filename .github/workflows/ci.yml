@@ -189,15 +189,31 @@ jobs:
           uv pip install --system langchain langchain-core langchain-openai langgraph
           uv pip install --system fastapi uvicorn pydantic PyYAML
           uv pip install --system types-PyYAML types-requests
+          # OpenAI + Agents SDK (Python 3.10+). Installed before crewai so the
+          # matrix exercises openai>=2; crewai may pin openai<3 afterwards.
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
+            && uv pip install --system openai openai-agents \
+            || echo "Skipping openai / openai-agents (requires Python 3.10+)"
+          # AutoGen AgentChat (Python 3.10+)
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
+            && uv pip install --system "autogen-agentchat>=0.7.0" "autogen-ext[openai]>=0.7.0" \
+            || echo "Skipping autogen (requires Python 3.10+)"
+          # Google ADK
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
+            && uv pip install --system google-adk \
+            || echo "Skipping google-adk (requires Python 3.10+)"
           # Install crewai for integration tests (Python 3.10+).
           # Skip on Python 3.14 (all OS/arch): CrewAI/Chroma pydantic.v1 models raise
           # ConfigError at import/collection time until upstream supports 3.14.
+          # Note: crewai currently requires openai<3 and mcp~=1.x — keep this
+          # install after openai so adapter tests still collect; mcp-smoke covers
+          # FastMCP 4 / mcp 2 separately.
           if [ "${{ matrix.python-version }}" = "3.14" ]; then
             echo "Skipping crewai install on Python 3.14 (upstream collect failure)"
           else
             python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system crewai || echo "Skipping crewai (requires Python 3.10+)"
           fi
-          # MCP SDK requires Python 3.10+
+          # MCP SDK requires Python 3.10+ (crewai-compatible 1.x when crewai is present)
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system mcp || echo "Skipping MCP (requires Python 3.10+)"
           # Temporal SDK for live integration tests (Python 3.12+ to match dedicated job).
           # protobuf>=6.0 prevents a conflict with grpcio's bundled protobuf on Python 3.12+
@@ -234,12 +250,30 @@ jobs:
           fi
 
   # ============================================================================
-  # MCP END-TO-END SMOKE
+  # MCP / FastMCP dual-line smoke (regression guard)
+  # FastMCP 3 pairs with MCP SDK 1.x; FastMCP 4 requires MCP SDK 2.x.
+  # Keep these jobs separate from the main matrix (CrewAI pins mcp~=1.x).
   # ============================================================================
   mcp-smoke:
-    name: MCP Smoke (FastMCP + SecureMCPClient)
+    name: MCP Smoke (FastMCP ${{ matrix.fastmcp-line }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Latest 3.x (>=3.4 already has ToolResult.is_error); the weekly
+          # compatibility matrix covers the 3.2.1 floor.
+          - fastmcp-line: "3"
+            mcp_spec: "mcp>=1.9.4,<2"
+            fastmcp_spec: "fastmcp>=3,<4"
+            expect_fastmcp_major: "3"
+            expect_mcp_major: "1"
+          - fastmcp-line: "4"
+            mcp_spec: "mcp>=2"
+            fastmcp_spec: "fastmcp>=4"
+            expect_fastmcp_major: "4"
+            expect_mcp_major: "2"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -260,19 +294,29 @@ jobs:
           cache: pip
           cache-dependency-path: tenuo-python/pyproject.toml
 
-      - name: Install Tenuo + MCP smoke dependencies
+      - name: Install Tenuo + FastMCP ${{ matrix.fastmcp-line }} line
         working-directory: tenuo-python
         run: |
           pip install uv
           uv pip install --system maturin
           maturin build --release
           uv pip install --system target/wheels/*.whl
-          uv pip install --system pytest pytest-asyncio mcp fastmcp
+          uv pip install --system pytest pytest-asyncio \
+            "${{ matrix.mcp_spec }}" \
+            "${{ matrix.fastmcp_spec }}"
+          python ../scripts/check_installed_majors.py \
+            "mcp=${{ matrix.expect_mcp_major }}" \
+            "fastmcp=${{ matrix.expect_fastmcp_major }}"
 
-      - name: Run MCP smoke test
+      - name: Run MCP smoke + FastMCP middleware/e2e
         working-directory: tenuo-python
         run: |
-          pytest -v tests/adapters/test_mcp_ci_smoke.py
+          pytest -v \
+            tests/adapters/test_mcp_ci_smoke.py \
+            tests/adapters/test_mcp_fastmcp_middleware.py \
+            tests/adapters/test_mcp_fastmcp_e2e.py \
+            tests/e2e/test_smoke.py::test_mcp_import \
+            tests/e2e/test_smoke.py::test_fastmcp_import
 
   # ============================================================================
   # TEMPORAL INTEGRATION (live Temporal server)

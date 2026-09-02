@@ -2,10 +2,10 @@
 
 Tenuo's own MCP code spans SDK 1.x and 2.x (see :mod:`tenuo.mcp._compat`), but
 some tests stand up a real MCP *server*, and the server side is not portable
-across the two lines:
+across every combination:
 
-* FastMCP's server extras still require ``mcp<2.0``, so importing
-  ``fastmcp.server`` fails outright when only 2.x is installed.
+* FastMCP 3.x's server stack historically required ``mcp<2.0``; FastMCP 4.x
+  requires MCP SDK 2.x. Probing ``fastmcp.server`` covers both lines.
 * The lowlevel ``Server`` decorator API that the stdio fixture servers use was
   restructured in 2.0.
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 FASTMCP_SERVER_AVAILABLE: bool
 FASTMCP_SERVER_SKIP_REASON = (
-    "FastMCP server support unavailable (its server extras require mcp<2.0)"
+    "FastMCP server support unavailable (install tenuo[fastmcp] / fastmcp)"
 )
 
 try:

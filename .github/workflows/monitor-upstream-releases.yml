@@ -50,6 +50,36 @@ jobs:
                 file: 'tenuo-python/tenuo/langgraph.py',
                 docs: 'https://github.com/langchain-ai/langgraph/releases'
               },
+              {
+                name: 'MCP',
+                repo: 'modelcontextprotocol/python-sdk',
+                file: 'tenuo-python/tenuo/mcp/server.py',
+                docs: 'https://github.com/modelcontextprotocol/python-sdk/releases'
+              },
+              {
+                name: 'FastMCP',
+                repo: 'PrefectHQ/fastmcp',
+                file: 'tenuo-python/tenuo/mcp/fastmcp_middleware.py',
+                docs: 'https://github.com/PrefectHQ/fastmcp/releases'
+              },
+              {
+                name: 'Google ADK',
+                repo: 'google/adk-python',
+                file: 'tenuo-python/tenuo/google_adk/__init__.py',
+                docs: 'https://github.com/google/adk-python/releases'
+              },
+              {
+                name: 'Temporal',
+                repo: 'temporalio/sdk-python',
+                file: 'tenuo-python/tenuo/temporal_plugin.py',
+                docs: 'https://github.com/temporalio/sdk-python/releases'
+              },
+              {
+                name: 'FastAPI',
+                repo: 'fastapi/fastapi',
+                file: 'tenuo-python/tenuo/fastapi.py',
+                docs: 'https://github.com/fastapi/fastapi/releases'
+              },
             ];
 
             const sevenDaysAgo = new Date();

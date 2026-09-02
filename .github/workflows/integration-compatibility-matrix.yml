@@ -12,9 +12,14 @@ on:
       - 'tenuo-python/tenuo/autogen.py'
       - 'tenuo-python/tenuo/langchain.py'
       - 'tenuo-python/tenuo/langgraph.py'
+      - 'tenuo-python/tenuo/fastapi.py'
+      - 'tenuo-python/tenuo/google_adk/**'
+      - 'tenuo-python/tenuo/mcp/**'
       - 'tenuo-python/tenuo/temporal/**'
       - 'tenuo-python/tenuo/temporal_plugin.py'
       - 'tenuo-python/pyproject.toml'
+      - 'tenuo-python/tests/e2e/test_smoke.py'
+      - '.github/workflows/integration-compatibility-matrix.yml'
 
 permissions:
   contents: read
@@ -24,7 +29,7 @@ jobs:
   test-compatibility:
     name: ${{ matrix.integration }} @ ${{ matrix.version }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +39,10 @@ jobs:
           - autogen
           - langchain
           - langgraph
+          - fastapi
+          - google_adk
+          - mcp
+          - fastmcp
         version:
           - minimum  # Minimum supported version
           - latest   # Latest stable
@@ -47,45 +56,104 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
-      - name: Install base dependencies
+      - name: Install Rust toolchain (for tenuo wheel)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: tenuo-python
+
+      - name: Install base test harness (no integration extras)
         run: |
           python -m pip install --upgrade pip
-          pip install -e "tenuo-python[dev]"
+          pip install maturin pytest pytest-asyncio hypothesis
+          # Build the wheel and install it without pulling every optional
+          # extra, so "latest" can actually resolve to current PyPI majors.
+          # (`maturin develop` needs an activated virtualenv, which the
+          # runner does not have.)
+          (cd tenuo-python && maturin build)
+          pip install tenuo-python/target/wheels/*.whl
+          pip install "PyYAML>=6.0" "pydantic>=2.0"
 
       - name: Install minimum version
         if: matrix.version == 'minimum'
         run: |
-          # Test the actual minimum versions from pyproject.toml
-          # These may have known issues - smoke tests should handle gracefully
           case "${{ matrix.integration }}" in
             openai)
-              # Minimum from pyproject.toml - may have httpx issues
-              pip install "openai==1.0.0" || pip install "openai==1.6.0"
+              pip install "openai==1.6.0" || pip install "openai==1.0.0"
               ;;
             crewai)
-              # Minimum from pyproject.toml
-              pip install "crewai==1.0.0" || pip install "crewai==1.1.0"
+              # crewai.hooks (GuardedCrew) first ships in 1.5.0
+              pip install "crewai==1.5.0"
               ;;
             autogen)
               pip install "autogen-agentchat==0.7.0" "autogen-ext[openai]==0.7.0"
               ;;
             langchain)
-              pip install "langchain-core==0.2.0"
+              pip install "langchain-core==0.2.27" "langchain==0.2.0"
               ;;
             langgraph)
-              # langgraph 0.2.0 requires langchain-core>=0.2.27
               pip install "langgraph==0.2.0" "langchain-core==0.2.27"
+              ;;
+            fastapi)
+              # httpx 0.28 dropped Client(app=...), which starlette 0.27's TestClient uses
+              pip install "fastapi==0.100.0" "uvicorn==0.20.0" "httpx>=0.24,<0.28"
+              ;;
+            google_adk)
+              pip install "google-adk==0.1.0" || pip install "google-adk==1.0.0" || pip install "google-adk"
+              ;;
+            mcp)
+              # 1.9.4: first release whose streamable-HTTP transport yields the
+              # (read, write, get_session_id) triple tenuo.mcp unpacks
+              pip install "mcp==1.9.4"
+              ;;
+            fastmcp)
+              # Explicit dual-line floors: FastMCP 3 + MCP 1.x
+              pip install "mcp>=1.9.4,<2" "fastmcp==3.2.1"
+              python scripts/check_installed_majors.py mcp=1 fastmcp=3
               ;;
           esac
 
       - name: Install latest version
         if: matrix.version == 'latest'
         run: |
-          pip install "tenuo[${{ matrix.integration }}]"
+          case "${{ matrix.integration }}" in
+            openai)
+              pip install -U "openai" "openai-agents"
+              ;;
+            crewai)
+              # CrewAI currently constrains openai<3 and mcp~=1.x
+              pip install -U "crewai"
+              ;;
+            autogen)
+              pip install -U "autogen-agentchat>=0.7.0" "autogen-ext[openai]>=0.7.0"
+              ;;
+            langchain)
+              pip install -U "langchain" "langchain-core"
+              ;;
+            langgraph)
+              pip install -U "langgraph" "langchain-core"
+              ;;
+            fastapi)
+              pip install -U "fastapi" "uvicorn" "httpx" "starlette"
+              ;;
+            google_adk)
+              pip install -U "google-adk"
+              ;;
+            mcp)
+              pip install -U "mcp"
+              ;;
+            fastmcp)
+              # Explicit dual-line ceiling: FastMCP 4 + MCP 2.x
+              pip install -U "fastmcp>=4" "mcp>=2"
+              python scripts/check_installed_majors.py mcp=2 fastmcp=4
+              ;;
+          esac
 
       - name: Show installed versions
         run: |
-          pip list | grep -E "(openai|crewai|autogen|langchain|langgraph)"
+          pip list | grep -Ei "(openai|crewai|autogen|langchain|langgraph|fastapi|starlette|google-adk|mcp|fastmcp|tenuo)" || true
 
       - name: Run smoke tests (API contracts)
         run: |
@@ -95,11 +163,55 @@ jobs:
 
       - name: Run integration tests
         run: |
-          # Run integration-specific tests if they exist
-          pytest tenuo-python/tests/ \
-            -k "${{ matrix.integration }}" \
-            --ignore=tenuo-python/tests/e2e/ \
-            -v --tb=short || echo "No integration tests found"
+          case "${{ matrix.integration }}" in
+            openai)
+              pytest tenuo-python/tests/adapters/test_openai_adapter.py \
+                tenuo-python/tests/adapters/test_openai_adversarial.py \
+                tenuo-python/tests/adapters/test_openai_delegation.py \
+                -v --tb=short
+              ;;
+            crewai)
+              pytest tenuo-python/tests/adapters/test_crewai.py \
+                tenuo-python/tests/adapters/test_crewai_adversarial.py \
+                tenuo-python/tests/adapters/test_crewai_integration.py \
+                -v --tb=short
+              ;;
+            autogen)
+              pytest tenuo-python/tests/adapters/test_autogen_integration.py -v --tb=short
+              ;;
+            langchain)
+              pytest tenuo-python/tests/adapters/test_langchain_integration.py \
+                tenuo-python/tests/adapters/test_langchain_delegation.py \
+                -v --tb=short
+              ;;
+            langgraph)
+              pytest tenuo-python/tests/adapters/test_langgraph.py \
+                tenuo-python/tests/adapters/test_langgraph_toolnode.py \
+                -v --tb=short
+              ;;
+            fastapi)
+              pytest tenuo-python/tests/adapters/test_fastapi_integration.py \
+                tenuo-python/tests/adapters/test_fastapi_delegation.py \
+                -v --tb=short
+              ;;
+            google_adk)
+              pytest tenuo-python/tests/adapters/test_google_adk.py \
+                tenuo-python/tests/adapters/test_google_adk_adversarial.py \
+                -v --tb=short
+              ;;
+            mcp)
+              pytest tenuo-python/tests/adapters/test_mcp.py \
+                tenuo-python/tests/adapters/test_mcp_server.py \
+                tenuo-python/tests/adapters/test_mcp_sdk_compat.py \
+                -v --tb=short
+              ;;
+            fastmcp)
+              pytest tenuo-python/tests/adapters/test_mcp_fastmcp_middleware.py \
+                tenuo-python/tests/adapters/test_mcp_fastmcp_e2e.py \
+                tenuo-python/tests/adapters/test_mcp_ci_smoke.py \
+                -v --tb=short
+              ;;
+          esac
 
       - name: Check for deprecation warnings
         run: |
@@ -118,35 +230,30 @@ jobs:
             const body = `
             ## Integration Test Failure
 
-            **Integration**: ${{ matrix.integration }}
-            **Version**: ${{ matrix.version }}
-            **Python**: ${{ matrix.python-version }}
+            **Integration**: \`${{ matrix.integration }}\`
+            **Version track**: \`${{ matrix.version }}\`
+            **Python**: \`${{ matrix.python-version }}\`
             **Workflow**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-            ### Action Items
-            - [ ] Review test logs
-            - [ ] Check for breaking changes in upstream changelog
-            - [ ] Update integration code if needed
-            - [ ] Update minimum version in pyproject.toml if needed
-            - [ ] Update compatibility matrix documentation
-
-            ### Upstream Resources
-            ${{ matrix.integration == 'openai' && '- [OpenAI Changelog](https://github.com/openai/openai-python/releases)' || '' }}
-            ${{ matrix.integration == 'crewai' && '- [CrewAI Changelog](https://github.com/joaomdmoura/crewAI/releases)' || '' }}
-            ${{ matrix.integration == 'autogen' && '- [AutoGen Changelog](https://github.com/microsoft/autogen/releases)' || '' }}
-            ${{ matrix.integration == 'langchain' && '- [LangChain Changelog](https://python.langchain.com/changelog)' || '' }}
-            ${{ matrix.integration == 'langgraph' && '- [LangGraph Changelog](https://github.com/langchain-ai/langgraph/releases)' || '' }}
+            Please investigate before the next release.
             `;
-
-            github.rest.issues.create({
+            const issues = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: title,
-              body: body,
-              labels: ['integration', 'breaking-change', '${{ matrix.integration }}', 'automated']
+              state: 'open',
+              labels: 'integration',
+              per_page: 100
             });
+            if (!issues.data.find(i => i.title === title)) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['integration', 'compatibility']
+              });
+            }
 
-  # ==========================================================================
   # Temporal — needs Rust toolchain + test server, so runs as a separate job.
   # Tests both minimum (1.23.0, where SimplePlugin was introduced) and latest.
   # Replay safety: records workflow history on one version, replays on both.

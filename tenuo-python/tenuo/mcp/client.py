@@ -39,6 +39,7 @@ try:
     from mcp.types import Tool as MCPTool  # type: ignore[import-not-found]
 
     from ._compat import (
+        tool_input_schema,
         call_tool_result_is_error,
         call_tool_result_structured_content,
         open_streamable_http_transport,
@@ -430,7 +431,7 @@ class SecureMCPClient:
         """
         Get available MCP tools.
 
-        Returns list of MCP Tool objects with name, description, inputSchema.
+        Returns list of MCP Tool objects with name, description, input schema.
         """
         if self.session is None:
             raise RuntimeError(
@@ -803,7 +804,7 @@ class SecureMCPClient:
         # the schema it doesn't get sent to the server.  When the schema is
         # absent or has no properties we forward all args — stripping everything
         # would silently break tools that don't publish a schema.
-        input_schema = getattr(mcp_tool, "inputSchema", {}) or {}
+        input_schema = tool_input_schema(mcp_tool)
         properties = input_schema.get("properties", {})
         allowed_keys: Optional[set] = set(properties.keys()) if properties else None
 
