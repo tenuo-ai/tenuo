@@ -8,10 +8,10 @@ unchanged — this module only wires FastMCP's middleware hook to
 
 ``CallToolRequestParams.meta`` (JSON ``_meta``) is the primary source. When
 FastMCP builds an internal ``CallToolRequestParams`` without ``meta`` (common
-on the wire path), metadata is taken from the current MCP
-:class:`~mcp.shared.context.RequestContext` exposed by
-:class:`fastmcp.server.context.Context` (``extra="allow"`` preserves
-``tenuo``).
+on the wire path), metadata is taken from
+:attr:`fastmcp.server.context.Context.request_context` ``.meta`` (FastMCP 3:
+MCP SDK ``RequestContext``; FastMCP 4: ``FastMCPRequestContext`` wrapping the
+raw ``_meta`` dict).
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ except ImportError as exc:
 
 try:
     from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
+    from fastmcp.tools.base import ToolResult
 except ImportError as exc:
     raise ImportError(
         "tenuo.mcp.fastmcp_middleware requires FastMCP (optional; not part of tenuo[mcp]). "
@@ -115,7 +116,12 @@ def _strip_tenuo_meta(
 
 
 class _VerifierDenialToolReturn:
-    """Satisfies ``FastMCP.call_tool`` consumers that call ``.to_mcp_result()``."""
+    """Duck-typed FastMCP 3 denial: consumers call ``.to_mcp_result()`` for the wire shape.
+
+    FastMCP 3's ``ToolResult`` has no ``is_error`` flag, and its ``to_mcp_result()``
+    only emits a ``CallToolResult`` when ``meta`` is set — so denials need this
+    wrapper. FastMCP 4 requires a real ``ToolResult`` (see ``_denial_tool_return``).
+    """
 
     __slots__ = ("_result",)
 
@@ -128,7 +134,9 @@ class _VerifierDenialToolReturn:
         return self._result
 
 
-def _denial_tool_return(verification: MCPVerificationResult) -> _VerifierDenialToolReturn:
+def _denial_tool_return(
+    verification: MCPVerificationResult,
+) -> ToolResult | _VerifierDenialToolReturn:
     code = verification.jsonrpc_error_code or -32001
     message = verification.denial_reason or "Authorization denied"
     tenuo_block: dict[str, Any] = {
@@ -143,11 +151,23 @@ def _denial_tool_return(verification: MCPVerificationResult) -> _VerifierDenialT
             tenuo_block["got"] = meta["got"]
         if "need" in meta:
             tenuo_block["need"] = meta["need"]
-    call = make_error_call_tool_result(
-        content=[TextContent(type="text", text=message)],
-        structured_content={"tenuo": tenuo_block},
-    )
-    return _VerifierDenialToolReturn(call)
+    content = [TextContent(type="text", text=message)]
+    structured = {"tenuo": tenuo_block}
+    # FastMCP 4+: ToolResult(is_error=True) survives isinstance checks and
+    # serializes isError on the wire. FastMCP 3.x rejects the kwarg.
+    try:
+        return ToolResult(
+            content=content,
+            structured_content=structured,
+            is_error=True,
+        )
+    except TypeError:
+        return _VerifierDenialToolReturn(
+            make_error_call_tool_result(
+                content=content,
+                structured_content=structured,
+            )
+        )
 
 
 class TenuoMiddleware(Middleware):

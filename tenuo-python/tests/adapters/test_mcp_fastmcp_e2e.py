@@ -153,9 +153,15 @@ async def test_e2e_middleware_denies_without_warrant_structured(e2e_server: Path
         assert client.session is not None
         result = await client.session.call_tool("ping", {}, meta=None)
 
-    assert result.isError is True
-    assert result.structuredContent is not None
-    tenuo = result.structuredContent.get("tenuo")
+    from tenuo.mcp._compat import (
+        call_tool_result_is_error,
+        call_tool_result_structured_content,
+    )
+
+    assert call_tool_result_is_error(result) is True
+    structured = call_tool_result_structured_content(result)
+    assert structured is not None
+    tenuo = structured.get("tenuo")
     assert isinstance(tenuo, dict)
     assert tenuo.get("code") == -32001
     assert "message" in tenuo

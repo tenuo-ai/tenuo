@@ -803,7 +803,11 @@ class SecureMCPClient:
         # the schema it doesn't get sent to the server.  When the schema is
         # absent or has no properties we forward all args — stripping everything
         # would silently break tools that don't publish a schema.
-        input_schema = getattr(mcp_tool, "inputSchema", {}) or {}
+        input_schema = (
+            getattr(mcp_tool, "input_schema", None)
+            or getattr(mcp_tool, "inputSchema", None)
+            or {}
+        )
         properties = input_schema.get("properties", {})
         allowed_keys: Optional[set] = set(properties.keys()) if properties else None
 

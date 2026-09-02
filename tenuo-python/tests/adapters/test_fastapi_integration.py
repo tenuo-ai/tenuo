@@ -204,6 +204,9 @@ class TestFastAPIIntegration:
 
     def test_self_signed_warrant_rejected_without_trusted_issuers(self):
         """Attacker mints self-signed warrant; server has no trusted_issuers configured."""
+        from tenuo import reset_config
+
+        reset_config()  # isolate from global trusted_roots set by earlier tests
         app = FastAPI()
         configure_tenuo(app)  # no trusted_issuers
 
@@ -223,8 +226,9 @@ class TestFastAPIIntegration:
         headers = {X_TENUO_WARRANT: forged.to_base64(), X_TENUO_POP: pop_b64}
         resp = client.get("/admin", headers=headers)
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.json()}"
-        assert "trusted_issuers" in resp.json()["detail"]["message"].lower() or \
-               "configuration" in resp.json()["detail"]["message"].lower()
+        detail = resp.json()["detail"]
+        assert detail.get("error") == "configuration_error"
+        assert "trusted_issuers" in detail["message"].lower()
 
     def test_global_config_trusted_roots_bridged(self, key):
         """tenuo.configure(trusted_roots=[...]) is respected by TenuoGuard."""
