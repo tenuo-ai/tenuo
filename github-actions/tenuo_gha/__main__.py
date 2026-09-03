@@ -6,7 +6,7 @@ import sys
 
 
 def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] in {"hold", "holder", "shim", "action"}:
+    if len(sys.argv) > 1 and sys.argv[1] in {"hold", "holder", "shim", "action", "live"}:
         mode = sys.argv.pop(1)
         if mode in {"hold", "holder"}:
             from .holder import main as hold
@@ -16,9 +16,12 @@ def main() -> None:
             from .shim import main as shim
             shim()
             return
+        if mode == "live":
+            from .live import main as live
+            live()
+            return
         from .action import main as action
         action()
-        return
     from .app import main as serve
     serve()
 

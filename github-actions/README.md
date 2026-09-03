@@ -15,4 +15,7 @@ python -m tenuo_gha shim --socket /tmp/tenuo.sock --gateway-url http://127.0.0.1
 
 # Job path: OIDC → exchange → holder → mcp_config
 python -m tenuo_gha action --gateway-url URL --exchange-url URL --audience tenuo:org/acme
+
+# Live GitHub (creates a disposable issue, comments, closes it)
+TENUO_LIVE_GITHUB=1 GH_TOKEN="$(gh auth token)" python -m pytest -q tests/test_live_github.py
 ```
