@@ -41,6 +41,8 @@ jobs:
           pip install uv
           uv pip install --system maturin
           (cd tenuo-python && maturin build --release)
+          python github-actions/package_runtime.py
+          test -n "$(ls github-actions/vendor/tenuo-*.whl)"
           uv pip install --system tenuo-python/target/wheels/*.whl
           uv pip install --system pytest pyyaml PyJWT cryptography starlette httpx
           (cd github-actions && pytest -q -m "not live")

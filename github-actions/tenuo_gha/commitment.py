@@ -14,10 +14,6 @@ from typing import Any, Mapping, Optional
 
 EXCHANGE_PROOF_CONTEXT = "tenuo-warrant-exchange-v1"
 
-# Shared with tenuo-cloud TestGitHubExchangeRequestHashTaskBindingVector.
-GHA_COMPACT_VECTOR = "a6e5f6e8d6f2454c167343e57cbe1ce0dcfef675a969c1607c82a4ba589568ae"
-
-
 class CommitmentError(ValueError):
     """The exchange commitment could not be built or verified."""
 
@@ -72,14 +68,14 @@ def _stable_maps(value: Any) -> Any:
     return value
 
 
+def canonical_json(value: Any) -> str:
+    """Compact UTF-8 JSON with recursively sorted object keys."""
+    return json.dumps(_stable_maps(value), separators=(",", ":"), ensure_ascii=False)
+
+
 def hash_json(value: Any) -> str:
     """SHA-256 hex of compact JSON with recursively sorted object keys."""
-    canonical = json.dumps(
-        _stable_maps(value),
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
 def exchange_proof_preimage(request_hash: str) -> bytes:
@@ -94,6 +90,47 @@ def compact_task_binding(raw: Optional[Mapping[str, Any]]) -> Optional[dict[str,
     return {"number": int(raw["number"]), "type": str(raw["type"])}
 
 
+def exchange_request_payload(
+    *,
+    issuer: str,
+    jti: str,
+    holder_public_key: str,
+    ttl_seconds: int,
+    capabilities: Mapping[str, Any],
+    task_binding: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "issuer": issuer,
+        "jti": jti,
+        "holder_public_key": normalize_holder_public_key(holder_public_key),
+        "ttl_seconds": int(ttl_seconds),
+        "capabilities": dict(capabilities),
+        "task_binding": compact_task_binding(task_binding),
+    }
+
+
+def exchange_request_canonical(
+    *,
+    issuer: str,
+    jti: str,
+    holder_public_key: str,
+    ttl_seconds: int,
+    capabilities: Mapping[str, Any],
+    task_binding: Optional[Mapping[str, Any]] = None,
+) -> str:
+    return canonical_json(
+        exchange_request_payload(
+            issuer=issuer,
+            jti=jti,
+            holder_public_key=holder_public_key,
+            ttl_seconds=ttl_seconds,
+            capabilities=capabilities,
+            task_binding=task_binding,
+        )
+    )
+
+
 def exchange_request_hash(
     *,
     issuer: str,
@@ -105,15 +142,14 @@ def exchange_request_hash(
 ) -> str:
     """Hash the compact ``POST /v1/exchange`` commitment Cloud verifies."""
     return hash_json(
-        {
-            "version": 1,
-            "issuer": issuer,
-            "jti": jti,
-            "holder_public_key": normalize_holder_public_key(holder_public_key),
-            "ttl_seconds": int(ttl_seconds),
-            "capabilities": dict(capabilities),
-            "task_binding": compact_task_binding(task_binding),
-        }
+        exchange_request_payload(
+            issuer=issuer,
+            jti=jti,
+            holder_public_key=holder_public_key,
+            ttl_seconds=ttl_seconds,
+            capabilities=capabilities,
+            task_binding=task_binding,
+        )
     )
 
 

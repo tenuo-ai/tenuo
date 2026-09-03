@@ -1,0 +1,114 @@
+{
+  "schema": "tenuo.ci_exchange.v1",
+  "description": "Language-neutral vectors for the compact POST /v1/exchange commitment. The seed is public test material and must never be used outside conformance tests.",
+  "proof_context": "tenuo-warrant-exchange-v1",
+  "signing_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "signing_public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+  "vectors": [
+    {
+      "name": "minimal_no_task",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "jti": "jti-minimal",
+      "request": {
+        "holder_public_key": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+        "ttl_seconds": 900,
+        "capabilities": {
+          "github.get_issue": {"issue": 4127}
+        },
+        "task_binding": null
+      },
+      "canonical_json": "{\"capabilities\":{\"github.get_issue\":{\"issue\":4127}},\"holder_public_key\":\"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"jti\":\"jti-minimal\",\"task_binding\":null,\"ttl_seconds\":900,\"version\":1}",
+      "expected_hash": "aaa4c40af92f5fa3d7bd15b56c476f04689b755354856dc543a32a488b46ba27",
+      "expected_proof": "9QiW_v1AHjXVmwjAZdoPjWIenTIYF7IHCgaPKlrsP7qoB-WvPPBwkF-Y139D7pKuw1YxlJ0vUwYX1WqvYvAVBQ"
+    },
+    {
+      "name": "issue_triage",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "jti": "jti-issue-4127",
+      "request": {
+        "holder_public_key": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+        "ttl_seconds": 900,
+        "capabilities": {
+          "github.get_issue": {"repository": "acme/widgets", "issue": 4127},
+          "github.list_issue_comments": {"repository": "acme/widgets", "issue": 4127},
+          "github.add_comment": {"repository": "acme/widgets", "issue": 4127}
+        },
+        "task_binding": {"type": "issue", "number": 4127}
+      },
+      "canonical_json": "{\"capabilities\":{\"github.add_comment\":{\"issue\":4127,\"repository\":\"acme/widgets\"},\"github.get_issue\":{\"issue\":4127,\"repository\":\"acme/widgets\"},\"github.list_issue_comments\":{\"issue\":4127,\"repository\":\"acme/widgets\"}},\"holder_public_key\":\"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"jti\":\"jti-issue-4127\",\"task_binding\":{\"number\":4127,\"type\":\"issue\"},\"ttl_seconds\":900,\"version\":1}",
+      "expected_hash": "1877b916f828a3e1fcf6911a18e9e52aa8efc27ca25ba48c0e67c1feff072c26",
+      "expected_proof": "8n7c26j8i1xyfPkPC-xJ3zi22BFnjKON4bkv1XqScCFvIeWJ2geelnvyqi1bbNarQnxPgsJCVchSPjtpsi-1BA"
+    },
+    {
+      "name": "pull_request_lists_and_bool",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "jti": "jti-pr-27",
+      "request": {
+        "holder_public_key": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+        "ttl_seconds": 300,
+        "capabilities": {
+          "github.add_labels": {"dry_run": false, "issue": 27, "labels": ["security", "needs-review"], "repository": "acme/widgets"},
+          "github.add_comment": {"issue": 27, "repository": "acme/widgets"}
+        },
+        "task_binding": {"number": 27, "type": "pull_request"}
+      },
+      "canonical_json": "{\"capabilities\":{\"github.add_comment\":{\"issue\":27,\"repository\":\"acme/widgets\"},\"github.add_labels\":{\"dry_run\":false,\"issue\":27,\"labels\":[\"security\",\"needs-review\"],\"repository\":\"acme/widgets\"}},\"holder_public_key\":\"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"jti\":\"jti-pr-27\",\"task_binding\":{\"number\":27,\"type\":\"pull_request\"},\"ttl_seconds\":300,\"version\":1}",
+      "expected_hash": "90c7f3d8a53e805e3f1c964742a5d8472e430263670fcd55ec226f77eacecad4",
+      "expected_proof": "PfBenisVXwKh_XL-WnMsW1xRH_CXK07YjMj0C1_ei3rQ_AfOXeYiYPSr2D8t6JVBrnqWd5ux0w1YKncjOliPCw"
+    },
+    {
+      "name": "base64url_holder_normalizes_to_hex",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "jti": "jti-minimal",
+      "request": {
+        "holder_public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+        "ttl_seconds": 900,
+        "capabilities": {
+          "github.get_issue": {"issue": 4127}
+        },
+        "task_binding": null
+      },
+      "canonical_json": "{\"capabilities\":{\"github.get_issue\":{\"issue\":4127}},\"holder_public_key\":\"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"jti\":\"jti-minimal\",\"task_binding\":null,\"ttl_seconds\":900,\"version\":1}",
+      "expected_hash": "aaa4c40af92f5fa3d7bd15b56c476f04689b755354856dc543a32a488b46ba27",
+      "expected_proof": "9QiW_v1AHjXVmwjAZdoPjWIenTIYF7IHCgaPKlrsP7qoB-WvPPBwkF-Y139D7pKuw1YxlJ0vUwYX1WqvYvAVBQ"
+    },
+    {
+      "name": "unicode_string",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "jti": "jti-unicode",
+      "request": {
+        "holder_public_key": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+        "ttl_seconds": 60,
+        "capabilities": {
+          "github.add_labels": {"issue": 9, "labels": ["rélease/🚀"], "repository": "acme/widgets"}
+        },
+        "task_binding": {"type": "issue", "number": 9}
+      },
+      "canonical_json": "{\"capabilities\":{\"github.add_labels\":{\"issue\":9,\"labels\":[\"rélease/🚀\"],\"repository\":\"acme/widgets\"}},\"holder_public_key\":\"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"jti\":\"jti-unicode\",\"task_binding\":{\"number\":9,\"type\":\"issue\"},\"ttl_seconds\":60,\"version\":1}",
+      "expected_hash": "cfe6eb27cd645429389f64e5955785821e47b34333c42a1089f4f9a09b39fdd9",
+      "expected_proof": "enDBeIwaFiDlkq2htHB3jcskG_ac0VMiYh_B8IyVY2NJMcQ5D5oL6N1NvEEGYEihDBps3FQGzzS3Y8pLWnjZCg"
+    }
+  ],
+  "required_negative_cases": [
+    {"name": "unknown_task_context_field", "expected_error": "invalid_request"},
+    {"name": "missing_or_invalid_holder_proof", "expected_error": "holder_proof_invalid"},
+    {"name": "proof_replayed_with_changed_ttl", "expected_error": "holder_proof_invalid"},
+    {"name": "proof_replayed_with_changed_capability", "expected_error": "holder_proof_invalid"},
+    {"name": "proof_replayed_with_changed_task_binding", "expected_error": "holder_proof_invalid"},
+    {"name": "repository_conflicts_with_oidc_claim", "expected_error": "outside_ceiling"},
+    {"name": "requested_action_outside_policy", "expected_error": "outside_ceiling"},
+    {"name": "same_jti_same_commitment", "expected_result": "idempotent_replay"},
+    {"name": "same_jti_changed_commitment", "expected_error": "token_reused"},
+    {"name": "untrusted_workflow_or_wrong_audience", "expected_error": "untrusted_workflow"}
+  ],
+  "required_lifecycle_assertions": [
+    "exchange response contains policy issuer and run warrant (stack length 2)",
+    "holder appends one exact terminal leaf (presented stack length 3)",
+    "terminal leaf cannot widen repository, issue, tool, TTL, or delegation depth",
+    "gateway trusts roots configured out of band and never adopts response roots",
+    "allowed call emits a native receipt with run provenance and request binding",
+    "cross-repository call is denied before a GitHub credential is used",
+    "revoking the issued run warrant makes a previously valid presentation fail",
+    "holder key, GitHub token, installation token, and warrant never appear in logs"
+  ]
+}

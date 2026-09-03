@@ -3,6 +3,12 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const UBUNTU_WHEEL = /manylinux|linux_/;
+
+export function runnerIsUbuntu() {
+  return process.platform === 'linux';
+}
+
 export function findTenuoWheel(actionPath) {
   if (process.env.TENUO_WHEEL) {
     return process.env.TENUO_WHEEL;
@@ -11,17 +17,25 @@ export function findTenuoWheel(actionPath) {
   if (!existsSync(vendor)) {
     return '';
   }
-  const wheels = readdirSync(vendor)
-    .filter((name) => /^tenuo-.*\.whl$/.test(name))
-    .sort();
-  return wheels.length ? join(vendor, wheels[wheels.length - 1]) : '';
+  const wheels = readdirSync(vendor).filter((name) => /^tenuo-.*\.whl$/.test(name)).sort();
+  if (!wheels.length) {
+    return '';
+  }
+  if (!runnerIsUbuntu()) {
+    console.error(
+      'This action currently supports Ubuntu runners. Package a manylinux tenuo wheel into vendor/ and run on ubuntu-latest.',
+    );
+    process.exit(1);
+  }
+  const matched = wheels.filter((name) => UBUNTU_WHEEL.test(name));
+  return matched.length ? join(vendor, matched[matched.length - 1]) : '';
 }
 
 export function installRuntime(python, actionPath) {
   const wheel = findTenuoWheel(actionPath);
   if (!wheel) {
     console.error(
-      'Tenuo runtime wheel is missing. Package the compatible tenuo wheel into vendor/ or set TENUO_WHEEL.',
+      'Tenuo runtime wheel is missing. Package the compatible Ubuntu tenuo wheel into vendor/ with package_runtime.py.',
     );
     process.exit(1);
   }

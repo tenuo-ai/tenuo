@@ -20,4 +20,4 @@ python -m tenuo_gha action --gateway-url URL --exchange-url URL --audience tenuo
 TENUO_LIVE_GITHUB=1 GH_TOKEN="$(gh auth token)" python -m pytest -q tests/test_live_github.py
 ```
 
-The JavaScript action installs third-party deps from `requirements.lock` with `--require-hashes`, then installs the compatible `tenuo` wheel from `vendor/` (or `TENUO_WHEEL`). It does not `pip install tenuo` from PyPI. The holder socket path includes `$GITHUB_RUN_ID`. The post step stops the holder and removes temporary socket and mcp_config files.
+The JavaScript action installs third-party deps from `requirements.lock` with `--require-hashes`, then installs the Ubuntu/manylinux `tenuo` wheel from `vendor/`. `package_runtime.py` copies that wheel into the assembled action; a CI-built wheel that is not packaged is not enough. v1 supports Ubuntu runners. The holder socket path includes `$GITHUB_RUN_ID`. The post step stops the holder and removes temporary socket and mcp_config files.

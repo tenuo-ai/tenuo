@@ -1,4 +1,4 @@
-"""The Node action must install Tenuo on a runner that does not already have it."""
+"""Install the packaged action into a pristine venv with no repository PYTHONPATH."""
 
 from __future__ import annotations
 
@@ -11,17 +11,13 @@ from pathlib import Path
 import pytest
 
 ACTION_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = ACTION_ROOT.parent
 
 
-def _tenuo_wheel() -> Path:
-    wheels = sorted(REPO_ROOT.glob("tenuo-python/target/wheels/tenuo-*.whl"))
-    if not wheels:
-        pytest.skip("tenuo wheel is not built; run maturin build --release in tenuo-python")
-    return wheels[-1]
+def _vendor_wheels() -> list[Path]:
+    return sorted((ACTION_ROOT / "vendor").glob("tenuo-*.whl"))
 
 
-def _stage_action(tmp_path: Path, *, wheel: Path | None) -> Path:
+def _copy_assembled_action(tmp_path: Path, *, include_wheel: bool) -> Path:
     dest = tmp_path / "action"
     dest.mkdir()
     for name in ("requirements.lock", "install-runtime.mjs", "index.mjs", "cleanup.mjs", "action.yml"):
@@ -29,8 +25,12 @@ def _stage_action(tmp_path: Path, *, wheel: Path | None) -> Path:
     shutil.copytree(ACTION_ROOT / "tenuo_gha", dest / "tenuo_gha")
     vendor = dest / "vendor"
     vendor.mkdir()
-    if wheel is not None:
-        shutil.copy2(wheel, vendor / wheel.name)
+    if include_wheel:
+        wheels = _vendor_wheels()
+        if not wheels:
+            pytest.skip("action is not packaged; run github-actions/package_runtime.py after maturin build")
+        for wheel in wheels:
+            shutil.copy2(wheel, vendor / wheel.name)
     return dest
 
 
@@ -40,47 +40,50 @@ def _venv_python(tmp_path: Path) -> Path:
     return dest / "bin" / "python"
 
 
-def _import_tenuo(python: Path, *, action_path: str = "") -> subprocess.CompletedProcess[str]:
+def _pristine_env(python: Path, action: Path) -> dict[str, str]:
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONPATH", "PYTHONHOME", "TENUO_WHEEL"}
+    }
+    env["TENUO_PYTHON"] = str(python)
+    env["GITHUB_ACTION_PATH"] = str(action)
+    env["PYTHONPATH"] = ""
+    return env
+
+
+def _import_tenuo(python: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [str(python), "-c", "import tenuo" + ("; import tenuo_gha" if action_path else "")],
+        [str(python), "-c", "import tenuo"],
         capture_output=True,
         text=True,
-        env={**os.environ, "PYTHONPATH": action_path},
+        env={**os.environ, "PYTHONPATH": ""},
+        cwd=str(Path(python).parent),
     )
 
 
-def test_clean_runner_action_installs_tenuo_runtime(tmp_path):
+def test_clean_runner_installs_tenuo_from_packaged_vendor(tmp_path):
     node = shutil.which("node")
     if not node:
         pytest.skip("node is required to invoke the GitHub Action entrypoint")
+    if sys.platform != "linux":
+        pytest.skip("clean-runner packaging is asserted on Ubuntu")
+    if not _vendor_wheels():
+        pytest.skip("action is not packaged; run github-actions/package_runtime.py after maturin build")
     python = _venv_python(tmp_path)
     assert _import_tenuo(python).returncode != 0
-    action = _stage_action(tmp_path, wheel=_tenuo_wheel())
-    env = {
-        **os.environ,
-        "TENUO_PYTHON": str(python),
-        "GITHUB_ACTION_PATH": str(action),
-        "GITHUB_RUN_ID": "clean-runner",
-        "RUNNER_TEMP": str(tmp_path / "runner"),
-        "INPUT_GATEWAY_URL": "http://127.0.0.1:9",
-        "INPUT_EXCHANGE_URL": "http://127.0.0.1:9",
-        "INPUT_AUDIENCE": "tenuo:org/acme",
-        "INPUT_TTL": "900",
-        "PYTHONPATH": "",
-    }
+    action = _copy_assembled_action(tmp_path, include_wheel=True)
     invoked = subprocess.run(
-        [node, str(action / "index.mjs")],
+        [node, str(action / "install-runtime.mjs")],
         cwd=str(action),
-        env=env,
+        env=_pristine_env(python, action),
         capture_output=True,
         text=True,
     )
-    combined = invoked.stdout + invoked.stderr
-    assert "No module named 'tenuo'" not in combined
-    assert "No module named tenuo" not in combined
-    imported = _import_tenuo(python, action_path=str(action))
-    assert imported.returncode == 0, imported.stderr or combined
-    assert invoked.returncode != 0
+    assert invoked.returncode == 0, invoked.stdout + invoked.stderr
+    imported = _import_tenuo(python)
+    assert imported.returncode == 0, imported.stderr
+    assert "github-actions" not in (imported.stdout + imported.stderr)
 
 
 def test_clean_runner_refuses_to_start_without_tenuo_wheel(tmp_path):
@@ -88,16 +91,11 @@ def test_clean_runner_refuses_to_start_without_tenuo_wheel(tmp_path):
     if not node:
         pytest.skip("node is required to invoke the GitHub Action entrypoint")
     python = _venv_python(tmp_path)
-    action = _stage_action(tmp_path, wheel=None)
+    action = _copy_assembled_action(tmp_path, include_wheel=False)
     invoked = subprocess.run(
         [node, str(action / "install-runtime.mjs")],
         cwd=str(action),
-        env={
-            **os.environ,
-            "TENUO_PYTHON": str(python),
-            "GITHUB_ACTION_PATH": str(action),
-            "PYTHONPATH": "",
-        },
+        env=_pristine_env(python, action),
         capture_output=True,
         text=True,
     )

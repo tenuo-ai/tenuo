@@ -30,7 +30,6 @@ from tenuo_gha.holder import HolderClient, HolderServer
 from tenuo_gha.http import build_http
 from tenuo_gha.shim import call_gateway
 from tenuo_gha.commitment import (
-    GHA_COMPACT_VECTOR,
     encode_proof,
     exchange_proof_preimage,
     exchange_request_hash,
@@ -283,7 +282,6 @@ def test_strict_cloud_handler_rejects_unknown_fields_and_legacy_proof(tmp_path):
         capabilities=capabilities,
         task_binding=binding,
     )
-    assert compact != GHA_COMPACT_VECTOR
     assert len(compact) == 64
 
     aliased = dict(body)
