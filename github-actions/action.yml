@@ -1,0 +1,26 @@
+name: Tenuo
+description: Start a holder process and write mcp_config for the agent step
+inputs:
+  gateway_url:
+    required: true
+    description: Shared gateway URL
+  exchange_url:
+    required: false
+    description: Shared exchange URL. Omitted, the gateway URL is used.
+outputs:
+  mcp_config:
+    description: Path to mcp-config.json
+    value: ${{ steps.start.outputs.mcp_config }}
+runs:
+  using: composite
+  steps:
+    - id: start
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "${RUNNER_TEMP}/tenuo"
+        python -m tenuo_gha action \
+          --gateway-url "${{ inputs.gateway_url }}" \
+          --mcp-config "${RUNNER_TEMP}/tenuo/mcp-config.json" \
+          --socket "${RUNNER_TEMP}/tenuo/holder.sock" \
+          --pid "${RUNNER_TEMP}/tenuo/holder.pid"

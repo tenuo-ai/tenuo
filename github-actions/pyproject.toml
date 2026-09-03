@@ -16,6 +16,8 @@ dependencies = [
 
 [project.scripts]
 tenuo-gha = "tenuo_gha.app:main"
+tenuo-gha-hold = "tenuo_gha.holder:main"
+tenuo-gha-shim = "tenuo_gha.shim:main"
 
 [build-system]
 requires = ["setuptools>=68"]

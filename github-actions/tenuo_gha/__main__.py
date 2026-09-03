@@ -1,4 +1,27 @@
-from .app import main
+"""``python -m tenuo_gha [hold|shim|action]`` — default is the HTTP server."""
+
+from __future__ import annotations
+
+import sys
+
+
+def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] in {"hold", "holder", "shim", "action"}:
+        mode = sys.argv.pop(1)
+        if mode in {"hold", "holder"}:
+            from .holder import main as hold
+            hold()
+            return
+        if mode == "shim":
+            from .shim import main as shim
+            shim()
+            return
+        from .action import main as action
+        action()
+        return
+    from .app import main as serve
+    serve()
+
 
 if __name__ == "__main__":
     main()
