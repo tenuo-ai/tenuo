@@ -128,6 +128,9 @@ class GatewayConfig:
     issuer_key_id: Optional[str] = None
     receipt_key_id: Optional[str] = None
     github_app_key_id: Optional[str] = None
+    github_app_id: Optional[str] = None
+    github_api_url: str = "https://api.github.com"
+    github_installation_id: Optional[str] = None
     extras: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -147,16 +150,33 @@ class GatewayConfig:
         elif provider != "kms":
             raise ConfigError(f"unsupported signing.provider {provider!r}")
 
-        github_creds = (data.get("credentials") or {}).get("github") or {}
-        if github_creds:
-            raise ConfigError("credentials.github is not supported")
-        _assert_no_embedded_secrets(data)
-
         role = (environ.get("TENUO_ROLE") or data.get("role") or "gateway").strip()
         if role not in _ROLES:
             raise ConfigError(f"unsupported role {role!r}")
         if role == "both" and environ.get("TENUO_ALLOW_COMBINED_ROLES") != "1":
             raise ConfigError("role=both requires TENUO_ALLOW_COMBINED_ROLES=1")
+
+        github_creds = (data.get("credentials") or {}).get("github") or {}
+        github_app_id = None
+        github_api_url = "https://api.github.com"
+        github_installation_id = None
+        if github_creds:
+            if role == "exchange":
+                raise ConfigError("exchange role cannot be configured with credentials.github")
+            github_provider = github_creds.get("provider")
+            if github_provider != "app":
+                raise ConfigError("credentials.github.provider must be app")
+            if github_creds.get("token_env") or github_creds.get("token"):
+                raise ConfigError("token and token_env are not allowed")
+            if github_creds.get("app_private_key_env") or github_creds.get("app_private_key"):
+                raise ConfigError("app_private_key and app_private_key_env are not allowed")
+            github_app_id = str(github_creds.get("app_id") or "") or None
+            if not github_app_id:
+                raise ConfigError("credentials.github.app_id is required")
+            github_api_url = str(github_creds.get("api_url") or "https://api.github.com").rstrip("/")
+            if github_creds.get("installation_id") is not None:
+                github_installation_id = str(github_creds["installation_id"])
+        _assert_no_embedded_secrets(data)
 
         kms = signing.get("kms") or {}
         issuer_key_id = kms.get("issuer_key_id") or None
@@ -165,6 +185,8 @@ class GatewayConfig:
         if role == "exchange":
             if receipt_key_id or github_app_key_id:
                 raise ConfigError("exchange role cannot be configured with receipt or App key ids")
+            if github_creds:
+                raise ConfigError("exchange role cannot be configured with credentials.github")
         if role == "gateway":
             if issuer_key_id:
                 raise ConfigError("gateway role cannot be configured with an issuer key id")
@@ -217,6 +239,9 @@ class GatewayConfig:
             issuer_key_id=str(issuer_key_id) if issuer_key_id else None,
             receipt_key_id=str(receipt_key_id) if receipt_key_id else None,
             github_app_key_id=str(github_app_key_id) if github_app_key_id else None,
+            github_app_id=github_app_id,
+            github_api_url=github_api_url,
+            github_installation_id=github_installation_id,
             extras=data,
         )
 

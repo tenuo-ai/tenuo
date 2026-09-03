@@ -72,7 +72,7 @@ def test_memory_keys_require_the_escape(tmp_path):
 
 def test_github_credentials_are_a_startup_error(tmp_path):
     issuer = SigningKey.generate()
-    with pytest.raises(ConfigError, match="credentials.github"):
+    with pytest.raises(ConfigError, match="must be app"):
         GatewayConfig.from_mapping(
             {
                 "version": 1,

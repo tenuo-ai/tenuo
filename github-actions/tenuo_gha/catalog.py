@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -13,19 +13,61 @@ class ToolSpec:
     arguments: Tuple[str, ...]
     tripwire: bool = False
     mutating: bool = False
+    method: str = "GET"
+    path: Optional[str] = None
+    body: Optional[Dict[str, str]] = None
+    response: Optional[Dict[str, str]] = None
 
 
 TRIAGE: Tuple[ToolSpec, ...] = (
-    ToolSpec("github.get_issue", "Read one issue.", ("repository", "issue")),
-    ToolSpec("github.list_issue_comments", "List comments on an issue.", ("repository", "issue")),
-    ToolSpec("github.add_comment", "Add a comment.", ("repository", "issue", "body"), mutating=True),
-    ToolSpec("github.add_labels", "Add labels.", ("repository", "issue", "labels"), mutating=True),
-    ToolSpec("github.remove_label", "Remove a label.", ("repository", "issue", "name"), mutating=True),
+    ToolSpec(
+        "github.get_issue",
+        "Read one issue.",
+        ("repository", "issue"),
+        path="/repos/{repository}/issues/{issue}",
+        response={"number": "number", "title": "title", "html_url": "html_url", "state": "state"},
+    ),
+    ToolSpec(
+        "github.list_issue_comments",
+        "List comments on an issue.",
+        ("repository", "issue"),
+        path="/repos/{repository}/issues/{issue}/comments",
+    ),
+    ToolSpec(
+        "github.add_comment",
+        "Add a comment.",
+        ("repository", "issue", "body"),
+        mutating=True,
+        method="POST",
+        path="/repos/{repository}/issues/{issue}/comments",
+        body={"body": "{body}"},
+        response={"comment_id": "id", "html_url": "html_url"},
+    ),
+    ToolSpec(
+        "github.add_labels",
+        "Add labels.",
+        ("repository", "issue", "labels"),
+        mutating=True,
+        method="POST",
+        path="/repos/{repository}/issues/{issue}/labels",
+        body={"labels": "{labels}"},
+    ),
+    ToolSpec(
+        "github.remove_label",
+        "Remove a label.",
+        ("repository", "issue", "name"),
+        mutating=True,
+        method="DELETE",
+        path="/repos/{repository}/issues/{issue}/labels/{name}",
+    ),
     ToolSpec(
         "github.close_issue",
         "Close an issue.",
         ("repository", "issue", "state_reason"),
         mutating=True,
+        method="PATCH",
+        path="/repos/{repository}/issues/{issue}",
+        body={"state": "closed", "state_reason": "{state_reason}"},
     ),
 )
 
@@ -59,3 +101,10 @@ def tools_for_packs(packs: List[str]) -> List[ToolSpec]:
             chosen.append(spec)
             seen.add(spec.name)
     return chosen
+
+
+def spec_by_name(name: str, tools: List[ToolSpec]) -> Optional[ToolSpec]:
+    for spec in tools:
+        if spec.name == name:
+            return spec
+    return None
