@@ -1,7 +1,9 @@
 """Live GitHub mutation: disposable issue, holder path, then close.
 
-The harness token stays in this process and in the gateway cache. It is never
-passed to the holder, the shim, or mcp_config.
+The harness injects a personal token through ``mint_token``. That is not an
+App JWT mint; the first real App signing path is still the unit test that
+parses ``expires_at``. The token stays in this process and the gateway cache.
+It is never passed to the holder, the shim, or mcp_config.
 """
 
 from __future__ import annotations

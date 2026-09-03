@@ -19,7 +19,15 @@ from tenuo import Exact, Pattern, Range
 from tenuo.mcp import TENUO_CONSTRAINT_VIOLATION, TENUO_TOOL_NOT_AUTHORIZED
 from tenuo_core import PublicKey, SigningKey, Warrant
 
-from tenuo_gha.action import deliver_warrant, guardrails, spawn_holder, start_holder, stop_holder, write_mcp_config
+from tenuo_gha.action import (
+    deliver_warrant,
+    guardrails,
+    holder_work_dir,
+    spawn_holder,
+    start_holder,
+    stop_holder,
+    write_mcp_config,
+)
 from tenuo_gha.app import Gateway
 from tenuo_gha.config import ConfigError, GatewayConfig
 from tenuo_gha.github import GitHubApp
@@ -122,6 +130,20 @@ def test_config_refuses_holder_fd(tmp_path):
                 "TENUO_HOLDER_FD": "3",
             },
         )
+
+
+def test_holder_work_dir_includes_the_run_id(tmp_path):
+    dest = holder_work_dir(tmp_path, run_id="33802215001")
+    assert dest.name == "33802215001"
+    assert dest.is_dir()
+
+
+def test_holder_is_expired_after_warrant_ttl():
+    issuer = SigningKey.generate()
+    holder = Holder()
+    holder.set_warrant(_warrant(issuer, holder.public_key_hex()).to_base64())
+    holder._expires_at = int(time.time()) - 1
+    assert holder.expired()
 
 
 def test_guardrails_refuse_holder_secret():

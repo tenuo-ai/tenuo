@@ -9,10 +9,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional
 
-from tenuo import Pattern, PublicKey, SigningKey, Warrant
+from tenuo import CEL, PublicKey, SigningKey, Warrant
 from tenuo.mcp import exact_argument_constraints
 
-from .catalog import PACKS, TRIPWIRE_NAMES
+from .catalog import COMMENT_BODY_CEL, PACKS, TRIPWIRE_NAMES
 from .config import ConfigError, GatewayConfig
 from .oidc import OidcError, assert_conditions, load_jwks, verify_oidc
 
@@ -195,7 +195,7 @@ class Exchange:
             args["repository"] = repository
             constraints = exact_argument_constraints(args)
             if tool == "github.add_comment" and "body" not in constraints:
-                constraints["body"] = Pattern("*")
+                constraints["body"] = CEL(COMMENT_BODY_CEL)
             builder = builder.capability(tool, constraints)
 
         warrant = builder.mint(self._issuer)

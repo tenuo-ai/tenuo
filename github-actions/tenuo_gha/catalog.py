@@ -83,6 +83,9 @@ TRIPWIRES: Tuple[ToolSpec, ...] = (
 
 PACKS: Dict[str, Tuple[ToolSpec, ...]] = {"github-triage": TRIAGE}
 
+# Free-text comment body: non-empty, 64KiB ceiling. The leaf binds the exact digest.
+COMMENT_BODY_CEL = "value.size() >= 1 && value.size() <= 65536"
+
 TRIPWIRE_NAMES = frozenset(spec.name for spec in TRIPWIRES)
 
 

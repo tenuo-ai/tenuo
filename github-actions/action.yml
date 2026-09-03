@@ -38,13 +38,16 @@ runs:
         TENUO_EXCHANGE_AUDIENCE: ${{ inputs.audience }}
       run: |
         set -euo pipefail
-        mkdir -p "${RUNNER_TEMP}/tenuo"
-        python -m pip install --disable-pip-version-check --quiet "${{ github.action_path }}"
+        run_dir="${RUNNER_TEMP}/tenuo/${GITHUB_RUN_ID:-local}"
+        mkdir -p "$run_dir"
+        python -m pip install --disable-pip-version-check --quiet --require-hashes \
+          -r "${{ github.action_path }}/requirements.lock"
+        export PYTHONPATH="${{ github.action_path }}${PYTHONPATH:+:$PYTHONPATH}"
         python -m tenuo_gha action \
           --gateway-url "${{ inputs.gateway_url }}" \
           --exchange-url "${{ inputs.exchange_url || inputs.gateway_url }}" \
           --audience "${{ inputs.audience }}" \
           --ttl "${{ inputs.ttl }}" \
-          --mcp-config "${RUNNER_TEMP}/tenuo/mcp-config.json" \
-          --socket "${RUNNER_TEMP}/tenuo/holder.sock" \
-          --pid "${RUNNER_TEMP}/tenuo/holder.pid"
+          --mcp-config "${run_dir}/mcp-config.json" \
+          --socket "${run_dir}/holder.sock" \
+          --pid "${run_dir}/holder.pid"

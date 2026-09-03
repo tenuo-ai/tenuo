@@ -94,7 +94,7 @@ def run_agent_table(
         TENUO_TOOL_NOT_AUTHORIZED,
     )
     attempt(
-        "unsafe path read",
+        "tripwire get_file_contents (not in github-triage)",
         "github.get_file_contents",
         {"repository": bound_repository, "path": ".env", "ref": "main"},
         TENUO_TOOL_NOT_AUTHORIZED,
@@ -179,7 +179,7 @@ def run_containment(
     )
     unsafe = {"repository": bound_repository, "path": ".env", "ref": "main"}
     row(
-        "unsafe path read",
+        "tripwire get_file_contents (not in github-triage)",
         TENUO_TOOL_NOT_AUTHORIZED,
         gateway.verify("github.get_file_contents", unsafe, meta=meta("github.get_file_contents", unsafe)),
     )

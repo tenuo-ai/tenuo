@@ -207,6 +207,48 @@ def test_oidc_fetch_uses_the_actions_url(monkeypatch):
     assert seen["auth"] == "Bearer req-token"
 
 
+def test_empty_comment_body_is_denied(tmp_path):
+    issuer = SigningKey.generate()
+    recorded: list = []
+    _gateway, http, rsa_key = _stack(tmp_path, issuer, recorded)
+    socket = _sock("empty-body")
+    server = HolderServer(socket)
+    server.start()
+    try:
+        run_job(
+            gateway_url="http://test",
+            exchange_url="http://test",
+            audience=AUDIENCE,
+            socket_path=socket,
+            mcp_config=tmp_path / "mcp-config.json",
+            event_name="issues",
+            repository="acme/widgets",
+            event={"issue": {"number": 4127}},
+            oidc_token=_token(rsa_key, jti="empty-body"),
+            environ={"PATH": "/usr/bin", "TENUO_ALLOW_INSECURE_MEMORY_KEYS": "1"},
+            http=http,
+            holder_server=server,
+        )
+        from tenuo_gha.holder import HolderClient
+        from tenuo_gha.shim import call_gateway
+
+        envelope = HolderClient(socket).envelope(
+            "github.add_comment",
+            {"repository": "acme/widgets", "issue": 4127, "body": ""},
+        )
+        outcome = call_gateway(
+            "http://test",
+            "github.add_comment",
+            {"repository": "acme/widgets", "issue": 4127, "body": ""},
+            envelope,
+            client=http,
+        )
+        assert outcome["allowed"] is False
+        assert not any(item[0] == "POST" and item[1].endswith("/comments") for item in recorded)
+    finally:
+        server.stop()
+
+
 def test_job_refuses_a_github_token():
     with pytest.raises(Exception, match="GITHUB_TOKEN"):
         guardrails({"GITHUB_TOKEN": "ghs_not_a_real_token", "PATH": "/usr/bin"})

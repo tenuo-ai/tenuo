@@ -19,3 +19,5 @@ python -m tenuo_gha action --gateway-url URL --exchange-url URL --audience tenuo
 # Live GitHub (creates a disposable issue, comments, closes it)
 TENUO_LIVE_GITHUB=1 GH_TOKEN="$(gh auth token)" python -m pytest -q tests/test_live_github.py
 ```
+
+The composite installs third-party deps from `requirements.lock` with `--require-hashes`. It does not `pip install` this package from PyPI. The holder socket path includes `$GITHUB_RUN_ID` and the process exits when the warrant expires.

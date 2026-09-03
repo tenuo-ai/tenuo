@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import socket
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from tenuo.mcp import derive_terminal_leaf
+from tenuo import Exact
+from tenuo.mcp import exact_argument_constraints
 from tenuo_core import SigningKey, Warrant, encode_warrant_stack
 
 from .catalog import PACKS, TRIPWIRE_NAMES
@@ -50,6 +52,38 @@ def _encode_stack(warrants: List[Warrant]) -> str:
         return warrants[-1].to_base64()
 
 
+def _warrant_expiry(warrant: Warrant) -> Optional[int]:
+    exp = getattr(warrant, "expires_at", None)
+    if exp is None:
+        return None
+    if callable(exp):
+        exp = exp()
+    if exp is None:
+        return None
+    if hasattr(exp, "timestamp"):
+        return int(exp.timestamp())
+    try:
+        return int(exp)
+    except (TypeError, ValueError):
+        return None
+
+
+def _derive_leaf(warrant: Warrant, key: SigningKey, tool: str, arguments: Dict[str, Any]) -> Tuple[Warrant, SigningKey]:
+    leaf_key = SigningKey.generate()
+    constraints = exact_argument_constraints(arguments)
+    body = arguments.get("body")
+    if isinstance(body, str):
+        constraints["body_sha256"] = Exact(hashlib.sha256(body.encode("utf-8")).hexdigest())
+    leaf = warrant.grant(
+        to=leaf_key.public_key,
+        allow=tool,
+        ttl=30,
+        key=key,
+        **constraints,
+    )
+    return leaf, leaf_key
+
+
 class Holder:
     """In-process holder used by the socket server and by tests."""
 
@@ -58,12 +92,19 @@ class Holder:
         self._key = key or SigningKey.generate()
         self._warrant: Optional[Warrant] = None
         self._allowlist = allowlist
+        self._expires_at: Optional[int] = None
 
     def public_key_hex(self) -> str:
         return self._key.public_key.to_bytes().hex()
 
     def set_warrant(self, warrant_b64: str) -> None:
         self._warrant = Warrant.from_base64(warrant_b64)
+        self._expires_at = _warrant_expiry(self._warrant)
+
+    def expired(self, *, now: Optional[int] = None) -> bool:
+        if self._expires_at is None:
+            return False
+        return (now if now is not None else int(time.time())) >= self._expires_at
 
     def tools(self) -> List[str]:
         if self._warrant is None:
@@ -80,7 +121,7 @@ class Holder:
             raise HolderError("no warrant has been set")
         ts = int(time.time())
         try:
-            leaf, leaf_key = derive_terminal_leaf(self._warrant, self._key, tool, arguments)
+            leaf, leaf_key = _derive_leaf(self._warrant, self._key, tool, arguments)
             sig = leaf.sign(leaf_key, tool, arguments, ts)
             stack = _encode_stack([self._warrant, leaf])
         except Exception:
@@ -158,6 +199,9 @@ class HolderServer:
     def _serve(self) -> None:
         assert self._sock is not None
         while not self._stop.is_set():
+            if self.holder.expired():
+                self._stop.set()
+                return
             try:
                 conn, _ = self._sock.accept()
             except socket.timeout:

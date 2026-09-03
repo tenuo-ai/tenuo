@@ -1,0 +1,46 @@
+name: GitHub Actions package
+
+on:
+  pull_request:
+  push:
+    paths:
+      - github-actions/**
+      - tenuo-python/**
+      - tenuo-core/**
+      - .github/workflows/github-actions.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: github-actions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+        with:
+          workspaces: tenuo-python
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Build tenuo and run package tests
+        run: |
+          pip install uv
+          uv pip install --system maturin
+          (cd tenuo-python && maturin build --release)
+          uv pip install --system tenuo-python/target/wheels/*.whl
+          uv pip install --system pytest pyyaml PyJWT cryptography starlette httpx
+          (cd github-actions && pytest -q -m "not live")

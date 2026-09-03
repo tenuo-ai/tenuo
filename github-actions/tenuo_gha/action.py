@@ -22,6 +22,14 @@ class ActionError(RuntimeError):
     """The action could not finish. Never includes holder material."""
 
 
+def holder_work_dir(base: "str | Path", *, run_id: str = "") -> Path:
+    """Per-run directory so a later job cannot reuse this socket."""
+    rid = (run_id or "local").strip() or "local"
+    dest = Path(base) / rid
+    dest.mkdir(parents=True, exist_ok=True)
+    return dest
+
+
 def guardrails(environ: Optional[Mapping[str, str]] = None) -> None:
     env = environ if environ is not None else os.environ
     assert_no_holder_secret(dict(env))
@@ -241,7 +249,10 @@ def main() -> None:
     parser.add_argument("--pid", default="")
     args = parser.parse_args()
     env = dict(os.environ)
-    work = Path(tempfile.mkdtemp(prefix="tenuo-"))
+    work = holder_work_dir(
+        Path(tempfile.mkdtemp(prefix="tenuo-")),
+        run_id=env.get("GITHUB_RUN_ID", ""),
+    )
     payload = run_job(
         gateway_url=args.gateway_url,
         exchange_url=args.exchange_url or args.gateway_url,
