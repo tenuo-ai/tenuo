@@ -12,4 +12,7 @@ python -m tenuo_gha --config github-actions/examples/gateway.yaml
 
 python -m tenuo_gha hold --socket /tmp/tenuo.sock
 python -m tenuo_gha shim --socket /tmp/tenuo.sock --gateway-url http://127.0.0.1:8000
+
+# Job path: OIDC → exchange → holder → mcp_config
+python -m tenuo_gha action --gateway-url URL --exchange-url URL --audience tenuo:org/acme
 ```

@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional
 
-from tenuo import PublicKey, SigningKey, Warrant
+from tenuo import Pattern, PublicKey, SigningKey, Warrant
 from tenuo.mcp import exact_argument_constraints
 
 from .catalog import PACKS, TRIPWIRE_NAMES
@@ -193,7 +193,10 @@ class Exchange:
             if requested_repo is not None and str(requested_repo) != repository:
                 raise ExchangeError("outside_ceiling", "repository does not match the OIDC subject")
             args["repository"] = repository
-            builder = builder.capability(tool, exact_argument_constraints(args))
+            constraints = exact_argument_constraints(args)
+            if tool == "github.add_comment" and "body" not in constraints:
+                constraints["body"] = Pattern("*")
+            builder = builder.capability(tool, constraints)
 
         warrant = builder.mint(self._issuer)
         expires_at = warrant.expires_at()

@@ -1,5 +1,5 @@
 name: Tenuo
-description: Start a holder process and write mcp_config for the agent step
+description: Exchange OIDC for a holder-bound warrant and write mcp_config
 inputs:
   gateway_url:
     required: true
@@ -7,20 +7,44 @@ inputs:
   exchange_url:
     required: false
     description: Shared exchange URL. Omitted, the gateway URL is used.
+  audience:
+    required: false
+    description: OIDC audience for the exchange. Defaults to TENUO_EXCHANGE_AUDIENCE.
+  ttl:
+    required: false
+    default: "900"
+    description: Requested warrant lifetime in seconds
 outputs:
   mcp_config:
     description: Path to mcp-config.json
     value: ${{ steps.start.outputs.mcp_config }}
+  warrant_id:
+    description: Issued warrant id
+    value: ${{ steps.start.outputs.warrant_id }}
+  expires_at:
+    description: Warrant expiry
+    value: ${{ steps.start.outputs.expires_at }}
+  gateway_url:
+    description: Gateway URL passed through
+    value: ${{ steps.start.outputs.gateway_url }}
 runs:
   using: composite
   steps:
     - id: start
       shell: bash
+      env:
+        TENUO_GATEWAY_URL: ${{ inputs.gateway_url }}
+        TENUO_EXCHANGE_URL: ${{ inputs.exchange_url }}
+        TENUO_EXCHANGE_AUDIENCE: ${{ inputs.audience }}
       run: |
         set -euo pipefail
         mkdir -p "${RUNNER_TEMP}/tenuo"
+        python -m pip install --disable-pip-version-check --quiet "${{ github.action_path }}"
         python -m tenuo_gha action \
           --gateway-url "${{ inputs.gateway_url }}" \
+          --exchange-url "${{ inputs.exchange_url || inputs.gateway_url }}" \
+          --audience "${{ inputs.audience }}" \
+          --ttl "${{ inputs.ttl }}" \
           --mcp-config "${RUNNER_TEMP}/tenuo/mcp-config.json" \
           --socket "${RUNNER_TEMP}/tenuo/holder.sock" \
           --pid "${RUNNER_TEMP}/tenuo/holder.pid"
