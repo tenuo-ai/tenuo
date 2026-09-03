@@ -1,7 +1,7 @@
 [project]
 name = "tenuo-github-actions"
 version = "0.1.0"
-description = "Tenuo for GitHub Actions — verify-only gateway"
+description = "Tenuo for GitHub Actions"
 requires-python = ">=3.10"
 dependencies = [
     "tenuo",

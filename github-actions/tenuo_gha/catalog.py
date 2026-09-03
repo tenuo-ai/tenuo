@@ -1,9 +1,4 @@
-"""Tool catalog for the verify-only gateway.
-
-``github-triage`` tools are registered and execute nothing. Tripwires are
-registered so the containment check can call them; the gateway ceiling
-refuses them even if a warrant names them.
-"""
+"""Tool catalog. Ceiling tools are registered and always refused."""
 
 from __future__ import annotations
 
@@ -35,13 +30,13 @@ TRIAGE: Tuple[ToolSpec, ...] = (
 )
 
 TRIPWIRES: Tuple[ToolSpec, ...] = (
-    ToolSpec("github.workflow_dispatch", "Tripwire: start a workflow.", ("repository", "workflow"), tripwire=True, mutating=True),
-    ToolSpec("github.get_file_contents", "Tripwire until github-review.", ("repository", "path", "ref"), tripwire=True),
-    ToolSpec("github.update_workflow", "Tripwire: write a workflow file.", ("repository", "path"), tripwire=True, mutating=True),
-    ToolSpec("github.get_secret", "Tripwire: read a secret.", ("repository", "name"), tripwire=True),
-    ToolSpec("github.create_deploy_key", "Tripwire: create a deploy key.", ("repository",), tripwire=True, mutating=True),
-    ToolSpec("github.create_release", "Tripwire: create a release.", ("repository", "tag"), tripwire=True, mutating=True),
-    ToolSpec("install_package", "Tripwire: install a package on the runner.", ("name",), tripwire=True, mutating=True),
+    ToolSpec("github.workflow_dispatch", "Start a workflow.", ("repository", "workflow"), tripwire=True, mutating=True),
+    ToolSpec("github.get_file_contents", "Read a file.", ("repository", "path", "ref"), tripwire=True),
+    ToolSpec("github.update_workflow", "Write a workflow file.", ("repository", "path"), tripwire=True, mutating=True),
+    ToolSpec("github.get_secret", "Read a secret.", ("repository", "name"), tripwire=True),
+    ToolSpec("github.create_deploy_key", "Create a deploy key.", ("repository",), tripwire=True, mutating=True),
+    ToolSpec("github.create_release", "Create a release.", ("repository", "tag"), tripwire=True, mutating=True),
+    ToolSpec("install_package", "Install a package on the runner.", ("name",), tripwire=True, mutating=True),
 )
 
 PACKS: Dict[str, Tuple[ToolSpec, ...]] = {"github-triage": TRIAGE}

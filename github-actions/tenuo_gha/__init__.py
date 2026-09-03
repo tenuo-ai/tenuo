@@ -1,4 +1,4 @@
-"""Tenuo for GitHub Actions — verify-only gateway (M2)."""
+"""Tenuo for GitHub Actions gateway."""
 
 from .app import Gateway
 from .config import ConfigError, GatewayConfig

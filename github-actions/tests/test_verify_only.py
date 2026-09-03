@@ -1,4 +1,4 @@
-"""I3 / I6 and I10 for the verify-only gateway."""
+"""Gateway config refuse-to-start, fixture table, and signed receipts."""
 
 from __future__ import annotations
 
@@ -49,9 +49,9 @@ def _triage_warrant(issuer: SigningKey, holder: SigningKey) -> Warrant:
     )
 
 
-def test_i10_refuses_github_token(tmp_path):
+def test_refuses_github_token(tmp_path):
     issuer = SigningKey.generate()
-    with pytest.raises(ConfigError, match="I10"):
+    with pytest.raises(ConfigError, match="GITHUB_TOKEN"):
         _config(tmp_path, issuer, {"GITHUB_TOKEN": "ghs_not_a_real_token"})
 
 
@@ -88,7 +88,7 @@ def test_github_credentials_are_a_startup_error(tmp_path):
         )
 
 
-def test_i10_refuses_pem_in_env(tmp_path):
+def test_refuses_pem_in_env(tmp_path):
     issuer = SigningKey.generate()
     with pytest.raises(ConfigError, match="PEM"):
         _config(
@@ -98,9 +98,9 @@ def test_i10_refuses_pem_in_env(tmp_path):
         )
 
 
-def test_i10_refuses_embedded_token_in_yaml(tmp_path):
+def test_refuses_embedded_token_in_yaml(tmp_path):
     issuer = SigningKey.generate()
-    with pytest.raises(ConfigError, match="I10"):
+    with pytest.raises(ConfigError, match="stored credential"):
         GatewayConfig.from_mapping(
             {
                 "version": 1,
@@ -132,7 +132,7 @@ def test_containment_fixtures_deny_and_allowed_read_passes(tmp_path):
     )
     assert all_passed(rows), "\n".join(f"{r.name}: expected {r.expected} got {r.actual}" for r in rows)
     text = Path(tmp_path / "receipts.jsonl").read_text(encoding="utf-8")
-    assert text.strip(), "I6: denials and the allow must produce receipts"
+    assert text.strip(), "denials and the allow must produce receipts"
 
 
 def test_cross_repo_receipt_is_a_constraint_denial(tmp_path):

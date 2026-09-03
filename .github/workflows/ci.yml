@@ -274,7 +274,7 @@ jobs:
         run: |
           pytest -v tests/adapters/test_mcp_ci_smoke.py
 
-      - name: Verify-only GitHub Actions gateway
+      - name: GitHub Actions gateway tests
         working-directory: github-actions
         run: |
           uv pip install --system pytest pyyaml

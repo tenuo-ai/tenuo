@@ -1,4 +1,4 @@
-"""Verify-only GitHub Actions gateway. I3 and I6; no GitHub API calls."""
+"""GitHub Actions gateway: warrant verify, file receipts, no GitHub calls."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class Gateway:
 
     def __init__(self, config: GatewayConfig) -> None:
         if config.signing_provider == "kms":
-            raise ConfigError("KMS signing is M3; this image is verify-only")
+            raise ConfigError("signing.provider=kms is not supported")
         self.config = config
         self.tools = tools_for_packs(config.packs)
         roots = [_public_key(item) for item in config.root_public_keys]
@@ -54,9 +54,7 @@ class Gateway:
             FileReceiptSink(self.config.receipt_path),
             authorizer=self.authorizer,
         )
-        # Tripwires are decided here, after a warrant decode and before any
-        # allow receipt, so a warrant that names a tripwire never produces
-        # an allow followed by a deny.
+        # Ceiling tools are checked after decode and before an allow receipt.
         self._raw = MCPVerifier(authorizer=self.authorizer, control_plane=False)
         self.verifier = MCPVerifier(
             authorizer=self.authorizer,
@@ -79,7 +77,7 @@ class Gateway:
                 clean_arguments=dict(arguments or {}),
                 constraints=dict(arguments or {}),
                 warrant_id=result.warrant_id,
-                denial_reason="gateway ceiling: tripwire tools cannot be enabled",
+                denial_reason="gateway ceiling: tool is not enabled",
                 jsonrpc_error_code=-32001,
                 error_type="tool_not_allowed",
                 error_code=TENUO_TOOL_NOT_AUTHORIZED,
@@ -97,7 +95,7 @@ class Gateway:
 
 
 def build_mcp(gateway: Gateway):
-    """FastMCP app: middleware verifies, handlers never call GitHub."""
+    """FastMCP app: middleware verifies; handlers do not perform the tool."""
     from fastmcp import FastMCP
     from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
     import mcp.types as mt
@@ -137,7 +135,7 @@ def build_mcp(gateway: Gateway):
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Tenuo for GitHub Actions (verify-only)")
+    parser = argparse.ArgumentParser(description="Tenuo for GitHub Actions")
     parser.add_argument("--config", default=os.environ.get("TENUO_GATEWAY_CONFIG", "/etc/tenuo/gateway.yaml"))
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)

@@ -1,4 +1,4 @@
-"""Gateway configuration. A PEM, PAT, or GITHUB_TOKEN is a startup error."""
+"""Gateway configuration. Stored tokens and PEMs are a startup error."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ _FORBIDDEN_NAMES = frozenset(
 
 
 class ConfigError(ValueError):
-    """Invalid gateway configuration or I10 violation."""
+    """Invalid gateway configuration."""
 
 
 def _expand(value: Any, environ: Mapping[str, str]) -> Any:
@@ -52,24 +52,24 @@ def _looks_like_pem(raw: str) -> bool:
 
 
 def assert_no_runtime_secrets(environ: Mapping[str, str]) -> None:
-    """I10: refuse to start if a stored credential is visible in the environment."""
+    """Refuse to start if a stored credential is visible in the environment."""
     for name, raw in environ.items():
         if not raw:
             continue
         if name in _FORBIDDEN_NAMES or name.endswith("_API_KEY"):
-            raise ConfigError(f"I10: {name} must not be present in the gateway environment")
+            raise ConfigError(f"{name} must not be present in the gateway environment")
         if _looks_like_token(raw):
-            raise ConfigError(f"I10: {name} looks like a GitHub token")
+            raise ConfigError(f"{name} looks like a GitHub token")
         if name.endswith("_KEY") or "PRIVATE_KEY" in name:
             if _looks_like_pem(raw):
-                raise ConfigError(f"I10: {name} looks like a PEM")
+                raise ConfigError(f"{name} looks like a PEM")
 
 
 def _assert_no_embedded_secrets(data: Any, *, path: str = "config") -> None:
-    """I10: refuse token/PEM material written into the YAML itself."""
+    """Refuse token or PEM material written into the YAML itself."""
     if isinstance(data, str):
         if _looks_like_token(data) or _looks_like_pem(data):
-            raise ConfigError(f"I10: {path} looks like a stored credential")
+            raise ConfigError(f"{path} looks like a stored credential")
         return
     if isinstance(data, list):
         for index, item in enumerate(data):
@@ -104,18 +104,14 @@ class GatewayConfig:
         if provider == "memory":
             if environ.get("TENUO_ALLOW_INSECURE_MEMORY_KEYS") != "1":
                 raise ConfigError(
-                    "signing.provider=memory requires TENUO_ALLOW_INSECURE_MEMORY_KEYS=1 "
-                    "(tests only). Production uses KMS."
+                    "signing.provider=memory requires TENUO_ALLOW_INSECURE_MEMORY_KEYS=1"
                 )
         elif provider != "kms":
             raise ConfigError(f"unsupported signing.provider {provider!r}")
 
         github_creds = (data.get("credentials") or {}).get("github") or {}
         if github_creds:
-            raise ConfigError(
-                "credentials.github is M4; this image is verify-only and "
-                "refuses a token or App key at rest (I10)"
-            )
+            raise ConfigError("credentials.github is not supported")
         _assert_no_embedded_secrets(data)
 
         trust = data.get("trust") or {}

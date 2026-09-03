@@ -1,5 +1,3 @@
-# Verify-only gateway (M2). Distroless / no-shell is M6.
-#
 # Build from the monorepo root after producing a tenuo wheel:
 #   (cd tenuo-python && maturin build --release)
 #   docker build -f github-actions/Dockerfile \

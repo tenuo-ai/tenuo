@@ -1,4 +1,4 @@
-"""Containment check: incident-shaped calls against a verify-only gateway."""
+"""Replay fixture calls against a local gateway and print expected vs actual."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def run_containment(
     bound_issue: int,
     foreign_repository: str,
 ) -> List[CheckRow]:
-    """Replay the incident shapes. Allowed stubs execute nothing."""
+    """Replay the fixture table. Allowed stubs execute nothing."""
     rows: List[CheckRow] = []
 
     def row(name: str, expected: str, result: Any) -> None:
@@ -131,7 +131,7 @@ def format_table(rows: List[CheckRow]) -> str:
 
 
 def main() -> None:
-    """Local containment replay. Mints an in-process issuer; does not call GitHub."""
+    """Mint an in-process issuer and replay the fixture table."""
     import tempfile
     from pathlib import Path
 
