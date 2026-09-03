@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stable `TENUO_*` denial codes** on MCP results and in `error.data.code`
   (`TENUO_TOOL_NOT_AUTHORIZED`, `TENUO_CONSTRAINT_VIOLATION`,
   `TENUO_INVALID_POP`, `TENUO_REVOKED`, `TENUO_WARRANT_EXPIRED`).
+- **Verify-only GitHub Actions gateway** in `github-actions/`. FastMCP
+  ceiling, `github-triage` plus tripwires, file receipts, I10 refuse-to-start.
+  No GitHub API calls. `python -m tenuo_gha.check` replays the containment
+  fixtures.
 
 ### Changed
 
