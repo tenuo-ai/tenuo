@@ -291,12 +291,17 @@ from tenuo import Range
 # 0 to 100 (inclusive)
 Range(min=0, max=100)
 
+# Exact integer match — `Exact` is string-typed
+Range(4127, 4127)
+
 # At most 1000
 Range.max_value(1000)
 
 # At least 10
 Range.min_value(10)
 ```
+
+`Range(n, n)` is the exact-match form for integers. Use it when a terminal leaf must bind one issue number, replica count, or other numeric argument. `Exact` is for strings (and booleans, which the terminal-leaf helper stringifies to `"true"` / `"false"`).
 
 > [!WARNING]
 > **Precision Limit**: Bounds are stored as 64-bit floats. Integers larger than 2^53 (9,007,199,254,740,992) will lose precision.

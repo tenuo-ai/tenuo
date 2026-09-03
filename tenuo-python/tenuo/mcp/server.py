@@ -113,6 +113,15 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .._pop_canonicalize import strip_none_values
+from ..control_plane import _POP_ESTABLISHED_ERROR_TYPES
+from .codes import (
+    TENUO_CONSTRAINT_VIOLATION,
+    TENUO_INVALID_POP,
+    TENUO_REVOKED,
+    TENUO_TOOL_NOT_AUTHORIZED,
+    TENUO_WARRANT_EXPIRED,
+    error_type_and_code,
+)
 from ..exceptions import (
     ApprovalExpired,
     ApprovalGateTriggered,
@@ -234,6 +243,24 @@ class MCPVerificationResult:
     approval_metadata: Optional[Dict[str, Any]] = field(default=None)
     """Structured approval counts for ``-32002`` responses (``got`` / ``need``)."""
 
+    error_type: Optional[str] = field(default=None)
+    """Coarse category for receipts (``constraint_violation``, ``expired``, …)."""
+
+    error_code: Optional[str] = field(default=None)
+    """Stable ``TENUO_*`` code for brokers and job summaries."""
+
+    presented_chain: Optional[Any] = field(default=None)
+    """Warrants presented with the call. Set on denials after a successful decode."""
+
+    verified_pop: Optional[Any] = field(default=None)
+    """Holder PoP, only when possession was established before the failure."""
+
+    pop_auth_args: Optional[Dict[str, Any]] = field(default=None)
+    """PoP-view arguments the holder signed over. Key 7 on a denial receipt."""
+
+    authorizer: Optional[Any] = field(default=None)
+    """Authorizer that decided. Required for local receipt trust binding."""
+
     @property
     def is_approval_required(self) -> bool:
         """``True`` when an approval gate fired and approvals must be supplied."""
@@ -272,6 +299,8 @@ class MCPVerificationResult:
                 data["got"] = self.approval_metadata["got"]
             if "need" in self.approval_metadata:
                 data["need"] = self.approval_metadata["need"]
+        if self.error_code:
+            data["code"] = self.error_code
         if data:
             error["data"] = data
         return error
@@ -352,6 +381,42 @@ class MCPApprovalRequired(MCPAuthorizationError):
                 request_hash=request_hash,
             )
             super().__init__(_result)
+
+
+def _denial_from_exc(
+    exc: BaseException,
+    *,
+    tool_name: str,
+    clean_arguments: Dict[str, Any],
+    constraints: Dict[str, Any],
+    warrant_id: Optional[str],
+    presented_chain: Any,
+    pop_args: Dict[str, Any],
+    authorizer: Any,
+    pop_sig: Optional[bytes],
+    jsonrpc_error_code: int = -32001,
+    denial_reason: Optional[str] = None,
+    request_hash: Optional[str] = None,
+    approval_metadata: Optional[Dict[str, Any]] = None,
+) -> MCPVerificationResult:
+    error_type, error_code = error_type_and_code(exc)
+    return MCPVerificationResult(
+        allowed=False,
+        tool=tool_name,
+        clean_arguments=clean_arguments,
+        constraints=constraints,
+        warrant_id=warrant_id,
+        denial_reason=denial_reason or _access_denial_reason(exc),
+        jsonrpc_error_code=jsonrpc_error_code,
+        request_hash=request_hash,
+        approval_metadata=approval_metadata,
+        error_type=error_type,
+        error_code=error_code,
+        presented_chain=presented_chain,
+        verified_pop=pop_sig if error_type in _POP_ESTABLISHED_ERROR_TYPES else None,
+        pop_auth_args=pop_args,
+        authorizer=authorizer,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -668,6 +733,7 @@ class MCPVerifier:
             ))
 
         warrant_id: Optional[str] = getattr(warrant, "id", None)
+        presented_chain = list(_chain_parents or []) + [warrant]
 
         # ------------------------------------------------------------------
         # Step 4: decode PoP signature
@@ -763,6 +829,11 @@ class MCPVerifier:
                             "timestamp for each tool call."
                         ),
                         jsonrpc_error_code=-32001,
+                        error_type="invalid_pop",
+                        error_code=TENUO_INVALID_POP,
+                        presented_chain=presented_chain,
+                        pop_auth_args=pop_args,
+                        authorizer=self._authorizer,
                     ),
                     latency_us=(time.perf_counter_ns() - start_ns) // 1000,
                 )
@@ -774,6 +845,10 @@ class MCPVerifier:
                 clean_arguments=clean_arguments,
                 constraints=constraints,
                 warrant_id=warrant_id,
+                presented_chain=presented_chain,
+                verified_pop=pop_sig,
+                pop_auth_args=pop_args,
+                authorizer=self._authorizer,
             )
         except ApprovalGateTriggered as gate_exc:
             logger.info(
@@ -781,15 +856,19 @@ class MCPVerifier:
                 tool_name,
                 warrant_id,
             )
-            result = MCPVerificationResult(
-                allowed=False,
-                tool=tool_name,
+            result = _denial_from_exc(
+                gate_exc,
+                tool_name=tool_name,
                 clean_arguments=clean_arguments,
                 constraints=constraints,
                 warrant_id=warrant_id,
-                request_hash=gate_exc.request_hash or None,
-                denial_reason=gate_exc.message,
+                presented_chain=presented_chain,
+                pop_args=pop_args,
+                authorizer=self._authorizer,
+                pop_sig=pop_sig,
                 jsonrpc_error_code=-32002,
+                denial_reason=gate_exc.message,
+                request_hash=gate_exc.request_hash or None,
             )
         except InsufficientApprovals as insuf_exc:
             # Multi-sig threshold not met — the warrant does authorise this tool
@@ -806,18 +885,22 @@ class MCPVerifier:
                 _got,
                 _need,
             )
-            result = MCPVerificationResult(
-                allowed=False,
-                tool=tool_name,
+            result = _denial_from_exc(
+                insuf_exc,
+                tool_name=tool_name,
                 clean_arguments=clean_arguments,
                 constraints=constraints,
                 warrant_id=warrant_id,
+                presented_chain=presented_chain,
+                pop_args=pop_args,
+                authorizer=self._authorizer,
+                pop_sig=pop_sig,
+                jsonrpc_error_code=-32002,
                 denial_reason=(
                     f"Insufficient approvals for '{tool_name}': "
                     f"got {_got}, need {_need}. "
                     "Re-submit with additional approvals in _meta.tenuo.approvals."
                 ),
-                jsonrpc_error_code=-32002,
                 approval_metadata={"got": _got, "need": _need},
             )
         except (InvalidApproval, ApprovalExpired) as approval_exc:
@@ -827,14 +910,16 @@ class MCPVerifier:
                 warrant_id,
                 approval_exc,
             )
-            result = MCPVerificationResult(
-                allowed=False,
-                tool=tool_name,
+            result = _denial_from_exc(
+                approval_exc,
+                tool_name=tool_name,
                 clean_arguments=clean_arguments,
                 constraints=constraints,
                 warrant_id=warrant_id,
-                denial_reason=_access_denial_reason(approval_exc),
-                jsonrpc_error_code=-32001,
+                presented_chain=presented_chain,
+                pop_args=pop_args,
+                authorizer=self._authorizer,
+                pop_sig=pop_sig,
             )
         except (
             ConstraintViolation,
@@ -850,14 +935,16 @@ class MCPVerifier:
                 warrant_id,
                 exc,
             )
-            result = MCPVerificationResult(
-                allowed=False,
-                tool=tool_name,
+            result = _denial_from_exc(
+                exc,
+                tool_name=tool_name,
                 clean_arguments=clean_arguments,
                 constraints=constraints,
                 warrant_id=warrant_id,
-                denial_reason=_access_denial_reason(exc),
-                jsonrpc_error_code=-32001,
+                presented_chain=presented_chain,
+                pop_args=pop_args,
+                authorizer=self._authorizer,
+                pop_sig=pop_sig,
             )
         except TenuoError as exc:
             logger.info(
@@ -866,14 +953,16 @@ class MCPVerifier:
                 warrant_id,
                 exc,
             )
-            result = MCPVerificationResult(
-                allowed=False,
-                tool=tool_name,
+            result = _denial_from_exc(
+                exc,
+                tool_name=tool_name,
                 clean_arguments=clean_arguments,
                 constraints=constraints,
                 warrant_id=warrant_id,
-                denial_reason=_access_denial_reason(exc),
-                jsonrpc_error_code=-32001,
+                presented_chain=presented_chain,
+                pop_args=pop_args,
+                authorizer=self._authorizer,
+                pop_sig=pop_sig,
             )
         except Exception as exc:
             logger.error(
@@ -890,6 +979,10 @@ class MCPVerifier:
                 warrant_id=warrant_id,
                 denial_reason=f"Internal verification error: {exc}",
                 jsonrpc_error_code=-32001,
+                error_type="internal_error",
+                presented_chain=presented_chain,
+                pop_auth_args=pop_args,
+                authorizer=self._authorizer,
             )
 
         latency_us = (time.perf_counter_ns() - start_ns) // 1000
@@ -983,6 +1076,11 @@ def verify_mcp_call(
 
 __all__ = [
     "MCPVerificationResult",
+    "TENUO_TOOL_NOT_AUTHORIZED",
+    "TENUO_CONSTRAINT_VIOLATION",
+    "TENUO_INVALID_POP",
+    "TENUO_REVOKED",
+    "TENUO_WARRANT_EXPIRED",
     "MCPAuthorizationError",
     "MCPVerifier",
     "verify_mcp_call",

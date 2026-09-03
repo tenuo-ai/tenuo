@@ -327,6 +327,24 @@ impl PyControlPlaneClient {
         .map(Some)
     }
 
+    /// Receipt issuer with no control-plane URL and no heartbeat.
+    ///
+    /// Use this when the enforcement point signs receipts locally (file or
+    /// webhook sink) and must not open a network connection.
+    #[staticmethod]
+    fn local(signing_key: &PySigningKey) -> PyResult<Self> {
+        let (audit_tx, _audit_rx) = create_audit_channel(1);
+        let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+        Ok(Self {
+            receipt_signer: signing_key.inner.clone(),
+            trust: Arc::new(Mutex::new(None)),
+            last_receipt_hash: Arc::new(Mutex::new(None)),
+            sender: audit_tx,
+            authorizer_id_py: Arc::new(Mutex::new(None)),
+            shutdown_tx,
+        })
+    }
+
     /// Copy the enforcement point's trust context from its authorizer.
     ///
     /// Receipts commit to the trusted root set and the revocation list in force
@@ -702,9 +720,15 @@ impl PyControlPlaneClient {
     /// Flush pending events and stop the background heartbeat task.
     #[pyo3(signature = (timeout_secs = 5.0))]
     fn shutdown(&self, timeout_secs: f64) -> PyResult<()> {
-        let secs = timeout_secs.clamp(0.0, 30.0);
-        runtime().block_on(tokio::time::sleep(std::time::Duration::from_secs_f64(secs)));
         let _ = self.shutdown_tx.send(true);
+        let secs = timeout_secs.clamp(0.0, 30.0);
+        if secs > 0.0 {
+            // sleep() must be constructed inside the runtime, not as a
+            // block_on argument — Tokio 1.x timers require a context.
+            runtime().block_on(async {
+                tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await
+            });
+        }
         Ok(())
     }
 
