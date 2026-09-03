@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `github-triage` catalog, file receipts, refuse-to-start on stored tokens
   or PEMs. Tool handlers do not call GitHub. `python -m tenuo_gha.check`
   replays the fixture table.
+- **`POST /v1/exchange`** (and `/v1/exchange/github`) mints a run warrant
+  from a GitHub Actions OIDC JWT. Capabilities outside the ceiling are
+  refused. A reused JWT id is `403`. `TENUO_ROLE=exchange|gateway`;
+  `role=both` needs `TENUO_ALLOW_COMBINED_ROLES=1`. The exchange role
+  refuses receipt and App key ids; the gateway role refuses an issuer
+  key id.
 
 ### Changed
 

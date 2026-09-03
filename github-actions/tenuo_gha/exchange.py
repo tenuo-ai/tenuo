@@ -1,0 +1,207 @@
+"""OIDC bearer in, run warrant out. Refuse rather than trim."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import threading
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Mapping, Optional
+
+from tenuo import PublicKey, SigningKey, Warrant
+from tenuo.mcp import exact_argument_constraints
+
+from .catalog import PACKS, TRIPWIRE_NAMES
+from .config import ConfigError, GatewayConfig
+from .oidc import OidcError, assert_conditions, load_jwks, verify_oidc
+
+
+class ExchangeError(ValueError):
+    """Issuance refused. ``code`` is the wire error name."""
+
+    def __init__(self, code: str, detail: str, status: int = 403) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+        self.status = status
+
+
+@dataclass
+class ExchangeResult:
+    warrant: str
+    warrant_id: str
+    expires_at: str
+    root_public_keys: list[str]
+
+
+class ReplayCache:
+    """Remember JWT ids until they expire."""
+
+    def __init__(self) -> None:
+        self._seen: Dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def check_and_record(self, token_id: str, expires_at: int, *, now: Optional[int] = None) -> bool:
+        """Return True if this id is new and was recorded."""
+        if now is None:
+            now = int(time.time())
+        with self._lock:
+            expired = [key for key, exp in self._seen.items() if exp <= now]
+            for key in expired:
+                del self._seen[key]
+            if token_id in self._seen:
+                return False
+            self._seen[token_id] = expires_at
+            return True
+
+
+def _signing_key(config: GatewayConfig, override: Optional[SigningKey]) -> SigningKey:
+    if override is not None:
+        return override
+    raw = config.exchange_signing_key
+    if not raw:
+        if config.signing_provider == "memory":
+            return SigningKey.generate()
+        raise ConfigError("TENUO_EXCHANGE_SIGNING_KEY is required")
+    try:
+        return SigningKey.from_base64(raw)
+    except AttributeError:
+        return SigningKey.from_bytes(base64.b64decode(raw))
+    except Exception:
+        return SigningKey.from_bytes(bytes.fromhex(raw))
+
+
+def _public_key(value: str) -> PublicKey:
+    raw = value.strip()
+    if raw.startswith("hex:"):
+        raw = raw[4:]
+    try:
+        return PublicKey.from_bytes(bytes.fromhex(raw))
+    except Exception:
+        return PublicKey.from_bytes(base64.b64decode(raw))
+
+
+def _allowed_tools(packs: list[str]) -> set[str]:
+    names: set[str] = set()
+    for pack in packs:
+        for spec in PACKS.get(pack, ()):
+            names.add(spec.name)
+    return names
+
+
+def _token_id(claims: Mapping[str, Any], token: str) -> str:
+    jti = claims.get("jti")
+    if jti:
+        return str(jti)
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+class Exchange:
+    """Mint a run warrant from a verified GitHub Actions OIDC token."""
+
+    def __init__(
+        self,
+        config: GatewayConfig,
+        *,
+        issuer_key: Optional[SigningKey] = None,
+        jwks: Optional[Mapping[str, Any]] = None,
+        jwks_fetcher: Optional[Callable[[str], Mapping[str, Any]]] = None,
+        replay: Optional[ReplayCache] = None,
+    ) -> None:
+        if config.signing_provider == "kms":
+            raise ConfigError("signing.provider=kms is not supported")
+        if config.role == "gateway":
+            raise ConfigError("exchange is not served by role=gateway")
+        if not config.audience:
+            raise ConfigError("exchange.audience is required")
+        self.config = config
+        self._issuer = _signing_key(config, issuer_key)
+        self._jwks = load_jwks(jwks=jwks, jwks_url=config.jwks_url, fetcher=jwks_fetcher)
+        self._replay = replay or ReplayCache()
+        self._allowed = _allowed_tools(config.packs)
+
+    def mint(
+        self,
+        token: str,
+        body: Mapping[str, Any],
+        *,
+        now: Optional[int] = None,
+    ) -> ExchangeResult:
+        if now is None:
+            now = int(time.time())
+        try:
+            claims = verify_oidc(
+                token,
+                issuer=self.config.oidc_issuer,
+                audience=self.config.audience,
+                jwks=self._jwks,
+                clock_tolerance_seconds=self.config.clock_tolerance_seconds,
+                now=now,
+            )
+            assert_conditions(
+                claims,
+                repository_owner_id=self.config.repository_owner_id,
+                repository_ids=self.config.repository_ids,
+                job_workflow_ref=self.config.job_workflow_ref,
+                event_names=self.config.event_names,
+                repositories=self.config.repositories,
+            )
+        except OidcError as exc:
+            raise ExchangeError(exc.code, exc.detail) from exc
+
+        token_id = _token_id(claims, token)
+        expires = int(claims.get("exp") or now)
+        if not self._replay.check_and_record(token_id, expires, now=now):
+            raise ExchangeError("token_reused", "OIDC token was already exchanged")
+
+        holder_raw = body.get("holder_public_key")
+        if not holder_raw or not isinstance(holder_raw, str):
+            raise ExchangeError("outside_ceiling", "holder_public_key is required", status=400)
+        try:
+            holder = _public_key(holder_raw)
+        except Exception as exc:
+            raise ExchangeError("outside_ceiling", "holder_public_key is invalid", status=400) from exc
+
+        ttl = body.get("ttl_seconds")
+        if ttl is None:
+            ttl = self.config.ttl_max
+        try:
+            ttl_i = int(ttl)
+        except (TypeError, ValueError) as exc:
+            raise ExchangeError("outside_ceiling", "ttl_seconds is invalid", status=400) from exc
+        if ttl_i <= 0:
+            raise ExchangeError("outside_ceiling", "ttl_seconds must be positive", status=400)
+        if ttl_i > self.config.ttl_max:
+            raise ExchangeError("outside_ceiling", "ttl_seconds exceeds ttl_max")
+
+        capabilities = body.get("capabilities")
+        if not isinstance(capabilities, dict) or not capabilities:
+            raise ExchangeError("outside_ceiling", "capabilities are required", status=400)
+
+        repository = str(claims["repository"])
+        builder = Warrant.mint_builder().holder(holder).ttl(ttl_i)
+        run_id = claims.get("run_id")
+        if run_id is not None:
+            builder = builder.session_id(str(run_id))
+
+        for tool, raw_args in capabilities.items():
+            if tool in TRIPWIRE_NAMES or tool not in self._allowed:
+                raise ExchangeError("outside_ceiling", f"{tool} is not in the configured packs")
+            args = dict(raw_args or {})
+            requested_repo = args.get("repository")
+            if requested_repo is not None and str(requested_repo) != repository:
+                raise ExchangeError("outside_ceiling", "repository does not match the OIDC subject")
+            args["repository"] = repository
+            builder = builder.capability(tool, exact_argument_constraints(args))
+
+        warrant = builder.mint(self._issuer)
+        expires_at = warrant.expires_at()
+        if callable(expires_at):
+            expires_at = expires_at()
+        return ExchangeResult(
+            warrant=warrant.to_base64(),
+            warrant_id=str(warrant.id),
+            expires_at=str(expires_at),
+            root_public_keys=list(self.config.root_public_keys),
+        )

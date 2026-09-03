@@ -7,6 +7,10 @@ dependencies = [
     "tenuo",
     "pyyaml>=6.0",
     "fastmcp>=3.2.1",
+    "PyJWT>=2.8",
+    "cryptography>=42",
+    "starlette>=0.37",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]

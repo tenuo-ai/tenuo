@@ -277,7 +277,7 @@ jobs:
       - name: GitHub Actions gateway tests
         working-directory: github-actions
         run: |
-          uv pip install --system pytest pyyaml
+          uv pip install --system pytest pyyaml PyJWT cryptography starlette httpx
           pytest -v
 
   # ============================================================================
