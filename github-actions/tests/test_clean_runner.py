@@ -79,7 +79,7 @@ def test_clean_runner_action_installs_tenuo_runtime(tmp_path):
     assert "No module named 'tenuo'" not in combined
     assert "No module named tenuo" not in combined
     imported = _import_tenuo(python, action_path=str(action))
-    assert imported.returncode == 0, imported.stderr
+    assert imported.returncode == 0, imported.stderr or combined
     assert invoked.returncode != 0
 
 

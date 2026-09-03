@@ -18,6 +18,14 @@ export function findTenuoWheel(actionPath) {
 }
 
 export function installRuntime(python, actionPath) {
+  const wheel = findTenuoWheel(actionPath);
+  if (!wheel) {
+    console.error(
+      'Tenuo runtime wheel is missing. Package the compatible tenuo wheel into vendor/ or set TENUO_WHEEL.',
+    );
+    process.exit(1);
+  }
+
   const lock = spawnSync(
     python,
     [
@@ -27,14 +35,6 @@ export function installRuntime(python, actionPath) {
     { stdio: 'inherit', env: process.env },
   );
   if (lock.status !== 0) process.exit(lock.status ?? 1);
-
-  const wheel = findTenuoWheel(actionPath);
-  if (!wheel) {
-    console.error(
-      'Tenuo runtime wheel is missing. Package the compatible tenuo wheel into vendor/ or set TENUO_WHEEL.',
-    );
-    process.exit(1);
-  }
   const runtime = spawnSync(
     python,
     ['-m', 'pip', 'install', '--disable-pip-version-check', '--quiet', wheel],
