@@ -29,7 +29,14 @@ from tenuo_gha.github import GitHubApp
 from tenuo_gha.holder import HolderClient, HolderServer
 from tenuo_gha.http import build_http
 from tenuo_gha.shim import call_gateway
-from tenuo_gha.task import infer_task_context
+from tenuo_gha.commitment import (
+    GHA_COMPACT_VECTOR,
+    encode_proof,
+    exchange_proof_preimage,
+    exchange_request_hash,
+    hash_json,
+)
+from tenuo_gha.task import infer_task_binding
 
 from exchange_helpers import exchange_body, holder_proof
 
@@ -157,9 +164,10 @@ def _cloud_stack(tmp_path: Path, root: SigningKey, recorded: list):
     return gateway, exchange, _Http(app), rsa_key
 
 
-def test_infer_task_context_is_runner_asserted():
-    context = infer_task_context(event_name="issues", event={"issue": {"number": 4127}})
-    assert context == {"type": "issue", "number": 4127, "assurance": "runner_asserted"}
+def test_infer_task_binding_omits_assurance():
+    binding = infer_task_binding(event_name="issues", event={"issue": {"number": 4127}})
+    assert binding == {"type": "issue", "number": 4127}
+    assert "assurance" not in binding
 
 
 def test_successful_stack_response(tmp_path):
@@ -168,7 +176,7 @@ def test_successful_stack_response(tmp_path):
     jwks, rsa_key = _rsa_jwks()
     exchange = CloudCompatibleExchange(_config(tmp_path, root), tenant_root=root, jwks=jwks)
     token = _token(rsa_key, jti="stack-ok")
-    task = {"type": "issue", "number": 4127, "assurance": "runner_asserted"}
+    task = {"type": "issue", "number": 4127}
     result = exchange.mint(
         token,
         exchange_body(
@@ -179,12 +187,12 @@ def test_successful_stack_response(tmp_path):
                 "github.get_issue": {"issue": 4127},
                 "github.add_comment": {"issue": 4127},
             },
-            task_context=task,
+            task_binding=task,
         ),
     )
     stack = decode_warrant_stack_base64(result.warrant)
     assert len(stack) == 2
-    assert result.task_context == task
+    assert result.task_binding == {"number": 4127, "type": "issue"}
     assert result.root_public_keys == [root.public_key.to_bytes().hex()]
     verify_exchange_roots(result.root_public_keys, [root.public_key.to_bytes().hex()])
 
@@ -240,11 +248,133 @@ def test_request_rejects_tenant_and_policy_identifiers(tmp_path):
     jwks, rsa_key = _rsa_jwks()
     exchange = CloudCompatibleExchange(_config(tmp_path, root), tenant_root=root, jwks=jwks)
     token = _token(rsa_key, jti="ids")
-    with pytest.raises(ExchangeError, match="tenant_id"):
+    with pytest.raises(ExchangeError, match="unknown field: policy_id|unknown field: tenant_id"):
         exchange.mint(
             token,
             exchange_body(holder, token, extra={"tenant_id": "ten_x", "policy_id": "pol_y"}),
         )
+
+
+def test_strict_cloud_handler_rejects_unknown_fields_and_legacy_proof(tmp_path):
+    root = SigningKey.generate()
+    holder = SigningKey.generate()
+    jwks, rsa_key = _rsa_jwks()
+    config = _config(tmp_path, root)
+    exchange = CloudCompatibleExchange(config, tenant_root=root, jwks=jwks)
+    client = TestClient(build_http(config, exchange=exchange))
+    token = _token(rsa_key, jti="jti-gha")
+    capabilities = {
+        "github.add_comment": {"issue": 4127},
+        "github.get_issue": {"issue": 4127},
+    }
+    binding = {"type": "issue", "number": 4127}
+    body = exchange_body(
+        holder,
+        token,
+        ttl_seconds=900,
+        capabilities=capabilities,
+        task_binding=binding,
+    )
+    compact = exchange_request_hash(
+        issuer=ISSUER,
+        jti="jti-gha",
+        holder_public_key=holder.public_key.to_bytes().hex(),
+        ttl_seconds=900,
+        capabilities=capabilities,
+        task_binding=binding,
+    )
+    assert compact != GHA_COMPACT_VECTOR
+    assert len(compact) == 64
+
+    aliased = dict(body)
+    aliased["task_context"] = {"type": "issue", "number": 4127}
+    refused = client.post("/v1/exchange", headers={"Authorization": f"Bearer {token}"}, json=aliased)
+    assert refused.status_code == 400
+    assert refused.json()["error"] == "invalid_request"
+
+    assured = dict(body)
+    assured["task_binding"] = {"type": "issue", "number": 4127, "assurance": "runner_asserted"}
+    refused_assurance = client.post(
+        "/v1/exchange",
+        headers={"Authorization": f"Bearer {token}"},
+        json=assured,
+    )
+    assert refused_assurance.status_code == 400
+    assert refused_assurance.json()["error"] == "invalid_request"
+
+    legacy = hash_json(
+        {
+            "tenant_id": "",
+            "policy_id": "",
+            "issuer": ISSUER,
+            "jti": "jti-gha",
+            "holder_public_key": holder.public_key.to_bytes().hex(),
+            "actions": ["github.add_comment", "github.get_issue"],
+            "ttl_seconds": 900,
+            "task_binding": binding,
+        }
+    )
+    stale = dict(body)
+    stale["holder_proof"] = encode_proof(bytes(holder.sign_raw(exchange_proof_preimage(legacy))))
+    replayed = client.post("/v1/exchange", headers={"Authorization": f"Bearer {token}"}, json=stale)
+    assert replayed.status_code == 403
+    assert replayed.json()["error"] == "holder_proof_invalid"
+
+    allowed = client.post("/v1/exchange", headers={"Authorization": f"Bearer {token}"}, json=body)
+    assert allowed.status_code == 200
+    assert decode_warrant_stack_base64(allowed.json()["warrant"])
+
+
+def test_action_posts_task_binding_without_assurance(tmp_path):
+    root = SigningKey.generate()
+    recorded: list = []
+    _gateway, _exchange, http, rsa_key = _cloud_stack(tmp_path, root, recorded)
+    captured: list = []
+
+    class _Capture(_Http):
+        def post(self, url, headers=None, json=None):
+            captured.append(json)
+            return super().post(url, headers=headers, json=json)
+
+    http = _Capture(http._client.app)
+    socket = _sock("compact")
+    server = HolderServer(socket)
+    server.start()
+    try:
+        run_job(
+            gateway_url="http://test",
+            exchange_url="http://test",
+            audience=AUDIENCE,
+            socket_path=socket,
+            mcp_config=tmp_path / "mcp-config.json",
+            event_name="issues",
+            repository="acme/widgets",
+            event={"issue": {"number": 4127}},
+            oidc_token=_token(rsa_key, jti="compact-1"),
+            environ={"PATH": "/usr/bin", "TENUO_ALLOW_INSECURE_MEMORY_KEYS": "1"},
+            http=http,
+            holder_server=server,
+            trusted_roots=[root.public_key.to_bytes().hex()],
+        )
+    finally:
+        server.stop()
+    body = next(item for item in captured if item and "holder_proof" in item)
+    assert "task_context" not in body
+    assert "tenant_id" not in body
+    assert "policy_id" not in body
+    assert body["task_binding"] == {"number": 4127, "type": "issue"}
+    assert "assurance" not in body["task_binding"]
+    expected = exchange_request_hash(
+        issuer=ISSUER,
+        jti="compact-1",
+        holder_public_key=body["holder_public_key"],
+        ttl_seconds=int(body["ttl_seconds"]),
+        capabilities=body["capabilities"],
+        task_binding=body["task_binding"],
+    )
+    from tenuo_gha.commitment import verify_holder_proof
+
+    verify_holder_proof(body["holder_public_key"], body["holder_proof"], expected)
 
 
 def test_run_provided_root_is_not_trusted():

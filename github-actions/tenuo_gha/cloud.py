@@ -41,7 +41,7 @@ class CloudCompatibleExchange(Exchange):
         *,
         now: Optional[int] = None,
     ) -> ExchangeResult:
-        claims, holder, ttl_i, capabilities, task_context = self.validate(token, body, now=now)
+        claims, holder, ttl_i, capabilities, task_binding = self.validate(token, body, now=now)
         repository = str(claims["repository"])
         bound = self.bind_capabilities(capabilities, repository=repository)
         policy = self._mint_policy(bound, ttl_seconds=max(ttl_i, 60))
@@ -60,7 +60,7 @@ class CloudCompatibleExchange(Exchange):
             warrant_id=str(run.id),
             expires_at=str(expires_at),
             root_public_keys=[self._tenant_root.public_key.to_bytes().hex()],
-            task_context=task_context,
+            task_binding=task_binding,
         )
 
     def _mint_policy(self, bound: Mapping[str, Any], *, ttl_seconds: int):

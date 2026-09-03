@@ -20,7 +20,7 @@ def holder_proof(
     holder_public_key: str,
     ttl_seconds: int,
     capabilities: Mapping[str, Any],
-    task_context: Optional[Mapping[str, Any]] = None,
+    task_binding: Optional[Mapping[str, Any]] = None,
 ) -> str:
     claims = peek_claims(token)
     request_hash = exchange_request_hash(
@@ -29,7 +29,7 @@ def holder_proof(
         holder_public_key=holder_public_key,
         ttl_seconds=ttl_seconds,
         capabilities=capabilities,
-        task_context=task_context,
+        task_binding=task_binding,
     )
     return encode_proof(bytes(key.sign_raw(exchange_proof_preimage(request_hash))))
 
@@ -40,7 +40,7 @@ def exchange_body(
     *,
     ttl_seconds: int = 120,
     capabilities: Optional[Mapping[str, Any]] = None,
-    task_context: Optional[Mapping[str, Any]] = None,
+    task_binding: Optional[Mapping[str, Any]] = None,
     extra: Optional[Mapping[str, Any]] = None,
 ) -> dict:
     caps = dict(capabilities or {"github.get_issue": {"issue": 4127}})
@@ -53,13 +53,13 @@ def exchange_body(
             holder_public_key=pubkey,
             ttl_seconds=ttl_seconds,
             capabilities=caps,
-            task_context=task_context,
+            task_binding=task_binding,
         ),
         "ttl_seconds": ttl_seconds,
         "capabilities": caps,
     }
-    if task_context is not None:
-        body["task_context"] = dict(task_context)
+    if task_binding is not None:
+        body["task_binding"] = {"type": task_binding["type"], "number": int(task_binding["number"])}
     if extra:
         body.update(extra)
     return body

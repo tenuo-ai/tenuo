@@ -39,13 +39,17 @@ def infer_capabilities(
     }
 
 
-def infer_task_context(
+def infer_task_binding(
     *,
     event_name: str,
     event: Optional[Mapping[str, Any]] = None,
     issue: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Issue numbers are runner-asserted. GitHub OIDC does not attest them."""
+    """Send only ``{type, number}``. Cloud assigns assurance; do not supply it.
+
+    GitHub OIDC does not attest the issue number. The runner asserts it; Cloud
+    may upgrade a pull-request binding after an independent provider lookup.
+    """
     if event_name not in _ISSUE_EVENTS:
         raise TaskError(f"cannot infer a task from event {event_name!r}")
     number = issue
@@ -55,4 +59,4 @@ def infer_task_context(
             number = int(raw)
     if number is None:
         raise TaskError("issue number is required")
-    return {"type": "issue", "number": int(number), "assurance": "runner_asserted"}
+    return {"type": "issue", "number": int(number)}

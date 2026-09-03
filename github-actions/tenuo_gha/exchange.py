@@ -14,7 +14,7 @@ from tenuo.mcp import exact_argument_constraints
 from tenuo_core import encode_warrant_stack
 
 from .catalog import COMMENT_BODY_CEL, PACKS, TRIPWIRE_NAMES
-from .commitment import CommitmentError, exchange_request_hash, verify_holder_proof
+from .commitment import CommitmentError, compact_task_binding, exchange_request_hash, verify_holder_proof
 from .config import ConfigError, GatewayConfig
 from .oidc import OidcError, assert_conditions, load_jwks, verify_oidc
 
@@ -35,26 +35,41 @@ class ExchangeResult:
     warrant_id: str
     expires_at: str
     root_public_keys: list[str]
-    task_context: Optional[Dict[str, Any]] = None
+    task_binding: Optional[Dict[str, Any]] = None
 
 
-def normalize_task_context(raw: Any) -> Optional[Dict[str, Any]]:
-    """Issue numbers are runner-asserted. GitHub OIDC does not attest them."""
+GITHUB_EXCHANGE_FIELDS = frozenset(
+    {"holder_public_key", "holder_proof", "ttl_seconds", "capabilities", "task_binding"}
+)
+
+
+def assert_github_exchange_fields(body: Mapping[str, Any]) -> None:
+    """Cloud ``DisallowUnknownFields``: reject ``task_context`` and identifiers."""
+    unknown = sorted(set(body) - GITHUB_EXCHANGE_FIELDS)
+    if unknown:
+        raise ExchangeError("invalid_request", f"unknown field: {unknown[0]}", status=400)
+
+
+def normalize_task_binding(raw: Any) -> Optional[Dict[str, Any]]:
+    """Accept only ``{type, number}``. Assurance is not runner-supplied."""
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        raise ExchangeError("outside_ceiling", "task_context must be a mapping", status=400)
+        raise ExchangeError("invalid_request", "task_binding must be a mapping", status=400)
+    extra = sorted(set(raw) - {"type", "number"})
+    if extra:
+        raise ExchangeError("invalid_request", "task_binding must contain only type and number", status=400)
     kind = raw.get("type")
     number = raw.get("number")
     if kind not in {"issue", "pull_request"}:
-        raise ExchangeError("outside_ceiling", "task_context.type must be issue or pull_request", status=400)
+        raise ExchangeError("invalid_request", "task_binding.type must be issue or pull_request", status=400)
     try:
         parsed = int(number)
     except (TypeError, ValueError) as exc:
-        raise ExchangeError("outside_ceiling", "task_context.number must be a positive integer", status=400) from exc
+        raise ExchangeError("invalid_request", "task_binding.number must be a positive integer", status=400) from exc
     if parsed <= 0:
-        raise ExchangeError("outside_ceiling", "task_context.number must be a positive integer", status=400)
-    return {"type": str(kind), "number": parsed, "assurance": "runner_asserted"}
+        raise ExchangeError("invalid_request", "task_binding.number must be a positive integer", status=400)
+    return compact_task_binding({"type": str(kind), "number": parsed})
 
 
 def encode_exchange_stack(warrants: list) -> str:
@@ -205,8 +220,7 @@ class Exchange:
         except OidcError as exc:
             raise ExchangeError(exc.code, exc.detail) from exc
 
-        if body.get("tenant_id") or body.get("policy_id"):
-            raise ExchangeError("outside_ceiling", "tenant_id and policy_id are not accepted", status=400)
+        assert_github_exchange_fields(body)
 
         holder_raw = body.get("holder_public_key")
         if not holder_raw or not isinstance(holder_raw, str):
@@ -231,7 +245,7 @@ class Exchange:
         capabilities = body.get("capabilities")
         if not isinstance(capabilities, dict) or not capabilities:
             raise ExchangeError("outside_ceiling", "capabilities are required", status=400)
-        task_context = normalize_task_context(body.get("task_context"))
+        task_binding = normalize_task_binding(body.get("task_binding"))
 
         proof = body.get("holder_proof")
         if not isinstance(proof, str) or not proof:
@@ -243,7 +257,7 @@ class Exchange:
                 holder_public_key=holder_raw,
                 ttl_seconds=ttl_i,
                 capabilities=capabilities,
-                task_context=task_context,
+                task_binding=task_binding,
             )
             verify_holder_proof(holder_raw, proof, request_hash)
         except CommitmentError as exc:
@@ -253,7 +267,7 @@ class Exchange:
         expires = int(claims.get("exp") or now)
         if not self._replay.check_and_record(token_id, expires, now=now):
             raise ExchangeError("token_reused", "OIDC token was already exchanged")
-        return claims, holder, ttl_i, capabilities, task_context
+        return claims, holder, ttl_i, capabilities, task_binding
 
     def mint(
         self,
@@ -262,7 +276,7 @@ class Exchange:
         *,
         now: Optional[int] = None,
     ) -> ExchangeResult:
-        claims, holder, ttl_i, capabilities, task_context = self.validate(token, body, now=now)
+        claims, holder, ttl_i, capabilities, task_binding = self.validate(token, body, now=now)
         repository = str(claims["repository"])
         bound = self.bind_capabilities(capabilities, repository=repository)
         builder = Warrant.mint_builder().holder(holder).ttl(ttl_i)
@@ -281,5 +295,5 @@ class Exchange:
             warrant_id=str(warrant.id),
             expires_at=str(expires_at),
             root_public_keys=list(self.config.root_public_keys),
-            task_context=task_context,
+            task_binding=task_binding,
         )

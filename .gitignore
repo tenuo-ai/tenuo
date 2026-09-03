@@ -36,6 +36,9 @@ reproduce_pickle.py
 .DS_Store
 Thumbs.db
 
+# Packaged Tenuo wheels for the GitHub Action (built, not committed)
+github-actions/vendor/*.whl
+
 # Python
 __pycache__/
 *.pyc

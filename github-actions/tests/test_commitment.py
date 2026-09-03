@@ -1,54 +1,18 @@
-"""Cloud/OSS shared exchange commitment vectors."""
+"""Cloud/OSS shared compact GitHub exchange commitment vectors."""
 
 from __future__ import annotations
 
 from tenuo_gha.commitment import (
-    cloud_exchange_request_hash,
+    GHA_COMPACT_VECTOR,
     encode_proof,
     exchange_proof_preimage,
     exchange_request_hash,
     verify_holder_proof,
 )
 
-# Go/Node vectors from tenuo-cloud/internal/service/warrant_exchange_test.go
-CLOUD_ACTIONS_VECTOR = "3e3cfc45ed2d830a10c0c4f4a92f03d7c1cbd749f51f2462adbfedb8dbe738e9"
-CLOUD_AUTO_VECTOR = "85838c1a2c042acda3e9f97b7f2eab6d566a2f8653b6a047aec72678a3ea9db0"
-# Identifier-free POST /v1/exchange mapping. Also asserted in tenuo-cloud.
-GHA_CAPABILITIES_VECTOR = "a4549e0f30c20a522f49ec3b1a3af96594be9073719424912fc3a700624b862f"
 
-
-def test_cloud_go_node_action_order_vector():
-    pub = bytes(range(32)).hex()
-    assert (
-        cloud_exchange_request_hash(
-            issuer="https://token.actions.githubusercontent.com",
-            jti="jti-1",
-            holder_public_key=pub,
-            actions=["b", "a"],
-            ttl_seconds=600,
-            tenant_id="tenant",
-            policy_id="wpol_test",
-            constraints={"z": 1, "a": "x"},
-        )
-        == CLOUD_ACTIONS_VECTOR
-    )
-
-
-def test_cloud_go_node_automatic_resolution_vector():
-    assert (
-        cloud_exchange_request_hash(
-            issuer="https://token.actions.githubusercontent.com",
-            jti="jti-auto",
-            holder_public_key="00" * 32,
-            actions=["a"],
-            constraints={},
-            per_action_constraints={},
-        )
-        == CLOUD_AUTO_VECTOR
-    )
-
-
-def test_gha_identifier_free_capabilities_vector():
+def test_gha_compact_task_binding_vector():
+    """Shared with tenuo-cloud TestGitHubExchangeRequestHashTaskBindingVector."""
     assert (
         exchange_request_hash(
             issuer="https://token.actions.githubusercontent.com",
@@ -59,10 +23,26 @@ def test_gha_identifier_free_capabilities_vector():
                 "github.add_comment": {"issue": 4127},
                 "github.get_issue": {"issue": 4127},
             },
-            task_context={"type": "issue", "number": 4127, "assurance": "runner_asserted"},
+            task_binding={"type": "issue", "number": 4127},
         )
-        == GHA_CAPABILITIES_VECTOR
+        == GHA_COMPACT_VECTOR
+        == "a6e5f6e8d6f2454c167343e57cbe1ce0dcfef675a969c1607c82a4ba589568ae"
     )
+
+
+def test_compact_hash_omits_runner_assurance():
+    with_extra = exchange_request_hash(
+        issuer="https://token.actions.githubusercontent.com",
+        jti="jti-gha",
+        holder_public_key="00" * 32,
+        ttl_seconds=900,
+        capabilities={
+            "github.add_comment": {"issue": 4127},
+            "github.get_issue": {"issue": 4127},
+        },
+        task_binding={"type": "issue", "number": 4127, "assurance": "runner_asserted"},
+    )
+    assert with_extra == GHA_COMPACT_VECTOR
 
 
 def test_holder_proof_roundtrip():

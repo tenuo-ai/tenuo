@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { installRuntime } from './install-runtime.mjs';
 
 const input = (name) => process.env[`INPUT_${name.toUpperCase()}`] || '';
 const actionPath = process.env.GITHUB_ACTION_PATH || process.cwd();
@@ -12,15 +13,7 @@ const pid = join(runDir, 'holder.pid');
 const mcpConfig = join(runDir, 'mcp-config.json');
 const python = process.env.TENUO_PYTHON || 'python';
 
-const pip = spawnSync(
-  python,
-  [
-    '-m', 'pip', 'install', '--disable-pip-version-check', '--quiet', '--require-hashes',
-    '-r', join(actionPath, 'requirements.lock'),
-  ],
-  { stdio: 'inherit', env: process.env },
-);
-if (pip.status !== 0) process.exit(pip.status ?? 1);
+installRuntime(python, actionPath);
 
 const env = {
   ...process.env,

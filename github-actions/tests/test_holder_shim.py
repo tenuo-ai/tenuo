@@ -158,7 +158,7 @@ def test_sign_exchange_does_not_return_the_key():
         jti="jti-1",
         ttl_seconds=120,
         capabilities={"github.get_issue": {"issue": 4127}},
-        task_context={"type": "issue", "number": 4127, "assurance": "runner_asserted"},
+        task_binding={"type": "issue", "number": 4127},
     )
     assert proof
     assert holder.public_key_hex() not in proof

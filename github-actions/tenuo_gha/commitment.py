@@ -1,9 +1,8 @@
-"""Cloud-compatible exchange commitment and holder proof.
+"""Cloud-compatible GitHub exchange commitment and holder proof.
 
-The hash and proof preimage match tenuo-cloud's
-``ComputeWarrantExchangeRequestHash`` / ``ExchangeProofPreimage``. Nested maps
-use sorted keys, matching Go ``encoding/json``. Do not invent a second
-canonicalization — add golden vectors here and in tenuo-cloud together.
+The hash matches tenuo-cloud ``ComputeGitHubExchangeRequestHash``: compact
+UTF-8 JSON with recursively sorted object keys, then SHA-256. Do not invent a
+second canonicalization — the golden vector is shared with tenuo-cloud.
 """
 
 from __future__ import annotations
@@ -11,32 +10,16 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional
 
 EXCHANGE_PROOF_CONTEXT = "tenuo-warrant-exchange-v1"
 
-# Field order matches the Go commitment struct in warrant_exchange.go.
-_CLOUD_FIELDS = (
-    "tenant_id",
-    "policy_id",
-    "issuer",
-    "jti",
-    "holder_public_key",
-    "actions",
-    "constraints",
-    "per_action_constraints",
-    "ttl_seconds",
-    "max_depth",
-    "task_binding",
-)
+# Shared with tenuo-cloud TestGitHubExchangeRequestHashTaskBindingVector.
+GHA_COMPACT_VECTOR = "a6e5f6e8d6f2454c167343e57cbe1ce0dcfef675a969c1607c82a4ba589568ae"
 
 
 class CommitmentError(ValueError):
     """The exchange commitment could not be built or verified."""
-
-
-class _Struct(dict):
-    """JSON object with declaration order, matching a Go struct."""
 
 
 def normalize_holder_public_key(value: str) -> str:
@@ -81,25 +64,18 @@ def decode_proof(encoded: str) -> bytes:
         raise CommitmentError("holder_proof is not valid base64") from exc
 
 
-def _stable_maps(value: Any, *, sort_object: bool) -> Any:
-    if isinstance(value, _Struct):
-        return {str(key): _stable_maps(value[key], sort_object=True) for key in value}
+def _stable_maps(value: Any) -> Any:
     if isinstance(value, dict):
-        keys = sorted(value) if sort_object else list(value)
-        return {str(key): _stable_maps(value[key], sort_object=True) for key in keys}
+        return {str(key): _stable_maps(value[key]) for key in sorted(value)}
     if isinstance(value, (list, tuple)):
-        return [_stable_maps(item, sort_object=True) for item in value]
+        return [_stable_maps(item) for item in value]
     return value
 
 
-def hash_json(value: Any, *, sort_object: bool = False) -> str:
-    """SHA-256 hex of compact JSON.
-
-    Top-level struct field order is preserved (Go ``encoding/json``). Nested
-    maps use sorted keys, matching both Go map encoding and the Node action.
-    """
+def hash_json(value: Any) -> str:
+    """SHA-256 hex of compact JSON with recursively sorted object keys."""
     canonical = json.dumps(
-        _stable_maps(value, sort_object=sort_object),
+        _stable_maps(value),
         separators=(",", ":"),
         ensure_ascii=False,
     )
@@ -111,47 +87,11 @@ def exchange_proof_preimage(request_hash: str) -> bytes:
     return f"{EXCHANGE_PROOF_CONTEXT}\x00{request_hash}".encode("utf-8")
 
 
-def cloud_exchange_request_hash(
-    *,
-    issuer: str,
-    jti: str,
-    holder_public_key: str,
-    actions: Sequence[str],
-    ttl_seconds: int = 0,
-    tenant_id: str = "",
-    policy_id: str = "",
-    constraints: Optional[Mapping[str, Any]] = None,
-    per_action_constraints: Optional[Mapping[str, Mapping[str, Any]]] = None,
-    max_depth: Optional[int] = None,
-    task_binding: Optional[Mapping[str, Any]] = None,
-) -> str:
-    """Hash used by tenuo-cloud ``ComputeWarrantExchangeRequestHash``."""
-    binding = None
-    if task_binding is not None:
-        binding = _Struct(
-            (
-                ("type", str(task_binding["type"])),
-                ("number", int(task_binding["number"])),
-            )
-        )
-    payload = {
-        "tenant_id": tenant_id,
-        "policy_id": policy_id,
-        "issuer": issuer,
-        "jti": jti,
-        "holder_public_key": normalize_holder_public_key(holder_public_key),
-        "actions": sorted(str(item) for item in actions),
-        "constraints": dict(constraints) if constraints is not None else None,
-        "per_action_constraints": (
-            {str(key): dict(value) for key, value in per_action_constraints.items()}
-            if per_action_constraints is not None
-            else None
-        ),
-        "ttl_seconds": int(ttl_seconds),
-        "max_depth": max_depth,
-        "task_binding": binding,
-    }
-    return hash_json({key: payload[key] for key in _CLOUD_FIELDS})
+def compact_task_binding(raw: Optional[Mapping[str, Any]]) -> Optional[dict[str, Any]]:
+    """``{type, number}`` only. Assurance is assigned by Cloud, never signed here."""
+    if raw is None:
+        return None
+    return {"number": int(raw["number"]), "type": str(raw["type"])}
 
 
 def exchange_request_hash(
@@ -161,31 +101,19 @@ def exchange_request_hash(
     holder_public_key: str,
     ttl_seconds: int,
     capabilities: Mapping[str, Any],
-    task_context: Optional[Mapping[str, Any]] = None,
+    task_binding: Optional[Mapping[str, Any]] = None,
 ) -> str:
-    """Hash the identifier-free ``POST /v1/exchange`` body via Cloud's function.
-
-    Capabilities become sorted ``actions`` plus ``per_action_constraints``.
-    ``task_context.assurance`` is not part of the commitment — Cloud's
-    ``task_binding`` is only ``type`` and ``number``.
-    """
-    binding = None
-    if task_context is not None:
-        binding = {
-            "type": str(task_context["type"]),
-            "number": int(task_context["number"]),
+    """Hash the compact ``POST /v1/exchange`` commitment Cloud verifies."""
+    return hash_json(
+        {
+            "version": 1,
+            "issuer": issuer,
+            "jti": jti,
+            "holder_public_key": normalize_holder_public_key(holder_public_key),
+            "ttl_seconds": int(ttl_seconds),
+            "capabilities": dict(capabilities),
+            "task_binding": compact_task_binding(task_binding),
         }
-    return cloud_exchange_request_hash(
-        issuer=issuer,
-        jti=jti,
-        holder_public_key=holder_public_key,
-        actions=list(capabilities.keys()),
-        ttl_seconds=ttl_seconds,
-        constraints={},
-        per_action_constraints={
-            str(tool): dict(args or {}) for tool, args in capabilities.items()
-        },
-        task_binding=binding,
     )
 
 

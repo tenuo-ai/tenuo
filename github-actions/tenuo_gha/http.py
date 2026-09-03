@@ -58,8 +58,8 @@ def build_http(
             "expires_at": result.expires_at,
             "root_public_keys": result.root_public_keys,
         }
-        if result.task_context is not None:
-            payload["task_context"] = result.task_context
+        if result.task_binding is not None:
+            payload["task_binding"] = result.task_binding
         return JSONResponse(payload)
 
     async def call_handler(request: Request) -> Response:

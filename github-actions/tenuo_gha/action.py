@@ -16,7 +16,8 @@ from .commitment import normalize_holder_public_key
 from .config import assert_no_runtime_secrets
 from .holder import HolderClient, HolderError, HolderServer, assert_no_holder_secret
 from .oidc import OidcError, fetch_actions_oidc, peek_oidc_claims
-from .task import TaskError, infer_capabilities, infer_task_context
+from .commitment import compact_task_binding
+from .task import TaskError, infer_capabilities, infer_task_binding
 
 
 class ActionError(RuntimeError):
@@ -209,7 +210,7 @@ def exchange_warrant(
     holder_proof: str,
     ttl_seconds: int,
     capabilities: Mapping[str, Any],
-    task_context: Optional[Mapping[str, Any]] = None,
+    task_binding: Optional[Mapping[str, Any]] = None,
     client: Optional[httpx.Client] = None,
 ) -> Dict[str, Any]:
     own = client is None
@@ -220,8 +221,9 @@ def exchange_warrant(
         "ttl_seconds": ttl_seconds,
         "capabilities": dict(capabilities),
     }
-    if task_context:
-        body["task_context"] = dict(task_context)
+    binding = compact_task_binding(task_binding)
+    if binding is not None:
+        body["task_binding"] = binding
     try:
         response = http.post(
             exchange_url.rstrip("/") + "/v1/exchange",
@@ -276,7 +278,7 @@ def run_job(
             event=event,
             repository=repository,
         )
-        task_context = infer_task_context(event_name=event_name, event=event)
+        task_binding = infer_task_binding(event_name=event_name, event=event)
     except (TaskError, OidcError) as exc:
         raise ActionError(str(exc)) from exc
     issuer = str(claims.get("iss") or "")
@@ -289,7 +291,7 @@ def run_job(
             jti=jti,
             ttl_seconds=ttl_seconds,
             capabilities=capabilities,
-            task_context=task_context,
+            task_binding=task_binding,
         )
         minted = exchange_warrant(
             exchange_url,
@@ -298,7 +300,7 @@ def run_job(
             holder_proof=proof,
             ttl_seconds=ttl_seconds,
             capabilities=capabilities,
-            task_context=task_context,
+            task_binding=task_binding,
             client=http,
         )
     except (OidcError, HolderError) as exc:

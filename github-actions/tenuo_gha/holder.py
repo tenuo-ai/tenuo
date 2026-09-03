@@ -162,16 +162,16 @@ class Holder:
         jti: str,
         ttl_seconds: int,
         capabilities: Dict[str, Any],
-        task_context: Optional[Dict[str, Any]] = None,
+        task_binding: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Sign Cloud's exchange commitment. The private key never leaves."""
+        """Sign Cloud's compact exchange commitment. The private key never leaves."""
         request_hash = exchange_request_hash(
             issuer=issuer,
             jti=jti,
             holder_public_key=self.public_key_hex(),
             ttl_seconds=ttl_seconds,
             capabilities=capabilities,
-            task_context=task_context,
+            task_binding=task_binding,
         )
         signature = self._key.sign_raw(exchange_proof_preimage(request_hash))
         return encode_proof(bytes(signature))
@@ -222,7 +222,7 @@ def _handle(holder: Holder, message: Dict[str, Any]) -> Dict[str, Any]:
         jti = message.get("jti")
         ttl = message.get("ttl_seconds")
         capabilities = message.get("capabilities")
-        task_context = message.get("task_context")
+        task_binding = message.get("task_binding")
         if not isinstance(issuer, str) or not issuer or not isinstance(jti, str) or not jti:
             return {"ok": False, "error": "issuer and jti are required"}
         try:
@@ -231,15 +231,15 @@ def _handle(holder: Holder, message: Dict[str, Any]) -> Dict[str, Any]:
             return {"ok": False, "error": "ttl_seconds is required"}
         if not isinstance(capabilities, dict) or not capabilities:
             return {"ok": False, "error": "capabilities are required"}
-        if task_context is not None and not isinstance(task_context, dict):
-            return {"ok": False, "error": "task_context must be a mapping"}
+        if task_binding is not None and not isinstance(task_binding, dict):
+            return {"ok": False, "error": "task_binding must be a mapping"}
         try:
             proof = holder.sign_exchange(
                 issuer=issuer,
                 jti=jti,
                 ttl_seconds=ttl_i,
                 capabilities=capabilities,
-                task_context=task_context,
+                task_binding=task_binding,
             )
         except Exception:
             return {"ok": False, "error": "could not sign exchange commitment"}
@@ -387,7 +387,7 @@ class HolderClient:
         jti: str,
         ttl_seconds: int,
         capabilities: Dict[str, Any],
-        task_context: Optional[Dict[str, Any]] = None,
+        task_binding: Optional[Dict[str, Any]] = None,
     ) -> str:
         reply = self._rpc(
             {
@@ -396,7 +396,7 @@ class HolderClient:
                 "jti": jti,
                 "ttl_seconds": ttl_seconds,
                 "capabilities": capabilities,
-                "task_context": task_context,
+                "task_binding": task_binding,
             }
         )
         return str(reply["holder_proof"])
