@@ -151,6 +151,28 @@ def test_guardrails_refuse_holder_secret():
         guardrails({"TENUO_HOLDER_SECRET": "x", "PATH": "/usr/bin"})
 
 
+def test_sign_exchange_does_not_return_the_key():
+    holder = Holder()
+    proof = holder.sign_exchange(
+        issuer="https://token.actions.githubusercontent.com",
+        jti="jti-1",
+        ttl_seconds=120,
+        capabilities={"github.get_issue": {"issue": 4127}},
+        task_context={"type": "issue", "number": 4127, "assurance": "runner_asserted"},
+    )
+    assert proof
+    assert holder.public_key_hex() not in proof
+    dumped = json.dumps(_handle(holder, {
+        "op": "sign_exchange",
+        "issuer": "https://token.actions.githubusercontent.com",
+        "jti": "jti-1",
+        "ttl_seconds": 120,
+        "capabilities": {"github.get_issue": {"issue": 4127}},
+    }))
+    assert "secret" not in dumped
+    assert holder.public_key_hex() not in dumped
+
+
 def test_export_key_is_not_supported():
     holder = Holder()
     reply = _handle(holder, {"op": "export_key"})

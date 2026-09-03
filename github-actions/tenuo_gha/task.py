@@ -37,3 +37,22 @@ def infer_capabilities(
         "github.list_issue_comments": dict(bound),
         "github.add_comment": dict(bound),
     }
+
+
+def infer_task_context(
+    *,
+    event_name: str,
+    event: Optional[Mapping[str, Any]] = None,
+    issue: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Issue numbers are runner-asserted. GitHub OIDC does not attest them."""
+    if event_name not in _ISSUE_EVENTS:
+        raise TaskError(f"cannot infer a task from event {event_name!r}")
+    number = issue
+    if number is None and event is not None:
+        raw = (event.get("issue") or {}).get("number")
+        if raw is not None:
+            number = int(raw)
+    if number is None:
+        raise TaskError("issue number is required")
+    return {"type": "issue", "number": int(number), "assurance": "runner_asserted"}

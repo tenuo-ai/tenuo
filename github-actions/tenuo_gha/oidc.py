@@ -69,6 +69,17 @@ def _audience_values(aud: Any) -> list[str]:
     return [str(item) for item in aud]
 
 
+def peek_oidc_claims(token: str) -> Dict[str, Any]:
+    """Read iss/jti for the exchange commitment. This is not verification."""
+    try:
+        payload = jwt.decode(token, options={"verify_signature": False, "verify_aud": False})
+    except jwt.InvalidTokenError as exc:
+        raise OidcError("untrusted_workflow", "malformed token") from exc
+    if not isinstance(payload, dict):
+        raise OidcError("untrusted_workflow", "malformed token")
+    return payload
+
+
 def verify_oidc(
     token: str,
     *,

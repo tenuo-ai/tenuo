@@ -6,7 +6,7 @@ import sys
 
 
 def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] in {"hold", "holder", "shim", "action", "live"}:
+    if len(sys.argv) > 1 and sys.argv[1] in {"hold", "holder", "shim", "action", "live", "stop"}:
         mode = sys.argv.pop(1)
         if mode in {"hold", "holder"}:
             from .holder import main as hold
@@ -21,7 +21,10 @@ def main() -> None:
             live()
             return
         from .action import main as action
+        if mode == "stop":
+            sys.argv.insert(1, "--stop")
         action()
+        return
     from .app import main as serve
     serve()
 

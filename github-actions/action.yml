@@ -14,40 +14,19 @@ inputs:
     required: false
     default: "900"
     description: Requested warrant lifetime in seconds
+  trusted_roots:
+    required: false
+    description: Hex root public keys the exchange may advertise. Never used as the gateway trust anchor.
 outputs:
   mcp_config:
     description: Path to mcp-config.json
-    value: ${{ steps.start.outputs.mcp_config }}
   warrant_id:
     description: Issued warrant id
-    value: ${{ steps.start.outputs.warrant_id }}
   expires_at:
     description: Warrant expiry
-    value: ${{ steps.start.outputs.expires_at }}
   gateway_url:
     description: Gateway URL passed through
-    value: ${{ steps.start.outputs.gateway_url }}
 runs:
-  using: composite
-  steps:
-    - id: start
-      shell: bash
-      env:
-        TENUO_GATEWAY_URL: ${{ inputs.gateway_url }}
-        TENUO_EXCHANGE_URL: ${{ inputs.exchange_url }}
-        TENUO_EXCHANGE_AUDIENCE: ${{ inputs.audience }}
-      run: |
-        set -euo pipefail
-        run_dir="${RUNNER_TEMP}/tenuo/${GITHUB_RUN_ID:-local}"
-        mkdir -p "$run_dir"
-        python -m pip install --disable-pip-version-check --quiet --require-hashes \
-          -r "${{ github.action_path }}/requirements.lock"
-        export PYTHONPATH="${{ github.action_path }}${PYTHONPATH:+:$PYTHONPATH}"
-        python -m tenuo_gha action \
-          --gateway-url "${{ inputs.gateway_url }}" \
-          --exchange-url "${{ inputs.exchange_url || inputs.gateway_url }}" \
-          --audience "${{ inputs.audience }}" \
-          --ttl "${{ inputs.ttl }}" \
-          --mcp-config "${run_dir}/mcp-config.json" \
-          --socket "${run_dir}/holder.sock" \
-          --pid "${run_dir}/holder.pid"
+  using: node20
+  main: index.mjs
+  post: cleanup.mjs

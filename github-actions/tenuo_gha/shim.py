@@ -25,6 +25,8 @@ def call_gateway(
     client: Optional[httpx.Client] = None,
 ) -> Dict[str, Any]:
     """POST the holder envelope to the gateway. Logs no arguments."""
+    if isinstance(envelope.get("arguments"), dict):
+        arguments = dict(envelope["arguments"])
     own = client is None
     http = client or httpx.Client(timeout=20.0)
     try:

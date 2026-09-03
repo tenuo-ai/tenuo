@@ -9,10 +9,12 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional
 
-from tenuo import CEL, PublicKey, SigningKey, Warrant
+from tenuo import CEL, Pattern, PublicKey, SigningKey, Warrant
 from tenuo.mcp import exact_argument_constraints
+from tenuo_core import encode_warrant_stack
 
 from .catalog import COMMENT_BODY_CEL, PACKS, TRIPWIRE_NAMES
+from .commitment import CommitmentError, exchange_request_hash, verify_holder_proof
 from .config import ConfigError, GatewayConfig
 from .oidc import OidcError, assert_conditions, load_jwks, verify_oidc
 
@@ -33,6 +35,33 @@ class ExchangeResult:
     warrant_id: str
     expires_at: str
     root_public_keys: list[str]
+    task_context: Optional[Dict[str, Any]] = None
+
+
+def normalize_task_context(raw: Any) -> Optional[Dict[str, Any]]:
+    """Issue numbers are runner-asserted. GitHub OIDC does not attest them."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ExchangeError("outside_ceiling", "task_context must be a mapping", status=400)
+    kind = raw.get("type")
+    number = raw.get("number")
+    if kind not in {"issue", "pull_request"}:
+        raise ExchangeError("outside_ceiling", "task_context.type must be issue or pull_request", status=400)
+    try:
+        parsed = int(number)
+    except (TypeError, ValueError) as exc:
+        raise ExchangeError("outside_ceiling", "task_context.number must be a positive integer", status=400) from exc
+    if parsed <= 0:
+        raise ExchangeError("outside_ceiling", "task_context.number must be a positive integer", status=400)
+    return {"type": str(kind), "number": parsed, "assurance": "runner_asserted"}
+
+
+def encode_exchange_stack(warrants: list) -> str:
+    encoded = encode_warrant_stack(warrants)
+    if not encoded:
+        raise ExchangeError("outside_ceiling", "could not encode warrant stack", status=500)
+    return encoded
 
 
 class ReplayCache:
@@ -121,13 +150,39 @@ class Exchange:
         self._replay = replay or ReplayCache()
         self._allowed = _allowed_tools(config.packs)
 
-    def mint(
+    def bind_capabilities(
+        self,
+        capabilities: Mapping[str, Any],
+        *,
+        repository: str,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Map a request onto exact constraints. Refuse rather than trim."""
+        bound: Dict[str, Dict[str, Any]] = {}
+        for tool, raw_args in capabilities.items():
+            if tool in TRIPWIRE_NAMES or tool not in self._allowed:
+                raise ExchangeError("outside_ceiling", f"{tool} is not in the configured packs")
+            args = dict(raw_args or {})
+            requested_repo = args.get("repository")
+            if requested_repo is not None and str(requested_repo) != repository:
+                raise ExchangeError("outside_ceiling", "repository does not match the OIDC subject")
+            args["repository"] = repository
+            constraints = exact_argument_constraints(args)
+            if tool == "github.add_comment":
+                if "body" not in constraints:
+                    constraints["body"] = CEL(COMMENT_BODY_CEL)
+                if "body_sha256" not in constraints:
+                    constraints["body_sha256"] = Pattern("*")
+            bound[str(tool)] = constraints
+        return bound
+
+    def validate(
         self,
         token: str,
         body: Mapping[str, Any],
         *,
         now: Optional[int] = None,
-    ) -> ExchangeResult:
+    ) -> tuple[Dict[str, Any], Any, int, Dict[str, Any], Optional[Dict[str, Any]]]:
+        """OIDC, holder proof, replay, and ceiling. Returns claims, holder, ttl, capabilities, task."""
         if now is None:
             now = int(time.time())
         try:
@@ -150,10 +205,8 @@ class Exchange:
         except OidcError as exc:
             raise ExchangeError(exc.code, exc.detail) from exc
 
-        token_id = _token_id(claims, token)
-        expires = int(claims.get("exp") or now)
-        if not self._replay.check_and_record(token_id, expires, now=now):
-            raise ExchangeError("token_reused", "OIDC token was already exchanged")
+        if body.get("tenant_id") or body.get("policy_id"):
+            raise ExchangeError("outside_ceiling", "tenant_id and policy_id are not accepted", status=400)
 
         holder_raw = body.get("holder_public_key")
         if not holder_raw or not isinstance(holder_raw, str):
@@ -178,24 +231,45 @@ class Exchange:
         capabilities = body.get("capabilities")
         if not isinstance(capabilities, dict) or not capabilities:
             raise ExchangeError("outside_ceiling", "capabilities are required", status=400)
+        task_context = normalize_task_context(body.get("task_context"))
 
+        proof = body.get("holder_proof")
+        if not isinstance(proof, str) or not proof:
+            raise ExchangeError("holder_proof_invalid", "holder_proof is required", status=403)
+        try:
+            request_hash = exchange_request_hash(
+                issuer=str(claims.get("iss") or ""),
+                jti=str(claims.get("jti") or ""),
+                holder_public_key=holder_raw,
+                ttl_seconds=ttl_i,
+                capabilities=capabilities,
+                task_context=task_context,
+            )
+            verify_holder_proof(holder_raw, proof, request_hash)
+        except CommitmentError as exc:
+            raise ExchangeError("holder_proof_invalid", "holder_proof is invalid", status=403) from exc
+
+        token_id = _token_id(claims, token)
+        expires = int(claims.get("exp") or now)
+        if not self._replay.check_and_record(token_id, expires, now=now):
+            raise ExchangeError("token_reused", "OIDC token was already exchanged")
+        return claims, holder, ttl_i, capabilities, task_context
+
+    def mint(
+        self,
+        token: str,
+        body: Mapping[str, Any],
+        *,
+        now: Optional[int] = None,
+    ) -> ExchangeResult:
+        claims, holder, ttl_i, capabilities, task_context = self.validate(token, body, now=now)
         repository = str(claims["repository"])
+        bound = self.bind_capabilities(capabilities, repository=repository)
         builder = Warrant.mint_builder().holder(holder).ttl(ttl_i)
         run_id = claims.get("run_id")
         if run_id is not None:
             builder = builder.session_id(str(run_id))
-
-        for tool, raw_args in capabilities.items():
-            if tool in TRIPWIRE_NAMES or tool not in self._allowed:
-                raise ExchangeError("outside_ceiling", f"{tool} is not in the configured packs")
-            args = dict(raw_args or {})
-            requested_repo = args.get("repository")
-            if requested_repo is not None and str(requested_repo) != repository:
-                raise ExchangeError("outside_ceiling", "repository does not match the OIDC subject")
-            args["repository"] = repository
-            constraints = exact_argument_constraints(args)
-            if tool == "github.add_comment" and "body" not in constraints:
-                constraints["body"] = CEL(COMMENT_BODY_CEL)
+        for tool, constraints in bound.items():
             builder = builder.capability(tool, constraints)
 
         warrant = builder.mint(self._issuer)
@@ -203,8 +277,9 @@ class Exchange:
         if callable(expires_at):
             expires_at = expires_at()
         return ExchangeResult(
-            warrant=warrant.to_base64(),
+            warrant=encode_exchange_stack([warrant]),
             warrant_id=str(warrant.id),
             expires_at=str(expires_at),
             root_public_keys=list(self.config.root_public_keys),
+            task_context=task_context,
         )

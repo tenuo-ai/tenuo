@@ -12,11 +12,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from tenuo import Exact
+from tenuo import CEL, Exact
 from tenuo.mcp import exact_argument_constraints
-from tenuo_core import SigningKey, Warrant, encode_warrant_stack
+from tenuo_core import SigningKey, Warrant, decode_warrant_stack_base64, encode_warrant_stack
 
-from .catalog import PACKS, TRIPWIRE_NAMES
+from .catalog import COMMENT_BODY_CEL, PACKS, TRIPWIRE_NAMES
+from .commitment import encode_proof, exchange_proof_preimage, exchange_request_hash
 
 
 class HolderError(ValueError):
@@ -47,9 +48,32 @@ def _warrant_tools(warrant: Warrant) -> List[str]:
 
 def _encode_stack(warrants: List[Warrant]) -> str:
     try:
-        return encode_warrant_stack(warrants)
+        encoded = encode_warrant_stack(warrants)
     except Exception:
-        return warrants[-1].to_base64()
+        encoded = None
+    if not encoded:
+        raise HolderError("could not encode warrant stack")
+    return encoded
+
+
+def decode_exchange_stack(raw: str) -> List[Warrant]:
+    """Decode an exchange response as a warrant stack.
+
+    Cloud returns policy issuer → run warrant. A single-warrant encoding is
+    still treated as a one-element stack, not as the only possible shape.
+    """
+    if not raw or not isinstance(raw, str):
+        raise HolderError("warrant stack is required")
+    try:
+        stack = list(decode_warrant_stack_base64(raw))
+        if stack:
+            return stack
+    except Exception:
+        pass
+    try:
+        return [Warrant.from_base64(raw)]
+    except Exception as exc:
+        raise HolderError("warrant stack is invalid") from exc
 
 
 def _warrant_expiry(warrant: Warrant) -> Optional[int]:
@@ -68,11 +92,22 @@ def _warrant_expiry(warrant: Warrant) -> Optional[int]:
         return None
 
 
+def bind_call_arguments(tool: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Add body_sha256 for comment calls so the leaf digest is present at verify."""
+    bound = dict(arguments)
+    body = bound.get("body")
+    if tool == "github.add_comment" and isinstance(body, str):
+        bound["body_sha256"] = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return bound
+
+
 def _derive_leaf(warrant: Warrant, key: SigningKey, tool: str, arguments: Dict[str, Any]) -> Tuple[Warrant, SigningKey]:
     leaf_key = SigningKey.generate()
     constraints = exact_argument_constraints(arguments)
     body = arguments.get("body")
     if isinstance(body, str):
+        # Size CEL stays on the chain; Exact(body) cannot replace it.
+        constraints["body"] = CEL(COMMENT_BODY_CEL)
         constraints["body_sha256"] = Exact(hashlib.sha256(body.encode("utf-8")).hexdigest())
     leaf = warrant.grant(
         to=leaf_key.public_key,
@@ -90,6 +125,7 @@ class Holder:
     def __init__(self, *, allowlist: Optional[List[str]] = None, key: Optional[SigningKey] = None) -> None:
         assert_no_holder_secret()
         self._key = key or SigningKey.generate()
+        self._stack: List[Warrant] = []
         self._warrant: Optional[Warrant] = None
         self._allowlist = allowlist
         self._expires_at: Optional[int] = None
@@ -98,8 +134,11 @@ class Holder:
         return self._key.public_key.to_bytes().hex()
 
     def set_warrant(self, warrant_b64: str) -> None:
-        self._warrant = Warrant.from_base64(warrant_b64)
-        self._expires_at = _warrant_expiry(self._warrant)
+        stack = decode_exchange_stack(warrant_b64)
+        self._stack = stack
+        self._warrant = stack[-1]
+        expiries = [value for value in (_warrant_expiry(item) for item in stack) if value is not None]
+        self._expires_at = min(expiries) if expiries else None
 
     def expired(self, *, now: Optional[int] = None) -> bool:
         if self._expires_at is None:
@@ -116,25 +155,52 @@ class Holder:
             chosen = [name for name in chosen if name in self._allowlist]
         return chosen
 
+    def sign_exchange(
+        self,
+        *,
+        issuer: str,
+        jti: str,
+        ttl_seconds: int,
+        capabilities: Dict[str, Any],
+        task_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Sign Cloud's exchange commitment. The private key never leaves."""
+        request_hash = exchange_request_hash(
+            issuer=issuer,
+            jti=jti,
+            holder_public_key=self.public_key_hex(),
+            ttl_seconds=ttl_seconds,
+            capabilities=capabilities,
+            task_context=task_context,
+        )
+        signature = self._key.sign_raw(exchange_proof_preimage(request_hash))
+        return encode_proof(bytes(signature))
+
     def envelope(self, tool: str, arguments: Dict[str, Any]) -> Dict[str, str]:
         if self._warrant is None:
             raise HolderError("no warrant has been set")
         ts = int(time.time())
+        raw_arguments = dict(arguments)
+        bound_arguments = bind_call_arguments(tool, raw_arguments)
+        parents = list(self._stack)
         try:
-            leaf, leaf_key = _derive_leaf(self._warrant, self._key, tool, arguments)
-            sig = leaf.sign(leaf_key, tool, arguments, ts)
-            stack = _encode_stack([self._warrant, leaf])
+            leaf, leaf_key = _derive_leaf(self._warrant, self._key, tool, bound_arguments)
+            sig = leaf.sign(leaf_key, tool, bound_arguments, ts)
+            stack = _encode_stack(parents + [leaf])
+            signed_arguments = bound_arguments
         except Exception:
-            # Widening and unknown tools still present the parent so the
+            # Widening and unknown tools still present the parents so the
             # gateway can emit a signed denial. Do not return the secret.
             try:
-                sig = self._warrant.sign(self._key, tool, arguments, ts)
-                stack = _encode_stack([self._warrant])
+                sig = self._warrant.sign(self._key, tool, raw_arguments, ts)
+                stack = _encode_stack(parents)
+                signed_arguments = raw_arguments
             except Exception as exc:
                 raise HolderError("could not sign") from exc
         return {
             "warrant": stack,
             "signature": base64.b64encode(bytes(sig)).decode(),
+            "arguments": signed_arguments,
         }
 
 
@@ -146,8 +212,38 @@ def _handle(holder: Holder, message: Dict[str, Any]) -> Dict[str, Any]:
         raw = message.get("warrant")
         if not isinstance(raw, str) or not raw:
             return {"ok": False, "error": "warrant is required"}
-        holder.set_warrant(raw)
+        try:
+            holder.set_warrant(raw)
+        except HolderError as exc:
+            return {"ok": False, "error": str(exc)}
         return {"ok": True}
+    if op == "sign_exchange":
+        issuer = message.get("issuer")
+        jti = message.get("jti")
+        ttl = message.get("ttl_seconds")
+        capabilities = message.get("capabilities")
+        task_context = message.get("task_context")
+        if not isinstance(issuer, str) or not issuer or not isinstance(jti, str) or not jti:
+            return {"ok": False, "error": "issuer and jti are required"}
+        try:
+            ttl_i = int(ttl)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "ttl_seconds is required"}
+        if not isinstance(capabilities, dict) or not capabilities:
+            return {"ok": False, "error": "capabilities are required"}
+        if task_context is not None and not isinstance(task_context, dict):
+            return {"ok": False, "error": "task_context must be a mapping"}
+        try:
+            proof = holder.sign_exchange(
+                issuer=issuer,
+                jti=jti,
+                ttl_seconds=ttl_i,
+                capabilities=capabilities,
+                task_context=task_context,
+            )
+        except Exception:
+            return {"ok": False, "error": "could not sign exchange commitment"}
+        return {"ok": True, "holder_proof": proof}
     if op == "tools":
         return {"ok": True, "tools": holder.tools()}
     if op == "envelope":
@@ -284,12 +380,36 @@ class HolderClient:
     def set_warrant(self, warrant_b64: str) -> None:
         self._rpc({"op": "set_warrant", "warrant": warrant_b64})
 
+    def sign_exchange(
+        self,
+        *,
+        issuer: str,
+        jti: str,
+        ttl_seconds: int,
+        capabilities: Dict[str, Any],
+        task_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        reply = self._rpc(
+            {
+                "op": "sign_exchange",
+                "issuer": issuer,
+                "jti": jti,
+                "ttl_seconds": ttl_seconds,
+                "capabilities": capabilities,
+                "task_context": task_context,
+            }
+        )
+        return str(reply["holder_proof"])
+
     def tools(self) -> List[str]:
         return list(self._rpc({"op": "tools"})["tools"])
 
     def envelope(self, tool: str, arguments: Dict[str, Any]) -> Dict[str, str]:
         reply = self._rpc({"op": "envelope", "tool": tool, "arguments": arguments})
-        return {"warrant": str(reply["warrant"]), "signature": str(reply["signature"])}
+        payload = {"warrant": str(reply["warrant"]), "signature": str(reply["signature"])}
+        if isinstance(reply.get("arguments"), dict):
+            payload["arguments"] = dict(reply["arguments"])
+        return payload
 
     def shutdown(self) -> None:
         try:

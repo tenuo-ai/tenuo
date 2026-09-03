@@ -52,14 +52,15 @@ def build_http(
             result = exchange.mint(_bearer(request), body)
         except ExchangeError as exc:
             return JSONResponse({"error": exc.code, "detail": exc.detail}, status_code=exc.status)
-        return JSONResponse(
-            {
-                "warrant": result.warrant,
-                "warrant_id": result.warrant_id,
-                "expires_at": result.expires_at,
-                "root_public_keys": result.root_public_keys,
-            }
-        )
+        payload = {
+            "warrant": result.warrant,
+            "warrant_id": result.warrant_id,
+            "expires_at": result.expires_at,
+            "root_public_keys": result.root_public_keys,
+        }
+        if result.task_context is not None:
+            payload["task_context"] = result.task_context
+        return JSONResponse(payload)
 
     async def call_handler(request: Request) -> Response:
         if gateway is None:

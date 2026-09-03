@@ -12,10 +12,11 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import httpx
 
+from .commitment import normalize_holder_public_key
 from .config import assert_no_runtime_secrets
 from .holder import HolderClient, HolderError, HolderServer, assert_no_holder_secret
-from .oidc import OidcError, fetch_actions_oidc
-from .task import TaskError, infer_capabilities
+from .oidc import OidcError, fetch_actions_oidc, peek_oidc_claims
+from .task import TaskError, infer_capabilities, infer_task_context
 
 
 class ActionError(RuntimeError):
@@ -135,26 +136,97 @@ def stop_holder(socket_path: "str | Path", pid_path: Optional["str | Path"] = No
             path.unlink(missing_ok=True)
 
 
+def cleanup_job(
+    *,
+    socket_path: Optional["str | Path"] = None,
+    pid_path: Optional["str | Path"] = None,
+    mcp_config: Optional["str | Path"] = None,
+    work_dir: Optional["str | Path"] = None,
+) -> None:
+    """Stop the holder and remove temporary socket/config files."""
+    if socket_path:
+        stop_holder(socket_path, pid_path=pid_path)
+    elif pid_path:
+        stop_holder("", pid_path=pid_path)
+    for item in (socket_path, pid_path, mcp_config):
+        if not item:
+            continue
+        path = Path(item)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    if work_dir:
+        dest = Path(work_dir)
+        try:
+            if dest.exists() and dest.is_dir() and not any(dest.iterdir()):
+                dest.rmdir()
+        except OSError:
+            pass
+
+
+def verify_exchange_roots(response_keys: Any, trusted_roots: List[str]) -> None:
+    """Response roots must already be in configured trust. Never adopt them."""
+    if not trusted_roots:
+        return
+    advertised = response_keys if isinstance(response_keys, list) else []
+    trusted = set()
+    for raw in trusted_roots:
+        try:
+            trusted.add(normalize_holder_public_key(str(raw)))
+        except Exception as exc:
+            raise ActionError("trusted root is invalid") from exc
+    if not advertised:
+        raise ActionError("exchange did not return root_public_keys")
+    for raw in advertised:
+        try:
+            key = normalize_holder_public_key(str(raw))
+        except Exception as exc:
+            raise ActionError("exchange root_public_keys are invalid") from exc
+        if key not in trusted:
+            raise ActionError("exchange root_public_keys are not in configured trust")
+
+
+def _parse_trusted_roots(raw: str) -> List[str]:
+    text = (raw or "").strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            loaded = json.loads(text)
+        except json.JSONDecodeError:
+            loaded = None
+        if isinstance(loaded, list):
+            return [str(item).strip() for item in loaded if str(item).strip()]
+    return [item.strip() for item in text.replace(",", " ").split() if item.strip()]
+
+
 def exchange_warrant(
     exchange_url: str,
     oidc_token: str,
     *,
     holder_public_key: str,
+    holder_proof: str,
     ttl_seconds: int,
     capabilities: Mapping[str, Any],
+    task_context: Optional[Mapping[str, Any]] = None,
     client: Optional[httpx.Client] = None,
 ) -> Dict[str, Any]:
     own = client is None
     http = client or httpx.Client(timeout=20.0)
+    body: Dict[str, Any] = {
+        "holder_public_key": holder_public_key,
+        "holder_proof": holder_proof,
+        "ttl_seconds": ttl_seconds,
+        "capabilities": dict(capabilities),
+    }
+    if task_context:
+        body["task_context"] = dict(task_context)
     try:
         response = http.post(
             exchange_url.rstrip("/") + "/v1/exchange",
             headers={"Authorization": f"Bearer {oidc_token}"},
-            json={
-                "holder_public_key": holder_public_key,
-                "ttl_seconds": ttl_seconds,
-                "capabilities": dict(capabilities),
-            },
+            json=body,
         )
     finally:
         if own:
@@ -165,6 +237,9 @@ def exchange_warrant(
         raise ActionError(f"exchange returned non-JSON ({response.status_code})") from exc
     if response.status_code >= 400 or not payload.get("warrant"):
         raise ActionError(payload.get("detail") or payload.get("error") or "exchange refused")
+    if payload.get("tenant_id") or payload.get("policy_id"):
+        # Cloud may echo resolved ids; the action never sent them and does not store them.
+        payload = {key: value for key, value in payload.items() if key not in {"tenant_id", "policy_id"}}
     return payload
 
 
@@ -185,6 +260,7 @@ def run_job(
     http: Optional[httpx.Client] = None,
     holder_server: Optional[HolderServer] = None,
     fetch_oidc: Callable[[str, Mapping[str, str]], str] = fetch_actions_oidc,
+    trusted_roots: Optional[List[str]] = None,
 ) -> Dict[str, str]:
     """Start the holder, exchange OIDC, deliver the warrant, write mcp_config."""
     env = dict(environ if environ is not None else os.environ)
@@ -194,24 +270,40 @@ def run_job(
     pubkey = public_key_hex(socket_path)
     token = oidc_token or fetch_oidc(audience, env)
     try:
+        claims = peek_oidc_claims(token)
         capabilities = infer_capabilities(
             event_name=event_name,
             event=event,
             repository=repository,
         )
-    except TaskError as exc:
+        task_context = infer_task_context(event_name=event_name, event=event)
+    except (TaskError, OidcError) as exc:
         raise ActionError(str(exc)) from exc
+    issuer = str(claims.get("iss") or "")
+    jti = str(claims.get("jti") or "")
+    if not issuer or not jti:
+        raise ActionError("OIDC token is missing iss or jti")
     try:
+        proof = HolderClient(socket_path).sign_exchange(
+            issuer=issuer,
+            jti=jti,
+            ttl_seconds=ttl_seconds,
+            capabilities=capabilities,
+            task_context=task_context,
+        )
         minted = exchange_warrant(
             exchange_url,
             token,
             holder_public_key=pubkey,
+            holder_proof=proof,
             ttl_seconds=ttl_seconds,
             capabilities=capabilities,
+            task_context=task_context,
             client=http,
         )
-    except OidcError as exc:
+    except (OidcError, HolderError) as exc:
         raise ActionError(str(exc)) from exc
+    verify_exchange_roots(minted.get("root_public_keys"), list(trusted_roots or []))
     deliver_warrant(socket_path, str(minted["warrant"]))
     write_mcp_config(mcp_config, socket=str(socket_path), gateway_url=gateway_url)
     return {
@@ -247,8 +339,17 @@ def main() -> None:
     parser.add_argument("--socket", default="")
     parser.add_argument("--mcp-config", default="")
     parser.add_argument("--pid", default="")
+    parser.add_argument("--trusted-roots", default=os.environ.get("TENUO_TRUSTED_ROOTS", ""))
+    parser.add_argument("--stop", action="store_true", help="Stop the holder and remove temp files")
     args = parser.parse_args()
     env = dict(os.environ)
+    if args.stop:
+        cleanup_job(
+            socket_path=args.socket or None,
+            pid_path=args.pid or None,
+            mcp_config=args.mcp_config or None,
+        )
+        return
     work = holder_work_dir(
         Path(tempfile.mkdtemp(prefix="tenuo-")),
         run_id=env.get("GITHUB_RUN_ID", ""),
@@ -265,6 +366,7 @@ def main() -> None:
         repository=env.get("GITHUB_REPOSITORY", ""),
         event=_load_event(env),
         environ=env,
+        trusted_roots=_parse_trusted_roots(args.trusted_roots),
     )
     print(json.dumps({key: payload[key] for key in ("mcp_config", "warrant_id", "expires_at", "gateway_url", "public_key")}))
     github_output = env.get("GITHUB_OUTPUT")

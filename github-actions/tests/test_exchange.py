@@ -14,12 +14,14 @@ pytest.importorskip("tenuo_core")
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
-from tenuo_core import SigningKey, Warrant
+from tenuo_core import SigningKey, decode_warrant_stack_base64
 
 from tenuo_gha.app import Gateway
 from tenuo_gha.config import ConfigError, GatewayConfig
 from tenuo_gha.exchange import Exchange, ExchangeError
 from tenuo_gha.http import build_http
+
+from exchange_helpers import exchange_body
 
 
 AUDIENCE = "tenuo:org/acme"
@@ -161,18 +163,22 @@ def test_fixture_jwt_mints_a_warrant(tmp_path):
     holder = SigningKey.generate()
     jwks, rsa_key = _rsa_jwks()
     exchange = Exchange(_exchange_config(tmp_path, issuer), issuer_key=issuer, jwks=jwks)
+    token = _token(rsa_key)
     result = exchange.mint(
-        _token(rsa_key),
-        {
-            "holder_public_key": holder.public_key.to_bytes().hex(),
-            "ttl_seconds": 900,
-            "capabilities": {
+        token,
+        exchange_body(
+            holder,
+            token,
+            ttl_seconds=900,
+            capabilities={
                 "github.get_issue": {"issue": 4127},
                 "github.add_comment": {"issue": 4127},
             },
-        },
+        ),
     )
-    warrant = Warrant.from_base64(result.warrant)
+    stack = decode_warrant_stack_base64(result.warrant)
+    assert len(stack) >= 1
+    warrant = stack[-1]
     assert result.warrant_id
     assert result.expires_at
     holder_pk = warrant.authorized_holder
@@ -207,17 +213,31 @@ def test_fixture_jwt_mints_a_warrant(tmp_path):
     assert verified.allowed
 
 
+def test_missing_holder_proof_is_forbidden(tmp_path):
+    issuer = SigningKey.generate()
+    holder = SigningKey.generate()
+    jwks, rsa_key = _rsa_jwks()
+    exchange = Exchange(_exchange_config(tmp_path, issuer), issuer_key=issuer, jwks=jwks)
+    token = _token(rsa_key, jti="no-proof")
+    body = exchange_body(holder, token, ttl_seconds=60)
+    del body["holder_proof"]
+    with pytest.raises(ExchangeError) as caught:
+        exchange.mint(token, body)
+    assert caught.value.code == "holder_proof_invalid"
+
+
 def test_reused_token_is_forbidden(tmp_path):
     issuer = SigningKey.generate()
     holder = SigningKey.generate()
     jwks, rsa_key = _rsa_jwks()
     exchange = Exchange(_exchange_config(tmp_path, issuer), issuer_key=issuer, jwks=jwks)
-    body = {
-        "holder_public_key": holder.public_key.to_bytes().hex(),
-        "ttl_seconds": 60,
-        "capabilities": {"github.get_issue": {"issue": 1}},
-    }
     token = _token(rsa_key)
+    body = exchange_body(
+        holder,
+        token,
+        ttl_seconds=60,
+        capabilities={"github.get_issue": {"issue": 1}},
+    )
     exchange.mint(token, body)
     with pytest.raises(ExchangeError, match="already exchanged") as caught:
         exchange.mint(token, body)
@@ -230,13 +250,15 @@ def test_ttl_above_max_is_refused(tmp_path):
     jwks, rsa_key = _rsa_jwks()
     exchange = Exchange(_exchange_config(tmp_path, issuer), issuer_key=issuer, jwks=jwks)
     with pytest.raises(ExchangeError) as caught:
+        token = _token(rsa_key)
         exchange.mint(
-            _token(rsa_key),
-            {
-                "holder_public_key": holder.public_key.to_bytes().hex(),
-                "ttl_seconds": 3600,
-                "capabilities": {"github.get_issue": {"issue": 1}},
-            },
+            token,
+            exchange_body(
+                holder,
+                token,
+                ttl_seconds=3600,
+                capabilities={"github.get_issue": {"issue": 1}},
+            ),
         )
     assert caught.value.code == "outside_ceiling"
 
@@ -247,13 +269,15 @@ def test_tripwire_capability_is_refused(tmp_path):
     jwks, rsa_key = _rsa_jwks()
     exchange = Exchange(_exchange_config(tmp_path, issuer), issuer_key=issuer, jwks=jwks)
     with pytest.raises(ExchangeError) as caught:
+        token = _token(rsa_key)
         exchange.mint(
-            _token(rsa_key),
-            {
-                "holder_public_key": holder.public_key.to_bytes().hex(),
-                "ttl_seconds": 60,
-                "capabilities": {"github.workflow_dispatch": {"workflow": "x.yml"}},
-            },
+            token,
+            exchange_body(
+                holder,
+                token,
+                ttl_seconds=60,
+                capabilities={"github.workflow_dispatch": {"workflow": "x.yml"}},
+            ),
         )
     assert caught.value.code == "outside_ceiling"
 
@@ -264,13 +288,15 @@ def test_foreign_repository_is_refused(tmp_path):
     jwks, rsa_key = _rsa_jwks()
     exchange = Exchange(_exchange_config(tmp_path, issuer), issuer_key=issuer, jwks=jwks)
     with pytest.raises(ExchangeError) as caught:
+        token = _token(rsa_key, repository="acme/payments-internal", repository_id="999")
         exchange.mint(
-            _token(rsa_key, repository="acme/payments-internal", repository_id="999"),
-            {
-                "holder_public_key": holder.public_key.to_bytes().hex(),
-                "ttl_seconds": 60,
-                "capabilities": {"github.get_issue": {"issue": 1}},
-            },
+            token,
+            exchange_body(
+                holder,
+                token,
+                ttl_seconds=60,
+                capabilities={"github.get_issue": {"issue": 1}},
+            ),
         )
     assert caught.value.code in {"outside_ceiling", "untrusted_workflow"}
 
@@ -282,17 +308,15 @@ def test_http_exchange_mints(tmp_path):
     config = _exchange_config(tmp_path, issuer)
     exchange = Exchange(config, issuer_key=issuer, jwks=jwks)
     client = TestClient(build_http(config, exchange=exchange))
+    token = _token(rsa_key, jti="http-1")
     response = client.post(
         "/v1/exchange",
-        headers={"Authorization": f"Bearer {_token(rsa_key, jti='http-1')}"},
-        json={
-            "holder_public_key": holder.public_key.to_bytes().hex(),
-            "ttl_seconds": 120,
-            "capabilities": {"github.get_issue": {"issue": 4127}},
-        },
+        headers={"Authorization": f"Bearer {token}"},
+        json=exchange_body(holder, token, ttl_seconds=120),
     )
     assert response.status_code == 200
     payload = response.json()
-    Warrant.from_base64(payload["warrant"])
+    stack = decode_warrant_stack_base64(payload["warrant"])
+    assert stack
     health = client.get("/health")
     assert health.status_code == 200

@@ -27,7 +27,7 @@ from tenuo_gha.github import GitHubApp
 from tenuo_gha.holder import HolderClient, HolderServer
 from tenuo_gha.http import build_http
 from tenuo_gha.oidc import fetch_actions_oidc
-from tenuo_gha.task import TaskError, infer_capabilities
+from tenuo_gha.task import TaskError, infer_capabilities, infer_task_context
 
 
 AUDIENCE = "tenuo:org/acme"
@@ -174,6 +174,11 @@ def test_infer_capabilities_from_an_issues_event():
     assert "github.add_comment" in caps
     with pytest.raises(TaskError, match="pull_request"):
         infer_capabilities(event_name="pull_request", event={})
+    assert infer_task_context(event_name="issues", event={"issue": {"number": 4127}}) == {
+        "type": "issue",
+        "number": 4127,
+        "assurance": "runner_asserted",
+    }
 
 
 def test_oidc_fetch_uses_the_actions_url(monkeypatch):
