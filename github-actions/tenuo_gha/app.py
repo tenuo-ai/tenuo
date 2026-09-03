@@ -12,6 +12,8 @@ from tenuo.receipts import FileReceiptSink, ReceiptSigner
 
 from .catalog import TRIPWIRE_NAMES, ToolSpec, tools_for_packs
 from .config import ConfigError, GatewayConfig
+from .exchange import Exchange
+from .http import build_http
 
 
 def _public_key(value: str) -> PublicKey:
@@ -135,15 +137,23 @@ def build_mcp(gateway: Gateway):
 def main() -> None:
     import argparse
 
+    import uvicorn
+
     parser = argparse.ArgumentParser(description="Tenuo for GitHub Actions")
     parser.add_argument("--config", default=os.environ.get("TENUO_GATEWAY_CONFIG", "/etc/tenuo/gateway.yaml"))
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
     config = GatewayConfig.from_yaml(args.config)
-    gateway = Gateway(config)
-    mcp = build_mcp(gateway)
-    mcp.run(transport="streamable-http", host=args.host, port=args.port)
+
+    exchange = None
+    mcp_app = None
+    if config.role in {"exchange", "both"}:
+        exchange = Exchange(config)
+    if config.role in {"gateway", "both"}:
+        mcp_app = build_mcp(Gateway(config)).http_app()
+
+    uvicorn.run(build_http(config, exchange=exchange, mcp_app=mcp_app), host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
