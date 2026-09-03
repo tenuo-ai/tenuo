@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import base64
 import os
+from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
 from tenuo import Authorizer, PublicKey, SigningKey
 from tenuo.mcp import MCPVerificationResult, MCPVerifier, TENUO_TOOL_NOT_AUTHORIZED
+
+_verified: ContextVar[Optional[MCPVerificationResult]] = ContextVar("tenuo_gha_verified", default=None)
 from tenuo.receipts import FileReceiptSink, ReceiptSigner
 
 from .catalog import TRIPWIRE_NAMES, ToolSpec, spec_by_name, tools_for_packs
@@ -94,10 +97,53 @@ class Gateway:
             )
             self.signer.emit_for_enforcement(denied)
             return denied
-        return self.verifier.verify(tool, arguments, meta=meta)
+        result = self.verifier.verify(tool, arguments, meta=meta)
+        if not result.allowed:
+            return result
+        return self._apply_repository_ceiling(result)
+
+    def _apply_repository_ceiling(self, result: MCPVerificationResult) -> MCPVerificationResult:
+        repository = (result.clean_arguments or {}).get("repository")
+        if repository is None:
+            return result
+        allowed = {str(item) for item in self.config.repositories}
+        if str(repository) in allowed:
+            return result
+        denied = MCPVerificationResult(
+            allowed=False,
+            tool=result.tool,
+            clean_arguments=dict(result.clean_arguments or {}),
+            constraints=dict(result.constraints or {}),
+            warrant_id=result.warrant_id,
+            denial_reason="gateway ceiling: repository is not enabled",
+            jsonrpc_error_code=-32001,
+            error_type="tool_not_allowed",
+            error_code=TENUO_TOOL_NOT_AUTHORIZED,
+            presented_chain=result.presented_chain,
+            verified_pop=result.verified_pop,
+            pop_auth_args=result.pop_auth_args,
+            authorizer=self.authorizer,
+        )
+        self.signer.emit_for_enforcement(denied)
+        return denied
 
     def flush_receipts(self) -> bool:
         return self.signer.flush()
+
+    def dispatch(self, result: MCPVerificationResult) -> Optional[Dict[str, Any]]:
+        """Call GitHub with the verifier's cleaned arguments after an allow."""
+        if not result.allowed:
+            return None
+        spec = spec_by_name(result.tool, self.tools)
+        if spec is None or spec.tripwire:
+            return {"executed": False, "tool": result.tool}
+        if self.github is None:
+            return {"executed": False, "tool": result.tool}
+        try:
+            payload = self.github.call(spec, result.clean_arguments)
+        except GitHubError as exc:
+            return {"executed": False, "tool": result.tool, "error": str(exc)}
+        return payload if isinstance(payload, dict) else {"result": payload}
 
     def execute(
         self,
@@ -108,16 +154,7 @@ class Gateway:
         result = self.verify(tool, arguments, meta=meta)
         if not result.allowed:
             return result, None
-        spec = spec_by_name(tool, self.tools)
-        if spec is None or spec.tripwire:
-            return result, {"executed": False, "tool": tool}
-        if self.github is None:
-            return result, {"executed": False, "tool": tool}
-        try:
-            payload = self.github.call(spec, result.clean_arguments)
-        except GitHubError as exc:
-            return result, {"executed": False, "tool": tool, "error": str(exc)}
-        return result, payload if isinstance(payload, dict) else {"result": payload}
+        return result, self.dispatch(result)
 
 
 def build_mcp(gateway: Gateway):
@@ -141,20 +178,23 @@ def build_mcp(gateway: Gateway):
             )
             if not result.allowed:
                 return _denial_tool_return(result)
-            return await call_next(context)
+            token = _verified.set(result)
+            fastmcp = context.fastmcp_context
+            if fastmcp is not None and hasattr(fastmcp, "set_state"):
+                fastmcp.set_state("tenuo_verified", result)
+            try:
+                return await call_next(context)
+            finally:
+                _verified.reset(token)
 
     mcp = FastMCP("tenuo-github-actions", middleware=[_Ceiling()])
 
     def _register(spec: ToolSpec) -> None:
         async def _handler(**kwargs: Any) -> Dict[str, Any]:
-            # Middleware already verified; call GitHub with clean arguments only.
-            if spec.tripwire or gateway.github is None:
+            result = _verified.get()
+            if result is None:
                 return {"executed": False, "tool": spec.name}
-            try:
-                payload = gateway.github.call(spec, kwargs)
-            except GitHubError as exc:
-                return {"executed": False, "tool": spec.name, "error": str(exc)}
-            return payload if isinstance(payload, dict) else {"result": payload}
+            return gateway.dispatch(result) or {"executed": False, "tool": spec.name}
 
         _handler.__name__ = spec.name.replace(".", "_")
         _handler.__doc__ = spec.description
