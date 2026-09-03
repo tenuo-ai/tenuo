@@ -25,9 +25,13 @@ def build_http(
     config: GatewayConfig,
     *,
     exchange: Optional[Exchange] = None,
+    gateway: Any = None,
     mcp_app: Any = None,
 ) -> Starlette:
-    ready = {"exchange": exchange is not None, "gateway": mcp_app is not None}
+    ready = {
+        "exchange": exchange is not None,
+        "gateway": gateway is not None or mcp_app is not None,
+    }
 
     async def health(_request: Request) -> Response:
         return JSONResponse({"status": "ok"})
@@ -57,11 +61,41 @@ def build_http(
             }
         )
 
+    async def call_handler(request: Request) -> Response:
+        if gateway is None:
+            return JSONResponse({"error": "not_found", "detail": "gateway is not served"}, status_code=404)
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return JSONResponse({"error": "outside_ceiling", "detail": "body must be JSON"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "outside_ceiling", "detail": "body must be a mapping"}, status_code=400)
+        tool = body.get("tool")
+        arguments = body.get("arguments") or {}
+        if not isinstance(tool, str) or not tool:
+            return JSONResponse({"error": "outside_ceiling", "detail": "tool is required"}, status_code=400)
+        if not isinstance(arguments, dict):
+            return JSONResponse({"error": "outside_ceiling", "detail": "arguments must be a mapping"}, status_code=400)
+        result, payload = gateway.execute(tool, arguments, meta=body.get("meta"))
+        if not result.allowed:
+            return JSONResponse(
+                {
+                    "allowed": False,
+                    "error_code": result.error_code,
+                    "error_type": result.error_type,
+                    "denial_reason": result.denial_reason,
+                    "detail": result.denial_reason,
+                },
+                status_code=403,
+            )
+        return JSONResponse({"allowed": True, "result": payload or {}})
+
     routes = [
         Route("/health", health, methods=["GET"]),
         Route("/ready", ready_probe, methods=["GET"]),
         Route("/v1/exchange", exchange_handler, methods=["POST"]),
         Route("/v1/exchange/github", exchange_handler, methods=["POST"]),
+        Route("/v1/call", call_handler, methods=["POST"]),
     ]
     if mcp_app is not None:
         routes.append(Mount("/", app=mcp_app))

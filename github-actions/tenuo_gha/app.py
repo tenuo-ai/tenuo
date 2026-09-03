@@ -178,13 +178,19 @@ def main() -> None:
     config = GatewayConfig.from_yaml(args.config)
 
     exchange = None
+    gateway = None
     mcp_app = None
     if config.role in {"exchange", "both"}:
         exchange = Exchange(config)
     if config.role in {"gateway", "both"}:
-        mcp_app = build_mcp(Gateway(config)).http_app()
+        gateway = Gateway(config)
+        mcp_app = build_mcp(gateway).http_app()
 
-    uvicorn.run(build_http(config, exchange=exchange, mcp_app=mcp_app), host=args.host, port=args.port)
+    uvicorn.run(
+        build_http(config, exchange=exchange, gateway=gateway, mcp_app=mcp_app),
+        host=args.host,
+        port=args.port,
+    )
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ _FORBIDDEN_NAMES = frozenset(
         "TENUO_GITHUB_APP_PRIVATE_KEY",
         "TENUO_ISSUER_KEY",
         "TENUO_HOLDER_SECRET",
+        "TENUO_HOLDER_FD",
     }
 )
 
