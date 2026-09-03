@@ -33,7 +33,20 @@ Server-side (verifying warrants inside an MCP server):
 """
 
 from ..exceptions import MCPToolCallError
-from .client import MCP_AVAILABLE, SecureMCPClient, discover_and_protect
+from .client import (
+    MCP_AVAILABLE,
+    SecureMCPClient,
+    derive_terminal_leaf,
+    discover_and_protect,
+    exact_argument_constraints,
+)
+from .codes import (
+    TENUO_CONSTRAINT_VIOLATION,
+    TENUO_INVALID_POP,
+    TENUO_REVOKED,
+    TENUO_TOOL_NOT_AUTHORIZED,
+    TENUO_WARRANT_EXPIRED,
+)
 from .server import (
     MCPApprovalRequired,
     MCPAuthorizationError,
@@ -54,6 +67,13 @@ __all__ = [
     "MCPAuthorizationError",
     "MCPApprovalRequired",
     "verify_mcp_call",
+    "derive_terminal_leaf",
+    "exact_argument_constraints",
+    "TENUO_TOOL_NOT_AUTHORIZED",
+    "TENUO_CONSTRAINT_VIOLATION",
+    "TENUO_INVALID_POP",
+    "TENUO_REVOKED",
+    "TENUO_WARRANT_EXPIRED",
 ]
 
 try:

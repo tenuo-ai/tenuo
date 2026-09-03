@@ -56,6 +56,7 @@ __all__ = [
     "FileReceiptSink",
     "DeferredEmitter",
     "JournalEmitter",
+    "ReceiptSigner",
     "deliver",
 ]
 
@@ -147,6 +148,82 @@ class FileReceiptSink:
     @property
     def path(self) -> Path:
         return self._path
+
+
+class ReceiptSigner:
+    """Sign receipts locally. No control-plane URL, no heartbeat.
+
+    The enforcement point still has to ``bind_authorizer`` before anything
+    is signed — a receipt that cannot name its trust context is not worth
+    emitting. After that, ``emit_for_enforcement`` is the same path
+    ``ControlPlaneClient`` uses.
+
+    KMS ``Sign`` callbacks (AWS / GCP / Azure / Vault) land with the
+    gateway custody work. Until then pass an in-process ``SigningKey``.
+
+        from tenuo.receipts import FileReceiptSink, ReceiptSigner
+
+        signer = ReceiptSigner(signing_key, FileReceiptSink(path))
+        signer.bind_authorizer(authorizer)
+        signer.emit_for_enforcement(result, chain_result=chain_result)
+    """
+
+    def __init__(
+        self,
+        signing_key: object,
+        sink: "ReceiptSink",
+        *,
+        authorizer: object = None,
+        emitter: object = None,
+        sign: object = None,
+    ) -> None:
+        if sign is not None:
+            raise NotImplementedError(
+                "custom Sign callbacks ship with the KMS signer. "
+                "Use ReceiptSigner(signing_key, sink) for an in-process key."
+            )
+        if signing_key is None:
+            raise ValueError("ReceiptSigner requires a signing_key")
+        if sink is None:
+            raise ValueError("ReceiptSigner requires a sink")
+
+        from tenuo_core import ControlPlaneClient as _Rust
+
+        from .control_plane import ControlPlaneClient
+
+        self._inner = _Rust.local(signing_key)
+        if emitter is None:
+            emitter = DeferredEmitter(sink)
+        self._emitter = emitter
+        self._emitter._attach(self._inner, None)
+        self._client = ControlPlaneClient.__new__(ControlPlaneClient)
+        self._client._inner = self._inner
+        self._client._receipt_emitter = self._emitter
+        self._client._receipt_sink = sink
+        self._client._on_receipt_error = None
+        self._client._receipt_unbound_warned = False
+        if authorizer is not None:
+            self.bind_authorizer(authorizer)
+
+    def bind_authorizer(self, authorizer: object) -> None:
+        self._client.bind_authorizer(authorizer)
+
+    @property
+    def receipt_signer_key(self) -> str:
+        return self._inner.receipt_signer_key
+
+    def emit_for_enforcement(self, result: object, chain_result: object = None, **kwargs: object) -> None:
+        self._client.emit_for_enforcement(result, chain_result=chain_result, **kwargs)
+
+    def flush(self, timeout: float = 10.0) -> bool:
+        return self._emitter.flush(timeout)
+
+    def close(self, timeout: float = 10.0) -> None:
+        self._emitter.close(timeout)
+        try:
+            self._inner.shutdown(0.0)
+        except Exception:  # noqa: BLE001
+            logger.warning("local receipt issuer did not shut down cleanly")
 
 
 def deliver(
