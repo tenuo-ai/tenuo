@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,17 @@ PACKS: Dict[str, Tuple[ToolSpec, ...]] = {"github-triage": TRIAGE}
 
 # Free-text comment body: non-empty, 64KiB ceiling. The leaf binds the exact digest.
 COMMENT_BODY_CEL = "value.size() >= 1 && value.size() <= 65536"
+
+
+def comment_body_digest(body: str) -> str:
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def comment_digest_matches(arguments: Mapping[str, Any]) -> bool:
+    """True when body_sha256 is the SHA-256 of the body the gateway would post."""
+    body = arguments.get("body")
+    claimed = arguments.get("body_sha256")
+    return isinstance(body, str) and isinstance(claimed, str) and comment_body_digest(body) == claimed
 
 TRIPWIRE_NAMES = frozenset(spec.name for spec in TRIPWIRES)
 

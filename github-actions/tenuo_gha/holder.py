@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
 import socket
@@ -13,10 +12,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from tenuo import CEL, Exact
+from tenuo.exceptions import IssuanceError, LimitError, MonotonicityError
 from tenuo.mcp import exact_argument_constraints
 from tenuo_core import SigningKey, Warrant, decode_warrant_stack_base64, encode_warrant_stack
 
-from .catalog import COMMENT_BODY_CEL, PACKS, TRIPWIRE_NAMES
+from .catalog import COMMENT_BODY_CEL, PACKS, TRIPWIRE_NAMES, comment_body_digest
 from .commitment import encode_proof, exchange_proof_preimage, exchange_request_hash
 
 
@@ -97,7 +97,7 @@ def bind_call_arguments(tool: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     bound = dict(arguments)
     body = bound.get("body")
     if tool == "github.add_comment" and isinstance(body, str):
-        bound["body_sha256"] = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        bound["body_sha256"] = comment_body_digest(body)
     return bound
 
 
@@ -108,14 +108,17 @@ def _derive_leaf(warrant: Warrant, key: SigningKey, tool: str, arguments: Dict[s
     if isinstance(body, str):
         # Size CEL stays on the chain; Exact(body) cannot replace it.
         constraints["body"] = CEL(COMMENT_BODY_CEL)
-        constraints["body_sha256"] = Exact(hashlib.sha256(body.encode("utf-8")).hexdigest())
-    leaf = warrant.grant(
-        to=leaf_key.public_key,
-        allow=tool,
-        ttl=30,
-        key=key,
-        **constraints,
+        constraints["body_sha256"] = Exact(comment_body_digest(body))
+    leaf = (
+        warrant.grant_builder()
+        .capability(tool, constraints)
+        .holder(leaf_key.public_key)
+        .ttl(30)
+        .terminal()
+        .grant(key)
     )
+    if not leaf.is_terminal():
+        raise HolderError("derived leaf is not terminal")
     return leaf, leaf_key
 
 
@@ -176,7 +179,7 @@ class Holder:
         signature = self._key.sign_raw(exchange_proof_preimage(request_hash))
         return encode_proof(bytes(signature))
 
-    def envelope(self, tool: str, arguments: Dict[str, Any]) -> Dict[str, str]:
+    def envelope(self, tool: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         if self._warrant is None:
             raise HolderError("no warrant has been set")
         ts = int(time.time())
@@ -185,22 +188,31 @@ class Holder:
         parents = list(self._stack)
         try:
             leaf, leaf_key = _derive_leaf(self._warrant, self._key, tool, bound_arguments)
-            sig = leaf.sign(leaf_key, tool, bound_arguments, ts)
-            stack = _encode_stack(parents + [leaf])
-            signed_arguments = bound_arguments
-        except Exception:
-            # Widening and unknown tools still present the parents so the
-            # gateway can emit a signed denial. Do not return the secret.
+        except (MonotonicityError, LimitError, IssuanceError):
+            # Core refused the grant. Present the parents so the gateway can
+            # verify the chain and sign a denial. This envelope cannot allow:
+            # the run warrant is not terminal.
             try:
                 sig = self._warrant.sign(self._key, tool, raw_arguments, ts)
                 stack = _encode_stack(parents)
-                signed_arguments = raw_arguments
             except Exception as exc:
                 raise HolderError("could not sign") from exc
+            return {
+                "warrant": stack,
+                "signature": base64.b64encode(bytes(sig)).decode(),
+                "arguments": raw_arguments,
+                "leaf_derived": False,
+            }
+        except HolderError:
+            raise
+        except Exception as exc:
+            raise HolderError("could not derive terminal leaf") from exc
+        sig = leaf.sign(leaf_key, tool, bound_arguments, ts)
         return {
-            "warrant": stack,
+            "warrant": _encode_stack(parents + [leaf]),
             "signature": base64.b64encode(bytes(sig)).decode(),
-            "arguments": signed_arguments,
+            "arguments": bound_arguments,
+            "leaf_derived": True,
         }
 
 
@@ -404,9 +416,13 @@ class HolderClient:
     def tools(self) -> List[str]:
         return list(self._rpc({"op": "tools"})["tools"])
 
-    def envelope(self, tool: str, arguments: Dict[str, Any]) -> Dict[str, str]:
+    def envelope(self, tool: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         reply = self._rpc({"op": "envelope", "tool": tool, "arguments": arguments})
-        payload = {"warrant": str(reply["warrant"]), "signature": str(reply["signature"])}
+        payload: Dict[str, Any] = {
+            "warrant": str(reply["warrant"]),
+            "signature": str(reply["signature"]),
+            "leaf_derived": bool(reply.get("leaf_derived")),
+        }
         if isinstance(reply.get("arguments"), dict):
             payload["arguments"] = dict(reply["arguments"])
         return payload

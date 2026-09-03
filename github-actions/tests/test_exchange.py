@@ -19,6 +19,7 @@ from tenuo_core import SigningKey, decode_warrant_stack_base64
 from tenuo_gha.app import Gateway
 from tenuo_gha.config import ConfigError, GatewayConfig
 from tenuo_gha.exchange import Exchange, ExchangeError
+from tenuo_gha.holder import Holder
 from tenuo_gha.http import build_http
 
 from exchange_helpers import exchange_body
@@ -184,10 +185,11 @@ def test_fixture_jwt_mints_a_warrant(tmp_path):
     holder_pk = warrant.authorized_holder
     holder_pk = holder_pk() if callable(holder_pk) else holder_pk
     assert holder_pk.to_bytes() == holder.public_key.to_bytes()
-    import base64 as b64
 
+    process = Holder(key=holder)
+    process.set_warrant(result.warrant)
     args = {"repository": "acme/widgets", "issue": 4127}
-    sig = warrant.sign(holder, "github.get_issue", args, int(time.time()))
+    envelope = process.envelope("github.get_issue", args)
     gateway = Gateway(
         GatewayConfig.from_mapping(
             {
@@ -207,10 +209,12 @@ def test_fixture_jwt_mints_a_warrant(tmp_path):
     )
     verified = gateway.verify(
         "github.get_issue",
-        args,
-        meta={"tenuo": {"warrant": result.warrant, "signature": b64.b64encode(bytes(sig)).decode()}},
+        envelope["arguments"],
+        meta={"tenuo": envelope},
     )
     assert verified.allowed
+    assert envelope["leaf_derived"] is True
+    assert decode_warrant_stack_base64(envelope["warrant"])[-1].is_terminal()
 
 
 def test_missing_holder_proof_is_forbidden(tmp_path):

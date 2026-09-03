@@ -12,7 +12,7 @@ from tenuo.mcp import (
 )
 
 from .app import Gateway
-from .holder import HolderClient
+from .holder import Holder, HolderClient
 from .shim import call_gateway
 
 
@@ -33,7 +33,9 @@ def _call(
     client: Any = None,
 ) -> Dict[str, Any]:
     envelope = holder.envelope(tool, arguments)
-    return call_gateway(gateway_url, tool, arguments, envelope, client=client)
+    outcome = call_gateway(gateway_url, tool, arguments, envelope, client=client)
+    outcome["leaf_derived"] = bool(envelope.get("leaf_derived"))
+    return outcome
 
 
 def run_agent_table(
@@ -55,7 +57,9 @@ def run_agent_table(
 
     def attempt(name: str, tool: str, arguments: Dict[str, Any], expected: str) -> None:
         outcome = _call(holder, gateway_url, tool, arguments, client=client)
-        if outcome.get("allowed"):
+        if expected == "allow" and not outcome.get("leaf_derived"):
+            actual = "parent-only"
+        elif outcome.get("allowed"):
             actual = "allow"
         else:
             actual = str(outcome.get("error_code") or "deny")
@@ -135,19 +139,18 @@ def run_containment(
     foreign_repository: str,
 ) -> List[CheckRow]:
     """In-process verify table used by the image check."""
-    import base64
-    import time
-
+    os.environ.setdefault("TENUO_ALLOW_INSECURE_MEMORY_KEYS", "1")
     rows: List[CheckRow] = []
+    holder = Holder(key=holder_key)
+    holder.set_warrant(warrant.to_base64())
 
-    def meta(tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
-        sig = warrant.sign(holder_key, tool, args, int(time.time()))
-        return {
-            "tenuo": {
-                "warrant": warrant.to_base64(),
-                "signature": base64.b64encode(bytes(sig)).decode(),
-            }
-        }
+    def present(tool: str, args: Dict[str, Any]) -> Any:
+        envelope = holder.envelope(tool, args)
+        return gateway.verify(
+            tool,
+            envelope.get("arguments") or args,
+            meta={"tenuo": envelope},
+        )
 
     def row(name: str, expected: str, result: Any) -> None:
         actual = "allow" if result.allowed else (result.error_code or "deny")
@@ -157,31 +160,31 @@ def run_containment(
     row(
         "allowed get_issue",
         "allow",
-        gateway.verify("github.get_issue", allowed_args, meta=meta("github.get_issue", allowed_args)),
+        present("github.get_issue", allowed_args),
     )
     cross = {"repository": foreign_repository, "issue": 1}
     row(
         "GitLost cross-repo read",
         TENUO_CONSTRAINT_VIOLATION,
-        gateway.verify("github.get_issue", cross, meta=meta("github.get_issue", cross)),
+        present("github.get_issue", cross),
     )
     dispatch = {"repository": bound_repository, "workflow": "release.yml"}
     row(
         "Gemini workflow_dispatch",
         TENUO_TOOL_NOT_AUTHORIZED,
-        gateway.verify("github.workflow_dispatch", dispatch, meta=meta("github.workflow_dispatch", dispatch)),
+        present("github.workflow_dispatch", dispatch),
     )
     install = {"name": "evil-pkg"}
     row(
         "Clinejection install_package",
         TENUO_TOOL_NOT_AUTHORIZED,
-        gateway.verify("install_package", install, meta=meta("install_package", install)),
+        present("install_package", install),
     )
     unsafe = {"repository": bound_repository, "path": ".env", "ref": "main"}
     row(
         "tripwire get_file_contents (not in github-triage)",
         TENUO_TOOL_NOT_AUTHORIZED,
-        gateway.verify("github.get_file_contents", unsafe, meta=meta("github.get_file_contents", unsafe)),
+        present("github.get_file_contents", unsafe),
     )
     bare = gateway.verify("github.get_issue", allowed_args, meta={})
     rows.append(

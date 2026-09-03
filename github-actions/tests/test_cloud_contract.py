@@ -411,8 +411,10 @@ def test_full_stack_terminal_attenuation_revocation_and_receipts(tmp_path):
 
         args = {"repository": "acme/widgets", "issue": 4127, "body": "Authorized by a Cloud stack."}
         envelope = HolderClient(socket).envelope("github.add_comment", args)
+        assert envelope["leaf_derived"] is True
         presented = decode_warrant_stack_base64(envelope["warrant"])
         assert len(presented) == 3
+        assert presented[-1].is_terminal()
         outcome = call_gateway("http://test", "github.add_comment", args, envelope, client=http)
         assert outcome["allowed"] is True
         assert any(item[0] == "POST" and "/comments" in item[1] for item in recorded)

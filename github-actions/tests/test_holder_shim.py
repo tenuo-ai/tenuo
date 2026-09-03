@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import stat
@@ -15,9 +16,9 @@ from starlette.testclient import TestClient
 
 pytest.importorskip("tenuo_core")
 
-from tenuo import Exact, Pattern, Range
+from tenuo import CEL, Exact, Pattern, Range
 from tenuo.mcp import TENUO_CONSTRAINT_VIOLATION, TENUO_TOOL_NOT_AUTHORIZED
-from tenuo_core import PublicKey, SigningKey, Warrant
+from tenuo_core import PublicKey, SigningKey, Warrant, decode_warrant_stack_base64
 
 from tenuo_gha.action import (
     deliver_warrant,
@@ -31,6 +32,7 @@ from tenuo_gha.action import (
 from tenuo_gha.app import Gateway
 from tenuo_gha.config import ConfigError, GatewayConfig
 from tenuo_gha.github import GitHubApp
+from tenuo_gha.catalog import COMMENT_BODY_CEL
 from tenuo_gha.holder import Holder, HolderClient, HolderError, HolderServer, _handle
 from tenuo_gha.http import build_http
 from tenuo_gha.shim import call_gateway
@@ -73,7 +75,8 @@ def _warrant(issuer: SigningKey, holder_hex: str) -> Warrant:
             "github.add_comment",
             repository=Exact("acme/widgets"),
             issue=Range(4127, 4127),
-            body=Pattern("*"),
+            body=CEL(COMMENT_BODY_CEL),
+            body_sha256=Pattern("*"),
         )
         .holder(holder_pub)
         .ttl(900)
@@ -230,9 +233,12 @@ def test_holder_envelope_allows_a_bound_comment(tmp_path):
         envelope = client.envelope("github.add_comment", args)
         assert "signature" in envelope
         assert envelope["warrant"]
+        assert envelope["leaf_derived"] is True
+        presented = decode_warrant_stack_base64(envelope["warrant"])
+        assert presented[-1].is_terminal()
         result, payload = gateway.execute(
             "github.add_comment",
-            args,
+            envelope["arguments"],
             meta={"tenuo": envelope},
         )
         assert result.allowed
@@ -244,6 +250,29 @@ def test_holder_envelope_allows_a_bound_comment(tmp_path):
         server.stop()
 
 
+def test_parent_only_allow_is_refused_at_the_gateway(tmp_path):
+    issuer = SigningKey.generate()
+    recorded: list = []
+    gateway = _mock_github(tmp_path, issuer, recorded)
+    holder = Holder()
+    warrant = _warrant(issuer, holder.public_key_hex())
+    holder.set_warrant(warrant.to_base64())
+    args = {"repository": "acme/widgets", "issue": 4127, "body": "looks good"}
+    ts = int(time.time())
+    sig = warrant.sign(holder._key, "github.add_comment", args, ts)
+    envelope = {
+        "warrant": warrant.to_base64(),
+        "signature": base64.b64encode(bytes(sig)).decode(),
+        "arguments": args,
+        "leaf_derived": True,
+    }
+    result, payload = gateway.execute("github.add_comment", args, meta={"tenuo": envelope})
+    assert not result.allowed
+    assert result.error_code == TENUO_CONSTRAINT_VIOLATION
+    assert payload is None
+    assert recorded == []
+
+
 def test_holder_widening_still_presents_parent(tmp_path):
     issuer = SigningKey.generate()
     recorded: list = []
@@ -252,6 +281,7 @@ def test_holder_widening_still_presents_parent(tmp_path):
     holder.set_warrant(_warrant(issuer, holder.public_key_hex()).to_base64())
     args = {"repository": "acme/payments-internal", "issue": 1}
     envelope = holder.envelope("github.get_issue", args)
+    assert envelope["leaf_derived"] is False
     result, payload = gateway.execute("github.get_issue", args, meta={"tenuo": envelope})
     assert not result.allowed
     assert result.error_code == TENUO_CONSTRAINT_VIOLATION
@@ -288,7 +318,7 @@ def test_http_call_uses_the_holder_envelope(tmp_path):
     client = TestClient(build_http(gateway.config, gateway=gateway))
     response = client.post(
         "/v1/call",
-        json={"tool": "github.add_comment", "arguments": args, "meta": {"tenuo": envelope}},
+        json={"tool": "github.add_comment", "arguments": envelope["arguments"], "meta": {"tenuo": envelope}},
     )
     assert response.status_code == 200
     assert response.json()["allowed"] is True

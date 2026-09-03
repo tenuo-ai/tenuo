@@ -8,12 +8,12 @@ from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
 from tenuo import Authorizer, PublicKey, SigningKey
-from tenuo.mcp import MCPVerificationResult, MCPVerifier, TENUO_TOOL_NOT_AUTHORIZED
+from tenuo.mcp import MCPVerificationResult, MCPVerifier, TENUO_CONSTRAINT_VIOLATION, TENUO_TOOL_NOT_AUTHORIZED
 
 _verified: ContextVar[Optional[MCPVerificationResult]] = ContextVar("tenuo_gha_verified", default=None)
 from tenuo.receipts import FileReceiptSink, ReceiptSigner
 
-from .catalog import TRIPWIRE_NAMES, ToolSpec, spec_by_name, tools_for_packs
+from .catalog import TRIPWIRE_NAMES, ToolSpec, comment_digest_matches, spec_by_name, tools_for_packs
 from .config import ConfigError, GatewayConfig
 from .exchange import Exchange
 from .github import GitHubError
@@ -100,7 +100,32 @@ class Gateway:
         result = self.verifier.verify(tool, arguments, meta=meta)
         if not result.allowed:
             return result
-        return self._apply_repository_ceiling(result)
+        result = self._apply_repository_ceiling(result)
+        if not result.allowed:
+            return result
+        result = self._apply_terminal_leaf(result)
+        if not result.allowed:
+            return result
+        return self._apply_body_digest(result)
+
+    def _deny_after_allow(self, result: MCPVerificationResult, reason: str, error_code: str) -> MCPVerificationResult:
+        denied = MCPVerificationResult(
+            allowed=False,
+            tool=result.tool,
+            clean_arguments=dict(result.clean_arguments or {}),
+            constraints=dict(result.constraints or {}),
+            warrant_id=result.warrant_id,
+            denial_reason=reason,
+            jsonrpc_error_code=-32001,
+            error_type="constraint_violation" if error_code == TENUO_CONSTRAINT_VIOLATION else "tool_not_allowed",
+            error_code=error_code,
+            presented_chain=result.presented_chain,
+            verified_pop=result.verified_pop,
+            pop_auth_args=result.pop_auth_args,
+            authorizer=self.authorizer,
+        )
+        self.signer.emit_for_enforcement(denied)
+        return denied
 
     def _apply_repository_ceiling(self, result: MCPVerificationResult) -> MCPVerificationResult:
         repository = (result.clean_arguments or {}).get("repository")
@@ -109,23 +134,34 @@ class Gateway:
         allowed = {str(item) for item in self.config.repositories}
         if str(repository) in allowed:
             return result
-        denied = MCPVerificationResult(
-            allowed=False,
-            tool=result.tool,
-            clean_arguments=dict(result.clean_arguments or {}),
-            constraints=dict(result.constraints or {}),
-            warrant_id=result.warrant_id,
-            denial_reason="gateway ceiling: repository is not enabled",
-            jsonrpc_error_code=-32001,
-            error_type="tool_not_allowed",
-            error_code=TENUO_TOOL_NOT_AUTHORIZED,
-            presented_chain=result.presented_chain,
-            verified_pop=result.verified_pop,
-            pop_auth_args=result.pop_auth_args,
-            authorizer=self.authorizer,
+        return self._deny_after_allow(
+            result,
+            "gateway ceiling: repository is not enabled",
+            TENUO_TOOL_NOT_AUTHORIZED,
         )
-        self.signer.emit_for_enforcement(denied)
-        return denied
+
+    def _apply_terminal_leaf(self, result: MCPVerificationResult) -> MCPVerificationResult:
+        chain = result.presented_chain or []
+        leaf = chain[-1] if chain else None
+        check = getattr(leaf, "is_terminal", None)
+        if callable(check) and check():
+            return result
+        return self._deny_after_allow(
+            result,
+            "gateway: presented warrant is not a terminal leaf",
+            TENUO_CONSTRAINT_VIOLATION,
+        )
+
+    def _apply_body_digest(self, result: MCPVerificationResult) -> MCPVerificationResult:
+        if result.tool != "github.add_comment":
+            return result
+        if comment_digest_matches(result.clean_arguments or {}):
+            return result
+        return self._deny_after_allow(
+            result,
+            "gateway: comment body digest does not match",
+            TENUO_CONSTRAINT_VIOLATION,
+        )
 
     def flush_receipts(self) -> bool:
         return self.signer.flush()
@@ -139,6 +175,8 @@ class Gateway:
             return {"executed": False, "tool": result.tool}
         if self.github is None:
             return {"executed": False, "tool": result.tool}
+        if spec.name == "github.add_comment" and not comment_digest_matches(result.clean_arguments or {}):
+            return {"executed": False, "tool": result.tool, "error": "body digest does not match"}
         try:
             payload = self.github.call(spec, result.clean_arguments)
         except GitHubError as exc:
