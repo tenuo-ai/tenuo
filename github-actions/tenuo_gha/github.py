@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import quote
 
@@ -17,6 +18,28 @@ SignAppJwt = Callable[[str], str]
 
 class GitHubError(RuntimeError):
     """A GitHub API or token-mint failure. Never includes a token."""
+
+
+def format_path(template: str, arguments: Dict[str, Any]) -> str:
+    """Percent-encode path arguments. Repository keeps its slash."""
+    encoded = {}
+    for key, value in arguments.items():
+        text = str(value)
+        encoded[key] = quote(text, safe="/") if key == "repository" else quote(text, safe="")
+    return template.format(**encoded)
+
+
+def parse_github_expiry(value: Any) -> int:
+    """Unix timestamp from GitHub's ``expires_at`` field."""
+    if isinstance(value, (int, float)) and value > 0:
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        raw = value.strip().replace("Z", "+00:00")
+        try:
+            return int(datetime.fromisoformat(raw).timestamp())
+        except ValueError:
+            pass
+    raise GitHubError("installation token mint returned no expiry")
 
 
 def _format_template(template: Any, arguments: Dict[str, Any]) -> Any:
@@ -69,6 +92,14 @@ class GitHubApp:
         self._cache[repository] = (token, expires_at)
         return token
 
+    def _http(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        # Blocking GitHub HTTP is acceptable for a single-tenant process.
+        # An async client can replace this later without changing call().
+        try:
+            return self._client.request(method, url, **kwargs)
+        except httpx.HTTPError:
+            raise GitHubError("GitHub request failed (network)") from None
+
     def _mint(self, repository: str) -> Tuple[str, int]:
         if self._mint_token is not None:
             return self._mint_token(repository)
@@ -77,7 +108,8 @@ class GitHubApp:
         app_jwt = self._sign_app_jwt(self._app_id)
         installation_id = self._installation_id or self._discover(repository, app_jwt)
         owner, _, name = repository.partition("/")
-        response = self._client.post(
+        response = self._http(
+            "POST",
             f"/app/installations/{installation_id}/access_tokens",
             headers={
                 "Authorization": f"Bearer {app_jwt}",
@@ -91,13 +123,13 @@ class GitHubApp:
         token = data.get("token")
         if not token or not isinstance(token, str):
             raise GitHubError("installation token mint returned no token")
-        expires_at = self._now() + 3600
-        return token, expires_at
+        return token, parse_github_expiry(data.get("expires_at"))
 
     def _discover(self, repository: str, app_jwt: str) -> str:
         owner, _, name = repository.partition("/")
-        response = self._client.get(
-            f"/repos/{quote(owner)}/{quote(name)}/installation",
+        response = self._http(
+            "GET",
+            f"/repos/{quote(owner, safe='')}/{quote(name, safe='')}/installation",
             headers={
                 "Authorization": f"Bearer {app_jwt}",
                 "Accept": "application/vnd.github+json",
@@ -114,13 +146,13 @@ class GitHubApp:
         if spec.tripwire or not spec.path:
             raise GitHubError(f"{spec.name} is not executable")
         token = self.token_for(str(arguments["repository"]))
-        path = spec.path.format(**{key: quote(str(value), safe="/") if key == "repository" else value for key, value in arguments.items()})
+        path = format_path(spec.path, arguments)
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
         }
         body = _format_template(spec.body, arguments) if spec.body else None
-        response = self._client.request(spec.method, path, headers=headers, json=body)
+        response = self._http(spec.method, path, headers=headers, json=body)
         if response.status_code >= 400:
             raise GitHubError(f"{spec.name} failed ({response.status_code})")
         if response.status_code == 204 or not response.content:

@@ -12,12 +12,12 @@ import pytest
 pytest.importorskip("tenuo_core")
 
 from tenuo import Exact, Pattern, Range
-from tenuo.mcp import TENUO_CONSTRAINT_VIOLATION
+from tenuo.mcp import TENUO_CONSTRAINT_VIOLATION, TENUO_TOOL_NOT_AUTHORIZED
 from tenuo_core import SigningKey, Warrant
 
 from tenuo_gha.app import Gateway
 from tenuo_gha.config import ConfigError, GatewayConfig
-from tenuo_gha.github import GitHubApp
+from tenuo_gha.github import GitHubApp, GitHubError, format_path, parse_github_expiry
 
 
 def _config(tmp_path: Path, issuer: SigningKey, *, with_app: bool = True) -> GatewayConfig:
@@ -76,7 +76,7 @@ def _meta(warrant: Warrant, key: SigningKey, tool: str, args: dict) -> dict:
 
 def _mock_github(tmp_path: Path, issuer: SigningKey, recorded: list) -> tuple[Gateway, GitHubApp]:
     def handler(request: httpx.Request) -> httpx.Response:
-        recorded.append((request.method, request.url.path, request.read()))
+        recorded.append((request.method, request.url.raw_path.decode(), request.read()))
         if request.method == "POST" and request.url.path.endswith("/comments"):
             return httpx.Response(
                 201,
@@ -87,6 +87,8 @@ def _mock_github(tmp_path: Path, issuer: SigningKey, recorded: list) -> tuple[Ga
                 200,
                 json={"number": 4127, "title": "bug", "html_url": "https://github.com/acme/widgets/issues/4127", "state": "open"},
             )
+        if request.method == "DELETE" and "/labels/" in request.url.path:
+            return httpx.Response(204)
         return httpx.Response(404, json={"message": "not mocked"})
 
     transport = httpx.MockTransport(handler)
@@ -199,3 +201,136 @@ def test_token_is_not_in_github_error_text(tmp_path):
     with pytest.raises(GitHubError) as caught:
         github.call(spec, {"repository": "acme/widgets", "issue": 1})
     assert "installation-token" not in str(caught.value)
+
+
+def test_wide_warrant_is_still_stopped_by_repository_ceiling(tmp_path):
+    issuer = SigningKey.generate()
+    holder = SigningKey.generate()
+    recorded: list = []
+    gateway, _ = _mock_github(tmp_path, issuer, recorded)
+    warrant = (
+        Warrant.mint_builder()
+        .capability("github.get_issue", repository=Exact("acme/canary"), issue=Range(1, 1))
+        .holder(holder.public_key)
+        .ttl(900)
+        .mint(issuer)
+    )
+    args = {"repository": "acme/canary", "issue": 1}
+    result, payload = gateway.execute(
+        "github.get_issue",
+        args,
+        meta=_meta(warrant, holder, "github.get_issue", args),
+    )
+    assert not result.allowed
+    assert result.error_code == TENUO_TOOL_NOT_AUTHORIZED
+    assert "repository is not enabled" in (result.denial_reason or "")
+    assert payload is None
+    assert recorded == []
+    assert gateway.flush_receipts()
+    assert (tmp_path / "receipts.jsonl").read_text(encoding="utf-8").strip()
+
+
+def test_remove_label_encodes_slash_in_the_path(tmp_path):
+    issuer = SigningKey.generate()
+    holder = SigningKey.generate()
+    recorded: list = []
+    gateway, _ = _mock_github(tmp_path, issuer, recorded)
+    warrant = (
+        Warrant.mint_builder()
+        .capability(
+            "github.remove_label",
+            repository=Exact("acme/widgets"),
+            issue=Range(4127, 4127),
+            name=Exact("triage/demo"),
+        )
+        .holder(holder.public_key)
+        .ttl(900)
+        .mint(issuer)
+    )
+    args = {"repository": "acme/widgets", "issue": 4127, "name": "triage/demo"}
+    result, payload = gateway.execute(
+        "github.remove_label",
+        args,
+        meta=_meta(warrant, holder, "github.remove_label", args),
+    )
+    assert result.allowed
+    assert payload == {"ok": True}
+    assert recorded
+    assert recorded[0][0] == "DELETE"
+    assert recorded[0][1].endswith("/labels/triage%2Fdemo")
+    assert "/labels/triage/demo" not in recorded[0][1]
+
+
+def test_path_encoding_keeps_repository_slash():
+    path = format_path(
+        "/repos/{repository}/issues/{issue}/labels/{name}",
+        {"repository": "acme/widgets", "issue": 4127, "name": "triage/demo"},
+    )
+    assert path == "/repos/acme/widgets/issues/4127/labels/triage%2Fdemo"
+
+
+def test_network_error_is_a_github_error(tmp_path):
+    issuer = SigningKey.generate()
+    config = _config(tmp_path, issuer)
+
+    def boom(request: httpx.Request):
+        raise httpx.ConnectError("connection refused", request=request)
+
+    github = GitHubApp(
+        config,
+        client=httpx.Client(
+            transport=httpx.MockTransport(boom),
+            base_url="https://api.github.com",
+        ),
+        mint_token=lambda _repo: ("installation-token", int(time.time()) + 3600),
+    )
+    from tenuo_gha.catalog import spec_by_name, tools_for_packs
+
+    spec = spec_by_name("github.get_issue", tools_for_packs(["github-triage"]))
+    with pytest.raises(GitHubError, match="network") as caught:
+        github.call(spec, {"repository": "acme/widgets", "issue": 1})
+    assert "installation-token" not in str(caught.value)
+    assert "connection refused" not in str(caught.value)
+
+
+def test_installation_token_expiry_is_parsed(tmp_path):
+    issuer = SigningKey.generate()
+    config = _config(tmp_path, issuer)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/access_tokens")
+        return httpx.Response(
+            201,
+            json={"token": "ghs_not_a_real_token", "expires_at": "2099-01-15T12:00:00Z"},
+        )
+
+    github = GitHubApp(
+        config,
+        client=httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="https://api.github.com",
+        ),
+        sign_app_jwt=lambda _app_id: "app-jwt",
+    )
+    token = github.token_for("acme/widgets")
+    assert token == "ghs_not_a_real_token"
+    _cached_token, expires_at = github._cache["acme/widgets"]
+    assert expires_at == parse_github_expiry("2099-01-15T12:00:00Z")
+    assert expires_at > int(time.time()) + 3600 * 24
+
+
+def test_dispatch_uses_cleaned_arguments(tmp_path):
+    issuer = SigningKey.generate()
+    holder = SigningKey.generate()
+    recorded: list = []
+    gateway, _ = _mock_github(tmp_path, issuer, recorded)
+    warrant = _warrant(issuer, holder)
+    args = {"repository": "acme/widgets", "issue": 4127, "body": "looks good"}
+    result = gateway.verify("github.add_comment", args, meta=_meta(warrant, holder, "github.add_comment", args))
+    assert result.allowed
+    payload = gateway.dispatch(result)
+    assert payload == {
+        "comment_id": 77,
+        "html_url": "https://github.com/acme/widgets/issues/4127#issuecomment-77",
+    }
+    assert recorded
