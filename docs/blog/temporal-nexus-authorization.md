@@ -159,19 +159,19 @@ The Nexus endpoint allowlist sees the namespace making the immediate call. It do
 A warrant can carry those limits forward. At a delegation boundary, the current holder can create a child warrant for the next component:
 
 ```py
-next_warrant = current_warrant.attenuate(
-    signing_key=current_holder_key,
-    holder=next_service_key.public_key,
-    capabilities={
+next_warrant = (
+    current_warrant.grant_builder()
+    .holder(next_service_key.public_key)
+    .capability(
         nexus_tool_name(
             "compliance-prod",
             "screen_change",
             service="ReviewService",
-        ): {
-            "change_id": Exact(change_id),
-        },
-    },
-    ttl_seconds=600,
+        ),
+        change_id=Exact(change_id),
+    )
+    .ttl(600)
+    .grant(current_holder_key)
 )
 ```
 
