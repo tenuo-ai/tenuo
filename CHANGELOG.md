@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `role=both` needs `TENUO_ALLOW_COMBINED_ROLES=1`. The exchange role
   refuses receipt and App key ids; the gateway role refuses an issuer
   key id.
+- **GitHub App triage.** `credentials.github.provider=app` on the gateway
+  role mints an installation token in memory and runs `github-triage`
+  tools from the catalog. A denied call does not reach GitHub. Tokens
+  are not logged. `token` / PEM App keys remain startup errors.
 
 ### Changed
 

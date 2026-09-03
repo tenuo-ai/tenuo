@@ -1,4 +1,4 @@
-"""GitHub Actions gateway: warrant verify, file receipts, no GitHub calls."""
+"""GitHub Actions gateway: warrant verify, file receipts, optional GitHub calls."""
 
 from __future__ import annotations
 
@@ -10,9 +10,10 @@ from tenuo import Authorizer, PublicKey, SigningKey
 from tenuo.mcp import MCPVerificationResult, MCPVerifier, TENUO_TOOL_NOT_AUTHORIZED
 from tenuo.receipts import FileReceiptSink, ReceiptSigner
 
-from .catalog import TRIPWIRE_NAMES, ToolSpec, tools_for_packs
+from .catalog import TRIPWIRE_NAMES, ToolSpec, spec_by_name, tools_for_packs
 from .config import ConfigError, GatewayConfig
 from .exchange import Exchange
+from .github import GitHubError
 from .http import build_http
 
 
@@ -43,10 +44,13 @@ def _signing_key(config: GatewayConfig) -> SigningKey:
 class Gateway:
     """In-process gateway used by tests and by the HTTP entrypoint."""
 
-    def __init__(self, config: GatewayConfig) -> None:
+    def __init__(self, config: GatewayConfig, *, github: Any = None) -> None:
         if config.signing_provider == "kms":
             raise ConfigError("signing.provider=kms is not supported")
+        if config.github_app_id and github is None:
+            raise ConfigError("GitHub App signing is not configured")
         self.config = config
+        self.github = github
         self.tools = tools_for_packs(config.packs)
         roots = [_public_key(item) for item in config.root_public_keys]
         self.authorizer = Authorizer(trusted_roots=roots)
@@ -95,9 +99,29 @@ class Gateway:
     def flush_receipts(self) -> bool:
         return self.signer.flush()
 
+    def execute(
+        self,
+        tool: str,
+        arguments: Optional[Dict[str, Any]],
+        meta: Any = None,
+    ) -> tuple[MCPVerificationResult, Optional[Dict[str, Any]]]:
+        result = self.verify(tool, arguments, meta=meta)
+        if not result.allowed:
+            return result, None
+        spec = spec_by_name(tool, self.tools)
+        if spec is None or spec.tripwire:
+            return result, {"executed": False, "tool": tool}
+        if self.github is None:
+            return result, {"executed": False, "tool": tool}
+        try:
+            payload = self.github.call(spec, result.clean_arguments)
+        except GitHubError as exc:
+            return result, {"executed": False, "tool": tool, "error": str(exc)}
+        return result, payload if isinstance(payload, dict) else {"result": payload}
+
 
 def build_mcp(gateway: Gateway):
-    """FastMCP app: middleware verifies; handlers do not perform the tool."""
+    """FastMCP app: middleware verifies; handlers call GitHub only after allow."""
     from fastmcp import FastMCP
     from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
     import mcp.types as mt
@@ -123,7 +147,14 @@ def build_mcp(gateway: Gateway):
 
     def _register(spec: ToolSpec) -> None:
         async def _handler(**kwargs: Any) -> Dict[str, Any]:
-            return {"executed": False, "mode": "verify_only", "tool": spec.name}
+            # Middleware already verified; call GitHub with clean arguments only.
+            if spec.tripwire or gateway.github is None:
+                return {"executed": False, "tool": spec.name}
+            try:
+                payload = gateway.github.call(spec, kwargs)
+            except GitHubError as exc:
+                return {"executed": False, "tool": spec.name, "error": str(exc)}
+            return payload if isinstance(payload, dict) else {"result": payload}
 
         _handler.__name__ = spec.name.replace(".", "_")
         _handler.__doc__ = spec.description
