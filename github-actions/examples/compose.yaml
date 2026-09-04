@@ -20,6 +20,12 @@ services:
       TENUO_REPOSITORY: ${TENUO_REPOSITORY}
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
     volumes:
       - ./gateway-secret.yaml:/etc/tenuo/gateway.yaml:ro
       - ./secrets:/var/run/secrets/tenuo:ro

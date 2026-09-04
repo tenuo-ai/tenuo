@@ -8,7 +8,9 @@ from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
 from tenuo import Authorizer, PublicKey, SigningKey
-from tenuo.mcp import MCPVerificationResult, MCPVerifier, TENUO_CONSTRAINT_VIOLATION, TENUO_TOOL_NOT_AUTHORIZED
+from tenuo.mcp import MCPVerificationResult, MCPVerifier
+
+from .codes import TENUO_CONSTRAINT_VIOLATION, TENUO_TOOL_NOT_AUTHORIZED
 
 _verified: ContextVar[Optional[MCPVerificationResult]] = ContextVar("tenuo_gha_verified", default=None)
 from tenuo.receipts import FileReceiptSink, ReceiptSigner
@@ -268,15 +270,21 @@ def build_mcp(gateway: Gateway):
     mcp = FastMCP("tenuo-github-actions", middleware=[_Ceiling()])
 
     def _register(spec: ToolSpec) -> None:
-        async def _handler(**kwargs: Any) -> Dict[str, Any]:
-            result = _verified.get()
-            if result is None:
-                return {"executed": False, "tool": spec.name}
-            return gateway.dispatch(result) or {"executed": False, "tool": spec.name}
-
-        _handler.__name__ = spec.name.replace(".", "_")
-        _handler.__doc__ = spec.description
-        mcp.tool(name=spec.name)(_handler)
+        params = ", ".join(spec.arguments)
+        loc: Dict[str, Any] = {}
+        exec(
+            "async def _handler(" + params + ") -> Dict[str, Any]:\n"
+            "    result = _verified.get()\n"
+            "    if result is None:\n"
+            "        return {\"executed\": False, \"tool\": spec.name}\n"
+            "    return gateway.dispatch(result) or {\"executed\": False, \"tool\": spec.name}\n",
+            {"_verified": _verified, "spec": spec, "gateway": gateway, "Dict": Dict, "Any": Any},
+            loc,
+        )
+        handler = loc["_handler"]
+        handler.__name__ = spec.name.replace(".", "_")
+        handler.__doc__ = spec.description
+        mcp.tool(name=spec.name)(handler)
 
     for spec in gateway.tools:
         _register(spec)

@@ -6,10 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from tenuo.mcp import (
-    TENUO_CONSTRAINT_VIOLATION,
-    TENUO_TOOL_NOT_AUTHORIZED,
-)
+from .codes import TENUO_CONSTRAINT_VIOLATION, TENUO_TOOL_NOT_AUTHORIZED
 
 from .app import Gateway
 from .holder import Holder, HolderClient

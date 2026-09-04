@@ -25,15 +25,15 @@ PYTHONPATH=github-actions python -m tenuo_gha box \
     --mount github-actions/examples/secrets
 # from the monorepo root; installs tenuo from PyPI unless docker/wheels/ has a wheel
 docker compose -f github-actions/examples/compose.yaml up --build
+# compose is healthy only after /ready can sign
+PYTHONPATH=github-actions python -m tenuo_gha doctor \
+    --gateway-url http://127.0.0.1:8000 --gateway-only
 ```
 
 Then set org vars `TENUO_GATEWAY_URL`, `TENUO_EXCHANGE_URL`, and
-`TENUO_EXCHANGE_AUDIENCE`, pin the action SHA, and run doctor.
+`TENUO_EXCHANGE_AUDIENCE`, pin the action SHA, and run doctor against Cloud.
 
 ```bash
-PYTHONPATH=github-actions python -m tenuo_gha doctor \
-    --gateway-url URL --gateway-only
-# After Cloud exchange exists:
 PYTHONPATH=github-actions python -m tenuo_gha doctor \
     --gateway-url URL --exchange-url URL --audience tenuo:org/acme
 ```

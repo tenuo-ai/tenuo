@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
     "tenuo",
     "pyyaml>=6.0",
-    "fastmcp>=3.2.1",
+    "fastmcp>=3.2.1,<4",
     "PyJWT>=2.8",
     "cryptography>=42",
     "starlette>=0.37",
