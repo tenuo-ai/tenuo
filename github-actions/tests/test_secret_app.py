@@ -14,8 +14,11 @@ pytest.importorskip("tenuo_core")
 
 from tenuo_core import SigningKey
 
+from starlette.testclient import TestClient
+
 from tenuo_gha.app import Gateway
 from tenuo_gha.config import ConfigError, GatewayConfig
+from tenuo_gha.http import build_http
 from tenuo_gha.secrets import sign_github_app_jwt
 
 
@@ -204,6 +207,47 @@ def test_memory_app_still_requires_injected_client(tmp_path):
                 },
             )
         )
+
+
+def test_ready_is_ok_after_secret_self_test(tmp_path):
+    issuer = SigningKey.generate()
+    receipt = SigningKey.generate()
+    pem, _ = _rsa_pem()
+    mount = _write_mount(tmp_path, receipt=receipt, app_pem=pem)
+    config = GatewayConfig.from_mapping(_secret_mapping(tmp_path, mount), environ=_secret_env(issuer))
+    gateway = Gateway(config)
+    client = TestClient(build_http(config, gateway=gateway))
+    response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready", "role": "gateway"}
+
+
+def test_ready_is_503_when_gateway_self_test_fails(tmp_path):
+    issuer = SigningKey.generate()
+    config = GatewayConfig.from_mapping(
+        {
+            "version": 1,
+            "trust": {"root_public_keys": ["${TENUO_ROOT_PUBLIC_KEY}"]},
+            "signing": {"provider": "memory"},
+            "receipts": {"path": str(tmp_path / "r.jsonl")},
+        },
+        environ={
+            "TENUO_ALLOW_INSECURE_MEMORY_KEYS": "1",
+            "TENUO_ROLE": "gateway",
+            "TENUO_ROOT_PUBLIC_KEY": issuer.public_key.to_bytes().hex(),
+        },
+    )
+
+    class _Broken:
+        def self_test(self) -> None:
+            raise ConfigError("receipt key self-test failed")
+
+    client = TestClient(build_http(config, gateway=_Broken()))
+    response = client.get("/ready")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "not_ready"
+    assert body["detail"] == "gateway sign self-test failed"
 
 
 def test_from_yaml_scans_the_config_directory(tmp_path):

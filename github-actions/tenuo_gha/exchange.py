@@ -170,6 +170,14 @@ class Exchange:
         self._jwks = load_jwks(jwks=jwks, jwks_url=config.jwks_url, fetcher=jwks_fetcher)
         self._replay = replay or ReplayCache()
         self._allowed = _allowed_tools(config.packs)
+        self.self_test()
+
+    def self_test(self) -> None:
+        """Sign with the issuer key. Never log material."""
+        try:
+            self._issuer.sign_raw(b"tenuo-gha-ready")
+        except Exception as exc:
+            raise ConfigError("issuer key self-test failed") from exc
 
     def bind_capabilities(
         self,

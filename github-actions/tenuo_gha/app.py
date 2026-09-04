@@ -81,8 +81,9 @@ class Gateway:
         roots = [_public_key(item) for item in config.root_public_keys]
         self.authorizer = Authorizer(trusted_roots=roots)
         self.config.receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        self._receipt_key = _signing_key(config)
         self.signer = ReceiptSigner(
-            _signing_key(config),
+            self._receipt_key,
             FileReceiptSink(self.config.receipt_path),
             authorizer=self.authorizer,
         )
@@ -92,6 +93,22 @@ class Gateway:
             authorizer=self.authorizer,
             control_plane=self.signer,
         )
+        self.self_test()
+
+    def self_test(self) -> None:
+        """Sign with the receipt key and, if configured, the App PEM. Never log material."""
+        try:
+            self._receipt_key.sign_raw(b"tenuo-gha-ready")
+        except Exception as exc:
+            raise ConfigError("receipt key self-test failed") from exc
+        signer = getattr(self.github, "_sign_app_jwt", None) if self.github is not None else None
+        if callable(signer) and self.config.github_app_id:
+            try:
+                token = signer(self.config.github_app_id)
+            except Exception as exc:
+                raise ConfigError("GitHub App JWT self-test failed") from exc
+            if not token:
+                raise ConfigError("GitHub App JWT self-test failed")
 
     def verify(
         self,
