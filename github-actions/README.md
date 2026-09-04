@@ -14,10 +14,9 @@ key into the same mount. The process loads those files at start; a PEM in the
 environment or next to the config YAML is a startup error.
 
 ```bash
-mkdir -p github-actions/examples/secrets
-cp /path/to/app.pem github-actions/examples/secrets/app.pem
-python -c "from tenuo import SigningKey; print(SigningKey.generate().to_pem())" \
-  > github-actions/examples/secrets/receipt.pem
+PYTHONPATH=github-actions python -m tenuo_gha init-secrets \
+    --mount github-actions/examples/secrets \
+    --app-pem /path/to/app.pem
 export TENUO_ROOT_PUBLIC_KEY=<hex of the Cloud or exchange root>
 export TENUO_GITHUB_APP_ID=<app id>
 export TENUO_REPOSITORY=acme/widgets
