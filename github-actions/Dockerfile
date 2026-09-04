@@ -15,8 +15,7 @@ COPY ${TENUO_WHEEL} /tmp/tenuo.whl
 COPY github-actions /src/github-actions
 
 RUN pip install --no-cache-dir /tmp/tenuo.whl \
-    && pip install --no-cache-dir --no-deps /src/github-actions \
-    && pip install --no-cache-dir "pyyaml>=6.0" "fastmcp>=3.2.1" \
+    && pip install --no-cache-dir /src/github-actions \
     && rm -rf /tmp/tenuo.whl /src
 
 USER 1000

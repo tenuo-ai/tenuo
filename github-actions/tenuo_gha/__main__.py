@@ -1,4 +1,4 @@
-"""``python -m tenuo_gha [hold|shim|action]`` — default is the HTTP server."""
+"""``python -m tenuo_gha [hold|shim|action|doctor|check]`` — default is the HTTP server."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import sys
 
 
 def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] in {"hold", "holder", "shim", "action", "live", "stop"}:
+    if len(sys.argv) > 1 and sys.argv[1] in {"hold", "holder", "shim", "action", "live", "stop", "doctor", "check"}:
         mode = sys.argv.pop(1)
         if mode in {"hold", "holder"}:
             from .holder import main as hold
@@ -19,6 +19,14 @@ def main() -> None:
         if mode == "live":
             from .live import main as live
             live()
+            return
+        if mode == "doctor":
+            from .doctor import main as doctor
+            doctor()
+            return
+        if mode == "check":
+            from .check import main as check
+            check()
             return
         from .action import main as action
         if mode == "stop":

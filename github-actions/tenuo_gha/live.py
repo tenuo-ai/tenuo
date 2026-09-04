@@ -1,9 +1,8 @@
 """Live GitHub mutation: disposable issue, holder path, then close.
 
-The harness injects a personal token through ``mint_token``. That is not an
-App JWT mint; the first real App signing path is still the unit test that
-parses ``expires_at``. The token stays in this process and the gateway cache.
-It is never passed to the holder, the shim, or mcp_config.
+``run_live_app`` signs an App JWT from a Secret-mounted PEM and mints an
+installation token. ``run_live`` still accepts a personal token for the older
+harness. Neither credential is passed to the holder, the shim, or mcp_config.
 """
 
 from __future__ import annotations
@@ -164,6 +163,133 @@ def find_comment(token: str, repository: str, issue: int, body: str) -> Optional
     return None
 
 
+def app_credentials_from_env(environ: Optional[Dict[str, str]] = None) -> Optional[Dict[str, str]]:
+    """App id + PEM file path. The PEM stays on disk; it is not copied into the environment."""
+    env = environ if environ is not None else os.environ
+    app_id = (env.get("TENUO_GITHUB_APP_ID") or "").strip()
+    key_file = (env.get("TENUO_GITHUB_APP_KEY_FILE") or "").strip()
+    if not app_id or not key_file:
+        return None
+    path = Path(key_file)
+    if not path.is_file():
+        raise LiveError("TENUO_GITHUB_APP_KEY_FILE is not a readable file")
+    installation = (env.get("TENUO_GITHUB_INSTALLATION_ID") or "").strip()
+    return {
+        "app_id": app_id,
+        "key_file": str(path),
+        "installation_id": installation,
+    }
+
+
+def _write_secret_mount(work: Path, *, issuer: SigningKey, receipt: SigningKey, app_pem: bytes) -> Path:
+    mount = work / "secrets"
+    mount.mkdir(parents=True, exist_ok=True)
+    (mount / "issuer.pem").write_text(issuer.to_pem(), encoding="utf-8")
+    (mount / "receipt.pem").write_text(receipt.to_pem(), encoding="utf-8")
+    (mount / "app.pem").write_bytes(app_pem)
+    return mount
+
+
+def run_live_app(
+    *,
+    repository: str,
+    foreign_repository: str,
+    app_id: str,
+    app_pem: bytes,
+    work: Path,
+    installation_id: Optional[str] = None,
+) -> LiveResult:
+    """Live path that mints an installation token from a Secret-mounted App PEM."""
+    issuer = SigningKey.generate()
+    receipt = SigningKey.generate()
+    mount = _write_secret_mount(work, issuer=issuer, receipt=receipt, app_pem=app_pem)
+    receipts = work / "receipts.jsonl"
+    bootstrap = GatewayConfig.from_mapping(
+        {
+            "version": 1,
+            "trust": {"root_public_keys": ["${TENUO_ROOT_PUBLIC_KEY}"]},
+            "signing": {
+                "profile": "secret",
+                "secret": {
+                    "mount": str(mount),
+                    "receipt_key": "receipt.pem",
+                    "github_app_key": "app.pem",
+                },
+            },
+            "credentials": {
+                "github": {
+                    "provider": "app",
+                    "app_id": app_id,
+                    "api_url": "https://api.github.com",
+                    **({"installation_id": installation_id} if installation_id else {}),
+                }
+            },
+            "receipts": {"path": str(receipts)},
+        },
+        environ={"TENUO_ROLE": "gateway", "TENUO_ROOT_PUBLIC_KEY": issuer.public_key.to_bytes().hex()},
+        scan_roots=[work],
+    )
+    probe = Gateway(bootstrap)
+    if probe.github is None:
+        raise LiveError("GitHub App signing is not configured")
+    token = probe.github.token_for(repository)
+    source = repo_info(token, repository)
+    config = GatewayConfig.from_mapping(
+        {
+            "version": 1,
+            "trust": {"root_public_keys": ["${TENUO_ROOT_PUBLIC_KEY}"], "issuer": OIDC_ISSUER},
+            "signing": {
+                "profile": "secret",
+                "secret": {
+                    "mount": str(mount),
+                    "issuer_key": "issuer.pem",
+                    "receipt_key": "receipt.pem",
+                    "github_app_key": "app.pem",
+                },
+            },
+            "role": "both",
+            "ceiling": {"repositories": [source["full_name"], foreign_repository]},
+            "tools": {"packs": ["github-triage"]},
+            "credentials": {
+                "github": {
+                    "provider": "app",
+                    "app_id": app_id,
+                    "api_url": "https://api.github.com",
+                    **({"installation_id": installation_id} if installation_id else {}),
+                }
+            },
+            "exchange": {
+                "audience": AUDIENCE,
+                "ttl_max": "15m",
+                "jwks_url": "https://example.invalid/jwks",
+                "conditions": {
+                    "repository_owner_id": source["owner_id"],
+                    "repository_id": [source["id"]],
+                    "event_name": ["issues"],
+                },
+            },
+            "receipts": {"path": str(receipts)},
+        },
+        environ={
+            "TENUO_ALLOW_COMBINED_ROLES": "1",
+            "TENUO_ROLE": "both",
+            "TENUO_ROOT_PUBLIC_KEY": issuer.public_key.to_bytes().hex(),
+        },
+        scan_roots=[work],
+    )
+    gateway = Gateway(config)
+    return _execute_live(
+        source=source,
+        foreign_repository=foreign_repository,
+        token=token,
+        work=work,
+        issuer=issuer,
+        config=config,
+        gateway=gateway,
+        receipts=receipts,
+    )
+
+
 def run_live(
     *,
     repository: str,
@@ -172,19 +298,8 @@ def run_live(
     work: Path,
 ) -> LiveResult:
     source = repo_info(token, repository)
-    nonce = uuid.uuid4().hex[:8]
-    body = f"Tenuo live e2e {nonce} — authorized by a holder-bound warrant."
-    issue = create_issue(
-        token,
-        source["full_name"],
-        title=f"Tenuo live e2e — disposable {nonce}",
-        body="Disposable target. Closed automatically.",
-    )
     issuer = SigningKey.generate()
     receipts = work / "receipts.jsonl"
-    socket = work / "holder.sock"
-    if len(str(socket)) > 100:
-        socket = Path(f"/tmp/tenuo-live-{nonce}.sock")
     config = GatewayConfig.from_mapping(
         {
             "version": 1,
@@ -225,6 +340,40 @@ def run_live(
         mint_token=lambda _repo: (token, int(time.time()) + 3600),
     )
     gateway = Gateway(config, github=github)
+    return _execute_live(
+        source=source,
+        foreign_repository=foreign_repository,
+        token=token,
+        work=work,
+        issuer=issuer,
+        config=config,
+        gateway=gateway,
+        receipts=receipts,
+    )
+
+
+def _execute_live(
+    *,
+    source: Dict[str, str],
+    foreign_repository: str,
+    token: str,
+    work: Path,
+    issuer: SigningKey,
+    config: GatewayConfig,
+    gateway: Gateway,
+    receipts: Path,
+) -> LiveResult:
+    nonce = uuid.uuid4().hex[:8]
+    body = f"Tenuo live e2e {nonce} — authorized by a holder-bound warrant."
+    issue = create_issue(
+        token,
+        source["full_name"],
+        title=f"Tenuo live e2e — disposable {nonce}",
+        body="Disposable target. Closed automatically.",
+    )
+    socket = work / "holder.sock"
+    if len(str(socket)) > 100:
+        socket = Path(f"/tmp/tenuo-live-{nonce}.sock")
     jwks, rsa_key = _rsa_jwks()
     exchange = Exchange(config, issuer_key=issuer, jwks=jwks)
     http = _Http(build_http(config, exchange=exchange, gateway=gateway))
@@ -301,15 +450,25 @@ def main() -> None:
         default=os.environ.get("TENUO_LIVE_GITHUB_FOREIGN", "aimable100/tenuo-agentic-canary-private"),
     )
     args = parser.parse_args()
-    token = _token_from_env()
     work = Path(tempfile.mkdtemp(prefix="tenuo-live-"))
     try:
-        result = run_live(
-            repository=args.repository,
-            foreign_repository=args.foreign_repository,
-            token=token,
-            work=work,
-        )
+        app = app_credentials_from_env()
+        if app:
+            result = run_live_app(
+                repository=args.repository,
+                foreign_repository=args.foreign_repository,
+                app_id=app["app_id"],
+                app_pem=Path(app["key_file"]).read_bytes(),
+                installation_id=app["installation_id"] or None,
+                work=work,
+            )
+        else:
+            result = run_live(
+                repository=args.repository,
+                foreign_repository=args.foreign_repository,
+                token=_token_from_env(),
+                work=work,
+            )
     except GitHubError as exc:
         raise SystemExit(str(exc)) from exc
     print(format_table(result.rows))

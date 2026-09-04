@@ -285,6 +285,10 @@ def test_oidc_exchange_holder_and_demo_scenarios(tmp_path):
         )
         assert result["warrant_id"]
         assert result["expires_at"]
+        assert "github.add_comment" in result["summary"]
+        assert "acme/widgets#4127" in result["summary"]
+        assert "This run may" in result["summary"]
+        assert "This warrant cannot" in result["summary"]
         text = Path(result["mcp_config"]).read_text(encoding="utf-8")
         assert "TENUO_HOLDER_SECRET" not in text
         assert "warrant" not in text

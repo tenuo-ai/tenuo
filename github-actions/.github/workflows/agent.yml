@@ -1,0 +1,86 @@
+# Org reusable / copy-paste workflow for Tenuo for GitHub Actions.
+#
+# mcp_config is a file on this runner. Keep the agent step in this same job.
+# Copy into your org .github repo, or after the product repo is cut:
+#   uses: tenuo-ai/github-actions/.github/workflows/agent.yml@<sha>
+#
+# Pin the Tenuo action SHA. @main is not an allowlist.
+
+name: Tenuo agent
+
+on:
+  workflow_call:
+    inputs:
+      gateway_url:
+        description: Shared gateway URL (TENUO_GATEWAY_URL)
+        required: true
+        type: string
+      exchange_url:
+        description: Shared exchange URL. Omitted, gateway_url is used.
+        required: false
+        type: string
+        default: ""
+      audience:
+        description: OIDC audience. Must match exchange.audience (or Cloud cloud_audience).
+        required: false
+        type: string
+        default: ""
+      ttl:
+        description: Requested warrant lifetime in seconds
+        required: false
+        type: string
+        default: "900"
+    outputs:
+      mcp_config:
+        description: Path to mcp-config.json on this runner
+        value: ${{ jobs.grant.outputs.mcp_config }}
+      warrant_id:
+        description: Issued warrant id
+        value: ${{ jobs.grant.outputs.warrant_id }}
+      expires_at:
+        description: Warrant expiry
+        value: ${{ jobs.grant.outputs.expires_at }}
+      gateway_url:
+        description: Gateway URL passed through
+        value: ${{ jobs.grant.outputs.gateway_url }}
+  issues:
+    types: [opened, reopened, labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: none
+  issues: none
+  pull-requests: none
+  id-token: write
+
+jobs:
+  grant:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: none
+      issues: none
+      pull-requests: none
+      id-token: write
+    outputs:
+      mcp_config: ${{ steps.tenuo.outputs.mcp_config }}
+      warrant_id: ${{ steps.tenuo.outputs.warrant_id }}
+      expires_at: ${{ steps.tenuo.outputs.expires_at }}
+      gateway_url: ${{ steps.tenuo.outputs.gateway_url }}
+    steps:
+      - name: Grant a task-scoped warrant
+        id: tenuo
+        uses: tenuo-ai/tenuo/github-actions@main
+        with:
+          gateway_url: ${{ inputs.gateway_url || vars.TENUO_GATEWAY_URL }}
+          exchange_url: ${{ inputs.exchange_url || vars.TENUO_EXCHANGE_URL }}
+          audience: ${{ inputs.audience || vars.TENUO_EXCHANGE_AUDIENCE }}
+          ttl: ${{ inputs.ttl || '900' }}
+
+      # Keep this step in the same job. mcp_config is a local path.
+      # Pin the agent action SHA in your org copy.
+      # - name: Run the agent
+      #   uses: anthropics/claude-code-action@PIN_SHA
+      #   with:
+      #     mcp_config: ${{ steps.tenuo.outputs.mcp_config }}

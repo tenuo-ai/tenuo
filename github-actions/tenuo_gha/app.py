@@ -31,6 +31,12 @@ def _public_key(value: str) -> PublicKey:
 
 
 def _signing_key(config: GatewayConfig) -> SigningKey:
+    if config.signing_provider == "secret":
+        if config.secret_mount is None or not config.secret_receipt_key:
+            raise ConfigError("receipt_key is required under signing.secret.mount")
+        from .secrets import signing_key_from_mount
+
+        return signing_key_from_mount(config.secret_mount, config.secret_receipt_key)
     raw = config.receipt_signing_key
     if not raw:
         if config.signing_provider == "memory":
@@ -44,16 +50,33 @@ def _signing_key(config: GatewayConfig) -> SigningKey:
         return SigningKey.from_bytes(bytes.fromhex(raw))
 
 
+def _github_client(config: GatewayConfig, github: Any, *, client: Any = None) -> Any:
+    if github is not None:
+        return github
+    if not config.github_app_id:
+        return None
+    if config.signing_provider != "secret":
+        raise ConfigError("GitHub App signing is not configured")
+    if config.secret_mount is None or not config.secret_github_app_key:
+        raise ConfigError("github_app_key is required under signing.secret.mount")
+    from .github import GitHubApp
+    from .secrets import app_jwt_signer_from_mount
+
+    return GitHubApp(
+        config,
+        client=client,
+        sign_app_jwt=app_jwt_signer_from_mount(config.secret_mount, config.secret_github_app_key),
+    )
+
+
 class Gateway:
     """In-process gateway used by tests and by the HTTP entrypoint."""
 
-    def __init__(self, config: GatewayConfig, *, github: Any = None) -> None:
+    def __init__(self, config: GatewayConfig, *, github: Any = None, github_http: Any = None) -> None:
         if config.signing_provider == "kms":
             raise ConfigError("signing.provider=kms is not supported")
-        if config.github_app_id and github is None:
-            raise ConfigError("GitHub App signing is not configured")
         self.config = config
-        self.github = github
+        self.github = _github_client(config, github, client=github_http)
         self.tools = tools_for_packs(config.packs)
         roots = [_public_key(item) for item in config.root_public_keys]
         self.authorizer = Authorizer(trusted_roots=roots)

@@ -3,8 +3,51 @@
 Checks warrants and writes file receipts. The holder process keeps the run key
 behind a Unix socket; `mcp_config` launches a stdio shim that never sees it.
 
+The gateway is the GitHub credential. Cloud (or a self-hosted exchange) issues
+warrants. Do not point `TENUO_GATEWAY_URL` at Tenuo Cloud.
+
+## Concierge box (`secret` profile)
+
+Create a GitHub App in Settings (issues read/write). Download the PEM once, copy
+it to a Secret mount as `app.pem`, and delete the download. Generate a receipt
+key into the same mount. The process loads those files at start; a PEM in the
+environment or next to the config YAML is a startup error.
+
 ```bash
-PYTHONPATH=github-actions python -m tenuo_gha.check
+mkdir -p github-actions/examples/secrets
+cp /path/to/app.pem github-actions/examples/secrets/app.pem
+python -c "from tenuo import SigningKey; print(SigningKey.generate().to_pem())" \
+  > github-actions/examples/secrets/receipt.pem
+export TENUO_ROOT_PUBLIC_KEY=<hex of the Cloud or exchange root>
+export TENUO_GITHUB_APP_ID=<app id>
+export TENUO_REPOSITORY=acme/widgets
+# from the monorepo root, after a tenuo wheel exists
+docker compose -f github-actions/examples/compose.yaml up --build
+```
+
+Then set org vars `TENUO_GATEWAY_URL`, `TENUO_EXCHANGE_URL`, and
+`TENUO_EXCHANGE_AUDIENCE`, pin the action SHA, and run doctor.
+
+```bash
+PYTHONPATH=github-actions python -m tenuo_gha doctor \
+    --gateway-url URL --exchange-url URL --audience tenuo:org/acme
+```
+
+Live App-signed comment (PEM file, not `GH_TOKEN`):
+
+```bash
+TENUO_LIVE_GITHUB=1 \
+TENUO_GITHUB_APP_ID=<app id> \
+TENUO_GITHUB_APP_KEY_FILE=/path/to/app.pem \
+python -m pytest -q tests/test_live_github.py -k live_app
+```
+
+Copy `.github/workflows/agent.yml` into the org and add the agent step in that
+same job (`mcp_config` is a local path). Each job writes a "This run may"
+summary from the issued warrant.
+
+```bash
+PYTHONPATH=github-actions python -m tenuo_gha check
 
 TENUO_ALLOW_INSECURE_MEMORY_KEYS=1 \
 TENUO_ROOT_PUBLIC_KEY=<hex> \

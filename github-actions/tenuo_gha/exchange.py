@@ -103,6 +103,12 @@ class ReplayCache:
 def _signing_key(config: GatewayConfig, override: Optional[SigningKey]) -> SigningKey:
     if override is not None:
         return override
+    if config.signing_provider == "secret":
+        if config.secret_mount is None or not config.secret_issuer_key:
+            raise ConfigError("issuer_key is required under signing.secret.mount")
+        from .secrets import signing_key_from_mount
+
+        return signing_key_from_mount(config.secret_mount, config.secret_issuer_key)
     raw = config.exchange_signing_key
     if not raw:
         if config.signing_provider == "memory":

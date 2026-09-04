@@ -17,6 +17,7 @@ from .config import assert_no_runtime_secrets
 from .holder import HolderClient, HolderError, HolderServer, assert_no_holder_secret
 from .oidc import OidcError, fetch_actions_oidc, peek_oidc_claims
 from .commitment import compact_task_binding
+from .summary import format_job_summary, write_job_summary
 from .task import TaskError, infer_capabilities, infer_task_binding
 
 
@@ -308,6 +309,21 @@ def run_job(
     verify_exchange_roots(minted.get("root_public_keys"), list(trusted_roots or []))
     deliver_warrant(socket_path, str(minted["warrant"]))
     write_mcp_config(mcp_config, socket=str(socket_path), gateway_url=gateway_url)
+    tools = []
+    try:
+        tools = HolderClient(socket_path).tools()
+    except (OSError, HolderError):
+        tools = list(capabilities)
+    summary = format_job_summary(
+        tools=tools,
+        repository=repository,
+        warrant_id=str(minted.get("warrant_id") or ""),
+        expires_at=str(minted.get("expires_at") or ""),
+        ttl_seconds=ttl_seconds,
+        gateway_url=gateway_url,
+        task_binding=task_binding,
+    )
+    write_job_summary(summary, path=env.get("GITHUB_STEP_SUMMARY"))
     return {
         "mcp_config": str(mcp_config),
         "warrant_id": str(minted.get("warrant_id") or ""),
@@ -315,6 +331,7 @@ def run_job(
         "gateway_url": gateway_url,
         "public_key": pubkey,
         "socket": str(socket_path),
+        "summary": summary,
     }
 
 

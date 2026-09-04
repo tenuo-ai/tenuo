@@ -1,0 +1,29 @@
+# Concierge box: gateway only. Cloud (or a separate exchange) issues warrants.
+# Put app.pem and receipt.pem in ./secrets/ — never in the environment.
+# From the monorepo root, after `maturin build --release` in tenuo-python:
+#   TENUO_WHEEL=tenuo-python/target/wheels/tenuo-<ver>-*.whl \
+#     docker compose -f github-actions/examples/compose.yaml up --build
+services:
+  gateway:
+    build:
+      context: ../..
+      dockerfile: github-actions/Dockerfile
+      args:
+        TENUO_WHEEL: ${TENUO_WHEEL}
+    environment:
+      TENUO_ROLE: gateway
+      TENUO_GATEWAY_CONFIG: /etc/tenuo/gateway.yaml
+      TENUO_ROOT_PUBLIC_KEY: ${TENUO_ROOT_PUBLIC_KEY}
+      TENUO_GITHUB_APP_ID: ${TENUO_GITHUB_APP_ID}
+      TENUO_REPOSITORY: ${TENUO_REPOSITORY}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./gateway-secret.yaml:/etc/tenuo/gateway.yaml:ro
+      - ./secrets:/var/run/secrets/tenuo:ro
+      - receipts:/state
+    read_only: true
+    tmpfs:
+      - /tmp
+volumes:
+  receipts:

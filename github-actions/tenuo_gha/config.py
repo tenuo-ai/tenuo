@@ -82,6 +82,7 @@ def _assert_no_embedded_secrets(data: Any, *, path: str = "config") -> None:
 
 
 _ROLES = frozenset({"exchange", "gateway", "both"})
+_PROFILES = frozenset({"memory", "secret", "kms"})
 
 
 def parse_duration(value: Any) -> int:
@@ -132,24 +133,44 @@ class GatewayConfig:
     github_app_id: Optional[str] = None
     github_api_url: str = "https://api.github.com"
     github_installation_id: Optional[str] = None
+    secret_mount: Optional[Path] = None
+    secret_issuer_key: Optional[str] = None
+    secret_receipt_key: Optional[str] = None
+    secret_github_app_key: Optional[str] = None
     extras: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_mapping(cls, raw: Mapping[str, Any], *, environ: Mapping[str, str]) -> "GatewayConfig":
+    def from_mapping(
+        cls,
+        raw: Mapping[str, Any],
+        *,
+        environ: Mapping[str, str],
+        scan_roots: Optional[List[Path]] = None,
+    ) -> "GatewayConfig":
         assert_no_runtime_secrets(environ)
         data = _expand(dict(raw), environ)
         if data.get("version") != 1:
             raise ConfigError(f"unsupported config version {data.get('version')!r}")
 
         signing = data.get("signing") or {}
-        provider = signing.get("provider") or "memory"
-        if provider == "memory":
+        profile = signing.get("profile")
+        provider = signing.get("provider")
+        if profile is None:
+            if provider in _PROFILES or provider in (None, ""):
+                profile = provider or "memory"
+            else:
+                raise ConfigError(f"unsupported signing.provider {provider!r}")
+        elif profile not in _PROFILES:
+            raise ConfigError(f"unsupported signing.profile {profile!r}")
+        if profile == "memory":
             if environ.get("TENUO_ALLOW_INSECURE_MEMORY_KEYS") != "1":
                 raise ConfigError(
                     "signing.provider=memory requires TENUO_ALLOW_INSECURE_MEMORY_KEYS=1"
                 )
-        elif provider != "kms":
-            raise ConfigError(f"unsupported signing.provider {provider!r}")
+        if profile == "secret" and (
+            environ.get("TENUO_RECEIPT_SIGNING_KEY") or environ.get("TENUO_EXCHANGE_SIGNING_KEY")
+        ):
+            raise ConfigError("secret profile cannot load keys from the environment")
 
         role = (environ.get("TENUO_ROLE") or data.get("role") or "gateway").strip()
         if role not in _ROLES:
@@ -183,14 +204,34 @@ class GatewayConfig:
         issuer_key_id = kms.get("issuer_key_id") or None
         receipt_key_id = kms.get("receipt_key_id") or None
         github_app_key_id = kms.get("github_app_key_id") or None
+        secret = signing.get("secret") or {}
+        secret_mount = Path(secret["mount"]).expanduser() if secret.get("mount") else None
+        secret_issuer_key = str(secret["issuer_key"]) if secret.get("issuer_key") else None
+        secret_receipt_key = str(secret["receipt_key"]) if secret.get("receipt_key") else None
+        secret_github_app_key = str(secret["github_app_key"]) if secret.get("github_app_key") else None
+        if profile == "secret":
+            if secret_mount is None:
+                raise ConfigError("signing.secret.mount is required")
+            from .secrets import assert_no_keys_outside_mount, resolve_secret_file
+
+            for name in (secret_issuer_key, secret_receipt_key, secret_github_app_key):
+                if name:
+                    resolve_secret_file(secret_mount, name)
+            assert_no_keys_outside_mount(secret_mount, scan_roots or ())
+        elif secret_mount or secret_issuer_key or secret_receipt_key or secret_github_app_key:
+            raise ConfigError("signing.secret is only valid with signing.profile=secret")
         if role == "exchange":
             if receipt_key_id or github_app_key_id:
                 raise ConfigError("exchange role cannot be configured with receipt or App key ids")
+            if secret_receipt_key or secret_github_app_key:
+                raise ConfigError("exchange role cannot be configured with receipt or App Secret files")
             if github_creds:
                 raise ConfigError("exchange role cannot be configured with credentials.github")
         if role == "gateway":
             if issuer_key_id:
                 raise ConfigError("gateway role cannot be configured with an issuer key id")
+            if secret_issuer_key:
+                raise ConfigError("gateway role cannot be configured with an issuer Secret file")
 
         trust = data.get("trust") or {}
         keys = trust.get("root_public_keys") or []
@@ -219,7 +260,7 @@ class GatewayConfig:
             packs=list(packs),
             repositories=[str(item) for item in repositories],
             receipt_path=Path(path),
-            signing_provider=provider,
+            signing_provider=profile,
             role=role,
             receipt_signing_key=environ.get("TENUO_RECEIPT_SIGNING_KEY"),
             exchange_signing_key=environ.get("TENUO_EXCHANGE_SIGNING_KEY"),
@@ -243,13 +284,22 @@ class GatewayConfig:
             github_app_id=github_app_id,
             github_api_url=github_api_url,
             github_installation_id=github_installation_id,
+            secret_mount=secret_mount,
+            secret_issuer_key=secret_issuer_key,
+            secret_receipt_key=secret_receipt_key,
+            secret_github_app_key=secret_github_app_key,
             extras=data,
         )
 
     @classmethod
     def from_yaml(cls, path: "str | Path", *, environ: Optional[Mapping[str, str]] = None) -> "GatewayConfig":
-        text = Path(path).read_text(encoding="utf-8")
+        config_path = Path(path)
+        text = config_path.read_text(encoding="utf-8")
         loaded = yaml.safe_load(text)
         if not isinstance(loaded, dict):
             raise ConfigError("config must be a mapping")
-        return cls.from_mapping(loaded, environ=environ or os.environ)
+        return cls.from_mapping(
+            loaded,
+            environ=environ or os.environ,
+            scan_roots=[config_path.parent],
+        )
