@@ -107,12 +107,13 @@ def run_doctor(
     client: Any = None,
     config: Optional[GatewayConfig] = None,
     containment: bool = False,
+    gateway_only: bool = False,
 ) -> DoctorReport:
     """Probe exchange and gateway. Does not mint a warrant or print secrets."""
     env = dict(environ if environ is not None else os.environ)
     report = DoctorReport()
-    exchange = (exchange_url or gateway_url).rstrip("/")
     gateway = gateway_url.rstrip("/")
+    exchange = "" if gateway_only else (exchange_url or gateway_url).rstrip("/")
     own = client is None
     http = client or httpx.Client(timeout=10.0)
     try:
@@ -125,7 +126,9 @@ def run_doctor(
             )
             return report
 
-        if not audience.strip():
+        if gateway_only and not audience.strip():
+            report.add("audience", True, "skipped (gateway-only)", "")
+        elif not audience.strip():
             report.add(
                 "audience",
                 False,
@@ -171,64 +174,68 @@ def run_doctor(
         else:
             report.add("gateway ready", True, f"role={gw_role}", "")
 
-        healthy, detail = probe_health(http, exchange)
-        report.add(
-            "exchange health",
-            healthy,
-            detail,
-            "" if healthy else "Point exchange_url at the exchange Deployment /health.",
-        )
-        ex_role, ex_err = probe_ready(http, exchange)
-        if ex_role is None:
-            report.add(
-                "exchange ready",
-                False,
-                ex_err,
-                "Confirm the exchange Service is up and TENUO_ROLE=exchange.",
-            )
-        elif ex_role == "gateway":
-            report.add(
-                "exchange ready",
-                False,
-                "this URL serves the gateway role",
-                "Point exchange_url at the exchange Service. TENUO_ROLE=both is a test escape.",
-            )
+        if gateway_only:
+            report.add("exchange health", True, "skipped (gateway-only)", "")
+            report.add("exchange ready", True, "skipped (gateway-only)", "")
+            report.add("split identities", True, "gateway-only; Cloud or a later exchange Deployment issues warrants", "")
+            report.add("exchange route", True, "skipped (gateway-only)", "")
         else:
-            report.add("exchange ready", True, f"role={ex_role}", "")
-
-        same = urlparse(gateway).netloc == urlparse(exchange).netloc and urlparse(gateway).path == urlparse(exchange).path
-        if same or (gw_role == "both" or ex_role == "both"):
+            healthy, detail = probe_health(http, exchange)
             report.add(
-                "split identities",
-                False,
-                "exchange and gateway share one URL or role=both",
-                "Install two Deployments. TENUO_ROLE=both requires TENUO_ALLOW_COMBINED_ROLES=1 and is not a production install.",
+                "exchange health",
+                healthy,
+                detail,
+                "" if healthy else "Point exchange_url at the exchange Deployment /health.",
             )
-        elif gw_role == "gateway" and ex_role == "exchange":
-            report.add("split identities", True, "exchange and gateway are separate", "")
+            ex_role, ex_err = probe_ready(http, exchange)
+            if ex_role is None:
+                report.add(
+                    "exchange ready",
+                    False,
+                    ex_err,
+                    "Confirm the exchange Service is up and TENUO_ROLE=exchange.",
+                )
+            elif ex_role == "gateway":
+                report.add(
+                    "exchange ready",
+                    False,
+                    "this URL serves the gateway role",
+                    "Point exchange_url at the exchange Service. TENUO_ROLE=both is a test escape.",
+                )
+            else:
+                report.add("exchange ready", True, f"role={ex_role}", "")
 
-        try:
-            posted = _post(http, exchange + "/v1/exchange", {})
-            status = getattr(posted, "status_code", 0)
-        except Exception as exc:
-            status = 0
-            posted = None
-            report.add(
-                "exchange route",
-                False,
-                f"POST /v1/exchange failed ({exc.__class__.__name__})",
-                "Confirm the exchange Service exposes POST /v1/exchange.",
-            )
-        else:
-            if status == 404:
+            same = urlparse(gateway).netloc == urlparse(exchange).netloc and urlparse(gateway).path == urlparse(exchange).path
+            if same or (gw_role == "both" or ex_role == "both"):
+                report.add(
+                    "split identities",
+                    False,
+                    "exchange and gateway share one URL or role=both",
+                    "Install two Deployments. TENUO_ROLE=both requires TENUO_ALLOW_COMBINED_ROLES=1 and is not a production install.",
+                )
+            elif gw_role == "gateway" and ex_role == "exchange":
+                report.add("split identities", True, "exchange and gateway are separate", "")
+
+            try:
+                posted = _post(http, exchange + "/v1/exchange", {})
+                status = getattr(posted, "status_code", 0)
+            except Exception as exc:
                 report.add(
                     "exchange route",
                     False,
-                    "POST /v1/exchange returned 404",
-                    "This process is not serving the exchange. Set TENUO_ROLE=exchange on that Deployment.",
+                    f"POST /v1/exchange failed ({exc.__class__.__name__})",
+                    "Confirm the exchange Service exposes POST /v1/exchange.",
                 )
             else:
-                report.add("exchange route", True, f"POST /v1/exchange returned {status}", "")
+                if status == 404:
+                    report.add(
+                        "exchange route",
+                        False,
+                        "POST /v1/exchange returned 404",
+                        "This process is not serving the exchange. Set TENUO_ROLE=exchange on that Deployment.",
+                    )
+                else:
+                    report.add("exchange route", True, f"POST /v1/exchange returned {status}", "")
 
         try:
             denied = _post(
@@ -363,6 +370,11 @@ def main() -> None:
     parser.add_argument("--audience", default=os.environ.get("TENUO_EXCHANGE_AUDIENCE", ""))
     parser.add_argument("--config", default=os.environ.get("TENUO_GATEWAY_CONFIG", ""))
     parser.add_argument("--containment", action="store_true", help="Also run the in-process containment table")
+    parser.add_argument(
+        "--gateway-only",
+        action="store_true",
+        help="Prove the customer box only. Skip Cloud / exchange probes.",
+    )
     args = parser.parse_args()
     config = None
     if args.config:
@@ -377,6 +389,7 @@ def main() -> None:
         audience=args.audience,
         config=config,
         containment=args.containment,
+        gateway_only=args.gateway_only,
     )
     print(format_report(report))
     if not report.ok:

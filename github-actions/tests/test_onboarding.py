@@ -219,6 +219,29 @@ def test_doctor_names_the_fix_when_audience_is_missing(tmp_path):
     assert "Unset GITHUB_TOKEN" in by_name["no GitHub token in environment"].fix
 
 
+def test_doctor_gateway_only_skips_exchange(tmp_path):
+    issuer = SigningKey.generate()
+    config = _gateway_only(tmp_path, issuer)
+    http = _Http(build_http(config, gateway=Gateway(config)))
+    report = run_doctor(
+        gateway_url="http://gateway.test",
+        audience="",
+        environ={"PATH": "/usr/bin"},
+        client=http,
+        gateway_only=True,
+    )
+    by_name = {row.name: row for row in report.rows}
+    assert by_name["audience"].ok
+    assert "gateway-only" in by_name["audience"].detail
+    assert by_name["gateway health"].ok
+    assert by_name["gateway ready"].ok
+    assert by_name["gateway fail-closed"].ok
+    assert by_name["exchange health"].ok
+    assert "skipped" in by_name["exchange health"].detail
+    assert by_name["split identities"].ok
+    assert report.ok, format_report(report)
+
+
 def test_doctor_in_process_containment(tmp_path):
     issuer = SigningKey.generate()
     config = _both_roles(tmp_path, issuer)

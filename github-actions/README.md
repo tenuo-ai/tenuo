@@ -29,6 +29,9 @@ Then set org vars `TENUO_GATEWAY_URL`, `TENUO_EXCHANGE_URL`, and
 
 ```bash
 PYTHONPATH=github-actions python -m tenuo_gha doctor \
+    --gateway-url URL --gateway-only
+# After Cloud exchange exists:
+PYTHONPATH=github-actions python -m tenuo_gha doctor \
     --gateway-url URL --exchange-url URL --audience tenuo:org/acme
 ```
 
