@@ -1,4 +1,4 @@
-"""``python -m tenuo_gha [hold|shim|action|doctor|check|init-secrets]`` — default is the HTTP server."""
+"""``python -m tenuo_gha [hold|shim|action|doctor|check|init-secrets|box]`` — default is the HTTP server."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ def main() -> None:
         "doctor",
         "check",
         "init-secrets",
+        "box",
     }:
         mode = sys.argv.pop(1)
         if mode in {"hold", "holder"}:
@@ -41,6 +42,10 @@ def main() -> None:
         if mode == "init-secrets":
             from .init_secrets import main as init_secrets
             init_secrets()
+            return
+        if mode == "box":
+            from .box import main as box
+            box()
             return
         from .action import main as action
         if mode == "stop":

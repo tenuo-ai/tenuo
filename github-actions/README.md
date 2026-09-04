@@ -20,6 +20,9 @@ PYTHONPATH=github-actions python -m tenuo_gha init-secrets \
 export TENUO_ROOT_PUBLIC_KEY=<hex of the Cloud or exchange root>
 export TENUO_GITHUB_APP_ID=<app id>
 export TENUO_REPOSITORY=acme/widgets
+PYTHONPATH=github-actions python -m tenuo_gha box \
+    --config github-actions/examples/gateway-secret.yaml \
+    --mount github-actions/examples/secrets
 # from the monorepo root; installs tenuo from PyPI unless docker/wheels/ has a wheel
 docker compose -f github-actions/examples/compose.yaml up --build
 ```
