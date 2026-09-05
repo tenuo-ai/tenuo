@@ -1,0 +1,31 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "tenuo-github-actions.exchangeName" . }}
+  labels:
+    {{- include "tenuo-github-actions.labels" . | nindent 4 }}
+    app.kubernetes.io/component: exchange
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "tenuo-github-actions.exchangeSelectorLabels" . | nindent 6 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "tenuo-github-actions.gatewayName" . }}
+  labels:
+    {{- include "tenuo-github-actions.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "tenuo-github-actions.gatewaySelectorLabels" . | nindent 6 }}
+{{- end }}

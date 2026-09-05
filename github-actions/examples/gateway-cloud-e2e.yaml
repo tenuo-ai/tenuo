@@ -1,0 +1,25 @@
+version: 1
+trust:
+  root_public_keys:
+    - "JzaQ/NAMtSuaYvlIY7+j9EURvJ0byLmVwcLYtKkTrtM="
+    - "TLCYI9potBXC+cVMuNm5pj+WUY+MFBzcFEOAE8AvxOg="
+  require_pop: true
+signing:
+  profile: secret
+  secret:
+    mount: /var/run/secrets/tenuo
+    receipt_key: receipt.pem
+    github_app_key: app.pem
+credentials:
+  github:
+    provider: app
+    app_id: "${TENUO_GITHUB_APP_ID}"
+    api_url: https://api.github.com
+# ceiling.repositories is issuance identity (I8), not a gateway ACL after allow.
+ceiling:
+  repositories: ["${TENUO_REPOSITORY}"]
+tools:
+  packs: [github-triage]
+receipts:
+  sink: file
+  path: /state/receipts.jsonl

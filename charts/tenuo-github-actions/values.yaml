@@ -1,0 +1,145 @@
+# Tenuo for GitHub Actions. Two identities. No values knob merges them.
+
+image:
+  registry: ghcr.io
+  repository: tenuo-ai/github-actions
+  pullPolicy: IfNotPresent
+  # Prefer digest. Tag is used only when digest is empty.
+  tag: ""
+  digest: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+signing:
+  # kms is I10 in the spec and is not implemented yet. This chart installs secret.
+  profile: secret
+  secret:
+    mount: /var/run/secrets/tenuo
+    issuerKey: issuer.pem
+    receiptKey: receipt.pem
+    githubAppKey: app.pem
+
+trust:
+  # Hex public keys. Self-hosted: the exchange issuer public key. Cloud: the Cloud root.
+  rootPublicKeys: []
+  requirePop: true
+  clockToleranceSeconds: 30
+
+exchange:
+  replicaCount: 2
+  audience: ""
+  issuer: https://token.actions.githubusercontent.com
+  jwksUrl: ""
+  ttlMax: 15m
+  conditions:
+    repositoryOwnerId: ""
+    repositoryId: []
+    jobWorkflowRef: ""
+    eventName: []
+  secrets:
+    existingSecret: ""
+  serviceAccount:
+    create: true
+    automount: false
+    annotations: {}
+    name: ""
+  service:
+    type: ClusterIP
+    port: 8000
+    annotations: {}
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+gateway:
+  replicaCount: 2
+  secrets:
+    existingSecret: ""
+  serviceAccount:
+    create: true
+    automount: false
+    annotations: {}
+    name: ""
+  service:
+    type: ClusterIP
+    port: 8000
+    annotations: {}
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+github:
+  appId: ""
+  apiUrl: https://api.github.com
+  installationId: ""
+
+ceiling:
+  # Issuance identity (I8). Empty = any repository that passes OIDC conditions.
+  repositories: []
+
+tools:
+  packs:
+    - github-triage
+
+receipts:
+  sink: file
+  path: /state/receipts.jsonl
+
+networkPolicy:
+  enabled: true
+  # Empty from = allow ingress on the service port from any namespace.
+  ingressFrom: []
+  extraEgress: []
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

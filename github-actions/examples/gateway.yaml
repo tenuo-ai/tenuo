@@ -4,6 +4,7 @@ trust:
   require_pop: true
 signing:
   provider: memory
+# ceiling.repositories is issuance identity (I8), not a gateway ACL after allow.
 ceiling:
   repositories: ["acme/widgets"]
 tools:

@@ -11,13 +11,15 @@ import pytest
 
 pytest.importorskip("tenuo_core")
 
-from tenuo import Exact, Pattern, Range
-from tenuo.mcp import TENUO_CONSTRAINT_VIOLATION, TENUO_TOOL_NOT_AUTHORIZED
+from tenuo import CEL, Exact, Pattern, Range
+from tenuo.mcp import TENUO_CONSTRAINT_VIOLATION
 from tenuo_core import SigningKey, Warrant
 
 from tenuo_gha.app import Gateway
+from tenuo_gha.catalog import COMMENT_BODY_CEL
 from tenuo_gha.config import ConfigError, GatewayConfig
 from tenuo_gha.github import GitHubApp, GitHubError, format_path, parse_github_expiry
+from tenuo_gha.holder import Holder, bind_call_arguments
 
 
 def _config(tmp_path: Path, issuer: SigningKey, *, with_app: bool = True) -> GatewayConfig:
@@ -56,7 +58,8 @@ def _warrant(issuer: SigningKey, holder: SigningKey) -> Warrant:
             "github.add_comment",
             repository=Exact("acme/widgets"),
             issue=Range(4127, 4127),
-            body=Pattern("*"),
+            body=CEL(COMMENT_BODY_CEL),
+            body_sha256=Pattern("*"),
         )
         .holder(holder.public_key)
         .ttl(900)
@@ -64,14 +67,15 @@ def _warrant(issuer: SigningKey, holder: SigningKey) -> Warrant:
     )
 
 
-def _meta(warrant: Warrant, key: SigningKey, tool: str, args: dict) -> dict:
-    sig = warrant.sign(key, tool, args, int(time.time()))
-    return {
-        "tenuo": {
-            "warrant": warrant.to_base64(),
-            "signature": base64.b64encode(bytes(sig)).decode(),
-        }
-    }
+def _present(warrant: Warrant, key: SigningKey, tool: str, args: dict) -> dict:
+    holder = Holder(key=key)
+    holder.set_warrant(warrant.to_base64())
+    return holder.envelope(tool, args)
+
+
+def _call(gateway: Gateway, warrant: Warrant, key: SigningKey, tool: str, args: dict):
+    envelope = _present(warrant, key, tool, args)
+    return gateway.execute(tool, envelope["arguments"], meta={"tenuo": envelope})
 
 
 def _mock_github(tmp_path: Path, issuer: SigningKey, recorded: list) -> tuple[Gateway, GitHubApp]:
@@ -139,11 +143,12 @@ def test_allowed_comment_hits_github(tmp_path):
     recorded: list = []
     gateway, _ = _mock_github(tmp_path, issuer, recorded)
     warrant = _warrant(issuer, holder)
-    args = {"repository": "acme/widgets", "issue": 4127, "body": "looks good"}
-    result, payload = gateway.execute(
+    result, payload = _call(
+        gateway,
+        warrant,
+        holder,
         "github.add_comment",
-        args,
-        meta=_meta(warrant, holder, "github.add_comment", args),
+        {"repository": "acme/widgets", "issue": 4127, "body": "looks good"},
     )
     assert result.allowed
     assert payload == {
@@ -161,11 +166,12 @@ def test_cross_repo_read_does_not_call_github(tmp_path):
     recorded: list = []
     gateway, _ = _mock_github(tmp_path, issuer, recorded)
     warrant = _warrant(issuer, holder)
-    args = {"repository": "acme/payments-internal", "issue": 1}
-    result, payload = gateway.execute(
+    result, payload = _call(
+        gateway,
+        warrant,
+        holder,
         "github.get_issue",
-        args,
-        meta=_meta(warrant, holder, "github.get_issue", args),
+        {"repository": "acme/payments-internal", "issue": 1},
     )
     assert not result.allowed
     assert result.error_code == TENUO_CONSTRAINT_VIOLATION
@@ -203,7 +209,7 @@ def test_token_is_not_in_github_error_text(tmp_path):
     assert "installation-token" not in str(caught.value)
 
 
-def test_wide_warrant_is_still_stopped_by_repository_ceiling(tmp_path):
+def test_warrant_repository_is_the_authorization(tmp_path):
     issuer = SigningKey.generate()
     holder = SigningKey.generate()
     recorded: list = []
@@ -215,17 +221,16 @@ def test_wide_warrant_is_still_stopped_by_repository_ceiling(tmp_path):
         .ttl(900)
         .mint(issuer)
     )
-    args = {"repository": "acme/canary", "issue": 1}
-    result, payload = gateway.execute(
+    result, payload = _call(
+        gateway,
+        warrant,
+        holder,
         "github.get_issue",
-        args,
-        meta=_meta(warrant, holder, "github.get_issue", args),
+        {"repository": "acme/canary", "issue": 1},
     )
-    assert not result.allowed
-    assert result.error_code == TENUO_TOOL_NOT_AUTHORIZED
-    assert "repository is not enabled" in (result.denial_reason or "")
-    assert payload is None
-    assert recorded == []
+    assert result.allowed
+    assert payload is not None
+    assert recorded
     assert gateway.flush_receipts()
     assert (tmp_path / "receipts.jsonl").read_text(encoding="utf-8").strip()
 
@@ -247,11 +252,12 @@ def test_remove_label_encodes_slash_in_the_path(tmp_path):
         .ttl(900)
         .mint(issuer)
     )
-    args = {"repository": "acme/widgets", "issue": 4127, "name": "triage/demo"}
-    result, payload = gateway.execute(
+    result, payload = _call(
+        gateway,
+        warrant,
+        holder,
         "github.remove_label",
-        args,
-        meta=_meta(warrant, holder, "github.remove_label", args),
+        {"repository": "acme/widgets", "issue": 4127, "name": "triage/demo"},
     )
     assert result.allowed
     assert payload == {"ok": True}
@@ -325,8 +331,17 @@ def test_dispatch_uses_cleaned_arguments(tmp_path):
     recorded: list = []
     gateway, _ = _mock_github(tmp_path, issuer, recorded)
     warrant = _warrant(issuer, holder)
-    args = {"repository": "acme/widgets", "issue": 4127, "body": "looks good"}
-    result = gateway.verify("github.add_comment", args, meta=_meta(warrant, holder, "github.add_comment", args))
+    envelope = _present(
+        warrant,
+        holder,
+        "github.add_comment",
+        {"repository": "acme/widgets", "issue": 4127, "body": "looks good"},
+    )
+    result = gateway.verify(
+        "github.add_comment",
+        envelope["arguments"],
+        meta={"tenuo": envelope},
+    )
     assert result.allowed
     payload = gateway.dispatch(result)
     assert payload == {
@@ -334,3 +349,56 @@ def test_dispatch_uses_cleaned_arguments(tmp_path):
         "html_url": "https://github.com/acme/widgets/issues/4127#issuecomment-77",
     }
     assert recorded
+
+
+def test_leaf_digest_mismatch_is_a_verifier_deny(tmp_path):
+    issuer = SigningKey.generate()
+    holder = SigningKey.generate()
+    recorded: list = []
+    gateway, _ = _mock_github(tmp_path, issuer, recorded)
+    warrant = _warrant(issuer, holder)
+    envelope = _present(
+        warrant,
+        holder,
+        "github.add_comment",
+        {"repository": "acme/widgets", "issue": 4127, "body": "looks good"},
+    )
+    args = dict(envelope["arguments"])
+    args["body_sha256"] = "0" * 64
+    result, payload = gateway.execute(
+        "github.add_comment",
+        args,
+        meta={"tenuo": envelope},
+    )
+    assert not result.allowed
+    assert result.error_code in {TENUO_CONSTRAINT_VIOLATION, "TENUO_INVALID_POP"}
+    assert payload is None
+    assert recorded == []
+
+
+def test_parent_only_stack_cannot_allow(tmp_path):
+    issuer = SigningKey.generate()
+    holder = SigningKey.generate()
+    recorded: list = []
+    gateway, _ = _mock_github(tmp_path, issuer, recorded)
+    warrant = _warrant(issuer, holder)
+    args = bind_call_arguments(
+        "github.add_comment",
+        {"repository": "acme/widgets", "issue": 4127, "body": "looks good"},
+    )
+    sig = warrant.sign(holder, "github.add_comment", args, int(time.time()))
+    result, payload = gateway.execute(
+        "github.add_comment",
+        args,
+        meta={
+            "tenuo": {
+                "warrant": warrant.to_base64(),
+                "signature": base64.b64encode(bytes(sig)).decode(),
+            }
+        },
+    )
+    assert not result.allowed
+    assert result.error_code == TENUO_CONSTRAINT_VIOLATION
+    assert "terminal leaf" in (result.denial_reason or "")
+    assert payload is None
+    assert recorded == []

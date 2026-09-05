@@ -8,12 +8,14 @@ from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
 from tenuo import Authorizer, PublicKey, SigningKey
-from tenuo.mcp import MCPVerificationResult, MCPVerifier, TENUO_TOOL_NOT_AUTHORIZED
+from tenuo.mcp import MCPVerificationResult, MCPVerifier
+
+from .codes import TENUO_CONSTRAINT_VIOLATION
 
 _verified: ContextVar[Optional[MCPVerificationResult]] = ContextVar("tenuo_gha_verified", default=None)
 from tenuo.receipts import FileReceiptSink, ReceiptSigner
 
-from .catalog import TRIPWIRE_NAMES, ToolSpec, spec_by_name, tools_for_packs
+from .catalog import ToolSpec, spec_by_name, tools_for_packs
 from .config import ConfigError, GatewayConfig
 from .exchange import Exchange
 from .github import GitHubError
@@ -31,6 +33,12 @@ def _public_key(value: str) -> PublicKey:
 
 
 def _signing_key(config: GatewayConfig) -> SigningKey:
+    if config.signing_provider == "secret":
+        if config.secret_mount is None or not config.secret_receipt_key:
+            raise ConfigError("receipt_key is required under signing.secret.mount")
+        from .secrets import signing_key_from_mount
+
+        return signing_key_from_mount(config.secret_mount, config.secret_receipt_key)
     raw = config.receipt_signing_key
     if not raw:
         if config.signing_provider == "memory":
@@ -44,31 +52,63 @@ def _signing_key(config: GatewayConfig) -> SigningKey:
         return SigningKey.from_bytes(bytes.fromhex(raw))
 
 
+def _github_client(config: GatewayConfig, github: Any, *, client: Any = None) -> Any:
+    if github is not None:
+        return github
+    if not config.github_app_id:
+        return None
+    if config.signing_provider != "secret":
+        raise ConfigError("GitHub App signing is not configured")
+    if config.secret_mount is None or not config.secret_github_app_key:
+        raise ConfigError("github_app_key is required under signing.secret.mount")
+    from .github import GitHubApp
+    from .secrets import app_jwt_signer_from_mount
+
+    return GitHubApp(
+        config,
+        client=client,
+        sign_app_jwt=app_jwt_signer_from_mount(config.secret_mount, config.secret_github_app_key),
+    )
+
+
 class Gateway:
     """In-process gateway used by tests and by the HTTP entrypoint."""
 
-    def __init__(self, config: GatewayConfig, *, github: Any = None) -> None:
+    def __init__(self, config: GatewayConfig, *, github: Any = None, github_http: Any = None) -> None:
         if config.signing_provider == "kms":
             raise ConfigError("signing.provider=kms is not supported")
-        if config.github_app_id and github is None:
-            raise ConfigError("GitHub App signing is not configured")
         self.config = config
-        self.github = github
+        self.github = _github_client(config, github, client=github_http)
         self.tools = tools_for_packs(config.packs)
         roots = [_public_key(item) for item in config.root_public_keys]
         self.authorizer = Authorizer(trusted_roots=roots)
         self.config.receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        self._receipt_key = _signing_key(config)
         self.signer = ReceiptSigner(
-            _signing_key(config),
+            self._receipt_key,
             FileReceiptSink(self.config.receipt_path),
             authorizer=self.authorizer,
         )
-        # Ceiling tools are checked after decode and before an allow receipt.
-        self._raw = MCPVerifier(authorizer=self.authorizer, control_plane=False)
         self.verifier = MCPVerifier(
             authorizer=self.authorizer,
             control_plane=self.signer,
         )
+        self.self_test()
+
+    def self_test(self) -> None:
+        """Sign with the receipt key and, if configured, the App PEM. Never log material."""
+        try:
+            self._receipt_key.sign_raw(b"tenuo-gha-ready")
+        except Exception as exc:
+            raise ConfigError("receipt key self-test failed") from exc
+        signer = getattr(self.github, "_sign_app_jwt", None) if self.github is not None else None
+        if callable(signer) and self.config.github_app_id:
+            try:
+                token = signer(self.config.github_app_id)
+            except Exception as exc:
+                raise ConfigError("GitHub App JWT self-test failed") from exc
+            if not token:
+                raise ConfigError("GitHub App JWT self-test failed")
 
     def verify(
         self,
@@ -76,49 +116,24 @@ class Gateway:
         arguments: Optional[Dict[str, Any]],
         meta: Any = None,
     ) -> MCPVerificationResult:
-        if tool in TRIPWIRE_NAMES:
-            result = self._raw.verify(tool, arguments, meta=meta)
-            if not result.allowed and not result.presented_chain:
-                return result
-            denied = MCPVerificationResult(
-                allowed=False,
-                tool=tool,
-                clean_arguments=dict(arguments or {}),
-                constraints=dict(arguments or {}),
-                warrant_id=result.warrant_id,
-                denial_reason="gateway ceiling: tool is not enabled",
-                jsonrpc_error_code=-32001,
-                error_type="tool_not_allowed",
-                error_code=TENUO_TOOL_NOT_AUTHORIZED,
-                presented_chain=result.presented_chain,
-                verified_pop=result.verified_pop,
-                pop_auth_args=result.pop_auth_args,
-                authorizer=self.authorizer,
-            )
-            self.signer.emit_for_enforcement(denied)
-            return denied
         result = self.verifier.verify(tool, arguments, meta=meta)
         if not result.allowed:
             return result
-        return self._apply_repository_ceiling(result)
+        # Core authorize() does not require a terminal leaf. The warrant
+        # carries the flag; the interpreter refuses a non-terminal program.
+        return self._apply_terminal_leaf(result)
 
-    def _apply_repository_ceiling(self, result: MCPVerificationResult) -> MCPVerificationResult:
-        repository = (result.clean_arguments or {}).get("repository")
-        if repository is None:
-            return result
-        allowed = {str(item) for item in self.config.repositories}
-        if str(repository) in allowed:
-            return result
+    def _deny_after_allow(self, result: MCPVerificationResult, reason: str, error_code: str) -> MCPVerificationResult:
         denied = MCPVerificationResult(
             allowed=False,
             tool=result.tool,
             clean_arguments=dict(result.clean_arguments or {}),
             constraints=dict(result.constraints or {}),
             warrant_id=result.warrant_id,
-            denial_reason="gateway ceiling: repository is not enabled",
+            denial_reason=reason,
             jsonrpc_error_code=-32001,
-            error_type="tool_not_allowed",
-            error_code=TENUO_TOOL_NOT_AUTHORIZED,
+            error_type="constraint_violation",
+            error_code=error_code,
             presented_chain=result.presented_chain,
             verified_pop=result.verified_pop,
             pop_auth_args=result.pop_auth_args,
@@ -126,6 +141,18 @@ class Gateway:
         )
         self.signer.emit_for_enforcement(denied)
         return denied
+
+    def _apply_terminal_leaf(self, result: MCPVerificationResult) -> MCPVerificationResult:
+        chain = result.presented_chain or []
+        leaf = chain[-1] if chain else None
+        check = getattr(leaf, "is_terminal", None)
+        if callable(check) and check():
+            return result
+        return self._deny_after_allow(
+            result,
+            "gateway: presented warrant is not a terminal leaf",
+            TENUO_CONSTRAINT_VIOLATION,
+        )
 
     def flush_receipts(self) -> bool:
         return self.signer.flush()
@@ -135,7 +162,7 @@ class Gateway:
         if not result.allowed:
             return None
         spec = spec_by_name(result.tool, self.tools)
-        if spec is None or spec.tripwire:
+        if spec is None or not spec.path:
             return {"executed": False, "tool": result.tool}
         if self.github is None:
             return {"executed": False, "tool": result.tool}
@@ -164,7 +191,7 @@ def build_mcp(gateway: Gateway):
     import mcp.types as mt
     from tenuo.mcp.fastmcp_middleware import _denial_tool_return, resolve_tool_call_meta_for_verify
 
-    class _Ceiling(Middleware):
+    class _Verify(Middleware):
         async def on_call_tool(
             self,
             context: MiddlewareContext[mt.CallToolRequestParams],
@@ -187,18 +214,24 @@ def build_mcp(gateway: Gateway):
             finally:
                 _verified.reset(token)
 
-    mcp = FastMCP("tenuo-github-actions", middleware=[_Ceiling()])
+    mcp = FastMCP("tenuo-github-actions", middleware=[_Verify()])
 
     def _register(spec: ToolSpec) -> None:
-        async def _handler(**kwargs: Any) -> Dict[str, Any]:
-            result = _verified.get()
-            if result is None:
-                return {"executed": False, "tool": spec.name}
-            return gateway.dispatch(result) or {"executed": False, "tool": spec.name}
-
-        _handler.__name__ = spec.name.replace(".", "_")
-        _handler.__doc__ = spec.description
-        mcp.tool(name=spec.name)(_handler)
+        params = ", ".join(spec.arguments)
+        loc: Dict[str, Any] = {}
+        exec(
+            "async def _handler(" + params + ") -> Dict[str, Any]:\n"
+            "    result = _verified.get()\n"
+            "    if result is None:\n"
+            "        return {\"executed\": False, \"tool\": spec.name}\n"
+            "    return gateway.dispatch(result) or {\"executed\": False, \"tool\": spec.name}\n",
+            {"_verified": _verified, "spec": spec, "gateway": gateway, "Dict": Dict, "Any": Any},
+            loc,
+        )
+        handler = loc["_handler"]
+        handler.__name__ = spec.name.replace(".", "_")
+        handler.__doc__ = spec.description
+        mcp.tool(name=spec.name)(handler)
 
     for spec in gateway.tools:
         _register(spec)

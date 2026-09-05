@@ -33,10 +33,37 @@ def build_http(
         "gateway": gateway is not None or mcp_app is not None,
     }
 
+    def _self_test() -> Optional[str]:
+        if config.role in {"exchange", "both"}:
+            if exchange is None:
+                return "exchange is not served"
+            test = getattr(exchange, "self_test", None)
+            if callable(test):
+                try:
+                    test()
+                except Exception:
+                    return "exchange sign self-test failed"
+        if config.role in {"gateway", "both"}:
+            if gateway is None and mcp_app is None:
+                return "gateway is not served"
+            test = getattr(gateway, "self_test", None)
+            if callable(test):
+                try:
+                    test()
+                except Exception:
+                    return "gateway sign self-test failed"
+        return None
+
     async def health(_request: Request) -> Response:
         return JSONResponse({"status": "ok"})
 
     async def ready_probe(_request: Request) -> Response:
+        detail = _self_test()
+        if detail:
+            return JSONResponse(
+                {"status": "not_ready", "role": config.role, "detail": detail},
+                status_code=503,
+            )
         return JSONResponse({"status": "ready", "role": config.role})
 
     async def exchange_handler(request: Request) -> Response:
@@ -52,14 +79,15 @@ def build_http(
             result = exchange.mint(_bearer(request), body)
         except ExchangeError as exc:
             return JSONResponse({"error": exc.code, "detail": exc.detail}, status_code=exc.status)
-        return JSONResponse(
-            {
-                "warrant": result.warrant,
-                "warrant_id": result.warrant_id,
-                "expires_at": result.expires_at,
-                "root_public_keys": result.root_public_keys,
-            }
-        )
+        payload = {
+            "warrant": result.warrant,
+            "warrant_id": result.warrant_id,
+            "expires_at": result.expires_at,
+            "root_public_keys": result.root_public_keys,
+        }
+        if result.task_binding is not None:
+            payload["task_binding"] = result.task_binding
+        return JSONResponse(payload)
 
     async def call_handler(request: Request) -> Response:
         if gateway is None:
