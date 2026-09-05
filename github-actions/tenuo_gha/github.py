@@ -143,7 +143,7 @@ class GitHubApp:
         return str(installation_id)
 
     def call(self, spec: ToolSpec, arguments: Dict[str, Any]) -> Any:
-        if spec.tripwire or not spec.path:
+        if not spec.path:
             raise GitHubError(f"{spec.name} is not executable")
         token = self.token_for(str(arguments["repository"]))
         path = format_path(spec.path, arguments)

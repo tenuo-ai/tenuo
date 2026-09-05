@@ -1,0 +1,47 @@
+{{- include "tenuo-github-actions.validate" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tenuo-github-actions.gatewayName" . }}
+  labels:
+    {{- include "tenuo-github-actions.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+data:
+  gateway.yaml: |
+    version: 1
+    trust:
+      root_public_keys:
+        {{- range .Values.trust.rootPublicKeys }}
+        - {{ . | quote }}
+        {{- end }}
+      require_pop: {{ .Values.trust.requirePop }}
+      clock_tolerance_seconds: {{ .Values.trust.clockToleranceSeconds }}
+    signing:
+      profile: secret
+      secret:
+        mount: {{ .Values.signing.secret.mount | quote }}
+        receipt_key: {{ .Values.signing.secret.receiptKey | quote }}
+        github_app_key: {{ .Values.signing.secret.githubAppKey | quote }}
+    credentials:
+      github:
+        provider: app
+        app_id: {{ .Values.github.appId | quote }}
+        api_url: {{ .Values.github.apiUrl | quote }}
+        {{- if .Values.github.installationId }}
+        installation_id: {{ .Values.github.installationId | quote }}
+        {{- end }}
+    exchange:
+      audience: {{ .Values.exchange.audience | quote }}
+    ceiling:
+      repositories:
+        {{- range .Values.ceiling.repositories }}
+        - {{ . | quote }}
+        {{- end }}
+    tools:
+      packs:
+        {{- range .Values.tools.packs }}
+        - {{ . | quote }}
+        {{- end }}
+    receipts:
+      sink: {{ .Values.receipts.sink | quote }}
+      path: {{ .Values.receipts.path | quote }}

@@ -10,12 +10,12 @@ from typing import Any, Dict, Optional
 from tenuo import Authorizer, PublicKey, SigningKey
 from tenuo.mcp import MCPVerificationResult, MCPVerifier
 
-from .codes import TENUO_CONSTRAINT_VIOLATION, TENUO_TOOL_NOT_AUTHORIZED
+from .codes import TENUO_CONSTRAINT_VIOLATION
 
 _verified: ContextVar[Optional[MCPVerificationResult]] = ContextVar("tenuo_gha_verified", default=None)
 from tenuo.receipts import FileReceiptSink, ReceiptSigner
 
-from .catalog import TRIPWIRE_NAMES, ToolSpec, comment_digest_matches, spec_by_name, tools_for_packs
+from .catalog import ToolSpec, spec_by_name, tools_for_packs
 from .config import ConfigError, GatewayConfig
 from .exchange import Exchange
 from .github import GitHubError
@@ -89,8 +89,6 @@ class Gateway:
             FileReceiptSink(self.config.receipt_path),
             authorizer=self.authorizer,
         )
-        # Ceiling tools are checked after decode and before an allow receipt.
-        self._raw = MCPVerifier(authorizer=self.authorizer, control_plane=False)
         self.verifier = MCPVerifier(
             authorizer=self.authorizer,
             control_plane=self.signer,
@@ -118,37 +116,12 @@ class Gateway:
         arguments: Optional[Dict[str, Any]],
         meta: Any = None,
     ) -> MCPVerificationResult:
-        if tool in TRIPWIRE_NAMES:
-            result = self._raw.verify(tool, arguments, meta=meta)
-            if not result.allowed and not result.presented_chain:
-                return result
-            denied = MCPVerificationResult(
-                allowed=False,
-                tool=tool,
-                clean_arguments=dict(arguments or {}),
-                constraints=dict(arguments or {}),
-                warrant_id=result.warrant_id,
-                denial_reason="gateway ceiling: tool is not enabled",
-                jsonrpc_error_code=-32001,
-                error_type="tool_not_allowed",
-                error_code=TENUO_TOOL_NOT_AUTHORIZED,
-                presented_chain=result.presented_chain,
-                verified_pop=result.verified_pop,
-                pop_auth_args=result.pop_auth_args,
-                authorizer=self.authorizer,
-            )
-            self.signer.emit_for_enforcement(denied)
-            return denied
         result = self.verifier.verify(tool, arguments, meta=meta)
         if not result.allowed:
             return result
-        result = self._apply_repository_ceiling(result)
-        if not result.allowed:
-            return result
-        result = self._apply_terminal_leaf(result)
-        if not result.allowed:
-            return result
-        return self._apply_body_digest(result)
+        # Core authorize() does not require a terminal leaf. The warrant
+        # carries the flag; the interpreter refuses a non-terminal program.
+        return self._apply_terminal_leaf(result)
 
     def _deny_after_allow(self, result: MCPVerificationResult, reason: str, error_code: str) -> MCPVerificationResult:
         denied = MCPVerificationResult(
@@ -159,7 +132,7 @@ class Gateway:
             warrant_id=result.warrant_id,
             denial_reason=reason,
             jsonrpc_error_code=-32001,
-            error_type="constraint_violation" if error_code == TENUO_CONSTRAINT_VIOLATION else "tool_not_allowed",
+            error_type="constraint_violation",
             error_code=error_code,
             presented_chain=result.presented_chain,
             verified_pop=result.verified_pop,
@@ -168,19 +141,6 @@ class Gateway:
         )
         self.signer.emit_for_enforcement(denied)
         return denied
-
-    def _apply_repository_ceiling(self, result: MCPVerificationResult) -> MCPVerificationResult:
-        repository = (result.clean_arguments or {}).get("repository")
-        if repository is None:
-            return result
-        allowed = {str(item) for item in self.config.repositories}
-        if str(repository) in allowed:
-            return result
-        return self._deny_after_allow(
-            result,
-            "gateway ceiling: repository is not enabled",
-            TENUO_TOOL_NOT_AUTHORIZED,
-        )
 
     def _apply_terminal_leaf(self, result: MCPVerificationResult) -> MCPVerificationResult:
         chain = result.presented_chain or []
@@ -194,17 +154,6 @@ class Gateway:
             TENUO_CONSTRAINT_VIOLATION,
         )
 
-    def _apply_body_digest(self, result: MCPVerificationResult) -> MCPVerificationResult:
-        if result.tool != "github.add_comment":
-            return result
-        if comment_digest_matches(result.clean_arguments or {}):
-            return result
-        return self._deny_after_allow(
-            result,
-            "gateway: comment body digest does not match",
-            TENUO_CONSTRAINT_VIOLATION,
-        )
-
     def flush_receipts(self) -> bool:
         return self.signer.flush()
 
@@ -213,12 +162,10 @@ class Gateway:
         if not result.allowed:
             return None
         spec = spec_by_name(result.tool, self.tools)
-        if spec is None or spec.tripwire:
+        if spec is None or not spec.path:
             return {"executed": False, "tool": result.tool}
         if self.github is None:
             return {"executed": False, "tool": result.tool}
-        if spec.name == "github.add_comment" and not comment_digest_matches(result.clean_arguments or {}):
-            return {"executed": False, "tool": result.tool, "error": "body digest does not match"}
         try:
             payload = self.github.call(spec, result.clean_arguments)
         except GitHubError as exc:
@@ -244,7 +191,7 @@ def build_mcp(gateway: Gateway):
     import mcp.types as mt
     from tenuo.mcp.fastmcp_middleware import _denial_tool_return, resolve_tool_call_meta_for_verify
 
-    class _Ceiling(Middleware):
+    class _Verify(Middleware):
         async def on_call_tool(
             self,
             context: MiddlewareContext[mt.CallToolRequestParams],
@@ -267,7 +214,7 @@ def build_mcp(gateway: Gateway):
             finally:
                 _verified.reset(token)
 
-    mcp = FastMCP("tenuo-github-actions", middleware=[_Ceiling()])
+    mcp = FastMCP("tenuo-github-actions", middleware=[_Verify()])
 
     def _register(spec: ToolSpec) -> None:
         params = ", ".join(spec.arguments)

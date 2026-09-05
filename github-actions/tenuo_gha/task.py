@@ -1,8 +1,17 @@
-"""Infer the run's capabilities from the GitHub event."""
+"""Infer the run's capabilities from the GitHub event.
+
+``infer_capabilities`` is the job's request, not a ceiling. Open comment
+fields are filled at issuance (OSS stand-in for a Cloud template) so they
+land on the warrant. The gateway does not re-apply them.
+"""
 
 from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional
+
+from tenuo import CEL, Pattern
+
+from .catalog import COMMENT_BODY_CEL
 
 
 class TaskError(ValueError):
@@ -37,6 +46,18 @@ def infer_capabilities(
         "github.list_issue_comments": dict(bound),
         "github.add_comment": dict(bound),
     }
+
+
+def expand_issuance_constraints(tool: str, constraints: Dict[str, Any]) -> Dict[str, Any]:
+    """Write inferred comment fields into the warrant. Cloud templates do this."""
+    if tool != "github.add_comment":
+        return constraints
+    out = dict(constraints)
+    if "body" not in out:
+        out["body"] = CEL(COMMENT_BODY_CEL)
+    if "body_sha256" not in out:
+        out["body_sha256"] = Pattern("*")
+    return out
 
 
 def infer_task_binding(

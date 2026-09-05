@@ -267,23 +267,31 @@ def test_ttl_above_max_is_refused(tmp_path):
     assert caught.value.code == "outside_ceiling"
 
 
-def test_tripwire_capability_is_refused(tmp_path):
+def test_exchange_mints_requested_capabilities(tmp_path):
     issuer = SigningKey.generate()
     holder = SigningKey.generate()
     jwks, rsa_key = _rsa_jwks()
     exchange = Exchange(_exchange_config(tmp_path, issuer), issuer_key=issuer, jwks=jwks)
-    with pytest.raises(ExchangeError) as caught:
-        token = _token(rsa_key)
-        exchange.mint(
+    token = _token(rsa_key)
+    minted = exchange.mint(
+        token,
+        exchange_body(
+            holder,
             token,
-            exchange_body(
-                holder,
-                token,
-                ttl_seconds=60,
-                capabilities={"github.workflow_dispatch": {"workflow": "x.yml"}},
-            ),
-        )
-    assert caught.value.code == "outside_ceiling"
+            ttl_seconds=60,
+            capabilities={"github.workflow_dispatch": {"workflow": "x.yml"}},
+        ),
+    )
+    stack = decode_warrant_stack_base64(minted.warrant)
+    names = set()
+    for warrant in stack:
+        tools = warrant.tools() if callable(getattr(warrant, "tools", None)) else getattr(warrant, "tools", None)
+        if tools:
+            names.update(str(item) for item in tools)
+        caps = warrant.capabilities() if callable(getattr(warrant, "capabilities", None)) else getattr(warrant, "capabilities", None)
+        if isinstance(caps, dict):
+            names.update(str(item) for item in caps)
+    assert "github.workflow_dispatch" in names
 
 
 def test_foreign_repository_is_refused(tmp_path):

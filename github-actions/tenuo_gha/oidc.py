@@ -138,7 +138,7 @@ def assert_conditions(
     event_names: list[str],
     repositories: list[str],
 ) -> None:
-    """Match numeric ids, workflow ref, event, and repository ceiling."""
+    """Match numeric ids, workflow ref, event, and issuance repository."""
     if repository_owner_id is not None:
         got = str(claims.get("repository_owner_id") or "")
         if got != str(repository_owner_id):

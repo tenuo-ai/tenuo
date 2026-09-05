@@ -11,12 +11,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from tenuo import CEL, Exact
+from tenuo import Exact
 from tenuo.exceptions import IssuanceError, LimitError, MonotonicityError
 from tenuo.mcp import exact_argument_constraints
 from tenuo_core import SigningKey, Warrant, decode_warrant_stack_base64, encode_warrant_stack
 
-from .catalog import COMMENT_BODY_CEL, PACKS, TRIPWIRE_NAMES, comment_body_digest
+from .catalog import comment_body_digest
 from .commitment import encode_proof, exchange_proof_preimage, exchange_request_hash
 
 
@@ -101,14 +101,24 @@ def bind_call_arguments(tool: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     return bound
 
 
-def _derive_leaf(warrant: Warrant, key: SigningKey, tool: str, arguments: Dict[str, Any]) -> Tuple[Warrant, SigningKey]:
-    leaf_key = SigningKey.generate()
-    constraints = exact_argument_constraints(arguments)
-    body = arguments.get("body")
-    if isinstance(body, str):
-        # Size CEL stays on the chain; Exact(body) cannot replace it.
-        constraints["body"] = CEL(COMMENT_BODY_CEL)
-        constraints["body_sha256"] = Exact(comment_body_digest(body))
+def _tool_constraints(warrant: Warrant, tool: str) -> Dict[str, Any]:
+    """Constraints already on the warrant for this tool. Core objects, not copies."""
+    caps = getattr(warrant, "capabilities", None)
+    if callable(caps):
+        caps = caps()
+    if not isinstance(caps, dict):
+        return {}
+    raw = caps.get(tool)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _grant_leaf(
+    warrant: Warrant,
+    key: SigningKey,
+    tool: str,
+    constraints: Dict[str, Any],
+    leaf_key: SigningKey,
+) -> Warrant:
     leaf = (
         warrant.grant_builder()
         .capability(tool, constraints)
@@ -119,18 +129,33 @@ def _derive_leaf(warrant: Warrant, key: SigningKey, tool: str, arguments: Dict[s
     )
     if not leaf.is_terminal():
         raise HolderError("derived leaf is not terminal")
-    return leaf, leaf_key
+    return leaf
+
+
+def _derive_leaf(warrant: Warrant, key: SigningKey, tool: str, arguments: Dict[str, Any]) -> Tuple[Warrant, SigningKey]:
+    leaf_key = SigningKey.generate()
+    constraints = exact_argument_constraints(arguments)
+    body = arguments.get("body")
+    if isinstance(body, str):
+        constraints["body_sha256"] = Exact(comment_body_digest(body))
+    try:
+        return _grant_leaf(warrant, key, tool, constraints, leaf_key), leaf_key
+    except MonotonicityError:
+        parent_body = _tool_constraints(warrant, tool).get("body")
+        if parent_body is None or not isinstance(body, str):
+            raise
+        constraints["body"] = parent_body
+        return _grant_leaf(warrant, key, tool, constraints, leaf_key), leaf_key
 
 
 class Holder:
     """In-process holder used by the socket server and by tests."""
 
-    def __init__(self, *, allowlist: Optional[List[str]] = None, key: Optional[SigningKey] = None) -> None:
+    def __init__(self, *, key: Optional[SigningKey] = None) -> None:
         assert_no_holder_secret()
         self._key = key or SigningKey.generate()
         self._stack: List[Warrant] = []
         self._warrant: Optional[Warrant] = None
-        self._allowlist = allowlist
         self._expires_at: Optional[int] = None
 
     def public_key_hex(self) -> str:
@@ -151,12 +176,7 @@ class Holder:
     def tools(self) -> List[str]:
         if self._warrant is None:
             return []
-        named = set(_warrant_tools(self._warrant))
-        catalog = {spec.name for pack in PACKS.values() for spec in pack}
-        chosen = sorted((named & catalog) - TRIPWIRE_NAMES)
-        if self._allowlist is not None:
-            chosen = [name for name in chosen if name in self._allowlist]
-        return chosen
+        return sorted(set(_warrant_tools(self._warrant)))
 
     def sign_exchange(
         self,
@@ -464,9 +484,7 @@ def main() -> None:
         daemonize()
     if args.pid:
         Path(args.pid).write_text(str(os.getpid()), encoding="utf-8")
-    allow = os.environ.get("TENUO_TOOL_ALLOWLIST")
-    allowlist = [item.strip() for item in allow.split(",") if item.strip()] if allow else None
-    server = HolderServer(args.socket, Holder(allowlist=allowlist))
+    server = HolderServer(args.socket, Holder())
 
     def _stop(*_sig: object) -> None:
         server.stop()

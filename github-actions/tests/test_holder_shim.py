@@ -202,7 +202,7 @@ def test_socket_mode_is_owner_only():
         server.stop()
 
 
-def test_tools_are_the_warrant_catalog_intersection():
+def test_tools_are_the_warrant_names():
     issuer = SigningKey.generate()
     holder = Holder()
     warrant = _warrant(issuer, holder.public_key_hex())
@@ -214,11 +214,18 @@ def test_tools_are_the_warrant_catalog_intersection():
     assert "github.get_file_contents" not in tools
 
 
-def test_allowlist_filters_advertised_tools():
+def test_tools_advertise_every_name_on_the_warrant():
     issuer = SigningKey.generate()
-    holder = Holder(allowlist=["github.get_issue"])
-    holder.set_warrant(_warrant(issuer, holder.public_key_hex()).to_base64())
-    assert holder.tools() == ["github.get_issue"]
+    holder = Holder()
+    warrant = (
+        Warrant.mint_builder()
+        .capability("github.get_file_contents", repository=Exact("acme/widgets"))
+        .holder(PublicKey.from_bytes(bytes.fromhex(holder.public_key_hex())))
+        .ttl(900)
+        .mint(issuer)
+    )
+    holder.set_warrant(warrant.to_base64())
+    assert holder.tools() == ["github.get_file_contents"]
 
 
 def test_holder_envelope_allows_a_bound_comment(tmp_path):

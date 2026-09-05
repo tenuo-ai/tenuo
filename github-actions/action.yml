@@ -3,20 +3,20 @@ description: Exchange OIDC for a holder-bound warrant and write mcp_config
 inputs:
   gateway_url:
     required: true
-    description: Shared gateway URL
+    description: Customer gateway URL (MCP). Never point this at Tenuo Cloud.
   exchange_url:
     required: false
-    description: Shared exchange URL. Omitted, the gateway URL is used.
+    description: Exchange URL. Cloud or self-hosted POST /v1/exchange. Omitted, gateway_url is used.
   audience:
     required: false
-    description: OIDC audience for the exchange. Defaults to TENUO_EXCHANGE_AUDIENCE.
+    description: OIDC audience. Self-hosted exchange.audience, or Cloud tenuo:org/<tenant>. Defaults to TENUO_EXCHANGE_AUDIENCE.
   ttl:
     required: false
     default: "900"
     description: Requested warrant lifetime in seconds
   trusted_roots:
     required: false
-    description: Hex root public keys the exchange may advertise. Never used as the gateway trust anchor.
+    description: Deploy-time root public keys (hex or base64). The action checks advertised root_public_keys against this list. Never installed as the gateway trust anchor.
 outputs:
   mcp_config:
     description: Path to mcp-config.json

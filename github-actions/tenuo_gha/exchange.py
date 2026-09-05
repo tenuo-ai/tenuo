@@ -9,14 +9,14 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional
 
-from tenuo import CEL, Pattern, PublicKey, SigningKey, Warrant
+from tenuo import PublicKey, SigningKey, Warrant
 from tenuo.mcp import exact_argument_constraints
 from tenuo_core import encode_warrant_stack
 
-from .catalog import COMMENT_BODY_CEL, PACKS, TRIPWIRE_NAMES
 from .commitment import CommitmentError, compact_task_binding, exchange_request_hash, verify_holder_proof
 from .config import ConfigError, GatewayConfig
 from .oidc import OidcError, assert_conditions, load_jwks, verify_oidc
+from .task import expand_issuance_constraints
 
 
 class ExchangeError(ValueError):
@@ -132,14 +132,6 @@ def _public_key(value: str) -> PublicKey:
         return PublicKey.from_bytes(base64.b64decode(raw))
 
 
-def _allowed_tools(packs: list[str]) -> set[str]:
-    names: set[str] = set()
-    for pack in packs:
-        for spec in PACKS.get(pack, ()):
-            names.add(spec.name)
-    return names
-
-
 def _token_id(claims: Mapping[str, Any], token: str) -> str:
     jti = claims.get("jti")
     if jti:
@@ -169,7 +161,6 @@ class Exchange:
         self._issuer = _signing_key(config, issuer_key)
         self._jwks = load_jwks(jwks=jwks, jwks_url=config.jwks_url, fetcher=jwks_fetcher)
         self._replay = replay or ReplayCache()
-        self._allowed = _allowed_tools(config.packs)
         self.self_test()
 
     def self_test(self) -> None:
@@ -185,23 +176,15 @@ class Exchange:
         *,
         repository: str,
     ) -> Dict[str, Dict[str, Any]]:
-        """Map a request onto exact constraints. Refuse rather than trim."""
+        """Bind requested tools. Repository comes from the OIDC subject."""
         bound: Dict[str, Dict[str, Any]] = {}
         for tool, raw_args in capabilities.items():
-            if tool in TRIPWIRE_NAMES or tool not in self._allowed:
-                raise ExchangeError("outside_ceiling", f"{tool} is not in the configured packs")
             args = dict(raw_args or {})
             requested_repo = args.get("repository")
             if requested_repo is not None and str(requested_repo) != repository:
                 raise ExchangeError("outside_ceiling", "repository does not match the OIDC subject")
             args["repository"] = repository
-            constraints = exact_argument_constraints(args)
-            if tool == "github.add_comment":
-                if "body" not in constraints:
-                    constraints["body"] = CEL(COMMENT_BODY_CEL)
-                if "body_sha256" not in constraints:
-                    constraints["body_sha256"] = Pattern("*")
-            bound[str(tool)] = constraints
+            bound[str(tool)] = expand_issuance_constraints(str(tool), exact_argument_constraints(args))
         return bound
 
     def validate(
@@ -211,7 +194,7 @@ class Exchange:
         *,
         now: Optional[int] = None,
     ) -> tuple[Dict[str, Any], Any, int, Dict[str, Any], Optional[Dict[str, Any]]]:
-        """OIDC, holder proof, replay, and ceiling. Returns claims, holder, ttl, capabilities, task."""
+        """OIDC, holder proof, replay, and issuance identity. Returns claims, holder, ttl, capabilities, task."""
         if now is None:
             now = int(time.time())
         try:

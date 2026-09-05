@@ -133,7 +133,7 @@ def run_doctor(
                 "audience",
                 False,
                 "OIDC audience is empty",
-                "Set the action audience input (or TENUO_EXCHANGE_AUDIENCE) to exchange.audience. For Cloud, use cloud_audience.",
+                "Set the action audience input (or TENUO_EXCHANGE_AUDIENCE) to exchange.audience, or Cloud tenuo:org/<tenant>.",
             )
         else:
             report.add("audience", True, audience, "")
@@ -300,7 +300,7 @@ def run_doctor(
             elif config.audience:
                 report.add("audience matches config", True, config.audience, "")
             report.add(
-                "gateway ceiling",
+                "execution catalog",
                 True,
                 f"packs={','.join(config.packs) or 'none'} repos={len(config.repositories)}",
                 "",

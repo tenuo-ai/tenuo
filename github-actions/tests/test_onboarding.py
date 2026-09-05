@@ -214,7 +214,8 @@ def test_doctor_names_the_fix_when_audience_is_missing(tmp_path):
     )
     by_name = {row.name: row for row in report.rows}
     assert not by_name["audience"].ok
-    assert "cloud_audience" in by_name["audience"].fix
+    assert "TENUO_EXCHANGE_AUDIENCE" in by_name["audience"].fix
+    assert "cloud_audience" not in by_name["audience"].fix
     assert not by_name["no GitHub token in environment"].ok
     assert "Unset GITHUB_TOKEN" in by_name["no GitHub token in environment"].fix
 

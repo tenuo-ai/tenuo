@@ -1,7 +1,16 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+export function actionRoot() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const envPath = process.env.GITHUB_ACTION_PATH;
+  if (envPath && existsSync(join(envPath, 'action.yml'))) {
+    return envPath;
+  }
+  return here;
+}
 
 const UBUNTU_WHEEL = /manylinux|linux_/;
 
@@ -58,6 +67,5 @@ export function installRuntime(python, actionPath) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  const actionPath = process.env.GITHUB_ACTION_PATH || process.cwd();
-  installRuntime(process.env.TENUO_PYTHON || 'python', actionPath);
+  installRuntime(process.env.TENUO_PYTHON || 'python', actionRoot());
 }

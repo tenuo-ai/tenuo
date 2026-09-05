@@ -1,10 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { installRuntime } from './install-runtime.mjs';
+import { actionRoot, installRuntime } from './install-runtime.mjs';
 
 const input = (name) => process.env[`INPUT_${name.toUpperCase()}`] || '';
-const actionPath = process.env.GITHUB_ACTION_PATH || process.cwd();
+const actionPath = actionRoot();
 const runDir = join(process.env.RUNNER_TEMP || '/tmp', 'tenuo', process.env.GITHUB_RUN_ID || 'local');
 mkdirSync(runDir, { recursive: true });
 

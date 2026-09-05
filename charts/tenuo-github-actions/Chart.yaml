@@ -1,0 +1,16 @@
+apiVersion: v2
+name: tenuo-github-actions
+description: Tenuo for GitHub Actions — split exchange and gateway beside the runners
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - tenuo
+  - github-actions
+  - authorization
+home: https://github.com/tenuo-ai/tenuo
+sources:
+  - https://github.com/tenuo-ai/tenuo
+maintainers:
+  - name: Tenuo Team
+    email: team@tenuo.ai

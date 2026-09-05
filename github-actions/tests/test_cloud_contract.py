@@ -209,7 +209,7 @@ def test_holder_proof_failure(tmp_path):
     assert caught.value.code == "holder_proof_invalid"
 
 
-def test_outside_ceiling_capability(tmp_path):
+def test_outside_ceiling_repository(tmp_path):
     root = SigningKey.generate()
     holder = SigningKey.generate()
     jwks, rsa_key = _rsa_jwks()
@@ -222,7 +222,7 @@ def test_outside_ceiling_capability(tmp_path):
                 holder,
                 token,
                 ttl_seconds=60,
-                capabilities={"github.workflow_dispatch": {"workflow": "x.yml"}},
+                capabilities={"github.get_issue": {"repository": "acme/other", "issue": 1}},
             ),
         )
     assert caught.value.code == "outside_ceiling"
@@ -381,9 +381,20 @@ def test_run_provided_root_is_not_trusted():
 
 
 def test_full_stack_terminal_attenuation_revocation_and_receipts(tmp_path):
+    """Cloud /v1/exchange contract: stack, terminal leaf, one GitHub call, trust, revocation, receipts."""
     root = SigningKey.generate()
     recorded: list = []
+    exchanged: list = []
     gateway, _exchange, http, rsa_key = _cloud_stack(tmp_path, root, recorded)
+
+    class _Capture(_Http):
+        def post(self, url, headers=None, json=None):
+            response = super().post(url, headers=headers, json=json)
+            if url.endswith("/v1/exchange") or str(urlparse(url).path) == "/v1/exchange":
+                exchanged.append(response.json())
+            return response
+
+    http = _Capture(http._client.app)
     socket = _sock("accept")
     server = HolderServer(socket)
     server.start()
@@ -409,6 +420,18 @@ def test_full_stack_terminal_attenuation_revocation_and_receipts(tmp_path):
         assert "ghs_" not in config_text
         assert "tenant_id" not in config_text
 
+        minted = exchanged[0]
+        issued = decode_warrant_stack_base64(minted["warrant"])
+        assert len(issued) == 2
+        assert not issued[0].is_terminal()
+        assert not issued[1].is_terminal()
+        verify_exchange_roots(minted["root_public_keys"], [root.public_key.to_bytes().hex()])
+        assert set(HolderClient(socket).tools()) == {
+            "github.get_issue",
+            "github.list_issue_comments",
+            "github.add_comment",
+        }
+
         args = {"repository": "acme/widgets", "issue": 4127, "body": "Authorized by a Cloud stack."}
         envelope = HolderClient(socket).envelope("github.add_comment", args)
         assert envelope["leaf_derived"] is True
@@ -417,13 +440,17 @@ def test_full_stack_terminal_attenuation_revocation_and_receipts(tmp_path):
         assert presented[-1].is_terminal()
         outcome = call_gateway("http://test", "github.add_comment", args, envelope, client=http)
         assert outcome["allowed"] is True
-        assert any(item[0] == "POST" and "/comments" in item[1] for item in recorded)
+        github_calls = [item for item in recorded if item[0] in {"GET", "POST", "PATCH", "PUT", "DELETE"}]
+        assert len(github_calls) == 1
+        assert github_calls[0][0] == "POST"
+        assert "/repos/acme/widgets/issues/4127/comments" in github_calls[0][1]
         assert not any(b"installation-token" in item[2] for item in recorded)
 
         denied_args = {"repository": "acme/payments-internal", "issue": 1}
         denied_env = HolderClient(socket).envelope("github.get_issue", denied_args)
         denied = call_gateway("http://test", "github.get_issue", denied_args, denied_env, client=http)
         assert denied["allowed"] is False
+        assert len([item for item in recorded if item[0] in {"GET", "POST", "PATCH", "PUT", "DELETE"}]) == 1
 
         assert gateway.flush_receipts()
         journal = (tmp_path / "receipts.jsonl").read_text(encoding="utf-8")
@@ -437,5 +464,6 @@ def test_full_stack_terminal_attenuation_revocation_and_receipts(tmp_path):
         after = call_gateway("http://test", "github.add_comment", args, envelope, client=http)
         assert after["allowed"] is False
         assert TENUO_REVOKED in str(after.get("error_code") or after.get("message") or "")
+        assert len([item for item in recorded if item[0] in {"GET", "POST", "PATCH", "PUT", "DELETE"}]) == 1
     finally:
         server.stop()

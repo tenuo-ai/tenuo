@@ -95,7 +95,7 @@ def run_agent_table(
         TENUO_TOOL_NOT_AUTHORIZED,
     )
     attempt(
-        "tripwire get_file_contents (not in github-triage)",
+        "get_file_contents (not on the warrant)",
         "github.get_file_contents",
         {"repository": bound_repository, "path": ".env", "ref": "main"},
         TENUO_TOOL_NOT_AUTHORIZED,
@@ -179,7 +179,7 @@ def run_containment(
     )
     unsafe = {"repository": bound_repository, "path": ".env", "ref": "main"}
     row(
-        "tripwire get_file_contents (not in github-triage)",
+        "get_file_contents (not on the warrant)",
         TENUO_TOOL_NOT_AUTHORIZED,
         present("github.get_file_contents", unsafe),
     )

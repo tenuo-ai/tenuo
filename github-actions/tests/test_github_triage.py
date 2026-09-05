@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("tenuo_core")
 
 from tenuo import CEL, Exact, Pattern, Range
-from tenuo.mcp import TENUO_CONSTRAINT_VIOLATION, TENUO_TOOL_NOT_AUTHORIZED
+from tenuo.mcp import TENUO_CONSTRAINT_VIOLATION
 from tenuo_core import SigningKey, Warrant
 
 from tenuo_gha.app import Gateway
@@ -209,7 +209,7 @@ def test_token_is_not_in_github_error_text(tmp_path):
     assert "installation-token" not in str(caught.value)
 
 
-def test_wide_warrant_is_still_stopped_by_repository_ceiling(tmp_path):
+def test_warrant_repository_is_the_authorization(tmp_path):
     issuer = SigningKey.generate()
     holder = SigningKey.generate()
     recorded: list = []
@@ -228,11 +228,9 @@ def test_wide_warrant_is_still_stopped_by_repository_ceiling(tmp_path):
         "github.get_issue",
         {"repository": "acme/canary", "issue": 1},
     )
-    assert not result.allowed
-    assert result.error_code == TENUO_TOOL_NOT_AUTHORIZED
-    assert "repository is not enabled" in (result.denial_reason or "")
-    assert payload is None
-    assert recorded == []
+    assert result.allowed
+    assert payload is not None
+    assert recorded
     assert gateway.flush_receipts()
     assert (tmp_path / "receipts.jsonl").read_text(encoding="utf-8").strip()
 
@@ -353,7 +351,7 @@ def test_dispatch_uses_cleaned_arguments(tmp_path):
     assert recorded
 
 
-def test_comment_body_digest_is_checked_before_github(tmp_path):
+def test_leaf_digest_mismatch_is_a_verifier_deny(tmp_path):
     issuer = SigningKey.generate()
     holder = SigningKey.generate()
     recorded: list = []
@@ -365,15 +363,16 @@ def test_comment_body_digest_is_checked_before_github(tmp_path):
         "github.add_comment",
         {"repository": "acme/widgets", "issue": 4127, "body": "looks good"},
     )
-    result = gateway.verify(
+    args = dict(envelope["arguments"])
+    args["body_sha256"] = "0" * 64
+    result, payload = gateway.execute(
         "github.add_comment",
-        envelope["arguments"],
+        args,
         meta={"tenuo": envelope},
     )
-    assert result.allowed
-    result.clean_arguments["body"] = "tampered after verify"
-    payload = gateway.dispatch(result)
-    assert payload == {"executed": False, "tool": "github.add_comment", "error": "body digest does not match"}
+    assert not result.allowed
+    assert result.error_code in {TENUO_CONSTRAINT_VIOLATION, "TENUO_INVALID_POP"}
+    assert payload is None
     assert recorded == []
 
 

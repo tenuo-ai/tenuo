@@ -102,3 +102,28 @@ def test_clean_runner_refuses_to_start_without_tenuo_wheel(tmp_path):
     assert invoked.returncode != 0
     assert "Tenuo runtime wheel is missing" in invoked.stderr
     assert _import_tenuo(python).returncode != 0
+
+
+def test_action_root_uses_script_directory_when_github_action_path_is_unset(tmp_path):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required to resolve the action root")
+    action = tmp_path / "nested" / "github-actions"
+    action.mkdir(parents=True)
+    shutil.copy2(ACTION_ROOT / "install-runtime.mjs", action / "install-runtime.mjs")
+    (action / "action.yml").write_text("name: Tenuo\n", encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if key != "GITHUB_ACTION_PATH"}
+    invoked = subprocess.run(
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            "import { actionRoot } from './nested/github-actions/install-runtime.mjs'; process.stdout.write(actionRoot());",
+        ],
+        cwd=str(tmp_path),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert invoked.returncode == 0, invoked.stderr
+    assert Path(invoked.stdout).resolve() == action.resolve()
