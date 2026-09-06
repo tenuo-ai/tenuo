@@ -77,9 +77,43 @@ export type WasmReceiptChain = {
 
 export type WasmSession = object;
 
+/** Mirrors `SessionInfoDto` in tenuo-wasm. Snake case is the WASM boundary. */
+export type WasmSessionInfo = {
+  holder_public_key: string;
+  root_public_key: string;
+  depth: number;
+  max_depth: number;
+  terminal: boolean;
+  expires_at: number;
+  tools: string[];
+  warrant_ids: string[];
+  can_authorize: boolean;
+};
+
+/** Security limits exported by tenuo-core; TypeScript must not redefine them. */
+export type WasmProtocolLimits = {
+  max_delegation_depth: number;
+  max_warrant_ttl_seconds: number;
+};
+
+/** Mirrors `NarrowOptions` in tenuo-wasm. Unknown keys are rejected there. */
+export type WasmNarrowOptions = {
+  holder?: string;
+  ttlSeconds?: number;
+  terminal?: boolean;
+  maxDepth?: number;
+};
+
 export type WasmContext = {
-  mint(allow: unknown, ttlSeconds: number, requireApproval?: unknown): WasmSession;
-  narrow(session: WasmSession, allow: unknown): WasmSession;
+  mint(
+    allow: unknown,
+    ttlSeconds: number,
+    requireApproval?: unknown,
+    holderHex?: string,
+    maxDepth?: number,
+  ): WasmSession;
+  narrow(session: WasmSession, allow: unknown, options?: WasmNarrowOptions): WasmSession;
+  issuerPublicKey(): string;
   authorize(
     session: WasmSession,
     tool: string,
@@ -122,6 +156,8 @@ type Generated = {
   };
   sdkInspectWarrant(wire: string): WasmInspect;
   sdkInspectParts(payloadHex: string, signatureHex: string): WasmInspect;
+  sdkProtocolLimits(): WasmProtocolLimits;
+  sdkPublicKeyFromHolderKey(holderSecret: Uint8Array): string;
   sdkSignApproval(
     session: WasmSession,
     tool: string,
@@ -174,6 +210,10 @@ export function createDevContext(): WasmContext {
   return new SdkContext();
 }
 
+export function protocolLimits(): WasmProtocolLimits {
+  return loadWasm().sdkProtocolLimits();
+}
+
 export function createVerifierContext(
   rootHexes: readonly string[],
   revocationList?: string,
@@ -207,6 +247,11 @@ export function importSessionFromChain(parts: unknown, holderKey: Uint8Array): W
 
 export function inspectWarrant(wire: string): WasmInspect {
   return loadWasm().sdkInspectWarrant(wire);
+}
+
+/** Hex public key for a 32-byte holder secret. Ed25519, derived in Rust. */
+export function publicKeyHexFromHolderKey(holderSecret: Uint8Array): string {
+  return loadWasm().sdkPublicKeyFromHolderKey(holderSecret);
 }
 
 export function inspectParts(payloadHex: string, signatureHex: string): WasmInspect {

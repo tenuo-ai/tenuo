@@ -15,6 +15,7 @@ export type TenuoErrorCode =
   | "TENUO_INVALID_POP"
   | "TENUO_SIGNATURE_INVALID"
   | "TENUO_CHAIN_INVALID"
+  | "TENUO_DEPTH_EXCEEDED"
   | "TENUO_REVOKED"
   | "TENUO_APPROVAL_REQUIRED"
   | "TENUO_INSUFFICIENT_APPROVALS"
@@ -144,6 +145,59 @@ export type SessionInput = {
   readonly tools?: readonly object[];
   readonly ttlSeconds?: number;
   readonly requireApproval?: RequireApproval;
+  /**
+   * Issue to another agent's key instead of a fresh local holder. The
+   * returned session cannot authorize here (it has no holder secret); send
+   * `toWire()` to that agent, which imports it with `sessionFromWire()`.
+   */
+  readonly holder?: PublicKeyHandle;
+  /**
+   * How many times this authority may be delegated below the root.
+   * `0` makes the session terminal. Omit for the protocol maximum.
+   * Delegation can lower this ceiling and never raise it.
+   */
+  readonly maxDepth?: number;
+};
+
+/** Options for `tenuo.narrow()`. All optional; the default keeps the holder. */
+export type NarrowOptions = {
+  /**
+   * Bind the child to another agent's key. This is delegation: the current
+   * holder signs, the child belongs to `holder`, and the returned session
+   * cannot authorize here. Hand `toWire()` to that agent.
+   */
+  readonly holder?: PublicKeyHandle;
+  /** Child lifetime. Clamped to what the parent has left. */
+  readonly ttlSeconds?: number;
+  /** The child's holder cannot delegate further. */
+  readonly terminal?: boolean;
+  /** Lower the delegation ceiling. Cannot exceed the parent's. */
+  readonly maxDepth?: number;
+};
+
+/** Public view of a session's leaf. Never includes the holder secret. */
+export type SessionInfo = {
+  /** Hex public key the leaf is bound to. */
+  readonly holderPublicKey: string;
+  /** Hex public key that signed the root of the chain. */
+  readonly rootPublicKey: string;
+  /** 0 for a root session, +1 per delegation. */
+  readonly depth: number;
+  /** Delegation ceiling in force for this leaf. */
+  readonly maxDepth: number;
+  /** True when `depth >= maxDepth`: cannot be narrowed further. */
+  readonly terminal: boolean;
+  /** Unix seconds. */
+  readonly expiresAt: number;
+  readonly tools: readonly string[];
+  /** Warrant ids, root first. */
+  readonly warrantIds: readonly string[];
+  /**
+   * True when this process holds the leaf's holder secret. False for a
+   * session issued or delegated to another agent: `toWire()` works,
+   * `execute` and `narrow` do not.
+   */
+  readonly canAuthorize: boolean;
 };
 
 export type DevRoot = {
@@ -198,6 +252,8 @@ export interface Session {
   toWire(): readonly string[];
   /** SHA-256 of `(warrant_id, tool, canonical args)`. App-level idempotency, not PoP. */
   dedupKey(tool: string, args: Readonly<Record<string, unknown>>): string;
+  /** Holder public key, depth, ceiling, lifetime, tools. Never the secret. */
+  inspect(): SessionInfo;
 }
 
 export interface Tenuo {
@@ -213,7 +269,17 @@ export interface Tenuo {
   /** Import a warrant minted elsewhere (Rust / Python / another process). */
   sessionFromWire(input: SessionFromWireInput): Session;
   withSession<R>(session: Session, fn: () => R): R;
-  narrow(session: Session, allow: NarrowInput): Session;
+  /**
+   * Child session with less authority. Without options the same holder keeps
+   * it; with `options.holder` it is delegated to another agent's key. Core
+   * rejects any child that is not within its parent before a token exists.
+   */
+  narrow(session: Session, allow: NarrowInput, options?: NarrowOptions): Session;
+  /**
+   * Public key of the local issuer (devRoot contexts only). Other processes
+   * put it in `trustedRoots` to accept warrants this context mints.
+   */
+  issuerPublicKey(): PublicKeyHandle;
   /** Load a published SignedRevocationList. Rust verifies the issuer against trusted roots. */
   revoke(list: string | Uint8Array): void;
   /** MCP `_meta.tenuo` attach / verify. No MCP SDK dependency. */

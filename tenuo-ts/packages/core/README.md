@@ -50,6 +50,27 @@ const session = tenuo.sessionFromWire({
 });
 ```
 
+Delegation to another agent rebinds a narrower child to that agent's key. The
+current holder signs; core refuses any child that is not within its parent
+before a token exists; a copied chain fails `TENUO_INVALID_POP` under any other
+key:
+
+```ts
+const holderKey = createTenuo.generateHolderKey();          // in the worker, once
+const workerPublicKey = createTenuo.publicKeyFromHolderKey(holderKey);
+
+const handed = tenuo.narrow(session, { path: under("/data/reports") }, {
+  holder: workerPublicKey,
+  ttlSeconds: 300,
+  terminal: true, // the worker cannot hand it on
+});
+// worker: tenuo.sessionFromWire({ warrant: handed.toWire(), holderKey })
+```
+
+`session({ holder, maxDepth })` issues straight to an agent's key and caps how
+far the chain may go; `issuerPublicKey()` is what agents put in `trustedRoots`;
+`session.inspect()` shows depth, ceiling, tools, and holder public key.
+
 MCP wire helpers live on `tenuo.mcp` (`attach` / `verify` / `handler`). They do
 not depend on an MCP framework. For the official v2 server, use `@tenuo/mcp`.
 For `@modelcontextprotocol/sdk` v1, copy the recipe in `examples/mcp/host.ts`.

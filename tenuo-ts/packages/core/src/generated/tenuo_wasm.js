@@ -97,6 +97,31 @@ class SdkContext {
         return SdkContext.__wrap(ret[0]);
     }
     /**
+     * Public key of the local issuer, hex. Verifier-only contexts have none.
+     *
+     * This is what other processes put in `trustedRoots` to accept warrants
+     * this context mints. It is a public key: sharing it grants nothing.
+     * @returns {string}
+     */
+    issuerPublicKey() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.sdkcontext_issuerPublicKey(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
      * Load a published SignedRevocationList. The SRL must be signed by a trusted root.
      * @param {string} wire
      */
@@ -114,27 +139,46 @@ class SdkContext {
      *
      * `require_approval` is optional:
      * `{ "approvers": ["hex..."], "min": 2, "tools": ["transfer"] }`
+     *
+     * `holder_hex` binds the warrant to another agent's public key. The
+     * returned session then has no holder secret: export it with `toWire()`
+     * and let that agent import it. Omit it to mint a local session with a
+     * fresh holder key.
+     *
+     * `max_depth` caps how many times the authority may be delegated below
+     * the root (0 = terminal). Omit for the protocol maximum.
      * @param {any} allow_json
      * @param {number} ttl_seconds
      * @param {any} require_approval
+     * @param {string | null} [holder_hex]
+     * @param {number | null} [max_depth]
      * @returns {SdkSession}
      */
-    mint(allow_json, ttl_seconds, require_approval) {
-        const ret = wasm.sdkcontext_mint(this.__wbg_ptr, allow_json, ttl_seconds, require_approval);
+    mint(allow_json, ttl_seconds, require_approval, holder_hex, max_depth) {
+        var ptr0 = isLikeNone(holder_hex) ? 0 : passStringToWasm0(holder_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_mint(this.__wbg_ptr, allow_json, ttl_seconds, require_approval, ptr0, len0, isLikeNone(max_depth) ? Number.MAX_SAFE_INTEGER : (max_depth) >>> 0);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
         return SdkSession.__wrap(ret[0]);
     }
     /**
-     * Attenuate the leaf. The current holder signs; the same holder keeps the child.
+     * Attenuate the leaf. The current holder signs.
+     *
+     * Without `options.holder` the same holder keeps the child. With it, the
+     * child is bound to that public key: this is delegation to another agent,
+     * and the returned session carries no holder secret (see `SdkSession`).
+     * Core rejects any child that is not within its parent — tools,
+     * constraints, lifetime, and depth — before a token exists.
      * @param {SdkSession} session
      * @param {any} allow_json
+     * @param {any} options
      * @returns {SdkSession}
      */
-    narrow(session, allow_json) {
+    narrow(session, allow_json, options) {
         _assertClass(session, SdkSession);
-        const ret = wasm.sdkcontext_narrow(this.__wbg_ptr, session.__wbg_ptr, allow_json);
+        const ret = wasm.sdkcontext_narrow(this.__wbg_ptr, session.__wbg_ptr, allow_json, options);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -203,6 +247,11 @@ exports.SdkContext = SdkContext;
 
 /**
  * Opaque warrant chain (root first) + leaf holder key. Not JSON-serializable from JS.
+ *
+ * `holder` is `None` when the leaf was issued or delegated to another agent's
+ * key. Such a session can be exported with `toWire()` and handed over, but it
+ * cannot sign proof-of-possession here; the holder imports it with
+ * `SdkSession.fromWire` and its own secret.
  */
 class SdkSession {
     static __wrap(ptr) {
@@ -247,6 +296,18 @@ class SdkSession {
         } finally {
             wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
         }
+    }
+    /**
+     * Public view of the leaf: holder public key, depth, ceiling, lifetime,
+     * tools. Never the holder secret.
+     * @returns {any}
+     */
+    describe() {
+        const ret = wasm.sdksession_describe(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * Test / interop seam. Not on the public TypeScript Session type.
@@ -657,6 +718,46 @@ function sdkInspectWarrant(wire) {
     return takeFromExternrefTable0(ret[0]);
 }
 exports.sdkInspectWarrant = sdkInspectWarrant;
+
+/**
+ * @returns {any}
+ */
+function sdkProtocolLimits() {
+    const ret = wasm.sdkProtocolLimits();
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkProtocolLimits = sdkProtocolLimits;
+
+/**
+ * Public key (hex) for a 32-byte Ed25519 holder secret. What an agent hands
+ * to whoever will issue or delegate a warrant to it.
+ * @param {Uint8Array} holder_secret
+ * @returns {string}
+ */
+function sdkPublicKeyFromHolderKey(holder_secret) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(holder_secret, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkPublicKeyFromHolderKey(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+exports.sdkPublicKeyFromHolderKey = sdkPublicKeyFromHolderKey;
 
 /**
  * Test / host seam. Signs a SignedApproval envelope; does not authorize.

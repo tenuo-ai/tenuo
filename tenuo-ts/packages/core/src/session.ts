@@ -1,6 +1,6 @@
-import type { Session as SessionContract } from "./api.ts";
+import type { Session as SessionContract, SessionInfo } from "./api.ts";
 import { TenuoConfigurationError } from "./errors.ts";
-import type { WasmSession } from "./wasm.ts";
+import type { WasmSession, WasmSessionInfo } from "./wasm.ts";
 
 const inspect = Symbol.for("nodejs.util.inspect.custom");
 const nativeSessions = new WeakMap<Session, WasmSession>();
@@ -47,6 +47,25 @@ export class Session implements SessionContract {
       throw new TenuoConfigurationError("session is not bound to the WASM core");
     }
     return native.dedupKey(tool, args);
+  }
+
+  inspect(): SessionInfo {
+    const native = nativeSessions.get(this) as { describe?: () => unknown } | undefined;
+    if (typeof native?.describe !== "function") {
+      throw new TenuoConfigurationError("session is not bound to the WASM core");
+    }
+    const info = native.describe() as WasmSessionInfo;
+    return {
+      holderPublicKey: info.holder_public_key,
+      rootPublicKey: info.root_public_key,
+      depth: info.depth,
+      maxDepth: info.max_depth,
+      terminal: info.terminal,
+      expiresAt: info.expires_at,
+      tools: [...info.tools],
+      warrantIds: [...info.warrant_ids],
+      canAuthorize: info.can_authorize,
+    };
   }
 }
 

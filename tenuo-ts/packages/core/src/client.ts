@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomBytes } from "node:crypto";
 import type {
   AllowPolicy,
   CreateTenuoOptions,
@@ -6,6 +7,7 @@ import type {
   ProtectedTool,
   PublicKeyHandle,
   NarrowInput,
+  NarrowOptions,
   SessionFromWireInput,
   SessionInput,
   Tenuo,
@@ -22,7 +24,10 @@ import {
   importSessionFromChain,
   importSessionFromWire,
   loadWasm,
+  protocolLimits,
+  publicKeyHexFromHolderKey,
   type WasmContext,
+  type WasmNarrowOptions,
 } from "./wasm.ts";
 
 const currentSession = new AsyncLocalStorage<Session>();
@@ -146,6 +151,70 @@ export function holderKeyFromHex(hex: string): Uint8Array {
   return hexToBytes(normalizeSecretHex(hex));
 }
 
+/**
+ * A fresh 32-byte Ed25519 holder secret. One per agent, kept in that agent's
+ * process; only its public key (see `publicKeyFromHolderKey`) travels.
+ */
+export function generateHolderKey(): Uint8Array {
+  return new Uint8Array(randomBytes(32));
+}
+
+/** The public half of a holder secret: what an issuer or delegator binds a warrant to. */
+export function publicKeyFromHolderKey(holderKey: Uint8Array): PublicKeyHandle {
+  if (!(holderKey instanceof Uint8Array) || holderKey.length !== 32) {
+    throw new TenuoConfigurationError("publicKeyFromHolderKey() requires a 32-byte holder key");
+  }
+  loadWasm();
+  return { kind: "public-key", source: "bytes", hex: publicKeyHexFromHolderKey(holderKey) };
+}
+
+const MAX_WASM_U32 = 0xffff_ffff;
+
+function requireUint32(value: number, name: string, minimum = 0): number {
+  if (!Number.isInteger(value) || value < minimum || value > MAX_WASM_U32) {
+    throw new TenuoConfigurationError(
+      `${name} must be an integer between ${minimum} and ${MAX_WASM_U32}`,
+    );
+  }
+  return value;
+}
+
+function requireDepth(value: number, name: string): number {
+  requireUint32(value, name);
+  const maximum = protocolLimits().max_delegation_depth;
+  if (value > maximum) {
+    throw new TenuoConfigurationError(
+      `${name} ${value} exceeds the protocol maximum of ${maximum}`,
+    );
+  }
+  return value;
+}
+
+function requireTtl(value: number, name: string, minimum = 0): number {
+  requireUint32(value, name, minimum);
+  const maximum = protocolLimits().max_warrant_ttl_seconds;
+  if (value > maximum) {
+    throw new TenuoConfigurationError(
+      `${name} ${value} exceeds the protocol maximum of ${maximum}`,
+    );
+  }
+  return value;
+}
+
+function requirePublicKey(value: unknown, name: string): PublicKeyHandle {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    (value as { kind?: unknown }).kind !== "public-key" ||
+    typeof (value as { hex?: unknown }).hex !== "string"
+  ) {
+    throw new TenuoConfigurationError(
+      `${name} must be a public key handle (createTenuo.publicKeyFromHolderKey / publicKeyFromHex / publicKeyFromEnv)`,
+    );
+  }
+  return value as PublicKeyHandle;
+}
+
 function rootHexes(options: CreateTenuoOptions): string[] {
   const handles: PublicKeyHandle[] = [];
   if (options.root !== undefined && options.root.kind === "public-key") {
@@ -260,7 +329,10 @@ class TenuoClient implements Tenuo {
         "session() mints a warrant and needs a local issuer. Use createTenuo({ root: createTenuo.devRoot() }).",
       );
     }
-    const ttl = input.ttlSeconds ?? 0;
+    const ttl =
+      input.ttlSeconds === undefined
+        ? 0
+        : requireTtl(input.ttlSeconds, "session().ttlSeconds");
     if (input.requireApproval !== undefined) {
       if (input.requireApproval.approvers.length === 0) {
         throw new TenuoConfigurationError("requireApproval.approvers must not be empty");
@@ -269,8 +341,31 @@ class TenuoClient implements Tenuo {
         throw new TenuoConfigurationError("requireApproval.min must be at least 1");
       }
     }
-    const native = this.context.mint(allow, ttl, requireApprovalJson(input.requireApproval));
-    return new Session(native);
+    const holderHex =
+      input.holder === undefined ? undefined : requirePublicKey(input.holder, "session().holder").hex;
+    const maxDepth =
+      input.maxDepth === undefined ? undefined : requireDepth(input.maxDepth, "session().maxDepth");
+    try {
+      const native = this.context.mint(
+        allow,
+        ttl,
+        requireApprovalJson(input.requireApproval),
+        holderHex,
+        maxDepth,
+      );
+      return new Session(native);
+    } catch (error) {
+      throw new TenuoConfigurationError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  issuerPublicKey(): PublicKeyHandle {
+    if (!this.canMint) {
+      throw new TenuoConfigurationError(
+        "issuerPublicKey() needs a local issuer. This context verifies against trustedRoots and does not mint.",
+      );
+    }
+    return { kind: "public-key", source: "bytes", hex: this.context.issuerPublicKey() };
   }
 
   sessionFromWire(input: SessionFromWireInput): Session {
@@ -300,19 +395,23 @@ class TenuoClient implements Tenuo {
     return currentSession.run(session, fn);
   }
 
-  narrow(session: Session, allow: NarrowInput): Session {
+  narrow(session: Session, allow: NarrowInput, options?: NarrowOptions): Session {
     if (Object.keys(allow).length === 0) {
       throw new TenuoConfigurationError("tenuo.narrow() requires a non-empty allow policy");
     }
     if (!isSession(session)) {
       throw new TenuoConfigurationError("narrow() requires a Tenuo Session, not a plain object");
     }
+    const native = options === undefined ? undefined : narrowOptionsJson(options);
     try {
-      return new Session(this.context.narrow(nativeSession(session), allow));
+      return new Session(this.context.narrow(nativeSession(session), allow, native));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.startsWith("TENUO_CHAIN_INVALID")) {
         throw new AuthorizationDeniedError("TENUO_CHAIN_INVALID", message);
+      }
+      if (message.startsWith("TENUO_DEPTH_EXCEEDED")) {
+        throw new AuthorizationDeniedError("TENUO_DEPTH_EXCEEDED", message);
       }
       throw new TenuoConfigurationError(message);
     }
@@ -351,6 +450,39 @@ function requireApprovalJson(
     payload.tools = [...require.tools];
   }
   return payload;
+}
+
+function narrowOptionsJson(options: NarrowOptions): WasmNarrowOptions {
+  if (options === null || typeof options !== "object") {
+    throw new TenuoConfigurationError("narrow() options must be an object");
+  }
+  const out: WasmNarrowOptions = {};
+  for (const key of Object.keys(options)) {
+    if (key !== "holder" && key !== "ttlSeconds" && key !== "terminal" && key !== "maxDepth") {
+      throw new TenuoConfigurationError(
+        `narrow() options: unknown key '${key}' (expected holder, ttlSeconds, terminal, maxDepth)`,
+      );
+    }
+  }
+  if (options.holder !== undefined) {
+    out.holder = requirePublicKey(options.holder, "narrow().holder").hex;
+  }
+  if (options.ttlSeconds !== undefined) {
+    out.ttlSeconds = requireTtl(options.ttlSeconds, "narrow().ttlSeconds", 1);
+  }
+  if (options.terminal !== undefined) {
+    if (typeof options.terminal !== "boolean") {
+      throw new TenuoConfigurationError("narrow().terminal must be a boolean");
+    }
+    out.terminal = options.terminal;
+  }
+  if (options.maxDepth !== undefined) {
+    out.maxDepth = requireDepth(options.maxDepth, "narrow().maxDepth");
+  }
+  if (out.terminal === true && out.maxDepth !== undefined) {
+    throw new TenuoConfigurationError("narrow() options: pass terminal or maxDepth, not both");
+  }
+  return out;
 }
 
 function applyDecision(decision: { outcome: string; code?: string; field?: string; message?: string; tool?: string; required?: number; received?: number }, tool: string): void {
@@ -409,6 +541,10 @@ function importWireError(error: unknown): TenuoError {
   }
   if (message.startsWith("TENUO_UNTRUSTED_ROOT")) {
     return new TenuoError("TENUO_UNTRUSTED_ROOT", message);
+  }
+  if (message.startsWith("TENUO_INVALID_POP")) {
+    // The warrant is fine; the key is not the one it was issued to.
+    return new AuthorizationDeniedError("TENUO_INVALID_POP", message);
   }
   return new TenuoConfigurationError(message);
 }
@@ -532,6 +668,8 @@ export const createTenuo: ((options?: CreateTenuoOptions) => Tenuo) & {
   publicKeyFromBytes: typeof publicKeyFromBytes;
   holderKeyFromEnv: typeof holderKeyFromEnv;
   holderKeyFromHex: typeof holderKeyFromHex;
+  generateHolderKey: typeof generateHolderKey;
+  publicKeyFromHolderKey: typeof publicKeyFromHolderKey;
 } = Object.assign(createTenuoImpl, {
   devRoot,
   publicKeyFromEnv,
@@ -539,4 +677,6 @@ export const createTenuo: ((options?: CreateTenuoOptions) => Tenuo) & {
   publicKeyFromBytes,
   holderKeyFromEnv,
   holderKeyFromHex,
+  generateHolderKey,
+  publicKeyFromHolderKey,
 });

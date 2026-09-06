@@ -56,6 +56,13 @@ Tenuo provides cryptographic authorization primitives. Applications are responsi
 We maintain comprehensive red team test suites:
 
 - **Rust tests**: `cargo test --test red_team`
+- **Python tests**: `cd tenuo-python && pytest tests/security/`
+- **TypeScript tests**: `cd tenuo-ts && pnpm --filter @tenuo/core test && pnpm --filter @tenuo/mcp test`
+
+The dedicated security workflow runs all three suites on pull requests and on
+a weekly schedule. TypeScript also has CI gates for Rust/WASM linting, generated
+binding drift, packed-package installation, supported Node versions, and
+production dependency advisories.
 
 These cover:
 - Signature/trust attacks
@@ -81,4 +88,3 @@ Security advisories will be published via:
 ## Recognition
 
 We gratefully acknowledge all valid security reports in our Hall of Fame and release notes. We do not currently offer monetary rewards.
-
