@@ -53,18 +53,6 @@ describe("Vitest recipe: protected tools via public APIs", () => {
   });
 
   it("denies an out-of-scope call without invoking the inner tool", async () => {
-    await expect(
-      tenuo.withSession(session, () => readFile.execute({ path: "/etc/passwd" })),
-    ).rejects.toMatchObject({
-      name: "AuthorizationDeniedError",
-      code: "TENUO_CONSTRAINT_VIOLATION",
-      field: "path",
-    });
-
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it("asserts denial through stable fields, not the full message text", async () => {
     let caught: unknown;
     try {
       await tenuo.withSession(session, () =>
