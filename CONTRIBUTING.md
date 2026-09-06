@@ -111,6 +111,19 @@ pnpm --filter @tenuo/core test:watch
 pnpm --filter @tenuo/mcp test:watch
 ```
 
+Security-sensitive TypeScript changes should also run the randomized boundary
+suite and mutation gate. The Python binding must be importable for the
+cross-runtime differential test; CI builds it automatically.
+
+```bash
+pnpm --filter @tenuo/core exec vitest run test/wasm-boundary.property.test.ts
+pnpm --filter @tenuo/core exec vitest run test/differential.property.test.ts
+pnpm test:mutation
+```
+
+Property failures report a replayable fast-check seed. Set `FC_SEED` to replay
+it locally; `FC_RUNS` and `FC_BOUNDARY_RUNS` control the run counts.
+
 ### Full WASM-backed validation
 
 Run the full workspace test before opening a pull request that changes runtime

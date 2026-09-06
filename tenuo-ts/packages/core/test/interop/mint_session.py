@@ -75,14 +75,18 @@ def mint(spec: dict[str, Any] | None = None) -> dict[str, Any]:
     builder = apply_allow(builder, allow)
     warrant = builder.mint(issuer)
     chain = [warrant]
-    if spec.get("narrow"):
-        child = warrant.attenuate(
-            capabilities=capabilities_from_narrow(allow, spec["narrow"]),
+    narrows = spec.get("narrows")
+    if narrows is None:
+        narrows = [spec["narrow"]] if spec.get("narrow") else []
+    current = warrant
+    for narrow in narrows:
+        current = current.attenuate(
+            capabilities=capabilities_from_narrow(allow, narrow),
             signing_key=holder,
             holder=holder.public_key,
             ttl_seconds=min(ttl, 200),
         )
-        chain.append(child)
+        chain.append(current)
     return {
         "warrant": chain[-1].to_base64(),
         "warrants": [item.to_base64() for item in chain],

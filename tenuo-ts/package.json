@@ -8,9 +8,15 @@
     "typecheck": "pnpm --filter @tenuo/core typecheck && pnpm --filter @tenuo/mcp typecheck",
     "example:mcp": "pnpm --filter @tenuo/core exec vitest run test/mcp.test.ts -t quarterly-close",
     "example:mcp:host": "pnpm --filter @tenuo/core exec vitest run test/mcp-host.smoke.test.ts",
-    "example:mcp:adapter": "pnpm --filter @tenuo/mcp test"
+    "example:mcp:adapter": "pnpm --filter @tenuo/mcp test",
+    "test:mutation": "stryker run stryker.core.config.mjs && stryker run stryker.mcp.config.mjs"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/typescript-checker": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0"
   }
 }
