@@ -10,6 +10,7 @@
 import type { Session, Tenuo } from "@tenuo/core";
 import type { AuditLog } from "../audit.ts";
 import type { PolicyService } from "../auth/policy-service.ts";
+import type { PolicyConfig } from "../auth/policy.ts";
 import { identityCredential, SHARED_KEY } from "../auth/classic.ts";
 import type { TenuoMode } from "../auth/tenuo-mode.ts";
 import type { AuthMode, Call, Credential, Decision } from "../auth/types.ts";
@@ -34,6 +35,8 @@ export interface Runtime {
   readonly world: World;
   readonly audit: AuditLog;
   readonly policyService?: PolicyService;
+  /** The participant's scoped configuration, when the stage has one. */
+  readonly config?: PolicyConfig;
   readonly tenuo?: TenuoMode;
   readonly chain?: ChainModule;
   /** Set by the incident scenario. */
@@ -88,7 +91,7 @@ export class Agent {
         decision,
         reason,
         ...(code !== undefined ? { code } : {}),
-        roundTrips: 0,
+        centralCalls: 0,
         source: "handoff",
       });
     if (mine === undefined) {

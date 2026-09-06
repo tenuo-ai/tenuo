@@ -64,18 +64,18 @@ describe("stage 4: two travelers", () => {
     expect(r.functionality.ok).toBe(false);
     expect(r.functionality.steps.some((s) => s.trip === "trip-bob-sea" && !s.ok)).toBe(true);
   });
-  it("per-task identities pass the cross-task probe with zero round trips", async () => {
+  it("per-task identities pass the cross-task probe, with registration and registry checks counted", async () => {
     const r = await evaluate(4, "answers/04-two-travelers/per-task.ts");
     expect(r.functionality.ok).toBe(true);
     expect(r.probes.filter((p) => p.category === "cross-task").every((p) => p.ok)).toBe(true);
-    expect(r.built.runtime.audit.roundTrips()).toBe(0);
+    // Registration at task start plus one registry check per call: not zero.
+    expect(r.built.runtime.audit.centralCalls()).toBeGreaterThan(0);
   });
-  it("a policy service passes the cross-task probe at one round trip per reservation check", async () => {
+  it("a policy service passes the cross-task probe at one central call per check", async () => {
     const r = await evaluate(4, "answers/04-two-travelers/policy-service.ts");
     expect(r.functionality.ok).toBe(true);
     expect(r.probes.filter((p) => p.category === "cross-task").every((p) => p.ok)).toBe(true);
-    const tripRoundTrips = r.built.runtime.audit.records.filter((x) => x.source === "trip").reduce((n, x) => n + x.roundTrips, 0);
-    expect(tripRoundTrips).toBeGreaterThan(0);
+    expect(r.built.runtime.audit.centralCalls()).toBeGreaterThan(0);
   });
 });
 
@@ -97,14 +97,14 @@ describe("stage 6: tenuo", () => {
     const handoff = r.built.runtime.audit.records.find((x) => x.source === "handoff" && x.decision === "DENIED");
     expect(handoff?.reason).toMatch(/TODO: write the Flight → Check-in link/);
   });
-  it("the completed chain books the trip, blocks everything, refuses the escalation locally, and needs no round trips", async () => {
+  it("the completed chain books the trip, blocks everything, refuses the escalation locally, with zero central calls", async () => {
     const r = await evaluate(6, "answers/06-tenuo/chain.ts");
     expect(r.functionality.ok).toBe(true);
     expect(r.functionality.damage).toEqual([]);
     expect(r.probes.filter((p) => p.category !== "sanity").every((p) => p.ok)).toBe(true);
     const escalation = r.probes.find((p) => p.section.startsWith("ESCALATION"));
     expect(escalation?.code).toBe("TENUO_CHAIN_INVALID");
-    expect(r.built.runtime.audit.roundTrips()).toBe(0);
+    expect(r.built.runtime.audit.centralCalls()).toBe(0);
     expect(r.score.total).toBeGreaterThanOrEqual(95);
   });
   it("the two-traveler run passes cross-task with no policy file", async () => {

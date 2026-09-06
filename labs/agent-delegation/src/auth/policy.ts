@@ -35,8 +35,8 @@ export interface PolicyConfig {
   readonly policy: Policy;
   /**
    * Stage 4's second fix. When true, reservation checks ask the policy
-   * service which reservations belong to the calling task, one round trip
-   * per call, instead of reading `reservations` from the file.
+   * service which task is calling, one central call per check, instead of
+   * reading `reservations`, `destination`, and `maxPrice` from the file.
    */
   readonly policyService?: boolean;
 }
@@ -60,7 +60,7 @@ export interface PolicyVerdict {
   readonly reason: string;
 }
 
-/** Evaluate one call against one identity's rule. Pure; no round trips. */
+/** Evaluate one call against one identity's rule. Pure; no central calls. */
 export function evaluateRule(
   identity: string,
   rule: RolePolicy | undefined,

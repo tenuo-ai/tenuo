@@ -1,5 +1,5 @@
 /**
- * The five commands, plus `next`, `reset`, and `ambassador`.
+ * The commands.
  *
  *   npm run lab        start or resume where you left off
  *   npm run trace      watch the agents work, with every decision shown
@@ -7,18 +7,21 @@
  *   npm run score      see your score and why
  *   npm run audit      what every agent can currently do
  *   npm run next       move to the next stage
+ *   npm run share      write an anonymized score breakdown you can hand to your host
  *   npm run reset      back to stage 1
  */
 process.env.NODE_ENV ??= "development";
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { runBattery, type ProbeResult } from "../harness/attacks.ts";
 import { checkFunctionality, type Functionality } from "../harness/functionality.ts";
-import { measureMargin } from "../harness/margin.ts";
+import { measureMargin, type Margin } from "../harness/margin.ts";
 import { runScenario, type Built } from "../harness/run.ts";
-import { score } from "../harness/score.ts";
+import { score, type Score } from "../harness/score.ts";
 import type { AuditRecord } from "../audit.ts";
+import { AGENTS } from "../mission.ts";
 import { loadState, ROOT, saveState } from "../state.ts";
 import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stages.ts";
 
@@ -68,8 +71,8 @@ function printTrace(records: readonly AuditRecord[], full: boolean): void {
   for (const r of records) {
     if (!full && r.source === "probe") continue;
     const src = r.source === "injected" ? yellow("injected") : r.source === "probe" ? dim("probe   ") : r.source === "handoff" ? "handoff " : "trip    ";
-    const rt = r.roundTrips > 0 ? dim(`  round_trips: ${r.roundTrips}`) : "";
-    console.log(`  ${pad(String(r.seq), 3)} ${src} ${pad(r.agent, 15)} ${pad(r.task, 15)} ${pad(r.action, 28)} ${pad(r.resource, 15)} ${decisionMark(r)}${rt}`);
+    const cc = r.centralCalls > 0 ? dim(`  central_calls: ${r.centralCalls}`) : "";
+    console.log(`  ${pad(String(r.seq), 3)} ${src} ${pad(r.agent, 15)} ${pad(r.task, 15)} ${pad(r.action, 28)} ${pad(r.resource, 15)} ${decisionMark(r)}${cc}`);
     if (r.decision === "DENIED" || full) {
       console.log(dim(`      reason: ${r.reason}${r.code !== undefined ? `  [${r.code}]` : ""}`));
     }
@@ -108,11 +111,53 @@ function printBattery(results: readonly ProbeResult[]): void {
   console.log("");
 }
 
+function centralCallsLine(built: Built): string {
+  return dim(`  central_calls during the trip: ${built.runtime.audit.centralCalls()}   (calls to a component outside the acting agent)`);
+}
+
 async function runStage(def: StageDef, scenario: Scenario): Promise<Built> {
   return runScenario(def, scenario);
 }
 
+const WARMUP: ReadonlyArray<readonly [string, string]> = [
+  [
+    "What does a warrant let an agent do?",
+    "Call the tools it names, with the argument values it allows, for the key it was issued to, until it expires. Nothing else.",
+  ],
+  [
+    "What has to be true of a warrant an agent passes to another agent?",
+    "It has to fit inside the one the passing agent holds: fewer tools, tighter values, no longer a lifetime. It can only narrow, and that is checked when it is made and again when it is used.",
+  ],
+  [
+    "Who checks a warrant, and do they need to call a server to do it?",
+    "The code right next to the tool checks it, using the issuer's public key. No server, no network: it works when the control plane is down.",
+  ],
+];
+
+async function warmup(): Promise<void> {
+  const state = loadState();
+  if (state.warmupDone === true || state.stage !== 1 || !process.stdin.isTTY) {
+    return;
+  }
+  console.log("");
+  console.log(bold("Warm-up (from the three sections you read, not graded)"));
+  console.log("");
+  WARMUP.forEach(([q], i) => console.log(`  ${i + 1}. ${q}`));
+  console.log("");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  await rl.question(dim("  Answer each in one line in your head, then press enter to see the answers and start stage 1. "));
+  rl.close();
+  console.log("");
+  WARMUP.forEach(([q, a], i) => {
+    console.log(`  ${i + 1}. ${q}`);
+    console.log(dim(`     ${a}`));
+  });
+  console.log("");
+  saveState({ ...state, warmupDone: true });
+}
+
 async function cmdLab(def: StageDef): Promise<void> {
+  await warmup();
   const scenario = def.scenario;
   header(def, scenario);
   for (const line of def.blurb) console.log(`  ${line}`);
@@ -122,6 +167,8 @@ async function cmdLab(def: StageDef): Promise<void> {
   console.log(bold("WALLET  ") + walletLine(built));
   console.log("");
   printTrace(built.runtime.audit.records, false);
+  console.log("");
+  console.log(centralCallsLine(built));
   console.log("");
   printFunctionality(checkFunctionality(built.plan, built.runtime.audit.records, built.runtime.world));
   if (def.n === 8) {
@@ -141,14 +188,20 @@ async function cmdTrace(def: StageDef): Promise<void> {
     if (printExerciseError(built)) return;
     printTrace(built.runtime.audit.records, true);
     console.log("");
-    console.log(dim(`  round trips to a central service: ${built.runtime.audit.roundTrips()}`));
+    console.log(centralCallsLine(built));
     console.log("");
   }
 }
 
-async function attackAll(def: StageDef): Promise<{ built: Built; probes: ProbeResult[]; functionality: Functionality }[]> {
+interface Evaluated {
+  readonly built: Built;
+  readonly probes: ProbeResult[];
+  readonly functionality: Functionality;
+}
+
+async function attackAll(def: StageDef): Promise<Evaluated[]> {
   const scenarios: Scenario[] = def.alsoRun !== undefined ? [def.scenario, def.alsoRun] : [def.scenario];
-  const out = [];
+  const out: Evaluated[] = [];
   for (const scenario of scenarios) {
     const built = await runStage(def, scenario);
     if (built.exercise?.error !== undefined) {
@@ -181,7 +234,7 @@ async function cmdAttack(def: StageDef): Promise<void> {
     printBattery(probes);
     const failed = probes.filter((p) => !p.ok).length;
     console.log(failed === 0 ? green(`  clean: all ${probes.length} checks landed as expected`) : yellow(`  ${failed} of ${probes.length} checks did not land as expected`));
-    console.log(dim(`  round trips to a central service during the trip: ${built.runtime.audit.records.filter((r) => r.source !== "probe").reduce((n, r) => n + r.roundTrips, 0)}`));
+    console.log(centralCallsLine(built));
     console.log("");
   }
   if (def.n === 6) {
@@ -192,12 +245,12 @@ async function cmdAttack(def: StageDef): Promise<void> {
   }
 }
 
-async function cmdScore(def: StageDef): Promise<void> {
+async function evaluateStage(def: StageDef): Promise<{ runs: Evaluated[]; functionality: Functionality; probes: ProbeResult[]; margin: Margin; score: Score } | undefined> {
   const runs = await attackAll(def);
   const first = runs[0];
-  if (first === undefined) return;
-  header(def, def.scenario);
-  if (printExerciseError(first.built)) return;
+  if (first === undefined || first.built.exercise?.error !== undefined) {
+    return undefined;
+  }
   const probes = runs.flatMap((r) => r.probes);
   const functionality: Functionality = {
     ok: runs.every((r) => r.functionality.ok),
@@ -205,13 +258,24 @@ async function cmdScore(def: StageDef): Promise<void> {
     damage: runs.flatMap((r) => r.functionality.damage),
   };
   const margin = await measureMargin(first.built.runtime);
-  const s = score(functionality, probes, margin);
+  return { runs, functionality, probes, margin, score: score(functionality, probes, margin) };
+}
+
+async function cmdScore(def: StageDef): Promise<void> {
+  header(def, def.scenario);
+  const e = await evaluateStage(def);
+  if (e === undefined) {
+    const built = await runStage(def, def.scenario);
+    printExerciseError(built);
+    return;
+  }
+  const { functionality, probes, margin, score: s } = e;
   const row = (label: string, points: number, max: number, note: string) =>
     console.log(`  ${pad(label, 44)} ${pad(`${points}`, 3)} / ${pad(String(max), 3)} ${dim(note)}`);
   row("The trip completes correctly", s.functionality.points, 25, s.functionality.ok ? "" : "the functionality gate: nothing else counts until the trip works");
   row("Unauthorized actions are blocked", s.blocked.points, 30, `${s.blocked.passed} of ${s.blocked.total} checks`);
   row("Handoffs pass along only what's needed", s.handoffs.points, 25, `${s.handoffs.passed} of ${s.handoffs.total} checks`);
-  row("You didn't grant more than the job required", s.margin.points, 20, `${s.margin.findings.length} finding${s.margin.findings.length === 1 ? "" : "s"}`);
+  row("You didn't grant more than the job required", s.margin.points, 20, `${s.margin.findings.length} finding${s.margin.findings.length === 1 ? "" : "s"}, capped at -5 per agent`);
   console.log(`  ${pad("", 44)} ${bold(pad(String(s.total), 3))} / 100${s.gated ? red("   gated") : ""}`);
   console.log("");
   if (!functionality.ok) {
@@ -228,8 +292,13 @@ async function cmdScore(def: StageDef): Promise<void> {
   }
   if (margin.findings.length > 0) {
     console.log(bold("GRANTED BUT NOT REQUIRED BY THE MISSION"));
-    for (const f of margin.findings) {
-      console.log(`  -${f.cost} ${pad(f.agent, 15)} ${f.label}`);
+    for (const agent of AGENTS) {
+      const mine = margin.findings.filter((f) => f.agent === agent);
+      if (mine.length === 0) continue;
+      console.log(`  ${bold(pad(agent, 15))} -${margin.perAgent[agent]}${mine.reduce((n, f) => n + f.cost, 0) > margin.perAgent[agent] ? dim(" (capped)") : ""}`);
+      for (const f of mine) {
+        console.log(dim(`      -${f.cost} ${f.label}`));
+      }
     }
     console.log("");
   }
@@ -240,6 +309,34 @@ async function cmdScore(def: StageDef): Promise<void> {
       saveState(state);
     }
   }
+}
+
+async function cmdShare(def: StageDef): Promise<void> {
+  const e = await evaluateStage(def);
+  if (e === undefined) {
+    console.log("Your exercise file does not load; fix that first (npm run lab shows the error).");
+    return;
+  }
+  const report = {
+    stage: def.n,
+    total: e.score.total,
+    gated: e.score.gated,
+    functionality: e.score.functionality.points,
+    blocked: `${e.score.blocked.passed}/${e.score.blocked.total}`,
+    handoffs: `${e.score.handoffs.passed}/${e.score.handoffs.total}`,
+    margin: e.score.margin.points,
+    marginPerAgent: e.margin.perAgent,
+    failedChecks: e.probes.filter((p) => !p.ok).map((p) => p.label),
+    centralCalls: e.runs.map((r) => ({ scenario: r.built.plan.name, count: r.built.runtime.audit.centralCalls() })),
+    generatedAt: new Date().toISOString(),
+  };
+  const dir = join(ROOT, ".lab");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `share-stage-${def.n}.json`);
+  writeFileSync(file, JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report, null, 2));
+  console.log("");
+  console.log(dim(`  Written to ${file}. Nothing was sent anywhere. Hand the file to your session host if you want to; it carries no name, no key, and no code.`));
 }
 
 async function cmdAudit(def: StageDef): Promise<void> {
@@ -301,8 +398,8 @@ function cmdAmbassador(): void {
   console.log(`  on stage ${state.stage}; scored a working trip on: ${state.completed.length === 0 ? "none yet" : state.completed.sort((a, b) => a - b).join(", ")}`);
   console.log("");
   console.log(bold("COMMANDS"));
-  console.log("  npm run ambassador -- answers N     print the reference solution for stage N");
-  console.log("  npm run ambassador -- stage --stage N   move this machine to stage N");
+  console.log("  npm run ambassador -- answers N          print the reference solution for stage N");
+  console.log("  npm run ambassador -- stage --stage N    move this machine to stage N");
   console.log("");
   console.log(bold("DISCUSSION PROMPTS"));
   for (const p of [
@@ -310,7 +407,7 @@ function cmdAmbassador(): void {
     "The injected instruction lived in a data field. What other fields would an agent read and treat as trustworthy?",
     "Stage 5 showed that passing a credential downward gives away everything you hold. What do humans do instead?",
     "If the agent is going to be wrong sometimes, where would you rather the check happen: before the action or after it?",
-    "Your stage 4 fix needed a service on every call. What happens to the trip when that service is down? And in stage 6?",
+    "Your stage 4 fix put something central in the path of every call. What happens to the trip when that component is down? And in stage 6?",
     "What did the least-privilege score cost you, and what would you grant differently if you ran it again?",
   ]) {
     console.log(`  - ${p}`);
@@ -330,12 +427,13 @@ async function main(): Promise<void> {
     case "trace": return cmdTrace(def);
     case "attack": return cmdAttack(def);
     case "score": return cmdScore(def);
+    case "share": return cmdShare(def);
     case "audit": return cmdAudit(def);
     case "next": return cmdNext();
     case "reset": return cmdReset();
     case "ambassador": return cmdAmbassador();
     default:
-      console.log(`unknown command ${command}. Try: lab, trace, attack, score, audit, next, reset, ambassador`);
+      console.log(`unknown command ${command}. Try: lab, trace, attack, score, share, audit, next, reset, ambassador`);
   }
 }
 

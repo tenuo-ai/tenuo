@@ -38,9 +38,12 @@ Give the agent a different identity for each trip. A key of the form
 ```
 
 Do the same for `flight-agent` (destination and budget differ) and
-`boarding-agent`. It works. Now ask: who writes these entries, and when? In a
-real system, the orchestrator writes them at the moment each task starts, and
-every identity has to be registered somewhere before its first call.
+`boarding-agent`. It works. Now ask: who writes these entries, and when? The
+orchestrator writes them at the moment each task starts, and registers each
+identity before its first call; the chokepoint asks the registry whether an
+identity exists before it trusts a rule written for it. Look at
+`npm run trace`: registration at task start, then `central_calls: 1` on every
+call by a per-task identity.
 
 ## Fix B: ask a service which task this is
 
@@ -51,11 +54,11 @@ you can drop `destination` and `maxPrice` from `flight-agent` and
 `reservations` from `checkin-agent` and `boarding-agent`. When a flight is
 booked, the service is told, and the task's reservation narrows to that one.
 It works. Look at `npm run trace`: every one of those calls now shows
-`round_trips: 1`, and the service holds state for every open task.
+`central_calls: 1`, and the service holds state for every open task.
 
 ## What both fixes have in common
 
-Some central component has to be told about every task before it starts and
-consulted for every call while it runs. Its availability now gates every tool
-call. Write down, in one sentence, what your fix depends on. You will compare
+Some component outside the acting agent has to be told about every task before
+it starts and consulted while it runs, and its availability gates the trip.
+Neither fix can bring `central_calls` to zero; that is the whole point. Write down, in one sentence, what your fix depends on. You will compare
 it with stage 6.

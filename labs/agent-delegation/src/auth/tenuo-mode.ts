@@ -68,29 +68,29 @@ export class TenuoMode implements AuthMode {
         decision,
         reason,
         ...(code !== undefined ? { code } : {}),
-        roundTrips: 0,
+        centralCalls: 0,
         source: call.source,
       });
     const session = this.session(call.actor, call.taskId);
     if (session === undefined) {
       const reason = `${call.actor} holds no session for ${call.taskId}: nothing was delegated to it`;
       record("DENIED", reason, "NO_SESSION");
-      return { allowed: false, reason, code: "NO_SESSION", roundTrips: 0 };
+      return { allowed: false, reason, code: "NO_SESSION", centralCalls: 0 };
     }
     const tool = this.tool(call.actor, call.action, ctx.world);
     try {
       const result = await this.fleet[call.actor].tenuo.withSession(session, () => tool.execute(call.args));
       record("ALLOWED", `warrant ${session.inspect().warrantIds.at(-1) ?? "?"} permits ${call.action}`);
-      return { allowed: true, reason: "warrant permits", roundTrips: 0, result };
+      return { allowed: true, reason: "warrant permits", centralCalls: 0, result };
     } catch (error) {
       if (error instanceof ServiceError) {
         record("ALLOWED", `warrant permits; service error: ${error.message}`);
-        return { allowed: true, reason: "warrant permits", roundTrips: 0, error: error.message };
+        return { allowed: true, reason: "warrant permits", centralCalls: 0, error: error.message };
       }
       if (error instanceof AuthorizationDeniedError || error instanceof ApprovalRequiredError || error instanceof TenuoError) {
         const reason = describeDenial(error, call);
         record("DENIED", reason, error.code);
-        return { allowed: false, reason, code: error.code, roundTrips: 0 };
+        return { allowed: false, reason, code: error.code, centralCalls: 0 };
       }
       throw error;
     }

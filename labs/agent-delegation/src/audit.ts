@@ -1,8 +1,10 @@
 /**
  * One record per decision. The `reason` field is the pedagogical payload:
  * it always names the rule that fired, never a generic "unauthorized".
- * `roundTrips` counts calls to a central service before the decision, which
- * is the number stage 4 makes visible and stage 6 makes zero.
+ * `centralCalls` counts every call the chokepoint made to a component
+ * outside the acting agent before deciding: task registration, identity
+ * lookups, policy lookups. It is the number stage 4 makes visible and
+ * stage 6 makes zero.
  */
 import type { AgentId } from "./mission.ts";
 
@@ -16,7 +18,7 @@ export interface AuditRecord {
   readonly decision: "ALLOWED" | "DENIED";
   readonly reason: string;
   readonly code?: string;
-  readonly roundTrips: number;
+  readonly centralCalls: number;
   /** "trip" for the scripted workflow, "injected" for calls the payload provoked, "probe" for the harness. */
   readonly source: "trip" | "injected" | "probe" | "handoff";
 }
@@ -32,8 +34,9 @@ export class AuditLog {
     return record;
   }
 
-  roundTrips(): number {
-    return this.records.reduce((n, r) => n + r.roundTrips, 0);
+  /** Central calls made during the trip itself, probes excluded. */
+  centralCalls(): number {
+    return this.records.filter((r) => r.source !== "probe").reduce((n, r) => n + r.centralCalls, 0);
   }
 }
 

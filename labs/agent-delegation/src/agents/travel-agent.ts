@@ -32,7 +32,7 @@ export async function runTravelAgent(rt: Runtime, trip: Trip, options: TripOptio
         decision,
         reason,
         ...(code !== undefined ? { code } : {}),
-        roundTrips: 0,
+        centralCalls: 0,
         source: "handoff",
       });
     try {

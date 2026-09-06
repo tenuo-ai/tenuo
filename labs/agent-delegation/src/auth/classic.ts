@@ -16,9 +16,16 @@ export function identityCredential(agent: string, taskId?: string): Credential {
   return { identity, label: identity };
 }
 
+/** Which stage 4 fix a scoped configuration represents. */
+export function fixOf(config: PolicyConfig | undefined): "policy-service" | "identities" | "none" {
+  if (config?.policyService === true) return "policy-service";
+  if (config !== undefined && Object.keys(config.policy).some((k) => k.includes(":"))) return "identities";
+  return "none";
+}
+
 export class ClassicMode implements AuthMode {
   readonly name: "shared" | "identity" | "scoped";
-  private readonly config: PolicyConfig;
+  readonly config: PolicyConfig;
   private readonly policyService: PolicyService | undefined;
 
   constructor(name: "shared" | "identity" | "scoped", config?: PolicyConfig, policyService?: PolicyService) {
@@ -27,9 +34,9 @@ export class ClassicMode implements AuthMode {
     this.policyService = policyService;
   }
 
-  private async verdict(call: Call): Promise<{ verdict: PolicyVerdict; roundTrips: number }> {
+  private async verdict(call: Call): Promise<{ verdict: PolicyVerdict; centralCalls: number }> {
     if (this.name === "shared") {
-      return { verdict: { allowed: true, reason: "TRAVEL_SERVICE_KEY opens everything" }, roundTrips: 0 };
+      return { verdict: { allowed: true, reason: "TRAVEL_SERVICE_KEY opens everything" }, centralCalls: 0 };
     }
     const credential = call.credential ?? identityCredential(call.actor);
     if (this.name === "identity") {
@@ -45,14 +52,25 @@ export class ClassicMode implements AuthMode {
               ? `no role for ${base}`
               : `role ${base} does not include ${call.action}`,
         },
-        roundTrips: 0,
+        centralCalls: 0,
       };
     }
     // scoped
     const policy: Policy = this.config.policy;
     const identity = credential.identity.includes(":") ? credential.identity : identityFor(policy, credential.identity, call.taskId);
-    let roundTrips = 0;
+    let centralCalls = 0;
     let rule = policy[identity];
+
+    // Fix A: a per-task identity is only trusted once the registry confirms it exists.
+    if (identity.includes(":") && this.policyService !== undefined) {
+      const known = await this.policyService.isRegistered(identity);
+      centralCalls += 1;
+      if (!known) {
+        return { verdict: { allowed: false, reason: `identity ${identity} is not registered` }, centralCalls };
+      }
+    }
+
+    // Fix B: the policy service says which task is calling.
     let reservationsForTask: readonly string[] | undefined;
     const consultsService =
       this.config.policyService === true &&
@@ -63,9 +81,9 @@ export class ClassicMode implements AuthMode {
         call.action === TOOLS.book_flight);
     if (consultsService && this.policyService !== undefined && rule !== undefined) {
       const facts = await this.policyService.factsFor(call.taskId);
-      roundTrips = 1;
+      centralCalls += 1;
       if (facts === undefined) {
-        return { verdict: { allowed: false, reason: `policy service has no record of task ${call.taskId}` }, roundTrips };
+        return { verdict: { allowed: false, reason: `policy service has no record of task ${call.taskId}` }, centralCalls };
       }
       reservationsForTask = facts.reservations;
       if (call.action === TOOLS.search_flights || call.action === TOOLS.book_flight) {
@@ -73,11 +91,12 @@ export class ClassicMode implements AuthMode {
       }
     }
     const verdict = evaluateRule(identity, rule, call.action, call.args, reservationsForTask);
-    return { verdict, roundTrips };
+    return { verdict, centralCalls };
   }
 
   async execute(call: Call, ctx: Ctx): Promise<Decision> {
-    const { verdict, roundTrips } = await this.verdict(call);
+    const { verdict, centralCalls } = await this.verdict(call);
+    let calls = centralCalls;
     const record = (decision: "ALLOWED" | "DENIED", reason: string, code?: string) =>
       ctx.audit.record({
         agent: call.actor,
@@ -88,16 +107,15 @@ export class ClassicMode implements AuthMode {
         decision,
         reason,
         ...(code !== undefined ? { code } : {}),
-        roundTrips,
+        centralCalls: calls,
         source: call.source,
       });
     if (!verdict.allowed) {
       record("DENIED", verdict.reason, "POLICY");
-      return { allowed: false, reason: verdict.reason, code: "POLICY", roundTrips };
+      return { allowed: false, reason: verdict.reason, code: "POLICY", centralCalls: calls };
     }
     try {
       const result = services(ctx.world)[call.action]?.(call.args);
-      let trips = roundTrips;
       if (
         call.action === TOOLS.book_flight &&
         call.source === "trip" &&
@@ -106,14 +124,14 @@ export class ClassicMode implements AuthMode {
       ) {
         // The service learns which reservation this task now owns.
         await this.policyService.recordBooking(call.taskId, String(call.args["flightId"]));
-        trips += 1;
+        calls += 1;
       }
       record("ALLOWED", verdict.reason);
-      return { allowed: true, reason: verdict.reason, roundTrips: trips, result };
+      return { allowed: true, reason: verdict.reason, centralCalls: calls, result };
     } catch (error) {
       const message = error instanceof ServiceError ? error.message : String(error);
       record("ALLOWED", `${verdict.reason}; service error: ${message}`);
-      return { allowed: true, reason: verdict.reason, roundTrips, error: message };
+      return { allowed: true, reason: verdict.reason, centralCalls: calls, error: message };
     }
   }
 

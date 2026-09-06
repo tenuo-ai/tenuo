@@ -32,14 +32,17 @@ export async function runHotelAgent(rt: Runtime, trip: Trip): Promise<void> {
 }
 
 /**
- * Stage 9. The compromised Hotel Agent tries seven more things. Each goes
+ * Stage 9. The compromised Hotel Agent tries seven more things. Item 3 books
+ * the approved hotel at $320 a night: inside what the catalog offers, outside
+ * what the mission allows, which is why a ceiling copied from the catalog
+ * lets it through. Each goes
  * through the same chokepoint as everything else; the participant's chain
  * decides what happens.
  */
 async function runCompromisedHotelAgent(me: Agent, trip: Trip, approved: Hotel): Promise<void> {
   const rt = me.rt;
   await me.call(TOOLS.book_hotel, { hotelId: "HTL-TUL-1", city: "Tulum", nightlyRate: 220, nights: trip.nights, guest: trip.traveler, taskId: trip.taskId }, "injected");
-  await me.call(TOOLS.book_hotel, { hotelId: approved.hotelId, city: approved.city, nightlyRate: approved.nightlyRate * 3, nights: trip.nights, guest: trip.traveler, taskId: trip.taskId }, "injected");
+  await me.call(TOOLS.book_hotel, { hotelId: approved.hotelId, city: approved.city, nightlyRate: 320, nights: trip.nights, guest: trip.traveler, taskId: trip.taskId }, "injected");
   await me.call(TOOLS.traveler_read, { traveler: trip.traveler, field: "passportNumber" }, "injected");
   await me.call(TOOLS.book_flight, { flightId: "UA214", destination: "CUN", price: 286, passenger: trip.traveler }, "injected");
   await me.call(TOOLS.calendar_delete, { taskId: trip.taskId, eventId: "*" }, "injected");
@@ -58,7 +61,7 @@ async function runCompromisedHotelAgent(me: Agent, trip: Trip, approved: Hotel):
         decision,
         reason,
         ...(code !== undefined ? { code } : {}),
-        roundTrips: 0,
+        centralCalls: 0,
         source: "injected",
       });
     if (mine === undefined) {
@@ -95,7 +98,7 @@ async function runCompromisedHotelAgent(me: Agent, trip: Trip, approved: Hotel):
         decision,
         reason,
         ...(code !== undefined ? { code } : {}),
-        roundTrips: 0,
+        centralCalls: 0,
         source: "injected",
       });
     if (flight === undefined) {

@@ -78,6 +78,26 @@ export async function buildRuntime(stage: StageDef, scenario: Scenario, exercise
     mode = tenuo;
   } else if (stage.mode === "scoped") {
     mode = new ClassicMode("scoped", exercise?.config, policyService);
+    // Fix A: the orchestrator registers every per-task identity at task start.
+    // Each registration is a central call, and it shows in the trace.
+    for (const identity of Object.keys(exercise?.config?.policy ?? {}).filter((k) => k.includes(":"))) {
+      const taskId = identity.split(":")[1] ?? "";
+      if (!p.trips.some((t) => t.taskId === taskId)) {
+        continue;
+      }
+      await policyService.registerIdentity(identity);
+      audit.record({
+        agent: "travel-agent",
+        task: taskId,
+        action: "register identity",
+        resource: identity,
+        mode: "scoped",
+        decision: "ALLOWED",
+        reason: "orchestrator registered a per-task identity with the registry before the task's first call",
+        centralCalls: 1,
+        source: "handoff",
+      });
+    }
   } else {
     mode = new ClassicMode(stage.mode);
   }
@@ -88,6 +108,7 @@ export async function buildRuntime(stage: StageDef, scenario: Scenario, exercise
     world,
     audit,
     policyService,
+    ...(exercise?.config !== undefined ? { config: exercise.config } : {}),
     ...(tenuo !== undefined ? { tenuo } : {}),
     ...(exercise?.chain !== undefined ? { chain: exercise.chain } : {}),
     ...(p.compromised !== undefined ? { compromised: p.compromised } : {}),

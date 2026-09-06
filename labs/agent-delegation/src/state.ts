@@ -10,6 +10,8 @@ export interface LabState {
   stage: number;
   /** Stages the participant has scored full functionality on. */
   completed: number[];
+  /** The warm-up questions were shown once. */
+  warmupDone?: boolean;
 }
 
 export function loadState(): LabState {
@@ -21,6 +23,7 @@ export function loadState(): LabState {
     return {
       stage: typeof parsed.stage === "number" && parsed.stage >= 1 && parsed.stage <= 9 ? parsed.stage : 1,
       completed: Array.isArray(parsed.completed) ? parsed.completed.filter((n): n is number => typeof n === "number") : [],
+      ...(parsed.warmupDone === true ? { warmupDone: true } : {}),
     };
   } catch {
     return { stage: 1, completed: [] };

@@ -22,7 +22,8 @@ export interface Decision {
   readonly allowed: boolean;
   readonly reason: string;
   readonly code?: string;
-  readonly roundTrips: number;
+  /** Calls to a component outside the acting agent before this decision. */
+  readonly centralCalls: number;
   readonly result?: unknown;
   readonly error?: string;
 }

@@ -7,6 +7,10 @@
  *   tool the role's ceiling does not list          -2
  *   resource wider than the task                   -2
  *   numeric ceiling above the mission's            -1
+ *
+ * Capped at -5 per agent, floor at 0 overall, so a participant who
+ * over-grants moderately everywhere still sees the score move when they fix
+ * one agent.
  */
 import type { Runtime } from "../agents/runtime.ts";
 import { identityCredential, SHARED_KEY } from "../auth/classic.ts";
@@ -24,7 +28,12 @@ export interface MarginFinding {
 export interface Margin {
   readonly points: number;
   readonly findings: readonly MarginFinding[];
+  /** Points lost per agent, after the per-agent cap. */
+  readonly perAgent: Readonly<Record<AgentId, number>>;
 }
+
+/** So the score keeps moving: an agent can cost at most this much. */
+export const PER_AGENT_CAP = 5;
 
 interface Probe {
   readonly label: string;
@@ -107,8 +116,10 @@ function credentialFor(rt: Runtime, actor: AgentId): Credential {
 export async function measureMargin(rt: Runtime): Promise<Margin> {
   const trip = ALICE;
   const findings: MarginFinding[] = [];
-  let points = 20;
+  const perAgent = {} as Record<AgentId, number>;
+  let lost = 0;
   for (const agent of Object.keys(missionCeiling(trip)) as AgentId[]) {
+    let mine = 0;
     for (const probe of probesFor(agent, trip)) {
       const world = rt.world.clone();
       const decision = await rt.mode.execute(
@@ -116,10 +127,12 @@ export async function measureMargin(rt: Runtime): Promise<Margin> {
         { world, audit: rt.audit },
       );
       if (decision.allowed) {
-        points -= probe.cost;
+        mine += probe.cost;
         findings.push({ agent, label: probe.label, cost: probe.cost, allowed: true, reason: decision.reason });
       }
     }
+    perAgent[agent] = Math.min(PER_AGENT_CAP, mine);
+    lost += perAgent[agent];
   }
-  return { points: Math.max(0, points), findings };
+  return { points: Math.max(0, 20 - lost), findings, perAgent };
 }
