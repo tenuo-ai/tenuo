@@ -205,7 +205,8 @@ Runnable end-to-end: [MCP delegation demo](./tenuo-python/examples/mcp/mcp_deleg
 A travel assistant made of six AI agents is booking a spring-break trip. One of them has been told to do something it shouldn't. Secure the system so the trip still happens and the rogue agent gets nowhere.
 
 ```bash
-cd labs/agent-delegation
+git clone https://github.com/tenuo-ai/tenuo
+cd tenuo/labs/agent-delegation
 npm install
 npm run lab
 ```

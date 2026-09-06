@@ -8,26 +8,27 @@ No agent-framework experience required. Ninety minutes.
 
 ## Before you start
 
-- A free GitHub account, signed in to the `gh` CLI.
 - Seven minutes with three sections of the Tenuo docs: "Protect your first
   tool" and "Delegate to another agent" in the
   [TypeScript SDK guide](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts),
   and "How It Works" in the [main README](https://github.com/tenuo-ai/tenuo).
-- While you're there, star the repo. It's the main signal open-source
-  maintainers get that a project is useful to people.
+- Node 20 or newer (`node --version`).
+- A free GitHub account is not needed to run the lab. You will want one for
+  Codespaces if your laptop fights you, to star the repo while you're there,
+  and for the last step.
 
 ## Getting set up
 
 ```bash
-gh repo clone tenuo-ai/tenuo
+git clone https://github.com/tenuo-ai/tenuo
 cd tenuo/labs/agent-delegation
 npm install
 npm run lab
 ```
 
-Node 20 or newer. No API key, no credit card, no cloud account, and nothing
-leaves your machine. If npm fights you, open the repository in GitHub
-Codespaces and pick the "Agent Delegation Challenge" configuration instead.
+No account, no sign-in, no API key, no credit card, and nothing leaves your
+machine. If npm fights you, open the repository in GitHub Codespaces and pick
+the "Agent Delegation Challenge" configuration instead.
 
 The lab lives inside the Tenuo repository so that the code you are securing
 with and the code you are reading about are one checkout. Everything the lab
