@@ -231,6 +231,8 @@ export function sdkInspectParts(payload_hex: string, signature_hex: string): any
 
 export function sdkInspectWarrant(wire: string): any;
 
+export function sdkProtocolLimits(): any;
+
 /**
  * Public key (hex) for a 32-byte Ed25519 holder secret. What an agent hands
  * to whoever will issue or delegate a warrant to it.

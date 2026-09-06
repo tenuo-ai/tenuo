@@ -90,6 +90,12 @@ export type WasmSessionInfo = {
   can_authorize: boolean;
 };
 
+/** Security limits exported by tenuo-core; TypeScript must not redefine them. */
+export type WasmProtocolLimits = {
+  max_delegation_depth: number;
+  max_warrant_ttl_seconds: number;
+};
+
 /** Mirrors `NarrowOptions` in tenuo-wasm. Unknown keys are rejected there. */
 export type WasmNarrowOptions = {
   holder?: string;
@@ -150,6 +156,7 @@ type Generated = {
   };
   sdkInspectWarrant(wire: string): WasmInspect;
   sdkInspectParts(payloadHex: string, signatureHex: string): WasmInspect;
+  sdkProtocolLimits(): WasmProtocolLimits;
   sdkPublicKeyFromHolderKey(holderSecret: Uint8Array): string;
   sdkSignApproval(
     session: WasmSession,
@@ -201,6 +208,10 @@ export function loadWasm(): Generated {
 export function createDevContext(): WasmContext {
   const { SdkContext } = loadWasm();
   return new SdkContext();
+}
+
+export function protocolLimits(): WasmProtocolLimits {
+  return loadWasm().sdkProtocolLimits();
 }
 
 export function createVerifierContext(

@@ -512,6 +512,97 @@ describe("terminal and maxDepth", () => {
   });
 });
 
+describe("numeric security boundaries", () => {
+  const invalidDepths = [
+    -1,
+    1.5,
+    65,
+    2 ** 32,
+    2 ** 32 + 64,
+    Number.MAX_SAFE_INTEGER,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ];
+
+  it.each(invalidDepths)("rejects session maxDepth=%s before WASM can coerce it", (maxDepth) => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    expect(() =>
+      tenuo.session({ allow: { read_file: { path: under("/data") } }, maxDepth }),
+    ).toThrow(TenuoConfigurationError);
+  });
+
+  it.each(invalidDepths)("rejects narrow maxDepth=%s without changing the parent", (maxDepth) => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const parent = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+    const before = parent.toWire();
+
+    expect(() =>
+      tenuo.narrow(parent, { path: under("/data/reports") }, { maxDepth }),
+    ).toThrow(TenuoConfigurationError);
+    expect(parent.toWire()).toEqual(before);
+    expect(parent.inspect()).toMatchObject({ depth: 0, maxDepth: 64, terminal: false });
+  });
+
+  it.each([
+    -1,
+    1.5,
+    90 * 24 * 60 * 60 + 1,
+    2 ** 32,
+    Number.MAX_SAFE_INTEGER,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ])(
+    "rejects session ttlSeconds=%s before WASM can coerce it",
+    (ttlSeconds) => {
+      const tenuo = createTenuo({ root: createTenuo.devRoot() });
+      expect(() =>
+        tenuo.session({ allow: { read_file: { path: under("/data") } }, ttlSeconds }),
+      ).toThrow(TenuoConfigurationError);
+    },
+  );
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    90 * 24 * 60 * 60 + 1,
+    2 ** 32,
+    Number.MAX_SAFE_INTEGER,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ])(
+    "rejects narrow ttlSeconds=%s without changing the parent",
+    (ttlSeconds) => {
+      const tenuo = createTenuo({ root: createTenuo.devRoot() });
+      const parent = tenuo.session({ allow: { read_file: { path: under("/data") } } });
+      const before = parent.toWire();
+
+      expect(() =>
+        tenuo.narrow(parent, { path: under("/data/reports") }, { ttlSeconds }),
+      ).toThrow(TenuoConfigurationError);
+      expect(parent.toWire()).toEqual(before);
+      expect(parent.inspect().depth).toBe(0);
+    },
+  );
+
+  it("accepts the exact protocol and WASM boundaries", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const root = tenuo.session({
+      allow: { read_file: { path: under("/data") } },
+      ttlSeconds: 90 * 24 * 60 * 60,
+      maxDepth: 64,
+    });
+    expect(root.inspect()).toMatchObject({ depth: 0, maxDepth: 64, terminal: false });
+
+    const child = tenuo.narrow(
+      root,
+      { path: under("/data/reports") },
+      { ttlSeconds: 90 * 24 * 60 * 60 },
+    );
+    expect(child.inspect().expiresAt).toBeLessThanOrEqual(root.inspect().expiresAt);
+  });
+});
+
 describe("inspect()", () => {
   it("reports the leaf without the secret", () => {
     const tenuo = createTenuo({ root: createTenuo.devRoot() });

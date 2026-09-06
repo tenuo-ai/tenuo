@@ -19,7 +19,7 @@ use tenuo::{
     encode_approval_gate_map, wire, ApprovalGateMap, Authorizer, Constraint, ConstraintSet,
     ConstraintValue, Error, Exact, OneOf, Pattern, PublicKey, Range, Signature,
     SignedRevocationList, SigningKey, ToolApprovalGate, Warrant, APPROVAL_GATE_EXTENSION_KEY,
-    MAX_CONSTRAINT_DEPTH, MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE,
+    MAX_CONSTRAINT_DEPTH, MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE, MAX_WARRANT_TTL_SECS,
 };
 use wasm_bindgen::prelude::*;
 
@@ -160,6 +160,14 @@ struct SessionInfoDto {
     /// proof-of-possession. False for a session issued or delegated to
     /// another holder: `toWire()` works, `authorize` does not.
     can_authorize: bool,
+}
+
+/// Security-relevant limits owned by tenuo-core. Language SDKs consume these
+/// instead of duplicating values that could drift from core enforcement.
+#[derive(Serialize)]
+struct ProtocolLimitsDto {
+    max_delegation_depth: u32,
+    max_warrant_ttl_seconds: u64,
 }
 
 /// `narrow(session, allow, options)` options. Unknown keys are rejected so a
@@ -714,6 +722,14 @@ impl SdkSession {
             .last()
             .ok_or_else(|| JsError::new("session chain is empty"))
     }
+}
+
+#[wasm_bindgen(js_name = sdkProtocolLimits)]
+pub fn sdk_protocol_limits() -> Result<JsValue, JsError> {
+    Ok(to_js_value(&ProtocolLimitsDto {
+        max_delegation_depth: MAX_DELEGATION_DEPTH,
+        max_warrant_ttl_seconds: MAX_WARRANT_TTL_SECS,
+    }))
 }
 
 #[wasm_bindgen(js_name = sdkInspectWarrant)]

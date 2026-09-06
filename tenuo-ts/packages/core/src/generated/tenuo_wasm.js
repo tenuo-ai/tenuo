@@ -720,6 +720,18 @@ function sdkInspectWarrant(wire) {
 exports.sdkInspectWarrant = sdkInspectWarrant;
 
 /**
+ * @returns {any}
+ */
+function sdkProtocolLimits() {
+    const ret = wasm.sdkProtocolLimits();
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkProtocolLimits = sdkProtocolLimits;
+
+/**
  * Public key (hex) for a 32-byte Ed25519 holder secret. What an agent hands
  * to whoever will issue or delegate a warrant to it.
  * @param {Uint8Array} holder_secret

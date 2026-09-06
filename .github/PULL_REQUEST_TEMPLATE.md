@@ -17,3 +17,13 @@ Closes #<!-- issue number -->
 
 - [ ] Tests added/updated
 - [ ] `./scripts/check.sh` passes
+
+## Security Invariants
+
+<!-- Mark N/A only with a short explanation. Protocol/security-boundary changes
+must be called out on the linked issue before implementation. -->
+
+- [ ] Authorization decisions still run in the Rust core; adapters only validate configuration and transport data.
+- [ ] Missing, malformed, expired, untrusted, or denied authority fails closed and never invokes the protected handler.
+- [ ] Delegation only narrows authority, holder secrets do not cross process boundaries, and wire/canonicalization behavior is unchanged or explicitly reviewed.
+- [ ] Security-sensitive behavior has negative tests and, when shared across SDKs, cross-runtime compatibility coverage.

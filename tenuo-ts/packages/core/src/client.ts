@@ -24,6 +24,7 @@ import {
   importSessionFromChain,
   importSessionFromWire,
   loadWasm,
+  protocolLimits,
   publicKeyHexFromHolderKey,
   type WasmContext,
   type WasmNarrowOptions,
@@ -167,9 +168,35 @@ export function publicKeyFromHolderKey(holderKey: Uint8Array): PublicKeyHandle {
   return { kind: "public-key", source: "bytes", hex: publicKeyHexFromHolderKey(holderKey) };
 }
 
+const MAX_WASM_U32 = 0xffff_ffff;
+
+function requireUint32(value: number, name: string, minimum = 0): number {
+  if (!Number.isInteger(value) || value < minimum || value > MAX_WASM_U32) {
+    throw new TenuoConfigurationError(
+      `${name} must be an integer between ${minimum} and ${MAX_WASM_U32}`,
+    );
+  }
+  return value;
+}
+
 function requireDepth(value: number, name: string): number {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new TenuoConfigurationError(`${name} must be a non-negative integer`);
+  requireUint32(value, name);
+  const maximum = protocolLimits().max_delegation_depth;
+  if (value > maximum) {
+    throw new TenuoConfigurationError(
+      `${name} ${value} exceeds the protocol maximum of ${maximum}`,
+    );
+  }
+  return value;
+}
+
+function requireTtl(value: number, name: string, minimum = 0): number {
+  requireUint32(value, name, minimum);
+  const maximum = protocolLimits().max_warrant_ttl_seconds;
+  if (value > maximum) {
+    throw new TenuoConfigurationError(
+      `${name} ${value} exceeds the protocol maximum of ${maximum}`,
+    );
   }
   return value;
 }
@@ -302,7 +329,10 @@ class TenuoClient implements Tenuo {
         "session() mints a warrant and needs a local issuer. Use createTenuo({ root: createTenuo.devRoot() }).",
       );
     }
-    const ttl = input.ttlSeconds ?? 0;
+    const ttl =
+      input.ttlSeconds === undefined
+        ? 0
+        : requireTtl(input.ttlSeconds, "session().ttlSeconds");
     if (input.requireApproval !== undefined) {
       if (input.requireApproval.approvers.length === 0) {
         throw new TenuoConfigurationError("requireApproval.approvers must not be empty");
@@ -438,10 +468,7 @@ function narrowOptionsJson(options: NarrowOptions): WasmNarrowOptions {
     out.holder = requirePublicKey(options.holder, "narrow().holder").hex;
   }
   if (options.ttlSeconds !== undefined) {
-    if (!Number.isInteger(options.ttlSeconds) || options.ttlSeconds < 1) {
-      throw new TenuoConfigurationError("narrow().ttlSeconds must be a positive integer");
-    }
-    out.ttlSeconds = options.ttlSeconds;
+    out.ttlSeconds = requireTtl(options.ttlSeconds, "narrow().ttlSeconds", 1);
   }
   if (options.terminal !== undefined) {
     if (typeof options.terminal !== "boolean") {
