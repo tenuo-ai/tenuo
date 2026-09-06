@@ -104,6 +104,78 @@ def _safe_mcp_tool_error_message(content: Any, tool_name: str) -> str:
     return f"Tool '{tool_name}' returned an error"
 
 
+def exact_argument_constraints(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Map call arguments to exact-match constraints for a terminal leaf.
+
+    Strings and bools become ``Exact``. Integers become ``Range(n, n)``.
+    Lists become ``Subset``. ``None`` is omitted (not part of the PoP view).
+    Values that already look like constraint objects are passed through,
+    including CEL expressions on free text.
+    """
+    from tenuo import Exact, Range, Subset
+
+    constraints: Dict[str, Any] = {}
+    for key, value in args.items():
+        if value is None:
+            continue
+        if hasattr(value, "constraint_type") or type(value).__name__ in {
+            "Exact",
+            "Range",
+            "Subset",
+            "CEL",
+            "Pattern",
+            "OneOf",
+        }:
+            constraints[key] = value
+            continue
+        if isinstance(value, bool):
+            # Exact is string-typed; core compares after str() of the argument.
+            constraints[key] = Exact("true" if value else "false")
+        elif isinstance(value, str):
+            constraints[key] = Exact(value)
+        elif isinstance(value, int):
+            constraints[key] = Range(value, value)
+        elif isinstance(value, float):
+            constraints[key] = Range(value, value)
+        elif isinstance(value, (list, tuple, set)):
+            constraints[key] = Subset(list(value))
+        else:
+            constraints[key] = Exact(value)
+    return constraints
+
+
+def derive_terminal_leaf(
+    warrant: Any,
+    holder_key: Any,
+    tool: str,
+    args: Dict[str, Any],
+    *,
+    ttl: int = 30,
+):
+    """Attenuate ``warrant`` to one tool call with exact-argument constraints.
+
+    Returns ``(leaf_warrant, leaf_key)``. A widening attempt raises
+    ``MonotonicityError`` before anything is signed.
+
+    Shared by the broker and the containment check so the mapping lives in
+    one place.
+    """
+    from tenuo_core import SigningKey
+
+    leaf_key = SigningKey.generate()
+    constraints = exact_argument_constraints(args)
+    parent = getattr(warrant, "warrant", warrant)
+    parent_key = getattr(warrant, "key", None) or holder_key
+    leaf = parent.grant(
+        to=leaf_key.public_key,
+        allow=tool,
+        ttl=ttl,
+        key=parent_key,
+        **constraints,
+    )
+    return leaf, leaf_key
+
+
 class SecureMCPClient:
     """
     MCP client with Tenuo authorization.
@@ -565,6 +637,28 @@ class SecureMCPClient:
                 reason=enforcement.denial_reason or "Authorization denied",
                 suggestions=[],
             )
+
+    def derive_terminal_leaf(
+        self,
+        tool: str,
+        args: Dict[str, Any],
+        *,
+        warrant: Any = None,
+        holder_key: Any = None,
+        ttl: int = 30,
+    ):
+        """Attenuate the current (or given) warrant to this call's arguments.
+
+        See :func:`derive_terminal_leaf`.
+        """
+        parent = warrant if warrant is not None else warrant_scope()
+        key = holder_key if holder_key is not None else key_scope()
+        if parent is None or key is None:
+            raise ConfigurationError(
+                "derive_terminal_leaf requires a warrant and holder key "
+                "(pass them, or call inside warrant_scope / key_scope)"
+            )
+        return derive_terminal_leaf(parent, key, tool, args, ttl=ttl)
 
     async def call_tool(
         self,

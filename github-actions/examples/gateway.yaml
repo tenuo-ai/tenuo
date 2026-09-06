@@ -1,0 +1,13 @@
+version: 1
+trust:
+  root_public_keys: ["${TENUO_ROOT_PUBLIC_KEY}"]
+  require_pop: true
+signing:
+  provider: memory
+ceiling:
+  repositories: ["acme/widgets"]
+tools:
+  packs: [github-triage]
+receipts:
+  sink: file
+  path: /tmp/tenuo-receipts.jsonl

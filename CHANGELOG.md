@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MCP denial receipts.** `MCPVerificationResult` keeps `presented_chain`,
+  `error_type`, `error_code`, `verified_pop`, `pop_auth_args`, and
+  `authorizer` on denials after a warrant decodes, so `emit_for_enforcement`
+  can sign a refusal the same way `@guard` already does.
+- **`ReceiptSigner(signing_key, sink)`** in `tenuo.receipts`. Signs receipts
+  with no control-plane URL. Rust `ControlPlaneClient.local(signing_key)`
+  is the issuer underneath (no heartbeat).
+- **`SecureMCPClient.derive_terminal_leaf` / `tenuo.mcp.derive_terminal_leaf`.**
+  Attenuates a warrant to exact-argument constraints (`Exact` for strings,
+  `Range(n, n)` for integers, `Subset` for lists).
+- **Stable `TENUO_*` denial codes** on MCP results and in `error.data.code`
+  (`TENUO_TOOL_NOT_AUTHORIZED`, `TENUO_CONSTRAINT_VIOLATION`,
+  `TENUO_INVALID_POP`, `TENUO_REVOKED`, `TENUO_WARRANT_EXPIRED`).
+- **GitHub Actions gateway** in `github-actions/`. FastMCP ceiling,
+  `github-triage` catalog, file receipts, refuse-to-start on stored tokens
+  or PEMs. Tool handlers do not call GitHub. `python -m tenuo_gha.check`
+  replays the fixture table.
+
+### Changed
+
+- Document `Range(n, n)` as the exact-match form for integers; `Exact` is
+  for strings and booleans.
+
 ## [0.2.4] - 2026-09-01
 
 ### Breaking

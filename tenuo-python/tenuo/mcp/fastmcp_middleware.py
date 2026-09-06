@@ -135,6 +135,8 @@ def _denial_tool_return(verification: MCPVerificationResult) -> _VerifierDenialT
         "code": code,
         "message": message,
     }
+    if verification.error_code:
+        tenuo_block["error_code"] = verification.error_code
     if verification.request_hash:
         tenuo_block["request_hash"] = verification.request_hash
     if verification.approval_metadata:
