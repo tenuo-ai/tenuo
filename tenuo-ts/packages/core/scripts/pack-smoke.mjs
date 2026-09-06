@@ -13,6 +13,8 @@ try {
   const tarball = packPackage(coreDir, packDir);
   assertPacked(tarball, [
     "package/dist/index.js",
+    "package/dist/index.d.ts",
+    "package/dist/index.d.ts.map",
     "package/dist/generated/tenuo_wasm_bg.wasm",
     "package/dist/generated/tenuo_wasm.js",
     "package/LICENSE",
@@ -24,6 +26,23 @@ try {
     cwd: installDir,
     stdio: "inherit",
   });
+  execFileSync("npm", ["install", "--save-dev", "typescript@~5.8.2", "@types/node@^20.0.0"], {
+    cwd: installDir,
+    stdio: "inherit",
+  });
+  writeFileSync(join(installDir, "consumer.ts"), `
+    import { createTenuo, under, type ProtectedTool, type Session } from "@tenuo/core";
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const inner = { execute: async ({ path }: { path: string }) => path };
+    const tool: ProtectedTool<typeof inner> = tenuo.tool(inner, {
+      capability: "read_file",
+      allow: { path: under("/data") },
+    });
+    const session: Session = tenuo.session({ tools: [tool] });
+    await tenuo.withSession(session, () => tool.execute({ path: "/data/q3.pdf" }));
+  `);
+  typecheckConsumer(installDir);
+
   execFileSync(
     process.execPath,
     [
@@ -70,6 +89,27 @@ try {
 } finally {
   rmSync(packDir, { recursive: true, force: true });
   rmSync(installDir, { recursive: true, force: true });
+}
+
+function typecheckConsumer(cwd) {
+  writeFileSync(
+    join(cwd, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        strict: true,
+        noEmit: true,
+        skipLibCheck: false,
+      },
+      files: ["consumer.ts"],
+    }),
+  );
+  execFileSync(join(cwd, "node_modules", ".bin", "tsc"), ["--noEmit"], {
+    cwd,
+    stdio: "inherit",
+  });
 }
 
 function packPackage(cwd, destination) {

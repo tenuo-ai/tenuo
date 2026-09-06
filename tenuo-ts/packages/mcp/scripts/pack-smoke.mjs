@@ -15,13 +15,40 @@ const installDir = mkdtempSync(join(tmpdir(), "tenuo-mcp-smoke-"));
 try {
   const coreTarball = packPackage(coreDir, packDir);
   const mcpTarball = packPackage(mcpDir, packDir);
-  assertPacked(mcpTarball, ["package/dist/index.js", "package/LICENSE", "package/README.md"]);
+  assertPacked(mcpTarball, [
+    "package/dist/index.js",
+    "package/dist/index.d.ts",
+    "package/dist/index.d.ts.map",
+    "package/LICENSE",
+    "package/README.md",
+  ]);
 
   writeFileSync(join(installDir, "package.json"), JSON.stringify({ private: true, type: "module" }));
   execFileSync("npm", ["install", "--omit=dev", coreTarball, mcpTarball], {
     cwd: installDir,
     stdio: "inherit",
   });
+  execFileSync("npm", ["install", "--save-dev", "typescript@~5.8.2", "@types/node@^20.0.0"], {
+    cwd: installDir,
+    stdio: "inherit",
+  });
+  writeFileSync(join(installDir, "consumer.ts"), `
+    import { McpServer } from "@modelcontextprotocol/server";
+    import { createTenuo, under } from "@tenuo/core";
+    import { guardHandler, guardTools, type GuardHandlerCallback } from "@tenuo/mcp";
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const callback: GuardHandlerCallback<{ path: string }> = async ({ path }) => ({
+      content: [{ type: "text", text: path }],
+    });
+    const guarded = guardHandler(tenuo, "read_file", { allow: { path: under("/data") } }, callback);
+    await guarded({ path: "/data/q3.pdf" });
+    const server = new McpServer({ name: "consumer", version: "1.0.0" });
+    guardTools(tenuo, server).register("health", {}, async () => ({
+      content: [{ type: "text", text: "ok" }],
+    }));
+  `);
+  typecheckConsumer(installDir);
+
   execFileSync(
     process.execPath,
     [
@@ -66,6 +93,27 @@ try {
 } finally {
   rmSync(packDir, { recursive: true, force: true });
   rmSync(installDir, { recursive: true, force: true });
+}
+
+function typecheckConsumer(cwd) {
+  writeFileSync(
+    join(cwd, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        strict: true,
+        noEmit: true,
+        skipLibCheck: false,
+      },
+      files: ["consumer.ts"],
+    }),
+  );
+  execFileSync(join(cwd, "node_modules", ".bin", "tsc"), ["--noEmit"], {
+    cwd,
+    stdio: "inherit",
+  });
 }
 
 function packPackage(cwd, destination) {
