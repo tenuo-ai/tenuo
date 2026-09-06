@@ -1,0 +1,43 @@
+name: Fuzz Security Boundaries
+
+on:
+  pull_request:
+    branches: [main, camel]
+  push:
+    branches: [main, camel]
+  schedule:
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-fuzz:
+    name: Rust Fuzz Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up nightly Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # nightly
+        with:
+          toolchain: nightly
+
+      - name: Cache Rust fuzz dependencies
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+        with:
+          workspaces: tenuo-core/fuzz
+
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+
+      - name: Fuzz warrant and chain decoders
+        working-directory: tenuo-core
+        run: cargo fuzz run wire_decode -- -max_total_time=${{ github.event_name == 'schedule' && '300' || '45' }} -timeout=10 -max_len=300000 -rss_limit_mb=2048
+
+      - name: Fuzz signed security envelopes
+        working-directory: tenuo-core
+        run: cargo fuzz run signed_envelopes -- -max_total_time=${{ github.event_name == 'schedule' && '300' || '45' }} -timeout=10 -max_len=300000 -rss_limit_mb=2048

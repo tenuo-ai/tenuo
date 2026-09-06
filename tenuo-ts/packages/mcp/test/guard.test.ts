@@ -7,6 +7,7 @@ import {
   guardHandler,
   guardTools,
   requestMeta,
+  type GuardCallContext,
   type GuardToolConfig,
   type InferToolArgs,
 } from "../src/index.ts";
@@ -326,16 +327,20 @@ describe("@tenuo/mcp v2 adapter", () => {
       allow: { ping: {} },
     });
     const executed: string[] = [];
-    const handler = guardHandler(issuer, "ping", { allow: {} }, async () => {
+    let seenContext: GuardCallContext | undefined;
+    const handler = guardHandler(issuer, "ping", { allow: {} }, async (ctx) => {
+      seenContext = ctx;
       executed.push("ping");
       return { content: [{ type: "text", text: "pong" }] };
     });
     const call = issuer.mcp.attach(session, "ping", {});
-    const result = await handler({ mcpReq: { _meta: call._meta } });
+    const context = { mcpReq: { _meta: call._meta } };
+    const result = await handler(context);
     expect(result).toMatchObject({
       content: [{ type: "text", text: "pong" }],
     });
     expect("isError" in result && result.isError).not.toBe(true);
+    expect(seenContext).toBe(context);
     expect(executed).toEqual(["ping"]);
   });
 
