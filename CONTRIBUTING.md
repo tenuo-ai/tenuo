@@ -44,7 +44,7 @@ security model.
 ### Prerequisites
 
 - Node.js 20 or newer
-- Corepack and pnpm 9.15.9, as pinned by `tenuo-ts/package.json`
+- pnpm 9.15.9, as pinned by `tenuo-ts/package.json`
 
 Rust and `wasm-pack` are not required for ordinary TypeScript-only changes. The
 generated Node.js WASM package is committed so contributors can install, test,
@@ -52,13 +52,34 @@ and run examples without compiling Rust first.
 
 ### Install
 
+Node.js 20 through 24 normally include Corepack:
+
 ```bash
 cd tenuo-ts
 corepack enable
+```
+
+Corepack is no longer distributed with Node.js 25 and newer. On those versions,
+or when `corepack` is unavailable, install the pinned pnpm version directly:
+
+```bash
+npm install --global pnpm@9.15.9
+```
+
+Then install the workspace dependencies:
+
+```bash
+cd tenuo-ts
 pnpm install
 ```
 
-Run all TypeScript commands below from `tenuo-ts/`.
+Run all subsequent TypeScript commands from `tenuo-ts/`.
+
+> The root Makefile targets are not substitutes for these commands.
+> `make build-wasm` builds the Explorer's browser target, not the Node.js WASM
+> package under `packages/core/src/generated/`, and `make test-ts` skips when
+> `tenuo-ts/node_modules` is absent. For the Node.js SDK, install dependencies
+> first and use the `pnpm` commands below, including `pnpm build:wasm`.
 
 ### Fast development loop
 
