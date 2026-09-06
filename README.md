@@ -210,7 +210,7 @@ npm install
 npm run lab
 ```
 
-Nine stages, ninety minutes, no agent-framework experience needed. You watch three classic approaches fail in three different ways before Tenuo appears, then write the delegation chain yourself. Runs offline, no API key. See [`labs/agent-delegation`](./labs/agent-delegation/README.md) and the [participant guide](./labs/agent-delegation/docs/participant-guide.md).
+Nine stages, ninety minutes, no agent-framework experience needed. You watch three classic approaches fail in three different ways before Tenuo appears, then write the delegation chain yourself. Runs offline, no API key. See [`labs/agent-delegation`](./labs/agent-delegation/README.md).
 
 ---
 

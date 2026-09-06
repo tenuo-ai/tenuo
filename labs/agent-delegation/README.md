@@ -46,7 +46,8 @@ npm run reset      # start over from stage 1
 ```
 
 Run `attack` and `score` as often as you like. Nothing is limited and nothing
-penalizes retries. The full participant guide is in `docs/participant-guide.md`.
+penalizes retries. Each stage explains itself when you run `npm run lab`; your
+session host has the full participant guide.
 
 ## How it works
 

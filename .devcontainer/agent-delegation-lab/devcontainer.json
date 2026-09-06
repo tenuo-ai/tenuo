@@ -11,7 +11,7 @@
       }
     },
     "codespaces": {
-      "openFiles": ["docs/participant-guide.md"]
+      "openFiles": ["README.md"]
     }
   }
 }
