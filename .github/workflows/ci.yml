@@ -697,11 +697,15 @@ jobs:
         working-directory: tenuo-ts
         run: pnpm test
 
-      - name: Verify generated WASM bindings are current
+      # Optimized .wasm bytes and private export ordering vary across Rust and
+      # wasm-pack patch releases. The public adapters are the deterministic
+      # generated contract; the rebuilt binary is exercised by the tests above.
+      - name: Verify public WASM bindings are current
         run: |
           git diff --exit-code -- \
             tenuo-wasm/Cargo.lock \
-            tenuo-ts/packages/core/src/generated
+            tenuo-ts/packages/core/src/generated/tenuo_wasm.js \
+            tenuo-ts/packages/core/src/generated/tenuo_wasm.d.ts
 
       - name: Pack smoke (Node 20)
         working-directory: tenuo-ts
