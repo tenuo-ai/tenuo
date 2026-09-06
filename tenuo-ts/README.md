@@ -479,45 +479,11 @@ For the legacy `@modelcontextprotocol/sdk` v1 API, use the maintained recipe in
 
 ## Develop the SDK
 
-From the repository root:
-
-```bash
-cd tenuo-ts
-corepack enable
-pnpm install
-```
-
-For TypeScript-only changes, use the committed WASM build and run the fast
-checks directly:
-
-```bash
-pnpm typecheck
-pnpm --filter @tenuo/core test
-pnpm --filter @tenuo/mcp test
-```
-
-Run the full suite before opening a pull request:
-
-```bash
-pnpm test
-pnpm --filter @tenuo/core build
-pnpm --filter @tenuo/core pack:smoke
-pnpm --filter @tenuo/mcp build
-pnpm --filter @tenuo/mcp pack:smoke
-```
-
-`pnpm test` rebuilds the Node.js WASM package and therefore requires Rust,
-`wasm32-unknown-unknown`, and `wasm-pack`. Run `pnpm build:wasm` explicitly
-after changing `tenuo-wasm`. Consumers installing from npm do not need Rust or
-`wasm-pack`; the generated WASM is included in `@tenuo/core`.
-
-Useful MCP examples:
-
-```bash
-pnpm example:mcp          # quarterly-close wire scenario
-pnpm example:mcp:host     # official v1 host recipe
-pnpm example:mcp:adapter  # @tenuo/mcp v2 adapter
-```
+See the repository's
+[TypeScript contributor workflow](../CONTRIBUTING.md#typescript-and-javascript-sdk)
+for installation, focused tests, examples, Node.js WASM rebuilding, and package
+smoke tests. That contributor guide is the canonical source for development
+commands.
 
 Publishing is performed by the GitHub Actions release workflow so npm can
 attach provenance. Both TypeScript packages remain on the `beta` dist-tag until
