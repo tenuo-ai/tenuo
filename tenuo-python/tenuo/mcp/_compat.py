@@ -38,6 +38,7 @@ __all__ = [
     "make_error_call_tool_result",
     "open_streamable_http_transport",
     "request_params_meta_as_dict",
+    "tool_input_schema",
 ]
 
 #: True when the installed SDK is the 2.x line (top-level ``RequestParamsMeta``).
@@ -108,6 +109,21 @@ def call_tool_result_structured_content(result: Any) -> Optional[dict[str, Any]]
         if value is not None:
             return value
     return None
+
+
+def tool_input_schema(tool: Any) -> dict[str, Any]:
+    """Return a tool's JSON input schema as a plain dict, or ``{}`` if it has none.
+
+    The field is ``input_schema`` on SDK 2.x and ``inputSchema`` on 1.x; the 2.x
+    name is probed first because FastMCP 4 warns on the legacy attribute. Only a
+    real ``dict`` counts: a permissive ``__getattr__`` (proxies, mocks) must not
+    be mistaken for a schema, since callers fail closed on declared properties.
+    """
+    for name in ("input_schema", "inputSchema"):
+        schema = getattr(tool, name, None)
+        if isinstance(schema, dict):
+            return schema
+    return {}
 
 
 def _sdk_httpx_module() -> Any:

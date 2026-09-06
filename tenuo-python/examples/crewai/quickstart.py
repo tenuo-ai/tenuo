@@ -5,7 +5,7 @@ Tenuo CrewAI Integration - Basic Protection Example
 This example demonstrates Tier 1 (constraint-based) protection for CrewAI tools
 using CrewAI's native hooks system. Run with: python quickstart.py
 
-Requires: uv pip install tenuo crewai>=0.80.0
+Requires: uv pip install tenuo crewai>=1.5
 """
 
 # Import Tenuo CrewAI integration
@@ -52,12 +52,12 @@ def main():
     print("-" * 40)
 
     if HOOKS_AVAILABLE:
-        print("  CrewAI hooks API is available (v0.80.0+)")
+        print("  CrewAI hooks API is available (v1.5.0+)")
         print("  Usage: guard.register() to install global hook")
         print("  Usage: guard.as_hook() for crew-scoped hooks")
     else:
-        print("  CrewAI hooks API not available (requires v0.80.0+)")
-        print("  Install with: uv pip install 'crewai>=0.80.0'")
+        print("  CrewAI hooks API not available (requires v1.5.0+)")
+        print("  Install with: uv pip install 'crewai>=1.5'")
 
     # Example of how registration works (commented out to avoid side effects)
     # guard.register()  # All tool calls now go through authorization

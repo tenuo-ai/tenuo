@@ -56,13 +56,13 @@ langgraph = [
     "langchain-core>=0.2.27",  # langgraph 0.2.0 requires this minimum
 ]
 crewai = [
-    "crewai>=1.0; python_version >= '3.10'",
+    "crewai>=1.5; python_version >= '3.10'",
 ]
 mcp = [
-    "mcp>=1.0.0; python_version >= '3.10'",
+    "mcp>=1.9.4; python_version >= '3.10'",
 ]
 fastmcp = [
-    "mcp>=1.0.0; python_version >= '3.10'",
+    "mcp>=1.9.4; python_version >= '3.10'",
     # 3.2.1+ includes client call_tool error parsing fixes (PrefectHQ/fastmcp#3778).
     "fastmcp>=3.2.1; python_version >= '3.10'",
 ]

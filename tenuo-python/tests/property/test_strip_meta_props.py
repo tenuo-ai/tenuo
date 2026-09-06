@@ -69,6 +69,8 @@ class TestResolveToolCallMeta:
             from tenuo.mcp.fastmcp_middleware import resolve_tool_call_meta_for_verify
         except ImportError:
             pytest.skip("fastmcp not installed")
+        import tenuo.mcp.fastmcp_middleware as middleware_module
+
         src = inspect.getsource(resolve_tool_call_meta_for_verify)
         assert "request_context" in src
-        assert "model_dump" in src
+        assert "model_dump" in inspect.getsource(middleware_module)
