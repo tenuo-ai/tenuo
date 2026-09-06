@@ -1,0 +1,17 @@
+{
+  "name": "Agent Delegation Challenge",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-20-bookworm",
+  "workspaceFolder": "/workspaces/tenuo/labs/agent-delegation",
+  "postCreateCommand": "cd /workspaces/tenuo/labs/agent-delegation && npm install --no-audit --no-fund",
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint"],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    },
+    "codespaces": {
+      "openFiles": ["docs/participant-guide.md"]
+    }
+  }
+}
