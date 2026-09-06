@@ -79,5 +79,7 @@ or an async Redis `checkAndRecord`) to reject an exact replayed PoP; that is
 opt-in. PoP v1 is otherwise replayable in-window, including approval-gated
 calls. Pass `nonceStore` on those tools if an approval must be one-use.
 
+Testing tip: copy the Vitest recipe in `examples/vitest-protected-tools` to assert authorization boundaries with only public APIs.
+
 See the [workspace README](../../README.md) for the full API, refuse list, and
 how to rebuild WASM from this monorepo.

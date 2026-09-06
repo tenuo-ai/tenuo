@@ -101,6 +101,9 @@ await readFile.execute(
 );
 ```
 
+
+For a focused Vitest pattern that asserts allow and denial through public APIs (stable `code` / `field`, inner-tool spy, per-test session scope), see [`packages/core/examples/vitest-protected-tools`](packages/core/examples/vitest-protected-tools/README.md).
+
 ## Mental model
 
 Every protected call has three relevant inputs:
