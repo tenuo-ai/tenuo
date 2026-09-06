@@ -1,0 +1,10 @@
+# Security-critical implementation and enforcement surfaces require review by
+# a Tenuo maintainer. The branch ruleset enforces CODEOWNERS approval.
+/tenuo-core/ @aimable100 @d8joseph
+/tenuo-wasm/ @aimable100 @d8joseph
+/tenuo-ts/packages/core/ @aimable100 @d8joseph
+/tenuo-ts/packages/mcp/ @aimable100 @d8joseph
+/.github/workflows/ @aimable100 @d8joseph
+/.github/codeql/ @aimable100 @d8joseph
+/.github/CODEOWNERS @aimable100 @d8joseph
+/SECURITY.md @aimable100 @d8joseph

@@ -58,11 +58,16 @@ We maintain comprehensive red team test suites:
 - **Rust tests**: `cargo test --test red_team`
 - **Python tests**: `cd tenuo-python && pytest tests/security/`
 - **TypeScript tests**: `cd tenuo-ts && pnpm --filter @tenuo/core test && pnpm --filter @tenuo/mcp test`
+- **Cross-runtime property tests**: `cd tenuo-ts && pnpm --filter @tenuo/core exec vitest run test/differential.property.test.ts`
+- **TypeScript mutation tests**: `cd tenuo-ts && pnpm test:mutation` (Node.js 22+)
+- **Rust fuzz targets**: `cd tenuo-core && cargo +nightly fuzz run wire_decode` (also run `signed_envelopes`)
 
 The dedicated security workflow runs all three suites on pull requests and on
 a weekly schedule. TypeScript also has CI gates for Rust/WASM linting, generated
 binding drift, packed-package installation, supported Node versions, and
-production dependency advisories.
+production dependency advisories. Security-critical paths have CODEOWNERS, and
+the default-branch ruleset requires their approval plus the Rust, TypeScript,
+security, fuzz, mutation, and CodeQL checks.
 
 These cover:
 - Signature/trust attacks

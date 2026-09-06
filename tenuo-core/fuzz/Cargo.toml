@@ -1,0 +1,30 @@
+[package]
+name = "tenuo-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ciborium = "0.2"
+tenuo = { path = ".." }
+
+[[bin]]
+name = "wire_decode"
+path = "fuzz_targets/wire_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "signed_envelopes"
+path = "fuzz_targets/signed_envelopes.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
