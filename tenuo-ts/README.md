@@ -168,6 +168,9 @@ const reports = tenuo.narrow(session, {
 });
 ```
 
+To hand that narrower authority to a different agent, bind the child to that
+agent's key. See [Delegate to another agent](#delegate-to-another-agent).
+
 ## Production setup
 
 Development puts issuance and enforcement in one process. Production separates
@@ -268,6 +271,96 @@ await tenuo.withSession(reportSession, runReportAgent);
 The child can remove tools and tighten argument constraints; it cannot widen
 the parent, and it never outlives the parent warrant.
 `toWire()` exports only the warrant chain. It never exports the holder secret.
+
+### Delegate to another agent
+
+When the smaller job runs under a different agent, with its own key, pass that
+agent's public key as the holder. The current holder signs the child; the child
+belongs to the next agent. Every agent generates its own holder key once and
+shares only the public half:
+
+```ts
+// In each agent's process, once. The secret never leaves it.
+const holderKey = createTenuo.generateHolderKey();
+const publicKey = createTenuo.publicKeyFromHolderKey(holderKey);
+```
+
+```ts
+// Orchestrator: narrow and rebind. `handed` cannot authorize here — it has no
+// holder secret — but it can be exported and sent.
+const handed = tenuo.narrow(
+  taskSession,
+  { read_file: { path: under("/data/reports") } },
+  { holder: workerPublicKey, ttlSeconds: 5 * 60 },
+);
+sendToWorker(handed.toWire());
+
+// Worker: import with its own key, then use it like any session.
+const mine = tenuo.sessionFromWire({ warrant: received, holderKey });
+await tenuo.withSession(mine, runReportAgent);
+```
+
+Two checks make this a handoff of *less* authority rather than a shared
+credential:
+
+- Core rejects the child at `narrow()` time, before a token exists, if it names
+  a tool the parent lacks, widens a constraint, outlives the parent, or exceeds
+  the depth ceiling. The error carries `TENUO_CHAIN_INVALID` (or
+  `TENUO_DEPTH_EXCEEDED`).
+- A copied chain is not authority. `sessionFromWire()` with any other holder key
+  fails with `TENUO_INVALID_POP`, and a server verifying the proof-of-possession
+  fails the same way.
+
+### Limit how far authority travels
+
+A delegator can mark what it hands on as the end of the line, and the root can
+cap the whole chain. Neither can be undone by anyone below:
+
+```ts
+// The worker may use this; it may not hand it to anyone.
+const handed = tenuo.narrow(taskSession, allow, { holder: workerPublicKey, terminal: true });
+
+// Issued authority may be delegated at most twice below the root.
+const root = tenuo.session({ allow, holder: orchestratorPublicKey, maxDepth: 2 });
+```
+
+A holder that tries to narrow a terminal session gets `TENUO_DEPTH_EXCEEDED`.
+An intermediate can lower `maxDepth` for its children and cannot raise it.
+
+### Issue directly to an agent from a control plane
+
+A development issuer can bind a fresh session to another agent's key. Agents
+trust the issuer's public key and nothing else, so a warrant any agent mints for
+itself is rejected as `TENUO_UNTRUSTED_ROOT` before a single constraint is
+checked:
+
+```ts
+const controlPlane = createTenuo({ root: createTenuo.devRoot() });
+const root = controlPlane.issuerPublicKey();
+
+const agent = createTenuo({ trustedRoots: [root] });
+
+const issued = controlPlane.session({
+  allow: { read_file: { path: under("/data") } },
+  holder: agentPublicKey,
+  ttlSeconds: 30 * 60,
+});
+sendToAgent(issued.toWire());
+```
+
+`issuerPublicKey()` is a public key. Sharing it grants nothing.
+
+### Inspect a session
+
+`session.inspect()` reports the leaf's holder public key, depth, ceiling,
+lifetime, tools, and whether this process can authorize with it. It never
+includes the holder secret. Use it for audit views and to explain a denial:
+
+```ts
+const info = handed.inspect();
+// { holderPublicKey, rootPublicKey, depth: 1, maxDepth, terminal, expiresAt,
+//   tools: ["read_file"], warrantIds: [...], canAuthorize: false }
+```
 
 ### Enforce again at service boundaries
 

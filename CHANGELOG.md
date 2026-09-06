@@ -7,8 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TypeScript: delegation across agents.** `tenuo.narrow(session, allow,
+  options)` accepts `{ holder, ttlSeconds, terminal, maxDepth }`. With
+  `holder`, the child is bound to another agent's public key and signed by the
+  current holder; the returned session is wire-only (`toWire()`), and that
+  agent imports it with `sessionFromWire()`. Core rejects any child not within
+  its parent before a token exists.
+- **TypeScript: issue to an agent's key.** `tenuo.session({ holder, maxDepth })`
+  binds a fresh session to another holder and caps delegation depth
+  (`0` = terminal). `tenuo.issuerPublicKey()` returns the dev issuer's public
+  key for other processes' `trustedRoots`.
+- **TypeScript: holder keys.** `createTenuo.generateHolderKey()` and
+  `createTenuo.publicKeyFromHolderKey(secret)`.
+- **TypeScript: `session.inspect()`.** Holder public key, root public key,
+  depth, `maxDepth`, `terminal`, `expiresAt`, tools, warrant ids, and
+  `canAuthorize`. Never the holder secret.
+- **TypeScript: `TENUO_DEPTH_EXCEEDED`.** Narrowing a terminal session, or
+  past the chain's `maxDepth`, raises `AuthorizationDeniedError` with this
+  code instead of the generic `TENUO_CHAIN_INVALID`.
+
 ### Changed
 
+- **TypeScript: `sessionFromWire()` with the wrong holder key** now throws
+  `AuthorizationDeniedError` with `TENUO_INVALID_POP` (was a configuration
+  error). A copied warrant is not authority.
+- **tenuo-wasm `SdkContext.mint`** takes optional `holder_hex` and `max_depth`;
+  `SdkContext.narrow` takes an optional options object; `SdkSession` gains
+  `describe()`; `sdkPublicKeyFromHolderKey` is exported. Existing call sites
+  are unchanged.
 - **Python extras declare the floors the code actually needs.** `tenuo[mcp]`
   and `tenuo[fastmcp]` now require `mcp>=1.9.4` (streamable-HTTP transport
   shape, `CallToolRequestParams.meta`); `tenuo[crewai]` requires `crewai>=1.5`

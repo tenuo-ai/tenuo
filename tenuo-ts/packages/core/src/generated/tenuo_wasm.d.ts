@@ -31,6 +31,13 @@ export class SdkContext {
      */
     static fromTrustedRoots(roots: any): SdkContext;
     /**
+     * Public key of the local issuer, hex. Verifier-only contexts have none.
+     *
+     * This is what other processes put in `trustedRoots` to accept warrants
+     * this context mints. It is a public key: sharing it grants nothing.
+     */
+    issuerPublicKey(): string;
+    /**
      * Load a published SignedRevocationList. The SRL must be signed by a trusted root.
      */
     loadRevocationList(wire: string): void;
@@ -40,12 +47,26 @@ export class SdkContext {
      *
      * `require_approval` is optional:
      * `{ "approvers": ["hex..."], "min": 2, "tools": ["transfer"] }`
+     *
+     * `holder_hex` binds the warrant to another agent's public key. The
+     * returned session then has no holder secret: export it with `toWire()`
+     * and let that agent import it. Omit it to mint a local session with a
+     * fresh holder key.
+     *
+     * `max_depth` caps how many times the authority may be delegated below
+     * the root (0 = terminal). Omit for the protocol maximum.
      */
-    mint(allow_json: any, ttl_seconds: number, require_approval: any): SdkSession;
+    mint(allow_json: any, ttl_seconds: number, require_approval: any, holder_hex?: string | null, max_depth?: number | null): SdkSession;
     /**
-     * Attenuate the leaf. The current holder signs; the same holder keeps the child.
+     * Attenuate the leaf. The current holder signs.
+     *
+     * Without `options.holder` the same holder keeps the child. With it, the
+     * child is bound to that public key: this is delegation to another agent,
+     * and the returned session carries no holder secret (see `SdkSession`).
+     * Core rejects any child that is not within its parent — tools,
+     * constraints, lifetime, and depth — before a token exists.
      */
-    narrow(session: SdkSession, allow_json: any): SdkSession;
+    narrow(session: SdkSession, allow_json: any, options: any): SdkSession;
     constructor();
     /**
      * Holder PoP only. Does not authorize. Used to fill `_meta.tenuo.signature`.
@@ -59,6 +80,11 @@ export class SdkContext {
 
 /**
  * Opaque warrant chain (root first) + leaf holder key. Not JSON-serializable from JS.
+ *
+ * `holder` is `None` when the leaf was issued or delegated to another agent's
+ * key. Such a session can be exported with `toWire()` and handed over, but it
+ * cannot sign proof-of-possession here; the holder imports it with
+ * `SdkSession.fromWire` and its own secret.
  */
 export class SdkSession {
     private constructor();
@@ -69,6 +95,11 @@ export class SdkSession {
      * Not a PoP. MCP replay uses the PoP signature, not this key.
      */
     dedupKey(tool: string, args_json: any): string;
+    /**
+     * Public view of the leaf: holder public key, depth, ceiling, lifetime,
+     * tools. Never the holder secret.
+     */
+    describe(): any;
     /**
      * Test / interop seam. Not on the public TypeScript Session type.
      */
@@ -199,6 +230,12 @@ export function parse_connect_token(token: string): any;
 export function sdkInspectParts(payload_hex: string, signature_hex: string): any;
 
 export function sdkInspectWarrant(wire: string): any;
+
+/**
+ * Public key (hex) for a 32-byte Ed25519 holder secret. What an agent hands
+ * to whoever will issue or delegate a warrant to it.
+ */
+export function sdkPublicKeyFromHolderKey(holder_secret: Uint8Array): string;
 
 /**
  * Test / host seam. Signs a SignedApproval envelope; does not authorize.
