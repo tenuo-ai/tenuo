@@ -1,0 +1,92 @@
+<svg width="100%" viewBox="0 0 680 465" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>Cryptographic verification of a Temporal Nexus request</title>
+  <desc>The caller canonicalizes and signs the exact Nexus request, attaches the warrant chain and optional approvals, and sends them as Nexus metadata. The Tenuo interceptor verifies the authority chain, proof of possession, request binding, constraints, and approvals locally before allowing or denying handler execution.</desc>
+  <style>
+    .panel{fill:#0b1220;stroke:#1e293b}.card{fill:#111a2b;stroke:#334155;stroke-width:1.2}.temporal{fill:#171933;stroke:#818cf8;stroke-width:1.4}.tenuo{fill:#0f2a3a;stroke:#38bdf8;stroke-width:1.5}.allow{fill:#0f291f;stroke:#34d399;stroke-width:1.4}.deny{fill:#2a1416;stroke:#f87171;stroke-width:1.4}.inner{fill:#0b1826;stroke:#164e63;stroke-width:1}
+    .title{fill:#f8fafc;font:600 15px Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.subtitle{fill:#94a3b8;font:400 10.5px Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.eyebrow{fill:#94a3b8;font:700 9.5px Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:.7px}.temporal-text{fill:#a5b4fc}.tenuo-text{fill:#7dd3fc}.allow-text{fill:#6ee7b7}.deny-text{fill:#fca5a5}.label{fill:#e2e8f0;font:500 11px Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.small{fill:#94a3b8;font:400 9.5px Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.mono{fill:#cbd5e1;font:500 9.5px 'SFMono-Regular',Consolas,'Liberation Mono',monospace}.wire{fill:#94a3b8;font:500 9px Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.step{fill:#08131f;stroke:#38bdf8;stroke-width:1}
+  </style>
+  <defs>
+    <marker id="wire-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M2 1L8 5L2 9" fill="none" stroke="#94a3b8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="allow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M2 1L8 5L2 9" fill="none" stroke="#34d399" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="deny-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M2 1L8 5L2 9" fill="none" stroke="#f87171" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  </defs>
+  <rect x="10" y="10" width="660" height="445" rx="16" class="panel"/>
+
+  <!-- Caller -->
+  <rect x="25" y="25" width="180" height="292" rx="12" class="card"/>
+  <text x="43" y="50" class="eyebrow">CALLER WORKFLOW</text>
+  <text x="43" y="77" class="title">Build a bound request</text>
+  <text x="43" y="96" class="subtitle">Before the Nexus call</text>
+
+  <circle cx="49" cy="124" r="10" class="step"/><text x="49" y="128" text-anchor="middle" class="small" style="fill:#7dd3fc">1</text>
+  <text x="67" y="128" class="label">Canonicalize</text>
+  <text x="43" y="149" class="mono">endpoint · service</text>
+  <text x="43" y="165" class="mono">operation</text>
+  <text x="43" y="181" class="mono">normalized input</text>
+
+  <circle cx="49" cy="207" r="10" class="step"/><text x="49" y="211" text-anchor="middle" class="small" style="fill:#7dd3fc">2</text>
+  <text x="67" y="211" class="label">Sign exact request</text>
+  <text x="43" y="232" class="mono">holder key → PoP</text>
+
+  <circle cx="49" cy="259" r="10" class="step"/><text x="49" y="263" text-anchor="middle" class="small" style="fill:#7dd3fc">3</text>
+  <text x="67" y="263" class="label">Attach authority</text>
+  <text x="43" y="284" class="mono">warrant · chain</text>
+  <text x="43" y="300" class="mono">approvals, when required</text>
+
+  <!-- Nexus wire envelope -->
+  <rect x="245" y="25" width="180" height="292" rx="12" class="temporal"/>
+  <text x="263" y="50" class="eyebrow temporal-text">NEXUS REQUEST</text>
+  <text x="263" y="77" class="title">Metadata envelope</text>
+  <text x="263" y="96" class="subtitle">Standard service payload</text>
+  <text x="263" y="110" class="subtitle">remains unchanged</text>
+  <line x1="263" y1="122" x2="407" y2="122" stroke="#312e81"/>
+
+  <text x="263" y="140" class="small">Headers</text>
+  <rect x="263" y="149" width="144" height="25" rx="6" fill="#202247"/><text x="275" y="165" class="mono">x-tenuo-warrant</text>
+  <rect x="263" y="180" width="144" height="25" rx="6" fill="#202247"/><text x="275" y="196" class="mono">warrant chain</text>
+  <rect x="263" y="211" width="144" height="25" rx="6" fill="#202247"/><text x="275" y="227" class="mono">holder key ID + PoP</text>
+  <rect x="263" y="242" width="144" height="25" rx="6" fill="#202247"/><text x="275" y="258" class="mono">signed approvals</text>
+  <text x="263" y="290" class="eyebrow temporal-text">TEMPORAL CLOUD</text>
+  <text x="263" y="307" class="small">Routes headers and payload</text>
+
+  <!-- Tenuo verifier -->
+  <rect x="465" y="25" width="190" height="330" rx="12" class="tenuo"/>
+  <text x="483" y="50" class="eyebrow tenuo-text">TENUO INTERCEPTOR</text>
+  <text x="483" y="77" class="title">Verify locally</text>
+  <text x="483" y="96" class="subtitle">Before handler code executes</text>
+
+  <rect x="483" y="113" width="154" height="65" rx="8" class="inner"/>
+  <text x="495" y="133" class="eyebrow tenuo-text">1 / AUTHORITY CHAIN</text>
+  <text x="495" y="151" class="small">root · signatures · linkage</text>
+  <text x="495" y="166" class="small">expiry · revocation</text>
+
+  <rect x="483" y="186" width="154" height="82" rx="8" class="inner"/>
+  <text x="495" y="206" class="eyebrow tenuo-text">2 / REQUEST BINDING</text>
+  <text x="495" y="224" class="small">holder PoP · endpoint</text>
+  <text x="495" y="239" class="small">service · operation</text>
+  <text x="495" y="254" class="small">normalized input</text>
+
+  <rect x="483" y="276" width="154" height="60" rx="8" class="inner"/>
+  <text x="495" y="296" class="eyebrow tenuo-text">3 / POLICY DECISION</text>
+  <text x="495" y="314" class="small">capability · constraints</text>
+  <text x="495" y="328" class="small">approvals</text>
+  <text x="560" y="349" text-anchor="middle" class="small">No authorization-server call</text>
+
+  <!-- Wire arrows -->
+  <line x1="205" y1="165" x2="243" y2="165" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#wire-arrow)"/>
+  <line x1="425" y1="165" x2="463" y2="165" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#wire-arrow)"/>
+
+  <!-- Decision -->
+  <line x1="560" y1="355" x2="560" y2="371" stroke="#64748b" stroke-width="1.4"/>
+  <line x1="560" y1="371" x2="446" y2="371" stroke="#34d399" stroke-width="1.4"/>
+  <line x1="446" y1="371" x2="446" y2="386" stroke="#34d399" stroke-width="1.4" marker-end="url(#allow-arrow)"/>
+  <line x1="560" y1="371" x2="584" y2="371" stroke="#f87171" stroke-width="1.4"/>
+  <line x1="584" y1="371" x2="584" y2="386" stroke="#f87171" stroke-width="1.4" marker-end="url(#deny-arrow)"/>
+
+  <rect x="370" y="391" width="150" height="47" rx="10" class="allow"/>
+  <text x="385" y="410" class="eyebrow allow-text">ALLOWED</text>
+  <text x="385" y="427" class="label">Dispatch handler</text>
+  <rect x="530" y="391" width="125" height="47" rx="10" class="deny"/>
+  <text x="545" y="410" class="eyebrow deny-text">DENIED</text>
+  <text x="545" y="427" class="small">Non-retryable error</text>
+</svg>
