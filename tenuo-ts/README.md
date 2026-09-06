@@ -358,9 +358,180 @@ includes the holder secret. Use it for audit views and to explain a denial:
 
 ```ts
 const info = handed.inspect();
-// { holderPublicKey, rootPublicKey, depth: 1, maxDepth, terminal, expiresAt,
-//   tools: ["read_file"], warrantIds: [...], canAuthorize: false }
+// { kind, holderPublicKey, rootPublicKey, depth: 1, maxDepth, terminal, expiresAt,
+//   tools: ["read_file"], warrantIds: [...], canAuthorize: false,
+//   clearance?, sessionId?, agentId?, requiredApprovers?, minApprovals?, approvalGatedTools }
 ```
+
+### Explain a decision
+
+`tenuo.explain(session, tool, args)` reports what the session would decide,
+field by field, without running the tool and without signing
+proof-of-possession, so it works on a session issued to someone else:
+
+```ts
+const why = tenuo.explain(session, "read_file", { path: "/etc/passwd", mode: "r" });
+// { outcome: "deny", code: "TENUO_CONSTRAINT_VIOLATION", field: "path",
+//   toolGranted: true, chainValid: true, expired: false,
+//   fields: [{ field: "path", kind: "Subpath", satisfied: false, value: "/etc/passwd", reason: "..." },
+//            { field: "mode", kind: "OneOf", satisfied: true, value: "r" }],
+//   unknownFields: [], missingFields: [] }
+```
+
+### Run a control plane in Node
+
+A stable issuer key makes this process the root of authority. It trusts its
+own key plus any `trustedRoots`, works outside `NODE_ENV=development`, and
+its public key is what agents put in their `trustedRoots`:
+
+```ts
+const controlPlane = createTenuo({
+  root: createTenuo.issuerKeyFromEnv("TENUO_ISSUER_SECRET"),
+});
+const root = controlPlane.issuerPublicKey();
+
+const issued = controlPlane.session({
+  allow: { read_file: { path: under("/data") } },
+  holder: agentPublicKey,
+  ttlSeconds: 30 * 60,
+  clearance: "internal",
+  sessionId: "task-42",
+  agentId: "report-worker",
+});
+```
+
+Generate a key once with `createTenuo.generateIssuerKey()` and keep the hex in
+a secret store. Never put it in an agent process.
+
+### Delegate the right to issue
+
+An issuer session cannot call tools. Its holder can mint execution sessions
+for the tools in `issuableTools`, inside `constraintBounds`, without ever
+holding the root key. Core checks every issued session against those bounds:
+
+```ts
+// Control plane, once per orchestrator.
+const issuer = controlPlane.session({
+  kind: "issuer",
+  issuableTools: ["read_file", "search"],
+  constraintBounds: { path: under("/data") },
+  maxIssueDepth: 2,
+  holder: orchestratorPublicKey,
+  ttlSeconds: 8 * 3600,
+});
+
+// Orchestrator, per task. No root key in this process.
+const worker = tenuo.issue(mine, {
+  allow: { read_file: { path: under("/data/reports") } },
+  holder: workerPublicKey,
+  ttlSeconds: 300,
+});
+```
+
+Issuing `delete_file`, or `path: under("/")`, fails with `TENUO_CHAIN_INVALID`.
+
+### The full constraint set
+
+Every constraint is evaluated in the Rust core and attenuates monotonically.
+
+| Helper | Meaning |
+|---|---|
+| `under(root, { caseSensitive?, allowEqual? })` | Path inside a directory, traversal-safe |
+| `pattern(glob)`, `regex(source)` | String shape |
+| `exact(value)`, `oneOf(values)`, `notOneOf(values)` | Value sets |
+| `max(n)`, `min(n)`, `range({ min, max, minExclusive?, maxExclusive? })` | Numeric bounds |
+| `email({ domain })` | Address on a domain |
+| `cidr("10.0.0.0/8")` | IP inside a network |
+| `urlPattern("https://*.example.com/api/*")` | URL glob, parsed as a URL |
+| `urlSafe({ schemes?, allowDomains?, denyDomains? })` | SSRF-aware URL check; private and link-local hosts rejected |
+| `shlex(["ls", "cat"])` | Shell command whose first word is allowed, parsed with shell quoting |
+| `contains(values)`, `subset(values)` | List arguments |
+| `anyOf([...])`, `all([...])`, `not(c)` | Composition; `not` cannot be narrowed further, prefer `notOneOf` |
+| `wildcard()` | Any value; names an argument in a zero-trust policy without constraining it |
+| `cel("value < 10000")` | Common Expression Language over the value |
+
+Every named field is required. `wildcard()` admits any value, not the absence
+of one.
+
+### Approvals end to end
+
+Gate a tool, or only some of its arguments, on signed human approval:
+
+```ts
+const session = tenuo.session({
+  allow: { transfer: { amount: max(100_000) } },
+  requireApproval: {
+    approvers: [financePublicKey, cfoPublicKey],
+    min: 1,
+    gates: {
+      transfer: {
+        message: "Transfers of 1,000 or more need sign-off",
+        args: { amount: { when: min(1000) } },   // or "all", or { exempt: c }
+      },
+    },
+  },
+});
+```
+
+When a gate fires, `execute` throws `ApprovalRequiredError` whose `request`
+is what an approval service needs. The approver signs the request hash and
+never sees the warrant or the holder key; the approval binds the exact call:
+
+```ts
+try {
+  await transfer.execute({ amount: 5000 }, { session });
+} catch (error) {
+  if (error instanceof ApprovalRequiredError && error.request) {
+    const body = createTenuo.controlPlaneApprovalRequestV1(error.request, {
+      attestation: tenuo.attestApprovalRequest(session, "transfer", { amount: 5000 }),
+    });
+    const response = await postToApprovalService(body);            // same v1 shape the Python SDK sends
+    const approvals = createTenuo.signedApprovalsFromResponseV1(response);
+    await transfer.execute({ amount: 5000 }, { session, approvals });
+  }
+}
+
+// An approver service, anywhere:
+const envelope = createTenuo.signApproval(request, approverSecret, { externalId: "cfo@example.com" });
+createTenuo.inspectApproval(envelope); // { approverPublicKey, requestHash, externalId, expiresAt, signatureValid }
+```
+
+Delegation can add approvers and raise the threshold with
+`narrow(session, allow, { addApprovers, minApprovals })`; it can never remove
+or lower them.
+
+### Revocation lists
+
+An issuer signs a list of warrant ids; verifiers load it and refuse those
+chains from then on:
+
+```ts
+const list = controlPlane.revocationList({ revoke: [warrantId], version: 2 });
+createTenuo.inspectRevocationList(list); // { version, issuedAt, issuerPublicKey, revokedIds, signatureValid }
+
+agent.revoke(list);            // now TENUO_REVOKED for that chain
+```
+
+`createTenuo.signRevocationList(input, issuerSecret)` does the same with an
+explicit secret. Version numbers only go up.
+
+### Present authority across any boundary
+
+`mcp.attach()` and `mcp.verify()` are one instance of a general pattern:
+authorize locally, send the chain plus a proof-of-possession, verify at the
+other side. The same pair works over HTTP, a queue, or a workflow engine:
+
+```ts
+// Caller
+const presented = tenuo.present(session, "read_file", { path: "/data/q3.pdf" });
+await fetch(url, { method: "POST", body: JSON.stringify({ args, presented }) });
+
+// Service, trusting only the root
+const args = await service.verify(presented, "read_file", body.args, { allow: { path: under("/data") } });
+```
+
+Tampered arguments fail `TENUO_INVALID_POP`; the host ceiling in `allow`
+applies on top of the warrant.
 
 ### Enforce again at service boundaries
 
@@ -489,6 +660,19 @@ await readFile.execute(
 Receipts are evidence, not permission: verifying a receipt does not authorize a
 new call. Receipt-hook exceptions are isolated and never change the decision or
 prevent an allowed tool from running.
+
+Verify them anywhere:
+
+```ts
+createTenuo.verifyReceipt(receipt);
+// { authentic: true, signerKey, outcome, action, requestId, requestHash?, srlHash?, ... }
+createTenuo.verifyReceiptChain(receipt, [rootPublicKey]);
+// { chainValid, outcome, decisionCode?, rootIssuer?, leafHolder?, corroboratesDenial? }
+```
+
+The first checks the enforcement point's signature. The second checks the
+embedded warrant chain against roots you trust, at the receipt's own decision
+instant, and needs no trust in the signer.
 
 ## MCP
 

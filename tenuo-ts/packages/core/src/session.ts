@@ -55,7 +55,10 @@ export class Session implements SessionContract {
       throw new TenuoConfigurationError("session is not bound to the WASM core");
     }
     const info = native.describe() as WasmSessionInfo;
-    return {
+    const out: {
+      -readonly [K in keyof SessionInfo]: SessionInfo[K];
+    } = {
+      kind: info.kind,
       holderPublicKey: info.holder_public_key,
       rootPublicKey: info.root_public_key,
       depth: info.depth,
@@ -65,7 +68,30 @@ export class Session implements SessionContract {
       tools: [...info.tools],
       warrantIds: [...info.warrant_ids],
       canAuthorize: info.can_authorize,
+      approvalGatedTools: [...info.approval_gated_tools],
     };
+    if (info.clearance !== undefined) {
+      out.clearance = info.clearance;
+    }
+    if (info.session_id !== undefined) {
+      out.sessionId = info.session_id;
+    }
+    if (info.agent_id !== undefined) {
+      out.agentId = info.agent_id;
+    }
+    if (info.issuable_tools !== undefined) {
+      out.issuableTools = [...info.issuable_tools];
+    }
+    if (info.max_issue_depth !== undefined) {
+      out.maxIssueDepth = info.max_issue_depth;
+    }
+    if (info.required_approvers !== undefined) {
+      out.requiredApprovers = [...info.required_approvers];
+    }
+    if (info.min_approvals !== undefined) {
+      out.minApprovals = info.min_approvals;
+    }
+    return out;
   }
 }
 
