@@ -58,6 +58,18 @@ Customer-gateway configuration is four fields:
     trusted_roots: ${{ vars.TENUO_TRUSTED_ROOTS }}
 ```
 
+A host product (Pullfrog-shaped) uses the same four fields in-process instead of the Action:
+
+```python
+from tenuo_gha.embed import EmbedConfig, EmbedSession
+
+with EmbedSession(EmbedConfig(gateway_url, exchange_url, audience, trusted_roots)) as tenuo:
+    tenuo.exchange(oidc_token=oidc, event_name="issues", event=event, repository=repo)
+    tenuo.call("github.add_comment", {"repository": repo, "issue": n, "body": body})
+```
+
+See `examples/embed_host.py`. The host keeps the agent; Tenuo does exchange, the leaf, and the GitHub call.
+
 ```bash
 PYTHONPATH=github-actions python -m tenuo_gha doctor \
     --gateway-url URL --exchange-url URL --audience tenuo:org/acme
