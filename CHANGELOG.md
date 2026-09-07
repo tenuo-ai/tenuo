@@ -7,104 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Python / Rust only. Not part of the TypeScript `0.2.5-beta.0` npm cut.
+
 ### Changed
 
-- **Python extras declare the floors the code actually needs.** `tenuo[mcp]`
-  and `tenuo[fastmcp]` now require `mcp>=1.9.4` (streamable-HTTP transport
-  shape, `CallToolRequestParams.meta`); `tenuo[crewai]` requires `crewai>=1.5`
-  (`crewai.hooks`). Both were previously declared as `>=1.0` but failed at
-  import or first use on those versions.
+- **`tenuo[mcp]` / `tenuo[fastmcp]` require `mcp>=1.9.4`.** `tenuo[crewai]`
+  requires `crewai>=1.5`. Older extras (`>=1.0`) installed versions that
+  failed at import or first use.
 
 ### Fixed
 
-- **FastMCP 4 middleware denials.** `TenuoMiddleware` returns a real
-  `ToolResult` (with `isError=True` on the wire) on FastMCP 3.2 through 4.x,
-  and version-pinned FastMCP 4 calls no longer lose the `_meta.tenuo` block.
-- **MCP SDK 2.x tool schemas.** `SecureMCPClient` and the LangChain bridge read
-  `Tool.input_schema` on SDK 2.x (previously an empty schema).
+- **FastMCP 4 denials** return a real error `ToolResult` and keep
+  `_meta.tenuo` on version-pinned 4.x calls.
+- **MCP SDK 2.x tool schemas.** `SecureMCPClient` and the LangChain bridge
+  read `Tool.input_schema` (was empty).
 
 ## [0.2.5-beta.0] - 2026-09-06
 
-TypeScript SDK only (`@tenuo/core` / `@tenuo/mcp` on the npm `beta` tag).
-Rust and Python remain 0.2.4. `latest` is moved to this beta after publish
-so `npm i @tenuo/core` is not stuck on `0.2.4-beta.0`. Install with
-`@tenuo/core@beta` until a stable tag is declared.
+TypeScript SDK beta. Install with `npm i @tenuo/core@beta`. Rust and Python
+remain `0.2.4`.
 
 ### Added
 
-- **TypeScript: delegation across agents.** `tenuo.narrow(session, allow,
-  options)` accepts `{ holder, ttlSeconds, terminal, maxDepth }`. With
-  `holder`, the child is bound to another agent's public key and signed by the
-  current holder; the returned session is wire-only (`toWire()`), and that
-  agent imports it with `sessionFromWire()`. Core rejects any child not within
-  its parent before a token exists.
-- **TypeScript: issue to an agent's key.** `tenuo.session({ holder, maxDepth })`
-  binds a fresh session to another holder and caps delegation depth
-  (`0` = terminal). `tenuo.issuerPublicKey()` returns the dev issuer's public
-  key for other processes' `trustedRoots`.
-- **TypeScript: holder keys.** `createTenuo.generateHolderKey()` and
-  `createTenuo.publicKeyFromHolderKey(secret)`.
-- **TypeScript: `session.inspect()`.** Holder public key, root public key,
-  depth, `maxDepth`, `terminal`, `expiresAt`, tools, warrant ids, and
-  `canAuthorize`. Never the holder secret.
-- **TypeScript: `TENUO_DEPTH_EXCEEDED`.** Narrowing a terminal session, or
-  past the chain's `maxDepth`, raises `AuthorizationDeniedError` with this
-  code instead of the generic `TENUO_CHAIN_INVALID`.
-- **TypeScript: full constraint set.** `min`, `range`, `notOneOf`, `regex`,
-  `wildcard`, `cidr`, `urlPattern`, `urlSafe`, `shlex`, `contains`, `subset`,
-  `anyOf`, `all`, `not`, `cel`, and `under(root, { caseSensitive, allowEqual })`
-  join the existing six. Every kind is evaluated and attenuated in core; the
-  set now matches the Python SDK and the core `Constraint` enum.
-- **TypeScript: stable issuer key.** `createTenuo({ root:
-  createTenuo.issuerKeyFromEnv("TENUO_ISSUER_SECRET") })` (also `FromHex`,
-  `FromBytes`, `generateIssuerKey`) makes a Node process a control plane that
-  mints with a persistent key and works outside `NODE_ENV=development`.
-- **TypeScript: issuer sessions.** `session({ kind: "issuer", issuableTools,
-  constraintBounds, maxIssueDepth })` and `tenuo.issue(issuerSession, {
-  allow, holder, ... })` mint execution sessions without the root key; core
-  checks tools, bounds, clearance, and issue depth.
-- **TypeScript: warrant metadata.** `clearance` (name or 0-255), `sessionId`,
-  `agentId` on `session()`, `issue()`, and `narrow()` (clearance only lowers,
-  session id is inherited); all reported by `session.inspect()`.
-- **TypeScript: approvals end to end.** `requireApproval.gates` with per-tool
-  messages and per-argument `"all"` / `{ when }` / `{ exempt }` triggers;
-  `narrow({ addApprovers, minApprovals })`; `ApprovalRequiredError.request`;
-  `tenuo.approvalRequest()`, `tenuo.attestApprovalRequest()`,
-  `createTenuo.signApproval()`, `createTenuo.inspectApproval()`, and the
-  control-plane v1 wire helpers `controlPlaneApprovalRequestV1()` /
-  `signedApprovalsFromResponseV1()` matching the Python shape.
-- **TypeScript: revocation lists.** `tenuo.revocationList({ revoke, version })`
-  on issuer contexts, `createTenuo.signRevocationList()` with an explicit
-  secret, `createTenuo.inspectRevocationList()`.
-- **TypeScript: receipts are public.** `createTenuo.verifyReceipt()` and
-  `createTenuo.verifyReceiptChain()` with camelCase results.
-- **TypeScript: `tenuo.explain(session, tool, args)`.** Field-by-field
-  verdicts, unknown and missing arguments, chain validity, and the decision,
-  with no proof-of-possession, so it works on wire-only sessions.
-- **TypeScript: `tenuo.present()` / `tenuo.verify()`.** The MCP attach/verify
-  path without the MCP envelope, for HTTP or any other boundary.
-  `mcp.attach()` and `mcp.verify()` now share it.
-- **Core: CEL compiles on wasm32.** The compiled-program cache uses a bounded
-  map on `wasm32` instead of moka, whose eviction needs a monotonic clock the
-  target does not have. Native builds are unchanged.
+- **Full constraint set** on `@tenuo/core`, matching Python: `range`, `min`,
+  `notOneOf`, `regex`, `wildcard`, `cidr`, `urlPattern`, `urlSafe`, `shlex`,
+  `contains`, `subset`, `anyOf`, `all`, `not`, `cel`, plus `under(root, {
+  caseSensitive, allowEqual })`.
+- **Persistent issuer keys.** `createTenuo({ root: createTenuo.issuerKeyFromEnv(...) })`
+  (also `FromHex` / `FromBytes` / `generateIssuerKey`) mints warrants from a
+  Node control plane without `NODE_ENV=development`.
+- **Delegation to another agent.** `session({ holder, maxDepth })` and
+  `narrow(session, allow, { holder, terminal, maxDepth })` bind a child to
+  someone else's key. `session({ kind: "issuer", issuableTools, ... })` plus
+  `tenuo.issue()` mint execution warrants without the root key. Depth and
+  terminal violations raise `TENUO_DEPTH_EXCEEDED`.
+- **Inspect, explain, present, verify.** `session.inspect()`,
+  `tenuo.explain()`, and `tenuo.present()` / `tenuo.verify()` for any
+  HTTP/RPC boundary (`mcp.attach` / `mcp.verify` use the same path).
+  Approvals, signed revocation lists, and `createTenuo.verifyReceipt()` /
+  `verifyReceiptChain()` are public.
 
 ### Changed
 
-- **TypeScript: `sessionFromWire()` with the wrong holder key** now throws
-  `AuthorizationDeniedError` with `TENUO_INVALID_POP` (was a configuration
-  error). A copied warrant is not authority.
-- **@tenuo/mcp peer** is now `@tenuo/core@>=0.2.5-beta.0 <0.2.6`.
-- **tenuo-wasm `SdkContext.mint`** takes optional `holder_hex` and `max_depth`;
-  `SdkContext.narrow` takes an optional options object; `SdkSession` gains
-  `describe()`; `sdkPublicKeyFromHolderKey` is exported. Existing call sites
-  are unchanged.
-- **tenuo-wasm parity module** (`sdk_ext.rs`): `SdkContext.fromIssuerSecret`,
-  `mintExtended`, `issue`, `explain`, `approvalRequest`,
-  `approvalContextAttestation`, `signRevocationListVersioned`; free functions
-  `sdkSignApprovalForRequest`, `sdkInspectApproval`,
-  `sdkSignRevocationListVersioned`, `sdkInspectRevocationList`.
-  `describe()` reports kind, clearance, ids, issuer fields, approvers, and
-  gated tools.
+- **`sessionFromWire()` with the wrong holder key** throws
+  `AuthorizationDeniedError` (`TENUO_INVALID_POP`). A copied warrant is not
+  authority. `@tenuo/mcp` requires `@tenuo/core@0.2.5-beta.0`.
+
+### Fixed
+
+- **`memoryNonceStore({ ttlSeconds })`** rejects non-positive or non-finite
+  TTLs at construction (default remains 180 seconds).
 
 ## [0.2.4] - 2026-09-01
 
