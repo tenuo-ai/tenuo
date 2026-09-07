@@ -733,7 +733,8 @@ keys, never the client's holder secret.
 Proof-of-possession v1 is replayable within its validity window unless a nonce
 store is configured. Use `memoryNonceStore()` for one-process deployments or
 provide an async `NonceStore` backed by shared storage. A nonce-store failure
-fails closed.
+fails closed. Its `ttlSeconds` option defaults to 180 and, when provided, must
+be positive, finite, and small enough to represent in milliseconds.
 
 See the [`@tenuo/mcp` README](packages/mcp/README.md) for handler behavior,
 error mapping, and replay protection. A complete multi-agent scenario lives in
