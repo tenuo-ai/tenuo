@@ -30,7 +30,7 @@ export const STAGES: readonly StageDef[] = [
       "Every agent carries the same credential. It opens flights, hotels, activities, the wallet,",
       "the traveler's personal details, and the calendar.",
       "",
-      "Nothing to configure. Run `npm run attack` and look at the wallet.",
+      "There is no setup here. Run `npm run attack` and look at the wallet.",
     ],
   },
   {

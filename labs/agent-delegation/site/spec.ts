@@ -74,7 +74,7 @@ export const STAGES: readonly StageSpec[] = [
     goal: "See what a rogue agent can do when every agent shares one credential.",
     intro: [
       "Six agents book Alice's trip. All six carry the same key, and it opens everything: flights, hotels, the wallet, her passport number, the calendar.",
-      "Nothing to configure. This stage is the bottom of the hole.",
+      "There is no setup in this stage. Its job is to show you the damage before anything protects against it.",
     ],
     diagram: fleetDiagram({
       travelers: ["Alice → Cancún, $1,200"],
@@ -89,11 +89,11 @@ export const STAGES: readonly StageSpec[] = [
       { text: "Run the rogue behavior and the security checks. Read **WHAT ELSE HAPPENED** and look at the wallet.", cmd: "npm run attack", expect: { cmd: "attack", label: "What you should see" } },
     ],
     notice: [
-      "The trip works perfectly. Every step of it is green.",
-      "Then $412 leaves the wallet, Alice's flight is cancelled, and a stranger's reservation gets checked in. Nobody told Check-in Agent to do any of that.",
+      "The trip books correctly. Every step is green.",
+      "Then $412 leaves the wallet, Alice's flight is cancelled, and a stranger's reservation gets checked in. No one instructed Check-in Agent to do any of that.",
     ],
     question: "Where did the instruction come from? Open `src/services/flights.ts` and find it. It sits on the departure board Check-in Agent reads every time it does its job.",
-    stuck: ["Nothing to fix here. When you have looked at the wallet, run `npm run next`."],
+    stuck: ["There is no fix in this stage. Once you have looked at the wallet, run `npm run next`."],
     done: "You have seen the damage and found the injected notice.",
   },
   {
@@ -101,7 +101,7 @@ export const STAGES: readonly StageSpec[] = [
     title: "Every agent gets its own account",
     minutes: 5,
     mode: "identity",
-    goal: "Give each agent its own credential and see how much damage that removes, and how much it does not.",
+    goal: "Give each agent its own credential and see which damage that removes and which damage remains.",
     intro: [
       "Now each agent has its own credential with permissions that match its role. Flight Agent does flight things. Check-in Agent reads reservations and checks people in.",
     ],
@@ -118,11 +118,11 @@ export const STAGES: readonly StageSpec[] = [
     ],
     notice: [
       "The wallet charge and the cancellation are gone. Check-in Agent's role never included them.",
-      "Checking in AA882, another traveler's flight, still works. Reading reservations and checking people in *is* Check-in Agent's job.",
+      "Checking in AA882, another traveler's flight, still works, because reading reservations and checking people in is part of Check-in Agent's job.",
     ],
-    question: "The actions that still succeed are all things Check-in Agent's role legitimately includes. So what is the difference between the ones you want and the ones you don't?",
-    hint: "The difference is not *which tool*. It is *which reservation*, and *for whom*. A role says what kind of thing an agent does. It does not say which job it is doing right now.",
-    done: "You can say, in one sentence, what an identity does not tell you.",
+    question: "The actions that still succeed are all part of Check-in Agent's role. What separates the ones you want from the ones you do not?",
+    hint: "The tool is the same in both cases. What differs is the reservation, and whose trip it belongs to. A role says what kind of work an agent does. It does not say which job the agent is doing right now.",
+    done: "You can say in one sentence what an identity leaves out.",
   },
   {
     n: 3,
@@ -131,7 +131,7 @@ export const STAGES: readonly StageSpec[] = [
     mode: "scoped",
     goal: "Write the permissions yourself, narrow enough that every rogue action is blocked and the trip still books.",
     intro: [
-      "Instead of \"Check-in Agent can read reservations,\" you say *which* reservation. Instead of \"Flight Agent can book flights,\" you say *which* destination and *how much*.",
+      "Each rule now names the specifics. Check-in Agent may read one reservation. Flight Agent may book flights to one destination, up to a price.",
     ],
     diagram: fleetDiagram({
       wallet: "$1,200",
@@ -154,7 +154,7 @@ export const STAGES: readonly StageSpec[] = [
     check: [{ file: "answers/03-scoped/policy.ts", symbols: ["config"], caption: "One policy that scores 100" }],
     stuck: [
       "`npm run audit` prints what every agent can currently do.",
-      "Blocking everything scores zero: the trip has to work. Read **THE TRIP** in the output first.",
+      "Blocking everything scores zero, because the trip has to work. Read **THE TRIP** in the output first.",
       "Every denial names the rule that fired. Read the whole line.",
     ],
     done: "`npm run attack` is clean and `npm run score` is in the nineties.",
@@ -167,7 +167,7 @@ export const STAGES: readonly StageSpec[] = [
     goal: "Get Bob's trip working alongside Alice's without letting either trip's agent touch the other's reservation, and see what that fix costs.",
     intro: [
       "Bob is going to Seattle on DL331, at the same time, through the same agents. Your stage 3 policy pins Check-in Agent to UA214, so Bob's check-in is refused and his trip fails.",
-      "Do not rush past this stage. It is the whole lab.",
+      "Take your time with this stage. Every later stage builds on what you notice here.",
     ],
     diagram: fleetDiagram({
       travelers: ["Alice → Cancún, UA214", "Bob → Seattle, DL331"],
@@ -178,16 +178,16 @@ export const STAGES: readonly StageSpec[] = [
     }),
     steps: [
       { text: "Run the lab with both trips and watch Bob's check-in fail.", cmd: "npm run lab", expect: { cmd: "lab", label: "What you should see" } },
-      { text: "Fix it the obvious way: add DL331 to Check-in Agent's reservations. The trip completes. Now read the **CROSS-TASK** section of the checks.", cmd: "npm run attack", expect: { cmd: "attack", label: "After the obvious fix" } },
-      { text: "Pick a real fix. `exercises/04-two-travelers/README.md` shows both: one identity per task (Fix A), or a policy service that is asked which task each call belongs to (Fix B). Get the cross-task checks to pass.", cmd: "npm run attack", expect: [{ cmd: "attack", answer: "answers/04-two-travelers/per-task.ts", label: "Fix A: one identity per task" }, { cmd: "attack", answer: "answers/04-two-travelers/policy-service.ts", label: "Fix B: a policy service" }] },
+      { text: "Fix it the quick way: add DL331 to Check-in Agent's reservations. The trip completes. Now read the **CROSS-TASK** section of the checks.", cmd: "npm run attack", expect: { cmd: "attack", label: "After the obvious fix" } },
+      { text: "Pick a fix that holds up. `exercises/04-two-travelers/README.md` shows both: one identity per task (Fix A), or a policy service that is asked which task each call belongs to (Fix B). Get the cross-task checks to pass.", cmd: "npm run attack", expect: [{ cmd: "attack", answer: "answers/04-two-travelers/per-task.ts", label: "Fix A: one identity per task" }, { cmd: "attack", answer: "answers/04-two-travelers/policy-service.ts", label: "Fix B: a policy service" }] },
       { text: "Find `central_calls` in the trace. It counts every time the system had to ask something outside the acting agent before it could decide.", cmd: "npm run trace" },
     ],
     notice: [
-      "After the obvious fix, Alice's Check-in Agent can check Bob in. There is one `checkin-agent`, it is doing two jobs, and nothing in the file says which job a call belongs to.",
-      "Whichever real fix you chose, `central_calls` is not zero, and you cannot make it zero. Something outside the agent has to know about every task before it starts, and be reachable while it runs.",
+      "After the quick fix, Alice's Check-in Agent can check Bob in. There is one `checkin-agent`, it is doing two jobs, and the file never says which job a call belongs to.",
+      "Whichever fix you chose, `central_calls` is above zero and cannot be brought to zero. Something outside the agent has to know about every task before it starts, and it has to be reachable while the task runs.",
     ],
     question: "Write down, in one sentence, what your fix depends on being available. You will compare it with stage 6.",
-    code: [{ lang: "ts", code: "\"checkin-agent\": {\n  actions: [\"get_reservation\", \"check_in\"],\n  reservations: [\"UA214\", \"DL331\"],\n},", caption: "The obvious fix, and why CROSS-TASK lights up" }],
+    code: [{ lang: "ts", code: "\"checkin-agent\": {\n  actions: [\"get_reservation\", \"check_in\"],\n  reservations: [\"UA214\", \"DL331\"],\n},", caption: "The quick fix. CROSS-TASK shows what it misses." }],
     check: [
       { file: "answers/04-two-travelers/per-task.ts", symbols: ["config"], caption: "Fix A: a per-task identity is a key of the form agent:taskId" },
       { file: "answers/04-two-travelers/policy-service.ts", symbols: ["config"], caption: "Fix B: policyService: true, and the per-task fields come from the service" },
@@ -205,7 +205,7 @@ export const STAGES: readonly StageSpec[] = [
     mode: "scoped",
     goal: "Watch a handoff give the receiving agent more than it needed, then decide what a central service should do when asked for more.",
     intro: [
-      "Check-in Agent finishes with Alice's flight and hands boarding-pass generation to Boarding Agent. Boarding Agent needs to issue the pass for UA214, and nothing else at all. Check-in Agent is the one that knows which flight.",
+      "Check-in Agent finishes with Alice's flight and hands boarding-pass generation to Boarding Agent. Boarding Agent needs to issue the pass for UA214. That is its entire job. Check-in Agent is the one that knows which flight.",
     ],
     diagram: fleetDiagram({
       service: "Your stage 4 component",
@@ -223,11 +223,11 @@ export const STAGES: readonly StageSpec[] = [
       { text: "Read the escalation attempt at the end of the output, then answer the two questions below before you move on." },
     ],
     notice: [
-      "Boarding Agent came out of the handoff able to read and check in, not just issue a pass. Check-in Agent had one thing available to give: its whole credential.",
+      "Boarding Agent came out of the handoff able to read reservations and check people in as well as issue a pass. Check-in Agent had only one thing it could give: its whole credential.",
       "The rogue Check-in Agent then asks your stage 4 component to write a rule for Boarding Agent that is broader than anything Check-in Agent holds itself.",
     ],
     question: "Should the service say yes? What would it need to know in order to say no?",
-    hint: "To say no, the service has to know what the *asker* holds, not just who the asker is. That is exactly the piece of information a role-based rule does not carry, which is where stage 6 starts.",
+    hint: "To say no, the service has to know what the asker currently holds, in addition to who the asker is. A role-based rule does not carry that information. Stage 6 starts from there.",
     done: "You can say what Check-in Agent would have needed instead of its whole credential.",
   },
   {
@@ -237,20 +237,20 @@ export const STAGES: readonly StageSpec[] = [
     mode: "tenuo",
     goal: "Switch to Tenuo, complete the chain, and get the trip, the cross-task checks, and the escalation attempt all handled with no policy file and no central lookup.",
     intro: [
-      "Permission stops being a rule about the agent and becomes something the agent is *handed* for a specific job. When it passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks that rather than trusting it.",
-      "Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. Nobody else can sign one from scratch.",
+      "In this stage a permission is something an agent is handed for a specific job. When the agent passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks this instead of trusting it.",
+      "Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. No agent can sign one from scratch.",
     ],
     explainer: {
       title: "What a warrant is",
       lead: "A warrant is a signed, self-contained permission that travels with the request: which tools, with which argument values, for which agent's key, until when, and how many more hops it may take. That is what Tenuo issues, narrows, and checks.",
       points: [
-        ["Signed by one key nobody else holds", "The control plane signs the first warrant for a trip. Agents cannot sign a fresh one, because they do not have that key."],
+        ["Signed by a key no agent holds", "The control plane signs the first warrant for a trip. Agents cannot sign a fresh one, because they do not have that key."],
         ["Narrowed by whoever holds it", "An agent can derive a warrant for another agent from the one it holds, with fewer tools, tighter values, a shorter life. It can never widen. The check happens against the parent before a token exists."],
-        ["Bound to the receiver's key", "Every use is signed with the holder's key. A copy in someone else's hands is worthless."],
-        ["Checked next to the tool, offline", "The code guarding a tool verifies the whole chain with the control plane's public key. No lookup, no service to be up."],
+        ["Bound to the receiver's key", "Every use is signed with the holder's key. A copy held by anyone else cannot be used."],
+        ["Checked next to the tool, offline", "The code guarding a tool verifies the whole chain with the control plane's public key. There is no lookup and no service that has to be up."],
       ],
       why: [
-        ["Stage 2: an identity said who was acting, not which job", "The warrant carries the job: reservation UA214, trip-alice-cun, up to $300."],
+        ["Stage 2: an identity said who was acting and left out which job", "The warrant carries the job: reservation UA214, trip-alice-cun, up to $300."],
         ["Stage 4: every check had to ask a component that knew about every task", "Verification is local. central_calls goes to 0 and stays there when the control plane is down."],
         ["Stage 5: the only thing to hand over was the whole credential", "narrow() hands over exactly the subset the next agent needs, bound to that agent's key."],
         ["Stage 5: the service could not tell whether the asker held what it asked for", "A narrowed warrant must fit inside its parent. The rogue's request is refused before anything is signed."],
@@ -294,17 +294,17 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
       { text: "Open the link the lab prints and look at the chain Boarding Agent holds, hop by hop, in the explorer." },
     ],
     notice: [
-      "The escalation attempt from stage 5 is refused *before a permission exists*, inside Check-in Agent's own process, because the narrowed copy would not fit inside what Check-in Agent holds.",
-      "`central_calls` is 0. Nothing outside the acting agent was asked. Compare that with the sentence you wrote at the end of stage 4.",
+      "The escalation attempt from stage 5 is refused before any permission exists, inside Check-in Agent's own process, because the narrowed copy would not fit inside what Check-in Agent holds.",
+      "`central_calls` is 0. No component outside the acting agent was consulted. Compare that with the sentence you wrote at the end of stage 4.",
     ],
     question: "Who decided what Boarding Agent may do, and when? Compare that with who decided in stage 4.",
-    hint: "Flight Agent knows which flight it booked, so it is the link that narrows `reservation` to that one flight. Bind each result to the *next* agent's key with `holder`, and keep lifetimes short. Every argument a tool is called with must be named: leave one out and the call is refused.",
+    hint: "Flight Agent knows which flight it booked, so it is the link that narrows `reservation` to that one flight. Bind each result to the next agent's key with `holder`, and keep lifetimes short. Every argument a tool is called with must be named: leave one out and the call is refused.",
     code: [{ file: "exercises/06-tenuo/chain.ts", symbols: ["flightToCheckin", "checkinToBoarding"], caption: "The two links you write" }],
     check: [{ file: "answers/06-tenuo/chain.ts", symbols: ["flightToCheckin", "checkinToBoarding"], caption: "Reference" }],
     stuck: [
-      "\"not in parent's tools\" means exactly that. Look one link up the chain.",
+      "When a denial says \"not in parent's tools\", look one link up the chain.",
       "The receiver imports what it is handed with its own key. If you bind to the wrong `holder`, the import fails with `TENUO_INVALID_POP`.",
-      "The trip has to work: if Boarding Agent cannot issue the pass, nothing else counts.",
+      "The trip has to work. If Boarding Agent cannot issue the pass, the other checks do not count.",
     ],
     done: "`npm run attack` is clean for both scenarios and `central_calls` is 0.",
   },
@@ -313,7 +313,7 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     title: "Someone stole a permission",
     minutes: 5,
     mode: "tenuo",
-    goal: "See that a valid, unexpired, correctly scoped permission is useless to anyone it was not issued to.",
+    goal: "See that a valid, unexpired, correctly scoped permission cannot be used by anyone it was not issued to.",
     intro: [
       "Boarding Agent's permission for UA214 is a piece of data: a list of strings. Activity Agent gets a copy and tries to use it.",
     ],
@@ -324,10 +324,10 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
       tag: { activity: "thief" },
       edges: { "travel-hotel": "dim" },
       extra: [{ from: "boarding", to: "activity", style: "stolen", label: "copied bytes" }],
-      caption: "The bytes travel. The right to use them does not.",
+      caption: "Activity Agent has the bytes and still cannot use them.",
     }),
     steps: [
-      { text: "Read the theft. It is short.", cmd: "code exercises/07-stolen-warrant/steal.ts" },
+      { text: "Read the theft. The file is short.", cmd: "code exercises/07-stolen-warrant/steal.ts" },
       { text: "Run the checks and read the reason on the **STOLEN WARRANT** line carefully.", cmd: "npm run attack", expect: { cmd: "attack", answer: "answers/06-tenuo/chain.ts", label: "What you should see" } },
     ],
     notice: [
@@ -343,10 +343,10 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     title: "How far can this travel?",
     minutes: 10,
     mode: "tenuo",
-    goal: "Make one hop the end of the line and watch the chain stop where the *previous* agent decided it would.",
+    goal: "Mark one hop as the last, and watch the chain stop where the previous agent decided.",
     intro: [
       "When one agent hands a permission on, it can mark it terminal. And the root carries a maximum number of hops for the whole trip: any agent can lower it, none can raise it.",
-      "This stage is supposed to break the trip. Notice where, and who decided.",
+      "This stage breaks the trip on purpose. Notice where it breaks and who decided that.",
     ],
     diagram: fleetDiagram({
       controlPlane: "maxDepth: 4",
@@ -354,7 +354,7 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
       state: { flight: "focus", boarding: "dim" },
       edges: { "flight-checkin": "terminal", "checkin-boarding": "blocked", "travel-hotel": "dim", "travel-activity": "dim" },
       edgeLabels: { "flight-checkin": "terminal", "checkin-boarding": "TENUO_DEPTH_EXCEEDED" },
-      caption: "Flight Agent decided. Check-in Agent did not agree and cannot undo it.",
+      caption: "Flight Agent decided. Check-in Agent cannot undo it.",
     }),
     steps: [
       { text: "Find the Flight → Check-in link and add `terminal: true` to its options.", cmd: "code exercises/08-terminal/chain.ts" },
@@ -375,7 +375,7 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     mode: "tenuo",
     goal: "Hotel Agent is compromised. Keep the system online and legitimate bookings working: one attempt must succeed, seven must fail.",
     intro: [
-      "Minimal guidance, which is the point. The compromised Hotel Agent will try eight things.",
+      "This stage gives less guidance than the others. The compromised Hotel Agent will try eight things.",
     ],
     diagram: fleetDiagram({
       controlPlane: "signs the root",
@@ -392,14 +392,14 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
       { text: "Check the score. Blocking attempt 3 the same way you blocked attempt 2 costs points.", cmd: "npm run score", expect: { cmd: "score", answer: "answers/09-incident/chain.ts", label: "Full marks" } },
     ],
     notice: [
-      "Number 3 catches more people than any other. The approved hotel is $140 a night and the priciest place in the catalog is $340, so a ceiling wide enough to book anything in Cancún lets $320 through.",
+      "Attempt 3 trips up the most people. The approved hotel is $140 a night and the priciest place in the catalog is $340, so a ceiling wide enough to book anything in Cancún lets $320 through.",
       "Work out where the number should come from instead. It is in the mission, on the index page.",
     ],
     hint: "Only hotel tools, only Cancún, only the approved nightly rate, only the traveler's name, only the hotel's share of the wallet, and `terminal: true` so nothing can be handed on.",
     code: [{ lang: "text", code: "1.  book the approved Cancún hotel                  must work\n2.  book a hotel in Tulum instead                   must fail\n3.  book the approved hotel at $320 a night        must fail\n4.  read Alice's passport number                    must fail\n5.  book a flight                                   must fail\n6.  delete the trip's calendar event                must fail\n7.  hand wallet access to Activity Agent            must fail\n8.  import a permission copied from Flight Agent   must fail", caption: "The eight attempts" }],
     check: [{ file: "answers/09-incident/chain.ts", symbols: ["travelToHotel"], caption: "The fixed link" }],
     stuck: [
-      "Attempt 7 is refused by making the hotel link terminal, not by removing the wallet.",
+      "Attempt 7 is refused by making the hotel link terminal. Hotel Agent keeps its share of the wallet.",
       "Attempt 8 fails for the same reason stage 7's theft failed.",
     ],
     done: "One works, seven fail, and the least-privilege row is full marks.",
@@ -415,5 +415,5 @@ export const MISSION_DIAGRAM = fleetDiagram({
   travelers: ["Alice → Cancún, 3 nights, $1,200"],
   wallet: "$1,200",
   sub: { travel: "talks to you", flight: "books the flight", hotel: "books the hotel", activity: "books one activity", checkin: "checks Alice in", boarding: "issues the pass" },
-  caption: "You talk to Travel Agent. The flight side runs three handoffs deep, which turns out to matter a great deal.",
+  caption: "You talk to Travel Agent. The flight side runs three handoffs deep, and that matters later.",
 });

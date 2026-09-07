@@ -144,7 +144,7 @@ function stagePage(spec: StageSpec): string {
     parts.push(`<details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>${inline(spec.hint)}</div></details>`);
   }
   if (spec.check !== undefined) {
-    parts.push(`<details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try yours first. The score does not care whether it matches this one.</p>${spec.check.map(codeFigure).join("\n")}</div></details>`);
+    parts.push(`<details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try your own first. The score checks behavior, so yours does not need to match this one.</p>${spec.check.map(codeFigure).join("\n")}</div></details>`);
   }
   if (spec.stuck !== undefined) {
     parts.push(callout("stuck", "If it does not work", `<ul>${spec.stuck.map((n) => `<li>${inline(n)}</li>`).join("")}</ul>`));
@@ -158,13 +158,13 @@ function indexPage(): string {
   const cards = STAGES.map((s) => `<a class="lab-card" data-n="${s.n}" href="/lab/stage-${s.n}"><div class="lab-card-n">${s.n}</div><div><div class="lab-card-title">${esc(s.title)}</div><div class="lab-card-goal">${inline(s.goal)}</div></div><div class="lab-card-time">${s.minutes} min</div></a>`);
   cards.push(`<a class="lab-card" data-n="10" href="/lab/stage-10"><div class="lab-card-n">10</div><div><div class="lab-card-title">Your first pull request</div><div class="lab-card-goal">Optional. Take what you just used and contribute to it.</div></div><div class="lab-card-time">open</div></a>`);
   const grading = [
-    ["The trip completes correctly", 25, "The gate. If Alice does not get a flight, a hotel, an activity, and a boarding pass within budget, nothing else counts."],
+    ["The trip completes correctly", 25, "This is the gate. If Alice does not get a flight, a hotel, an activity, and a boarding pass within budget, the other rows do not count."],
     ["Unauthorized actions are blocked", 30, "Everything the rogue agent tries."],
     ["Handoffs pass along only what's needed", 25, "What Boarding Agent can do after Check-in Agent hands it the job."],
-    ["You didn't grant more than the job required", 20, "Compared against the mission, not against hindsight. A $300 ceiling for a $286 flight is full marks."],
+    ["You didn't grant more than the job required", 20, "Measured against the mission. A $300 ceiling for a $286 flight is full marks."],
   ] as const;
   const body = `${stepper(0)}
-<header class="lab-hero"><div class="lab-kicker">A ninety-minute lab · TypeScript · nothing to sign up for</div><h1>AI Agent Delegation Challenge</h1><p class="lab-goal">Six AI agents book a trip. One of them reads an instruction it should not follow. You change how permissions work, stage by stage, until the damage stops and the trip still happens.</p></header>
+<header class="lab-hero"><div class="lab-kicker">A ninety-minute lab · TypeScript · no account needed</div><h1>AI Agent Delegation Challenge</h1><p class="lab-goal">Six AI agents book a trip. One of them reads an instruction it should not follow. You change how permissions work, stage by stage, until the damage stops and the trip still happens.</p></header>
 
 <section class="lab-start">
 <div>
@@ -178,7 +178,7 @@ npm run lab</code></pre>
 <div>
 <h2>Or in the browser</h2>
 <a class="lab-button" href="${CODESPACES_URL}">Open in GitHub Codespaces</a>
-<p class="lab-muted">One click, nothing to install, same lab. Needs a free GitHub account.</p>
+<p class="lab-muted">One click, no install, the same lab. Needs a free GitHub account.</p>
 <h3>Ten minutes of prep</h3>
 <ul class="lab-prep">
 <li>Read <a href="${REPO_URL}/tree/main/tenuo-ts">Protect your first tool</a> and <a href="${REPO_URL}/tree/main/tenuo-ts">Delegate to another agent</a> in the TypeScript guide.</li>
@@ -211,7 +211,7 @@ npm run lab</code></pre>
 
 <h2>How it is scored</h2>
 <div class="lab-grading">${grading.map(([label, pts, note]) => `<div class="lab-grade"><div class="lab-grade-row"><span>${esc(label)}</span><strong>${pts}</strong></div><div class="lab-bar"><div style="width:${pts}%"></div></div><p class="lab-muted">${esc(note)}</p></div>`).join("")}</div>
-<p><code>npm run score</code> breaks this down per agent. Speed is not scored. Retries are free.</p>
+<p><code>npm run score</code> breaks this down per agent. Speed is not scored, and retries are free.</p>
 
 <h2>The commands</h2>
 <pre class="lab-cmd"><code>npm run lab        # start or resume where you left off
@@ -223,9 +223,9 @@ npm run next       # move on to the next stage
 npm run reset      # start over from stage 1
 npm run share      # write an anonymous score breakdown for your session host
 npm run telemetry  # see, turn on, or turn off anonymous progress events</code></pre>
-<p class="lab-muted">The first run asks once whether to share anonymous progress with the Tenuo team: stage numbers, scores, which checks did not land. Never your code or your name. Say no and nothing is ever sent.</p>
+<p class="lab-muted">The first run asks once whether to share anonymous progress with the Tenuo team: stage numbers, scores, which checks did not land. Never your code or your name. If you say no, the lab sends nothing.</p>
 
-<aside class="lab-callout notice"><div class="lab-callout-title">One ground rule</div><p>You will be tempted to fix the agent that misbehaves: filter what it reads, tell it to ignore suspicious instructions, pick a smarter model. None of that is what this lab is about. Assume the agent will sometimes be fooled. The question is what still holds when it is.</p></aside>
+<aside class="lab-callout notice"><div class="lab-callout-title">One ground rule</div><p>You will be tempted to fix the agent that misbehaves: filter what it reads, tell it to ignore suspicious instructions, pick a smarter model. This lab sets those aside. Assume the agent will sometimes be fooled, and work on what still holds when it is.</p></aside>
 
 <nav class="lab-nav"><span></span><a class="next" href="/lab/stage-1">Stage 1: One key for everyone →</a></nav>
 `;
@@ -252,9 +252,9 @@ function wrapUpPage(): string {
 <blockquote class="lab-quote">An AI agent sometimes needs to pass work to another agent. The second agent should get only the access that piece of work requires, and it should not be able to give itself or anyone else more access than it received.</blockquote>
 <p>And if you got further than that:</p>
 <blockquote class="lab-quote">An agent's identity tells you which agent is acting. It does not tell you what that agent was allowed to do for this particular job.</blockquote>
-<p>Neither sentence needs a technical term. That was deliberate. Here are the terms anyway, now that you have the ideas they attach to.</p>
+<p>Neither sentence uses a technical term. Here are the terms, now that you have the ideas they attach to.</p>
 <table class="lab-terms"><thead><tr><th>Term</th><th>Where you met it</th></tr></thead><tbody>${terms.map(([t, d]) => `<tr><td><strong>${esc(t)}</strong></td><td>${esc(d)}</td></tr>`).join("")}</tbody></table>
-<aside class="lab-callout question"><div class="lab-callout-title">One last look</div><p>Nobody told any agent in this lab to misbehave. Go find where the instruction actually came from, in <code>src/services/flights.ts</code>. It has been sitting there since stage 1, on a departure board your check-in agent reads every time it does its job.</p></aside>
+<aside class="lab-callout question"><div class="lab-callout-title">One last look</div><p>No one told any agent in this lab to misbehave. Find where the instruction came from, in <code>src/services/flights.ts</code>. It has been sitting there since stage 1, on a departure board your check-in agent reads every time it does its job.</p></aside>
 <h2>Going further</h2>
 <p>The authorization system you used in stages 6 to 9 is open source at <a href="${REPO_URL}">github.com/tenuo-ai/tenuo</a>. The delegation rules behind it are being written up as an IETF standards draft, which is public and readable. A star on the repository is the main way maintainers find out anyone is using their work.</p>
 <nav class="lab-nav"><a class="prev" href="/lab/stage-9">← Stage 9</a><a class="next" href="/lab/stage-10">Stage 10: your first pull request →</a></nav>
@@ -265,7 +265,7 @@ function wrapUpPage(): string {
 function stage10Page(): string {
   const body = `${stepper(10)}
 <header class="lab-hero"><div class="lab-kicker">Stage 10 of 10 · optional · no score</div><h1>Your first pull request</h1><p class="lab-goal"><strong>Goal.</strong> Take the TypeScript SDK you just spent ninety minutes inside and land one small change in it.</p></header>
-<p class="lab-intro">You have been working in a real open-source security project, in the same SDK its maintainers use every day. That is further than most people get before a first contribution, so here is the challenge: open one.</p>
+<p class="lab-intro">You have been working in a real open-source security project, in the same SDK its maintainers use every day. Most people never get that far before a first contribution. The challenge is to open one.</p>
 <h2>Do this</h2>
 <ol class="lab-steps">
 <li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="10:0"><span>1</span></label><div class="lab-step-body"><p>Pick an issue labeled <strong>good first issue</strong>. Most are TypeScript: a runnable example, a test recipe, a clearer error, a cookbook for the constraint helpers you used in stage 6. Each says what done looks like.</p><a class="lab-button" href="${GOOD_FIRST_ISSUES_URL}">Browse good first issues</a></div></li>
@@ -273,7 +273,7 @@ function stage10Page(): string {
 <li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="10:2"><span>3</span></label><div class="lab-step-body"><p>Make the change, run the checks, open the pull request, and say in the description that you ran them.</p></div></li>
 </ol>
 <aside class="lab-callout notice"><div class="lab-callout-title">What makes a first pull request easy to merge</div><ul><li>Keep it to the one issue. A small change that does exactly what the issue asks beats a large one that does several things.</li><li>Run the checks the contributing guide names, and say that you did.</li><li>If you get stuck, say so on the issue. Maintainers would rather answer a question than review a guess.</li></ul></aside>
-<p>Your session host can help you pick one and will tell you how to reach the maintainers if an issue is unclear. A merged pull request on a security project is a real thing to have your name on.</p>
+<p>Your session host can help you pick one and will tell you how to reach the maintainers if an issue is unclear. A merged pull request on a security project is worth having your name on.</p>
 <section class="lab-done"><div><div class="lab-callout-title">Done when</div><p>Your pull request is open.</p></div><button type="button" class="lab-mark" data-mark-done="10">Mark stage 10 done</button></section>
 <nav class="lab-nav"><a class="prev" href="/lab/wrap-up">← What you just learned</a><a class="next" href="${REPO_URL}">The repository →</a></nav>
 `;

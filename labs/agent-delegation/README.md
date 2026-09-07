@@ -46,8 +46,8 @@ npm run next       # move to the next stage
 npm run reset      # start over from stage 1
 ```
 
-Run `attack` and `score` as often as you like. Nothing is limited and nothing
-penalizes retries. Each stage explains itself when you run `npm run lab`, and
+Run `attack` and `score` as often as you like. There is no limit and no
+penalty for retries. Each stage explains itself when you run `npm run lab`, and
 the full guide is at [tenuo.ai/lab](https://tenuo.ai/lab/), one page per stage.
 
 ## What leaves your machine

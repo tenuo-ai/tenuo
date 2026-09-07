@@ -1,12 +1,12 @@
 ---
 layout: "lab"
 title: "Stage 2: Every agent gets its own account"
-description: "Give each agent its own credential and see how much damage that removes, and how much it does not."
+description: "Give each agent its own credential and see which damage that removes and which damage remains."
 lab_stage: 2
 ---
 <nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" class="current" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a><a href="/lab/stage-9" data-n="9" title="Stage 9">9</a><a href="/lab/stage-10" data-n="10" title="Stage 10">10</a></nav>
 
-<header class="lab-hero"><div class="lab-kicker">Stage 2 of 9 · <span class="lab-mode identity">identity</span> · about 5 min</div><h1>Every agent gets its own account</h1><p class="lab-goal"><strong>Goal.</strong> Give each agent its own credential and see how much damage that removes, and how much it does not.</p></header>
+<header class="lab-hero"><div class="lab-kicker">Stage 2 of 9 · <span class="lab-mode identity">identity</span> · about 5 min</div><h1>Every agent gets its own account</h1><p class="lab-goal"><strong>Goal.</strong> Give each agent its own credential and see which damage that removes and which damage remains.</p></header>
 
 <p class="lab-intro">Now each agent has its own credential with permissions that match its role. Flight Agent does flight things. Check-in Agent reads reservations and checks people in.</p>
 
@@ -72,12 +72,12 @@ BOARDING AGENT AFTER THE HANDOFF
 </li>
 </ol>
 
-<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The wallet charge and the cancellation are gone. Check-in Agent's role never included them.</li><li>Checking in AA882, another traveler's flight, still works. Reading reservations and checking people in <em>is</em> Check-in Agent's job.</li></ul></aside>
+<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The wallet charge and the cancellation are gone. Check-in Agent's role never included them.</li><li>Checking in AA882, another traveler's flight, still works, because reading reservations and checking people in is part of Check-in Agent's job.</li></ul></aside>
 
-<aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>The actions that still succeed are all things Check-in Agent's role legitimately includes. So what is the difference between the ones you want and the ones you don't?</p></aside>
+<aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>The actions that still succeed are all part of Check-in Agent's role. What separates the ones you want from the ones you do not?</p></aside>
 
-<details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>The difference is not <em>which tool</em>. It is <em>which reservation</em>, and <em>for whom</em>. A role says what kind of thing an agent does. It does not say which job it is doing right now.</div></details>
+<details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>The tool is the same in both cases. What differs is the reservation, and whose trip it belongs to. A role says what kind of work an agent does. It does not say which job the agent is doing right now.</div></details>
 
-<section class="lab-done"><div><div class="lab-callout-title">Done when</div><p>You can say, in one sentence, what an identity does not tell you.</p></div><button type="button" class="lab-mark" data-mark-done="2">Mark stage 2 done</button></section>
+<section class="lab-done"><div><div class="lab-callout-title">Done when</div><p>You can say in one sentence what an identity leaves out.</p></div><button type="button" class="lab-mark" data-mark-done="2">Mark stage 2 done</button></section>
 
 <nav class="lab-nav"><a class="prev" href="/lab/stage-1">← Stage 1</a><a class="next" href="/lab/stage-3">Stage 3: Rules that fit the job →</a></nav>

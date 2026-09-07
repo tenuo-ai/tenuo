@@ -8,13 +8,13 @@ lab_stage: 6
 
 <header class="lab-hero"><div class="lab-kicker">Stage 6 of 9 · <span class="lab-mode tenuo">tenuo</span> · about 25 min</div><h1>Access that travels with the work</h1><p class="lab-goal"><strong>Goal.</strong> Switch to Tenuo, complete the chain, and get the trip, the cross-task checks, and the escalation attempt all handled with no policy file and no central lookup.</p></header>
 
-<p class="lab-intro">Permission stops being a rule about the agent and becomes something the agent is <em>handed</em> for a specific job. When it passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks that rather than trusting it.</p>
-<p class="lab-intro">Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. Nobody else can sign one from scratch.</p>
+<p class="lab-intro">In this stage a permission is something an agent is handed for a specific job. When the agent passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks this instead of trusting it.</p>
+<p class="lab-intro">Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. No agent can sign one from scratch.</p>
 
 <section class="lab-explainer">
 <h2>What a warrant is</h2>
 <p class="lab-lead">A warrant is a signed, self-contained permission that travels with the request: which tools, with which argument values, for which agent's key, until when, and how many more hops it may take. That is what Tenuo issues, narrows, and checks.</p>
-<ul class="lab-points"><li><strong>Signed by one key nobody else holds.</strong> The control plane signs the first warrant for a trip. Agents cannot sign a fresh one, because they do not have that key.</li><li><strong>Narrowed by whoever holds it.</strong> An agent can derive a warrant for another agent from the one it holds, with fewer tools, tighter values, a shorter life. It can never widen. The check happens against the parent before a token exists.</li><li><strong>Bound to the receiver's key.</strong> Every use is signed with the holder's key. A copy in someone else's hands is worthless.</li><li><strong>Checked next to the tool, offline.</strong> The code guarding a tool verifies the whole chain with the control plane's public key. No lookup, no service to be up.</li></ul>
+<ul class="lab-points"><li><strong>Signed by a key no agent holds.</strong> The control plane signs the first warrant for a trip. Agents cannot sign a fresh one, because they do not have that key.</li><li><strong>Narrowed by whoever holds it.</strong> An agent can derive a warrant for another agent from the one it holds, with fewer tools, tighter values, a shorter life. It can never widen. The check happens against the parent before a token exists.</li><li><strong>Bound to the receiver's key.</strong> Every use is signed with the holder's key. A copy held by anyone else cannot be used.</li><li><strong>Checked next to the tool, offline.</strong> The code guarding a tool verifies the whole chain with the control plane's public key. There is no lookup and no service that has to be up.</li></ul>
 <figure class="lab-code"><figcaption>The shape of it, from this stage's chain</figcaption>
 {% highlight ts %}
 // The control plane signs the root, for Travel Agent's key.
@@ -35,7 +35,7 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
 {% endhighlight %}
 </figure>
 <h3>Why it is the right tool for this problem</h3>
-<table class="lab-why"><thead><tr><th>What you ran into</th><th>What a warrant does about it</th></tr></thead><tbody><tr><td>Stage 2: an identity said who was acting, not which job</td><td>The warrant carries the job: reservation UA214, trip-alice-cun, up to $300.</td></tr><tr><td>Stage 4: every check had to ask a component that knew about every task</td><td>Verification is local. central_calls goes to 0 and stays there when the control plane is down.</td></tr><tr><td>Stage 5: the only thing to hand over was the whole credential</td><td>narrow() hands over exactly the subset the next agent needs, bound to that agent's key.</td></tr><tr><td>Stage 5: the service could not tell whether the asker held what it asked for</td><td>A narrowed warrant must fit inside its parent. The rogue's request is refused before anything is signed.</td></tr></tbody></table>
+<table class="lab-why"><thead><tr><th>What you ran into</th><th>What a warrant does about it</th></tr></thead><tbody><tr><td>Stage 2: an identity said who was acting and left out which job</td><td>The warrant carries the job: reservation UA214, trip-alice-cun, up to $300.</td></tr><tr><td>Stage 4: every check had to ask a component that knew about every task</td><td>Verification is local. central_calls goes to 0 and stays there when the control plane is down.</td></tr><tr><td>Stage 5: the only thing to hand over was the whole credential</td><td>narrow() hands over exactly the subset the next agent needs, bound to that agent's key.</td></tr><tr><td>Stage 5: the service could not tell whether the asker held what it asked for</td><td>A narrowed warrant must fit inside its parent. The rogue's request is refused before anything is signed.</td></tr></tbody></table>
 <p class="lab-muted">Read more: <a href="https://tenuo.ai/concepts">Concepts</a> · <a href="https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts">Delegate to another agent (TypeScript guide)</a> · <a href="https://tenuo.ai/explorer/">Open a chain in the explorer</a></p>
 </section>
 
@@ -358,13 +358,13 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
 </li>
 </ol>
 
-<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The escalation attempt from stage 5 is refused <em>before a permission exists</em>, inside Check-in Agent's own process, because the narrowed copy would not fit inside what Check-in Agent holds.</li><li><code>central_calls</code> is 0. Nothing outside the acting agent was asked. Compare that with the sentence you wrote at the end of stage 4.</li></ul></aside>
+<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The escalation attempt from stage 5 is refused before any permission exists, inside Check-in Agent's own process, because the narrowed copy would not fit inside what Check-in Agent holds.</li><li><code>central_calls</code> is 0. No component outside the acting agent was consulted. Compare that with the sentence you wrote at the end of stage 4.</li></ul></aside>
 
 <aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>Who decided what Boarding Agent may do, and when? Compare that with who decided in stage 4.</p></aside>
 
-<details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>Flight Agent knows which flight it booked, so it is the link that narrows <code>reservation</code> to that one flight. Bind each result to the <em>next</em> agent's key with <code>holder</code>, and keep lifetimes short. Every argument a tool is called with must be named: leave one out and the call is refused.</div></details>
+<details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>Flight Agent knows which flight it booked, so it is the link that narrows <code>reservation</code> to that one flight. Bind each result to the next agent's key with <code>holder</code>, and keep lifetimes short. Every argument a tool is called with must be named: leave one out and the call is refused.</div></details>
 
-<details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try yours first. The score does not care whether it matches this one.</p><figure class="lab-code"><figcaption>Reference <span>answers/06-tenuo/chain.ts</span></figcaption>
+<details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try your own first. The score checks behavior, so yours does not need to match this one.</p><figure class="lab-code"><figcaption>Reference <span>answers/06-tenuo/chain.ts</span></figcaption>
 {% highlight ts %}
 /**
  * Flight → Check-in. Flight Agent has booked and knows the reservation, so
@@ -394,7 +394,7 @@ export function checkinToBoarding(checkin: Session, fleet: Fleet, trip: Trip, re
 {% endhighlight %}
 </figure></div></details>
 
-<aside class="lab-callout stuck"><div class="lab-callout-title">If it does not work</div><ul><li>&quot;not in parent's tools&quot; means exactly that. Look one link up the chain.</li><li>The receiver imports what it is handed with its own key. If you bind to the wrong <code>holder</code>, the import fails with <code>TENUO_INVALID_POP</code>.</li><li>The trip has to work: if Boarding Agent cannot issue the pass, nothing else counts.</li></ul></aside>
+<aside class="lab-callout stuck"><div class="lab-callout-title">If it does not work</div><ul><li>When a denial says &quot;not in parent's tools&quot;, look one link up the chain.</li><li>The receiver imports what it is handed with its own key. If you bind to the wrong <code>holder</code>, the import fails with <code>TENUO_INVALID_POP</code>.</li><li>The trip has to work. If Boarding Agent cannot issue the pass, the other checks do not count.</li></ul></aside>
 
 <section class="lab-done"><div><div class="lab-callout-title">Done when</div><p><code>npm run attack</code> is clean for both scenarios and <code>central_calls</code> is 0.</p></div><button type="button" class="lab-mark" data-mark-done="6">Mark stage 6 done</button></section>
 

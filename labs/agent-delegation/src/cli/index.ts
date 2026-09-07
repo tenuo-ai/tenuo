@@ -369,7 +369,7 @@ async function cmdScore(def: StageDef): Promise<void> {
   const { functionality, probes, margin, score: s } = e;
   const row = (label: string, points: number, max: number, note: string) =>
     console.log(`  ${pad(label, 44)} ${pad(`${points}`, 3)} / ${pad(String(max), 3)} ${dim(note)}`);
-  row("The trip completes correctly", s.functionality.points, 25, s.functionality.ok ? "" : "the functionality gate: nothing else counts until the trip works");
+  row("The trip completes correctly", s.functionality.points, 25, s.functionality.ok ? "" : "the functionality gate: the other rows do not count until the trip works");
   row("Unauthorized actions are blocked", s.blocked.points, 30, `${s.blocked.passed} of ${s.blocked.total} checks`);
   row("Handoffs pass along only what's needed", s.handoffs.points, 25, `${s.handoffs.passed} of ${s.handoffs.total} checks`);
   row("You didn't grant more than the job required", s.margin.points, 20, `${s.margin.findings.length} finding${s.margin.findings.length === 1 ? "" : "s"}, capped at -5 per agent`);
