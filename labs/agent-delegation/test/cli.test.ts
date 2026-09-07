@@ -70,6 +70,8 @@ describe("participant CLI", () => {
 
     const share = cli(labHome, "share", 5, "answers/05-tenuo/chain.ts");
     expect(share).toMatch(/ROGUE ATTEMPTS BLOCKED \(2 SCENARIOS\)\s+14 \/ 14/);
+    expect(share).toContain("npm run star");
+    expect(share).toContain("works locally and in Codespaces");
     const report = JSON.parse(readFileSync(join(labHome, "share-stage-5.json"), "utf8")) as {
       schema: string;
       stage: number;
@@ -121,7 +123,7 @@ describe("participant CLI", () => {
   });
 });
 
-describe("generated Stage 5 guide", () => {
+describe("generated lab guide", () => {
   it("keeps the public landing-page promise and one reset command", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
     expect(page).toContain("AI Agent Delegation Security Lab");
@@ -134,18 +136,15 @@ describe("generated Stage 5 guide", () => {
     expect(deployWorkflow).not.toMatch(/A ninety-minute security (?:game|challenge)/);
   });
 
-  it("lets visitors run the real Stage 1 breach before terminal setup", () => {
+  it("keeps the first action focused on setup and offers the optional star in both terminals", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
     const layout = readFileSync(join(ROOT, "..", "..", "docs", "_layouts", "lab.html"), "utf8");
-    expect(page).toContain('data-lab-browser-run aria-expanded="false"');
-    expect(page).toContain('data-lab-browser-output hidden');
-    expect(page).toContain("same deterministic Stage 1 attack the CLI runs");
-    expect(page).toContain("ROGUE ATTEMPTS BLOCKED");
-    expect(page).toContain("The breach is real. The rest needs a terminal.");
-    expect(page).toContain("Continue in Codespaces");
-    expect(page.indexOf("data-lab-browser-run")).toBeLessThan(page.indexOf("git clone"));
-    expect(layout).toContain("browserOutput.hidden = false");
-    expect(layout).toContain("browserRun.setAttribute('aria-expanded', 'true')");
+    expect(page).not.toContain("Run the breach");
+    expect(page).not.toContain("data-lab-browser-run");
+    expect(layout).not.toContain("lab-browser-run");
+    expect(page.match(/npm run star/g)).toHaveLength(2);
+    expect(page).toMatch(/git clone[\s\S]*npm install[\s\S]*npm run star[\s\S]*npm run lab/);
+    expect(page).toMatch(/At the Codespaces terminal:[\s\S]*npm run star[\s\S]*npm run lab/);
   });
 
   it("uses the challenge artwork on the homepage and its social card", () => {
@@ -158,7 +157,7 @@ describe("generated Stage 5 guide", () => {
     expect(page).toContain("og_image_width: 1200");
     expect(page).toContain("og_image_height: 630");
     expect(page).toContain('<img src="/images/challenge-image.svg" width="1200" height="630"');
-    expect(page.indexOf("challenge-image.svg")).toBeLessThan(page.indexOf("data-lab-browser-run"));
+    expect(page.indexOf("challenge-image.svg")).toBeLessThan(page.indexOf("git clone"));
     expect(existsSync(join(ROOT, "..", "..", "docs", "images", "challenge-image.png"))).toBe(true);
     expect(existsSync(join(ROOT, "..", "..", "docs", "images", "challenge-image.svg"))).toBe(true);
     expect(artwork).toContain("#040a0f");
@@ -166,6 +165,15 @@ describe("generated Stage 5 guide", () => {
     expect(artwork).not.toContain("#137a76");
     expect(layout).toContain('<meta property="og:title" content="{{ social_title }}">');
     expect(layout).toContain('<meta name="twitter:title" content="{{ social_title }}">');
+  });
+
+  it("links the IETF draft and repeats star and share at the end of the lab", () => {
+    const wrapUp = readFileSync(join(ROOT, "..", "..", "docs", "lab", "wrap-up.md"), "utf8");
+    const contribute = readFileSync(join(ROOT, "..", "..", "docs", "lab", "contribute.md"), "utf8");
+    expect(wrapUp).toContain('href="https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/"');
+    expect(wrapUp).toContain("npm run star");
+    expect(wrapUp).toContain("npm run share");
+    expect(contribute).toContain("npm run star");
   });
 
   it("states both secure Stage 4 branches and names their intentional over-grant", () => {

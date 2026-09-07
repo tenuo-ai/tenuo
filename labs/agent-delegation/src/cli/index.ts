@@ -450,6 +450,9 @@ async function cmdShare(def: StageDef): Promise<void> {
   writeFileSync(file, JSON.stringify(report, null, 2));
   printHud(walletLine(e.runs[0]!.built), e.probes, e.score, e.runs.length);
   console.log(dim(`  Anonymous local artifact: ${file}`));
+  console.log(dim("  If the lab was useful, you can support the project without leaving this terminal:"));
+  console.log(`  ${bold("npm run star")} ${dim("(optional; works locally and in Codespaces)")}`);
+  console.log("");
 }
 
 async function cmdAudit(def: StageDef): Promise<void> {

@@ -16,6 +16,7 @@ import { CODESPACES_URL, GOOD_FIRST_ISSUES_URL, MISSION_DIAGRAM, REPO_URL, STAGE
 
 const DOCS = join(ROOT, "..", "..", "docs", "lab");
 const README = join(ROOT, "README.md");
+const IETF_DRAFT_URL = "https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/";
 
 function labVersion(): string {
   const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version?: string };
@@ -193,7 +194,6 @@ function stagePage(spec: StageSpec): string {
 }
 
 function indexPage(): string {
-  const stageOnePreview = capture("attack", 1);
   const cards = STAGES.map((s) => `<a class="lab-card" data-n="${s.n}" href="/lab/stage-${s.n}"><div class="lab-card-n">${s.n}</div><div><div class="lab-card-title">${esc(s.title)}</div><div class="lab-card-goal">${inline(s.goal)}</div></div><div class="lab-card-time">${s.minutes} min</div></a>`);
   cards.push(`<a class="lab-card" href="/lab/${EPILOGUE.slug}"><div class="lab-card-n">+</div><div><div class="lab-card-title">${esc(EPILOGUE.title)}</div><div class="lab-card-goal">${esc(EPILOGUE.goal)}</div></div><div class="lab-card-time">optional</div></a>`);
   const grading = [
@@ -207,31 +207,15 @@ function indexPage(): string {
 
 <figure class="lab-cover"><img src="/images/challenge-image.svg" width="1200" height="630" alt="A boarding pass from Toronto to Cancún for Alice Chen, stamped denied because it is outside the granted scope." decoding="async" fetchpriority="high"></figure>
 
-<section class="lab-browser-demo" aria-labelledby="lab-browser-title">
-<div class="lab-kicker">Try Stage 1 now · no setup</div>
-<h2 id="lab-browser-title">Run the breach</h2>
-<p>See what happens when all six agents share one key. This browser preview replays the same deterministic Stage 1 attack the CLI runs. Its output is generated from the lab code, not written by hand.</p>
-<button type="button" class="lab-browser-run" data-lab-browser-run aria-expanded="false" aria-controls="lab-browser-output">Run Stage 1 in your browser</button>
-<div id="lab-browser-output" class="lab-browser-output" data-lab-browser-output hidden tabindex="-1">
-<div class="lab-callout-title">Stage 1 · One key for everyone</div>
-<pre class="lab-browser-terminal"><code>${esc(stageOnePreview)}</code></pre>
-<div class="lab-browser-next">
-<h3>The breach is real. The rest needs a terminal.</h3>
-<p>Continue the investigation by changing the policies yourself. Both paths run the same lab.</p>
-<div class="lab-browser-actions"><a class="lab-button" href="${CODESPACES_URL}">Continue in Codespaces</a><a class="lab-button secondary" href="#terminal-setup">Continue locally</a></div>
-</div>
-</div>
-<noscript><p class="lab-muted">JavaScript is off, so use either terminal setup below to run Stage 1.</p></noscript>
-</section>
-
 <section class="lab-start" id="terminal-setup">
 <div>
-<h2>Continue locally</h2>
+<h2>Start locally</h2>
 <pre class="lab-cmd"><code>git clone ${REPO_URL}
 cd tenuo/labs/agent-delegation
 npm install
+npm run star       # optional; skip if you are not signed in to GitHub
 npm run lab</code></pre>
-<p class="lab-muted">Node 20 or newer. No account, no API key, no network needed. The lab runs its own recorded agents; every check and score is real.</p>
+<p class="lab-muted">Node 20 or newer. The lab itself needs no account, API key, or network. The optional star command uses GitHub CLI; skip it if you are not signed in. Every lab check and score is real.</p>
 </div>
 <div>
 <h2>What to expect</h2>
@@ -244,6 +228,9 @@ npm run lab</code></pre>
 <div>
 <p>The same lab runs in GitHub Codespaces with no install. It needs a free GitHub account and no payment method. GitHub includes 120 core-hours a month on personal accounts, and the lab is pinned to the smallest 2-core machine, so a full session uses about 3 of them.</p>
 <a class="lab-button" href="${CODESPACES_URL}">Open in GitHub Codespaces</a>
+<p>At the Codespaces terminal:</p>
+<pre class="lab-cmd"><code>npm run star       # optional
+npm run lab</code></pre>
 <p class="lab-muted">Create it from the link so it counts against your own free hours. A codespace created inside an organization is billed to that organization. Stop the codespace when you are done.</p>
 </div>
 </details>
@@ -326,7 +313,9 @@ function wrapUpPage(): string {
 <table class="lab-terms"><thead><tr><th>Term</th><th>Where you met it</th></tr></thead><tbody>${terms.map(([t, d]) => `<tr><td><strong>${esc(t)}</strong></td><td>${esc(d)}</td></tr>`).join("")}</tbody></table>
 <aside class="lab-callout question"><div class="lab-callout-title">One last look</div><p>No one told any agent in this lab to misbehave. Find where the instruction came from, in <code>src/services/flights.ts</code>. It has been sitting there since stage 1, on a departure board your check-in agent reads every time it does its job.</p></aside>
 <h2>Going further</h2>
-<p>The authorization system you used in stages 5 to 7 is open source at <a href="${REPO_URL}">github.com/tenuo-ai/tenuo</a>. The delegation rules behind it are being written up as an IETF standards draft, which is public and readable. A star on the repository is the main way maintainers find out anyone is using their work.</p>
+<p>The authorization system you used in stages 5 to 7 is open source at <a href="${REPO_URL}">github.com/tenuo-ai/tenuo</a>. The delegation rules behind it are being standardized in the public <a href="${IETF_DRAFT_URL}">IETF draft on attenuating agent tokens</a>. A star on the repository is the main way maintainers find out anyone is using their work.</p>
+<pre class="lab-cmd"><code>npm run star       # optional: support the project without changing screens
+npm run share      # write the anonymous local scorecard for your session host</code></pre>
 <nav class="lab-nav"><a class="prev" href="/lab/stage-${TOTAL_STAGE_COUNT}">← Stage ${TOTAL_STAGE_COUNT}</a><a class="next" href="/lab/${EPILOGUE.slug}">${esc(EPILOGUE.title)} →</a></nav>
 `;
   return frontMatter({ layout: "lab", title: "What you just learned", description: "The two sentences the lab was built around, and the terms for them.", lab_stage: 0 }) + body;
@@ -336,6 +325,7 @@ function contributePage(): string {
   const body = `${stepper("contribute")}
 <header class="lab-hero"><div class="lab-kicker">Optional epilogue · no score</div><h1>${esc(EPILOGUE.title)}</h1><p class="lab-goal"><strong>Goal.</strong> Take the TypeScript SDK you just spent ninety minutes inside and land one small change in it.</p></header>
 <p class="lab-intro">You have been working in a real open-source security project, in the same SDK its maintainers use every day. Most people never get that far before a first contribution. The optional goal is to open one.</p>
+<aside class="lab-callout question"><div class="lab-callout-title">If the lab was useful</div><p><code>npm run star</code> supports the project from this terminal before you start contributing. It is optional.</p></aside>
 <h2>Do this</h2>
 <ol class="lab-steps">
 <li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="contribute:0"><span>1</span></label><div class="lab-step-body"><p>Pick an issue labeled <strong>good first issue</strong>. Most are TypeScript: a runnable example, a test recipe, a clearer error, a cookbook for the constraint helpers you used in stage 5. Each says what done looks like.</p><a class="lab-button" href="${GOOD_FIRST_ISSUES_URL}">Browse good first issues</a></div></li>
