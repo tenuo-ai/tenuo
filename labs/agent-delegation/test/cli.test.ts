@@ -151,6 +151,7 @@ describe("generated Stage 5 guide", () => {
   it("uses the challenge artwork on the homepage and its social card", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
     const layout = readFileSync(join(ROOT, "..", "..", "docs", "_layouts", "default.html"), "utf8");
+    const artwork = readFileSync(join(ROOT, "..", "..", "docs", "images", "challenge-image.svg"), "utf8");
     expect(page).toContain('og_title: "Security Challenge: Stop a Rogue AI Agent From Ruining Your Trip"');
     expect(page).toContain('description: "Give each agent only the authority its part of the trip needs. A free, hands-on lab in AI agent delegation security."');
     expect(page).toContain('og_image: "/images/challenge-image.png"');
@@ -160,6 +161,9 @@ describe("generated Stage 5 guide", () => {
     expect(page.indexOf("challenge-image.svg")).toBeLessThan(page.indexOf("data-lab-browser-run"));
     expect(existsSync(join(ROOT, "..", "..", "docs", "images", "challenge-image.png"))).toBe(true);
     expect(existsSync(join(ROOT, "..", "..", "docs", "images", "challenge-image.svg"))).toBe(true);
+    expect(artwork).toContain("#040a0f");
+    expect(artwork).toContain("#38bdf8");
+    expect(artwork).not.toContain("#137a76");
     expect(layout).toContain('<meta property="og:title" content="{{ social_title }}">');
     expect(layout).toContain('<meta name="twitter:title" content="{{ social_title }}">');
   });
