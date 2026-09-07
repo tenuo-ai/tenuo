@@ -134,7 +134,7 @@ You have just spent ninety minutes inside this codebase, in the same
 TypeScript SDK its maintainers work in. If you want to go one step further,
 the repository keeps issues sized for a first contribution under the
 [good first issue](https://github.com/tenuo-ai/tenuo/labels/good%20first%20issue)
-label. Most are TypeScript and touch things you met in stage 6. Pick one,
+label. Most are TypeScript and build on things you met in stage 5. Pick one,
 comment on it so nobody doubles up, and read
 [CONTRIBUTING.md](../../CONTRIBUTING.md) for how to run the checks locally.
 
