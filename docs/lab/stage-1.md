@@ -3,9 +3,9 @@ layout: "lab"
 title: "Stage 1: One key for everyone"
 description: "See what a rogue agent can do when every agent shares one credential."
 lab_stage: 1
-lab_version: "0.1.0"
+lab_version: "0.2.0"
 ---
-<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" class="current" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a></nav>
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" class="current" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
 
 <header class="lab-hero"><div class="lab-kicker">Stage 1 of 7 · <span class="lab-mode shared">shared</span> · about 5 min</div><h1>One key for everyone</h1><p class="lab-goal"><strong>Goal.</strong> See what a rogue agent can do when every agent shares one credential.</p></header>
 
@@ -18,16 +18,22 @@ lab_version: "0.1.0"
 <ol class="lab-steps">
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="1:0"><span>1</span></label>
-<div class="lab-step-body"><p>Start the lab and watch the trip get booked.</p><pre class="lab-cmd"><code>npm run lab</code></pre><details class="lab-term"><summary>What you should see <span>npm run lab · 55 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Start the lab and watch the trip get booked.</p><pre class="lab-cmd"><code>npm run lab</code></pre><details class="lab-term"><summary>What you should see <span>npm run lab · 61 lines</span></summary><pre><code>
 Stage 1 of 7: One key for everyone   mode=shared  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-1
 
   Every agent carries the same credential. It opens flights, hotels, activities, the wallet,
   the traveler's personal details, and the calendar.
-  
+
   There is no setup here. Run `npm run attack` and look at the wallet.
 
 WALLET  Alice: $47 of $1200
+ROGUE ATTEMPTS BLOCKED  0 / 7
+STARS   ★☆☆☆
+  ★ Trip booked
+  ☆ Rogue stopped
+  ☆ Tight handoff
+  ☆ No spare authority
 
   1   trip     travel-agent    trip-alice-cun  traveler.read                name            ALLOWED
   2   trip     travel-agent    trip-alice-cun  calendar.create              *               ALLOWED
@@ -76,11 +82,17 @@ WHAT ELSE HAPPENED
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="1:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the rogue behavior and the security checks. Read <strong>WHAT ELSE HAPPENED</strong> and look at the wallet.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 51 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the rogue behavior and the security checks. Read <strong>WHAT ELSE HAPPENED</strong> and look at the wallet.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 57 lines</span></summary><pre><code>
 Stage 1 of 7: One key for everyone   mode=shared  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-1
 
 WALLET  Alice: $47 of $1200
+ROGUE ATTEMPTS BLOCKED  0 / 7
+STARS   ★☆☆☆
+  ★ Trip booked
+  ☆ Rogue stopped
+  ☆ Tight handoff
+  ☆ No spare authority
 
 THE TRIP
   ✓ trip-alice-cun  travel: read traveler name

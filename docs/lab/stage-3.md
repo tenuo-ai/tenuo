@@ -1,13 +1,13 @@
 ---
 layout: "lab"
 title: "Stage 3: Rules that fit the job"
-description: "Write the permissions yourself, narrow enough that every rogue action is blocked and the trip still books."
+description: "Write permissions narrow enough that every rogue action is blocked and the trip still books."
 lab_stage: 3
-lab_version: "0.1.0"
+lab_version: "0.2.0"
 ---
-<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" class="current" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a></nav>
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" class="current" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
 
-<header class="lab-hero"><div class="lab-kicker">Stage 3 of 7 · <span class="lab-mode scoped">scoped</span> · about 15 min</div><h1>Rules that fit the job</h1><p class="lab-goal"><strong>Goal.</strong> Write the permissions yourself, narrow enough that every rogue action is blocked and the trip still books.</p></header>
+<header class="lab-hero"><div class="lab-kicker">Stage 3 of 7 · <span class="lab-mode scoped">scoped</span> · about 15 min</div><h1>Rules that fit the job</h1><p class="lab-goal"><strong>Goal.</strong> Write permissions narrow enough that every rogue action is blocked and the trip still books.</p></header>
 
 <p class="lab-intro">Each rule now names the specifics. Check-in Agent may read one reservation. Flight Agent may book flights to one destination, up to a price.</p>
 
@@ -58,11 +58,17 @@ export const config: PolicyConfig = {
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="3:1"><span>2</span></label>
-<div class="lab-step-body"><p>Narrow the rules. Run the checks after every change until the result line says <strong>clean</strong>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t3-1" id="t3-1-0" checked><label for="t3-1-0">Before you change anything</label><input type="radio" name="t3-1" id="t3-1-1"><label for="t3-1-1">When you are done</label><div class="lab-tab-panel"><details class="lab-term"><summary>Before you change anything <span>npm run attack · 49 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Narrow the rules. Run the checks after every change until the result line says <strong>clean</strong>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t3-1" id="t3-1-0" checked><label for="t3-1-0">Before you change anything</label><input type="radio" name="t3-1" id="t3-1-1"><label for="t3-1-1">When you are done</label><div class="lab-tab-panel"><details class="lab-term"><summary>Before you change anything <span>npm run attack · 55 lines</span></summary><pre><code>
 Stage 3 of 7: Rules that fit the job   mode=scoped  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-3
 
 WALLET  Alice: $459 of $1200
+ROGUE ATTEMPTS BLOCKED  5 / 7
+STARS   ★☆★☆
+  ★ Trip booked
+  ☆ Rogue stopped
+  ★ Tight handoff
+  ☆ No spare authority
 
 THE TRIP
   ✓ trip-alice-cun  travel: read traveler name
@@ -106,11 +112,17 @@ BOARDING AGENT AFTER THE HANDOFF
       reason: boarding-agent may not get_reservation (actions: issue_boarding_pass)  [POLICY]
 
   2 of 11 checks did not land as expected
-  central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When you are done <span>npm run attack · 46 lines</span></summary><pre><code>
+  central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When you are done <span>npm run attack · 52 lines</span></summary><pre><code>
 Stage 3 of 7: Rules that fit the job   mode=scoped  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-3
 
 WALLET  Alice: $459 of $1200
+ROGUE ATTEMPTS BLOCKED  7 / 7
+STARS   ★★★★
+  ★ Trip booked
+  ★ Rogue stopped
+  ★ Tight handoff
+  ★ No spare authority
 
 THE TRIP
   ✓ trip-alice-cun  travel: read traveler name
@@ -155,14 +167,22 @@ BOARDING AGENT AFTER THE HANDOFF
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="3:2"><span>3</span></label>
-<div class="lab-step-body"><p>Check your score. The last row tells you which agent holds more than the mission needs.</p><pre class="lab-cmd"><code>npm run score</code></pre><details class="lab-term" open><summary>A full-marks score <span>npm run score · 11 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Check your score. The last row tells you which agent holds more than the mission needs.</p><pre class="lab-cmd"><code>npm run score</code></pre><details class="lab-term" open><summary>A full-marks score <span>npm run score · 19 lines</span></summary><pre><code>
 Stage 3 of 7: Rules that fit the job   mode=scoped  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-3
 
-  The trip completes correctly                 25  / 25  
-  Unauthorized actions are blocked             30  / 30  7 of 7 checks
-  Handoffs pass along only what's needed       25  / 25  3 of 3 checks
-  You didn't grant more than the job required  20  / 20  0 findings, capped at -5 per agent
+WALLET  Alice: $459 of $1200
+ROGUE ATTEMPTS BLOCKED  7 / 7
+STARS   ★★★★
+  ★ Trip booked
+  ★ Rogue stopped
+  ★ Tight handoff
+  ★ No spare authority
+
+  Trip booked                                  25  / 25
+  Rogue stopped                                30  / 30  7 of 7 checks
+  Tight handoff                                25  / 25  3 of 3 checks
+  No spare authority                           20  / 20  0 findings, capped at -5 per agent
                                                100 / 100
 
   Stage 3 done.  Next: npm run next, then https://tenuo.ai/lab/stage-4?done=3</code></pre></details></div>
@@ -219,4 +239,4 @@ export const config: PolicyConfig = {
 
 <section class="lab-done"><div><div class="lab-callout-title">Done when</div><p><code>npm run attack</code> is clean and <code>npm run score</code> is in the nineties.</p></div><button type="button" class="lab-mark" data-mark-done="3">Mark stage 3 done</button></section>
 
-<nav class="lab-nav"><a class="prev" href="/lab/stage-2">← Stage 2</a><a class="next" href="/lab/stage-4">Stage 4: A second traveler, and a handoff →</a></nav>
+<nav class="lab-nav"><a class="prev" href="/lab/stage-2">← Stage 2</a><a class="next" href="/lab/stage-4">Stage 4: Two travelers, then a handoff →</a></nav>

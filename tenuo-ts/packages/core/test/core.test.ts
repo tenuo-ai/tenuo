@@ -5,6 +5,7 @@ import {
   AuthorizationDeniedError,
   createTenuo,
   email,
+  exact,
   max,
   oneOf,
   pattern,
@@ -160,6 +161,42 @@ describe("createTenuo", () => {
     expect(() => tenuo.tool({ id: "", execute: async () => "empty-id" }, { allow: {} })).toThrow(
       /needs a capability name/,
     );
+  });
+});
+
+describe("actionable delegation diagnostics", () => {
+  it("tells the caller how to fix a policy field omitted from allow", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const send = tenuo.tool(
+      { execute: (args: { to: string; body: string }) => args },
+      { capability: "send", allow: {} },
+    );
+    const session = tenuo.session({ allow: { send: { to: exact("ops@example.com") } } });
+
+    await expect(
+      tenuo.withSession(session, () => send.execute({ to: "ops@example.com", body: "hello" })),
+    ).rejects.toThrow(/name 'body' in allow.*constrained policies reject omitted fields/);
+  });
+
+  it("explains that a child constraint cannot widen its parent", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const parent = tenuo.session({ allow: { charge: { amount: max(100) } } });
+
+    expect(() => tenuo.narrow(parent, { charge: { amount: max(200) } })).toThrow(
+      /narrow\(\) only accepts a child policy that is equal to or stricter than its parent/,
+    );
+  });
+
+  it("points an omitted narrow().holder at the receiver key", () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const parent = issuer.session({ allow: { ping: {} } });
+    const child = issuer.narrow(parent, { ping: {} });
+    const receiver = createTenuo({ trustedRoots: [issuer.issuerPublicKey()] });
+
+    expect(() => receiver.sessionFromWire({
+      warrant: child.toWire(),
+      holderKey: createTenuo.generateHolderKey(),
+    })).toThrow(/set \{ holder: receiverPublicKey \}.*imports the child/);
   });
 });
 

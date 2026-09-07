@@ -46,6 +46,7 @@ export function capture(cmd: string, stage: number, answer?: string): string {
       .replace(/https:\/\/tenuo\.ai\/explorer\/\?s=[A-Za-z0-9+/=]+/g, "https://tenuo.ai/explorer/?s=…")
       .replace(/tnu_wrt_[0-9a-f]+/g, "tnu_wrt_…")
       .replace(/\b[0-9a-f]{12}(?:[0-9a-f]{52})?…?/g, "…")
+      .replace(/[ \t]+$/gm, "")
       .replace(/\s+$/, "");
     cache.set(key, text);
     return text;

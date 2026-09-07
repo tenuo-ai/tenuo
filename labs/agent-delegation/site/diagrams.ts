@@ -358,7 +358,7 @@ export function fleetDiagram(o: FleetOptions = {}): string {
 export interface ChainRow {
   readonly who: string;
   readonly scope: string;
-  readonly tag?: "root" | "written" | "you" | "terminal" | "blocked";
+  readonly tag?: "root" | "written" | "tutorial" | "you" | "terminal" | "blocked";
   /** Text on the arrow leading into this row. */
   readonly hop?: string;
 }
@@ -373,7 +373,7 @@ export function chainDiagram(rows: readonly ChainRow[], caption?: string): strin
   const out: string[] = [];
   rows.forEach((r, i) => {
     const y = 12 + i * (rowH + gap);
-    const color = r.tag === "you" ? PALETTE.focus : r.tag === "blocked" ? PALETTE.rogue : r.tag === "terminal" ? PALETTE.warn : "var(--border)";
+    const color = r.tag === "you" || r.tag === "tutorial" ? PALETTE.focus : r.tag === "blocked" ? PALETTE.rogue : r.tag === "terminal" ? PALETTE.warn : "var(--border)";
     if (i > 0) {
       const style: EdgeStyle = r.tag === "blocked" ? "blocked" : r.tag === "terminal" ? "terminal" : r.tag === "you" ? "you" : "normal";
       out.push(arrow([[arrowX, y - gap], [arrowX, y - 1]], style, r.hop !== undefined ? { label: r.hop } : {}));
@@ -382,9 +382,9 @@ export function chainDiagram(rows: readonly ChainRow[], caption?: string): strin
     out.push(label(x + 14, y + 29, r.who, 13, "var(--text)", "start", true));
     let tagWidth = 0;
     if (r.tag !== undefined) {
-      const text = r.tag === "root" ? "signed by the control plane" : r.tag === "written" ? "written for you" : r.tag === "you" ? "you write this" : r.tag === "terminal" ? "terminal" : "refused";
+      const text = r.tag === "root" ? "signed by the control plane" : r.tag === "written" ? "written for you" : r.tag === "tutorial" ? "tutorial" : r.tag === "you" ? "you write this" : r.tag === "terminal" ? "terminal" : "refused";
       tagWidth = textWidth(text, 10.5, true) + 18;
-      const fill = r.tag === "you" ? PALETTE.focus : r.tag === "blocked" ? PALETTE.rogue : r.tag === "terminal" ? PALETTE.warn : "var(--border)";
+      const fill = r.tag === "you" || r.tag === "tutorial" ? PALETTE.focus : r.tag === "blocked" ? PALETTE.rogue : r.tag === "terminal" ? PALETTE.warn : "var(--border)";
       const tf = r.tag === "written" || r.tag === "root" ? "var(--text-muted)" : PALETTE.ink;
       out.push(`<rect x="${x + w - tagWidth - 10}" y="${y + 14}" width="${tagWidth}" height="18" rx="9" fill="${fill}"/>`);
       out.push(label(x + w - tagWidth / 2 - 10, y + 27, text, 10.5, tf, "middle", true));

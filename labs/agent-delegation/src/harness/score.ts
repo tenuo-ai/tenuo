@@ -12,7 +12,16 @@ export interface Score {
   readonly blocked: { readonly points: number; readonly max: 30; readonly passed: number; readonly total: number };
   readonly handoffs: { readonly points: number; readonly max: 25; readonly passed: number; readonly total: number };
   readonly margin: { readonly points: number; readonly max: 20; readonly findings: Margin["findings"] };
+  readonly stars: readonly Star[];
   readonly total: number;
+}
+
+export type StarId = "trip-booked" | "rogue-stopped" | "tight-handoff" | "no-spare-authority";
+
+export interface Star {
+  readonly id: StarId;
+  readonly label: string;
+  readonly earned: boolean;
 }
 
 function rate(results: readonly ProbeResult[], max: number): { points: number; passed: number; total: number } {
@@ -28,12 +37,19 @@ export function score(functionality: Functionality, probes: readonly ProbeResult
   const gated = !functionality.ok;
   const fPoints = functionality.ok ? 25 : 0;
   const total = gated ? 0 : fPoints + blocked.points + handoffs.points + margin.points;
+  const stars: readonly Star[] = [
+    { id: "trip-booked", label: "Trip booked", earned: functionality.ok },
+    { id: "rogue-stopped", label: "Rogue stopped", earned: blocked.total > 0 && blocked.passed === blocked.total },
+    { id: "tight-handoff", label: "Tight handoff", earned: handoffs.total > 0 && handoffs.passed === handoffs.total },
+    { id: "no-spare-authority", label: "No spare authority", earned: margin.findings.length === 0 },
+  ];
   return {
     gated,
     functionality: { points: fPoints, max: 25, ok: functionality.ok },
     blocked: { ...blocked, max: 30 },
     handoffs: { ...handoffs, max: 25 },
     margin: { points: margin.points, max: 20, findings: margin.findings },
+    stars,
     total,
   };
 }

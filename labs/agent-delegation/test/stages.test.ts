@@ -10,7 +10,12 @@ import { checkFunctionality } from "../src/harness/functionality.ts";
 import { measureMargin } from "../src/harness/margin.ts";
 import { runScenario } from "../src/harness/run.ts";
 import { score } from "../src/harness/score.ts";
+import { sanitizeAttempts } from "../src/state.ts";
 import { stage } from "../src/stages.ts";
+import { STAGES as RUNTIME_STAGES } from "../src/stages.ts";
+import { STAGE_MAP } from "../src/stage-map.ts";
+import { snapshot } from "../src/telemetry.ts";
+import { STAGES as SITE_STAGES } from "../site/spec.ts";
 
 async function evaluate(n: number, answer?: string, scenario = stage(n).scenario) {
   const def = stage(n);
@@ -21,6 +26,65 @@ async function evaluate(n: number, answer?: string, scenario = stage(n).scenario
   const margin = await measureMargin(built.runtime);
   return { built, functionality, probes, margin, score: score(functionality, probes, margin) };
 }
+
+describe("canonical lab map", () => {
+  it("drives both the runtime and hosted guide", () => {
+    const pick = (stages: readonly { n: number; title: string; mode: string }[]) =>
+      stages.map(({ n, title, mode }) => ({ n, title, mode }));
+    expect(pick(RUNTIME_STAGES)).toEqual(pick(STAGE_MAP));
+    expect(pick(SITE_STAGES)).toEqual(pick(STAGE_MAP));
+    expect(STAGE_MAP.filter((item) => item.tier === "main")).toHaveLength(5);
+    expect(STAGE_MAP.filter((item) => item.tier === "boss")).toHaveLength(2);
+  });
+});
+
+describe("share telemetry privacy", () => {
+  it("keeps only the fixed semantic vocabulary from local state", () => {
+    expect(sanitizeAttempts({
+      5: {
+        count: 2,
+        firstAttempt: {
+          starsMissing: ["tight-handoff", "SECRET: paste source here"],
+          checks: { passed: 3, total: 4 },
+          handoffs: {
+            "flight-to-checkin": {
+              tools: ["check_in", "attacker-controlled text"],
+              constraintChecks: { passed: 3, total: 4 },
+              holderBound: true,
+              ttl: "under-6m",
+              source: "private code",
+            },
+            "checkin-to-boarding": "missing",
+            arbitrary: "participant identity",
+          },
+          name: "participant identity",
+          source: "private code",
+        },
+      },
+      99: {
+        count: 1,
+        firstAttempt: { starsMissing: [], checks: { passed: 0, total: 0 } },
+      },
+    })).toEqual({
+      5: {
+        count: 2,
+        firstAttempt: {
+          starsMissing: ["tight-handoff"],
+          checks: { passed: 3, total: 4 },
+          handoffs: {
+            "flight-to-checkin": {
+              tools: ["check_in"],
+              constraintChecks: { passed: 3, total: 4 },
+              holderBound: true,
+              ttl: "under-6m",
+            },
+            "checkin-to-boarding": "missing",
+          },
+        },
+      },
+    });
+  });
+});
 
 describe("stage 1: one key for everyone", () => {
   it("books the trip and lets the injected content through", async () => {
@@ -93,11 +157,11 @@ describe("stage 5: tenuo", () => {
       expect(Object.keys(context).sort()).toEqual(["publicKey", "tenuo"]);
     }
   });
-  it("the starter fails at the first link the participant must write", async () => {
+  it("the guided link works and the starter fails at the one participant TODO", async () => {
     const r = await evaluate(5);
     expect(r.functionality.ok).toBe(false);
     const handoff = r.built.runtime.audit.records.find((x) => x.source === "handoff" && x.decision === "DENIED");
-    expect(handoff?.reason).toMatch(/TODO: write the Flight → Check-in link/);
+    expect(handoff?.reason).toMatch(/TODO: write the Check-in → Boarding link/);
   });
   it("the completed chain books the trip, blocks everything, refuses the escalation locally, with zero central calls", async () => {
     const r = await evaluate(5, "answers/05-tenuo/chain.ts");
@@ -108,6 +172,19 @@ describe("stage 5: tenuo", () => {
     expect(escalation?.code).toBe("TENUO_CHAIN_INVALID");
     expect(r.built.runtime.audit.centralCalls()).toBe(0);
     expect(r.score.total).toBeGreaterThanOrEqual(95);
+    expect(r.score.stars.every((star) => star.earned)).toBe(true);
+    expect(snapshot({ ...r, runs: [r] }).handoffs).toEqual({
+      "flight-to-checkin": expect.objectContaining({
+        tools: ["check_in", "get_reservation", "issue_boarding_pass"],
+        holderBound: true,
+        ttl: "under-6m",
+      }),
+      "checkin-to-boarding": expect.objectContaining({
+        tools: ["issue_boarding_pass"],
+        holderBound: true,
+        ttl: "under-3m",
+      }),
+    });
   });
   it("the two-traveler run passes cross-task with no policy file", async () => {
     const r = await evaluate(5, "answers/05-tenuo/chain.ts", "two-travelers");

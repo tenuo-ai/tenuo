@@ -12,7 +12,8 @@
  *   - `reservation` at the root means "any Cancún flight this trip might
  *     book". Notice which link narrows that to the one that was booked.
  *
- * You write the last two: flightToCheckin and checkinToBoarding.
+ * Flight → Check-in is the tutorial. Read it, run it, then copy its shape for
+ * the one level you complete: Check-in → Boarding.
  *
  * Policies are zero-trust: every argument a tool is called with must be
  * named. `any()` names a free-form string argument without constraining it.
@@ -122,7 +123,7 @@ export function travelToActivity(travel: Session, fleet: Fleet, trip: Trip): Ses
 }
 
 /**
- * Flight → Check-in. YOU WRITE THIS.
+ * Flight → Check-in. TUTORIAL — complete and annotated.
  *
  * Flight Agent has just booked `reservation`. Check-in Agent needs to read
  * that reservation and check it in, and it needs to be able to hand the
@@ -130,11 +131,27 @@ export function travelToActivity(travel: Session, fleet: Fleet, trip: Trip): Ses
  * (`fleet["checkin-agent"].publicKey`) with a short lifetime.
  */
 export function flightToCheckin(flight: Session, fleet: Fleet, trip: Trip, reservation: string): Session {
-  throw new Error(`TODO: write the Flight → Check-in link for ${reservation} (exercises/05-tenuo/chain.ts)`);
+  // The agent has learned which reservation was booked, so this hop can turn
+  // the parent's list of candidates into one exact value.
+  const only = oneOf([reservation]);
+  return fleet["flight-agent"].tenuo.narrow(
+    flight,
+    {
+      get_reservation: { reservation: only },
+      check_in: { reservation: only },
+      // Keep this so Check-in Agent can narrow it once more for Boarding.
+      issue_boarding_pass: { reservation: only },
+    },
+    {
+      // Delegation must bind the result to the receiving agent's public key.
+      holder: fleet["checkin-agent"].publicKey,
+      ttlSeconds: 5 * 60,
+    },
+  );
 }
 
 /**
- * Check-in → Boarding. YOU WRITE THIS.
+ * Check-in → Boarding. YOUR LEVEL — copy the narrow() shape above.
  *
  * Boarding Agent needs to issue the boarding pass for `reservation`, and
  * nothing else at all.

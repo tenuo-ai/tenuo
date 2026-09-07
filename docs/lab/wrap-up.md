@@ -3,9 +3,9 @@ layout: "lab"
 title: "What you just learned"
 description: "The two sentences the lab was built around, and the terms for them."
 lab_stage: 0
-lab_version: "0.1.0"
+lab_version: "0.2.0"
 ---
-<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a></nav>
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
 <header class="lab-hero"><div class="lab-kicker">After stage 7</div><h1>What you just learned</h1><p class="lab-goal">If you can say this in your own words, the lab worked.</p></header>
 
 <blockquote class="lab-quote">An AI agent sometimes needs to pass work to another agent. The second agent should get only the access that piece of work requires, and it should not be able to give itself or anyone else more access than it received.</blockquote>
@@ -16,4 +16,4 @@ lab_version: "0.1.0"
 <aside class="lab-callout question"><div class="lab-callout-title">One last look</div><p>No one told any agent in this lab to misbehave. Find where the instruction came from, in <code>src/services/flights.ts</code>. It has been sitting there since stage 1, on a departure board your check-in agent reads every time it does its job.</p></aside>
 <h2>Going further</h2>
 <p>The authorization system you used in stages 5 to 7 is open source at <a href="https://github.com/tenuo-ai/tenuo">github.com/tenuo-ai/tenuo</a>. The delegation rules behind it are being written up as an IETF standards draft, which is public and readable. A star on the repository is the main way maintainers find out anyone is using their work.</p>
-<nav class="lab-nav"><a class="prev" href="/lab/stage-7">← Stage 7</a><a class="next" href="/lab/stage-8">Stage 8: your first pull request →</a></nav>
+<nav class="lab-nav"><a class="prev" href="/lab/stage-7">← Stage 7</a><a class="next" href="/lab/contribute">Contribute to Tenuo →</a></nav>

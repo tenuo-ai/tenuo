@@ -694,13 +694,29 @@ function chainError(error: unknown): TenuoError {
   if (error instanceof TenuoError) {
     return error;
   }
-  const message = errorMessage(error);
+  const message = explainChainFailure(errorMessage(error));
   for (const code of ["TENUO_CHAIN_INVALID", "TENUO_DEPTH_EXCEEDED", "TENUO_WARRANT_EXPIRED"] as const) {
     if (message.startsWith(code)) {
       return new AuthorizationDeniedError(code, message);
     }
   }
   return new TenuoConfigurationError(message);
+}
+
+function explainChainFailure(message: string): string {
+  const tool = /tool '([^']+)' not in parent's tools/.exec(message)?.[1];
+  if (tool !== undefined) {
+    return `${message}. narrow() cannot add '${tool}': remove it or delegate from a parent that grants it.`;
+  }
+  if (
+    message.includes("parent's allowed set") ||
+    message.includes("range expanded") ||
+    message.includes("would expand permissions") ||
+    message.includes("clearance cannot increase")
+  ) {
+    return `${message}. narrow() only accepts a child policy that is equal to or stricter than its parent.`;
+  }
+  return message;
 }
 
 function revocationInput(input: RevocationListInput): { ids: string[]; version: number | undefined } {
@@ -831,7 +847,7 @@ function explainDeny(message: string, field?: string): string {
     return message;
   }
   const named = field !== undefined && field.length > 0 ? `'${field}'` : "this argument";
-  return `${message}. Zero-trust: name ${named} in allow (e.g. ${named}: pattern("*")), or drop it from the call. Empty allow: {} adds no extra ceiling.`;
+  return `${message}. Zero-trust: name ${named} in allow (for example ${named}: pattern("*")), or remove it from the call; constrained policies reject omitted fields.`;
 }
 
 function forwardExecuteOptions(callOptions: unknown): unknown {
@@ -866,7 +882,10 @@ function importWireError(error: unknown): TenuoError {
   }
   if (message.startsWith("TENUO_INVALID_POP")) {
     // The warrant is fine; the key is not the one it was issued to.
-    return new AuthorizationDeniedError("TENUO_INVALID_POP", message);
+    return new AuthorizationDeniedError(
+      "TENUO_INVALID_POP",
+      `${message}. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.`,
+    );
   }
   return new TenuoConfigurationError(message);
 }

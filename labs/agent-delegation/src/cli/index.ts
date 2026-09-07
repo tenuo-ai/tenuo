@@ -12,9 +12,9 @@
  */
 process.env.NODE_ENV ??= "development";
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { runBattery, type ProbeResult } from "../harness/attacks.ts";
 import { checkFunctionality, type Functionality } from "../harness/functionality.ts";
@@ -23,8 +23,9 @@ import { runScenario, type Built } from "../harness/run.ts";
 import { score, type Score } from "../harness/score.ts";
 import type { AuditRecord } from "../audit.ts";
 import { AGENTS } from "../mission.ts";
-import { loadState, ROOT, saveState } from "../state.ts";
+import { LAB_HOME, loadState, ROOT, saveState } from "../state.ts";
 import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stages.ts";
+import { recordAttempt, snapshot } from "../telemetry.ts";
 
 const SITE = "https://tenuo.ai";
 
@@ -96,6 +97,23 @@ function walletLine(built: Built): string {
   return built.plan.trips
     .map((t) => `${t.traveler.split(" ")[0]}: $${built.runtime.world.balance(t.taskId)} of $${t.budget}`)
     .join("   ");
+}
+
+function blockedCount(probes: readonly ProbeResult[]): { blocked: number; total: number } {
+  const rogue = probes.filter((probe) => probe.category === "blocked");
+  return { blocked: rogue.filter((probe) => probe.actual === "DENIED").length, total: rogue.length };
+}
+
+function printHud(wallet: string, probes: readonly ProbeResult[], s?: Score): void {
+  const rogue = blockedCount(probes);
+  console.log(bold("WALLET  ") + wallet);
+  console.log(bold("ROGUE ATTEMPTS BLOCKED  ") + `${rogue.blocked} / ${rogue.total}`);
+  if (s !== undefined) {
+    const stars = s.stars.map((star) => star.earned ? green("★") : dim("☆")).join("");
+    console.log(bold("STARS   ") + stars);
+    for (const star of s.stars) console.log(`  ${star.earned ? green("★") : dim("☆")} ${star.label}`);
+  }
+  console.log("");
 }
 
 function printExerciseError(built: Built): boolean {
@@ -215,13 +233,15 @@ async function cmdLab(def: StageDef): Promise<void> {
   if (printExerciseError(built)) {
     return;
   }
-  console.log(bold("WALLET  ") + walletLine(built));
-  console.log("");
+  const wallet = walletLine(built);
+  const functionality = checkFunctionality(built.plan, built.runtime.audit.records, built.runtime.world);
+  const probes = await runBattery(built.runtime, built.plan);
+  const margin = await measureMargin(built.runtime);
+  printHud(wallet, probes, score(functionality, probes, margin));
   printTrace(built.runtime.audit.records, false);
   console.log("");
   console.log(centralCallsLine(built));
   console.log("");
-  const functionality = checkFunctionality(built.plan, built.runtime.audit.records, built.runtime.world);
   printFunctionality(functionality);
   printExplorerLink(built);
   if (def.breaksTrip === true) {
@@ -270,13 +290,19 @@ async function attackAll(def: StageDef): Promise<Evaluated[]> {
 }
 
 async function cmdAttack(def: StageDef): Promise<void> {
-  for (const { built, probes, functionality } of await attackAll(def)) {
+  const evaluated = await evaluateStage(def);
+  if (evaluated === undefined) {
+    const built = await runStage(def, def.scenario);
+    printExerciseError(built);
+    return;
+  }
+  recordAttempt(def.n, snapshot(evaluated));
+  for (const { built, probes, functionality } of evaluated.runs) {
     header(def, built.plan.name);
     if (printExerciseError(built)) {
       return;
     }
-    console.log(bold("WALLET  ") + walletLine(built));
-    console.log("");
+    printHud(walletLine(built), probes, evaluated.score);
     printFunctionality(functionality);
     const handoffs = built.runtime.audit.records.filter((r) => r.source === "handoff");
     if (handoffs.length > 0) {
@@ -325,13 +351,15 @@ async function cmdScore(def: StageDef): Promise<void> {
     printExerciseError(built);
     return;
   }
+  recordAttempt(def.n, snapshot(e));
   const { functionality, probes, margin, score: s } = e;
+  printHud(walletLine(e.runs[0]!.built), probes, s);
   const row = (label: string, points: number, max: number, note: string) =>
     console.log(`  ${pad(label, 44)} ${pad(`${points}`, 3)} / ${pad(String(max), 3)} ${dim(note)}`);
-  row("The trip completes correctly", s.functionality.points, 25, s.functionality.ok ? "" : "the functionality gate: the other rows do not count until the trip works");
-  row("Unauthorized actions are blocked", s.blocked.points, 30, `${s.blocked.passed} of ${s.blocked.total} checks`);
-  row("Handoffs pass along only what's needed", s.handoffs.points, 25, `${s.handoffs.passed} of ${s.handoffs.total} checks`);
-  row("You didn't grant more than the job required", s.margin.points, 20, `${s.margin.findings.length} finding${s.margin.findings.length === 1 ? "" : "s"}, capped at -5 per agent`);
+  row("Trip booked", s.functionality.points, 25, s.functionality.ok ? "" : "the trip is incomplete");
+  row("Rogue stopped", s.blocked.points, 30, `${s.blocked.passed} of ${s.blocked.total} checks`);
+  row("Tight handoff", s.handoffs.points, 25, `${s.handoffs.passed} of ${s.handoffs.total} checks`);
+  row("No spare authority", s.margin.points, 20, `${s.margin.findings.length} finding${s.margin.findings.length === 1 ? "" : "s"}, capped at -5 per agent`);
   console.log(`  ${pad("", 44)} ${bold(pad(String(s.total), 3))} / 100${s.gated ? red("   gated") : ""}`);
   console.log("");
   if (!functionality.ok) {
@@ -376,25 +404,17 @@ async function cmdShare(def: StageDef): Promise<void> {
     return;
   }
   const report = {
+    schema: "tenuo-lab-share-v1",
     stage: def.n,
-    total: e.score.total,
-    gated: e.score.gated,
-    functionality: e.score.functionality.points,
-    blocked: `${e.score.blocked.passed}/${e.score.blocked.total}`,
-    handoffs: `${e.score.handoffs.passed}/${e.score.handoffs.total}`,
-    margin: e.score.margin.points,
-    marginPerAgent: e.margin.perAgent,
-    failedChecks: e.probes.filter((p) => !p.ok).map((p) => p.label),
-    centralCalls: e.runs.map((r) => ({ scenario: r.built.plan.name, count: r.built.runtime.audit.centralCalls() })),
-    generatedAt: new Date().toISOString(),
+    stars: Object.fromEntries(e.score.stars.map((star) => [star.id, star.earned])),
+    attempts: loadState().attempts?.[String(def.n)] ?? { count: 0 },
   };
-  const dir = join(ROOT, ".lab");
+  const dir = LAB_HOME;
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `share-stage-${def.n}.json`);
   writeFileSync(file, JSON.stringify(report, null, 2));
-  console.log(JSON.stringify(report, null, 2));
-  console.log("");
-  console.log(dim(`  Written to ${file}. Hand the file to your session host if you want to; it carries no name, no key, and no code.`));
+  printHud(walletLine(e.runs[0]!.built), e.probes, e.score);
+  console.log(dim(`  Anonymous local artifact: ${file}`));
 }
 
 async function cmdAudit(def: StageDef): Promise<void> {
@@ -425,9 +445,21 @@ async function cmdNext(): Promise<void> {
 }
 
 async function cmdReset(): Promise<void> {
-  const state = loadState();
-  saveState({ ...state, stage: 1, completed: [] });
-  console.log("Back to stage 1. Your edits in exercises/ are untouched; `git checkout exercises` restores the originals.");
+  const backups = join(LAB_HOME, "reset-backups");
+  mkdirSync(backups, { recursive: true });
+  let n = 1;
+  while (existsSync(join(backups, String(n)))) n += 1;
+  const backup = join(backups, String(n));
+  cpSync(join(ROOT, "exercises"), backup, { recursive: true });
+  const restored = spawnSync("git", ["restore", "--source=HEAD", "--", "exercises"], { cwd: ROOT, encoding: "utf8" });
+  if (restored.status !== 0) {
+    console.log(red(`Could not restore starter exercises: ${restored.stderr.trim() || "git restore failed"}`));
+    console.log(dim(`  Your exercise backup is safe at ${backup}`));
+    return;
+  }
+  saveState({ stage: 1, completed: [] });
+  console.log("Back to stage 1. Progress, attempt history, and every starter exercise were restored.");
+  console.log(dim(`  Your previous exercise files are recoverable at ${backup}`));
 }
 
 function cmdAmbassador(): void {
