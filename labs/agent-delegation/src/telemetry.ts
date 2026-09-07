@@ -36,7 +36,14 @@ function handoff(e: EvaluatedStage, agent: AgentId): HandoffSnapshot | "missing"
   const expected = first?.built.runtime.tenuo?.fleet[agent].publicKey.hex;
   if (session === undefined || expected === undefined) return "missing";
   const info = session.inspect();
-  const constraints = e.probes.filter((probe) => probe.category !== "sanity");
+  // These are behavioral constraint checks for this exact receiver, not a
+  // duplicated aggregate of the whole stage. They disclose no argument
+  // values while still showing whether a participant tightened this hop.
+  const constraints = e.probes.filter((probe) => agent === "boarding-agent"
+    ? probe.section === "BOARDING AGENT AFTER THE HANDOFF"
+    : probe.section !== "BOARDING AGENT AFTER THE HANDOFF" &&
+      probe.section !== "TERMINAL" &&
+      probe.section !== "STOLEN: activity-agent presents boarding-agent's warrant");
   return {
     tools: [...info.tools].sort(),
     constraintChecks: {
@@ -66,11 +73,15 @@ export function snapshot(e: EvaluatedStage): AttemptSnapshot {
   return base;
 }
 
-export function recordAttempt(stage: number, value: AttemptSnapshot): void {
+export function recordAttempt(
+  stage: number,
+  value: AttemptSnapshot,
+  options: { readonly acceptGreen?: boolean } = {},
+): void {
   const state = loadState();
   const attempts = { ...(state.attempts ?? {}) };
   const previous = attempts[String(stage)];
-  const green = value.starsMissing.length === 0;
+  const green = options.acceptGreen !== false && value.starsMissing.length === 0;
   attempts[String(stage)] = previous === undefined
     ? { count: 1, firstAttempt: value, ...(green ? { firstGreen: value } : {}) }
     : {

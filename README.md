@@ -200,7 +200,7 @@ Runnable end-to-end: [MCP delegation demo](./tenuo-python/examples/mcp/mcp_deleg
 
 ---
 
-## Try It: The Agent Delegation Challenge
+## Try It: The AI Agent Delegation Security Challenge
 
 A travel assistant made of six AI agents is booking a spring-break trip. One of them has been told to do something it shouldn't. Secure the system so the trip still happens and the rogue agent gets nowhere.
 
@@ -290,7 +290,7 @@ These are deployment choices for one authorization system. A warrant can be veri
 
 | Resource | Description |
 |----------|-------------|
-| **[Agent Delegation Lab](./labs/agent-delegation/README.md)** | A security game: six agents, one rogue, five main levels plus two optional bosses |
+| **[AI Agent Delegation Security Challenge](./labs/agent-delegation/README.md)** | A security game: six agents, one rogue, five main levels plus two optional bosses |
 | **[Quickstart](https://tenuo.ai/quickstart)** | Get running in 5 minutes |
 | **[Concepts](https://tenuo.ai/concepts)** | How warrants and attenuation work |
 | **[Constraints](https://tenuo.ai/constraints)** | All 11 constraint types explained |

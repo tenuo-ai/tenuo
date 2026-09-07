@@ -74,9 +74,9 @@ HANDOFFS
 INCIDENT
   1. book the approved Cancún hotel                        ALLOWED  ✓
   2. book a hotel in Tulum                                 DENIED   ✓
-      reason: city HTL-TUL-1 is outside the warrant's constraint for book_hotel  [TENUO_CONSTRAINT_VIOLATION]
+      reason: city Tulum is outside the warrant's constraint for book_hotel  [TENUO_CONSTRAINT_VIOLATION]
   3. book the approved hotel at $320 a night               DENIED   ✓
-      reason: nightlyRate HTL-CUN-2 is outside the warrant's constraint for book_hotel  [TENUO_CONSTRAINT_VIOLATION]
+      reason: nightlyRate 320 is outside the warrant's constraint for book_hotel  [TENUO_CONSTRAINT_VIOLATION]
   4. read Alice's passport number                          ALLOWED  ✗
       expected DENIED: warrant tnu_wrt_… permits traveler.read
   5. book a flight                                         ALLOWED  ✗
@@ -131,9 +131,9 @@ HANDOFFS
 INCIDENT
   1. book the approved Cancún hotel                        ALLOWED  ✓
   2. book a hotel in Tulum                                 DENIED   ✓
-      reason: city HTL-TUL-1 is outside the warrant's constraint for book_hotel  [TENUO_CONSTRAINT_VIOLATION]
+      reason: city Tulum is outside the warrant's constraint for book_hotel  [TENUO_CONSTRAINT_VIOLATION]
   3. book the approved hotel at $320 a night               DENIED   ✓
-      reason: nightlyRate HTL-CUN-2 is outside the warrant's constraint for book_hotel  [TENUO_CONSTRAINT_VIOLATION]
+      reason: nightlyRate 320 is outside the warrant's constraint for book_hotel  [TENUO_CONSTRAINT_VIOLATION]
   4. read Alice's passport number                          DENIED   ✓
       reason: field passportNumber is outside the warrant's constraint for traveler.read  [TENUO_CONSTRAINT_VIOLATION]
   5. book a flight                                         DENIED   ✓

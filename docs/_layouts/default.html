@@ -559,10 +559,12 @@
     /* Footer */
     footer {
       margin-top: 4rem;
-      padding: 2rem 0;
-      border-top: 1px solid var(--border);
+      padding: 48px 0;
+      border-top: 1px solid rgba(56, 189, 248, 0.07);
       color: var(--text-muted);
-      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
       text-align: center;
     }
 
@@ -573,13 +575,6 @@
 
     footer a:hover {
       color: var(--text);
-    }
-
-    .footer-tech {
-      margin-bottom: 12px;
-      font-size: 0.9rem;
-      color: var(--text);
-      opacity: 0.7;
     }
 
     /* Mobile */
@@ -624,14 +619,11 @@
       </article>
 
       <footer>
-        <p class="footer-tech">🦀 Rust core • 🐍 Python SDK • ⚡ Sub-50μs verification</p>
         <p>
-          <a href="{{ site.baseurl }}/">Home</a> ·
-          <a href="{{ site.baseurl }}/quickstart">Quick Start</a> ·
-          <a href="{{ site.baseurl }}/api-reference">API</a> ·
-          <a href="{{ site.baseurl }}/security">Security</a> ·
-          <a href="{{ site.baseurl }}/in-the-wild">In the Wild</a> ·
-          <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
+          © 2026 Tenuo ·
+          <a href="{{ site.baseurl }}/quickstart">Docs</a> ·
+          <a href="https://github.com/tenuo-ai/tenuo">GitHub</a> ·
+          <a href="{{ site.baseurl }}/early-access.html">Early Access</a>
         </p>
       </footer>
     </main>

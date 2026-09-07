@@ -47,6 +47,8 @@ export interface StageSpec {
   readonly hint?: string;
   readonly code?: ReadonlyArray<CodeRef | Snippet>;
   readonly check?: ReadonlyArray<CodeRef | Snippet>;
+  /** Reference kept out of the page body and opened only on an explicit click. */
+  readonly referenceLink?: { readonly href: string; readonly label: string };
   readonly stuck?: readonly string[];
   /** What finished looks like, in one line. */
   readonly done: string;
@@ -151,7 +153,7 @@ export const STAGES: readonly StageSpec[] = [
   {
     ...stageMeta(4),
     intro: [
-      "Bob is going to Seattle on DL331, at the same time, through the same agents. Your stage 3 policy pins Check-in Agent to UA214, so Bob's check-in is refused and his trip fails.",
+      "Bob is going to Seattle on DL331, at the same time, through the same agents. Your stage 3 policy describes only Alice's Cancún flight, so Bob is rejected by destination, flight-budget, and reservation rules.",
       "This stage has two acts. First isolate Alice from Bob. Then observe an intentional handoff leak. The red handoff checks in Act 2 do not mean your Act 1 solution is broken.",
     ],
     diagram: fleetDiagram({
@@ -166,8 +168,8 @@ export const STAGES: readonly StageSpec[] = [
       caption: "Two trips through the same six agents. Then Check-in Agent passes the only thing it has, and asks for more.",
     }),
     steps: [
-      { text: "**Act 1 — isolate Alice and Bob.** Run both trips and watch Bob's check-in fail.", cmd: "npm run lab", expect: { cmd: "lab", label: "What you should see" } },
-      { text: "Fix it the quick way: add DL331 to Check-in Agent's reservations. The trip completes. Now read **CROSS-TASK**.", cmd: "npm run attack", expect: { cmd: "attack", label: "After the quick fix" } },
+      { text: "**Act 1 — isolate Alice and Bob.** Run both trips. Read **THE TRIP** from top to bottom and notice every Alice-only assumption that rejects Bob.", cmd: "npm run lab", expect: { cmd: "lab", label: "What you should see" } },
+      { text: "Fix it the quick way: broaden each shared flight-chain role for both trips. The README names every field. Both trips complete; now read **CROSS-TASK**.", cmd: "npm run attack", expect: { cmd: "attack", answer: "answers/04-two-travelers/quick-fix.ts", label: "After the broad quick fix" } },
       { text: "Give the agent a different identity for each trip. `exercises/04-two-travelers/README.md` walks through it. Get **CROSS-TASK** clean.", cmd: "npm run attack", expect: { cmd: "attack", answer: "answers/04-two-travelers/per-task.ts", label: "With one identity per task" } },
       { text: "Find `central_calls` in the trace. It counts every decision that asked something outside the acting agent.", cmd: "npm run trace" },
       { text: "**Act 2 — observe the leak. No fix is expected here.** Check-in Agent hands boarding-pass generation to Boarding Agent. Open the handoff and see what it actually passes.", cmd: "code src/agents/checkin-agent.ts" },
@@ -181,7 +183,7 @@ export const STAGES: readonly StageSpec[] = [
     ],
     question: "Write down, in one sentence, what your fix depends on being available. Then: should the policy component say yes to the rogue's request, and what would it need to know in order to say no?",
     hint: "To say no, the component has to know what the asker currently holds, in addition to who the asker is. A role-based rule does not carry that information. Stage 5 starts from there.",
-    code: [{ lang: "ts", code: "\"checkin-agent\": {\n  actions: [\"get_reservation\", \"check_in\"],\n  reservations: [\"UA214\", \"DL331\"],\n},", caption: "The quick fix. CROSS-TASK shows what it misses." }],
+    code: [{ lang: "ts", code: "// One shared role now covers both flight jobs.\n\"flight-agent\": {\n  actions: [\"traveler.read\", \"search_flights\", \"book_flight\", \"wallet.charge\"],\n  maxPrice: 450, // no destination: CUN and SEA both pass\n  maxCharge: 450,\n  profileFields: [\"passportNumber\"],\n},\n\"checkin-agent\": {\n  actions: [\"get_reservation\", \"check_in\", \"issue_boarding_pass\"],\n  reservations: [\"UA214\", \"DL331\"],\n},", caption: "Part of the broad quick fix. The README covers Boarding too." }],
     check: [
       { file: "answers/04-two-travelers/per-task.ts", symbols: ["config"], caption: "One identity per task" },
       { file: "answers/04-two-travelers/policy-service.ts", symbols: ["config"], caption: "Another way that works: policyService: true, and the per-task fields come from a service asked on every call" },
@@ -249,7 +251,7 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
       { text: "Open the chain. Flight → Check-in is a complete, annotated tutorial: it narrows to one reservation, binds the next holder, and shortens the TTL. Copying its `narrow()` shape is allowed.", cmd: "code exercises/05-tenuo/chain.ts" },
       { text: "Write the one TODO, `checkinToBoarding`. Boarding Agent needs one tool for one reservation, bound to its key, for a short time.", cmd: "npm run lab", expect: [{ cmd: "lab", label: "Before you write the link" }, { cmd: "lab", answer: "answers/05-tenuo/chain.ts", label: "When the link exists" }] },
       { text: "Run the checks. The two-traveler run happens here too, with no policy file to edit. Read **CROSS-TASK** and the escalation attempt, then find `central_calls`.", cmd: "npm run attack", expect: { cmd: "attack", answer: "answers/05-tenuo/chain.ts", label: "What you should see" } },
-      { text: "Open the link the lab prints and look at the chain Boarding Agent holds, hop by hop, in the explorer." },
+      { text: "Open the chain Boarding Agent holds, hop by hop, in the explorer.", cmd: "npm run trace -- --open-explorer" },
     ],
     notice: [
       "The escalation attempt from stage 4 is refused before any permission exists, inside Check-in Agent's own process, because the narrowed copy would not fit inside what Check-in Agent holds.",
@@ -258,7 +260,10 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     question: "Who decided what Boarding Agent may do, and when? Compare that with who decided in stage 4.",
     hint: "Flight Agent knows which flight it booked, so it is the link that narrows `reservation` to that one flight. Bind each result to the next agent's key with `holder`, and keep lifetimes short. Every argument a tool is called with must be named: leave one out and the call is refused.",
     code: [{ file: "exercises/05-tenuo/chain.ts", symbols: ["flightToCheckin", "checkinToBoarding"], caption: "Tutorial, then your level" }],
-    check: [{ file: "answers/05-tenuo/chain.ts", symbols: ["checkinToBoarding"], caption: "One solution to the TODO" }],
+    referenceLink: {
+      href: "https://github.com/tenuo-ai/tenuo/blob/main/labs/agent-delegation/answers/05-tenuo/chain.ts",
+      label: "Open the Stage 5 reference on GitHub",
+    },
     stuck: [
       "`narrow() cannot add ...` means the child asks for authority its parent never held. Remove it or look one link up the chain.",
       "`name 'reservation' in allow` means the call supplies a field your closed-world policy omitted.",

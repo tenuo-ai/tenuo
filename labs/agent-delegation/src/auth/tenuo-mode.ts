@@ -150,13 +150,18 @@ export class TenuoMode implements AuthMode {
 /** Turn a core error into the reason line the participant reads. */
 function describeDenial(error: TenuoError, call: Call): string {
   const field = error instanceof AuthorizationDeniedError ? error.field : undefined;
-  const resource = resourceOf(call.action, call.args);
+  const value = field === undefined ? undefined : call.args[field];
+  const display = value === undefined
+    ? resourceOf(call.action, call.args)
+    : typeof value === "string"
+      ? value
+      : JSON.stringify(value);
   switch (error.code) {
     case "TENUO_TOOL_NOT_AUTHORIZED":
       return `${call.action} is not in ${call.actor}'s warrant`;
     case "TENUO_CONSTRAINT_VIOLATION":
       return field !== undefined
-        ? `${field} ${resource} is outside the warrant's constraint for ${call.action}`
+        ? `${field} ${display} is outside the warrant's constraint for ${call.action}`
         : `arguments outside the warrant's constraints for ${call.action}`;
     case "TENUO_UNTRUSTED_ROOT":
       return "warrant chain does not lead back to the control plane's key";
