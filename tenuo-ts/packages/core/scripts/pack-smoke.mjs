@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,16 +11,15 @@ const installDir = mkdtempSync(join(tmpdir(), "tenuo-core-smoke-"));
 
 try {
   const tarball = packPackage(coreDir, packDir);
-  assertPacked(tarball, [
-    "package/dist/index.js",
-    "package/dist/generated/tenuo_wasm_bg.wasm",
-    "package/dist/generated/tenuo_wasm.js",
-    "package/LICENSE",
-    "package/README.md",
-  ]);
-
   writeFileSync(join(installDir, "package.json"), JSON.stringify({ private: true, type: "module" }));
   run("npm", ["install", "--omit=dev", tarball], { cwd: installDir, stdio: "inherit" });
+  assertInstalled(installDir, "@tenuo/core", [
+    "dist/index.js",
+    "dist/generated/tenuo_wasm_bg.wasm",
+    "dist/generated/tenuo_wasm.js",
+    "LICENSE",
+    "README.md",
+  ]);
   copyFileSync(join(coreDir, "scripts", "pack-smoke-consumer.mjs"), join(installDir, "smoke.mjs"));
   execFileSync(process.execPath, [join(installDir, "smoke.mjs")], {
     cwd: installDir,
@@ -53,12 +52,11 @@ function packPackage(cwd, destination) {
   return isAbsolute(packed) ? packed : join(destination, packed);
 }
 
-function assertPacked(tarball, required) {
-  const listing = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" });
-  const entries = listing.split(/\r?\n/);
+function assertInstalled(root, packageName, required) {
+  const packageDir = join(root, "node_modules", ...packageName.split("/"));
   for (const path of required) {
-    if (!entries.includes(path)) {
-      throw new Error(`packed tarball is missing ${path}`);
+    if (!existsSync(join(packageDir, path))) {
+      throw new Error(`installed ${packageName} is missing ${path}`);
     }
   }
 }

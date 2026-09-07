@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,13 +15,12 @@ const installDir = mkdtempSync(join(tmpdir(), "tenuo-mcp-smoke-"));
 try {
   const coreTarball = packPackage(coreDir, packDir);
   const mcpTarball = packPackage(mcpDir, packDir);
-  assertPacked(mcpTarball, ["package/dist/index.js", "package/LICENSE", "package/README.md"]);
-
   writeFileSync(join(installDir, "package.json"), JSON.stringify({ private: true, type: "module" }));
   run("npm", ["install", "--omit=dev", coreTarball, mcpTarball], {
     cwd: installDir,
     stdio: "inherit",
   });
+  assertInstalled(installDir, "@tenuo/mcp", ["dist/index.js", "LICENSE", "README.md"]);
   execFileSync(
     process.execPath,
     [
@@ -89,12 +88,11 @@ function packPackage(cwd, destination) {
   return isAbsolute(packed) ? packed : join(destination, packed);
 }
 
-function assertPacked(tarball, required) {
-  const listing = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" });
-  const entries = listing.split(/\r?\n/);
+function assertInstalled(root, packageName, required) {
+  const packageDir = join(root, "node_modules", ...packageName.split("/"));
   for (const path of required) {
-    if (!entries.includes(path)) {
-      throw new Error(`packed tarball is missing ${path}`);
+    if (!existsSync(join(packageDir, path))) {
+      throw new Error(`installed ${packageName} is missing ${path}`);
     }
   }
 }
