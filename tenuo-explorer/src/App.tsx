@@ -2698,14 +2698,14 @@ function App() {
   return (
     <>
       {/* Background */}
-      <div className="orb orb-1" />
-      <div className="orb orb-2" />
+      <div className="site-grid-bg" />
+      <div className="site-glow" />
 
       <div style={{ position: 'relative', zIndex: 1, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
         {/* Navigation */}
         <nav style={{ borderBottom: '1px solid var(--border)' }}>
           <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <a href="https://tenuo.ai" style={{ fontSize: '20px', fontWeight: 600, color: 'white', textDecoration: 'none' }}>tenuo</a>
+            <a href="https://tenuo.ai" style={{ fontSize: '20px', fontWeight: 600, color: 'var(--text-bright)', textDecoration: 'none' }}>tenuo</a>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <a href="https://tenuo.ai/quickstart" className="nav-link">Quick Start</a>
               <a href="https://tenuo.ai/concepts" className="nav-link">Concepts</a>
@@ -3101,7 +3101,7 @@ function App() {
 
                       {/* Chain Detected Banner */}
                       {chainResult && chainResult.is_chain && (
-                        <div style={{ marginBottom: '12px', padding: '12px', borderRadius: '10px', border: '1px solid var(--accent)', background: 'rgba(232, 232, 232, 0.08)' }}>
+                        <div style={{ marginBottom: '12px', padding: '12px', borderRadius: '10px', border: '1px solid var(--accent)', background: 'rgba(56, 189, 248, 0.08)' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <span style={{ fontSize: '16px' }}>⛓️</span>
@@ -3120,7 +3120,7 @@ function App() {
                                 <div style={{
                                   padding: '4px 8px',
                                   borderRadius: '6px',
-                                  background: idx === 0 ? 'rgba(34, 197, 94, 0.15)' : idx === chainResult.warrants.length - 1 ? 'rgba(232, 232, 232, 0.1)' : 'var(--surface-2)',
+                                  background: idx === 0 ? 'rgba(34, 197, 94, 0.15)' : idx === chainResult.warrants.length - 1 ? 'rgba(56, 189, 248, 0.1)' : 'var(--surface-2)',
                                   border: `1px solid ${idx === 0 ? 'var(--green)' : idx === chainResult.warrants.length - 1 ? 'var(--accent)' : 'var(--border)'}`,
                                   fontSize: '11px'
                                 }}>
