@@ -13,7 +13,7 @@
 process.env.NODE_ENV ??= "development";
 
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { runBattery, type ProbeResult } from "../harness/attacks.ts";
@@ -87,8 +87,16 @@ function explorerLink(built: Built): string | undefined {
 function printExplorerLink(built: Built): void {
   const url = explorerLink(built);
   if (url !== undefined) {
-    console.log(dim("  See the chain the agents are holding, hop by hop, in the explorer:"));
-    console.log(dim(`  ${url}`));
+    mkdirSync(LAB_HOME, { recursive: true });
+    const file = join(LAB_HOME, `explorer-stage-${built.runtime.stage.n}.url`);
+    writeFileSync(file, `${url}\n`);
+    if (args.includes("--open-explorer")) {
+      openInBrowser(url);
+      console.log(dim("  Opened the held warrant chain in the explorer."));
+    } else {
+      console.log(dim(`  Explorer link saved as ${basename(file)} in the lab state directory.`));
+      console.log(dim("  Run npm run trace -- --open-explorer to open it."));
+    }
     console.log("");
   }
 }
@@ -99,15 +107,21 @@ function walletLine(built: Built): string {
     .join("   ");
 }
 
-function blockedCount(probes: readonly ProbeResult[]): { blocked: number; total: number } {
+function blockedCount(probes: readonly ProbeResult[]): { blocked: number; total: number; unverified: number } {
   const rogue = probes.filter((probe) => probe.category === "blocked");
-  return { blocked: rogue.filter((probe) => probe.actual === "DENIED").length, total: rogue.length };
+  return {
+    blocked: rogue.filter((probe) => probe.ok && probe.actual === "DENIED").length,
+    total: rogue.length,
+    unverified: rogue.filter((probe) => !probe.ok && probe.actual === "DENIED").length,
+  };
 }
 
-function printHud(wallet: string, probes: readonly ProbeResult[], s?: Score): void {
+function printHud(wallet: string, probes: readonly ProbeResult[], s?: Score, scenarios = 1): void {
   const rogue = blockedCount(probes);
   console.log(bold("WALLET  ") + wallet);
-  console.log(bold("ROGUE ATTEMPTS BLOCKED  ") + `${rogue.blocked} / ${rogue.total}`);
+  const scope = scenarios > 1 ? ` (${scenarios} SCENARIOS)` : "";
+  const unverified = rogue.unverified > 0 ? dim(`   ${rogue.unverified} not reached`) : "";
+  console.log(bold(`ROGUE ATTEMPTS BLOCKED${scope}  `) + `${rogue.blocked} / ${rogue.total}${unverified}`);
   if (s !== undefined) {
     const stars = s.stars.map((star) => star.earned ? green("★") : dim("☆")).join("");
     console.log(bold("STARS   ") + stars);
@@ -243,7 +257,11 @@ async function cmdLab(def: StageDef): Promise<void> {
   const functionality = checkFunctionality(built.plan, built.runtime.audit.records, built.runtime.world);
   const probes = await runBattery(built.runtime, built.plan);
   const margin = await measureMargin(built.runtime);
-  printHud(wallet, probes, score(functionality, probes, margin));
+  const scored = score(functionality, probes, margin);
+  printHud(wallet, probes, scored);
+  if (def.n === 5) {
+    recordAttempt(def.n, snapshot({ runs: [{ built, probes, functionality }], functionality, probes, margin, score: scored }), { acceptGreen: false });
+  }
   printTrace(built.runtime.audit.records, false);
   console.log("");
   console.log(centralCallsLine(built));
@@ -419,7 +437,7 @@ async function cmdShare(def: StageDef): Promise<void> {
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `share-stage-${def.n}.json`);
   writeFileSync(file, JSON.stringify(report, null, 2));
-  printHud(walletLine(e.runs[0]!.built), e.probes, e.score);
+  printHud(walletLine(e.runs[0]!.built), e.probes, e.score, e.runs.length);
   console.log(dim(`  Anonymous local artifact: ${file}`));
 }
 
@@ -444,7 +462,13 @@ async function cmdNext(): Promise<void> {
     console.log(`Stages run 1 to ${STAGES.length}. You are on ${state.stage}.`);
     return;
   }
-  saveState({ ...state, stage: to });
+  const completed = [...state.completed];
+  // Stages 1 and 2 are observation levels with no editable solution to score.
+  // Following their documented `next` flow is completion.
+  if (flag("stage") === undefined && to === state.stage + 1 && state.stage <= 2 && !completed.includes(state.stage)) {
+    completed.push(state.stage);
+  }
+  saveState({ ...state, stage: to, completed });
   console.log(`Now on stage ${to}: ${stageDef(to).title}. Run npm run lab.`);
   console.log(dim(`  guide: ${guideUrl(to)}`));
   if (args.includes("--open")) openInBrowser(guideUrl(to));
@@ -474,7 +498,7 @@ function cmdAmbassador(): void {
     const n = Number(args[2]);
     const files: Record<number, string[]> = {
       3: ["answers/03-scoped/policy.ts"],
-      4: ["answers/04-two-travelers/per-task.ts", "answers/04-two-travelers/policy-service.ts"],
+      4: ["answers/04-two-travelers/quick-fix.ts", "answers/04-two-travelers/per-task.ts", "answers/04-two-travelers/policy-service.ts"],
       5: ["answers/05-tenuo/chain.ts"],
       6: ["answers/06-extensions/chain.ts"],
       7: ["answers/07-incident/chain.ts"],

@@ -1,5 +1,5 @@
 {
-  "name": "Agent Delegation Challenge",
+  "name": "Agent Delegation Lab",
   "image": "mcr.microsoft.com/devcontainers/typescript-node:1-20-bookworm",
   "hostRequirements": {
     "cpus": 2,

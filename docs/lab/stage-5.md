@@ -160,8 +160,8 @@ THE TRIP
   ✓ trip-alice-cun  activity: book
   ✓ trip-alice-cun  within budget ($741 of $1200)
 
-  See the chain the agents are holding, hop by hop, in the explorer:
-  https://tenuo.ai/explorer/?s=…
+  Explorer link saved as explorer-stage-5.url in the lab state directory.
+  Run npm run trace -- --open-explorer to open it.
 
   npm run attack   the rogue behavior and the tests      npm run score   points and why
   npm run trace    every decision with its reason        npm run next    when you are done here</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When the link exists <span>npm run lab · 73 lines</span></summary><pre><code>
@@ -232,8 +232,8 @@ THE TRIP
   ✓ trip-alice-cun  activity: book
   ✓ trip-alice-cun  within budget ($741 of $1200)
 
-  See the chain the agents are holding, hop by hop, in the explorer:
-  https://tenuo.ai/explorer/?s=…
+  Explorer link saved as explorer-stage-5.url in the lab state directory.
+  Run npm run trace -- --open-explorer to open it.
 
   npm run attack   the rogue behavior and the tests      npm run score   points and why
   npm run trace    every decision with its reason        npm run next    when you are done here</code></pre></details></div></div></div>
@@ -386,7 +386,7 @@ CROSS-TASK
   Task B agent: get_reservation(UA214)                     DENIED   ✓
       reason: reservation UA214 is outside the warrant's constraint for get_reservation  [TENUO_CONSTRAINT_VIOLATION]
   Task B agent: book_flight(UA214, CUN)                    DENIED   ✓
-      reason: destination UA214 is outside the warrant's constraint for book_flight  [TENUO_CONSTRAINT_VIOLATION]
+      reason: destination CUN is outside the warrant's constraint for book_flight  [TENUO_CONSTRAINT_VIOLATION]
 ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
   requested: every reservation; read, check in, cancel     DENIED   ✓
       reason: DENIED at narrow(), in checkin-agent's own process, before any token existed: TENUO_CHAIN_INVALID: attenuation would expand capabilities: tool 'cancel_reservation' not in parent's tools. narrow() cannot add 'cancel_reservation': remove it or delegate from a parent that grants it.  [TENUO_CHAIN_INVALID]
@@ -400,7 +400,7 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="5:3"><span>4</span></label>
-<div class="lab-step-body"><p>Open the link the lab prints and look at the chain Boarding Agent holds, hop by hop, in the explorer.</p></div>
+<div class="lab-step-body"><p>Open the chain Boarding Agent holds, hop by hop, in the explorer.</p><pre class="lab-cmd"><code>npm run trace -- --open-explorer</code></pre></div>
 </li>
 </ol>
 
@@ -410,18 +410,7 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
 
 <details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>Flight Agent knows which flight it booked, so it is the link that narrows <code>reservation</code> to that one flight. Bind each result to the next agent's key with <code>holder</code>, and keep lifetimes short. Every argument a tool is called with must be named: leave one out and the call is refused.</div></details>
 
-<details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try your own first. The score checks behavior, so yours does not need to match this one.</p><figure class="lab-code"><figcaption>One solution to the TODO <span>answers/05-tenuo/chain.ts</span></figcaption>
-{% highlight ts %}
-export function checkinToBoarding(checkin: Session, fleet: Fleet, trip: Trip, reservation: string): Session {
-  const only = oneOf([reservation]);
-  return fleet["checkin-agent"].tenuo.narrow(
-    checkin,
-    { issue_boarding_pass: { reservation: only } },
-    { holder: fleet["boarding-agent"].publicKey, ttlSeconds: 2 * 60 },
-  );
-}
-{% endhighlight %}
-</figure></div></details>
+<details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try your own first. The score checks behavior, so yours does not need to match this one.</p><a class="lab-button" href="https://github.com/tenuo-ai/tenuo/blob/main/labs/agent-delegation/answers/05-tenuo/chain.ts">Open the Stage 5 reference on GitHub</a></div></details>
 
 <aside class="lab-callout stuck"><div class="lab-callout-title">If it does not work</div><ul><li><code>narrow() cannot add ...</code> means the child asks for authority its parent never held. Remove it or look one link up the chain.</li><li><code>name 'reservation' in allow</code> means the call supplies a field your closed-world policy omitted.</li><li><code>set { holder: receiverPublicKey }</code> means the handoff was not bound to Boarding Agent's key.</li><li>The trip has to work. If Boarding Agent cannot issue the pass, the other checks do not count.</li></ul></aside>
 

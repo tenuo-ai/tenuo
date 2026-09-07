@@ -174,6 +174,9 @@ function stagePage(spec: StageSpec): string {
   if (spec.check !== undefined) {
     parts.push(`<details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try your own first. The score checks behavior, so yours does not need to match this one.</p>${spec.check.map(codeFigure).join("\n")}</div></details>`);
   }
+  if (spec.referenceLink !== undefined) {
+    parts.push(`<details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try your own first. The score checks behavior, so yours does not need to match this one.</p><a class="lab-button" href="${esc(spec.referenceLink.href)}">${esc(spec.referenceLink.label)}</a></div></details>`);
+  }
   if (spec.stuck !== undefined) {
     parts.push(callout("stuck", "If it does not work", `<ul>${spec.stuck.map((n) => `<li>${inline(n)}</li>`).join("")}</ul>`));
   }

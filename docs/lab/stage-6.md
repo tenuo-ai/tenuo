@@ -190,8 +190,8 @@ THE TRIP
   ✓ trip-alice-cun  activity: book
   ✓ trip-alice-cun  within budget ($741 of $1200)
 
-  See the chain the agents are holding, hop by hop, in the explorer:
-  https://tenuo.ai/explorer/?s=…
+  Explorer link saved as explorer-stage-6.url in the lab state directory.
+  Run npm run trace -- --open-explorer to open it.
 
   The terminal link breaks the trip on purpose. Notice where, and who decided.
 
@@ -209,7 +209,7 @@ Stage 6 of 7: Boss: stolen authority   mode=tenuo  scenario=spring-break
   Agent did not agree to this restriction and cannot remove it.
 
 WALLET  Alice: $459 of $1200
-ROGUE ATTEMPTS BLOCKED  8 / 8
+ROGUE ATTEMPTS BLOCKED  7 / 8   1 not reached
 STARS   ☆☆☆★
   ☆ Trip booked
   ☆ Rogue stopped
@@ -263,8 +263,8 @@ THE TRIP
   ✓ trip-alice-cun  activity: book
   ✓ trip-alice-cun  within budget ($741 of $1200)
 
-  See the chain the agents are holding, hop by hop, in the explorer:
-  https://tenuo.ai/explorer/?s=…
+  Explorer link saved as explorer-stage-6.url in the lab state directory.
+  Run npm run trace -- --open-explorer to open it.
 
   The terminal link breaks the trip on purpose. Notice where, and who decided.
 

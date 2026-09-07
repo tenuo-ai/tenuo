@@ -27,7 +27,7 @@ npm run lab
 
 No account, no sign-in, no API key, no credit card, and nothing leaves your
 machine. If npm fights you, open the repository in GitHub Codespaces and pick
-the "Agent Delegation Challenge" configuration instead.
+the "Agent Delegation Lab" configuration instead.
 
 The lab lives inside the Tenuo repository so that the code you are securing
 with and the code you are reading about are one checkout. Everything the lab
@@ -42,6 +42,7 @@ npm run attack     # run the rogue behavior and the security tests
 npm run score      # see your score and why
 npm run audit      # what every agent can currently do
 npm run next       # move to the next stage
+npm run share      # write an anonymous score breakdown for your session host
 npm run reset      # restore stage 1 and every starter exercise
 ```
 
@@ -81,9 +82,10 @@ After the game, the hosted guide has an unnumbered, optional contribution epilog
 ## What leaves your machine
 
 Nothing automatically. The lab runs locally and makes no network requests.
-It keeps attempt counts and small semantic summaries—tool names, whether the
-holder was correct, a coarse TTL bucket, and which stars were missing—in
-`.lab/`. It never records source code, keys, names, or exact timestamps.
+It keeps attempt counts and small semantic summaries—tool names, per-handoff
+behavioral constraint results, whether the holder was correct, a coarse TTL
+bucket, and which stars were missing—in `.lab/`. It never records source code,
+keys, names, argument values, or exact timestamps.
 `npm run share` writes an anonymous local JSON artifact; you choose whether to
 hand that file to a session host.
 
@@ -123,6 +125,8 @@ Every expected-output panel is captured from the CLI using the reference
 answers and a throwaway state directory. The CLI prints the current stage's
 page, including completed stages in the link. Add `-- --open` to `npm run lab`
 or `npm run next` to open it.
+Run `npm run trace -- --open-explorer` in stages 5 and 6 to open the held
+warrant chain without printing its long encoded URL into the terminal.
 
 ## After the lab
 
@@ -142,7 +146,7 @@ src/
   services/         six simulated services, in-process, no network
   auth/             the chokepoint: shared, identity, scoped, tenuo
   agents/           six scripted agents and their handoffs
-  keys.ts           one holder key per agent (stage 6+)
+  keys.ts           one holder key per agent (stage 5+)
   control-plane.ts  the only module that can mint a fresh permission
   harness/          runner, attack battery, functionality, margin, score
   cli/              the commands
