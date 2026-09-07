@@ -120,7 +120,7 @@ function stepper(current: number | "wrap" | "contribute"): string {
   }
   const epilogueClass = current === "contribute" ? ' class="current"' : "";
   items.push(`<a href="/lab/${EPILOGUE.slug}"${epilogueClass} title="Optional: ${esc(EPILOGUE.title)}">+</a>`);
-  return `<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a>${items.join("")}</nav>`;
+  return `<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Challenge</a>${items.join("")}</nav>`;
 }
 
 function callout(kind: "notice" | "question" | "hint" | "stuck", title: string, body: string): string {
@@ -195,7 +195,7 @@ function indexPage(): string {
     ["No spare authority", 20, "Every grant stays at or below the mission's least-privilege ceiling."],
   ] as const;
   const body = `${stepper(0)}
-<header class="lab-hero"><div class="lab-kicker">A ninety-minute security game · TypeScript · no account needed</div><h1>AI Agent Delegation Security Challenge</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
+<header class="lab-hero"><div class="lab-kicker">A ninety-minute security challenge · TypeScript · no account needed</div><h1>AI Agent Delegation Security Challenge</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
 
 <section class="lab-start">
 <div>
@@ -204,7 +204,7 @@ function indexPage(): string {
 cd tenuo/labs/agent-delegation
 npm install
 npm run lab</code></pre>
-<p class="lab-muted">Node 20 or newer. No account, no API key, no network needed. The lab runs its own recorded agents; every check and score is real.</p>
+<p class="lab-muted">Node 20 or newer. No account, no API key, no network needed. The challenge runs its own recorded agents; every check and score is real.</p>
 </div>
 <div>
 <h2>What to expect</h2>

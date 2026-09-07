@@ -134,7 +134,7 @@ You have just spent ninety minutes inside this codebase, in the same
 TypeScript SDK its maintainers work in. If you want to go one step further,
 the repository keeps issues sized for a first contribution under the
 [good first issue](https://github.com/tenuo-ai/tenuo/labels/good%20first%20issue)
-label. Most are TypeScript and touch things you met in stage 6. Pick one,
+label. Most are TypeScript and build on things you met in stage 5. Pick one,
 comment on it so nobody doubles up, and read
 [CONTRIBUTING.md](../../CONTRIBUTING.md) for how to run the checks locally.
 
@@ -164,9 +164,8 @@ npm test           # every stage with its reference solution
 npm run typecheck
 ```
 
-`@tenuo/core` is installed from `vendor/` until the npm beta that includes
-holder rebinding on delegation ships; then `package.json` moves to
-`@tenuo/core@beta`. CI rebuilds the package from this checkout, packs it into
-runner-temporary storage, replaces the installed vendored SDK with that fresh
+The participant install pins the published `@tenuo/core@0.2.5-beta.0` package
+for reproducible runs. CI also rebuilds the SDK from this checkout, packs it
+into runner-temporary storage, replaces the published SDK with that fresh
 artifact, and runs every stage. An SDK change that breaks a chain therefore
 fails the build here rather than in a classroom.

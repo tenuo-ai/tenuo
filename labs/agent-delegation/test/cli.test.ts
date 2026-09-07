@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ROOT, type LabState } from "../src/state.ts";
+import { ROOT, type AttemptSnapshot, type LabState } from "../src/state.ts";
 
 const homes: string[] = [];
 const ANSI = /\x1b\[[0-9;]*m/g;
@@ -68,6 +68,32 @@ describe("participant CLI", () => {
 
     const share = cli(labHome, "share", 5, "answers/05-tenuo/chain.ts");
     expect(share).toMatch(/ROGUE ATTEMPTS BLOCKED \(2 SCENARIOS\)\s+14 \/ 14/);
+    const report = JSON.parse(readFileSync(join(labHome, "share-stage-5.json"), "utf8")) as {
+      schema: string;
+      stage: number;
+      attempts: { count: number; firstAttempt: AttemptSnapshot; firstGreen?: AttemptSnapshot };
+    };
+    expect(report.schema).toBe("tenuo-lab-share-v1");
+    expect(report.stage).toBe(5);
+    expect(report.attempts.count).toBe(2);
+    expect(report.attempts.firstAttempt.starsMissing.length).toBeGreaterThan(0);
+    const firstGreen = report.attempts.firstGreen;
+    expect(firstGreen).toBeDefined();
+    if (firstGreen === undefined) throw new Error("share artifact omitted the first green attempt");
+    expect(firstGreen.starsMissing).toEqual([]);
+    for (const attempt of [report.attempts.firstAttempt, firstGreen]) {
+      const handoffs = attempt.handoffs;
+      expect(handoffs).toBeDefined();
+      if (handoffs === undefined) throw new Error("share artifact omitted handoff telemetry");
+      expect(Object.keys(handoffs)).toEqual(["flight-to-checkin", "checkin-to-boarding"]);
+      for (const handoff of Object.values(handoffs)) {
+        if (handoff === "missing") continue;
+        expect(Object.keys(handoff).sort()).toEqual(["constraintChecks", "holderBound", "tools", "ttl"]);
+      }
+    }
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toMatch(/Alice|Cancún|source|privateKey|publicKey|timestamp/i);
+    expect(serialized).not.toMatch(/[0-9a-f]{64}/i);
   }, 120_000);
 
   it("marks observation stages complete when the documented next command advances them", () => {
@@ -98,7 +124,8 @@ describe("generated Stage 5 guide", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
     expect(page).toContain("AI Agent Delegation Security Challenge");
     expect(page).toContain("Book the trip. Stop the rogue agent.");
-    expect(page).toContain("A ninety-minute security game");
+    expect(page).toContain("A ninety-minute security challenge");
+    expect(page).not.toContain("security game");
     expect(page.match(/npm run reset/g)).toHaveLength(1);
   });
 
