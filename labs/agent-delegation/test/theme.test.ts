@@ -12,6 +12,16 @@ function token(source: string, name: string): string {
 }
 
 describe("public-site theme", () => {
+  it("gives diagrams a clean text equivalent and extractable word boundaries", () => {
+    const index = readFileSync(join(REPO, "docs", "lab", "index.md"), "utf8");
+    const figure = /<figure class="lab-figure">([\s\S]*?)<\/figure>/.exec(index)?.[1];
+    expect(figure).toBeDefined();
+    expect(figure).toContain('aria-hidden="true" focusable="false"');
+    expect(figure).toContain("<figcaption>You talk to Travel Agent. The flight side runs three handoffs deep, and that matters later.</figcaption>");
+    const extracted = figure!.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    expect(extracted).toContain("Alice → Cancún, 3 nights, $1,200 Travel Agent talks to you Flight Agent books the flight");
+  });
+
   it("keeps the lab and explorer on the main website palette and background", () => {
     const main = readFileSync(join(REPO, "docs", "index.html"), "utf8");
     const lab = readFileSync(join(REPO, "docs", "_layouts", "lab.html"), "utf8");

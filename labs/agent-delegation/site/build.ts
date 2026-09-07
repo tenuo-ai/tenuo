@@ -84,7 +84,14 @@ function codeFigure(item: CodeRef | Snippet): string {
   const body = lang === "text"
     ? `<pre><code>${esc(code)}</code></pre>`
     : `{% highlight ${lang} %}\n${code}\n{% endhighlight %}`;
-  return `<figure class="lab-code"><figcaption>${esc(item.caption)}${file !== undefined ? ` <span>${esc(file)}</span>` : ""}</figcaption>\n${body}\n</figure>`;
+  const note = item.note !== undefined ? `\n<p class="lab-muted">${inline(item.note)}</p>` : "";
+  return `<figure class="lab-code"><figcaption>${esc(item.caption)}${file !== undefined ? ` <span>${esc(file)}</span>` : ""}</figcaption>\n${body}\n</figure>${note}`;
+}
+
+function diagramFigure(svg: string): string {
+  const caption = / data-caption="([^"]+)"/.exec(svg)?.[1];
+  if (caption === undefined) throw new Error("Lab diagram is missing its text description");
+  return `<figure class="lab-figure">${svg}\n<figcaption>${caption}</figcaption></figure>`;
 }
 
 function terminal(c: Capture, stage: number): string {
@@ -159,7 +166,7 @@ function stagePage(spec: StageSpec): string {
   if (spec.explainer !== undefined) {
     parts.push(explainerHtml(spec.explainer));
   }
-  parts.push(`<figure class="lab-figure">${spec.diagram}</figure>`);
+  parts.push(diagramFigure(spec.diagram));
   if (spec.code !== undefined) {
     parts.push(spec.code.map(codeFigure).join("\n"));
   }
@@ -222,7 +229,7 @@ npm run lab</code></pre>
 </details>
 
 <h2>The mission</h2>
-<figure class="lab-figure">${MISSION_DIAGRAM}</figure>
+${diagramFigure(MISSION_DIAGRAM)}
 <p><strong>The cast:</strong> Travel Agent, Flight Agent, Check-in Agent, Boarding Agent, Hotel Agent, and Activity Agent. The diagram above is the handoff graph; the three-hop flight branch matters in stage 5.</p>
 <div class="lab-mission">
 <table><tbody>
@@ -236,7 +243,7 @@ npm run lab</code></pre>
 
 <h2>What you will use</h2>
 <div class="lab-two">
-<div><h3>Stages 1 to 4: the usual tools</h3><p>A shared key, then one account per agent, then rules you write yourself, then a registry to tell two jobs apart. Each fixes something and costs something. By the end of stage 4 you will have hit the limit of all of them.</p></div>
+<div><h3>Stages 1 to 4: the usual tools</h3><p>A shared key, then one account per agent, then rules you write yourself, then either per-task identities backed by a registry or a policy service to tell two jobs apart. Each fixes something and costs something. By the end of stage 4 you will have hit the limit of all of them.</p></div>
 <div><h3>Stages 5 to 7: Tenuo warrants</h3><p>A <strong>warrant</strong> is a signed permission that travels with the request: which tools, which argument values, for which agent's key, until when. The control plane signs the first one; agents can only narrow it for the next agent; the code next to each tool checks the whole chain offline. <a href="/lab/stage-5">Stage 5 explains it</a> before you write your first one.</p></div>
 </div>
 

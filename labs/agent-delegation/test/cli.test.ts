@@ -134,6 +134,16 @@ describe("generated Stage 5 guide", () => {
     expect(deployWorkflow).not.toMatch(/A ninety-minute security (?:game|challenge)/);
   });
 
+  it("states both secure Stage 4 branches and names their intentional over-grant", () => {
+    const overview = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
+    const stage4 = readFileSync(join(ROOT, "..", "..", "docs", "lab", "stage-4.md"), "utf8");
+    expect(overview).toContain("either per-task identities backed by a registry or a policy service");
+    expect(stage4).toContain("Whichever secure fix you use");
+    expect(stage4).not.toContain("Whichever fix you use");
+    expect(stage4).toContain("checkin-agent:trip-alice-cun");
+    expect(stage4).toContain("Act 2 exploits exactly this over-grant");
+  });
+
   it("keeps the reference implementation out of the page body", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "stage-5.md"), "utf8");
     expect(page).toContain('<details class="lab-reveal answer"><summary>Show a reference solution</summary>');
