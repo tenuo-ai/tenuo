@@ -134,6 +134,20 @@ describe("generated Stage 5 guide", () => {
     expect(deployWorkflow).not.toMatch(/A ninety-minute security (?:game|challenge)/);
   });
 
+  it("lets visitors run the real Stage 1 breach before terminal setup", () => {
+    const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
+    const layout = readFileSync(join(ROOT, "..", "..", "docs", "_layouts", "lab.html"), "utf8");
+    expect(page).toContain('data-lab-browser-run aria-expanded="false"');
+    expect(page).toContain('data-lab-browser-output hidden');
+    expect(page).toContain("same deterministic Stage 1 attack the CLI runs");
+    expect(page).toContain("ROGUE ATTEMPTS BLOCKED");
+    expect(page).toContain("The breach is real. The rest needs a terminal.");
+    expect(page).toContain("Continue in Codespaces");
+    expect(page.indexOf("data-lab-browser-run")).toBeLessThan(page.indexOf("git clone"));
+    expect(layout).toContain("browserOutput.hidden = false");
+    expect(layout).toContain("browserRun.setAttribute('aria-expanded', 'true')");
+  });
+
   it("states both secure Stage 4 branches and names their intentional over-grant", () => {
     const overview = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
     const stage4 = readFileSync(join(ROOT, "..", "..", "docs", "lab", "stage-4.md"), "utf8");

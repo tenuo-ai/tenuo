@@ -146,6 +146,18 @@ layout: default
   .lab-start { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 1rem 0; }
   .lab-start h2 { margin-top: 0.4rem; }
   .lab-button { display: inline-block; padding: 10px 16px; border-radius: 8px; background: var(--accent); color: #0a0a0a !important; font-weight: 600; text-decoration: none; margin: 6px 0; }
+  .lab-button.secondary { background: transparent; color: var(--accent) !important; border: 1px solid var(--accent); }
+  .lab-browser-demo { margin: 1.4rem 0 2rem; padding: 22px; border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 12px; background: linear-gradient(135deg, rgba(56, 189, 248, 0.09), rgba(168, 85, 247, 0.04) 70%); }
+  .lab-browser-demo h2 { margin: 0.2rem 0 0.5rem; }
+  .lab-browser-run { margin-top: 10px; padding: 11px 18px; border: 0; border-radius: 8px; background: var(--accent); color: #0a0a0a; font: inherit; font-weight: 700; cursor: pointer; }
+  .lab-browser-run:hover { background: var(--accent-dim); }
+  .lab-browser-run:focus-visible { outline: 2px solid var(--text-bright); outline-offset: 3px; }
+  .lab-browser-output { margin-top: 18px; }
+  .lab-browser-output:focus { outline: none; }
+  .lab-browser-terminal { max-height: 420px; overflow: auto; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--code-bg); font-size: 0.76rem; line-height: 1.5; }
+  .lab-browser-next { padding-top: 8px; }
+  .lab-browser-next h3 { color: var(--green); }
+  .lab-browser-actions { display: flex; flex-wrap: wrap; gap: 10px; }
   .lab-prep { margin: 0.3rem 0 0 1.1rem; font-size: 0.9rem; }
   .lab-mission table { font-size: 0.9rem; }
   .lab-mission th { color: var(--text-muted); font-weight: 500; width: 14%; }
@@ -264,5 +276,16 @@ layout: default
       });
       pre.appendChild(b);
     });
+
+    var browserRun = document.querySelector('[data-lab-browser-run]');
+    var browserOutput = document.querySelector('[data-lab-browser-output]');
+    if (browserRun && browserOutput) {
+      browserRun.addEventListener('click', function () {
+        browserOutput.hidden = false;
+        browserRun.setAttribute('aria-expanded', 'true');
+        browserRun.textContent = '✓ Breach replayed';
+        browserOutput.focus();
+      });
+    }
   })();
 </script>
