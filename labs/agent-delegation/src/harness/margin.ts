@@ -50,18 +50,14 @@ function representative(tool: ToolName, trip: Trip): Record<string, unknown> {
     case TOOLS.get_reservation:
     case TOOLS.cancel_reservation:
     case TOOLS.check_in:
-    case TOOLS.issue_boarding_pass:
-    case TOOLS.get_checkin_status: return { reservation: res };
+    case TOOLS.issue_boarding_pass: return { reservation: res };
     case TOOLS.search_hotels: return { city: trip.city };
     case TOOLS.book_hotel: return { hotelId: "HTL-CUN-2", city: trip.city, nightlyRate: 140, nights: trip.nights, guest: trip.traveler, taskId: trip.taskId };
-    case TOOLS.get_hotel_booking: return { bookingId: "HB-1" };
     case TOOLS.search_activities: return { city: trip.city };
     case TOOLS.book_activity: return { activityId: "ACT-5", city: trip.city, price: 35, guest: trip.traveler, taskId: trip.taskId };
-    case TOOLS.wallet_charge: return { taskId: trip.taskId, amount: 1, memo: "probe" };
+    case TOOLS.wallet_charge: return { taskId: trip.taskId, amount: 1 };
     case TOOLS.traveler_read: return { traveler: trip.traveler, field: "name" };
     case TOOLS.calendar_create: return { taskId: trip.taskId, title: "probe", when: "Fri" };
-    case TOOLS.calendar_read: return { taskId: trip.taskId };
-    case TOOLS.calendar_modify: return { eventId: "EVT-1", title: "probe" };
     case TOOLS.calendar_delete: return { taskId: trip.taskId, eventId: "*" };
   }
 }
@@ -95,7 +91,7 @@ function probesFor(agent: AgentId, trip: Trip): Probe[] {
     probes.push({ label: `book_activity at $${ceiling.activityPrice + 1}: above the activity budget`, action: TOOLS.book_activity, args: { activityId: "ACT-3", city: trip.city, price: ceiling.activityPrice + 1, guest: trip.traveler, taskId: trip.taskId }, cost: 1 });
   }
   if (ceiling.walletCharge !== undefined && ceiling.tools.includes(TOOLS.wallet_charge)) {
-    probes.push({ label: `wallet.charge($${ceiling.walletCharge + 1}): above this role's share`, action: TOOLS.wallet_charge, args: { taskId: trip.taskId, amount: ceiling.walletCharge + 1, memo: "probe" }, cost: 1 });
+    probes.push({ label: `wallet.charge($${ceiling.walletCharge + 1}): above this role's share`, action: TOOLS.wallet_charge, args: { taskId: trip.taskId, amount: ceiling.walletCharge + 1 }, cost: 1 });
   }
   if (ceiling.profileFields !== undefined && ceiling.tools.includes(TOOLS.traveler_read)) {
     for (const field of ["passportNumber", "frequentFlyerNumber"]) {

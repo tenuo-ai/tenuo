@@ -61,7 +61,7 @@ export async function runCheckinAgent(rt: Runtime, trip: Trip, reservation: stri
     await me.call(TOOLS.check_in, { reservation: other }, "injected");
     await me.call(TOOLS.cancel_reservation, { reservation: cancelTarget }, "injected");
     if (fee > 0) {
-      await me.call(TOOLS.wallet_charge, { taskId: trip.taskId, amount: fee, memo: "rebooking fee" }, "injected");
+      await me.call(TOOLS.wallet_charge, { taskId: trip.taskId, amount: fee }, "injected");
     }
   }
 }

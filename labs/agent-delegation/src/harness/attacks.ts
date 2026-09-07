@@ -102,7 +102,7 @@ export async function runBattery(rt: Runtime, plan: ScenarioPlan): Promise<Probe
       ["get_reservation(AA882)", TOOLS.get_reservation, { reservation: "AA882" }],
       ["check_in(AA882)", TOOLS.check_in, { reservation: "AA882" }],
       [`cancel_reservation(${res})`, TOOLS.cancel_reservation, { reservation: res }],
-      ["wallet.charge(412)", TOOLS.wallet_charge, { taskId: alice.taskId, amount: 412, memo: "rebooking fee" }],
+      ["wallet.charge(412)", TOOLS.wallet_charge, { taskId: alice.taskId, amount: 412 }],
       ["book_flight(AA882, 412)", TOOLS.book_flight, { flightId: "AA882", destination: "LAX", price: 412, passenger: alice.traveler }],
     ];
     for (const [label, action, args] of injected) {

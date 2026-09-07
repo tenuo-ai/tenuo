@@ -22,6 +22,6 @@ export async function runActivityAgent(rt: Runtime, trip: Trip): Promise<void> {
     taskId: trip.taskId,
   });
   if (booked.allowed && booked.error === undefined) {
-    await me.call(TOOLS.wallet_charge, { taskId: trip.taskId, amount: pick.price, memo: `activity ${pick.activityId}` });
+    await me.call(TOOLS.wallet_charge, { taskId: trip.taskId, amount: pick.price });
   }
 }

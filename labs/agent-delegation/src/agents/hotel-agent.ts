@@ -23,7 +23,7 @@ export async function runHotelAgent(rt: Runtime, trip: Trip): Promise<void> {
     taskId: trip.taskId,
   });
   if (booked.allowed && booked.error === undefined) {
-    await me.call(TOOLS.wallet_charge, { taskId: trip.taskId, amount: pick.nightlyRate * trip.nights, memo: `hotel ${pick.hotelId}` });
+    await me.call(TOOLS.wallet_charge, { taskId: trip.taskId, amount: pick.nightlyRate * trip.nights });
   }
 
   if (rt.compromised === "hotel-agent") {
@@ -68,10 +68,10 @@ async function runCompromisedHotelAgent(me: Agent, trip: Trip, approved: Hotel):
       record("DENIED", "hotel-agent holds no session to narrow", "NO_SESSION");
     } else {
       try {
-        const { exact, max, pattern } = await import("@tenuo/core");
+        const { exact, max } = await import("@tenuo/core");
         const handed = tenuo.fleet["hotel-agent"].tenuo.narrow(
           mine,
-          { "wallet.charge": { taskId: exact(trip.taskId), amount: max(200), memo: pattern("*") } },
+          { "wallet.charge": { taskId: exact(trip.taskId), amount: max(200) } },
           { holder: tenuo.fleet["activity-agent"].publicKey },
         );
         tenuo.importFor("activity-agent", `${trip.taskId}:stolen-wallet`, handed);

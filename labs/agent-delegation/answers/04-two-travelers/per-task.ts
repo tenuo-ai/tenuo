@@ -45,11 +45,11 @@ export const config: PolicyConfig = {
       reservations: ["DL331"],
     },
     "boarding-agent:trip-alice-cun": {
-      actions: ["get_checkin_status", "issue_boarding_pass"],
+      actions: ["issue_boarding_pass"],
       reservations: ["UA214"],
     },
     "boarding-agent:trip-bob-sea": {
-      actions: ["get_checkin_status", "issue_boarding_pass"],
+      actions: ["issue_boarding_pass"],
       reservations: ["DL331"],
     },
   },

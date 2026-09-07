@@ -33,7 +33,7 @@ export const config: PolicyConfig = {
       reservations: ["UA214"],
     },
     "boarding-agent": {
-      actions: ["get_checkin_status", "issue_boarding_pass"],
+      actions: ["issue_boarding_pass"],
       reservations: ["UA214"],
     },
   },

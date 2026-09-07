@@ -54,8 +54,6 @@ export interface ActivityBooking {
 export interface WalletCharge {
   readonly taskId: string;
   readonly amount: number;
-  readonly memo: string;
-  readonly by: string;
 }
 
 /** All mutable state for one run. Fresh per scenario. */
@@ -190,12 +188,6 @@ export function services(world: World): Record<string, (args: Record<string, unk
       r.boardingPass = `BP-${id}-${r.passenger.split(" ")[0]?.toUpperCase() ?? "PAX"}`;
       return { reservation: id, boardingPass: r.boardingPass };
     },
-    get_checkin_status: (a) => {
-      const id = str(a, "reservation");
-      const r = world.reservations.get(id);
-      if (r === undefined) throw new ServiceError(`no reservation ${id}`);
-      return { reservation: id, status: r.status };
-    },
     search_hotels: (a) => {
       const city = str(a, "city");
       return { results: HOTELS.filter((h) => h.city === city) };
@@ -212,12 +204,6 @@ export function services(world: World): Record<string, (args: Record<string, unk
       const bookingId = world.nextId("HB");
       world.hotelBookings.set(bookingId, { bookingId, hotelId, guest, nights, nightlyRate, taskId });
       return { bookingId, total: nightlyRate * nights };
-    },
-    get_hotel_booking: (a) => {
-      const id = str(a, "bookingId");
-      const b = world.hotelBookings.get(id);
-      if (b === undefined) throw new ServiceError(`no booking ${id}`);
-      return b;
     },
     search_activities: (a) => {
       const city = str(a, "city");
@@ -245,7 +231,7 @@ export function services(world: World): Record<string, (args: Record<string, unk
       const balance = world.balance(taskId);
       if (amount > balance) throw new ServiceError(`insufficient funds: ${amount} > ${balance}`);
       world.wallets.set(taskId, balance - amount);
-      world.charges.push({ taskId, amount, memo: typeof a["memo"] === "string" ? a["memo"] : "", by: "" });
+      world.charges.push({ taskId, amount });
       return { taskId, charged: amount, balance: balance - amount };
     },
     "traveler.read": (a) => {
@@ -261,16 +247,6 @@ export function services(world: World): Record<string, (args: Record<string, unk
       const event: CalendarEvent = { eventId, taskId: str(a, "taskId"), title: str(a, "title"), when: str(a, "when") };
       world.calendar.set(eventId, event);
       return event;
-    },
-    "calendar.read": (a) => {
-      const taskId = str(a, "taskId");
-      return { events: [...world.calendar.values()].filter((e) => e.taskId === taskId) };
-    },
-    "calendar.modify": (a) => {
-      const e = world.calendar.get(str(a, "eventId"));
-      if (e === undefined) throw new ServiceError("no such event");
-      e.title = str(a, "title");
-      return e;
     },
     "calendar.delete": (a) => {
       const id = a["eventId"];

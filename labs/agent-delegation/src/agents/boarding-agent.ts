@@ -10,6 +10,5 @@ export async function runBoardingAgent(
   credential?: Credential,
 ): Promise<void> {
   const me = new Agent(rt, "boarding-agent", trip, credential);
-  await me.call(TOOLS.get_checkin_status, { reservation });
   await me.call(TOOLS.issue_boarding_pass, { reservation });
 }

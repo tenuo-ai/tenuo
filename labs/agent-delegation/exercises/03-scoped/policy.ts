@@ -24,13 +24,13 @@ export const config: PolicyConfig = {
     //   profileFields:  ["name"]    for traveler.read
 
     "travel-agent": {
-      actions: ["traveler.read", "calendar.create", "calendar.read", "calendar.modify", "calendar.delete", "wallet.charge"],
+      actions: ["traveler.read", "calendar.create", "calendar.delete", "wallet.charge"],
     },
     "flight-agent": {
       actions: ["traveler.read", "search_flights", "book_flight", "get_reservation", "wallet.charge"],
     },
     "hotel-agent": {
-      actions: ["traveler.read", "search_hotels", "book_hotel", "get_hotel_booking", "wallet.charge"],
+      actions: ["traveler.read", "search_hotels", "book_hotel", "wallet.charge"],
     },
     "activity-agent": {
       actions: ["traveler.read", "search_activities", "book_activity", "wallet.charge"],
@@ -39,7 +39,7 @@ export const config: PolicyConfig = {
       actions: ["get_reservation", "check_in"],
     },
     "boarding-agent": {
-      actions: ["get_checkin_status", "issue_boarding_pass"],
+      actions: ["issue_boarding_pass"],
     },
   },
 };

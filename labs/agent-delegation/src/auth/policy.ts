@@ -8,7 +8,7 @@ import { TOOLS, type ToolName } from "../mission.ts";
 export interface RolePolicy {
   /** Tool names this identity may call. */
   readonly actions: readonly ToolName[];
-  /** Reservation ids for get_reservation / check_in / cancel_reservation / issue_boarding_pass / get_checkin_status. Absent means any. */
+  /** Reservation ids for get_reservation / check_in / cancel_reservation / issue_boarding_pass. Absent means any. */
   readonly reservations?: readonly string[];
   /** For search_flights / book_flight. Absent means any. */
   readonly destination?: string;
@@ -46,7 +46,6 @@ export const RESERVATION_ACTIONS: readonly ToolName[] = [
   TOOLS.check_in,
   TOOLS.cancel_reservation,
   TOOLS.issue_boarding_pass,
-  TOOLS.get_checkin_status,
 ];
 
 /** Which identity entry applies to this actor on this task. */
@@ -127,13 +126,13 @@ export function evaluateRule(
 /** Role-shaped grants for stage 2: what each agent's job title implies, nothing narrower. */
 export const ROLE_POLICY: Policy = {
   "travel-agent": {
-    actions: [TOOLS.search_flights, TOOLS.search_hotels, TOOLS.search_activities, TOOLS.traveler_read, TOOLS.calendar_create, TOOLS.calendar_read, TOOLS.calendar_modify, TOOLS.calendar_delete, TOOLS.wallet_charge],
+    actions: [TOOLS.search_flights, TOOLS.search_hotels, TOOLS.search_activities, TOOLS.traveler_read, TOOLS.calendar_create, TOOLS.calendar_delete, TOOLS.wallet_charge],
   },
   "flight-agent": {
     actions: [TOOLS.search_flights, TOOLS.book_flight, TOOLS.get_reservation, TOOLS.wallet_charge, TOOLS.traveler_read],
   },
   "hotel-agent": {
-    actions: [TOOLS.search_hotels, TOOLS.book_hotel, TOOLS.get_hotel_booking, TOOLS.wallet_charge, TOOLS.traveler_read],
+    actions: [TOOLS.search_hotels, TOOLS.book_hotel, TOOLS.wallet_charge, TOOLS.traveler_read],
   },
   "activity-agent": {
     actions: [TOOLS.search_activities, TOOLS.book_activity, TOOLS.wallet_charge, TOOLS.traveler_read],
@@ -142,6 +141,6 @@ export const ROLE_POLICY: Policy = {
     actions: [TOOLS.get_reservation, TOOLS.check_in],
   },
   "boarding-agent": {
-    actions: [TOOLS.get_checkin_status, TOOLS.issue_boarding_pass],
+    actions: [TOOLS.issue_boarding_pass],
   },
 };

@@ -24,7 +24,7 @@ export async function runFlightAgent(rt: Runtime, trip: Trip): Promise<string | 
   if (!booked.allowed || booked.error !== undefined) {
     return undefined;
   }
-  await me.call(TOOLS.wallet_charge, { taskId: trip.taskId, amount: pick.price, memo: `flight ${pick.flightId}` });
+  await me.call(TOOLS.wallet_charge, { taskId: trip.taskId, amount: pick.price });
   const reservation = pick.flightId;
   const ok = me.handoff("checkin-agent", (chain, mine) => chain.flightToCheckin(mine, rt.tenuo!.fleet, trip, reservation), reservation);
   if (ok) {

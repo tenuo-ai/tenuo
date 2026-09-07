@@ -32,7 +32,7 @@ export const config: PolicyConfig = {
       actions: ["get_reservation", "check_in", "issue_boarding_pass"],
     },
     "boarding-agent": {
-      actions: ["get_checkin_status", "issue_boarding_pass"],
+      actions: ["issue_boarding_pass"],
     },
   },
 };

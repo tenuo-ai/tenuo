@@ -30,7 +30,6 @@ export function issueTrip(controlPlane: Tenuo, fleet: Fleet, trip: Trip): Sessio
       book_flight: { flightId: reservation, destination, price: max(trip.flightBudget), passenger: exact(trip.traveler) },
       get_reservation: { reservation },
       check_in: { reservation },
-      get_checkin_status: { reservation },
       issue_boarding_pass: { reservation },
       search_hotels: { city: exact(trip.city) },
       book_hotel: {
@@ -49,7 +48,7 @@ export function issueTrip(controlPlane: Tenuo, fleet: Fleet, trip: Trip): Sessio
         guest: exact(trip.traveler),
         taskId: exact(trip.taskId),
       },
-      "wallet.charge": { taskId: exact(trip.taskId), amount: max(trip.budget), memo: any() },
+      "wallet.charge": { taskId: exact(trip.taskId), amount: max(trip.budget) },
     },
     holder: fleet["travel-agent"].publicKey,
     ttlSeconds: 30 * 60,
@@ -69,9 +68,8 @@ export function travelToFlight(travel: Session, fleet: Fleet, trip: Trip): Sessi
       book_flight: { flightId: reservation, destination, price: max(trip.flightBudget), passenger: exact(trip.traveler) },
       get_reservation: { reservation },
       check_in: { reservation },
-      get_checkin_status: { reservation },
       issue_boarding_pass: { reservation },
-      "wallet.charge": { taskId: exact(trip.taskId), amount: max(trip.flightBudget), memo: any() },
+      "wallet.charge": { taskId: exact(trip.taskId), amount: max(trip.flightBudget) },
     },
     { holder: fleet["flight-agent"].publicKey, ttlSeconds: 10 * 60 },
   );
@@ -92,7 +90,7 @@ export function travelToHotel(travel: Session, fleet: Fleet, trip: Trip): Sessio
         guest: exact(trip.traveler),
         taskId: exact(trip.taskId),
       },
-      "wallet.charge": { taskId: exact(trip.taskId), amount: max(trip.hotelRateBudget * trip.nights), memo: any() },
+      "wallet.charge": { taskId: exact(trip.taskId), amount: max(trip.hotelRateBudget * trip.nights) },
     },
     { holder: fleet["hotel-agent"].publicKey, ttlSeconds: 10 * 60, terminal: true },
   );
@@ -112,7 +110,7 @@ export function travelToActivity(travel: Session, fleet: Fleet, trip: Trip): Ses
         guest: exact(trip.traveler),
         taskId: exact(trip.taskId),
       },
-      "wallet.charge": { taskId: exact(trip.taskId), amount: max(trip.activityBudget), memo: any() },
+      "wallet.charge": { taskId: exact(trip.taskId), amount: max(trip.activityBudget) },
     },
     { holder: fleet["activity-agent"].publicKey, ttlSeconds: 10 * 60 },
   );
@@ -129,7 +127,6 @@ export function flightToCheckin(flight: Session, fleet: Fleet, trip: Trip, reser
     {
       get_reservation: { reservation: only },
       check_in: { reservation: only },
-      get_checkin_status: { reservation: only },
       issue_boarding_pass: { reservation: only },
     },
     { holder: fleet["checkin-agent"].publicKey, ttlSeconds: 5 * 60 },
@@ -141,10 +138,7 @@ export function checkinToBoarding(checkin: Session, fleet: Fleet, trip: Trip, re
   const only = oneOf([reservation]);
   return fleet["checkin-agent"].tenuo.narrow(
     checkin,
-    {
-      get_checkin_status: { reservation: only },
-      issue_boarding_pass: { reservation: only },
-    },
+    { issue_boarding_pass: { reservation: only } },
     { holder: fleet["boarding-agent"].publicKey, ttlSeconds: 2 * 60 },
   );
 }
