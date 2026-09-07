@@ -121,6 +121,7 @@ npm run typecheck
 
 `@tenuo/core` is installed from `vendor/` until the npm beta that includes
 holder rebinding on delegation ships; then `package.json` moves to
-`@tenuo/core@beta`. CI rebuilds the package from this checkout, packs it over
-the vendored tarball, and runs every stage, so an SDK change that breaks a
-chain fails the build here rather than in a classroom.
+`@tenuo/core@beta`. CI rebuilds the package from this checkout, packs it into
+runner-temporary storage, replaces the installed vendored SDK with that fresh
+artifact, and runs every stage. An SDK change that breaks a chain therefore
+fails the build here rather than in a classroom.
