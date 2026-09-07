@@ -840,9 +840,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: tenuo-ts/pnpm-lock.yaml
 
-      # The lab installs @tenuo/core from a vendored tarball so participants
-      # never need Rust. CI rebuilds that tarball from this checkout first, so
-      # every stage runs against the SDK as it is in this commit.
+      # Participants install the pinned public @tenuo/core package and never
+      # need Rust. CI rebuilds the SDK from this checkout so every stage also
+      # runs against the implementation in this commit.
       - name: Build @tenuo/core from this checkout
         working-directory: tenuo-ts
         run: pnpm install --frozen-lockfile && pnpm build:wasm && pnpm --filter @tenuo/core build
@@ -861,7 +861,7 @@ jobs:
           TENUO_LAB_PACKAGE: ${{ runner.temp }}/tenuo-lab-package
         run: |
           # Install the lab reproducibly, then replace the participant-facing
-          # vendored SDK with the package built from this exact checkout.
+          # published SDK with the package built from this exact checkout.
           npm ci --no-audit --no-fund
           npm install --no-save --package-lock=false "$TENUO_LAB_PACKAGE"/*.tgz
           npm run typecheck

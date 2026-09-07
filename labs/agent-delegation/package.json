@@ -22,7 +22,7 @@
     "site": "tsx site/build.ts"
   },
   "dependencies": {
-    "@tenuo/core": "file:vendor/tenuo-core-0.2.4-beta.0.tgz"
+    "@tenuo/core": "0.2.5-beta.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
