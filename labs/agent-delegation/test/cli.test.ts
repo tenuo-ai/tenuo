@@ -127,6 +127,9 @@ describe("generated Stage 5 guide", () => {
     expect(page).toContain("A ninety-minute security challenge");
     expect(page).not.toContain("security game");
     expect(page.match(/npm run reset/g)).toHaveLength(1);
+    const deployWorkflow = readFileSync(join(ROOT, "..", "..", ".github", "workflows", "docs.yml"), "utf8");
+    expect(deployWorkflow).toContain("A ninety-minute security challenge");
+    expect(deployWorkflow).not.toContain("A ninety-minute security game");
   });
 
   it("keeps the reference implementation out of the page body", () => {
