@@ -52,18 +52,28 @@ the full guide is at [tenuo.ai/lab](https://tenuo.ai/lab/), one page per stage.
 
 ## What leaves your machine
 
-Nothing. The lab runs locally and makes no network requests.
+Nothing, unless you say yes. The first `npm run lab` asks once whether to
+share anonymous progress with the Tenuo team: stage numbers, which command
+ran, whether the trip worked, the score, the names of checks that did not
+land, the time between runs, which stage 4 fix you used, the lab version,
+whether you run locally or in Codespaces, and, from the hosted guide, which
+pages and hints you open from the links the lab prints. Never your code, your
+files, your name, or anything about your machine beyond OS and Node version.
+`npm run telemetry`
+shows the current setting and endpoint; `npm run telemetry -- off` stops it.
+Everything is sent to a small open collector whose source is in
+`collector/`, so you can read exactly what it keeps.
 
 ## How it works
 
-Every tool call passes through one chokepoint (`src/auth/`). Stages 1 to 4
+Every tool call passes through one chokepoint (`src/auth/`). Stages 1 to 5
 use three classic approaches: one shared key, one identity per agent, and
 scoped rules you write yourself. Stage 6 switches to
 [Tenuo](https://github.com/tenuo-ai/tenuo): each agent gets its own key, a
 control plane signs the trip's authority, and every handoff narrows what the
 next agent holds. The signer stays outside the agent runtime, and each holder
 private key remains inside its agent boundary; chain code sees recipient public
-keys only. Stages 6 and 7 extend the chain and handle an incident.
+keys only. Stages 7 to 9 are extensions.
 
 The agents are scripted and deterministic. They follow the same tool-call
 intents a live model produced when this scenario was designed, including
@@ -81,14 +91,18 @@ The stage-by-stage guide at [tenuo.ai/lab](https://tenuo.ai/lab) is generated
 from this directory, so it cannot drift from the code:
 
 ```bash
-npm run site            # rebuild docs/lab from the lab, exercises, and real runs
-npm run site -- --check # fail if docs/lab is stale
+npm run site            # rebuild docs/lab from site/spec.ts, the exercise files, and real runs
+npm run site -- --check # what CI runs: fail if docs/lab is stale
 ```
 
-Every expected-output panel is captured from the CLI using the reference
-answers and a throwaway state directory. The CLI prints the current stage's
-page, including completed stages in the link. Add `-- --open` to `npm run lab`
-or `npm run next` to open it.
+Every "what you should see" panel on the site is the CLI's own output,
+captured by running the reference answers with a throwaway state directory.
+Code on the pages is pulled from `exercises/` and `answers/` by symbol name.
+Edit `site/spec.ts` to change what a stage page says, then rerun and commit.
+
+The CLI prints the page for the current stage on every run, with the stages
+this install has completed in the link, so the page's progress matches the
+terminal. `npm run lab -- --open` and `npm run next -- --open` open it.
 
 ## After the lab
 
@@ -115,7 +129,8 @@ src/
 exercises/          the files you edit, one folder per stage
 answers/            reference solutions (npm run ambassador -- answers N)
 explainers/         optional reading; you can finish without opening one
-site/               source and generator for the hosted guide
+collector/          the opt-in event collector, a Cloudflare Worker; logic tested here
+scripts/            guide-to-site.py turns the participant guide into docs/lab
 test/               every stage, run with its reference solution
 ```
 

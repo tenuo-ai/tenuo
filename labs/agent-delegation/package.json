@@ -15,6 +15,7 @@
     "audit": "tsx src/cli/index.ts audit",
     "next": "tsx src/cli/index.ts next",
     "share": "tsx src/cli/index.ts share",
+    "telemetry": "tsx src/cli/index.ts telemetry",
     "reset": "tsx src/cli/index.ts reset",
     "ambassador": "tsx src/cli/index.ts ambassador",
     "test": "vitest run",

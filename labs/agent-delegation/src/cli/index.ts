@@ -8,6 +8,7 @@
  *   npm run audit      what every agent can currently do
  *   npm run next       move to the next stage
  *   npm run share      write an anonymized score breakdown you can hand to your host
+ *   npm run telemetry  on | off | status: opt-in anonymous progress events
  *   npm run reset      back to stage 1
  */
 process.env.NODE_ENV ??= "development";
@@ -25,17 +26,30 @@ import type { AuditRecord } from "../audit.ts";
 import { AGENTS } from "../mission.ts";
 import { loadState, ROOT, saveState } from "../state.ts";
 import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stages.ts";
+import { CONSENT_LINES, emit, enterStage, eventsUrl, sessionParam, setTelemetry, telemetry, type Fix } from "../telemetry.ts";
 
 const SITE = "https://tenuo.ai";
-
+/** The stage page, with the stages this install has completed, so the site's progress matches the terminal. */
 function guideUrl(n: number): string {
   const params = new URLSearchParams();
   const done = [...loadState().completed].sort((a, b) => a - b);
   if (done.length > 0) params.set("done", done.join(","));
+  // Only when events are on: lets the guide file page and hint events under the same anonymous id.
+  const sid = sessionParam();
+  if (sid !== undefined) params.set("sid", sid);
   const query = params.toString();
   return `${SITE}/lab/stage-${n}${query.length > 0 ? `?${query}` : ""}`;
 }
 
+/** Which stage 4 repair a scoped policy file uses, for the progress events. */
+function fixOf(built: Built): Fix | undefined {
+  const config = built.exercise?.config;
+  if (config === undefined) return undefined;
+  if (config.policyService === true) return "policy-service";
+  return Object.keys(config.policy).some((k) => k.includes(":")) ? "per-task" : undefined;
+}
+
+/** Open a URL in the default browser without blocking or failing the command. */
 function openInBrowser(url: string): void {
   const [bin, pre] = process.platform === "darwin" ? ["open", []] : process.platform === "win32" ? ["cmd", ["/c", "start", ""]] : ["xdg-open", []];
   try {
@@ -66,12 +80,17 @@ function header(def: StageDef, scenario: Scenario): void {
   console.log("");
 }
 
+/** A link that opens the explorer on the chain Boarding Agent holds, so students can see every hop. */
 function explorerLink(built: Built): string | undefined {
   const tenuo = built.runtime.tenuo;
   const trip = built.plan.trips[0];
-  if (tenuo === undefined || trip === undefined) return undefined;
+  if (tenuo === undefined || trip === undefined) {
+    return undefined;
+  }
   const session = tenuo.session("boarding-agent", trip.taskId) ?? tenuo.session("checkin-agent", trip.taskId) ?? tenuo.session("flight-agent", trip.taskId);
-  if (session === undefined) return undefined;
+  if (session === undefined) {
+    return undefined;
+  }
   const chain = session.toWire();
   const state = {
     chain,
@@ -89,6 +108,27 @@ function printExplorerLink(built: Built): void {
     console.log(dim("  See the chain the agents are holding, hop by hop, in the explorer:"));
     console.log(dim(`  ${url}`));
     console.log("");
+  }
+}
+
+/** One-time question, TTY only. Silence is a no. */
+async function consent(): Promise<void> {
+  const state = loadState();
+  if (state.telemetry !== undefined || !process.stdin.isTTY) {
+    return;
+  }
+  console.log("");
+  for (const line of CONSENT_LINES) console.log(`  ${line}`);
+  console.log("");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = (await rl.question(dim("  Share? [y/N] "))).trim().toLowerCase();
+  rl.close();
+  const yes = answer === "y" || answer === "yes";
+  setTelemetry(yes, flag("cohort"));
+  console.log(dim(yes ? "  Thank you. npm run telemetry -- off stops it at any time." : "  Nothing will be sent. npm run telemetry -- on if you change your mind."));
+  console.log("");
+  if (yes) {
+    await emit("opt_in", state.stage);
   }
 }
 
@@ -206,6 +246,8 @@ async function warmup(): Promise<void> {
 
 async function cmdLab(def: StageDef): Promise<void> {
   await warmup();
+  await consent();
+  await enterStage(def.n);
   const scenario = def.scenario;
   header(def, scenario);
   if (args.includes("--open")) openInBrowser(guideUrl(def.n));
@@ -213,6 +255,7 @@ async function cmdLab(def: StageDef): Promise<void> {
   console.log("");
   const built = await runStage(def, scenario);
   if (printExerciseError(built)) {
+    await emit("run", def.n, { command: "lab", scenario, exerciseLoadError: true });
     return;
   }
   console.log(bold("WALLET  ") + walletLine(built));
@@ -224,6 +267,7 @@ async function cmdLab(def: StageDef): Promise<void> {
   const functionality = checkFunctionality(built.plan, built.runtime.audit.records, built.runtime.world);
   printFunctionality(functionality);
   printExplorerLink(built);
+  await emit("run", def.n, { command: "lab", scenario, functionalityOk: functionality.ok, centralCalls: built.runtime.audit.centralCalls() });
   if (def.breaksTrip === true) {
     console.log(dim("  The terminal link breaks the trip on purpose. Notice where, and who decided."));
     console.log("");
@@ -243,7 +287,7 @@ async function cmdTrace(def: StageDef): Promise<void> {
     console.log("");
     console.log(centralCallsLine(built));
     console.log("");
-    printExplorerLink(built);
+    await emit("run", def.n, { command: "trace", scenario, centralCalls: built.runtime.audit.centralCalls() });
   }
 }
 
@@ -270,9 +314,11 @@ async function attackAll(def: StageDef): Promise<Evaluated[]> {
 }
 
 async function cmdAttack(def: StageDef): Promise<void> {
+  await enterStage(def.n);
   for (const { built, probes, functionality } of await attackAll(def)) {
     header(def, built.plan.name);
     if (printExerciseError(built)) {
+      await emit("run", def.n, { command: "attack", scenario: built.plan.name, exerciseLoadError: true });
       return;
     }
     console.log(bold("WALLET  ") + walletLine(built));
@@ -292,6 +338,16 @@ async function cmdAttack(def: StageDef): Promise<void> {
     console.log(failed === 0 ? green(`  clean: all ${probes.length} checks landed as expected`) : yellow(`  ${failed} of ${probes.length} checks did not land as expected`));
     console.log(centralCallsLine(built));
     console.log("");
+    printExplorerLink(built);
+    const fix = fixOf(built);
+    await emit("run", def.n, {
+      command: "attack",
+      scenario: built.plan.name,
+      functionalityOk: functionality.ok,
+      failedChecks: probes.filter((p) => !p.ok).map((p) => p.label),
+      centralCalls: built.runtime.audit.centralCalls(),
+      ...(fix !== undefined ? { fix } : {}),
+    });
   }
   if (def.starAsk === true) {
     console.log(dim("  That check ran locally, in the agent's own process, with no server to ask."));
@@ -318,11 +374,13 @@ async function evaluateStage(def: StageDef): Promise<{ runs: Evaluated[]; functi
 }
 
 async function cmdScore(def: StageDef): Promise<void> {
+  await enterStage(def.n);
   header(def, def.scenario);
   const e = await evaluateStage(def);
   if (e === undefined) {
     const built = await runStage(def, def.scenario);
     printExerciseError(built);
+    await emit("run", def.n, { command: "score", scenario: def.scenario, exerciseLoadError: true });
     return;
   }
   const { functionality, probes, margin, score: s } = e;
@@ -367,6 +425,18 @@ async function cmdScore(def: StageDef): Promise<void> {
       console.log("");
     }
   }
+  const fix = e.runs[0] !== undefined ? fixOf(e.runs[0].built) : undefined;
+  await emit("run", def.n, {
+    command: "score",
+    scenario: def.scenario,
+    functionalityOk: functionality.ok,
+    score: s.total,
+    failedChecks: failed.map((p) => p.label),
+    marginPoints: s.margin.points,
+    marginAgents: AGENTS.filter((a) => margin.perAgent[a] > 0),
+    ...(e.runs[0] !== undefined ? { centralCalls: e.runs[0].built.runtime.audit.centralCalls() } : {}),
+    ...(fix !== undefined ? { fix } : {}),
+  });
 }
 
 async function cmdShare(def: StageDef): Promise<void> {
@@ -394,7 +464,31 @@ async function cmdShare(def: StageDef): Promise<void> {
   writeFileSync(file, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
   console.log("");
-  console.log(dim(`  Written to ${file}. Hand the file to your session host if you want to; it carries no name, no key, and no code.`));
+  const t = telemetry();
+  if (t?.enabled === true) {
+    await emit("share", def.n, { command: "share", scenario: def.scenario, functionalityOk: !e.score.gated, score: e.score.total, failedChecks: report.failedChecks });
+    console.log(dim(`  Written to ${file}, and the same breakdown was sent as an anonymous event (npm run telemetry -- status).`));
+  } else {
+    console.log(dim(`  Written to ${file}. Nothing was sent anywhere. Hand the file to your session host if you want to; it carries no name, no key, and no code.`));
+  }
+}
+
+function cmdTelemetry(): void {
+  const sub = args[1] ?? "status";
+  if (sub === "on" || sub === "off") {
+    const t = setTelemetry(sub === "on", flag("cohort"));
+    console.log(sub === "on" ? `Anonymous progress events are on (session ${t.sessionId.slice(0, 8)}…). npm run telemetry -- off stops them.` : "Anonymous progress events are off. Nothing is sent.");
+    void emit(sub === "on" ? "opt_in" : "opt_out", loadState().stage);
+    return;
+  }
+  const t = telemetry();
+  if (t === undefined) {
+    console.log("Not decided yet: the first npm run lab asks. Nothing has been sent.");
+  } else {
+    console.log(`${t.enabled ? "On" : "Off"}. session ${t.sessionId.slice(0, 8)}…${t.cohort !== undefined ? `, cohort ${t.cohort}` : ""}, endpoint ${eventsUrl()}`);
+  }
+  console.log("");
+  for (const line of CONSENT_LINES.slice(2, 6)) console.log(`  ${line}`);
 }
 
 async function cmdAudit(def: StageDef): Promise<void> {
@@ -409,6 +503,7 @@ async function cmdAudit(def: StageDef): Promise<void> {
     for (const line of text) console.log(dim(line));
   }
   console.log("");
+  await emit("run", def.n, { command: "audit", scenario: def.scenario });
 }
 
 async function cmdNext(): Promise<void> {
@@ -419,15 +514,20 @@ async function cmdNext(): Promise<void> {
     return;
   }
   saveState({ ...state, stage: to });
+  await emit("run", to, { command: "next" });
   console.log(`Now on stage ${to}: ${stageDef(to).title}. Run npm run lab.`);
   console.log(dim(`  guide: ${guideUrl(to)}`));
   if (args.includes("--open")) openInBrowser(guideUrl(to));
+  await enterStage(to);
 }
 
 async function cmdReset(): Promise<void> {
   const state = loadState();
+  const before = state.stage;
+  // Progress goes; the consent answer and the warm-up flag stay.
   saveState({ ...state, stage: 1, completed: [] });
   console.log("Back to stage 1. Your edits in exercises/ are untouched; `git checkout exercises` restores the originals.");
+  await emit("run", before, { command: "reset" });
 }
 
 function cmdAmbassador(): void {
@@ -478,6 +578,9 @@ async function main(): Promise<void> {
   const state = loadState();
   const n = flag("stage") !== undefined && command !== "next" && command !== "ambassador" ? Number(flag("stage")) : state.stage;
   const def = stageDef(n);
+  if (flag("cohort") !== undefined && state.telemetry !== undefined) {
+    setTelemetry(state.telemetry.enabled, flag("cohort"));
+  }
   if (args.includes("--live")) {
     console.log(yellow("  --live is not wired in this build: the lab runs its recorded, deterministic agents. Every test and score is real."));
   }
@@ -487,12 +590,13 @@ async function main(): Promise<void> {
     case "attack": return cmdAttack(def);
     case "score": return cmdScore(def);
     case "share": return cmdShare(def);
+    case "telemetry": return cmdTelemetry();
     case "audit": return cmdAudit(def);
     case "next": return cmdNext();
     case "reset": return cmdReset();
     case "ambassador": return cmdAmbassador();
     default:
-      console.log(`unknown command ${command}. Try: lab, trace, attack, score, share, audit, next, reset, ambassador`);
+      console.log(`unknown command ${command}. Try: lab, trace, attack, score, share, telemetry, audit, next, reset, ambassador`);
   }
 }
 

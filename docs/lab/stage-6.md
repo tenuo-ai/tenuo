@@ -37,7 +37,7 @@ export function steal(tenuo: TenuoMode, boardingSession: Session): StealOutcome 
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="6:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the checks and read the reason on the <strong>STOLEN WARRANT</strong> line carefully.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 69 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks and read the reason on the <strong>STOLEN WARRANT</strong> line carefully.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 72 lines</span></summary><pre><code>
 Stage 6 of 7: A stolen permission, and the end of the line   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-6
 
@@ -105,7 +105,10 @@ TERMINAL
       expected DENIED: boarding-agent now holds {issue_boarding_pass} at depth 3
 
   1 of 14 checks did not land as expected
-  central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div>
+  central_calls during the trip: 0   (calls to a component outside the acting agent)
+
+  See the chain the agents are holding, hop by hop, in the explorer:
+  https://tenuo.ai/explorer/?s=…</code></pre></details></div>
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="6:2"><span>3</span></label>
