@@ -8,6 +8,7 @@
  *   npm run audit      what every agent can currently do
  *   npm run next       move to the next stage
  *   npm run share      write an anonymized score breakdown you can hand to your host
+ *   npm run star       optionally star Tenuo without leaving the terminal
  *   npm run reset      back to stage 1
  */
 process.env.NODE_ENV ??= "development";
@@ -26,6 +27,7 @@ import { AGENTS } from "../mission.ts";
 import { LAB_HOME, loadState, ROOT, saveState } from "../state.ts";
 import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stages.ts";
 import { recordAttempt, snapshot } from "../telemetry.ts";
+import { starRepository } from "../star.ts";
 
 const SITE = "https://tenuo.ai";
 
@@ -346,9 +348,18 @@ async function cmdAttack(def: StageDef): Promise<void> {
   if (def.starAsk === true) {
     console.log(dim("  That check ran locally, in the agent's own process, with no server to ask."));
     console.log(dim("  The code that did it is open source: github.com/tenuo-ai/tenuo"));
-    console.log(dim("  A star helps other people find it."));
+    console.log(dim("  If this changed how you think about agent permissions, you can star Tenuo without leaving the terminal:"));
+    console.log(`  ${bold("npm run star")} ${dim("(optional; works locally and in Codespaces)")}`);
     console.log("");
   }
+}
+
+function cmdStar(): void {
+  const result = starRepository();
+  console.log("");
+  console.log(result.ok ? green(`  ${result.message}`) : yellow(`  ${result.message}`));
+  console.log("");
+  if (!result.ok) process.exitCode = 1;
 }
 
 async function evaluateStage(def: StageDef): Promise<{ runs: Evaluated[]; functionality: Functionality; probes: ProbeResult[]; margin: Margin; score: Score } | undefined> {
@@ -549,12 +560,13 @@ async function main(): Promise<void> {
     case "attack": return cmdAttack(def);
     case "score": return cmdScore(def);
     case "share": return cmdShare(def);
+    case "star": return cmdStar();
     case "audit": return cmdAudit(def);
     case "next": return cmdNext();
     case "reset": return cmdReset();
     case "ambassador": return cmdAmbassador();
     default:
-      console.log(`unknown command ${command}. Try: lab, trace, attack, score, share, audit, next, reset, ambassador`);
+      console.log(`unknown command ${command}. Try: lab, trace, attack, score, share, star, audit, next, reset, ambassador`);
   }
 }
 

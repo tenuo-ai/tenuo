@@ -294,7 +294,7 @@ export function fleetDiagram(o: FleetOptions = {}): string {
     service: { x: COL[2], y: rowY[1] + 10, w: NODE_W + 36, h: NODE_H },
     wallet: { x: COL[3], y: rowY[2] + 11, w: NODE_W, h: 26 },
   };
-  const height = rowY[2] + NODE_H + 22 + (o.caption !== undefined ? 24 : 0);
+  const height = rowY[2] + NODE_H + 22;
   const out: string[] = [];
   const edge = (k: EdgeKey) => o.edges?.[k] ?? "normal";
   const opts = (k: EdgeKey, at: "above" | "below" | "right"): ArrowOptions => {
@@ -347,10 +347,7 @@ export function fleetDiagram(o: FleetOptions = {}): string {
   for (const e of o.extra ?? []) {
     out.push(route(boxes[e.from], boxes[e.to], e));
   }
-  if (o.caption !== undefined) {
-    out.push(label(W / 2, height - 8, o.caption, 12, "var(--text-muted)", "middle"));
-  }
-  return `<svg class="lab-diagram" viewBox="0 0 ${W} ${height}" role="img" aria-label="${esc(o.caption ?? "The six agents")}" xmlns="http://www.w3.org/2000/svg">${out.join("")}</svg>`;
+  return `<svg class="lab-diagram" viewBox="0 0 ${W} ${height}" aria-hidden="true" focusable="false" data-caption="${esc(o.caption ?? "The six agents")}" xmlns="http://www.w3.org/2000/svg">${out.join("\n")}</svg>`;
 }
 
 /* ---------- the chain ---------- */
@@ -393,9 +390,6 @@ export function chainDiagram(rows: readonly ChainRow[], caption?: string): strin
     const scope = fit(r.scope, x + w - 22 - tagWidth - scopeX, 12.5, false, 11);
     out.push(label(scopeX, y + 29, scope.text, scope.size, "var(--text-muted)"));
   });
-  const height = 12 + rows.length * (rowH + gap) - gap + 12 + (caption !== undefined ? 24 : 0);
-  if (caption !== undefined) {
-    out.push(label(W / 2, height - 8, caption, 12, "var(--text-muted)", "middle"));
-  }
-  return `<svg class="lab-diagram" viewBox="0 0 ${W} ${height}" role="img" aria-label="${esc(caption ?? "The warrant chain")}" xmlns="http://www.w3.org/2000/svg">${out.join("")}</svg>`;
+  const height = 12 + rows.length * (rowH + gap) - gap + 12;
+  return `<svg class="lab-diagram" viewBox="0 0 ${W} ${height}" aria-hidden="true" focusable="false" data-caption="${esc(caption ?? "The warrant chain")}" xmlns="http://www.w3.org/2000/svg">${out.join("\n")}</svg>`;
 }

@@ -5,7 +5,7 @@ description: "Complete one narrowing handoff so the trip works, the rogue stops,
 lab_stage: 5
 lab_version: "0.2.0"
 ---
-<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Challenge</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" class="current" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" class="current" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
 
 <header class="lab-hero"><div class="lab-kicker">Stage 5 of 7 · <span class="lab-mode tenuo">tenuo</span> · about 25 min</div><h1>Access that travels with the work</h1><p class="lab-goal"><strong>Goal.</strong> Complete one narrowing handoff so the trip works, the rogue stops, and no central lookup is needed.</p></header>
 
@@ -40,7 +40,36 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
 <p class="lab-muted">Read more: <a href="https://tenuo.ai/concepts">Concepts</a> · <a href="https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts">Delegate to another agent (TypeScript guide)</a> · <a href="https://tenuo.ai/explorer/">Open a chain in the explorer</a></p>
 </section>
 
-<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 414" role="img" aria-label="Each hop can only narrow. The root has to carry everything anyone below will ever need." xmlns="http://www.w3.org/2000/svg"><rect x="30" y="12" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="44" y="41" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text><rect x="560.7603" y="26" width="159.23969999999997" height="18" rx="9" fill="var(--border)"/><text x="640.38015" y="39" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">signed by the control plane</text><text x="220" y="41" font-size="12.5" text-anchor="start" fill="var(--text-muted)">signs the trip permission for Travel Agent</text><path d="M120 58 L120 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="120,91 115.05,82 124.95,82" fill="#6a6a6a"/><text x="129" y="78.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows</text><rect x="30" y="92" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="44" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text><rect x="622.7544" y="106" width="97.2456" height="18" rx="9" fill="var(--border)"/><text x="671.3772" y="119" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">written for you</text><text x="220" y="121" font-size="12.5" text-anchor="start" fill="var(--text-muted)">Alice → Cancún, up to $1,200, any flight this trip books</text><path d="M120 138 L120 163" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="120,171 115.05,162 124.95,162" fill="#6a6a6a"/><text x="129" y="158.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows</text><rect x="30" y="172" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="44" y="201" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text><rect x="622.7544" y="186" width="97.2456" height="18" rx="9" fill="var(--border)"/><text x="671.3772" y="199" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">written for you</text><text x="220" y="201" font-size="12.5" text-anchor="start" fill="var(--text-muted)">Cancún flights, up to $300, flight's share of the wallet</text><path d="M120 218 L120 243" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="120,251 115.05,242 124.95,242" fill="#6a6a6a"/><text x="129" y="238.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows to the flight it booked</text><rect x="30" y="252" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="44" y="281" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text><rect x="664.158" y="266" width="55.842000000000006" height="18" rx="9" fill="var(--accent)"/><text x="692.079" y="279" font-size="10.5" font-weight="600" text-anchor="middle" fill="#0a0a0a">tutorial</text><text x="220" y="281" font-size="12.5" text-anchor="start" fill="var(--text-muted)">UA214 only: read, check in, hand the boarding pass on</text><path d="M120 298 L120 323" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/><polygon points="120,331 115.05,322 124.95,322" fill="var(--accent)"/><text x="129" y="318.5" font-size="10.5" text-anchor="start" fill="var(--accent)">narrows</text><rect x="30" y="332" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="44" y="361" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text><rect x="628.9872" y="346" width="91.0128" height="18" rx="9" fill="var(--accent)"/><text x="674.4936" y="359" font-size="10.5" font-weight="600" text-anchor="middle" fill="#0a0a0a">you write this</text><text x="220" y="361" font-size="12.5" text-anchor="start" fill="var(--text-muted)">UA214 only: issue the boarding pass</text><text x="380" y="406" font-size="12" text-anchor="middle" fill="var(--text-muted)">Each hop can only narrow. The root has to carry everything anyone below will ever need.</text></svg></figure>
+<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 390" aria-hidden="true" focusable="false" data-caption="Each hop can only narrow. The root has to carry everything anyone below will ever need." xmlns="http://www.w3.org/2000/svg"><rect x="30" y="12" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="44" y="41" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text>
+<rect x="560.7603" y="26" width="159.23969999999997" height="18" rx="9" fill="var(--border)"/>
+<text x="640.38015" y="39" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">signed by the control plane</text>
+<text x="220" y="41" font-size="12.5" text-anchor="start" fill="var(--text-muted)">signs the trip permission for Travel Agent</text>
+<path d="M120 58 L120 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="120,91 115.05,82 124.95,82" fill="#6a6a6a"/><text x="129" y="78.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows</text>
+<rect x="30" y="92" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="44" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text>
+<rect x="622.7544" y="106" width="97.2456" height="18" rx="9" fill="var(--border)"/>
+<text x="671.3772" y="119" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">written for you</text>
+<text x="220" y="121" font-size="12.5" text-anchor="start" fill="var(--text-muted)">Alice → Cancún, up to $1,200, any flight this trip books</text>
+<path d="M120 138 L120 163" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="120,171 115.05,162 124.95,162" fill="#6a6a6a"/><text x="129" y="158.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows</text>
+<rect x="30" y="172" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="44" y="201" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text>
+<rect x="622.7544" y="186" width="97.2456" height="18" rx="9" fill="var(--border)"/>
+<text x="671.3772" y="199" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">written for you</text>
+<text x="220" y="201" font-size="12.5" text-anchor="start" fill="var(--text-muted)">Cancún flights, up to $300, flight's share of the wallet</text>
+<path d="M120 218 L120 243" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="120,251 115.05,242 124.95,242" fill="#6a6a6a"/><text x="129" y="238.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows to the flight it booked</text>
+<rect x="30" y="252" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+<text x="44" y="281" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text>
+<rect x="664.158" y="266" width="55.842000000000006" height="18" rx="9" fill="var(--accent)"/>
+<text x="692.079" y="279" font-size="10.5" font-weight="600" text-anchor="middle" fill="#0a0a0a">tutorial</text>
+<text x="220" y="281" font-size="12.5" text-anchor="start" fill="var(--text-muted)">UA214 only: read, check in, hand the boarding pass on</text>
+<path d="M120 298 L120 323" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/><polygon points="120,331 115.05,322 124.95,322" fill="var(--accent)"/><text x="129" y="318.5" font-size="10.5" text-anchor="start" fill="var(--accent)">narrows</text>
+<rect x="30" y="332" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+<text x="44" y="361" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text>
+<rect x="628.9872" y="346" width="91.0128" height="18" rx="9" fill="var(--accent)"/>
+<text x="674.4936" y="359" font-size="10.5" font-weight="600" text-anchor="middle" fill="#0a0a0a">you write this</text>
+<text x="220" y="361" font-size="12.5" text-anchor="start" fill="var(--text-muted)">UA214 only: issue the boarding pass</text></svg>
+<figcaption>Each hop can only narrow. The root has to carry everything anyone below will ever need.</figcaption></figure>
 
 <figure class="lab-code"><figcaption>Tutorial, then your level <span>exercises/05-tenuo/chain.ts</span></figcaption>
 {% highlight ts %}
@@ -240,7 +269,7 @@ THE TRIP
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="5:2"><span>3</span></label>
-<div class="lab-step-body"><p>Run the checks. The two-traveler run happens here too, with no policy file to edit. Read <strong>CROSS-TASK</strong> and the escalation attempt, then find <code>central_calls</code>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 157 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks. The two-traveler run happens here too, with no policy file to edit. Read <strong>CROSS-TASK</strong> and the escalation attempt, then find <code>central_calls</code>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 158 lines</span></summary><pre><code>
 Stage 5 of 7: Access that travels with the work   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-5
 
@@ -396,7 +425,8 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
 
   That check ran locally, in the agent's own process, with no server to ask.
   The code that did it is open source: github.com/tenuo-ai/tenuo
-  A star helps other people find it.</code></pre></details></div>
+  If this changed how you think about agent permissions, you can star Tenuo without leaving the terminal:
+  npm run star (optional; works locally and in Codespaces)</code></pre></details></div>
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="5:3"><span>4</span></label>

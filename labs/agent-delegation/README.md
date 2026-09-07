@@ -1,4 +1,4 @@
-# AI Agent Delegation Security Challenge
+# AI Agent Delegation Security Lab
 
 Your mission is simple: **book the trip and stop the rogue agent**. A travel
 assistant made of six AI agents is booking spring break in Cancún. One reads
@@ -6,7 +6,7 @@ an injected instruction and follows it. Change what the agents are allowed to
 do so the trip still happens and the rogue agent gets nowhere.
 
 No agent-framework experience required. Retries are free, copying the shown
-`narrow()` shape is allowed, and speed is not scored. The five-stage main game
+`narrow()` shape is allowed, and speed is not scored. The five-stage core lab
 takes about ninety minutes; stages 6 and 7 are optional boss levels.
 
 ## Before you start
@@ -43,12 +43,15 @@ npm run score      # see your score and why
 npm run audit      # what every agent can currently do
 npm run next       # move to the next stage
 npm run share      # write an anonymous score breakdown for your session host
+npm run star       # optionally star Tenuo without leaving the terminal
 npm run reset      # restore stage 1 and every starter exercise
 ```
 
 Run `attack` and `score` as often as you like. There is no limit and no
 penalty for retries. Each stage explains itself when you run `npm run lab`, and
 the full guide is at [tenuo.ai/lab](https://tenuo.ai/lab/), one page per stage.
+After stage 5, `npm run star` offers the same optional terminal-only path in a
+local clone and Codespaces. It never runs automatically.
 
 ## The cast and the handoffs
 
@@ -76,7 +79,7 @@ is where you will first replace a passed credential with narrowed authority.
 | 6. Boss: stolen authority *(optional boss)* | See why a copied permission cannot be used by another agent, then deliberately end a delegation chain. | 15 min |
 | 7. Boss: contain the incident *(optional boss)* | Contain a compromised Hotel Agent while legitimate bookings keep working. | 20 min |
 
-After the game, the hosted guide has an unnumbered, optional contribution epilogue.
+After the core lab, the hosted guide has an unnumbered, optional contribution epilogue.
 <!-- stage-map:end -->
 
 ## What leaves your machine

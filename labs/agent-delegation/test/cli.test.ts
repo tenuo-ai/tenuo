@@ -60,7 +60,9 @@ describe("participant CLI", () => {
     expect(state.attempts?.["5"]?.count).toBe(1);
     expect(state.attempts?.["5"]?.firstGreen).toBeUndefined();
 
-    cli(labHome, "attack", 5, "answers/05-tenuo/chain.ts");
+    const attack = cli(labHome, "attack", 5, "answers/05-tenuo/chain.ts");
+    expect(attack).toContain("npm run star");
+    expect(attack).toContain("works locally and in Codespaces");
     state = JSON.parse(readFileSync(join(labHome, "state.json"), "utf8")) as LabState;
     expect(state.attempts?.["5"]?.count).toBe(2);
     expect(state.attempts?.["5"]?.firstGreen).toBeDefined();
@@ -122,14 +124,58 @@ describe("participant CLI", () => {
 describe("generated Stage 5 guide", () => {
   it("keeps the public landing-page promise and one reset command", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
-    expect(page).toContain("AI Agent Delegation Security Challenge");
+    expect(page).toContain("AI Agent Delegation Security Lab");
     expect(page).toContain("Book the trip. Stop the rogue agent.");
-    expect(page).toContain("A ninety-minute security challenge");
-    expect(page).not.toContain("security game");
+    expect(page).toContain("A ninety-minute security lab");
+    expect(page).not.toMatch(/security (?:game|challenge)/);
     expect(page.match(/npm run reset/g)).toHaveLength(1);
     const deployWorkflow = readFileSync(join(ROOT, "..", "..", ".github", "workflows", "docs.yml"), "utf8");
-    expect(deployWorkflow).toContain("A ninety-minute security challenge");
-    expect(deployWorkflow).not.toContain("A ninety-minute security game");
+    expect(deployWorkflow).toContain("A ninety-minute security lab");
+    expect(deployWorkflow).not.toMatch(/A ninety-minute security (?:game|challenge)/);
+  });
+
+  it("lets visitors run the real Stage 1 breach before terminal setup", () => {
+    const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
+    const layout = readFileSync(join(ROOT, "..", "..", "docs", "_layouts", "lab.html"), "utf8");
+    expect(page).toContain('data-lab-browser-run aria-expanded="false"');
+    expect(page).toContain('data-lab-browser-output hidden');
+    expect(page).toContain("same deterministic Stage 1 attack the CLI runs");
+    expect(page).toContain("ROGUE ATTEMPTS BLOCKED");
+    expect(page).toContain("The breach is real. The rest needs a terminal.");
+    expect(page).toContain("Continue in Codespaces");
+    expect(page.indexOf("data-lab-browser-run")).toBeLessThan(page.indexOf("git clone"));
+    expect(layout).toContain("browserOutput.hidden = false");
+    expect(layout).toContain("browserRun.setAttribute('aria-expanded', 'true')");
+  });
+
+  it("uses the challenge artwork on the homepage and its social card", () => {
+    const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
+    const layout = readFileSync(join(ROOT, "..", "..", "docs", "_layouts", "default.html"), "utf8");
+    const artwork = readFileSync(join(ROOT, "..", "..", "docs", "images", "challenge-image.svg"), "utf8");
+    expect(page).toContain('og_title: "Security Challenge: Stop a Rogue AI Agent From Ruining Your Trip"');
+    expect(page).toContain('description: "Give each agent only the authority its part of the trip needs. A free, hands-on lab in AI agent delegation security."');
+    expect(page).toContain('og_image: "/images/challenge-image.png"');
+    expect(page).toContain("og_image_width: 1200");
+    expect(page).toContain("og_image_height: 630");
+    expect(page).toContain('<img src="/images/challenge-image.svg" width="1200" height="630"');
+    expect(page.indexOf("challenge-image.svg")).toBeLessThan(page.indexOf("data-lab-browser-run"));
+    expect(existsSync(join(ROOT, "..", "..", "docs", "images", "challenge-image.png"))).toBe(true);
+    expect(existsSync(join(ROOT, "..", "..", "docs", "images", "challenge-image.svg"))).toBe(true);
+    expect(artwork).toContain("#040a0f");
+    expect(artwork).toContain("#38bdf8");
+    expect(artwork).not.toContain("#137a76");
+    expect(layout).toContain('<meta property="og:title" content="{{ social_title }}">');
+    expect(layout).toContain('<meta name="twitter:title" content="{{ social_title }}">');
+  });
+
+  it("states both secure Stage 4 branches and names their intentional over-grant", () => {
+    const overview = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
+    const stage4 = readFileSync(join(ROOT, "..", "..", "docs", "lab", "stage-4.md"), "utf8");
+    expect(overview).toContain("either per-task identities backed by a registry or a policy service");
+    expect(stage4).toContain("Whichever secure fix you use");
+    expect(stage4).not.toContain("Whichever fix you use");
+    expect(stage4).toContain("checkin-agent:trip-alice-cun");
+    expect(stage4).toContain("Act 2 exploits exactly this over-grant");
   });
 
   it("keeps the reference implementation out of the page body", () => {

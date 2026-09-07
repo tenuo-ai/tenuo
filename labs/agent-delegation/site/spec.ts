@@ -25,12 +25,16 @@ export interface CodeRef {
   /** Exported symbols to pull out. Absent means the whole file after its header comment. */
   readonly symbols?: readonly string[];
   readonly caption: string;
+  /** Teaching point rendered directly after the code block. */
+  readonly note?: string;
 }
 
 export interface Snippet {
   readonly lang: string;
   readonly code: string;
   readonly caption: string;
+  /** Teaching point rendered directly after the code block. */
+  readonly note?: string;
 }
 
 export interface StageSpec {
@@ -177,7 +181,7 @@ export const STAGES: readonly StageSpec[] = [
     ],
     notice: [
       "After the quick fix, Alice's Check-in Agent can check Bob in. There is one `checkin-agent`, it is doing two jobs, and the file never says which job a call belongs to.",
-      "Whichever fix you use, `central_calls` is above zero and cannot be brought to zero. Something outside the agent has to know about every task before it starts, and it has to be reachable while the task runs.",
+      "Whichever secure fix you use, `central_calls` is above zero and cannot be brought to zero. Something outside the agent has to know about every task before it starts, and it has to be reachable while the task runs.",
       "Boarding Agent came out of the handoff able to read reservations and check people in as well as issue a pass. Check-in Agent had only one thing it could give: its whole credential.",
       "The rogue Check-in Agent then asks your policy component to write a rule for Boarding Agent that is broader than anything Check-in Agent holds itself.",
     ],
@@ -185,8 +189,18 @@ export const STAGES: readonly StageSpec[] = [
     hint: "To say no, the component has to know what the asker currently holds, in addition to who the asker is. A role-based rule does not carry that information. Stage 5 starts from there.",
     code: [{ lang: "ts", code: "// One shared role now covers both flight jobs.\n\"flight-agent\": {\n  actions: [\"traveler.read\", \"search_flights\", \"book_flight\", \"wallet.charge\"],\n  maxPrice: 450, // no destination: CUN and SEA both pass\n  maxCharge: 450,\n  profileFields: [\"passportNumber\"],\n},\n\"checkin-agent\": {\n  actions: [\"get_reservation\", \"check_in\", \"issue_boarding_pass\"],\n  reservations: [\"UA214\", \"DL331\"],\n},", caption: "Part of the broad quick fix. The README covers Boarding too." }],
     check: [
-      { file: "answers/04-two-travelers/per-task.ts", symbols: ["config"], caption: "One identity per task" },
-      { file: "answers/04-two-travelers/policy-service.ts", symbols: ["config"], caption: "Another way that works: policyService: true, and the per-task fields come from a service asked on every call" },
+      {
+        file: "answers/04-two-travelers/per-task.ts",
+        symbols: ["config"],
+        caption: "One identity per task",
+        note: "Notice that `checkin-agent:trip-alice-cun` still carries `issue_boarding_pass`. That is not part of its job; it is present only because Boarding Agent must inherit the whole credential. Act 2 exploits exactly this over-grant.",
+      },
+      {
+        file: "answers/04-two-travelers/policy-service.ts",
+        symbols: ["config"],
+        caption: "Another way that works: policyService: true, and the per-task fields come from a service asked on every call",
+        note: "The same over-grant remains here: Check-in Agent carries `issue_boarding_pass` only so its whole credential can power Boarding Agent. Act 2 exploits it.",
+      },
     ],
     stuck: [
       "Registration happens at task start, then `central_calls: 1` on every call by a per-task identity. That is the cost.",

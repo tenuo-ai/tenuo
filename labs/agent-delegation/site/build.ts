@@ -27,7 +27,7 @@ function readmeStageMap(): string {
     const title = stage.tier === "boss" ? `${stage.title} *(optional boss)*` : stage.title;
     return `| ${stage.n}. ${title} | ${stage.goal} | ${stage.minutes} min |`;
   });
-  return `<!-- stage-map:start -->\n## The levels\n\n| Level | Mission | Time |\n|---|---|---:|\n${rows.join("\n")}\n\nAfter the game, the hosted guide has an unnumbered, optional contribution epilogue.\n<!-- stage-map:end -->`;
+  return `<!-- stage-map:start -->\n## The levels\n\n| Level | Mission | Time |\n|---|---|---:|\n${rows.join("\n")}\n\nAfter the core lab, the hosted guide has an unnumbered, optional contribution epilogue.\n<!-- stage-map:end -->`;
 }
 
 function expectedReadme(): string {
@@ -84,7 +84,14 @@ function codeFigure(item: CodeRef | Snippet): string {
   const body = lang === "text"
     ? `<pre><code>${esc(code)}</code></pre>`
     : `{% highlight ${lang} %}\n${code}\n{% endhighlight %}`;
-  return `<figure class="lab-code"><figcaption>${esc(item.caption)}${file !== undefined ? ` <span>${esc(file)}</span>` : ""}</figcaption>\n${body}\n</figure>`;
+  const note = item.note !== undefined ? `\n<p class="lab-muted">${inline(item.note)}</p>` : "";
+  return `<figure class="lab-code"><figcaption>${esc(item.caption)}${file !== undefined ? ` <span>${esc(file)}</span>` : ""}</figcaption>\n${body}\n</figure>${note}`;
+}
+
+function diagramFigure(svg: string): string {
+  const caption = / data-caption="([^"]+)"/.exec(svg)?.[1];
+  if (caption === undefined) throw new Error("Lab diagram is missing its text description");
+  return `<figure class="lab-figure">${svg}\n<figcaption>${caption}</figcaption></figure>`;
 }
 
 function terminal(c: Capture, stage: number): string {
@@ -120,7 +127,7 @@ function stepper(current: number | "wrap" | "contribute"): string {
   }
   const epilogueClass = current === "contribute" ? ' class="current"' : "";
   items.push(`<a href="/lab/${EPILOGUE.slug}"${epilogueClass} title="Optional: ${esc(EPILOGUE.title)}">+</a>`);
-  return `<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Challenge</a>${items.join("")}</nav>`;
+  return `<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a>${items.join("")}</nav>`;
 }
 
 function callout(kind: "notice" | "question" | "hint" | "stuck", title: string, body: string): string {
@@ -159,7 +166,7 @@ function stagePage(spec: StageSpec): string {
   if (spec.explainer !== undefined) {
     parts.push(explainerHtml(spec.explainer));
   }
-  parts.push(`<figure class="lab-figure">${spec.diagram}</figure>`);
+  parts.push(diagramFigure(spec.diagram));
   if (spec.code !== undefined) {
     parts.push(spec.code.map(codeFigure).join("\n"));
   }
@@ -186,6 +193,7 @@ function stagePage(spec: StageSpec): string {
 }
 
 function indexPage(): string {
+  const stageOnePreview = capture("attack", 1);
   const cards = STAGES.map((s) => `<a class="lab-card" data-n="${s.n}" href="/lab/stage-${s.n}"><div class="lab-card-n">${s.n}</div><div><div class="lab-card-title">${esc(s.title)}</div><div class="lab-card-goal">${inline(s.goal)}</div></div><div class="lab-card-time">${s.minutes} min</div></a>`);
   cards.push(`<a class="lab-card" href="/lab/${EPILOGUE.slug}"><div class="lab-card-n">+</div><div><div class="lab-card-title">${esc(EPILOGUE.title)}</div><div class="lab-card-goal">${esc(EPILOGUE.goal)}</div></div><div class="lab-card-time">optional</div></a>`);
   const grading = [
@@ -195,16 +203,35 @@ function indexPage(): string {
     ["No spare authority", 20, "Every grant stays at or below the mission's least-privilege ceiling."],
   ] as const;
   const body = `${stepper(0)}
-<header class="lab-hero"><div class="lab-kicker">A ninety-minute security challenge · TypeScript · no account needed</div><h1>AI Agent Delegation Security Challenge</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
+<header class="lab-hero"><div class="lab-kicker">A ninety-minute security lab · TypeScript · no account needed</div><h1>AI Agent Delegation Security Lab</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
 
-<section class="lab-start">
+<figure class="lab-cover"><img src="/images/challenge-image.svg" width="1200" height="630" alt="A boarding pass from Toronto to Cancún for Alice Chen, stamped denied because it is outside the granted scope." decoding="async" fetchpriority="high"></figure>
+
+<section class="lab-browser-demo" aria-labelledby="lab-browser-title">
+<div class="lab-kicker">Try Stage 1 now · no setup</div>
+<h2 id="lab-browser-title">Run the breach</h2>
+<p>See what happens when all six agents share one key. This browser preview replays the same deterministic Stage 1 attack the CLI runs. Its output is generated from the lab code, not written by hand.</p>
+<button type="button" class="lab-browser-run" data-lab-browser-run aria-expanded="false" aria-controls="lab-browser-output">Run Stage 1 in your browser</button>
+<div id="lab-browser-output" class="lab-browser-output" data-lab-browser-output hidden tabindex="-1">
+<div class="lab-callout-title">Stage 1 · One key for everyone</div>
+<pre class="lab-browser-terminal"><code>${esc(stageOnePreview)}</code></pre>
+<div class="lab-browser-next">
+<h3>The breach is real. The rest needs a terminal.</h3>
+<p>Continue the investigation by changing the policies yourself. Both paths run the same lab.</p>
+<div class="lab-browser-actions"><a class="lab-button" href="${CODESPACES_URL}">Continue in Codespaces</a><a class="lab-button secondary" href="#terminal-setup">Continue locally</a></div>
+</div>
+</div>
+<noscript><p class="lab-muted">JavaScript is off, so use either terminal setup below to run Stage 1.</p></noscript>
+</section>
+
+<section class="lab-start" id="terminal-setup">
 <div>
-<h2>Start</h2>
+<h2>Continue locally</h2>
 <pre class="lab-cmd"><code>git clone ${REPO_URL}
 cd tenuo/labs/agent-delegation
 npm install
 npm run lab</code></pre>
-<p class="lab-muted">Node 20 or newer. No account, no API key, no network needed. The challenge runs its own recorded agents; every check and score is real.</p>
+<p class="lab-muted">Node 20 or newer. No account, no API key, no network needed. The lab runs its own recorded agents; every check and score is real.</p>
 </div>
 <div>
 <h2>What to expect</h2>
@@ -213,7 +240,7 @@ npm run lab</code></pre>
 </div>
 </section>
 <details class="lab-reveal">
-<summary>If npm fights you: run the lab in the browser instead</summary>
+<summary>Prefer a hosted terminal? Use Codespaces</summary>
 <div>
 <p>The same lab runs in GitHub Codespaces with no install. It needs a free GitHub account and no payment method. GitHub includes 120 core-hours a month on personal accounts, and the lab is pinned to the smallest 2-core machine, so a full session uses about 3 of them.</p>
 <a class="lab-button" href="${CODESPACES_URL}">Open in GitHub Codespaces</a>
@@ -222,7 +249,7 @@ npm run lab</code></pre>
 </details>
 
 <h2>The mission</h2>
-<figure class="lab-figure">${MISSION_DIAGRAM}</figure>
+${diagramFigure(MISSION_DIAGRAM)}
 <p><strong>The cast:</strong> Travel Agent, Flight Agent, Check-in Agent, Boarding Agent, Hotel Agent, and Activity Agent. The diagram above is the handoff graph; the three-hop flight branch matters in stage 5.</p>
 <div class="lab-mission">
 <table><tbody>
@@ -236,13 +263,13 @@ npm run lab</code></pre>
 
 <h2>What you will use</h2>
 <div class="lab-two">
-<div><h3>Stages 1 to 4: the usual tools</h3><p>A shared key, then one account per agent, then rules you write yourself, then a registry to tell two jobs apart. Each fixes something and costs something. By the end of stage 4 you will have hit the limit of all of them.</p></div>
+<div><h3>Stages 1 to 4: the usual tools</h3><p>A shared key, then one account per agent, then rules you write yourself, then either per-task identities backed by a registry or a policy service to tell two jobs apart. Each fixes something and costs something. By the end of stage 4 you will have hit the limit of all of them.</p></div>
 <div><h3>Stages 5 to 7: Tenuo warrants</h3><p>A <strong>warrant</strong> is a signed permission that travels with the request: which tools, which argument values, for which agent's key, until when. The control plane signs the first one; agents can only narrow it for the next agent; the code next to each tool checks the whole chain offline. <a href="/lab/stage-5">Stage 5 explains it</a> before you write your first one.</p></div>
 </div>
 
 <h2>The stages</h2>
 <div class="lab-grid">${cards.join("\n")}</div>
-<p class="lab-muted">Stages 1 to ${MAIN_STAGE_COUNT} are the main game, about ninety minutes. Stages ${MAIN_STAGE_COUNT + 1} and ${TOTAL_STAGE_COUNT} are optional boss levels. Your progress is kept in this browser, and the links the lab prints keep it in step with your terminal.</p>
+<p class="lab-muted">Stages 1 to ${MAIN_STAGE_COUNT} are the core lab, about ninety minutes. Stages ${MAIN_STAGE_COUNT + 1} and ${TOTAL_STAGE_COUNT} are optional boss levels. Your progress is kept in this browser, and the links the lab prints keep it in step with your terminal.</p>
 
 <h2>Your four stars</h2>
 <div class="lab-grading">${grading.map(([label, _pts, note]) => `<div class="lab-grade"><div class="lab-grade-row"><span>${esc(label)}</span><strong>☆</strong></div><p class="lab-muted">${esc(note)}</p></div>`).join("")}</div>
@@ -262,7 +289,17 @@ npm run reset      # restore stage 1 and every starter exercise</code></pre>
 
 <nav class="lab-nav"><span></span><a class="next" href="/lab/stage-1">Stage 1: One key for everyone →</a></nav>
 `;
-  return frontMatter({ layout: "lab", title: "AI Agent Delegation Security Challenge", description: `Six AI agents, one rogue, ${TOTAL_STAGE_COUNT} stages. Book the trip and stop the rogue agent.`, lab_stage: 0 }) + body;
+  return frontMatter({
+    layout: "lab",
+    title: "AI Agent Delegation Security Lab",
+    og_title: "Security Challenge: Stop a Rogue AI Agent From Ruining Your Trip",
+    description: "Give each agent only the authority its part of the trip needs. A free, hands-on lab in AI agent delegation security.",
+    og_image: "/images/challenge-image.png",
+    og_image_width: 1200,
+    og_image_height: 630,
+    og_image_alt: "A boarding pass from Toronto to Cancún for Alice Chen, stamped denied because it is outside the granted scope.",
+    lab_stage: 0,
+  }) + body;
 }
 
 function wrapUpPage(): string {
