@@ -126,10 +126,10 @@ describe("participant CLI", () => {
 describe("generated lab guide", () => {
   it("keeps the public landing-page promise and one reset command", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
-    expect(page).toContain("AI Agent Delegation Security Lab");
+    expect(page).toContain("AI Agent Delegation Security Challenge");
     expect(page).toContain("Book the trip. Stop the rogue agent.");
     expect(page).toContain("A ninety-minute security lab");
-    expect(page).not.toMatch(/security (?:game|challenge)/);
+    expect(page).not.toMatch(/security game/);
     expect(page.match(/npm run reset/g)).toHaveLength(1);
     const deployWorkflow = readFileSync(join(ROOT, "..", "..", ".github", "workflows", "docs.yml"), "utf8");
     expect(deployWorkflow).toContain("A ninety-minute security lab");
@@ -143,8 +143,9 @@ describe("generated lab guide", () => {
     expect(page).not.toContain("data-lab-browser-run");
     expect(layout).not.toContain("lab-browser-run");
     expect(page.match(/npm run star/g)).toHaveLength(2);
-    expect(page).toMatch(/git clone[\s\S]*npm install[\s\S]*npm run star[\s\S]*npm run lab/);
-    expect(page).toMatch(/At the Codespaces terminal:[\s\S]*npm run star[\s\S]*npm run lab/);
+    expect(page).toMatch(/git clone[\s\S]*npm install\n+npm run star\n+npm run lab/);
+    expect(page).toMatch(/At the Codespaces terminal:[\s\S]*npm run star\n+npm run lab/);
+    expect(page).not.toMatch(/npm run star\s+#/);
   });
 
   it("uses the challenge artwork on the homepage and its social card", () => {

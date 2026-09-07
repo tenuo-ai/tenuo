@@ -1,4 +1,4 @@
-# AI Agent Delegation Security Lab
+# AI Agent Delegation Security Challenge
 
 Your mission is simple: **book the trip and stop the rogue agent**. A travel
 assistant made of six AI agents is booking spring break in Cancún. One reads
@@ -22,7 +22,7 @@ takes about ninety minutes; stages 6 and 7 are optional boss levels.
 git clone https://github.com/tenuo-ai/tenuo
 cd tenuo/labs/agent-delegation
 npm install
-npm run star       # optional; skip if you are not signed in to GitHub
+npm run star
 npm run lab
 ```
 

@@ -1,6 +1,6 @@
 ---
 layout: "lab"
-title: "AI Agent Delegation Security Lab"
+title: "AI Agent Delegation Security Challenge"
 og_title: "Security Challenge: Stop a Rogue AI Agent From Ruining Your Trip"
 description: "Give each agent only the authority its part of the trip needs. A free, hands-on lab in AI agent delegation security."
 og_image: "/images/challenge-image.png"
@@ -11,7 +11,7 @@ lab_stage: 0
 lab_version: "0.2.0"
 ---
 <nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
-<header class="lab-hero"><div class="lab-kicker">A ninety-minute security lab · TypeScript · no account needed</div><h1>AI Agent Delegation Security Lab</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
+<header class="lab-hero"><div class="lab-kicker">A ninety-minute security lab · TypeScript · no account needed</div><h1>AI Agent Delegation Security Challenge</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
 
 <figure class="lab-cover"><img src="/images/challenge-image.svg" width="1200" height="630" alt="A boarding pass from Toronto to Cancún for Alice Chen, stamped denied because it is outside the granted scope." decoding="async" fetchpriority="high"></figure>
 
@@ -21,7 +21,7 @@ lab_version: "0.2.0"
 <pre class="lab-cmd"><code>git clone https://github.com/tenuo-ai/tenuo
 cd tenuo/labs/agent-delegation
 npm install
-npm run star       # optional; skip if you are not signed in to GitHub
+npm run star
 npm run lab</code></pre>
 <p class="lab-muted">Node 20 or newer. The lab itself needs no account, API key, or network. The optional star command uses GitHub CLI; skip it if you are not signed in. Every lab check and score is real.</p>
 </div>
@@ -37,8 +37,9 @@ npm run lab</code></pre>
 <p>The same lab runs in GitHub Codespaces with no install. It needs a free GitHub account and no payment method. GitHub includes 120 core-hours a month on personal accounts, and the lab is pinned to the smallest 2-core machine, so a full session uses about 3 of them.</p>
 <a class="lab-button" href="https://codespaces.new/tenuo-ai/tenuo?devcontainer_path=.devcontainer/agent-delegation-lab/devcontainer.json">Open in GitHub Codespaces</a>
 <p>At the Codespaces terminal:</p>
-<pre class="lab-cmd"><code>npm run star       # optional
+<pre class="lab-cmd"><code>npm run star
 npm run lab</code></pre>
+<p class="lab-muted">The star is optional; skip it if your personal GitHub CLI account is not signed in.</p>
 <p class="lab-muted">Create it from the link so it counts against your own free hours. A codespace created inside an organization is billed to that organization. Stop the codespace when you are done.</p>
 </div>
 </details>
