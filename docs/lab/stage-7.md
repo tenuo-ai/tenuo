@@ -32,7 +32,7 @@ lab_version: "0.1.0"
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="7:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the checks. All eight attempts are listed under <strong>INCIDENT</strong>. Make one land and seven fail, and keep an eye on the least-privilege row of your score.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t7-1" id="t7-1-0" checked><label for="t7-1-0">As it ships</label><input type="radio" name="t7-1" id="t7-1-1"><label for="t7-1-1">When it is fixed</label><div class="lab-tab-panel"><details class="lab-term"><summary>As it ships <span>npm run attack · 52 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks. All eight attempts are listed under <strong>INCIDENT</strong>. Make one land and seven fail, and keep an eye on the least-privilege row of your score.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t7-1" id="t7-1-0" checked><label for="t7-1-0">As it ships</label><input type="radio" name="t7-1" id="t7-1-1"><label for="t7-1-1">When it is fixed</label><div class="lab-tab-panel"><details class="lab-term"><summary>As it ships <span>npm run attack · 55 lines</span></summary><pre><code>
 Stage 7 of 7: The incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
@@ -83,7 +83,10 @@ INCIDENT
       reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it.  [TENUO_INVALID_POP]
 
   3 of 8 checks did not land as expected
-  central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When it is fixed <span>npm run attack · 52 lines</span></summary><pre><code>
+  central_calls during the trip: 0   (calls to a component outside the acting agent)
+
+  See the chain the agents are holding, hop by hop, in the explorer:
+  https://tenuo.ai/explorer/?s=…</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When it is fixed <span>npm run attack · 55 lines</span></summary><pre><code>
 Stage 7 of 7: The incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
@@ -134,7 +137,10 @@ INCIDENT
       reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it.  [TENUO_INVALID_POP]
 
   clean: all 8 checks landed as expected
-  central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div></div></div>
+  central_calls during the trip: 0   (calls to a component outside the acting agent)
+
+  See the chain the agents are holding, hop by hop, in the explorer:
+  https://tenuo.ai/explorer/?s=…</code></pre></details></div></div></div>
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="7:2"><span>3</span></label>

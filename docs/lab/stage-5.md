@@ -201,7 +201,7 @@ THE TRIP
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="5:2"><span>3</span></label>
-<div class="lab-step-body"><p>Run the checks. The two-traveler run happens here too, with no policy file to edit. Read <strong>CROSS-TASK</strong> and the escalation attempt, then find <code>central_calls</code>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 145 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks. The two-traveler run happens here too, with no policy file to edit. Read <strong>CROSS-TASK</strong> and the escalation attempt, then find <code>central_calls</code>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 151 lines</span></summary><pre><code>
 Stage 5 of 7: Access that travels with the work   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-5
 
@@ -264,6 +264,9 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
 
   clean: all 12 checks landed as expected
   central_calls during the trip: 0   (calls to a component outside the acting agent)
+
+  See the chain the agents are holding, hop by hop, in the explorer:
+  https://tenuo.ai/explorer/?s=…
 
 
 Stage 5 of 7: Access that travels with the work   mode=tenuo  scenario=two-travelers
@@ -342,6 +345,9 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
 
   clean: all 15 checks landed as expected
   central_calls during the trip: 0   (calls to a component outside the acting agent)
+
+  See the chain the agents are holding, hop by hop, in the explorer:
+  https://tenuo.ai/explorer/?s=…
 
   That check ran locally, in the agent's own process, with no server to ask.
   The code that did it is open source: github.com/tenuo-ai/tenuo

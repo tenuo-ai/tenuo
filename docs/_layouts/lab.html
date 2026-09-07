@@ -187,6 +187,36 @@ layout: default
       });
     });
 
+    // Progress events from the guide. Only when the CLI's link carried the anonymous session id,
+    // which it does only after the participant said yes in the terminal. Same id, same collector.
+    var EVENTS_URL = 'https://lab-events.tenuo.ai/v1/events';
+    var root = document.querySelector('.lab');
+    var sid = new URLSearchParams(location.search).get('sid');
+    if (sid && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sid)) {
+      try { localStorage.setItem('tenuo-lab-sid', sid); } catch (e) { /* fine */ }
+    } else {
+      sid = null;
+      try { sid = localStorage.getItem('tenuo-lab-sid'); } catch (e) { /* fine */ }
+    }
+    var sent = {};
+    function send(event) {
+      if (!sid || sent[event]) return;
+      sent[event] = true;
+      var body = JSON.stringify({
+        v: 1, session: sid, sentAt: new Date().toISOString(), event: event,
+        stage: Number(root.getAttribute('data-lab-stage')) || 0,
+        labVersion: root.getAttribute('data-lab-version') || undefined,
+        env: 'web', platform: 'web', node: 0
+      });
+      try {
+        // text/plain keeps this a simple request: no preflight, and a dead endpoint costs nothing.
+        fetch(EVENTS_URL, { method: 'POST', body: body, keepalive: true, headers: { 'content-type': 'text/plain' } }).catch(function () {});
+      } catch (e) { /* never the participant's problem */ }
+    }
+    send('page_view');
+    document.querySelectorAll('.lab-reveal.hint').forEach(function (d) { d.addEventListener('toggle', function () { if (d.open) send('hint_open'); }); });
+    document.querySelectorAll('.lab-reveal.answer').forEach(function (d) { d.addEventListener('toggle', function () { if (d.open) send('answer_open'); }); });
+
     var mark = document.querySelector('[data-mark-done]');
     if (mark) {
       var n = mark.getAttribute('data-mark-done');
@@ -200,6 +230,7 @@ layout: default
         save(p);
         render();
         paintStage(n);
+        if (p.stages[n]) send('mark_done');
       });
     }
 

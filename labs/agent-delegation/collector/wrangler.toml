@@ -1,0 +1,11 @@
+name = "tenuo-lab-events"
+main = "src/worker.ts"
+compatibility_date = "2025-06-01"
+
+# Route it at the URL src/telemetry.ts sends to, or set TENUO_LAB_EVENTS_URL.
+# routes = [{ pattern = "lab-events.tenuo.ai/*", zone_name = "tenuo.ai" }]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lab-events"
+database_id = "replace-with-the-id-wrangler-prints"
