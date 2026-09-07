@@ -81,6 +81,13 @@ Run the MCP hop demo:
 cd tenuo-core && cargo run --example sdk_mcp_demo --features sdk,mcp-transport
 ```
 
+Rig manager-worker calling a GitHub-shaped MCP server (outside this crate, so
+Rig/rmcp stay out of `tenuo-core` dev-dependencies):
+
+```bash
+cargo run --manifest-path examples/rig-mcp-delegation/Cargo.toml
+```
+
 ## Features
 
 | Feature | Description |
