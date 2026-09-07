@@ -176,16 +176,22 @@ npm run lab</code></pre>
 <p class="lab-muted">Node 20 or newer. No account, no API key, no network needed. The lab runs its own recorded agents; every check and score is real.</p>
 </div>
 <div>
-<h2>Or in the browser</h2>
-<a class="lab-button" href="${CODESPACES_URL}">Open in GitHub Codespaces</a>
-<p class="lab-muted">One click, no install, the same lab. Needs a free GitHub account.</p>
-<h3>Ten minutes of prep</h3>
+<h2>Ten minutes of prep</h2>
 <ul class="lab-prep">
 <li>Read <a href="${REPO_URL}/tree/main/tenuo-ts">Protect your first tool</a> and <a href="${REPO_URL}/tree/main/tenuo-ts">Delegate to another agent</a> in the TypeScript guide.</li>
 <li>Read <a href="${REPO_URL}#how-it-works">How it works</a> in the main README. Skip everything else.</li>
 </ul>
+<p class="lab-muted">You are not expected to understand it yet. Some of the words will be familiar when they come up in stage 6.</p>
 </div>
 </section>
+<details class="lab-reveal">
+<summary>If npm fights you: run the lab in the browser instead</summary>
+<div>
+<p>The same lab runs in GitHub Codespaces with no install. It needs a free GitHub account and no payment method. GitHub includes 120 core-hours a month on personal accounts, and the lab is pinned to the smallest 2-core machine, so a full session uses about 3 of them.</p>
+<a class="lab-button" href="${CODESPACES_URL}">Open in GitHub Codespaces</a>
+<p class="lab-muted">Create it from the link so it counts against your own free hours. A codespace created inside an organization is billed to that organization. Stop the codespace when you are done.</p>
+</div>
+</details>
 
 <h2>The mission</h2>
 <figure class="lab-figure">${MISSION_DIAGRAM}</figure>
