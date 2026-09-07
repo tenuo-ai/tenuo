@@ -47,7 +47,8 @@ npm run reset      # start over from stage 1
 ```
 
 Run `attack` and `score` as often as you like. There is no limit and no
-penalty for retries. Each stage explains itself when you run `npm run lab`.
+penalty for retries. Each stage explains itself when you run `npm run lab`, and
+the full guide is at [tenuo.ai/lab](https://tenuo.ai/lab/), one page per stage.
 
 ## What leaves your machine
 
@@ -74,6 +75,21 @@ not in this build.
 The rogue behavior is not in any prompt. Go find where the instruction
 actually comes from, in `src/services/flights.ts`.
 
+## The hosted guide
+
+The stage-by-stage guide at [tenuo.ai/lab](https://tenuo.ai/lab) is generated
+from this directory, so it cannot drift from the code:
+
+```bash
+npm run site            # rebuild docs/lab from the lab, exercises, and real runs
+npm run site -- --check # fail if docs/lab is stale
+```
+
+Every expected-output panel is captured from the CLI using the reference
+answers and a throwaway state directory. The CLI prints the current stage's
+page, including completed stages in the link. Add `-- --open` to `npm run lab`
+or `npm run next` to open it.
+
 ## After the lab
 
 You have just spent ninety minutes inside this codebase, in the same
@@ -99,6 +115,7 @@ src/
 exercises/          the files you edit, one folder per stage
 answers/            reference solutions (npm run ambassador -- answers N)
 explainers/         optional reading; you can finish without opening one
+site/               source and generator for the hosted guide
 test/               every stage, run with its reference solution
 ```
 

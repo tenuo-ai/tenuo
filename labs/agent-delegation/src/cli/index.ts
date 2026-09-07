@@ -14,6 +14,7 @@ process.env.NODE_ENV ??= "development";
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { runBattery, type ProbeResult } from "../harness/attacks.ts";
 import { checkFunctionality, type Functionality } from "../harness/functionality.ts";
@@ -24,6 +25,25 @@ import type { AuditRecord } from "../audit.ts";
 import { AGENTS } from "../mission.ts";
 import { loadState, ROOT, saveState } from "../state.ts";
 import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stages.ts";
+
+const SITE = "https://tenuo.ai";
+
+function guideUrl(n: number): string {
+  const params = new URLSearchParams();
+  const done = [...loadState().completed].sort((a, b) => a - b);
+  if (done.length > 0) params.set("done", done.join(","));
+  const query = params.toString();
+  return `${SITE}/lab/stage-${n}${query.length > 0 ? `?${query}` : ""}`;
+}
+
+function openInBrowser(url: string): void {
+  const [bin, pre] = process.platform === "darwin" ? ["open", []] : process.platform === "win32" ? ["cmd", ["/c", "start", ""]] : ["xdg-open", []];
+  try {
+    spawn(bin, [...pre, url], { detached: true, stdio: "ignore" }).on("error", () => undefined).unref();
+  } catch {
+    // No browser here (CI, a container): the link is printed anyway.
+  }
+}
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "lab";
@@ -42,7 +62,34 @@ const pad = (s: string, n: number) => (s.length >= n ? s : s + " ".repeat(n - s.
 function header(def: StageDef, scenario: Scenario): void {
   console.log("");
   console.log(bold(`Stage ${def.n} of ${STAGES.length}: ${def.title}`) + dim(`   mode=${def.mode}  scenario=${scenario}`));
+  console.log(dim(`  guide: ${guideUrl(def.n)}`));
   console.log("");
+}
+
+function explorerLink(built: Built): string | undefined {
+  const tenuo = built.runtime.tenuo;
+  const trip = built.plan.trips[0];
+  if (tenuo === undefined || trip === undefined) return undefined;
+  const session = tenuo.session("boarding-agent", trip.taskId) ?? tenuo.session("checkin-agent", trip.taskId) ?? tenuo.session("flight-agent", trip.taskId);
+  if (session === undefined) return undefined;
+  const chain = session.toWire();
+  const state = {
+    chain,
+    warrant: chain[chain.length - 1],
+    rootKey: session.inspect().rootPublicKey,
+    tool: "issue_boarding_pass",
+    args: JSON.stringify({ reservation: trip.expectedReservation }),
+  };
+  return `${SITE}/explorer/?s=${Buffer.from(JSON.stringify(state)).toString("base64")}`;
+}
+
+function printExplorerLink(built: Built): void {
+  const url = explorerLink(built);
+  if (url !== undefined) {
+    console.log(dim("  See the chain the agents are holding, hop by hop, in the explorer:"));
+    console.log(dim(`  ${url}`));
+    console.log("");
+  }
 }
 
 function walletLine(built: Built): string {
@@ -161,6 +208,7 @@ async function cmdLab(def: StageDef): Promise<void> {
   await warmup();
   const scenario = def.scenario;
   header(def, scenario);
+  if (args.includes("--open")) openInBrowser(guideUrl(def.n));
   for (const line of def.blurb) console.log(`  ${line}`);
   console.log("");
   const built = await runStage(def, scenario);
@@ -175,6 +223,7 @@ async function cmdLab(def: StageDef): Promise<void> {
   console.log("");
   const functionality = checkFunctionality(built.plan, built.runtime.audit.records, built.runtime.world);
   printFunctionality(functionality);
+  printExplorerLink(built);
   if (def.breaksTrip === true) {
     console.log(dim("  The terminal link breaks the trip on purpose. Notice where, and who decided."));
     console.log("");
@@ -194,6 +243,7 @@ async function cmdTrace(def: StageDef): Promise<void> {
     console.log("");
     console.log(centralCallsLine(built));
     console.log("");
+    printExplorerLink(built);
   }
 }
 
@@ -313,7 +363,7 @@ async function cmdScore(def: StageDef): Promise<void> {
     if (!state.completed.includes(def.n)) {
       state.completed.push(def.n);
       saveState(state);
-      console.log(green(`  Stage ${def.n} done.`) + (def.n < STAGES.length ? dim("  Next: npm run next") : ""));
+      console.log(green(`  Stage ${def.n} done.`) + (def.n < STAGES.length ? dim(`  Next: npm run next, then ${guideUrl(def.n + 1)}`) : ""));
       console.log("");
     }
   }
@@ -370,6 +420,8 @@ async function cmdNext(): Promise<void> {
   }
   saveState({ ...state, stage: to });
   console.log(`Now on stage ${to}: ${stageDef(to).title}. Run npm run lab.`);
+  console.log(dim(`  guide: ${guideUrl(to)}`));
+  if (args.includes("--open")) openInBrowser(guideUrl(to));
 }
 
 async function cmdReset(): Promise<void> {
