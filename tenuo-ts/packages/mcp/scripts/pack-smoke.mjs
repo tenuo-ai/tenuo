@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const mcpDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,13 +15,12 @@ const installDir = mkdtempSync(join(tmpdir(), "tenuo-mcp-smoke-"));
 try {
   const coreTarball = packPackage(coreDir, packDir);
   const mcpTarball = packPackage(mcpDir, packDir);
-  assertPacked(mcpTarball, ["package/dist/index.js", "package/LICENSE", "package/README.md"]);
-
   writeFileSync(join(installDir, "package.json"), JSON.stringify({ private: true, type: "module" }));
-  execFileSync("npm", ["install", "--omit=dev", coreTarball, mcpTarball], {
+  run("npm", ["install", "--omit=dev", coreTarball, mcpTarball], {
     cwd: installDir,
     stdio: "inherit",
   });
+  assertInstalled(installDir, "@tenuo/mcp", ["dist/index.js", "LICENSE", "README.md"]);
   execFileSync(
     process.execPath,
     [
@@ -68,25 +67,32 @@ try {
   rmSync(installDir, { recursive: true, force: true });
 }
 
+function run(command, args, options) {
+  return execFileSync(command, args, {
+    ...options,
+    shell: process.platform === "win32",
+  });
+}
+
 function packPackage(cwd, destination) {
-  const packed = execFileSync("pnpm", ["pack", "--pack-destination", destination], {
+  const packed = run("pnpm", ["pack", "--pack-destination", destination], {
     cwd,
     encoding: "utf8",
   })
     .trim()
-    .split("\n")
+    .split(/\r?\n/)
     .at(-1);
   if (packed === undefined || packed.length === 0) {
     throw new Error("pnpm pack did not print a tarball path");
   }
-  return packed.startsWith("/") ? packed : join(destination, packed);
+  return isAbsolute(packed) ? packed : join(destination, packed);
 }
 
-function assertPacked(tarball, required) {
-  const listing = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" });
+function assertInstalled(root, packageName, required) {
+  const packageDir = join(root, "node_modules", ...packageName.split("/"));
   for (const path of required) {
-    if (!listing.split("\n").includes(path)) {
-      throw new Error(`packed tarball is missing ${path}`);
+    if (!existsSync(join(packageDir, path))) {
+      throw new Error(`installed ${packageName} is missing ${path}`);
     }
   }
 }

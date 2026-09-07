@@ -131,6 +131,11 @@ function expectAgree(
 }
 
 const pythonBin = python();
+if (process.env.TENUO_REQUIRE_INTEROP === "1" && pythonBin === undefined) {
+  throw new Error(
+    "TENUO_REQUIRE_INTEROP=1 but `import tenuo` failed. Install the Python package before this suite.",
+  );
+}
 
 describe.skipIf(pythonBin === undefined)("Python ↔ TypeScript compatibility", () => {
   describe("Python mints, TypeScript imports", () => {

@@ -658,7 +658,9 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
-          workspaces: tenuo-wasm
+          workspaces: |
+            tenuo-wasm
+            tenuo-python
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -672,6 +674,22 @@ jobs:
           cargo clippy --locked --target wasm32-unknown-unknown -- \
             -D warnings \
             -A clippy::too_many_arguments
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tenuo-python/pyproject.toml
+
+      - name: Build and install the Python binding
+        working-directory: tenuo-python
+        run: |
+          pip install uv
+          uv pip install --system maturin
+          maturin build --release
+          uv pip install --system target/wheels/*.whl "mcp>=1.9.4"
+          python -c "import tenuo; from tenuo.mcp.server import MCPVerifier; print(f'tenuo {tenuo.__version__}')"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
@@ -695,6 +713,8 @@ jobs:
 
       - name: Test
         working-directory: tenuo-ts
+        env:
+          TENUO_REQUIRE_INTEROP: "1"
         run: pnpm test
 
       # Optimized .wasm bytes and private export ordering vary across Rust and
@@ -746,6 +766,42 @@ jobs:
           pnpm typecheck
           pnpm --filter @tenuo/core test
           pnpm --filter @tenuo/mcp test
+
+      - name: Build and pack smoke
+        working-directory: tenuo-ts
+        run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
+
+  # Committed WASM only — no wasm-pack. Catches Node path / createRequire /
+  # npm.cmd issues that Linux jobs will not see.
+  tenuo-ts-windows:
+    name: TypeScript SDK (Windows pack smoke)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9.15.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: tenuo-ts/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: tenuo-ts
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: tenuo-ts
+        run: pnpm typecheck
 
       - name: Build and pack smoke
         working-directory: tenuo-ts
