@@ -79,6 +79,7 @@ export type WasmSession = object;
 
 /** Mirrors `SessionInfoDto` in tenuo-wasm. Snake case is the WASM boundary. */
 export type WasmSessionInfo = {
+  kind: "execution" | "issuer";
   holder_public_key: string;
   root_public_key: string;
   depth: number;
@@ -88,6 +89,14 @@ export type WasmSessionInfo = {
   tools: string[];
   warrant_ids: string[];
   can_authorize: boolean;
+  clearance?: number;
+  session_id?: string;
+  agent_id?: string;
+  issuable_tools?: string[];
+  max_issue_depth?: number;
+  required_approvers?: string[];
+  min_approvals?: number;
+  approval_gated_tools: string[];
 };
 
 /** Security limits exported by tenuo-core; TypeScript must not redefine them. */
@@ -102,6 +111,116 @@ export type WasmNarrowOptions = {
   ttlSeconds?: number;
   terminal?: boolean;
   maxDepth?: number;
+  clearance?: number | string;
+  agentId?: string;
+  addApprovers?: string[];
+  minApprovals?: number;
+};
+
+export type WasmRequireApproval = {
+  approvers: string[];
+  min: number;
+  tools?: string[];
+  gates?: Record<string, { message?: string; args?: Record<string, unknown> }>;
+};
+
+/** Mirrors `MintOptions` in tenuo-wasm. */
+export type WasmMintOptions = {
+  kind?: "execution" | "issuer";
+  allow?: unknown;
+  ttlSeconds?: number;
+  holder?: string;
+  maxDepth?: number;
+  clearance?: number | string;
+  sessionId?: string;
+  agentId?: string;
+  requireApproval?: WasmRequireApproval;
+  issuableTools?: string[];
+  constraintBounds?: unknown;
+  maxIssueDepth?: number;
+};
+
+/** Mirrors `IssueOptions` in tenuo-wasm. */
+export type WasmIssueOptions = {
+  allow: unknown;
+  holder: string;
+  ttlSeconds?: number;
+  maxDepth?: number;
+  clearance?: number | string;
+  sessionId?: string;
+  agentId?: string;
+  requireApproval?: { approvers: string[]; min: number };
+};
+
+export type WasmExplainField = {
+  field: string;
+  kind: string;
+  constraint: unknown;
+  value?: unknown;
+  satisfied: boolean;
+  reason?: string;
+};
+
+export type WasmExplain = {
+  tool: string;
+  kind: "execution" | "issuer";
+  outcome: "allow" | "deny";
+  code?: TenuoErrorCode;
+  field?: string;
+  message?: string;
+  tool_granted: boolean;
+  fields: WasmExplainField[];
+  unknown_fields: string[];
+  missing_fields: string[];
+  expired: boolean;
+  expires_at: number;
+  chain_valid: boolean;
+  chain_error?: TenuoErrorCode;
+};
+
+export type WasmApprovalRequest = {
+  request_id: string;
+  warrant_id: string;
+  tool: string;
+  args: Record<string, unknown>;
+  request_hash: string;
+  holder_public_key: string;
+  required_approvers: string[];
+  min_approvals: number;
+  warrant_expires_at: number;
+  created_at: number;
+  message: string;
+};
+
+export type WasmAttestation = {
+  version: number;
+  canonicalization: string;
+  warrant_id: string;
+  tool: string;
+  request_hash: string;
+  holder_key_hex: string;
+  args_canonical_cbor_b64: string;
+  signer_key_hex: string;
+  signature_b64: string;
+};
+
+export type WasmApprovalInfo = {
+  approver_public_key: string;
+  request_hash: string;
+  external_id: string;
+  approved_at: number;
+  expires_at: number;
+  expired: boolean;
+  signature_valid: boolean;
+  error?: string;
+};
+
+export type WasmSrlInfo = {
+  version: number;
+  issued_at: number;
+  issuer_public_key: string;
+  revoked_ids: string[];
+  signature_valid: boolean;
 };
 
 export type WasmContext = {
@@ -112,8 +231,14 @@ export type WasmContext = {
     holderHex?: string,
     maxDepth?: number,
   ): WasmSession;
+  mintExtended(options: WasmMintOptions): WasmSession;
   narrow(session: WasmSession, allow: unknown, options?: WasmNarrowOptions): WasmSession;
+  issue(issuer: WasmSession, options: WasmIssueOptions): WasmSession;
   issuerPublicKey(): string;
+  explain(session: WasmSession, tool: string, args: unknown): WasmExplain;
+  approvalRequest(session: WasmSession, tool: string, args: unknown): WasmApprovalRequest;
+  approvalContextAttestation(session: WasmSession, tool: string, args: unknown): WasmAttestation;
+  signRevocationListVersioned(ids: string[], version?: number): string;
   authorize(
     session: WasmSession,
     tool: string,
@@ -148,6 +273,7 @@ type Generated = {
   SdkContext: {
     new (): WasmContext;
     fromTrustedRoots(roots: string[]): WasmContext;
+    fromIssuerSecret(secret: Uint8Array, extraRoots?: string[]): WasmContext;
   };
   SdkSession: {
     fromWire(warrant: string, holder: Uint8Array): WasmSession;
@@ -166,8 +292,18 @@ type Generated = {
     externalId: string,
     asOf?: number,
   ): string;
+  sdkSignApprovalForRequest(
+    requestHashHex: string,
+    approverSecret: Uint8Array,
+    externalId: string,
+    ttlSeconds?: number,
+    warrantExpiresAt?: number,
+  ): string;
+  sdkInspectApproval(envelope: string): WasmApprovalInfo;
   sdkSignRevocationList(ids: string[], issuerSecret: Uint8Array): string;
+  sdkSignRevocationListVersioned(ids: string[], version: number | undefined, issuerSecret: Uint8Array): string;
   sdkSignPublishedRevocationList(ids: string[], version: number, issuerSecret: Uint8Array): string;
+  sdkInspectRevocationList(wire: string): WasmSrlInfo;
   sdkVerifyReceipt(wire: string): WasmReceipt;
   sdkVerifyReceiptChain(wire: string, roots: string[]): WasmReceiptChain;
 };
@@ -226,6 +362,11 @@ export function createVerifierContext(
   return context;
 }
 
+export function createIssuerContext(secret: Uint8Array, extraRootHexes: readonly string[]): WasmContext {
+  const { SdkContext } = loadWasm();
+  return SdkContext.fromIssuerSecret(secret, [...extraRootHexes]);
+}
+
 export function importSessionFromWire(warrant: string, holderKey: Uint8Array): WasmSession {
   const { SdkSession } = loadWasm();
   return SdkSession.fromWire(warrant, holderKey);
@@ -249,11 +390,11 @@ export function inspectWarrant(wire: string): WasmInspect {
   return loadWasm().sdkInspectWarrant(wire);
 }
 
+export function inspectParts(payloadHex: string, signatureHex: string): WasmInspect {
+  return loadWasm().sdkInspectParts(payloadHex, signatureHex);
+}
+
 /** Hex public key for a 32-byte holder secret. Ed25519, derived in Rust. */
 export function publicKeyHexFromHolderKey(holderSecret: Uint8Array): string {
   return loadWasm().sdkPublicKeyFromHolderKey(holderSecret);
-}
-
-export function inspectParts(payloadHex: string, signatureHex: string): WasmInspect {
-  return loadWasm().sdkInspectParts(payloadHex, signatureHex);
 }

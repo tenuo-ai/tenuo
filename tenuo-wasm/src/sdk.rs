@@ -39,7 +39,7 @@ const MAX_ENCODED_WARRANT_CHARS: usize = MAX_WARRANT_SIZE * 2;
 const MAX_ENCODED_CHAIN_CHARS: usize = wire::MAX_STACK_SIZE * 2;
 
 #[derive(Default)]
-struct InputBudget {
+pub(crate) struct InputBudget {
     nodes: usize,
     key_bytes: usize,
     value_bytes: usize,
@@ -78,7 +78,7 @@ impl InputBudget {
 }
 
 #[derive(Serialize)]
-struct DecisionDto {
+pub(crate) struct DecisionDto {
     outcome: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
@@ -148,6 +148,8 @@ struct ExportDto {
 /// holder secret.
 #[derive(Serialize)]
 struct SessionInfoDto {
+    /// `"execution"` or `"issuer"`.
+    kind: String,
     holder_public_key: String,
     root_public_key: String,
     depth: u32,
@@ -160,6 +162,23 @@ struct SessionInfoDto {
     /// proof-of-possession. False for a session issued or delegated to
     /// another holder: `toWire()` works, `authorize` does not.
     can_authorize: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clearance: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_id: Option<String>,
+    /// Issuer warrants only: tools this holder may issue execution sessions for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    issuable_tools: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_issue_depth: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required_approvers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_approvals: Option<u32>,
+    /// Tools with an approval gate on the leaf.
+    approval_gated_tools: Vec<String>,
 }
 
 /// Security-relevant limits owned by tenuo-core. Language SDKs consume these
@@ -183,11 +202,19 @@ struct NarrowOptions {
     terminal: Option<bool>,
     /// Lower the delegation ceiling. Cannot exceed the parent's.
     max_depth: Option<u32>,
+    /// Lower the clearance level (name or 0-255). Cannot exceed the parent's.
+    clearance: Option<serde_json::Value>,
+    /// Set or change the agent id recorded on the child.
+    agent_id: Option<String>,
+    /// Hex public keys to add as required approvers. Approvers can only be added.
+    add_approvers: Option<Vec<String>>,
+    /// Raise the approval threshold. It can only go up.
+    min_approvals: Option<u32>,
 }
 
 /// Attenuation failures carry the code as a message prefix so TypeScript can
 /// map them without parsing prose.
-fn narrow_error(e: &Error) -> JsError {
+pub(crate) fn narrow_error(e: &Error) -> JsError {
     let code = match e {
         Error::DepthExceeded(_, _) => "TENUO_DEPTH_EXCEEDED",
         _ => "TENUO_CHAIN_INVALID",
@@ -199,24 +226,24 @@ fn narrow_error(e: &Error) -> JsError {
 /// Verifier-only contexts have `issuer: None` and cannot mint.
 #[wasm_bindgen]
 pub struct SdkContext {
-    issuer: Option<SigningKey>,
-    authorizer: Authorizer,
-    trusted_roots: Vec<PublicKey>,
-    receipt_signer: SigningKey,
+    pub(crate) issuer: Option<SigningKey>,
+    pub(crate) authorizer: Authorizer,
+    pub(crate) trusted_roots: Vec<PublicKey>,
+    pub(crate) receipt_signer: SigningKey,
     /// `(version, sha256(wire bytes))` of the revocation list currently loaded.
     /// `None` until one is installed — receipts then omit keys 12 and 13, which
     /// is the honest claim that revocation was never consulted.
-    srl_commitment: Option<(Option<u64>, [u8; 32])>,
+    pub(crate) srl_commitment: Option<(Option<u64>, [u8; 32])>,
     /// Commitment to the trusted root set (receipt key 15). Fixed at
     /// construction because the trust anchors do not change over a context's
     /// life.
-    trusted_roots_hash: [u8; 32],
+    pub(crate) trusted_roots_hash: [u8; 32],
     /// Digest of the last receipt this context emitted (receipt key 14).
     ///
     /// `Cell` because authorization takes `&self` and chaining is inherently
     /// stateful. Single-threaded by construction: wasm has no threads, and one
     /// context serves one enforcement point.
-    last_receipt_hash: std::cell::Cell<Option<[u8; 32]>>,
+    pub(crate) last_receipt_hash: std::cell::Cell<Option<[u8; 32]>>,
 }
 
 /// Opaque warrant chain (root first) + leaf holder key. Not JSON-serializable from JS.
@@ -227,8 +254,8 @@ pub struct SdkContext {
 /// `SdkSession.fromWire` and its own secret.
 #[wasm_bindgen]
 pub struct SdkSession {
-    chain: Vec<Warrant>,
-    holder: Option<SigningKey>,
+    pub(crate) chain: Vec<Warrant>,
+    pub(crate) holder: Option<SigningKey>,
 }
 
 impl Default for SdkContext {
@@ -497,6 +524,27 @@ impl SdkContext {
         } else if let Some(depth) = options.max_depth {
             builder = builder.max_depth(depth);
         }
+        if let Some(level) = &options.clearance {
+            builder = builder.clearance(crate::sdk_ext::parse_clearance(level)?);
+        }
+        if let Some(agent_id) = &options.agent_id {
+            builder = builder.agent_id(agent_id.clone());
+        }
+        if let Some(approvers) = &options.add_approvers {
+            let mut keys = Vec::with_capacity(approvers.len());
+            for hex in approvers {
+                keys.push(parse_public_key_hex(hex)?);
+            }
+            builder = builder.add_approvers(keys);
+        }
+        if let Some(min) = options.min_approvals {
+            if min == 0 {
+                return Err(JsError::new(
+                    "narrow options: minApprovals must be at least 1",
+                ));
+            }
+            builder = builder.raise_min_approvals(min);
+        }
         let child = builder.build(signer).map_err(|e| narrow_error(&e))?;
 
         let holder = match next_holder {
@@ -699,6 +747,10 @@ impl SdkSession {
             .ok_or_else(|| JsError::new("session chain is empty"))?;
         let leaf = self.leaf()?;
         Ok(to_js_value(&SessionInfoDto {
+            kind: match leaf.r#type() {
+                tenuo::WarrantType::Issuer => "issuer".into(),
+                tenuo::WarrantType::Execution => "execution".into(),
+            },
             holder_public_key: hex::encode(leaf.authorized_holder().to_bytes()),
             root_public_key: hex::encode(root.issuer().to_bytes()),
             depth: leaf.depth(),
@@ -708,6 +760,16 @@ impl SdkSession {
             tools: leaf.tools(),
             warrant_ids: self.chain.iter().map(|w| w.id().to_string()).collect(),
             can_authorize: self.holder.is_some(),
+            clearance: leaf.clearance().map(|c| c.0),
+            session_id: leaf.session_id().map(str::to_string),
+            agent_id: leaf.agent_id().map(str::to_string),
+            issuable_tools: leaf.issuable_tools().map(|t| t.to_vec()),
+            max_issue_depth: leaf.max_issue_depth(),
+            required_approvers: leaf
+                .required_approvers()
+                .map(|keys| keys.iter().map(|k| hex::encode(k.to_bytes())).collect()),
+            min_approvals: leaf.min_approvals(),
+            approval_gated_tools: crate::sdk_ext::approval_gated_tools(leaf),
         }))
     }
 }
@@ -717,7 +779,7 @@ impl SdkSession {
 const NO_HOLDER_SECRET: &str = "TENUO_CONFIGURATION: this session was issued to another holder and cannot sign proof-of-possession here. Send toWire() to that holder; it imports the warrant with sessionFromWire() and its own holder key.";
 
 impl SdkSession {
-    fn leaf(&self) -> Result<&Warrant, JsError> {
+    pub(crate) fn leaf(&self) -> Result<&Warrant, JsError> {
         self.chain
             .last()
             .ok_or_else(|| JsError::new("session chain is empty"))
@@ -1526,7 +1588,7 @@ fn apply_require_approval(
     Ok(builder.extension(APPROVAL_GATE_EXTENSION_KEY, encoded))
 }
 
-fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, String> {
+pub(crate) fn parse_approvals(value: &JsValue) -> Result<Vec<SignedApproval>, String> {
     if value.is_null() || value.is_undefined() {
         return Ok(Vec::new());
     }
@@ -1554,7 +1616,7 @@ fn parse_one_approval(value: &JsValue) -> Result<SignedApproval, String> {
     Err("each approval must be hex, base64, or bytes".into())
 }
 
-fn signed_approval_from_text(text: &str) -> Result<SignedApproval, String> {
+pub(crate) fn signed_approval_from_text(text: &str) -> Result<SignedApproval, String> {
     let trimmed = text.trim();
     if let Ok(bytes) = parse_hex(trimmed) {
         if let Ok(approval) = signed_approval_from_bytes(&bytes) {
@@ -1572,17 +1634,20 @@ fn signed_approval_from_text(text: &str) -> Result<SignedApproval, String> {
     Err("approval is not valid hex or base64 SignedApproval CBOR".into())
 }
 
-fn signed_approval_from_bytes(bytes: &[u8]) -> Result<SignedApproval, String> {
+pub(crate) fn signed_approval_from_bytes(bytes: &[u8]) -> Result<SignedApproval, String> {
     ciborium::from_reader(bytes).map_err(|e| format!("invalid SignedApproval: {e}"))
 }
 
-fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constraint, String> {
+pub(crate) fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constraint, String> {
     let kind = expr
         .get("kind")
         .and_then(|v| v.as_str())
         .ok_or("constraint is missing kind")?;
     match kind {
         "under" => {
+            if expr.get("caseSensitive").is_some() || expr.get("allowEqual").is_some() {
+                return crate::sdk_ext::constraint_from_expr_ext("under", expr);
+            }
             let root = expr
                 .get("root")
                 .and_then(|v| v.as_str())
@@ -1637,11 +1702,11 @@ fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constraint, String> 
             let cv = json_to_cv(value, 0, &mut InputBudget::default())?;
             Ok(Exact::new(cv).into())
         }
-        other => Err(format!("unknown constraint kind '{other}'")),
+        other => crate::sdk_ext::constraint_from_expr_ext(other, expr),
     }
 }
 
-fn json_to_cv(
+pub(crate) fn json_to_cv(
     value: &serde_json::Value,
     depth: u32,
     budget: &mut InputBudget,
@@ -1689,7 +1754,7 @@ fn json_to_cv(
     }
 }
 
-fn js_to_args(value: &JsValue) -> Result<HashMap<String, ConstraintValue>, String> {
+pub(crate) fn js_to_args(value: &JsValue) -> Result<HashMap<String, ConstraintValue>, String> {
     if value.is_null() || value.is_undefined() {
         return Ok(HashMap::new());
     }
@@ -1818,7 +1883,7 @@ fn reject_encoded_budget(input: &str, max: usize, what: &str) -> Result<(), JsEr
     Ok(())
 }
 
-fn cv_to_json(value: &ConstraintValue) -> serde_json::Value {
+pub(crate) fn cv_to_json(value: &ConstraintValue) -> serde_json::Value {
     match value {
         ConstraintValue::String(s) => json!(s),
         ConstraintValue::Integer(i) => json!(i),
@@ -1836,7 +1901,7 @@ fn cv_to_json(value: &ConstraintValue) -> serde_json::Value {
     }
 }
 
-fn deny_from_error(e: &Error) -> DecisionDto {
+pub(crate) fn deny_from_error(e: &Error) -> DecisionDto {
     if let Error::ApprovalRequired { tool, request } = e {
         return DecisionDto {
             outcome: "approval_required".into(),
@@ -1897,7 +1962,7 @@ fn pop_established_before_error(e: &Error) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode_receipt(
+pub(crate) fn encode_receipt(
     signer: &SigningKey,
     chain: &[Warrant],
     tool: &str,
@@ -1977,7 +2042,7 @@ fn policy_digest(tool_allow: &JsValue) -> Option<[u8; 32]> {
     Some(tenuo::policy_commitment_digest(&bytes))
 }
 
-fn sign_srl_hex(ids: JsValue, issuer: &SigningKey) -> Result<String, JsError> {
+pub(crate) fn sign_srl_hex(ids: JsValue, issuer: &SigningKey) -> Result<String, JsError> {
     let revoked: Vec<String> = serde_wasm_bindgen::from_value(ids)
         .map_err(|e| JsError::new(&format!("revoked ids must be an array of strings: {e}")))?;
     if revoked.is_empty() {
@@ -2085,7 +2150,7 @@ fn verify_published_srl(
     Ok(published.payload)
 }
 
-fn parse_srl_bytes(input: &str) -> Result<Vec<u8>, JsError> {
+pub(crate) fn parse_srl_bytes(input: &str) -> Result<Vec<u8>, JsError> {
     let trimmed = input.trim();
     if let Ok(bytes) = parse_hex(trimmed) {
         if !bytes.is_empty() {
@@ -2102,7 +2167,7 @@ fn parse_srl_bytes(input: &str) -> Result<Vec<u8>, JsError> {
     Err(JsError::new("invalid revocation list or receipt encoding"))
 }
 
-fn map_code(e: &Error) -> &'static str {
+pub(crate) fn map_code(e: &Error) -> &'static str {
     match e {
         Error::WarrantExpired { .. } => "TENUO_WARRANT_EXPIRED",
         Error::WarrantRevoked(_) => "TENUO_REVOKED",
@@ -2135,13 +2200,13 @@ fn map_code(e: &Error) -> &'static str {
     }
 }
 
-fn parse_hex(input: &str) -> Result<Vec<u8>, JsError> {
+pub(crate) fn parse_hex(input: &str) -> Result<Vec<u8>, JsError> {
     reject_encoded_budget(input, MAX_ENCODED_CHAIN_CHARS, "hex")?;
     let clean: String = input.chars().filter(|c| !c.is_whitespace()).collect();
     hex::decode(clean).map_err(|e| JsError::new(&format!("invalid hex: {e}")))
 }
 
-fn parse_public_key_hex(hex: &str) -> Result<PublicKey, JsError> {
+pub(crate) fn parse_public_key_hex(hex: &str) -> Result<PublicKey, JsError> {
     let bytes = parse_hex(hex)?;
     if bytes.len() != 32 {
         return Err(JsError::new(
@@ -2153,7 +2218,7 @@ fn parse_public_key_hex(hex: &str) -> Result<PublicKey, JsError> {
     PublicKey::from_bytes(&arr).map_err(|e| JsError::new(&format!("invalid public key: {e}")))
 }
 
-fn parse_holder_secret(bytes: &[u8]) -> Result<SigningKey, JsError> {
+pub(crate) fn parse_holder_secret(bytes: &[u8]) -> Result<SigningKey, JsError> {
     if bytes.len() != 32 {
         return Err(JsError::new("holder key must be 32 bytes"));
     }
@@ -2162,7 +2227,10 @@ fn parse_holder_secret(bytes: &[u8]) -> Result<SigningKey, JsError> {
     Ok(SigningKey::from_bytes(&arr))
 }
 
-fn session_from_chain(chain: Vec<Warrant>, holder_secret: &[u8]) -> Result<SdkSession, JsError> {
+pub(crate) fn session_from_chain(
+    chain: Vec<Warrant>,
+    holder_secret: &[u8],
+) -> Result<SdkSession, JsError> {
     if chain.is_empty() {
         return Err(JsError::new("chain must not be empty"));
     }
@@ -2179,7 +2247,7 @@ fn session_from_chain(chain: Vec<Warrant>, holder_secret: &[u8]) -> Result<SdkSe
     })
 }
 
-fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
+pub(crate) fn parse_chain(input: &str) -> Result<Vec<Warrant>, JsError> {
     reject_encoded_budget(input, MAX_ENCODED_CHAIN_CHARS, "encoded warrant chain")?;
     let trimmed = input.trim();
     if let Ok(stack) = wire::decode_pem_chain(trimmed) {
@@ -2285,7 +2353,7 @@ fn parse_chain_parts(parts: JsValue) -> Result<Vec<Warrant>, JsError> {
     Ok(out)
 }
 
-fn tools_for_narrow(
+pub(crate) fn tools_for_narrow(
     leaf: &Warrant,
     allow_json: &JsValue,
 ) -> Result<HashMap<String, ConstraintSet>, JsError> {
@@ -2355,7 +2423,7 @@ fn apply_tool_ceiling(
     set.matches(args)
 }
 
-fn constraint_set_from_fields(
+pub(crate) fn constraint_set_from_fields(
     fields: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<ConstraintSet, JsError> {
     let mut set = ConstraintSet::new();
@@ -2412,7 +2480,7 @@ fn to_js_inspect(dto: &InspectDto) -> JsValue {
         .unwrap_or_else(|_| JsValue::from_str("internal serialize error"))
 }
 
-fn error_field(e: &Error) -> Option<&str> {
+pub(crate) fn error_field(e: &Error) -> Option<&str> {
     match e {
         Error::ConstraintNotSatisfied { field, .. } => Some(field.as_str()),
         Error::PathNotContained { .. } | Error::InvalidPath { .. } => Some("path"),
@@ -2424,7 +2492,7 @@ fn to_js(dto: &DecisionDto) -> JsValue {
     to_js_value(dto)
 }
 
-fn to_js_value<T: Serialize>(dto: &T) -> JsValue {
+pub(crate) fn to_js_value<T: Serialize>(dto: &T) -> JsValue {
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
     dto.serialize(&serializer)
         .unwrap_or_else(|_| JsValue::from_str("internal serialize error"))

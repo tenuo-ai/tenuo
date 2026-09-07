@@ -3,76 +3,115 @@ import type {
   McpCallParams,
   McpHandlerPolicy,
   McpJsonRpcError,
+  McpVerifyOptions,
+  PresentedCall,
+  Session as SessionContract,
   TenuoErrorCode,
   TenuoMcp,
 } from "./api.ts";
-import { ApprovalRequiredError, AuthorizationDeniedError, TenuoConfigurationError, TenuoError } from "./errors.ts";
+import { AuthorizationDeniedError, TenuoConfigurationError, TenuoError } from "./errors.ts";
 import { nativeSession, type Session } from "./session.ts";
 import type { WasmContext, WasmDecision } from "./wasm.ts";
 
-export function createMcp(context: WasmContext, decide: (decision: WasmDecision, tool: string) => void): TenuoMcp {
+export type Decide = (decision: WasmDecision, tool: string, native?: object, args?: Record<string, unknown>) => void;
+
+/**
+ * Transport-agnostic half of `attach`: authorize locally, then sign
+ * proof-of-possession over the call. Shared by `tenuo.present()` and
+ * `tenuo.mcp.attach()`.
+ */
+export function presentCall(
+  context: WasmContext,
+  decide: Decide,
+  session: SessionContract,
+  name: string,
+  args: Readonly<Record<string, unknown>>,
+  options: McpAttachOptions | undefined,
+  label: string,
+): { readonly presented: PresentedCall; readonly wireArgs: Record<string, unknown> } {
+  if (options !== undefined) {
+    assertKnownKeys(options, ATTACH_OPTION_KEYS, `${label} options`);
+  }
+  const native = nativeSession(session as Session);
+  const wireArgs = stripNulls(args);
+  const local = context.authorize(
+    native,
+    name,
+    wireArgs,
+    options?.approvals,
+    undefined,
+    options?.requestId,
+  );
+  emitReceipt(options?.onReceipt, local.receipt);
+  decide(local, name, native, wireArgs);
+  const signature = context.signPop(native, name, wireArgs);
+  const warrant = stackWire(native);
+  if (options?.approvals !== undefined && options.approvals.length > 0) {
+    return {
+      presented: { warrant, signature, approvals: options.approvals.map(approvalWire) },
+      wireArgs,
+    };
+  }
+  return { presented: { warrant, signature }, wireArgs };
+}
+
+/**
+ * Transport-agnostic half of `verify`: check a presented warrant chain and
+ * proof-of-possession, then apply the host ceiling. Shared by
+ * `tenuo.verify()` and `tenuo.mcp.verify()`.
+ */
+export async function verifyPresented(
+  context: WasmContext,
+  decide: Decide,
+  presented: PresentedCall,
+  name: string,
+  args: Readonly<Record<string, unknown>>,
+  options: McpVerifyOptions | undefined,
+  label: string,
+): Promise<Readonly<Record<string, unknown>>> {
+  if (options !== undefined) {
+    assertKnownKeys(options, VERIFY_OPTION_KEYS, `${label} options`);
+  }
+  const envelope = presentedEnvelope(presented);
+  if (envelope === undefined) {
+    throw new TenuoConfigurationError(
+      `${label} needs { warrant, signature } from tenuo.present() or tenuo.mcp.attach()`,
+    );
+  }
+  const decision = context.authorizePresented(
+    envelope.warrant,
+    name,
+    stripNulls(args),
+    envelope.signature,
+    envelope.approvals,
+    options?.allow,
+    options?.requestId,
+  );
+  // Rust already signed this envelope. Emit before the nonce store can
+  // refuse a replay — otherwise an attacker leaves no audit artifact.
+  emitReceipt(options?.onReceipt, decision.receipt);
+  if (decision.outcome === "allow") {
+    await admitPop(options?.nonceStore, envelope.signature, options?.onNonceStoreError);
+  }
+  decide(decision, name);
+  return plainArgs(decision.args);
+}
+
+export function createMcp(context: WasmContext, decide: Decide): TenuoMcp {
   const mcp: TenuoMcp = {
     attach(session, name, args, options) {
-      if (options !== undefined) {
-        assertKnownKeys(options, ATTACH_OPTION_KEYS, "mcp.attach() options");
-      }
-      const native = nativeSession(session as Session);
-      const wireArgs = stripNulls(args);
-      const local = context.authorize(
-        native,
-        name,
-        wireArgs,
-        options?.approvals,
-        undefined,
-        options?.requestId,
-      );
-      emitReceipt(options?.onReceipt, local.receipt);
-      decide(local, name);
-      const signature = context.signPop(native, name, wireArgs);
-      const warrant = stackWire(native);
-      const tenuo: McpCallParams["_meta"]["tenuo"] = { warrant, signature };
-      if (options?.approvals !== undefined && options.approvals.length > 0) {
-        return {
-          name,
-          arguments: wireArgs,
-          _meta: {
-            tenuo: {
-              ...tenuo,
-              approvals: options.approvals.map(approvalWire),
-            },
-          },
-        };
-      }
-      return { name, arguments: wireArgs, _meta: { tenuo } };
+      const { presented, wireArgs } = presentCall(context, decide, session, name, args, options, "mcp.attach()");
+      return { name, arguments: wireArgs, _meta: { tenuo: presented } };
     },
 
     async verify(name, args, meta, options) {
-      if (options !== undefined) {
-        assertKnownKeys(options, VERIFY_OPTION_KEYS, "mcp.verify() options");
-      }
       const envelope = tenuoEnvelope(meta);
       if (envelope === undefined) {
         throw new TenuoConfigurationError(
           "MCP call is missing _meta.tenuo. The client must call tenuo.mcp.attach().",
         );
       }
-      const decision = context.authorizePresented(
-        envelope.warrant,
-        name,
-        stripNulls(args),
-        envelope.signature,
-        envelope.approvals,
-        options?.allow,
-        options?.requestId,
-      );
-      // Rust already signed this envelope. Emit before the nonce store can
-      // refuse a replay — otherwise an attacker leaves no audit artifact.
-      emitReceipt(options?.onReceipt, decision.receipt);
-      if (decision.outcome === "allow") {
-        await admitPop(options?.nonceStore, envelope.signature, options?.onNonceStoreError);
-      }
-      decide(decision, name);
-      return plainArgs(decision.args);
+      return verifyPresented(context, decide, envelope, name, args, options, "mcp.verify()");
     },
 
     handler(name, policyOrExecute, maybeExecute?) {
@@ -118,18 +157,13 @@ function approvalWire(value: string | Uint8Array): string {
   return Buffer.from(value).toString("base64");
 }
 
-function tenuoEnvelope(
-  meta: unknown,
+function presentedEnvelope(
+  value: unknown,
 ): { warrant: string; signature: string; approvals?: string[] } | undefined {
-  if (meta === null || typeof meta !== "object") {
+  if (value === null || typeof value !== "object") {
     return undefined;
   }
-  const root = meta as { tenuo?: unknown; _meta?: unknown };
-  const block = root.tenuo ?? (root._meta as { tenuo?: unknown } | undefined)?.tenuo;
-  if (block === null || typeof block !== "object") {
-    return undefined;
-  }
-  const tenuo = block as { warrant?: unknown; signature?: unknown; approvals?: unknown };
+  const tenuo = value as { warrant?: unknown; signature?: unknown; approvals?: unknown };
   if (typeof tenuo.warrant !== "string" || tenuo.warrant.length === 0) {
     return undefined;
   }
@@ -144,6 +178,17 @@ function tenuoEnvelope(
     signature: tenuo.signature,
     ...(approvals !== undefined && approvals.length > 0 ? { approvals } : {}),
   };
+}
+
+function tenuoEnvelope(
+  meta: unknown,
+): { warrant: string; signature: string; approvals?: string[] } | undefined {
+  if (meta === null || typeof meta !== "object") {
+    return undefined;
+  }
+  const root = meta as { tenuo?: unknown; _meta?: unknown };
+  const block = root.tenuo ?? (root._meta as { tenuo?: unknown } | undefined)?.tenuo;
+  return presentedEnvelope(block);
 }
 
 const HANDLER_POLICY_KEYS = new Set(["allow", "onReceipt", "nonceStore", "onNonceStoreError"]);

@@ -121,7 +121,7 @@ use cel_interpreter::{Context, Program, Value};
 use chrono::{DateTime, Utc};
 #[cfg(feature = "cel")]
 use ipnetwork::IpNetwork;
-#[cfg(feature = "cel")]
+#[cfg(all(feature = "cel", not(target_arch = "wasm32")))]
 use moka::sync::Cache;
 #[cfg(feature = "cel")]
 use std::net::IpAddr;
@@ -132,16 +132,27 @@ use std::sync::Arc;
 // CEL Feature: Full Implementation
 // ============================================================================
 
+/// Maximum number of compiled programs kept per process.
 #[cfg(feature = "cel")]
+const CEL_CACHE_CAPACITY: u64 = 1000;
+
+#[cfg(all(feature = "cel", not(target_arch = "wasm32")))]
 static CEL_CACHE: std::sync::LazyLock<Cache<String, Arc<Program>>> =
-    std::sync::LazyLock::new(|| Cache::builder().max_capacity(1000).build());
+    std::sync::LazyLock::new(|| Cache::builder().max_capacity(CEL_CACHE_CAPACITY).build());
+
+/// wasm32 has no monotonic clock, which moka's eviction needs, so the WASM
+/// build keeps a plain bounded map instead. Same capacity; when full it is
+/// cleared rather than evicted by recency, which is enough for the SDK.
+#[cfg(all(feature = "cel", target_arch = "wasm32"))]
+static CEL_CACHE: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Arc<Program>>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
 /// Compile a CEL expression, using cache if available.
 ///
 /// # Feature Flag
 ///
 /// Requires the `cel` feature. Without it, returns `CelError`.
-#[cfg(feature = "cel")]
+#[cfg(all(feature = "cel", not(target_arch = "wasm32")))]
 pub fn compile(expression: &str) -> Result<Arc<Program>> {
     if let Some(program) = CEL_CACHE.get(expression) {
         return Ok(program);
@@ -152,6 +163,29 @@ pub fn compile(expression: &str) -> Result<Arc<Program>> {
 
     let program = Arc::new(program);
     CEL_CACHE.insert(expression.to_string(), program.clone());
+
+    Ok(program)
+}
+
+/// Compile a CEL expression on wasm32, using the bounded map cache.
+#[cfg(all(feature = "cel", target_arch = "wasm32"))]
+pub fn compile(expression: &str) -> Result<Arc<Program>> {
+    if let Ok(cache) = CEL_CACHE.lock() {
+        if let Some(program) = cache.get(expression) {
+            return Ok(program.clone());
+        }
+    }
+
+    let program = Program::compile(expression)
+        .map_err(|e| Error::CelError(format!("compilation failed: {}", e)))?;
+
+    let program = Arc::new(program);
+    if let Ok(mut cache) = CEL_CACHE.lock() {
+        if cache.len() as u64 >= CEL_CACHE_CAPACITY {
+            cache.clear();
+        }
+        cache.insert(expression.to_string(), program.clone());
+    }
 
     Ok(program)
 }
@@ -289,9 +323,17 @@ fn constraint_value_to_cel(cv: &ConstraintValue) -> Result<Value> {
 }
 
 /// Clear the CEL program cache.
-#[cfg(feature = "cel")]
+#[cfg(all(feature = "cel", not(target_arch = "wasm32")))]
 pub fn clear_cache() {
     CEL_CACHE.invalidate_all();
+}
+
+/// Clear the CEL program cache (wasm32 bounded map).
+#[cfg(all(feature = "cel", target_arch = "wasm32"))]
+pub fn clear_cache() {
+    if let Ok(mut cache) = CEL_CACHE.lock() {
+        cache.clear();
+    }
 }
 
 /// Clear the CEL program cache (no-op when `cel` feature is disabled).
@@ -301,9 +343,15 @@ pub fn clear_cache() {
 }
 
 /// Get the number of cached CEL programs.
-#[cfg(feature = "cel")]
+#[cfg(all(feature = "cel", not(target_arch = "wasm32")))]
 pub fn cache_size() -> u64 {
     CEL_CACHE.entry_count()
+}
+
+/// Get the number of cached CEL programs (wasm32 bounded map).
+#[cfg(all(feature = "cel", target_arch = "wasm32"))]
+pub fn cache_size() -> u64 {
+    CEL_CACHE.lock().map(|c| c.len() as u64).unwrap_or(0)
 }
 
 /// Get the number of cached CEL programs (always 0 when `cel` feature is disabled).

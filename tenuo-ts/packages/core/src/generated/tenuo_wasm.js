@@ -22,6 +22,43 @@ class SdkContext {
         wasm.__wbg_sdkcontext_free(ptr, 0);
     }
     /**
+     * Signed statement from this session's holder that it is the one asking
+     * for `tool(args)`. Carried inside a control-plane approval request so
+     * the approver can tell a genuine request from a forged one.
+     * @param {SdkSession} session
+     * @param {string} tool
+     * @param {any} args_json
+     * @returns {any}
+     */
+    approvalContextAttestation(session, tool, args_json) {
+        _assertClass(session, SdkSession);
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_approvalContextAttestation(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Everything an approval service needs to present `tool(args)` to a
+     * human and mint a matching `SignedApproval`. Not a signed artifact.
+     * @param {SdkSession} session
+     * @param {string} tool
+     * @param {any} args_json
+     * @returns {any}
+     */
+    approvalRequest(session, tool, args_json) {
+        _assertClass(session, SdkSession);
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_approvalRequest(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * Sign PoP and authorize in one call. Never returns allow without a core allow.
      *
      * `tool_allow` is the wrapper ceiling (`tenuo.tool(..., { allow })`). Null/undefined
@@ -85,6 +122,42 @@ class SdkContext {
         return ret;
     }
     /**
+     * Explain what the leaf would decide for `tool(args)`, field by field.
+     * No proof-of-possession is signed, so this works on any session,
+     * including one issued to another holder.
+     * @param {SdkSession} session
+     * @param {string} tool
+     * @param {any} args_json
+     * @returns {any}
+     */
+    explain(session, tool, args_json) {
+        _assertClass(session, SdkSession);
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_explain(this.__wbg_ptr, session.__wbg_ptr, ptr0, len0, args_json);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Issuer context from a stable 32-byte Ed25519 secret. Its own public
+     * key is trusted; `extra_roots` (hex) are trusted as well, so one
+     * process can verify chains from several control planes.
+     * @param {Uint8Array} secret
+     * @param {any} extra_roots
+     * @returns {SdkContext}
+     */
+    static fromIssuerSecret(secret, extra_roots) {
+        const ptr0 = passArray8ToWasm0(secret, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_fromIssuerSecret(ptr0, len0, extra_roots);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return SdkContext.__wrap(ret[0]);
+    }
+    /**
      * Authorizer-only context. `mint()` fails; import a session from the wire.
      * @param {any} roots
      * @returns {SdkContext}
@@ -95,6 +168,23 @@ class SdkContext {
             throw takeFromExternrefTable0(ret[1]);
         }
         return SdkContext.__wrap(ret[0]);
+    }
+    /**
+     * Issue an execution session from an issuer session. The issuer
+     * session's holder signs; core checks the tools against
+     * `issuableTools`, constraints against `constraintBounds`, clearance,
+     * and issue depth. No control-plane key is involved.
+     * @param {SdkSession} issuer
+     * @param {any} options
+     * @returns {SdkSession}
+     */
+    issue(issuer, options) {
+        _assertClass(issuer, SdkSession);
+        const ret = wasm.sdkcontext_issue(this.__wbg_ptr, issuer.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return SdkSession.__wrap(ret[0]);
     }
     /**
      * Public key of the local issuer, hex. Verifier-only contexts have none.
@@ -158,6 +248,21 @@ class SdkContext {
         var ptr0 = isLikeNone(holder_hex) ? 0 : passStringToWasm0(holder_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len0 = WASM_VECTOR_LEN;
         const ret = wasm.sdkcontext_mint(this.__wbg_ptr, allow_json, ttl_seconds, require_approval, ptr0, len0, isLikeNone(max_depth) ? Number.MAX_SAFE_INTEGER : (max_depth) >>> 0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return SdkSession.__wrap(ret[0]);
+    }
+    /**
+     * `mint()` with every option the protocol offers: kind, clearance,
+     * session and agent ids, approval gates with messages and per-argument
+     * triggers, and issuer-warrant fields. Keys are camelCase; unknown keys
+     * are rejected.
+     * @param {any} options
+     * @returns {SdkSession}
+     */
+    mintExtended(options) {
+        const ret = wasm.sdkcontext_mintExtended(this.__wbg_ptr, options);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -228,6 +333,31 @@ class SdkContext {
         let deferred2_1;
         try {
             const ret = wasm.sdkcontext_signRevocationList(this.__wbg_ptr, ids);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Sign a revocation list with this context's issuer key. Load it with
+     * `loadRevocationList` anywhere this issuer is a trusted root.
+     * @param {any} ids
+     * @param {number | null} [version]
+     * @returns {string}
+     */
+    signRevocationListVersioned(ids, version) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.sdkcontext_signRevocationListVersioned(this.__wbg_ptr, ids, isLikeNone(version) ? Number.MAX_SAFE_INTEGER : (version) >>> 0);
             var ptr1 = ret[0];
             var len1 = ret[1];
             if (ret[3]) {
@@ -687,6 +817,22 @@ function parse_connect_token(token) {
 exports.parse_connect_token = parse_connect_token;
 
 /**
+ * Decode and check an approval envelope. Not authorization.
+ * @param {string} envelope
+ * @returns {any}
+ */
+function sdkInspectApproval(envelope) {
+    const ptr0 = passStringToWasm0(envelope, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.sdkInspectApproval(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkInspectApproval = sdkInspectApproval;
+
+/**
  * @param {string} payload_hex
  * @param {string} signature_hex
  * @returns {any}
@@ -703,6 +849,22 @@ function sdkInspectParts(payload_hex, signature_hex) {
     return takeFromExternrefTable0(ret[0]);
 }
 exports.sdkInspectParts = sdkInspectParts;
+
+/**
+ * Decode a signed revocation list without loading it.
+ * @param {string} wire
+ * @returns {any}
+ */
+function sdkInspectRevocationList(wire) {
+    const ptr0 = passStringToWasm0(wire, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.sdkInspectRevocationList(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkInspectRevocationList = sdkInspectRevocationList;
 
 /**
  * @param {string} wire
@@ -797,6 +959,42 @@ function sdkSignApproval(session, tool, args_json, approver_secret, external_id,
 exports.sdkSignApproval = sdkSignApproval;
 
 /**
+ * Sign an approval for a request hash. The approver never needs the
+ * warrant or the holder key; the hash already commits to both.
+ * @param {string} request_hash_hex
+ * @param {Uint8Array} approver_secret
+ * @param {string} external_id
+ * @param {number | null} [ttl_seconds]
+ * @param {number | null} [warrant_expires_at]
+ * @returns {string}
+ */
+function sdkSignApprovalForRequest(request_hash_hex, approver_secret, external_id, ttl_seconds, warrant_expires_at) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(request_hash_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(approver_secret, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(external_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkSignApprovalForRequest(ptr0, len0, ptr1, len1, ptr2, len2, isLikeNone(ttl_seconds) ? Number.MAX_SAFE_INTEGER : (ttl_seconds) >>> 0, !isLikeNone(warrant_expires_at), isLikeNone(warrant_expires_at) ? 0 : warrant_expires_at);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+exports.sdkSignApprovalForRequest = sdkSignApprovalForRequest;
+
+/**
  * Test seam. Signs the published generator envelope (not the in-memory SRL codec).
  * @param {any} ids
  * @param {number} version
@@ -852,6 +1050,35 @@ function sdkSignRevocationList(ids, issuer_secret) {
     }
 }
 exports.sdkSignRevocationList = sdkSignRevocationList;
+
+/**
+ * Sign a revocation list with an explicit issuer secret (control-plane path).
+ * @param {any} ids
+ * @param {number | null | undefined} version
+ * @param {Uint8Array} issuer_secret
+ * @returns {string}
+ */
+function sdkSignRevocationListVersioned(ids, version, issuer_secret) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(issuer_secret, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkSignRevocationListVersioned(ids, isLikeNone(version) ? Number.MAX_SAFE_INTEGER : (version) >>> 0, ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+exports.sdkSignRevocationListVersioned = sdkSignRevocationListVersioned;
 
 /**
  * Signature authenticity only. Not authorization.

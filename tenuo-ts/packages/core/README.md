@@ -71,6 +71,15 @@ const handed = tenuo.narrow(session, { path: under("/data/reports") }, {
 far the chain may go; `issuerPublicKey()` is what agents put in `trustedRoots`;
 `session.inspect()` shows depth, ceiling, tools, and holder public key.
 
+The rest of the protocol is here too: a stable issuer key
+(`createTenuo({ root: createTenuo.issuerKeyFromEnv("TENUO_ISSUER_SECRET") })`),
+issuer sessions and `tenuo.issue()`, clearance / session id / agent id, the
+full constraint set (`range`, `regex`, `cidr`, `urlSafe`, `shlex`, `anyOf`,
+`cel`, ...), approval gates with `ApprovalRequiredError.request`,
+`createTenuo.signApproval()` and the control-plane v1 wire shape, revocation
+lists (`tenuo.revocationList()`), public receipt verification, `tenuo.explain()`,
+and `tenuo.present()` / `tenuo.verify()` for boundaries that are not MCP.
+
 MCP wire helpers live on `tenuo.mcp` (`attach` / `verify` / `handler`). They do
 not depend on an MCP framework. For the official v2 server, use `@tenuo/mcp`.
 For `@modelcontextprotocol/sdk` v1, copy the recipe in `examples/mcp/host.ts`.

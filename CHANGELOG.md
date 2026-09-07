@@ -27,6 +27,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TypeScript: `TENUO_DEPTH_EXCEEDED`.** Narrowing a terminal session, or
   past the chain's `maxDepth`, raises `AuthorizationDeniedError` with this
   code instead of the generic `TENUO_CHAIN_INVALID`.
+- **TypeScript: full constraint set.** `min`, `range`, `notOneOf`, `regex`,
+  `wildcard`, `cidr`, `urlPattern`, `urlSafe`, `shlex`, `contains`, `subset`,
+  `anyOf`, `all`, `not`, `cel`, and `under(root, { caseSensitive, allowEqual })`
+  join the existing six. Every kind is evaluated and attenuated in core; the
+  set now matches the Python SDK and the core `Constraint` enum.
+- **TypeScript: stable issuer key.** `createTenuo({ root:
+  createTenuo.issuerKeyFromEnv("TENUO_ISSUER_SECRET") })` (also `FromHex`,
+  `FromBytes`, `generateIssuerKey`) makes a Node process a control plane that
+  mints with a persistent key and works outside `NODE_ENV=development`.
+- **TypeScript: issuer sessions.** `session({ kind: "issuer", issuableTools,
+  constraintBounds, maxIssueDepth })` and `tenuo.issue(issuerSession, {
+  allow, holder, ... })` mint execution sessions without the root key; core
+  checks tools, bounds, clearance, and issue depth.
+- **TypeScript: warrant metadata.** `clearance` (name or 0-255), `sessionId`,
+  `agentId` on `session()`, `issue()`, and `narrow()` (clearance only lowers,
+  session id is inherited); all reported by `session.inspect()`.
+- **TypeScript: approvals end to end.** `requireApproval.gates` with per-tool
+  messages and per-argument `"all"` / `{ when }` / `{ exempt }` triggers;
+  `narrow({ addApprovers, minApprovals })`; `ApprovalRequiredError.request`;
+  `tenuo.approvalRequest()`, `tenuo.attestApprovalRequest()`,
+  `createTenuo.signApproval()`, `createTenuo.inspectApproval()`, and the
+  control-plane v1 wire helpers `controlPlaneApprovalRequestV1()` /
+  `signedApprovalsFromResponseV1()` matching the Python shape.
+- **TypeScript: revocation lists.** `tenuo.revocationList({ revoke, version })`
+  on issuer contexts, `createTenuo.signRevocationList()` with an explicit
+  secret, `createTenuo.inspectRevocationList()`.
+- **TypeScript: receipts are public.** `createTenuo.verifyReceipt()` and
+  `createTenuo.verifyReceiptChain()` with camelCase results.
+- **TypeScript: `tenuo.explain(session, tool, args)`.** Field-by-field
+  verdicts, unknown and missing arguments, chain validity, and the decision,
+  with no proof-of-possession, so it works on wire-only sessions.
+- **TypeScript: `tenuo.present()` / `tenuo.verify()`.** The MCP attach/verify
+  path without the MCP envelope, for HTTP or any other boundary.
+  `mcp.attach()` and `mcp.verify()` now share it.
+- **Core: CEL compiles on wasm32.** The compiled-program cache uses a bounded
+  map on `wasm32` instead of moka, whose eviction needs a monotonic clock the
+  target does not have. Native builds are unchanged.
 
 ### Changed
 
@@ -42,6 +79,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shape, `CallToolRequestParams.meta`); `tenuo[crewai]` requires `crewai>=1.5`
   (`crewai.hooks`). Both were previously declared as `>=1.0` but failed at
   import or first use on those versions.
+- **tenuo-wasm parity module** (`sdk_ext.rs`): `SdkContext.fromIssuerSecret`,
+  `mintExtended`, `issue`, `explain`, `approvalRequest`,
+  `approvalContextAttestation`, `signRevocationListVersioned`; free functions
+  `sdkSignApprovalForRequest`, `sdkInspectApproval`,
+  `sdkSignRevocationListVersioned`, `sdkInspectRevocationList`.
+  `describe()` reports kind, clearance, ids, issuer fields, approvers, and
+  gated tools.
 
 ### Fixed
 

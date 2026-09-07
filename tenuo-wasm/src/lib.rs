@@ -17,6 +17,7 @@ use tenuo::{
 use wasm_bindgen::prelude::*;
 
 mod sdk;
+mod sdk_ext;
 
 #[wasm_bindgen]
 pub fn init_panic_hook() {

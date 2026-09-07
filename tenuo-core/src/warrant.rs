@@ -3403,6 +3403,37 @@ impl<'a> IssuanceBuilder<'a> {
         self
     }
 
+    /// Add or merge approval gates for the execution warrant being issued.
+    ///
+    /// Inherited issuer gates are retained; explicit gates can only add a
+    /// whole-tool gate or additional per-argument triggers.
+    pub fn set_approval_gates_extension(&mut self, bytes: Vec<u8>) -> Result<()> {
+        let explicit = match crate::approval_gate::parse_approval_gate_map(Some(&bytes))? {
+            Some(gates) => gates,
+            None => return Ok(()),
+        };
+        let merged = match self
+            .extensions
+            .get(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
+        {
+            Some(existing) => {
+                match crate::approval_gate::parse_approval_gate_map(Some(existing))? {
+                    Some(inherited) => {
+                        crate::approval_gate::merge_approval_gate_maps(&inherited, &explicit)
+                    }
+                    None => explicit,
+                }
+            }
+            None => explicit,
+        };
+        let encoded = crate::approval_gate::encode_approval_gate_map(&merged)?;
+        self.extensions.insert(
+            crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+            encoded,
+        );
+        Ok(())
+    }
+
     /// Build and sign the execution warrant.
     ///
     /// This validates:
@@ -3612,6 +3643,22 @@ impl<'a> IssuanceBuilder<'a> {
                     }
                 }
             }
+        }
+
+        // Approver metadata without an approval gate is permissive at
+        // authorization time. Reject that shape so an issuance API can never
+        // appear gated while silently allowing every call.
+        if self
+            .required_approvers
+            .as_ref()
+            .is_some_and(|approvers| !approvers.is_empty())
+            && !self
+                .extensions
+                .contains_key(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY)
+        {
+            return Err(Error::Validation(
+                "required_approvers requires an approval gate map".to_string(),
+            ));
         }
 
         // Validate extensions
