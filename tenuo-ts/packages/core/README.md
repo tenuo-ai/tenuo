@@ -87,6 +87,8 @@ For `@modelcontextprotocol/sdk` v1, copy the recipe in `examples/mcp/host.ts`.
 or an async Redis `checkAndRecord`) to reject an exact replayed PoP; that is
 opt-in. PoP v1 is otherwise replayable in-window, including approval-gated
 calls. Pass `nonceStore` on those tools if an approval must be one-use.
+`memoryNonceStore({ ttlSeconds })` defaults to 180 seconds; an explicit TTL must
+be positive, finite, and small enough to represent in milliseconds.
 
 See the [workspace README](../../README.md) for the full API, refuse list, and
 how to rebuild WASM from this monorepo.
