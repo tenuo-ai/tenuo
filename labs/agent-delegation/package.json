@@ -1,8 +1,8 @@
 {
   "name": "agent-delegation-lab",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "AI Agent Delegation Challenge: secure a six-agent travel assistant so the trip still happens and the rogue agent gets nowhere.",
+  "description": "Agent Delegation Lab: book the trip, stop the rogue agent, and learn least-privilege handoffs.",
   "type": "module",
   "engines": {
     "node": ">=20"

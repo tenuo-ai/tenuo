@@ -10,15 +10,33 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT } from "../src/state.ts";
+import { EPILOGUE, MAIN_STAGE_COUNT, STAGE_MAP, TOTAL_STAGE_COUNT } from "../src/stage-map.ts";
 import { capture } from "./capture.ts";
 import { CODESPACES_URL, GOOD_FIRST_ISSUES_URL, MISSION_DIAGRAM, REPO_URL, STAGES, type Capture, type CodeRef, type Explainer, type Snippet, type StageSpec, type Step } from "./spec.ts";
 
 const DOCS = join(ROOT, "..", "..", "docs", "lab");
-const TOTAL = 8;
+const README = join(ROOT, "README.md");
 
 function labVersion(): string {
   const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version?: string };
   return pkg.version ?? "0.0.0";
+}
+
+function readmeStageMap(): string {
+  const rows = STAGE_MAP.map((stage) => {
+    const title = stage.tier === "boss" ? `${stage.title} *(optional boss)*` : stage.title;
+    return `| ${stage.n}. ${title} | ${stage.goal} | ${stage.minutes} min |`;
+  });
+  return `<!-- stage-map:start -->\n## The levels\n\n| Level | Mission | Time |\n|---|---|---:|\n${rows.join("\n")}\n\nAfter the game, the hosted guide has an unnumbered, optional contribution epilogue.\n<!-- stage-map:end -->`;
+}
+
+function expectedReadme(): string {
+  const source = readFileSync(README, "utf8");
+  const replaced = source.replace(/<!-- stage-map:start -->[\s\S]*?<!-- stage-map:end -->/, readmeStageMap());
+  if (replaced === source && !source.includes("<!-- stage-map:start -->")) {
+    throw new Error("README.md is missing the generated stage-map markers");
+  }
+  return replaced;
 }
 
 function esc(s: string): string {
@@ -94,12 +112,14 @@ function stepHtml(step: Step, stage: number, index: number): string {
 </li>`;
 }
 
-function stepper(current: number | "wrap"): string {
+function stepper(current: number | "wrap" | "contribute"): string {
   const items: string[] = [];
-  for (let n = 1; n <= TOTAL; n += 1) {
+  for (let n = 1; n <= TOTAL_STAGE_COUNT; n += 1) {
     const cls = n === current ? ' class="current"' : "";
     items.push(`<a href="/lab/stage-${n}" data-n="${n}"${cls} title="Stage ${n}">${n}</a>`);
   }
+  const epilogueClass = current === "contribute" ? ' class="current"' : "";
+  items.push(`<a href="/lab/${EPILOGUE.slug}"${epilogueClass} title="Optional: ${esc(EPILOGUE.title)}">+</a>`);
   return `<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a>${items.join("")}</nav>`;
 }
 
@@ -130,10 +150,11 @@ ${more}
 
 function stagePage(spec: StageSpec): string {
   const prev = spec.n === 1 ? { href: "/lab/", label: "Overview" } : { href: `/lab/stage-${spec.n - 1}`, label: `Stage ${spec.n - 1}` };
-  const next = spec.n === 7 ? { href: "/lab/wrap-up", label: "Wrap up" } : { href: `/lab/stage-${spec.n + 1}`, label: `Stage ${spec.n + 1}: ${STAGES[spec.n]?.title ?? ""}` };
+  const next = spec.n === TOTAL_STAGE_COUNT ? { href: "/lab/wrap-up", label: "Wrap up" } : { href: `/lab/stage-${spec.n + 1}`, label: `Stage ${spec.n + 1}: ${STAGES[spec.n]?.title ?? ""}` };
   const parts: string[] = [];
   parts.push(stepper(spec.n));
-  parts.push(`<header class="lab-hero"><div class="lab-kicker">Stage ${spec.n} of 7 · <span class="lab-mode ${spec.mode}">${spec.mode}</span> · about ${spec.minutes} min</div><h1>${esc(spec.title)}</h1><p class="lab-goal"><strong>Goal.</strong> ${inline(spec.goal)}</p></header>`);
+  const tier = spec.n > MAIN_STAGE_COUNT ? " · optional boss level" : "";
+  parts.push(`<header class="lab-hero"><div class="lab-kicker">Stage ${spec.n} of ${TOTAL_STAGE_COUNT}${tier} · <span class="lab-mode ${spec.mode}">${spec.mode}</span> · about ${spec.minutes} min</div><h1>${esc(spec.title)}</h1><p class="lab-goal"><strong>Goal.</strong> ${inline(spec.goal)}</p></header>`);
   parts.push(spec.intro.map((p) => `<p class="lab-intro">${inline(p)}</p>`).join("\n"));
   if (spec.explainer !== undefined) {
     parts.push(explainerHtml(spec.explainer));
@@ -163,15 +184,15 @@ function stagePage(spec: StageSpec): string {
 
 function indexPage(): string {
   const cards = STAGES.map((s) => `<a class="lab-card" data-n="${s.n}" href="/lab/stage-${s.n}"><div class="lab-card-n">${s.n}</div><div><div class="lab-card-title">${esc(s.title)}</div><div class="lab-card-goal">${inline(s.goal)}</div></div><div class="lab-card-time">${s.minutes} min</div></a>`);
-  cards.push(`<a class="lab-card" data-n="8" href="/lab/stage-8"><div class="lab-card-n">8</div><div><div class="lab-card-title">Your first pull request</div><div class="lab-card-goal">Optional. Take what you just used and contribute to it.</div></div><div class="lab-card-time">open</div></a>`);
+  cards.push(`<a class="lab-card" href="/lab/${EPILOGUE.slug}"><div class="lab-card-n">+</div><div><div class="lab-card-title">${esc(EPILOGUE.title)}</div><div class="lab-card-goal">${esc(EPILOGUE.goal)}</div></div><div class="lab-card-time">optional</div></a>`);
   const grading = [
-    ["The trip completes correctly", 25, "This is the gate. If Alice does not get a flight, a hotel, an activity, and a boarding pass within budget, the other rows do not count."],
-    ["Unauthorized actions are blocked", 30, "Everything the rogue agent tries."],
-    ["Handoffs pass along only what's needed", 25, "What Boarding Agent can do after Check-in Agent hands it the job."],
-    ["You didn't grant more than the job required", 20, "Measured against the mission. A $300 ceiling for a $286 flight is full marks."],
+    ["Trip booked", 25, "Alice gets a flight, hotel, activity, and boarding pass within budget."],
+    ["Rogue stopped", 30, "Every injected or adversarial action lands as expected."],
+    ["Tight handoff", 25, "The next agent receives only what its piece of work needs."],
+    ["No spare authority", 20, "Every grant stays at or below the mission's least-privilege ceiling."],
   ] as const;
   const body = `${stepper(0)}
-<header class="lab-hero"><div class="lab-kicker">A ninety-minute lab · TypeScript · no account needed</div><h1>AI Agent Delegation Challenge</h1><p class="lab-goal">Six AI agents book a trip. One of them reads an instruction it should not follow. You change how permissions work, stage by stage, until the damage stops and the trip still happens.</p></header>
+<header class="lab-hero"><div class="lab-kicker">A ninety-minute security game · TypeScript · no account needed</div><h1>Book the trip. Stop the rogue agent.</h1><p class="lab-goal">Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
 
 <section class="lab-start">
 <div>
@@ -184,7 +205,7 @@ npm run lab</code></pre>
 </div>
 <div>
 <h2>What to expect</h2>
-<p>Five stages in about ninety minutes, then two extensions for a second sitting. You run a command, read what happened, change a file, and run it again. Stage 5 explains what a Tenuo warrant is before you write your first one, so there is no reading to do first.</p>
+<p>Five stages in about ninety minutes, then two optional boss levels. You run a command, read what happened, change a file, and run it again. Retries are free, speed is not scored, and copying the shown <code>narrow()</code> shape is allowed.</p>
 <p class="lab-muted">If you want the vocabulary early, the TypeScript guide's <a href="${REPO_URL}/tree/main/tenuo-ts">Protect your first tool</a> and <a href="${REPO_URL}/tree/main/tenuo-ts">Delegate to another agent</a> take about seven minutes.</p>
 </div>
 </section>
@@ -199,6 +220,7 @@ npm run lab</code></pre>
 
 <h2>The mission</h2>
 <figure class="lab-figure">${MISSION_DIAGRAM}</figure>
+<p><strong>The cast:</strong> Travel Agent, Flight Agent, Check-in Agent, Boarding Agent, Hotel Agent, and Activity Agent. The diagram above is the handoff graph; the three-hop flight branch matters in stage 5.</p>
 <div class="lab-mission">
 <table><tbody>
 <tr><th>Traveler</th><td>Alice Chen</td><th>Budget</th><td>$1,200 total</td></tr>
@@ -217,11 +239,11 @@ npm run lab</code></pre>
 
 <h2>The stages</h2>
 <div class="lab-grid">${cards.join("\n")}</div>
-<p class="lab-muted">Stages 1 to 5 are the main event, about ninety minutes. Stages 6 and 7 are extensions for a second sitting. Your progress is kept in this browser, and the links the lab prints keep it in step with your terminal.</p>
+<p class="lab-muted">Stages 1 to ${MAIN_STAGE_COUNT} are the main game, about ninety minutes. Stages ${MAIN_STAGE_COUNT + 1} and ${TOTAL_STAGE_COUNT} are optional boss levels. Your progress is kept in this browser, and the links the lab prints keep it in step with your terminal.</p>
 
-<h2>How it is scored</h2>
-<div class="lab-grading">${grading.map(([label, pts, note]) => `<div class="lab-grade"><div class="lab-grade-row"><span>${esc(label)}</span><strong>${pts}</strong></div><div class="lab-bar"><div style="width:${pts}%"></div></div><p class="lab-muted">${esc(note)}</p></div>`).join("")}</div>
-<p><code>npm run score</code> breaks this down per agent. Speed is not scored, and retries are free.</p>
+<h2>Your four stars</h2>
+<div class="lab-grading">${grading.map(([label, _pts, note]) => `<div class="lab-grade"><div class="lab-grade-row"><span>${esc(label)}</span><strong>☆</strong></div><p class="lab-muted">${esc(note)}</p></div>`).join("")}</div>
+<p><code>npm run score</code> shows the four-star HUD first, then the detailed diagnostics. A failed trip does not hide which security boundaries already worked.</p>
 
 <h2>The commands</h2>
 <pre class="lab-cmd"><code>npm run lab        # start or resume where you left off
@@ -230,15 +252,14 @@ npm run score      # your score and why
 npm run trace      # every decision, with its reason
 npm run audit      # what every agent can currently do
 npm run next       # move on to the next stage
-npm run reset      # start over from stage 1
 npm run share      # write an anonymous score breakdown for your session host
-npm run reset      # return to stage 1 without changing exercise files</code></pre>
+npm run reset      # restore stage 1 and every starter exercise</code></pre>
 
-<aside class="lab-callout notice"><div class="lab-callout-title">One ground rule</div><p>You will be tempted to fix the agent that misbehaves: filter what it reads, tell it to ignore suspicious instructions, pick a smarter model. This lab sets those aside. Assume the agent will sometimes be fooled, and work on what still holds when it is.</p></aside>
+<aside class="lab-callout notice"><div class="lab-callout-title">One ground rule</div><p><strong>The injected instruction is in the flight service. Do not delete or filter it.</strong> Assume an agent will sometimes be fooled; this game is about what still holds when it is.</p></aside>
 
 <nav class="lab-nav"><span></span><a class="next" href="/lab/stage-1">Stage 1: One key for everyone →</a></nav>
 `;
-  return frontMatter({ layout: "lab", title: "Agent Delegation Challenge", description: "Six AI agents, one rogue, nine stages. Change how permissions work until the damage stops and the trip still happens.", lab_stage: 0 }) + body;
+  return frontMatter({ layout: "lab", title: "Agent Delegation Lab", description: `Six AI agents, one rogue, ${TOTAL_STAGE_COUNT} stages. Book the trip and stop the rogue agent.`, lab_stage: 0 }) + body;
 }
 
 function wrapUpPage(): string {
@@ -266,27 +287,27 @@ function wrapUpPage(): string {
 <aside class="lab-callout question"><div class="lab-callout-title">One last look</div><p>No one told any agent in this lab to misbehave. Find where the instruction came from, in <code>src/services/flights.ts</code>. It has been sitting there since stage 1, on a departure board your check-in agent reads every time it does its job.</p></aside>
 <h2>Going further</h2>
 <p>The authorization system you used in stages 5 to 7 is open source at <a href="${REPO_URL}">github.com/tenuo-ai/tenuo</a>. The delegation rules behind it are being written up as an IETF standards draft, which is public and readable. A star on the repository is the main way maintainers find out anyone is using their work.</p>
-<nav class="lab-nav"><a class="prev" href="/lab/stage-7">← Stage 7</a><a class="next" href="/lab/stage-8">Stage 8: your first pull request →</a></nav>
+<nav class="lab-nav"><a class="prev" href="/lab/stage-${TOTAL_STAGE_COUNT}">← Stage ${TOTAL_STAGE_COUNT}</a><a class="next" href="/lab/${EPILOGUE.slug}">${esc(EPILOGUE.title)} →</a></nav>
 `;
   return frontMatter({ layout: "lab", title: "What you just learned", description: "The two sentences the lab was built around, and the terms for them.", lab_stage: 0 }) + body;
 }
 
-function stage8Page(): string {
-  const body = `${stepper(8)}
-<header class="lab-hero"><div class="lab-kicker">Stage 8 of 8 · optional · no score</div><h1>Your first pull request</h1><p class="lab-goal"><strong>Goal.</strong> Take the TypeScript SDK you just spent ninety minutes inside and land one small change in it.</p></header>
-<p class="lab-intro">You have been working in a real open-source security project, in the same SDK its maintainers use every day. Most people never get that far before a first contribution. The challenge is to open one.</p>
+function contributePage(): string {
+  const body = `${stepper("contribute")}
+<header class="lab-hero"><div class="lab-kicker">Optional epilogue · no score</div><h1>${esc(EPILOGUE.title)}</h1><p class="lab-goal"><strong>Goal.</strong> Take the TypeScript SDK you just spent ninety minutes inside and land one small change in it.</p></header>
+<p class="lab-intro">You have been working in a real open-source security project, in the same SDK its maintainers use every day. Most people never get that far before a first contribution. The optional goal is to open one.</p>
 <h2>Do this</h2>
 <ol class="lab-steps">
-<li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="8:0"><span>1</span></label><div class="lab-step-body"><p>Pick an issue labeled <strong>good first issue</strong>. Most are TypeScript: a runnable example, a test recipe, a clearer error, a cookbook for the constraint helpers you used in stage 5. Each says what done looks like.</p><a class="lab-button" href="${GOOD_FIRST_ISSUES_URL}">Browse good first issues</a></div></li>
-<li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="8:1"><span>2</span></label><div class="lab-step-body"><p>Comment on the issue so nobody else picks it up at the same time. Then read <code>CONTRIBUTING.md</code>: it tells you how to run the TypeScript checks locally, which is most of the work.</p></div></li>
-<li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="8:2"><span>3</span></label><div class="lab-step-body"><p>Make the change, run the checks, open the pull request, and say in the description that you ran them.</p></div></li>
+<li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="contribute:0"><span>1</span></label><div class="lab-step-body"><p>Pick an issue labeled <strong>good first issue</strong>. Most are TypeScript: a runnable example, a test recipe, a clearer error, a cookbook for the constraint helpers you used in stage 5. Each says what done looks like.</p><a class="lab-button" href="${GOOD_FIRST_ISSUES_URL}">Browse good first issues</a></div></li>
+<li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="contribute:1"><span>2</span></label><div class="lab-step-body"><p>Comment on the issue so nobody else picks it up at the same time. Then read <code>CONTRIBUTING.md</code>: it tells you how to run the TypeScript checks locally, which is most of the work.</p></div></li>
+<li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="contribute:2"><span>3</span></label><div class="lab-step-body"><p>Make the change, run the checks, open the pull request, and say in the description that you ran them.</p></div></li>
 </ol>
 <aside class="lab-callout notice"><div class="lab-callout-title">What makes a first pull request easy to merge</div><ul><li>Keep it to the one issue. A small change that does exactly what the issue asks beats a large one that does several things.</li><li>Run the checks the contributing guide names, and say that you did.</li><li>If you get stuck, say so on the issue. Maintainers would rather answer a question than review a guess.</li></ul></aside>
 <p>Your session host can help you pick one and will tell you how to reach the maintainers if an issue is unclear. A merged pull request on a security project is worth having your name on.</p>
-<section class="lab-done"><div><div class="lab-callout-title">Done when</div><p>Your pull request is open.</p></div><button type="button" class="lab-mark" data-mark-done="8">Mark stage 8 done</button></section>
+<section class="lab-done"><div><div class="lab-callout-title">Done when</div><p>Your pull request is open.</p></div></section>
 <nav class="lab-nav"><a class="prev" href="/lab/wrap-up">← What you just learned</a><a class="next" href="${REPO_URL}">The repository →</a></nav>
 `;
-  return frontMatter({ layout: "lab", title: "Stage 8: your first pull request", description: "Optional: contribute to the SDK you just used.", lab_stage: 10 }) + body;
+  return frontMatter({ layout: "lab", title: EPILOGUE.title, description: EPILOGUE.goal, lab_stage: 0 }) + body;
 }
 
 function main(): void {
@@ -295,7 +316,7 @@ function main(): void {
   pages.set("index.md", indexPage());
   for (const s of STAGES) pages.set(`stage-${s.n}.md`, stagePage(s));
   pages.set("wrap-up.md", wrapUpPage());
-  pages.set("stage-8.md", stage8Page());
+  pages.set(`${EPILOGUE.slug}.md`, contributePage());
 
   if (check) {
     const stale: string[] = [];
@@ -303,6 +324,7 @@ function main(): void {
       const path = join(DOCS, name);
       if (!existsSync(path) || readFileSync(path, "utf8") !== html) stale.push(name);
     }
+    if (readFileSync(README, "utf8") !== expectedReadme()) stale.push("labs/agent-delegation/README.md stage map");
     if (stale.length > 0) {
       console.error(`docs/lab is stale: ${stale.join(", ")}. Run: npm run site (in labs/agent-delegation) and commit the result.`);
       process.exitCode = 1;
@@ -316,6 +338,7 @@ function main(): void {
     if (existing.endsWith(".md") && !pages.has(existing)) rmSync(join(DOCS, existing));
   }
   for (const [name, html] of pages) writeFileSync(join(DOCS, name), html);
+  writeFileSync(README, expectedReadme());
   console.log(`wrote ${pages.size} pages to ${DOCS}`);
 }
 

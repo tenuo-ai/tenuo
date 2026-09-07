@@ -1,13 +1,13 @@
 ---
 layout: "lab"
-title: "Stage 6: A stolen permission, and the end of the line"
-description: "See that a copied permission cannot be used by anyone it was not issued to, then mark one hop as the last and watch the chain stop where the previous agent decided."
+title: "Stage 6: Boss: stolen authority"
+description: "See why a copied permission cannot be used by another agent, then deliberately end a delegation chain."
 lab_stage: 6
-lab_version: "0.1.0"
+lab_version: "0.2.0"
 ---
-<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" class="current" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a></nav>
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" class="current" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
 
-<header class="lab-hero"><div class="lab-kicker">Stage 6 of 7 · <span class="lab-mode tenuo">tenuo</span> · about 15 min</div><h1>A stolen permission, and the end of the line</h1><p class="lab-goal"><strong>Goal.</strong> See that a copied permission cannot be used by anyone it was not issued to, then mark one hop as the last and watch the chain stop where the previous agent decided.</p></header>
+<header class="lab-hero"><div class="lab-kicker">Stage 6 of 7 · optional boss level · <span class="lab-mode tenuo">tenuo</span> · about 15 min</div><h1>Boss: stolen authority</h1><p class="lab-goal"><strong>Goal.</strong> See why a copied permission cannot be used by another agent, then deliberately end a delegation chain.</p></header>
 
 <p class="lab-intro">Two short extensions on the chain you built. Boarding Agent's permission for UA214 is a piece of data: a list of strings. Activity Agent gets a copy and tries to use it.</p>
 <p class="lab-intro">Then a limit on distance. When one agent hands a permission on, it can mark it terminal. The root also carries a maximum number of hops for the whole trip: any agent can lower it, none can raise it.</p>
@@ -37,11 +37,17 @@ export function steal(tenuo: TenuoMode, boardingSession: Session): StealOutcome 
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="6:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the checks and read the reason on the <strong>STOLEN WARRANT</strong> line carefully.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 69 lines</span></summary><pre><code>
-Stage 6 of 7: A stolen permission, and the end of the line   mode=tenuo  scenario=spring-break
+<div class="lab-step-body"><p>Run the checks and read the <strong>STOLEN</strong> replay panel carefully. It prints both public keys, the failed comparison, and the Ed25519 signature result.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 79 lines</span></summary><pre><code>
+Stage 6 of 7: Boss: stolen authority   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-6
 
 WALLET  Alice: $459 of $1200
+ROGUE ATTEMPTS BLOCKED  8 / 8
+STARS   ★★☆★
+  ★ Trip booked
+  ★ Rogue stopped
+  ☆ Tight handoff
+  ★ No spare authority
 
 THE TRIP
   ✓ trip-alice-cun  travel: read traveler name
@@ -96,10 +102,14 @@ BOARDING AGENT AFTER THE HANDOFF
       reason: get_reservation is not in boarding-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
 ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
   requested: every reservation; read, check in, cancel     DENIED   ✓
-      reason: DENIED at narrow(), in checkin-agent's own process, before any token existed: TENUO_CHAIN_INVALID: attenuation would expand capabilities: tool 'cancel_reservation' not in parent's tools  [TENUO_CHAIN_INVALID]
+      reason: DENIED at narrow(), in checkin-agent's own process, before any token existed: TENUO_CHAIN_INVALID: attenuation would expand capabilities: tool 'cancel_reservation' not in parent's tools. narrow() cannot add 'cancel_reservation': remove it or delegate from a parent that grants it.  [TENUO_CHAIN_INVALID]
 STOLEN: activity-agent presents boarding-agent's warrant
   issue_boarding_pass(UA214) with a copied warrant         DENIED   ✓
-      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it.  [TENUO_INVALID_POP]
+      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
+      warrant.bound_key             …
+      activity holder_key.public   …
+      comparison                    holder_key != warrant.bound_key
+      Ed25519 signature             FAILED
 TERMINAL
   checkin-agent narrow → boarding-agent                    ALLOWED  ✗
       expected DENIED: boarding-agent now holds {issue_boarding_pass} at depth 3
@@ -113,19 +123,25 @@ TERMINAL
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="6:3"><span>4</span></label>
-<div class="lab-step-body"><p>Run the trip and see which step fails and with what code. This stage breaks the trip on purpose.</p><pre class="lab-cmd"><code>npm run lab</code></pre><div class="lab-tabs"><input type="radio" name="t6-3" id="t6-3-0" checked><label for="t6-3-0">Before</label><input type="radio" name="t6-3" id="t6-3-1"><label for="t6-3-1">After</label><div class="lab-tab-panel"><details class="lab-term"><summary>Before <span>npm run lab · 68 lines</span></summary><pre><code>
-Stage 6 of 7: A stolen permission, and the end of the line   mode=tenuo  scenario=spring-break
+<div class="lab-step-body"><p>Run the trip and see which step fails and with what code. This stage breaks the trip on purpose.</p><pre class="lab-cmd"><code>npm run lab</code></pre><div class="lab-tabs"><input type="radio" name="t6-3" id="t6-3-0" checked><label for="t6-3-0">Before</label><input type="radio" name="t6-3" id="t6-3-1"><label for="t6-3-1">After</label><div class="lab-tab-panel"><details class="lab-term"><summary>Before <span>npm run lab · 74 lines</span></summary><pre><code>
+Stage 6 of 7: Boss: stolen authority   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-6
 
   Two short extensions. First, exercises/06-extensions/steal.ts copies Boarding Agent's
   permission into Activity Agent, which tries to use it. Run `npm run attack` and read the
   reason on the STOLEN WARRANT line.
-  
+
   Then open exercises/06-extensions/chain.ts and mark what Flight Agent hands to Check-in
   Agent as terminal. Run the trip. Notice what fails and who decided it would. Check-in
   Agent did not agree to this restriction and cannot remove it.
 
 WALLET  Alice: $459 of $1200
+ROGUE ATTEMPTS BLOCKED  8 / 8
+STARS   ★★☆★
+  ★ Trip booked
+  ★ Rogue stopped
+  ☆ Tight handoff
+  ★ No spare authority
 
   1   handoff  travel-agent    trip-alice-cun  receive trip authority       control plane   ALLOWED
   2   trip     travel-agent    trip-alice-cun  traveler.read                name            ALLOWED
@@ -140,13 +156,13 @@ WALLET  Alice: $459 of $1200
   11  trip     checkin-agent   trip-alice-cun  check_in                     UA214           ALLOWED
   12  handoff  checkin-agent   trip-alice-cun  handoff → boarding-agent     UA214           ALLOWED
   13  trip     boarding-agent  trip-alice-cun  issue_boarding_pass          UA214           ALLOWED
-  14  injected checkin-agent   trip-alice-cun  get_reservation              AA882           DENIED 
+  14  injected checkin-agent   trip-alice-cun  get_reservation              AA882           DENIED
       reason: reservation AA882 is outside the warrant's constraint for get_reservation  [TENUO_CONSTRAINT_VIOLATION]
-  15  injected checkin-agent   trip-alice-cun  check_in                     AA882           DENIED 
+  15  injected checkin-agent   trip-alice-cun  check_in                     AA882           DENIED
       reason: reservation AA882 is outside the warrant's constraint for check_in  [TENUO_CONSTRAINT_VIOLATION]
-  16  injected checkin-agent   trip-alice-cun  cancel_reservation           UA214           DENIED 
+  16  injected checkin-agent   trip-alice-cun  cancel_reservation           UA214           DENIED
       reason: cancel_reservation is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
-  17  injected checkin-agent   trip-alice-cun  wallet.charge                $412            DENIED 
+  17  injected checkin-agent   trip-alice-cun  wallet.charge                $412            DENIED
       reason: wallet.charge is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
   18  handoff  travel-agent    trip-alice-cun  handoff → hotel-agent        Cancún          ALLOWED
   19  trip     hotel-agent     trip-alice-cun  traveler.read                name            ALLOWED
@@ -180,19 +196,25 @@ THE TRIP
   The terminal link breaks the trip on purpose. Notice where, and who decided.
 
   npm run attack   the rogue behavior and the tests      npm run score   points and why
-  npm run trace    every decision with its reason        npm run next    when you are done here</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>After <span>npm run lab · 68 lines</span></summary><pre><code>
-Stage 6 of 7: A stolen permission, and the end of the line   mode=tenuo  scenario=spring-break
+  npm run trace    every decision with its reason        npm run next    when you are done here</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>After <span>npm run lab · 74 lines</span></summary><pre><code>
+Stage 6 of 7: Boss: stolen authority   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-6
 
   Two short extensions. First, exercises/06-extensions/steal.ts copies Boarding Agent's
   permission into Activity Agent, which tries to use it. Run `npm run attack` and read the
   reason on the STOLEN WARRANT line.
-  
+
   Then open exercises/06-extensions/chain.ts and mark what Flight Agent hands to Check-in
   Agent as terminal. Run the trip. Notice what fails and who decided it would. Check-in
   Agent did not agree to this restriction and cannot remove it.
 
 WALLET  Alice: $459 of $1200
+ROGUE ATTEMPTS BLOCKED  8 / 8
+STARS   ☆☆☆★
+  ☆ Trip booked
+  ☆ Rogue stopped
+  ☆ Tight handoff
+  ★ No spare authority
 
   1   handoff  travel-agent    trip-alice-cun  receive trip authority       control plane   ALLOWED
   2   trip     travel-agent    trip-alice-cun  traveler.read                name            ALLOWED
@@ -205,15 +227,15 @@ WALLET  Alice: $459 of $1200
   9   handoff  flight-agent    trip-alice-cun  handoff → checkin-agent      UA214           ALLOWED
   10  trip     checkin-agent   trip-alice-cun  get_reservation              UA214           ALLOWED
   11  trip     checkin-agent   trip-alice-cun  check_in                     UA214           ALLOWED
-  12  handoff  checkin-agent   trip-alice-cun  handoff → boarding-agent     UA214           DENIED 
+  12  handoff  checkin-agent   trip-alice-cun  handoff → boarding-agent     UA214           DENIED
       reason: TENUO_DEPTH_EXCEEDED: delegation depth 3 exceeds maximum 2  [TENUO_DEPTH_EXCEEDED]
-  13  injected checkin-agent   trip-alice-cun  get_reservation              AA882           DENIED 
+  13  injected checkin-agent   trip-alice-cun  get_reservation              AA882           DENIED
       reason: reservation AA882 is outside the warrant's constraint for get_reservation  [TENUO_CONSTRAINT_VIOLATION]
-  14  injected checkin-agent   trip-alice-cun  check_in                     AA882           DENIED 
+  14  injected checkin-agent   trip-alice-cun  check_in                     AA882           DENIED
       reason: reservation AA882 is outside the warrant's constraint for check_in  [TENUO_CONSTRAINT_VIOLATION]
-  15  injected checkin-agent   trip-alice-cun  cancel_reservation           UA214           DENIED 
+  15  injected checkin-agent   trip-alice-cun  cancel_reservation           UA214           DENIED
       reason: cancel_reservation is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
-  16  injected checkin-agent   trip-alice-cun  wallet.charge                $412            DENIED 
+  16  injected checkin-agent   trip-alice-cun  wallet.charge                $412            DENIED
       reason: wallet.charge is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
   17  handoff  travel-agent    trip-alice-cun  handoff → hotel-agent        Cancún          ALLOWED
   18  trip     hotel-agent     trip-alice-cun  traveler.read                name            ALLOWED
@@ -255,7 +277,7 @@ THE TRIP
 </li>
 </ol>
 
-<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The import fails with <code>TENUO_INVALID_POP</code>. The warrant names the key it was issued to, and Activity Agent does not have that key.</li><li>With the terminal link, Boarding Agent never gets its permission: <code>TENUO_DEPTH_EXCEEDED</code> at the Check-in → Boarding hop. Check-in Agent did not agree to that restriction and cannot remove it.</li></ul></aside>
+<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The replay fails with <code>TENUO_INVALID_POP</code>. The warrant's <code>bound_key</code> and Activity Agent's public holder key are visibly different, so the Ed25519 proof cannot verify. This is a holder-bound warrant, not a bearer token.</li><li>With the terminal link, Boarding Agent never gets its permission: <code>TENUO_DEPTH_EXCEEDED</code> at the Check-in → Boarding hop. Check-in Agent did not agree to that restriction and cannot remove it.</li></ul></aside>
 
 <aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>If having a copy of a permission is not enough to use it, what else does using it require? And who in a chain gets to decide how many agents a job passes through?</p></aside>
 
@@ -284,4 +306,4 @@ export function flightToCheckin(flight: Session, fleet: Fleet, trip: Trip, reser
 
 <section class="lab-done"><div><div class="lab-callout-title">Done when</div><p>You can explain why the thief's copy did not work, and you have seen the trip fail at the hop you chose.</p></div><button type="button" class="lab-mark" data-mark-done="6">Mark stage 6 done</button></section>
 
-<nav class="lab-nav"><a class="prev" href="/lab/stage-5">← Stage 5</a><a class="next" href="/lab/stage-7">Stage 7: The incident →</a></nav>
+<nav class="lab-nav"><a class="prev" href="/lab/stage-5">← Stage 5</a><a class="next" href="/lab/stage-7">Stage 7: Boss: contain the incident →</a></nav>

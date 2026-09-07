@@ -4,6 +4,7 @@
  * captured from real runs at build time (see capture.ts), never typed in.
  */
 import { chainDiagram, fleetDiagram } from "./diagrams.ts";
+import { stageMeta } from "../src/stage-map.ts";
 
 export interface Capture {
   readonly cmd: "lab" | "attack" | "score" | "audit";
@@ -67,11 +68,7 @@ const SHARED = "TRAVEL_SERVICE_KEY";
 
 export const STAGES: readonly StageSpec[] = [
   {
-    n: 1,
-    title: "One key for everyone",
-    minutes: 5,
-    mode: "shared",
-    goal: "See what a rogue agent can do when every agent shares one credential.",
+    ...stageMeta(1),
     intro: [
       "Six agents book Alice's trip. All six carry the same key, and it opens everything: flights, hotels, the wallet, her passport number, the calendar.",
       "There is no setup in this stage. Its job is to show you the damage before anything protects against it.",
@@ -97,11 +94,7 @@ export const STAGES: readonly StageSpec[] = [
     done: "You have seen the damage and found the injected notice.",
   },
   {
-    n: 2,
-    title: "Every agent gets its own account",
-    minutes: 5,
-    mode: "identity",
-    goal: "Give each agent its own credential and see which damage that removes and which damage remains.",
+    ...stageMeta(2),
     intro: [
       "Now each agent has its own credential with permissions that match its role. Flight Agent does flight things. Check-in Agent reads reservations and checks people in.",
     ],
@@ -125,11 +118,7 @@ export const STAGES: readonly StageSpec[] = [
     done: "You can say in one sentence what an identity leaves out.",
   },
   {
-    n: 3,
-    title: "Rules that fit the job",
-    minutes: 15,
-    mode: "scoped",
-    goal: "Write the permissions yourself, narrow enough that every rogue action is blocked and the trip still books.",
+    ...stageMeta(3),
     intro: [
       "Each rule now names the specifics. Check-in Agent may read one reservation. Flight Agent may book flights to one destination, up to a price.",
     ],
@@ -160,14 +149,10 @@ export const STAGES: readonly StageSpec[] = [
     done: "`npm run attack` is clean and `npm run score` is in the nineties.",
   },
   {
-    n: 4,
-    title: "A second traveler, and a handoff",
-    minutes: 30,
-    mode: "scoped",
-    goal: "Get Bob's trip working alongside Alice's without letting either trip's agent touch the other's reservation, see what that fix costs, then watch a handoff give the next agent more than it needed.",
+    ...stageMeta(4),
     intro: [
       "Bob is going to Seattle on DL331, at the same time, through the same agents. Your stage 3 policy pins Check-in Agent to UA214, so Bob's check-in is refused and his trip fails.",
-      "Take your time with this stage. Every later stage builds on what you notice here.",
+      "This stage has two acts. First isolate Alice from Bob. Then observe an intentional handoff leak. The red handoff checks in Act 2 do not mean your Act 1 solution is broken.",
     ],
     diagram: fleetDiagram({
       travelers: ["Alice → Cancún, UA214", "Bob → Seattle, DL331"],
@@ -181,12 +166,12 @@ export const STAGES: readonly StageSpec[] = [
       caption: "Two trips through the same six agents. Then Check-in Agent passes the only thing it has, and asks for more.",
     }),
     steps: [
-      { text: "Run the lab with both trips and watch Bob's check-in fail.", cmd: "npm run lab", expect: { cmd: "lab", label: "What you should see" } },
-      { text: "Fix it the quick way: add DL331 to Check-in Agent's reservations. The trip completes. Now read the **CROSS-TASK** section of the checks.", cmd: "npm run attack", expect: { cmd: "attack", label: "After the quick fix" } },
-      { text: "Give the agent a different identity for each trip: a key of the form `agent:taskId` is used for that agent on that task. `exercises/04-two-travelers/README.md` walks through it. Get the cross-task checks to pass.", cmd: "npm run attack", expect: { cmd: "attack", answer: "answers/04-two-travelers/per-task.ts", label: "With one identity per task" } },
-      { text: "Find `central_calls` in the trace. It counts every time the system had to ask something outside the acting agent before it could decide.", cmd: "npm run trace" },
-      { text: "Now the handoff. Check-in Agent finishes with Alice's flight and hands boarding-pass generation to Boarding Agent, which only needs to issue the pass for UA214. Read how the handoff is implemented and look for what Check-in Agent actually passes.", cmd: "code src/agents/checkin-agent.ts" },
-      { text: "In the checks above, read **BOARDING AGENT AFTER THE HANDOFF**, then the escalation attempt at the end. Answer the questions below before you move on." },
+      { text: "**Act 1 — isolate Alice and Bob.** Run both trips and watch Bob's check-in fail.", cmd: "npm run lab", expect: { cmd: "lab", label: "What you should see" } },
+      { text: "Fix it the quick way: add DL331 to Check-in Agent's reservations. The trip completes. Now read **CROSS-TASK**.", cmd: "npm run attack", expect: { cmd: "attack", label: "After the quick fix" } },
+      { text: "Give the agent a different identity for each trip. `exercises/04-two-travelers/README.md` walks through it. Get **CROSS-TASK** clean.", cmd: "npm run attack", expect: { cmd: "attack", answer: "answers/04-two-travelers/per-task.ts", label: "With one identity per task" } },
+      { text: "Find `central_calls` in the trace. It counts every decision that asked something outside the acting agent.", cmd: "npm run trace" },
+      { text: "**Act 2 — observe the leak. No fix is expected here.** Check-in Agent hands boarding-pass generation to Boarding Agent. Open the handoff and see what it actually passes.", cmd: "code src/agents/checkin-agent.ts" },
+      { text: "Read **BOARDING AGENT AFTER THE HANDOFF** and the escalation attempt. Those failures are intentional; your Act 1 work is still correct." },
     ],
     notice: [
       "After the quick fix, Alice's Check-in Agent can check Bob in. There is one `checkin-agent`, it is doing two jobs, and the file never says which job a call belongs to.",
@@ -203,16 +188,12 @@ export const STAGES: readonly StageSpec[] = [
     ],
     stuck: [
       "Registration happens at task start, then `central_calls: 1` on every call by a per-task identity. That is the cost.",
-      "The handoff checks stay red in this stage on purpose. Check-in Agent has nothing narrower to give.",
+      "Act 2's handoff checks stay red on purpose. Stop editing Act 1 when CROSS-TASK is clean; Check-in Agent has nothing narrower to give.",
     ],
     done: "Both trips complete, CROSS-TASK is clean, and you have your one sentence.",
   },
   {
-    n: 5,
-    title: "Access that travels with the work",
-    minutes: 25,
-    mode: "tenuo",
-    goal: "Switch to Tenuo, complete the chain, and get the trip, the cross-task checks, and the escalation attempt all handled with no policy file and no central lookup.",
+    ...stageMeta(5),
     intro: [
       "In this stage a permission is something an agent is handed for a specific job. When the agent passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks this instead of trusting it.",
       "Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. No agent can sign one from scratch.",
@@ -261,12 +242,12 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
       { who: "Control plane", scope: "signs the trip permission for Travel Agent", tag: "root" },
       { who: "Travel Agent", scope: "Alice → Cancún, up to $1,200, any flight this trip books", tag: "written", hop: "narrows" },
       { who: "Flight Agent", scope: "Cancún flights, up to $300, flight's share of the wallet", tag: "written", hop: "narrows" },
-      { who: "Check-in Agent", scope: "UA214 only: read, check in, hand the boarding pass on", tag: "you", hop: "narrows to the flight it booked" },
+      { who: "Check-in Agent", scope: "UA214 only: read, check in, hand the boarding pass on", tag: "tutorial", hop: "narrows to the flight it booked" },
       { who: "Boarding Agent", scope: "UA214 only: issue the boarding pass", tag: "you", hop: "narrows" },
     ], "Each hop can only narrow. The root has to carry everything anyone below will ever need."),
     steps: [
-      { text: "Open the chain. The root and every link out of Travel Agent are written for you. Read them first: notice that the root lists everything anyone further down will ever need, and notice which link narrows \"any Cancún flight\" to \"UA214\".", cmd: "code exercises/05-tenuo/chain.ts" },
-      { text: "Write `flightToCheckin` and `checkinToBoarding`. Until both exist, the lab tells you which one is missing.", cmd: "npm run lab", expect: [{ cmd: "lab", label: "Before you write the links" }, { cmd: "lab", answer: "answers/05-tenuo/chain.ts", label: "When both links exist" }] },
+      { text: "Open the chain. Flight → Check-in is a complete, annotated tutorial: it narrows to one reservation, binds the next holder, and shortens the TTL. Copying its `narrow()` shape is allowed.", cmd: "code exercises/05-tenuo/chain.ts" },
+      { text: "Write the one TODO, `checkinToBoarding`. Boarding Agent needs one tool for one reservation, bound to its key, for a short time.", cmd: "npm run lab", expect: [{ cmd: "lab", label: "Before you write the link" }, { cmd: "lab", answer: "answers/05-tenuo/chain.ts", label: "When the link exists" }] },
       { text: "Run the checks. The two-traveler run happens here too, with no policy file to edit. Read **CROSS-TASK** and the escalation attempt, then find `central_calls`.", cmd: "npm run attack", expect: { cmd: "attack", answer: "answers/05-tenuo/chain.ts", label: "What you should see" } },
       { text: "Open the link the lab prints and look at the chain Boarding Agent holds, hop by hop, in the explorer." },
     ],
@@ -276,21 +257,18 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     ],
     question: "Who decided what Boarding Agent may do, and when? Compare that with who decided in stage 4.",
     hint: "Flight Agent knows which flight it booked, so it is the link that narrows `reservation` to that one flight. Bind each result to the next agent's key with `holder`, and keep lifetimes short. Every argument a tool is called with must be named: leave one out and the call is refused.",
-    code: [{ file: "exercises/05-tenuo/chain.ts", symbols: ["flightToCheckin", "checkinToBoarding"], caption: "The two links you write" }],
-    check: [{ file: "answers/05-tenuo/chain.ts", symbols: ["flightToCheckin", "checkinToBoarding"], caption: "Reference" }],
+    code: [{ file: "exercises/05-tenuo/chain.ts", symbols: ["flightToCheckin", "checkinToBoarding"], caption: "Tutorial, then your level" }],
+    check: [{ file: "answers/05-tenuo/chain.ts", symbols: ["checkinToBoarding"], caption: "One solution to the TODO" }],
     stuck: [
-      "When a denial says \"not in parent's tools\", look one link up the chain.",
-      "The receiver imports what it is handed with its own key. If you bind to the wrong `holder`, the import fails with `TENUO_INVALID_POP`.",
+      "`narrow() cannot add ...` means the child asks for authority its parent never held. Remove it or look one link up the chain.",
+      "`name 'reservation' in allow` means the call supplies a field your closed-world policy omitted.",
+      "`set { holder: receiverPublicKey }` means the handoff was not bound to Boarding Agent's key.",
       "The trip has to work. If Boarding Agent cannot issue the pass, the other checks do not count.",
     ],
     done: "`npm run attack` is clean for both scenarios and `central_calls` is 0.",
   },
   {
-    n: 6,
-    title: "A stolen permission, and the end of the line",
-    minutes: 15,
-    mode: "tenuo",
-    goal: "See that a copied permission cannot be used by anyone it was not issued to, then mark one hop as the last and watch the chain stop where the previous agent decided.",
+    ...stageMeta(6),
     intro: [
       "Two short extensions on the chain you built. Boarding Agent's permission for UA214 is a piece of data: a list of strings. Activity Agent gets a copy and tries to use it.",
       "Then a limit on distance. When one agent hands a permission on, it can mark it terminal. The root also carries a maximum number of hops for the whole trip: any agent can lower it, none can raise it.",
@@ -313,13 +291,13 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     }),
     steps: [
       { text: "Read the theft. The file is short.", cmd: "code exercises/06-extensions/steal.ts" },
-      { text: "Run the checks and read the reason on the **STOLEN WARRANT** line carefully.", cmd: "npm run attack", expect: { cmd: "attack", label: "What you should see" } },
+      { text: "Run the checks and read the **STOLEN** replay panel carefully. It prints both public keys, the failed comparison, and the Ed25519 signature result.", cmd: "npm run attack", expect: { cmd: "attack", label: "What you should see" } },
       { text: "Now find the Flight → Check-in link in the chain and add `terminal: true` to its options.", cmd: "code exercises/06-extensions/chain.ts" },
       { text: "Run the trip and see which step fails and with what code. This stage breaks the trip on purpose.", cmd: "npm run lab", expect: [{ cmd: "lab", label: "Before" }, { cmd: "lab", answer: "answers/06-extensions/chain.ts", label: "After" }] },
       { text: "Second version: lower `maxDepth` on the root instead, and watch where the chain stops." },
     ],
     notice: [
-      "The import fails with `TENUO_INVALID_POP`. The warrant names the key it was issued to, and Activity Agent does not have that key.",
+      "The replay fails with `TENUO_INVALID_POP`. The warrant's `bound_key` and Activity Agent's public holder key are visibly different, so the Ed25519 proof cannot verify. This is a holder-bound warrant, not a bearer token.",
       "With the terminal link, Boarding Agent never gets its permission: `TENUO_DEPTH_EXCEEDED` at the Check-in → Boarding hop. Check-in Agent did not agree to that restriction and cannot remove it.",
     ],
     question: "If having a copy of a permission is not enough to use it, what else does using it require? And who in a chain gets to decide how many agents a job passes through?",
@@ -329,11 +307,7 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     done: "You can explain why the thief's copy did not work, and you have seen the trip fail at the hop you chose.",
   },
   {
-    n: 7,
-    title: "The incident",
-    minutes: 20,
-    mode: "tenuo",
-    goal: "Hotel Agent is compromised. Keep the system online and legitimate bookings working: one attempt must succeed, seven must fail.",
+    ...stageMeta(7),
     intro: [
       "This stage gives less guidance than the others. The compromised Hotel Agent will try eight things.",
     ],

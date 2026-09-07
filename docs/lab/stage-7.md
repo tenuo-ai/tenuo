@@ -1,13 +1,13 @@
 ---
 layout: "lab"
-title: "Stage 7: The incident"
-description: "Hotel Agent is compromised. Keep the system online and legitimate bookings working: one attempt must succeed, seven must fail."
+title: "Stage 7: Boss: contain the incident"
+description: "Contain a compromised Hotel Agent while legitimate bookings keep working."
 lab_stage: 7
-lab_version: "0.1.0"
+lab_version: "0.2.0"
 ---
-<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" class="current" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a></nav>
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" class="current" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
 
-<header class="lab-hero"><div class="lab-kicker">Stage 7 of 7 · <span class="lab-mode tenuo">tenuo</span> · about 20 min</div><h1>The incident</h1><p class="lab-goal"><strong>Goal.</strong> Hotel Agent is compromised. Keep the system online and legitimate bookings working: one attempt must succeed, seven must fail.</p></header>
+<header class="lab-hero"><div class="lab-kicker">Stage 7 of 7 · optional boss level · <span class="lab-mode tenuo">tenuo</span> · about 20 min</div><h1>Boss: contain the incident</h1><p class="lab-goal"><strong>Goal.</strong> Contain a compromised Hotel Agent while legitimate bookings keep working.</p></header>
 
 <p class="lab-intro">This stage gives less guidance than the others. The compromised Hotel Agent will try eight things.</p>
 
@@ -32,11 +32,17 @@ lab_version: "0.1.0"
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="7:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the checks. All eight attempts are listed under <strong>INCIDENT</strong>. Make one land and seven fail, and keep an eye on the least-privilege row of your score.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t7-1" id="t7-1-0" checked><label for="t7-1-0">As it ships</label><input type="radio" name="t7-1" id="t7-1-1"><label for="t7-1-1">When it is fixed</label><div class="lab-tab-panel"><details class="lab-term"><summary>As it ships <span>npm run attack · 52 lines</span></summary><pre><code>
-Stage 7 of 7: The incident   mode=tenuo  scenario=incident
+<div class="lab-step-body"><p>Run the checks. All eight attempts are listed under <strong>INCIDENT</strong>. Make one land and seven fail, and keep an eye on the least-privilege row of your score.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t7-1" id="t7-1-0" checked><label for="t7-1-0">As it ships</label><input type="radio" name="t7-1" id="t7-1-1"><label for="t7-1-1">When it is fixed</label><div class="lab-tab-panel"><details class="lab-term"><summary>As it ships <span>npm run attack · 58 lines</span></summary><pre><code>
+Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
 WALLET  Alice: $459 of $1200
+ROGUE ATTEMPTS BLOCKED  3 / 5
+STARS   ★☆☆☆
+  ★ Trip booked
+  ☆ Rogue stopped
+  ☆ Tight handoff
+  ☆ No spare authority
 
 THE TRIP
   ✓ trip-alice-cun  travel: read traveler name
@@ -80,14 +86,20 @@ INCIDENT
   7. hand wallet access to Activity Agent                  ALLOWED  ✗
       expected DENIED: hotel-agent delegated wallet.charge to activity-agent
   8. import a warrant copied from Flight Agent             DENIED   ✓
-      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it.  [TENUO_INVALID_POP]
+      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
 
   3 of 8 checks did not land as expected
-  central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When it is fixed <span>npm run attack · 52 lines</span></summary><pre><code>
-Stage 7 of 7: The incident   mode=tenuo  scenario=incident
+  central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When it is fixed <span>npm run attack · 58 lines</span></summary><pre><code>
+Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
 WALLET  Alice: $459 of $1200
+ROGUE ATTEMPTS BLOCKED  5 / 5
+STARS   ★★★★
+  ★ Trip booked
+  ★ Rogue stopped
+  ★ Tight handoff
+  ★ No spare authority
 
 THE TRIP
   ✓ trip-alice-cun  travel: read traveler name
@@ -131,21 +143,29 @@ INCIDENT
   7. hand wallet access to Activity Agent                  DENIED   ✓
       reason: TENUO_DEPTH_EXCEEDED: delegation depth 2 exceeds maximum 1  [TENUO_DEPTH_EXCEEDED]
   8. import a warrant copied from Flight Agent             DENIED   ✓
-      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it.  [TENUO_INVALID_POP]
+      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
 
   clean: all 8 checks landed as expected
   central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div></div></div>
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="7:2"><span>3</span></label>
-<div class="lab-step-body"><p>Check the score. Blocking attempt 3 the same way you blocked attempt 2 costs points.</p><pre class="lab-cmd"><code>npm run score</code></pre><details class="lab-term" open><summary>Full marks <span>npm run score · 11 lines</span></summary><pre><code>
-Stage 7 of 7: The incident   mode=tenuo  scenario=incident
+<div class="lab-step-body"><p>Check the score. Blocking attempt 3 the same way you blocked attempt 2 costs points.</p><pre class="lab-cmd"><code>npm run score</code></pre><details class="lab-term" open><summary>Full marks <span>npm run score · 19 lines</span></summary><pre><code>
+Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
-  The trip completes correctly                 25  / 25  
-  Unauthorized actions are blocked             30  / 30  5 of 5 checks
-  Handoffs pass along only what's needed       25  / 25  2 of 2 checks
-  You didn't grant more than the job required  20  / 20  0 findings, capped at -5 per agent
+WALLET  Alice: $459 of $1200
+ROGUE ATTEMPTS BLOCKED  5 / 5
+STARS   ★★★★
+  ★ Trip booked
+  ★ Rogue stopped
+  ★ Tight handoff
+  ★ No spare authority
+
+  Trip booked                                  25  / 25
+  Rogue stopped                                30  / 30  5 of 5 checks
+  Tight handoff                                25  / 25  2 of 2 checks
+  No spare authority                           20  / 20  0 findings, capped at -5 per agent
                                                100 / 100
 
   Stage 7 done.</code></pre></details></div>

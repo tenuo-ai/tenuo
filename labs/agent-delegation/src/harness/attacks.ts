@@ -21,6 +21,12 @@ export interface ProbeResult {
   readonly actual: "ALLOWED" | "DENIED";
   readonly reason: string;
   readonly code?: string;
+  /** Public, non-secret key-binding evidence for a failed holder-bound replay. */
+  readonly keyBinding?: {
+    readonly warrantBoundKey: string;
+    readonly presenterPublicKey: string;
+    readonly signatureVerified: false;
+  };
   readonly ok: boolean;
 }
 
@@ -216,8 +222,25 @@ async function stolenWarrantProbe(rt: Runtime, alice: Trip): Promise<ProbeResult
   }
   const { steal } = await import("../../exercises/06-extensions/steal.ts");
   const outcome = steal(tenuo, boarding);
+  const keyBinding = outcome.code === "TENUO_INVALID_POP"
+    ? {
+        warrantBoundKey: boarding.inspect().holderPublicKey,
+        presenterPublicKey: tenuo.fleet["activity-agent"].publicKey.hex,
+        signatureVerified: false as const,
+      }
+    : undefined;
   rt.audit.record({ agent: "activity-agent", task: alice.taskId, action: "import boarding-agent's warrant", resource: "copied warrant", mode: "tenuo", decision: outcome.imported ? "ALLOWED" : "DENIED", reason: outcome.reason, ...(outcome.code !== undefined ? { code: outcome.code } : {}), centralCalls: 0, source: "probe" });
-  return { category: "blocked", section, label, expected: "DENIED", actual: outcome.imported ? "ALLOWED" : "DENIED", reason: outcome.reason, ...(outcome.code !== undefined ? { code: outcome.code } : {}), ok: !outcome.imported };
+  return {
+    category: "blocked",
+    section,
+    label,
+    expected: "DENIED",
+    actual: outcome.imported ? "ALLOWED" : "DENIED",
+    reason: outcome.reason,
+    ...(outcome.code !== undefined ? { code: outcome.code } : {}),
+    ...(keyBinding !== undefined ? { keyBinding } : {}),
+    ok: !outcome.imported,
+  };
 }
 
 export const STAGE_COUNT = STAGES.length;

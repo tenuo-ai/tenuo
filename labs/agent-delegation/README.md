@@ -1,17 +1,16 @@
-# AI Agent Delegation Challenge
+# Agent Delegation Lab
 
-A travel assistant made of six AI agents is booking your spring break in
-Cancún. One of them has been told to do something it shouldn't. Secure the
-system so the trip still happens and the rogue agent gets nowhere.
+Your mission is simple: **book the trip and stop the rogue agent**. A travel
+assistant made of six AI agents is booking spring break in Cancún. One reads
+an injected instruction and follows it. Change what the agents are allowed to
+do so the trip still happens and the rogue agent gets nowhere.
 
-No agent-framework experience required. Ninety minutes.
+No agent-framework experience required. Retries are free, copying the shown
+`narrow()` shape is allowed, and speed is not scored. The five-stage main game
+takes about ninety minutes; stages 6 and 7 are optional boss levels.
 
 ## Before you start
 
-- Seven minutes with three sections of the Tenuo docs: "Protect your first
-  tool" and "Delegate to another agent" in the
-  [TypeScript SDK guide](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts),
-  and "How It Works" in the [main README](https://github.com/tenuo-ai/tenuo).
 - Node 20 or newer (`node --version`).
 - A free GitHub account is not needed to run the lab. You will want one for
   Codespaces if your laptop fights you, to star the repo while you're there,
@@ -43,27 +42,62 @@ npm run attack     # run the rogue behavior and the security tests
 npm run score      # see your score and why
 npm run audit      # what every agent can currently do
 npm run next       # move to the next stage
-npm run reset      # start over from stage 1
+npm run reset      # restore stage 1 and every starter exercise
 ```
 
 Run `attack` and `score` as often as you like. There is no limit and no
 penalty for retries. Each stage explains itself when you run `npm run lab`, and
 the full guide is at [tenuo.ai/lab](https://tenuo.ai/lab/), one page per stage.
 
+## The cast and the handoffs
+
+```text
+                         Flight Agent → Check-in Agent → Boarding Agent
+                       ↗
+You → Travel Agent ────→ Hotel Agent
+                       ↘
+                         Activity Agent
+```
+
+Those are the six agents. The flight branch is three handoffs deep because it
+is where you will first replace a passed credential with narrowed authority.
+
+<!-- stage-map:start -->
+## The levels
+
+| Level | Mission | Time |
+|---|---|---:|
+| 1. One key for everyone | See what a rogue agent can do when every agent shares one credential. | 5 min |
+| 2. Every agent gets its own account | Give each agent its own credential and see which damage that removes and which damage remains. | 5 min |
+| 3. Rules that fit the job | Write permissions narrow enough that every rogue action is blocked and the trip still books. | 15 min |
+| 4. Two travelers, then a handoff | First isolate Alice from Bob; then observe why passing a whole credential gives the next agent too much. | 30 min |
+| 5. Access that travels with the work | Complete one narrowing handoff so the trip works, the rogue stops, and no central lookup is needed. | 25 min |
+| 6. Boss: stolen authority *(optional boss)* | See why a copied permission cannot be used by another agent, then deliberately end a delegation chain. | 15 min |
+| 7. Boss: contain the incident *(optional boss)* | Contain a compromised Hotel Agent while legitimate bookings keep working. | 20 min |
+
+After the game, the hosted guide has an unnumbered, optional contribution epilogue.
+<!-- stage-map:end -->
+
 ## What leaves your machine
 
-Nothing. The lab runs locally and makes no network requests.
+Nothing automatically. The lab runs locally and makes no network requests.
+It keeps attempt counts and small semantic summaries—tool names, whether the
+holder was correct, a coarse TTL bucket, and which stars were missing—in
+`.lab/`. It never records source code, keys, names, or exact timestamps.
+`npm run share` writes an anonymous local JSON artifact; you choose whether to
+hand that file to a session host.
 
 ## How it works
 
 Every tool call passes through one chokepoint (`src/auth/`). Stages 1 to 4
 use three classic approaches: one shared key, one identity per agent, and
-scoped rules you write yourself. Stage 6 switches to
+scoped rules you write yourself. Stage 5 switches to
 [Tenuo](https://github.com/tenuo-ai/tenuo): each agent gets its own key, a
 control plane signs the trip's authority, and every handoff narrows what the
 next agent holds. The signer stays outside the agent runtime, and each holder
 private key remains inside its agent boundary; chain code sees recipient public
-keys only. Stages 6 and 7 extend the chain and handle an incident.
+keys only. Stages 6 and 7 are optional boss levels: a stolen permission and a
+live incident-containment exercise.
 
 The agents are scripted and deterministic. They follow the same tool-call
 intents a live model produced when this scenario was designed, including
@@ -72,8 +106,8 @@ score is identical from one run to the next, and why the lab runs with no
 network at all. A `--live` mode driving the OpenAI Agents SDK is planned and
 not in this build.
 
-The rogue behavior is not in any prompt. Go find where the instruction
-actually comes from, in `src/services/flights.ts`.
+**The injected instruction is in `src/services/flights.ts`. Do not delete or
+filter it.** The level is to contain what a fooled agent can do.
 
 ## The hosted guide
 

@@ -2,7 +2,9 @@
  * Seven stages. Each is a system, a rogue agent, and a set of tests. The
  * participant changes how permissions work, then runs the tests again.
  */
-export type Mode = "shared" | "identity" | "scoped" | "tenuo";
+import { stageMeta, type LabMode } from "./stage-map.ts";
+
+export type Mode = LabMode;
 export type Scenario = "spring-break" | "two-travelers" | "incident";
 
 export interface StageDef {
@@ -25,11 +27,14 @@ export interface StageDef {
   readonly blurb: readonly string[];
 }
 
+const meta = (n: number) => {
+  const { title, mode } = stageMeta(n);
+  return { n, title, mode };
+};
+
 export const STAGES: readonly StageDef[] = [
   {
-    n: 1,
-    title: "One key for everyone",
-    mode: "shared",
+    ...meta(1),
     scenario: "spring-break",
     handoff: "own-identity",
     blurb: [
@@ -40,9 +45,7 @@ export const STAGES: readonly StageDef[] = [
     ],
   },
   {
-    n: 2,
-    title: "Every agent gets its own account",
-    mode: "identity",
+    ...meta(2),
     scenario: "spring-break",
     handoff: "own-identity",
     blurb: [
@@ -54,9 +57,7 @@ export const STAGES: readonly StageDef[] = [
     ],
   },
   {
-    n: 3,
-    title: "Rules that fit the job",
-    mode: "scoped",
+    ...meta(3),
     scenario: "spring-break",
     handoff: "own-identity",
     exercise: "exercises/03-scoped/policy.ts",
@@ -67,30 +68,26 @@ export const STAGES: readonly StageDef[] = [
     ],
   },
   {
-    n: 4,
-    title: "A second traveler, and a handoff",
-    mode: "scoped",
+    ...meta(4),
     scenario: "two-travelers",
     handoff: "pass-credential",
     exercise: "exercises/04-two-travelers/policy.ts",
     probes: ["escalation"],
     blurb: [
-      "Bob is going to Seattle, at the same time, through the same agents. Something will break.",
-      "Fix it in exercises/04-two-travelers/policy.ts the quick way, then read CROSS-TASK in",
-      "`npm run attack`. The README next to the file shows a fix that holds up.",
+      "ACT 1 — ISOLATE THE TRIPS",
+      "Bob is going to Seattle through the same agents. Fix his trip, then make sure Alice's",
+      "agent cannot touch Bob's reservation (and vice versa).",
       "",
-      "Then look at BOARDING AGENT AFTER THE HANDOFF: Check-in Agent hands Boarding Agent its",
-      "whole credential, because that is all it has. The rogue then asks your policy component",
-      "for more than it holds itself. Should it say yes? What would it need to know to say no?",
+      "ACT 2 — WATCH THE HANDOFF LEAK",
+      "The red handoff checks are intentional; your Act 1 solution is not broken. Check-in Agent",
+      "hands Boarding Agent its whole credential because that is all it has to give.",
       "",
       "Find `central_calls` in `npm run trace` and write down, in one sentence, what your fix",
       "depends on.",
     ],
   },
   {
-    n: 5,
-    title: "Access that travels with the work",
-    mode: "tenuo",
+    ...meta(5),
     scenario: "spring-break",
     handoff: "own-identity",
     exercise: "exercises/05-tenuo/chain.ts",
@@ -98,8 +95,8 @@ export const STAGES: readonly StageDef[] = [
     probes: ["escalation"],
     starAsk: true,
     blurb: [
-      "Switch to Tenuo and complete the chain in exercises/05-tenuo/chain.ts. The first four",
-      "links are written for you; you write the last two.",
+      "Switch to Tenuo and complete the chain in exercises/05-tenuo/chain.ts. Flight → Check-in",
+      "is a complete, annotated tutorial. Copy its narrow() shape for the one TODO below it.",
       "",
       "Each agent now has its own key. A control plane, separate from all six, signs the first",
       "permission. Agents can narrow what they hold. None can sign one from scratch.",
@@ -109,9 +106,7 @@ export const STAGES: readonly StageDef[] = [
     ],
   },
   {
-    n: 6,
-    title: "A stolen permission, and the end of the line",
-    mode: "tenuo",
+    ...meta(6),
     scenario: "spring-break",
     handoff: "own-identity",
     exercise: "exercises/06-extensions/chain.ts",
@@ -128,9 +123,7 @@ export const STAGES: readonly StageDef[] = [
     ],
   },
   {
-    n: 7,
-    title: "The incident",
-    mode: "tenuo",
+    ...meta(7),
     scenario: "incident",
     handoff: "own-identity",
     exercise: "exercises/07-incident/chain.ts",
