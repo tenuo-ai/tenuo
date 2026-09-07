@@ -10,6 +10,11 @@
   {% assign og_image_width = page.og_image_width | default: '1200' %}
   {% assign og_image_height = page.og_image_height | default: '630' %}
   {% assign og_image_alt = page.og_image_alt | default: page.title %}
+  {% if page.og_title %}
+    {% assign social_title = page.og_title %}
+  {% else %}
+    {% capture social_title %}{{ page.title }} | Tenuo{% endcapture %}
+  {% endif %}
   {% assign page_path = page.url | default: '/' %}
   {% assign canonical_path = page_path %}
   {% if canonical_path != '/' and canonical_path != '/index.html' and canonical_path contains '.html' %}
@@ -43,7 +48,7 @@
   
   <!-- Open Graph / Social Media -->
   <meta property="og:type" content="{{ og_type }}">
-  <meta property="og:title" content="{{ page.title }} | Tenuo">
+  <meta property="og:title" content="{{ social_title }}">
   <meta property="og:description" content="{{ page_description }}">
   <meta property="og:image" content="{{ og_image_url }}">
   <meta property="og:image:width" content="{{ og_image_width }}">
@@ -54,7 +59,7 @@
   
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{{ page.title }} | Tenuo">
+  <meta name="twitter:title" content="{{ social_title }}">
   <meta name="twitter:description" content="{{ page_description }}">
   <meta name="twitter:image" content="{{ og_image_url }}">
   <meta name="twitter:image:alt" content="{{ og_image_alt }}">

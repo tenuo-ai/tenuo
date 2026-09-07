@@ -148,6 +148,22 @@ describe("generated Stage 5 guide", () => {
     expect(layout).toContain("browserRun.setAttribute('aria-expanded', 'true')");
   });
 
+  it("uses the challenge artwork on the homepage and its social card", () => {
+    const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
+    const layout = readFileSync(join(ROOT, "..", "..", "docs", "_layouts", "default.html"), "utf8");
+    expect(page).toContain('og_title: "Security Challenge: Stop a Rogue AI Agent From Ruining Your Trip"');
+    expect(page).toContain('description: "Give each agent only the authority its part of the trip needs. A free, hands-on lab in AI agent delegation security."');
+    expect(page).toContain('og_image: "/images/challenge-image.png"');
+    expect(page).toContain("og_image_width: 1200");
+    expect(page).toContain("og_image_height: 630");
+    expect(page).toContain('<img src="/images/challenge-image.svg" width="1200" height="630"');
+    expect(page.indexOf("challenge-image.svg")).toBeLessThan(page.indexOf("data-lab-browser-run"));
+    expect(existsSync(join(ROOT, "..", "..", "docs", "images", "challenge-image.png"))).toBe(true);
+    expect(existsSync(join(ROOT, "..", "..", "docs", "images", "challenge-image.svg"))).toBe(true);
+    expect(layout).toContain('<meta property="og:title" content="{{ social_title }}">');
+    expect(layout).toContain('<meta name="twitter:title" content="{{ social_title }}">');
+  });
+
   it("states both secure Stage 4 branches and names their intentional over-grant", () => {
     const overview = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
     const stage4 = readFileSync(join(ROOT, "..", "..", "docs", "lab", "stage-4.md"), "utf8");
