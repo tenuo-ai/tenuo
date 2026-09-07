@@ -49,6 +49,18 @@ export interface StageSpec {
   readonly stuck?: readonly string[];
   /** What finished looks like, in one line. */
   readonly done: string;
+  /** A concept the stage introduces, explained before the steps. */
+  readonly explainer?: Explainer;
+}
+
+export interface Explainer {
+  readonly title: string;
+  readonly lead: string;
+  readonly points: ReadonlyArray<readonly [string, string]>;
+  /** Left column: the problem you hit. Right column: what the concept does about it. */
+  readonly why: ReadonlyArray<readonly [string, string]>;
+  readonly code?: Snippet;
+  readonly more?: ReadonlyArray<readonly [string, string]>;
 }
 
 const SHARED = "TRAVEL_SERVICE_KEY";
@@ -95,7 +107,7 @@ export const STAGES: readonly StageSpec[] = [
     ],
     diagram: fleetDiagram({
       wallet: "$1,200",
-      sub: { travel: "traveler, calendar, wallet", flight: "flights, wallet", hotel: "hotels, wallet", activity: "activities, wallet", checkin: "any reservation", boarding: "boarding passes" },
+      sub: { travel: "traveler, calendar", flight: "flights, wallet", hotel: "hotels, wallet", activity: "activities, wallet", checkin: "any reservation", boarding: "boarding passes" },
       state: { checkin: "rogue" },
       tag: { checkin: "rogue" },
       caption: "One account per agent, sized to its role.",
@@ -202,7 +214,7 @@ export const STAGES: readonly StageSpec[] = [
       tag: { checkin: "rogue", boarding: "too much" },
       edges: { "checkin-boarding": "focus" },
       edgeLabels: { "checkin-boarding": "hands over its credential" },
-      extra: [{ from: "checkin", to: "service", style: "ask", label: "\"grant Boarding Agent every reservation, plus cancel\"" }],
+      extra: [{ from: "checkin", to: "service", style: "ask", label: "asks for every reservation, plus cancel" }],
       caption: "The handoff passes the only thing Check-in Agent has to give. Then the rogue asks your stage 4 component for more.",
     }),
     steps: [
@@ -228,6 +240,46 @@ export const STAGES: readonly StageSpec[] = [
       "Permission stops being a rule about the agent and becomes something the agent is *handed* for a specific job. When it passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks that rather than trusting it.",
       "Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. Nobody else can sign one from scratch.",
     ],
+    explainer: {
+      title: "What a warrant is",
+      lead: "A warrant is a signed, self-contained permission that travels with the request: which tools, with which argument values, for which agent's key, until when, and how many more hops it may take. That is what Tenuo issues, narrows, and checks.",
+      points: [
+        ["Signed by one key nobody else holds", "The control plane signs the first warrant for a trip. Agents cannot sign a fresh one, because they do not have that key."],
+        ["Narrowed by whoever holds it", "An agent can derive a warrant for another agent from the one it holds, with fewer tools, tighter values, a shorter life. It can never widen. The check happens against the parent before a token exists."],
+        ["Bound to the receiver's key", "Every use is signed with the holder's key. A copy in someone else's hands is worthless."],
+        ["Checked next to the tool, offline", "The code guarding a tool verifies the whole chain with the control plane's public key. No lookup, no service to be up."],
+      ],
+      why: [
+        ["Stage 2: an identity said who was acting, not which job", "The warrant carries the job: reservation UA214, trip-alice-cun, up to $300."],
+        ["Stage 4: every check had to ask a component that knew about every task", "Verification is local. central_calls goes to 0 and stays there when the control plane is down."],
+        ["Stage 5: the only thing to hand over was the whole credential", "narrow() hands over exactly the subset the next agent needs, bound to that agent's key."],
+        ["Stage 5: the service could not tell whether the asker held what it asked for", "A narrowed warrant must fit inside its parent. The rogue's request is refused before anything is signed."],
+      ],
+      code: {
+        lang: "ts",
+        caption: "The shape of it, from this stage's chain",
+        code: `// The control plane signs the root, for Travel Agent's key.
+const trip = controlPlane.session({
+  allow: { check_in: { reservation: oneOf(["UA214", "AC712"]) }, /* ... */ },
+  holder: fleet["travel-agent"].publicKey,
+  ttlSeconds: 30 * 60,
+  maxDepth: 4,
+});
+
+// Flight Agent narrows what it holds for Check-in Agent's key. Core refuses
+// anything that is not inside \`flight\`: more tools, a wider value, a longer life.
+const forCheckin = fleet["flight-agent"].tenuo.narrow(
+  flight,
+  { check_in: { reservation: oneOf(["UA214"]) } },
+  { holder: fleet["checkin-agent"].publicKey, ttlSeconds: 5 * 60 },
+);`,
+      },
+      more: [
+        ["Concepts", "https://tenuo.ai/concepts"],
+        ["Delegate to another agent (TypeScript guide)", "https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts"],
+        ["Open a chain in the explorer", "https://tenuo.ai/explorer/"],
+      ],
+    },
     diagram: chainDiagram([
       { who: "Control plane", scope: "signs the trip permission for Travel Agent", tag: "root" },
       { who: "Travel Agent", scope: "Alice → Cancún, up to $1,200, any flight this trip books", tag: "written", hop: "narrows" },
@@ -298,7 +350,7 @@ export const STAGES: readonly StageSpec[] = [
     ],
     diagram: fleetDiagram({
       controlPlane: "maxDepth: 4",
-      sub: { flight: "marks the handoff terminal", checkin: "cannot pass it on", boarding: "never receives it" },
+      sub: { flight: "marks the hop terminal", checkin: "cannot pass it on", boarding: "never receives it" },
       state: { flight: "focus", boarding: "dim" },
       edges: { "flight-checkin": "terminal", "checkin-boarding": "blocked", "travel-hotel": "dim", "travel-activity": "dim" },
       edgeLabels: { "flight-checkin": "terminal", "checkin-boarding": "TENUO_DEPTH_EXCEEDED" },

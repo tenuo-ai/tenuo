@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { ROOT } from "../src/state.ts";
 import { capture } from "./capture.ts";
-import { CODESPACES_URL, GOOD_FIRST_ISSUES_URL, MISSION_DIAGRAM, REPO_URL, STAGES, type Capture, type CodeRef, type Snippet, type StageSpec, type Step } from "./spec.ts";
+import { CODESPACES_URL, GOOD_FIRST_ISSUES_URL, MISSION_DIAGRAM, REPO_URL, STAGES, type Capture, type CodeRef, type Explainer, type Snippet, type StageSpec, type Step } from "./spec.ts";
 
 const DOCS = join(ROOT, "..", "..", "docs", "lab");
 const TOTAL = 10;
@@ -106,6 +106,21 @@ function frontMatter(fields: Record<string, string | number>): string {
   return `---\n${Object.entries(fields).map(([k, v]) => `${k}: ${typeof v === "number" ? v : JSON.stringify(v)}`).join("\n")}\n---\n`;
 }
 
+function explainerHtml(e: Explainer): string {
+  const points = e.points.map(([t, d]) => `<li><strong>${esc(t)}.</strong> ${inline(d)}</li>`).join("");
+  const why = e.why.map(([problem, answer]) => `<tr><td>${inline(problem)}</td><td>${inline(answer)}</td></tr>`).join("");
+  const more = e.more === undefined ? "" : `<p class="lab-muted">Read more: ${e.more.map(([t, u]) => `<a href="${u}">${esc(t)}</a>`).join(" · ")}</p>`;
+  return `<section class="lab-explainer">
+<h2>${esc(e.title)}</h2>
+<p class="lab-lead">${inline(e.lead)}</p>
+<ul class="lab-points">${points}</ul>
+${e.code !== undefined ? codeFigure(e.code) : ""}
+<h3>Why it is the right tool for this problem</h3>
+<table class="lab-why"><thead><tr><th>What you ran into</th><th>What a warrant does about it</th></tr></thead><tbody>${why}</tbody></table>
+${more}
+</section>`;
+}
+
 function stagePage(spec: StageSpec): string {
   const prev = spec.n === 1 ? { href: "/lab/", label: "Overview" } : { href: `/lab/stage-${spec.n - 1}`, label: `Stage ${spec.n - 1}` };
   const next = spec.n === 9 ? { href: "/lab/wrap-up", label: "Wrap up" } : { href: `/lab/stage-${spec.n + 1}`, label: `Stage ${spec.n + 1}: ${STAGES[spec.n]?.title ?? ""}` };
@@ -113,6 +128,9 @@ function stagePage(spec: StageSpec): string {
   parts.push(stepper(spec.n));
   parts.push(`<header class="lab-hero"><div class="lab-kicker">Stage ${spec.n} of 9 · <span class="lab-mode ${spec.mode}">${spec.mode}</span> · about ${spec.minutes} min</div><h1>${esc(spec.title)}</h1><p class="lab-goal"><strong>Goal.</strong> ${inline(spec.goal)}</p></header>`);
   parts.push(spec.intro.map((p) => `<p class="lab-intro">${inline(p)}</p>`).join("\n"));
+  if (spec.explainer !== undefined) {
+    parts.push(explainerHtml(spec.explainer));
+  }
   parts.push(`<figure class="lab-figure">${spec.diagram}</figure>`);
   if (spec.code !== undefined) {
     parts.push(spec.code.map(codeFigure).join("\n"));
@@ -179,6 +197,12 @@ npm run lab</code></pre>
 <tr><th>Arrive</th><td>Friday evening</td><th>Activity</th><td>at least one, up to $200</td></tr>
 </tbody></table>
 <p>Watch the wallet in the output. It starts at $1,200. When it moves, something happened.</p>
+</div>
+
+<h2>What you will use</h2>
+<div class="lab-two">
+<div><h3>Stages 1 to 5: the usual tools</h3><p>A shared key, then one account per agent, then rules you write yourself, then a registry or a policy service to tell two jobs apart. Each fixes something and costs something. By stage 5 you will have hit the limit of all of them.</p></div>
+<div><h3>Stages 6 to 9: Tenuo warrants</h3><p>A <strong>warrant</strong> is a signed permission that travels with the request: which tools, which argument values, for which agent's key, until when. The control plane signs the first one; agents can only narrow it for the next agent; the code next to each tool checks the whole chain offline. <a href="/lab/stage-6">Stage 6 explains it</a> before you write your first one.</p></div>
 </div>
 
 <h2>The stages</h2>

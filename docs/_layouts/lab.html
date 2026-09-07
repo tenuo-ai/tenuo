@@ -121,6 +121,17 @@ layout: default
   .lab-bar div { height: 100%; background: var(--accent); border-radius: 3px; }
   .lab-grade p { margin: 0; font-size: 0.8rem; }
 
+  .lab-explainer { margin: 1.4rem 0; padding: 16px 18px 6px; border: 1px solid rgba(0, 212, 255, 0.35); border-radius: 12px; background: linear-gradient(180deg, rgba(0, 212, 255, 0.06), transparent 60%); }
+  .lab-explainer h2 { margin: 0 0 0.4rem; }
+  .lab-explainer h3 { margin: 1.2rem 0 0.4rem; }
+  .lab-lead { font-size: 1.02rem; }
+  .lab-points { margin: 0.6rem 0 0.8rem 1.1rem; padding: 0; }
+  .lab-points li { margin: 0.35rem 0; }
+  .lab-why { font-size: 0.88rem; }
+  .lab-why th { color: var(--text-muted); font-weight: 500; }
+  .lab-why td:first-child { color: var(--text-muted); width: 46%; }
+  .lab-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .lab-two h3 { margin-top: 0.2rem; }
   .lab-quote { font-size: 1.05rem; color: var(--text); background: var(--surface); padding: 12px 16px; border-radius: 0 8px 8px 0; }
   .lab-terms td { vertical-align: top; }
 
@@ -135,7 +146,7 @@ layout: default
   .highlight .p, .highlight .o { color: #89ddff; }
 
   @media (max-width: 720px) {
-    .lab-start, .lab-grid, .lab-grading { grid-template-columns: 1fr; }
+    .lab-start, .lab-grid, .lab-grading, .lab-two { grid-template-columns: 1fr; }
     .lab-done { flex-direction: column; align-items: stretch; }
     .main { padding: 24px 16px; }
   }
