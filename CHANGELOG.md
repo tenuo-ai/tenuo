@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Python extras declare the floors the code actually needs.** `tenuo[mcp]`
+  and `tenuo[fastmcp]` now require `mcp>=1.9.4` (streamable-HTTP transport
+  shape, `CallToolRequestParams.meta`); `tenuo[crewai]` requires `crewai>=1.5`
+  (`crewai.hooks`). Both were previously declared as `>=1.0` but failed at
+  import or first use on those versions.
+
+### Fixed
+
+- **FastMCP 4 middleware denials.** `TenuoMiddleware` returns a real
+  `ToolResult` (with `isError=True` on the wire) on FastMCP 3.2 through 4.x,
+  and version-pinned FastMCP 4 calls no longer lose the `_meta.tenuo` block.
+- **MCP SDK 2.x tool schemas.** `SecureMCPClient` and the LangChain bridge read
+  `Tool.input_schema` on SDK 2.x (previously an empty schema).
+
+## [0.2.5-beta.0] - 2026-09-06
+
+TypeScript SDK only (`@tenuo/core` / `@tenuo/mcp` on the npm `beta` tag).
+Rust and Python remain 0.2.4. `latest` is moved to this beta after publish
+so `npm i @tenuo/core` is not stuck on `0.2.4-beta.0`. Install with
+`@tenuo/core@beta` until a stable tag is declared.
+
 ### Added
 
 - **TypeScript: delegation across agents.** `tenuo.narrow(session, allow,
@@ -70,15 +93,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TypeScript: `sessionFromWire()` with the wrong holder key** now throws
   `AuthorizationDeniedError` with `TENUO_INVALID_POP` (was a configuration
   error). A copied warrant is not authority.
+- **@tenuo/mcp peer** is now `@tenuo/core@>=0.2.5-beta.0 <0.2.6`.
 - **tenuo-wasm `SdkContext.mint`** takes optional `holder_hex` and `max_depth`;
   `SdkContext.narrow` takes an optional options object; `SdkSession` gains
   `describe()`; `sdkPublicKeyFromHolderKey` is exported. Existing call sites
   are unchanged.
-- **Python extras declare the floors the code actually needs.** `tenuo[mcp]`
-  and `tenuo[fastmcp]` now require `mcp>=1.9.4` (streamable-HTTP transport
-  shape, `CallToolRequestParams.meta`); `tenuo[crewai]` requires `crewai>=1.5`
-  (`crewai.hooks`). Both were previously declared as `>=1.0` but failed at
-  import or first use on those versions.
 - **tenuo-wasm parity module** (`sdk_ext.rs`): `SdkContext.fromIssuerSecret`,
   `mintExtended`, `issue`, `explain`, `approvalRequest`,
   `approvalContextAttestation`, `signRevocationListVersioned`; free functions
@@ -86,14 +105,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sdkSignRevocationListVersioned`, `sdkInspectRevocationList`.
   `describe()` reports kind, clearance, ids, issuer fields, approvers, and
   gated tools.
-
-### Fixed
-
-- **FastMCP 4 middleware denials.** `TenuoMiddleware` returns a real
-  `ToolResult` (with `isError=True` on the wire) on FastMCP 3.2 through 4.x,
-  and version-pinned FastMCP 4 calls no longer lose the `_meta.tenuo` block.
-- **MCP SDK 2.x tool schemas.** `SecureMCPClient` and the LangChain bridge read
-  `Tool.input_schema` on SDK 2.x (previously an empty schema).
 
 ## [0.2.4] - 2026-09-01
 
