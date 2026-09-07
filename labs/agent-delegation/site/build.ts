@@ -269,7 +269,7 @@ npm run score      # your score and why
 npm run trace      # every decision, with its reason
 npm run audit      # what every agent can currently do
 npm run next       # move on to the next stage
-npm run share      # write an anonymous score breakdown for your session host
+npm run share      # send Tenuo a redacted scorecard to improve the challenge
 npm run reset      # restore stage 1 and every starter exercise</code></pre>
 
 <aside class="lab-callout notice"><div class="lab-callout-title">One ground rule</div><p><strong>The injected instruction is in the flight service. Do not delete or filter it.</strong> Assume an agent will sometimes be fooled; this game is about what still holds when it is.</p></aside>
@@ -315,7 +315,10 @@ function wrapUpPage(): string {
 <h2>Going further</h2>
 <p>The authorization system you used in stages 5 to 7 is open source at <a href="${REPO_URL}">github.com/tenuo-ai/tenuo</a>. The delegation rules behind it are being standardized in the public <a href="${IETF_DRAFT_URL}">IETF draft on attenuating agent tokens</a>. A star on the repository is the main way maintainers find out anyone is using their work.</p>
 <pre class="lab-cmd"><code>npm run star       # optional: support the project without changing screens
-npm run share      # write the anonymous local scorecard for your session host</code></pre>
+npm run share      # send Tenuo a redacted scorecard
+npm run share -- --username YOUR_GITHUB_USERNAME
+                   # optional: use this unverified name on future leaderboards</code></pre>
+<p class="lab-muted">Sharing is explicit. Tenuo receives the star results, attempt count, redacted first-attempt and first-green summaries, a random local challenge-session ID, and runtime versions. It never receives source, keys, argument values, filesystem paths, or client timestamps. The same scorecard is saved locally, and a failed delivery is clearly reported.</p>
 <nav class="lab-nav"><a class="prev" href="/lab/stage-${TOTAL_STAGE_COUNT}">← Stage ${TOTAL_STAGE_COUNT}</a><a class="next" href="/lab/${EPILOGUE.slug}">${esc(EPILOGUE.title)} →</a></nav>
 `;
   return frontMatter({ layout: "lab", title: "What you just learned", description: "The two sentences the lab was built around, and the terms for them.", lab_stage: 0 }) + body;

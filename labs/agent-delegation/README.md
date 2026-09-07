@@ -46,7 +46,7 @@ npm run attack     # run the rogue behavior and the security tests
 npm run score      # see your score and why
 npm run audit      # what every agent can currently do
 npm run next       # move to the next stage
-npm run share      # write an anonymous score breakdown for your session host
+npm run share      # send Tenuo a redacted scorecard to improve the challenge
 npm run star       # optionally star Tenuo without leaving the terminal
 npm run reset      # restore stage 1 and every starter exercise
 ```
@@ -88,13 +88,18 @@ After the core lab, the hosted guide has an unnumbered, optional contribution ep
 
 ## What leaves your machine
 
-Nothing automatically. The lab runs locally and makes no network requests.
+Nothing automatically. The challenge runs locally; only `npm run share` makes
+a network request, after you explicitly run it.
 It keeps attempt counts and small semantic summaries—tool names, per-handoff
 behavioral constraint results, whether the holder was correct, a coarse TTL
 bucket, and which stars were missing—in `.lab/`. It never records source code,
-keys, names, argument values, or exact timestamps.
-`npm run share` writes an anonymous local JSON artifact; you choose whether to
-hand that file to a session host.
+keys, traveler names, argument values, or exact timestamps.
+`npm run share` saves that redacted scorecard locally and submits it to Tenuo
+so the maintainers can analyze the developer experience. Add
+`-- --username YOUR_GITHUB_USERNAME` only if you want that unverified display
+name associated with the result for future challenge leaderboards. Without it,
+the scorecard has only a random local challenge-session ID. If delivery fails,
+the local file remains and the command tells you that Tenuo did not receive it.
 
 ## How it works
 

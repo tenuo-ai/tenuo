@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TOOLS } from "./mission.ts";
@@ -11,6 +12,8 @@ const STATE_FILE = join(LAB_HOME, "state.json");
 
 export interface LabState {
   stage: number;
+  /** Random local challenge-session identifier used only on explicit share. */
+  sessionId?: string;
   /** Stages the participant has scored full functionality on. */
   completed: number[];
   /** The warm-up questions were shown once. */
@@ -115,12 +118,21 @@ export function loadState(): LabState {
     return {
       stage: typeof parsed.stage === "number" && parsed.stage >= 1 && parsed.stage <= STAGES.length ? parsed.stage : 1,
       completed: Array.isArray(parsed.completed) ? parsed.completed.filter((n): n is number => typeof n === "number") : [],
+      ...(typeof parsed.sessionId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed.sessionId) ? { sessionId: parsed.sessionId } : {}),
       ...(parsed.warmupDone === true ? { warmupDone: true } : {}),
       ...(attempts !== undefined ? { attempts } : {}),
     };
   } catch {
     return { stage: 1, completed: [] };
   }
+}
+
+export function getOrCreateSessionId(): string {
+  const state = loadState();
+  if (state.sessionId !== undefined) return state.sessionId;
+  const sessionId = randomUUID();
+  saveState({ ...state, sessionId });
+  return sessionId;
 }
 
 export function saveState(state: LabState): void {
