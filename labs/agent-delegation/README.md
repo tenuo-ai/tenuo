@@ -57,7 +57,9 @@ use three classic approaches: one shared key, one identity per agent, and
 scoped rules you write yourself. Stage 6 switches to
 [Tenuo](https://github.com/tenuo-ai/tenuo): each agent gets its own key, a
 control plane signs the trip's authority, and every handoff narrows what the
-next agent holds. Stages 7 to 9 are extensions.
+next agent holds. The signer stays outside the agent runtime, and each holder
+private key remains inside its agent boundary; chain code sees recipient public
+keys only. Stages 7 to 9 are extensions.
 
 The agents are scripted and deterministic. They follow the same tool-call
 intents a live model produced when this scenario was designed, including
@@ -67,7 +69,7 @@ network at all. A `--live` mode driving the OpenAI Agents SDK is planned and
 not in this build.
 
 The rogue behavior is not in any prompt. Go find where the instruction
-actually comes from, in `src/services/index.ts`.
+actually comes from, in `src/services/flights.ts`.
 
 ## After the lab
 
