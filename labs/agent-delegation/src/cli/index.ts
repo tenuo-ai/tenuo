@@ -15,6 +15,7 @@ process.env.NODE_ENV ??= "development";
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { runBattery, type ProbeResult } from "../harness/attacks.ts";
 import { checkFunctionality, type Functionality } from "../harness/functionality.ts";
@@ -28,7 +29,21 @@ import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stag
 import { CONSENT_LINES, emit, enterStage, eventsUrl, setTelemetry, telemetry } from "../telemetry.ts";
 
 const SITE = "https://tenuo.ai";
-const guideUrl = (n: number) => `${SITE}/lab/stage-${n}`;
+/** The stage page, with the stages this install has completed, so the site's progress matches the terminal. */
+function guideUrl(n: number): string {
+  const done = [...loadState().completed].sort((a, b) => a - b);
+  return `${SITE}/lab/stage-${n}${done.length > 0 ? `?done=${done.join(",")}` : ""}`;
+}
+
+/** Open a URL in the default browser without blocking or failing the command. */
+function openInBrowser(url: string): void {
+  const [bin, pre] = process.platform === "darwin" ? ["open", []] : process.platform === "win32" ? ["cmd", ["/c", "start", ""]] : ["xdg-open", []];
+  try {
+    spawn(bin, [...pre, url], { detached: true, stdio: "ignore" }).on("error", () => undefined).unref();
+  } catch {
+    // No browser here (CI, a container): the link is printed anyway.
+  }
+}
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "lab";
@@ -174,7 +189,8 @@ function centralCallsLine(built: Built): string {
 }
 
 async function runStage(def: StageDef, scenario: Scenario): Promise<Built> {
-  return runScenario(def, scenario);
+  // The site builder runs the reference answers to capture what a finished stage prints.
+  return runScenario(def, scenario, process.env["TENUO_LAB_ANSWER"]);
 }
 
 const WARMUP: ReadonlyArray<readonly [string, string]> = [
@@ -220,6 +236,7 @@ async function cmdLab(def: StageDef): Promise<void> {
   await enterStage(def.n);
   const scenario = def.scenario;
   header(def, scenario);
+  if (args.includes("--open")) openInBrowser(guideUrl(def.n));
   for (const line of def.blurb) console.log(`  ${line}`);
   console.log("");
   const built = await runStage(def, scenario);
@@ -387,6 +404,8 @@ async function cmdScore(def: StageDef): Promise<void> {
     if (!state.completed.includes(def.n)) {
       state.completed.push(def.n);
       saveState(state);
+      console.log(green(`  Stage ${def.n} done.`) + (def.n < STAGES.length ? dim(`  Next: npm run next, then ${guideUrl(def.n + 1)}`) : ""));
+      console.log("");
     }
   }
   await emit("run", def.n, {
@@ -475,6 +494,7 @@ async function cmdNext(): Promise<void> {
   saveState({ ...state, stage: to });
   console.log(`Now on stage ${to}: ${stageDef(to).title}. Run npm run lab.`);
   console.log(dim(`  guide: ${guideUrl(to)}`));
+  if (args.includes("--open")) openInBrowser(guideUrl(to));
   await enterStage(to);
 }
 

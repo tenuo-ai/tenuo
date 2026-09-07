@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const STATE_DIR = join(ROOT, ".lab");
+/** Override for the site builder and tests, so a captured run never touches a participant's state. */
+const STATE_DIR = process.env["TENUO_LAB_HOME"] ?? join(ROOT, ".lab");
 const STATE_FILE = join(STATE_DIR, "state.json");
 
 export interface LabState {

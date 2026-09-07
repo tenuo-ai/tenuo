@@ -9,7 +9,16 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "exercises", "answers", "test", "collector"]
+  "include": [
+    "src",
+    "exercises",
+    "answers",
+    "test",
+    "collector",
+    "site"
+  ]
 }

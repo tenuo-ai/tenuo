@@ -19,7 +19,8 @@
     "reset": "tsx src/cli/index.ts reset",
     "ambassador": "tsx src/cli/index.ts ambassador",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "site": "tsx site/build.ts"
   },
   "dependencies": {
     "@tenuo/core": "file:vendor/tenuo-core-0.2.4-beta.0.tgz"

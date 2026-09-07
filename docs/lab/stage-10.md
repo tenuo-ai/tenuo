@@ -1,30 +1,19 @@
 ---
+layout: "lab"
 title: "Stage 10: your first pull request"
-description: "Stage 10 of the Agent Delegation Challenge."
+description: "Optional: contribute to the SDK you just used."
+lab_stage: 10
 ---
-
-Stages: [1]({{ site.baseurl }}/lab/stage-1) · [2]({{ site.baseurl }}/lab/stage-2) · [3]({{ site.baseurl }}/lab/stage-3) · [4]({{ site.baseurl }}/lab/stage-4) · [5]({{ site.baseurl }}/lab/stage-5) · [6]({{ site.baseurl }}/lab/stage-6) · [7]({{ site.baseurl }}/lab/stage-7) · [8]({{ site.baseurl }}/lab/stage-8) · [9]({{ site.baseurl }}/lab/stage-9) · **10**
-
-# Stage 10: your first pull request
-
-Optional, and the only stage without a score.
-
-You have spent ninety minutes inside a real open-source security project, in the same TypeScript SDK its maintainers work in every day. That is further than most people ever get before their first contribution, so here is the challenge: open one.
-
-The repository keeps a list of issues sized for exactly this, labeled **good first issue**:
-
-```text
-github.com/tenuo-ai/tenuo/labels/good%20first%20issue
-```
-
-Most of them are TypeScript: a runnable example, a test recipe, a clearer error, a cookbook for the constraint helpers you used in stage 6. Each one is scoped to an afternoon and says what "done" looks like. Pick one that touches something you met in the lab, comment on the issue so nobody else picks it up at the same time, and read `CONTRIBUTING.md` before you start. It tells you how to run the TypeScript checks locally, which is most of the work.
-
-Three things that make a first pull request easy to merge:
-
-- Keep it to the one issue. A small change that does exactly what the issue asks is worth more than a large one that does several things.
-- Run the checks the contributing guide names, and say in the description that you did.
-- If you get stuck, say so on the issue. Maintainers would rather answer a question than review a guess.
-
-Your session host can help you pick one, and will tell you how to reach the maintainers if the issue you want is unclear. A merged pull request on a security project is a real thing to have your name on.
-
-← [Stage 9: The incident]({{ site.baseurl }}/lab/stage-9)
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a><a href="/lab/stage-9" data-n="9" title="Stage 9">9</a><a href="/lab/stage-10" data-n="10" class="current" title="Stage 10">10</a></nav>
+<header class="lab-hero"><div class="lab-kicker">Stage 10 of 10 · optional · no score</div><h1>Your first pull request</h1><p class="lab-goal"><strong>Goal.</strong> Take the TypeScript SDK you just spent ninety minutes inside and land one small change in it.</p></header>
+<p class="lab-intro">You have been working in a real open-source security project, in the same SDK its maintainers use every day. That is further than most people get before a first contribution, so here is the challenge: open one.</p>
+<h2>Do this</h2>
+<ol class="lab-steps">
+<li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="10:0"><span>1</span></label><div class="lab-step-body"><p>Pick an issue labeled <strong>good first issue</strong>. Most are TypeScript: a runnable example, a test recipe, a clearer error, a cookbook for the constraint helpers you used in stage 6. Each says what done looks like.</p><a class="lab-button" href="https://github.com/tenuo-ai/tenuo/labels/good%20first%20issue">Browse good first issues</a></div></li>
+<li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="10:1"><span>2</span></label><div class="lab-step-body"><p>Comment on the issue so nobody else picks it up at the same time. Then read <code>CONTRIBUTING.md</code>: it tells you how to run the TypeScript checks locally, which is most of the work.</p></div></li>
+<li class="lab-step"><label class="lab-step-check"><input type="checkbox" data-key="10:2"><span>3</span></label><div class="lab-step-body"><p>Make the change, run the checks, open the pull request, and say in the description that you ran them.</p></div></li>
+</ol>
+<aside class="lab-callout notice"><div class="lab-callout-title">What makes a first pull request easy to merge</div><ul><li>Keep it to the one issue. A small change that does exactly what the issue asks beats a large one that does several things.</li><li>Run the checks the contributing guide names, and say that you did.</li><li>If you get stuck, say so on the issue. Maintainers would rather answer a question than review a guess.</li></ul></aside>
+<p>Your session host can help you pick one and will tell you how to reach the maintainers if an issue is unclear. A merged pull request on a security project is a real thing to have your name on.</p>
+<section class="lab-done"><div><div class="lab-callout-title">Done when</div><p>Your pull request is open.</p></div><button type="button" class="lab-mark" data-mark-done="10">Mark stage 10 done</button></section>
+<nav class="lab-nav"><a class="prev" href="/lab/wrap-up">← What you just learned</a><a class="next" href="https://github.com/tenuo-ai/tenuo">The repository →</a></nav>

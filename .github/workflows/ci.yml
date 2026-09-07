@@ -810,6 +810,8 @@ jobs:
           npm install --no-save --package-lock=false "$TENUO_LAB_PACKAGE"/*.tgz
           npm run typecheck
           npm test
+          # The hosted lab pages (docs/lab) are generated from this code and real runs.
+          npm run site -- --check
 
   # ============================================================================
   # DOC CODE BLOCKS

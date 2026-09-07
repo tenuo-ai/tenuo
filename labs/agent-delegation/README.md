@@ -82,6 +82,25 @@ not in this build.
 The rogue behavior is not in any prompt. Go find where the instruction
 actually comes from, in `src/services/flights.ts`.
 
+## The hosted guide
+
+The stage-by-stage guide at [tenuo.ai/lab](https://tenuo.ai/lab) is generated
+from this directory, so it cannot drift from the code:
+
+```bash
+npm run site            # rebuild docs/lab from site/spec.ts, the exercise files, and real runs
+npm run site -- --check # what CI runs: fail if docs/lab is stale
+```
+
+Every "what you should see" panel on the site is the CLI's own output,
+captured by running the reference answers with a throwaway state directory.
+Code on the pages is pulled from `exercises/` and `answers/` by symbol name.
+Edit `site/spec.ts` to change what a stage page says, then rerun and commit.
+
+The CLI prints the page for the current stage on every run, with the stages
+this install has completed in the link, so the page's progress matches the
+terminal. `npm run lab -- --open` and `npm run next -- --open` open it.
+
 ## After the lab
 
 You have just spent ninety minutes inside this codebase, in the same
