@@ -1,12 +1,12 @@
 ---
 layout: "lab"
-title: "Agent Delegation Lab"
+title: "AI Agent Delegation Security Challenge"
 description: "Six AI agents, one rogue, 7 stages. Book the trip and stop the rogue agent."
 lab_stage: 0
 lab_version: "0.2.0"
 ---
 <nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
-<header class="lab-hero"><div class="lab-kicker">A ninety-minute security game · TypeScript · no account needed</div><h1>Book the trip. Stop the rogue agent.</h1><p class="lab-goal">Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
+<header class="lab-hero"><div class="lab-kicker">A ninety-minute security game · TypeScript · no account needed</div><h1>AI Agent Delegation Security Challenge</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
 
 <section class="lab-start">
 <div>

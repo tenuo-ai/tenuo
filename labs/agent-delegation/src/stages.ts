@@ -75,8 +75,9 @@ export const STAGES: readonly StageDef[] = [
     probes: ["escalation"],
     blurb: [
       "ACT 1 — ISOLATE THE TRIPS",
-      "Bob is going to Seattle through the same agents. Fix his trip, then make sure Alice's",
-      "agent cannot touch Bob's reservation (and vice versa).",
+      "Bob is going to Seattle through the same agents. Alice's policy assumptions reject",
+      "several parts of his trip. Fix them, then make sure Alice's agent cannot touch Bob's",
+      "reservation (and vice versa).",
       "",
       "ACT 2 — WATCH THE HANDOFF LEAK",
       "The red handoff checks are intentional; your Act 1 solution is not broken. Check-in Agent",

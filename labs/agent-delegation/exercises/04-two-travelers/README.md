@@ -4,17 +4,35 @@ Bob is going to Seattle on DL331, with a flight budget of $450. His trip runs
 through the same `flight-agent` and `checkin-agent` as Alice's, at the same
 time.
 
-Your stage 3 policy pins `checkin-agent` to `["UA214"]`, so Bob's check-in is
-denied and the trip fails. The repair everyone reaches for first:
+Your stage 3 policy describes only Alice's Cancún flight. Bob is outside its
+destination, flight budget, and reservation rules, so several steps are denied.
+Read **THE TRIP** from top to bottom: the first denial is the first assumption
+you need to change.
+
+The repair everyone reaches for first is to make each shared flight-chain role
+broad enough for both trips:
 
 ```ts
+"flight-agent": {
+  // Omitting destination admits both CUN and SEA.
+  actions: ["traveler.read", "search_flights", "book_flight", "wallet.charge"],
+  maxPrice: 450,
+  maxCharge: 450,
+  profileFields: ["passportNumber"],
+},
 "checkin-agent": {
-  actions: ["get_reservation", "check_in"],
+  actions: ["get_reservation", "check_in", "issue_boarding_pass"],
+  reservations: ["UA214", "DL331"],
+},
+"boarding-agent": {
+  actions: ["issue_boarding_pass"],
   reservations: ["UA214", "DL331"],
 },
 ```
 
-The trip completes. Then read the CROSS-TASK section of `npm run attack`.
+The complete version is available with
+`npm run ambassador -- answers 4` if you want to compare. Once both trips
+complete, read the CROSS-TASK section of `npm run attack`.
 Alice's check-in agent can check Bob in. There is one `checkin-agent`, it is
 doing two jobs, and nothing in this file says which job a given call belongs
 to.
@@ -61,4 +79,4 @@ It works. Look at `npm run trace`: every one of those calls now shows
 Some component outside the acting agent has to be told about every task before
 it starts and consulted while it runs, and its availability gates the trip.
 Neither fix can bring `central_calls` to zero; that is the whole point. Write down, in one sentence, what your fix depends on. You will compare
-it with stage 6.
+it with stage 5.

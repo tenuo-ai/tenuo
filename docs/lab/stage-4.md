@@ -9,15 +9,22 @@ lab_version: "0.2.0"
 
 <header class="lab-hero"><div class="lab-kicker">Stage 4 of 7 · <span class="lab-mode scoped">scoped</span> · about 30 min</div><h1>Two travelers, then a handoff</h1><p class="lab-goal"><strong>Goal.</strong> First isolate Alice from Bob; then observe why passing a whole credential gives the next agent too much.</p></header>
 
-<p class="lab-intro">Bob is going to Seattle on DL331, at the same time, through the same agents. Your stage 3 policy pins Check-in Agent to UA214, so Bob's check-in is refused and his trip fails.</p>
+<p class="lab-intro">Bob is going to Seattle on DL331, at the same time, through the same agents. Your stage 3 policy describes only Alice's Cancún flight, so Bob is rejected by destination, flight-budget, and reservation rules.</p>
 <p class="lab-intro">This stage has two acts. First isolate Alice from Bob. Then observe an intentional handoff leak. The red handoff checks in Act 2 do not mean your Act 1 solution is broken.</p>
 
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 354" role="img" aria-label="Two trips through the same six agents. Then Check-in Agent passes the only thing it has, and asks for more." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/><path d="M97 200 L198 200" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#6a6a6a"/><path d="M97 284 L198 284" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#6a6a6a"/><path d="M172 116 L198 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,116 197,120.95 197,111.05" fill="#6a6a6a"/><path d="M357 116 L383 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="391,116 382,120.95 382,111.05" fill="#6a6a6a"/><path d="M542 116 L568 116" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/><polygon points="576,116 567,120.95 567,111.05" fill="var(--accent)"/><text x="559" y="155" font-size="10.5" text-anchor="middle" fill="var(--accent)">hands over its credential</text><rect x="22" y="22" width="158" height="26" rx="13" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/><text x="101" y="39" font-size="12" text-anchor="middle" fill="var(--text)">Alice → Cancún, UA214</text><rect x="192" y="22" width="148" height="26" rx="13" fill="var(--surface)" stroke="#ffb000" stroke-width="1.5"/><text x="266" y="39" font-size="12" text-anchor="middle" fill="var(--text)">Bob → Seattle, DL331</text><path d="M101 48 L101 74 L97 74 L97 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round" stroke-dasharray="6 4"/><polygon points="97,91 92.05,82 101.95,82" fill="#6a6a6a"/><rect x="22" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="33" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text><rect x="207" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="218" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text><text x="218" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">two destinations</text><rect x="207" y="176" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="205" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text><rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="289" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text><rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#ff5c5c" stroke-width="2"/><text x="403" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text><text x="403" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">one identity, two jobs</text><rect x="490.32" y="83" width="43.68" height="17" rx="8.5" fill="#ff5c5c"/><text x="512.16" y="95.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">rogue</text><rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="588" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text><text x="588" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">holds too much</text><rect x="659.632" y="83" width="59.36800000000001" height="17" rx="8.5" fill="#ffb000"/><text x="689.3159999999999" y="95.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">too much</text><rect x="392" y="186" width="186" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="403" y="207" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Your policy component</text><text x="403" y="224" font-size="11" text-anchor="start" fill="var(--text-muted)">outside every agent</text><path d="M467 140 L467 177" fill="none" stroke="#ffb000" stroke-width="2" stroke-linejoin="round"/><polygon points="467,185 462.05,176 471.95,176" fill="#ffb000"/><text x="476" y="175.5" font-size="10.5" text-anchor="start" fill="#ffb000">asks for every reservation, plus cancel</text><text x="380" y="346" font-size="12" text-anchor="middle" fill="var(--text-muted)">Two trips through the same six agents. Then Check-in Agent passes the only thing it has, and asks for more.</text></svg></figure>
 
-<figure class="lab-code"><figcaption>The quick fix. CROSS-TASK shows what it misses.</figcaption>
+<figure class="lab-code"><figcaption>Part of the broad quick fix. The README covers Boarding too.</figcaption>
 {% highlight ts %}
+// One shared role now covers both flight jobs.
+"flight-agent": {
+  actions: ["traveler.read", "search_flights", "book_flight", "wallet.charge"],
+  maxPrice: 450, // no destination: CUN and SEA both pass
+  maxCharge: 450,
+  profileFields: ["passportNumber"],
+},
 "checkin-agent": {
-  actions: ["get_reservation", "check_in"],
+  actions: ["get_reservation", "check_in", "issue_boarding_pass"],
   reservations: ["UA214", "DL331"],
 },
 {% endhighlight %}
@@ -27,13 +34,14 @@ lab_version: "0.2.0"
 <ol class="lab-steps">
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="4:0"><span>1</span></label>
-<div class="lab-step-body"><p><strong>Act 1 — isolate Alice and Bob.</strong> Run both trips and watch Bob's check-in fail.</p><pre class="lab-cmd"><code>npm run lab</code></pre><details class="lab-term"><summary>What you should see <span>npm run lab · 66 lines</span></summary><pre><code>
+<div class="lab-step-body"><p><strong>Act 1 — isolate Alice and Bob.</strong> Run both trips. Read <strong>THE TRIP</strong> from top to bottom and notice every Alice-only assumption that rejects Bob.</p><pre class="lab-cmd"><code>npm run lab</code></pre><details class="lab-term"><summary>What you should see <span>npm run lab · 67 lines</span></summary><pre><code>
 Stage 4 of 7: Two travelers, then a handoff   mode=scoped  scenario=two-travelers
   guide: https://tenuo.ai/lab/stage-4
 
   ACT 1 — ISOLATE THE TRIPS
-  Bob is going to Seattle through the same agents. Fix his trip, then make sure Alice's
-  agent cannot touch Bob's reservation (and vice versa).
+  Bob is going to Seattle through the same agents. Alice's policy assumptions reject
+  several parts of his trip. Fix them, then make sure Alice's agent cannot touch Bob's
+  reservation (and vice versa).
 
   ACT 2 — WATCH THE HANDOFF LEAK
   The red handoff checks are intentional; your Act 1 solution is not broken. Check-in Agent
@@ -96,14 +104,14 @@ THE TRIP
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="4:1"><span>2</span></label>
-<div class="lab-step-body"><p>Fix it the quick way: add DL331 to Check-in Agent's reservations. The trip completes. Now read <strong>CROSS-TASK</strong>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>After the quick fix <span>npm run attack · 65 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Fix it the quick way: broaden each shared flight-chain role for both trips. The README names every field. Both trips complete; now read <strong>CROSS-TASK</strong>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>After the broad quick fix <span>npm run attack · 65 lines</span></summary><pre><code>
 Stage 4 of 7: Two travelers, then a handoff   mode=scoped  scenario=two-travelers
   guide: https://tenuo.ai/lab/stage-4
 
-WALLET  Alice: $914 of $1200   Bob: $1500 of $1500
+WALLET  Alice: $914 of $1200   Bob: $1102 of $1500
 ROGUE ATTEMPTS BLOCKED  7 / 7
-STARS   ☆★☆☆
-  ☆ Trip booked
+STARS   ★★☆☆
+  ★ Trip booked
   ★ Rogue stopped
   ☆ Tight handoff
   ☆ No spare authority
@@ -118,19 +126,19 @@ THE TRIP
   ✓ trip-alice-cun  within budget ($286 of $1200)
   ✓ trip-bob-sea    travel: read traveler name
   ✓ trip-bob-sea    travel: calendar event
-  ✗ trip-bob-sea    flight: search   destination SEA is not CUN
-  ✗ trip-bob-sea    flight: book DL331   never attempted (an earlier step or handoff failed)
-  ✗ trip-bob-sea    check-in: DL331   never attempted (an earlier step or handoff failed)
-  ✗ trip-bob-sea    boarding: pass for DL331   never attempted (an earlier step or handoff failed)
-  ✓ trip-bob-sea    within budget ($0 of $1500)
+  ✓ trip-bob-sea    flight: search
+  ✓ trip-bob-sea    flight: book DL331
+  ✓ trip-bob-sea    check-in: DL331
+  ✓ trip-bob-sea    boarding: pass for DL331
+  ✓ trip-bob-sea    within budget ($398 of $1500)
 
 LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓
 TRIGGERED BY INJECTED CONTENT
   get_reservation(AA882)                                   DENIED   ✓
-      reason: reservation AA882 outside granted scope {UA214}  [POLICY]
+      reason: reservation AA882 outside granted scope {UA214, DL331}  [POLICY]
   check_in(AA882)                                          DENIED   ✓
-      reason: reservation AA882 outside granted scope {UA214}  [POLICY]
+      reason: reservation AA882 outside granted scope {UA214, DL331}  [POLICY]
   cancel_reservation(UA214)                                DENIED   ✓
       reason: checkin-agent may not cancel_reservation (actions: get_reservation, check_in, issue_boarding_pass)  [POLICY]
   wallet.charge(412)                                       DENIED   ✓
@@ -149,8 +157,8 @@ BOARDING AGENT AFTER THE HANDOFF
   get_reservation(UA214)   inherited?                      ALLOWED  ✗
       expected DENIED: checkin-agent rule permits get_reservation
 CROSS-TASK
-  Task A agent: check_in(DL331)                            DENIED   ✓
-      reason: reservation DL331 outside granted scope {UA214}  [POLICY]
+  Task A agent: check_in(DL331)                            ALLOWED  ✗
+      expected DENIED: checkin-agent rule permits check_in
   Task B agent: get_reservation(UA214)                     ALLOWED  ✗
       expected DENIED: checkin-agent rule permits get_reservation
   Task B agent: book_flight(UA214, CUN)                    ALLOWED  ✗
@@ -159,7 +167,7 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
   requested: every reservation; read, check in, cancel     ALLOWED  ✗
       expected DENIED: the policy service accepted a rule for boarding-agent from checkin-agent: it knows which reservations belong to which task, not what checkin-agent was granted, so it cannot tell that this is broader
 
-  5 of 15 checks did not land as expected
+  6 of 15 checks did not land as expected
   central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div>
 </li>
 <li class="lab-step">

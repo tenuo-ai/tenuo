@@ -123,10 +123,16 @@ describe("stage 3: scoped rules", () => {
 });
 
 describe("stage 4: two travelers, and the handoff", () => {
-  it("the stage 3 policy fails Bob's check-in", async () => {
+  it("the Alice-only stage 3 policy rejects each scoped part of Bob's trip", async () => {
     const r = await evaluate(4);
     expect(r.functionality.ok).toBe(false);
+    expect(r.functionality.steps.find((s) => s.trip === "trip-bob-sea" && s.step === "flight: search")?.ok).toBe(false);
     expect(r.functionality.steps.find((s) => s.trip === "trip-bob-sea" && s.step.startsWith("check-in"))?.ok).toBe(false);
+  });
+  it("the exact broad quick fix documented in the guide completes both trips and exposes cross-task authority", async () => {
+    const r = await evaluate(4, "answers/04-two-travelers/quick-fix.ts");
+    expect(r.functionality.ok).toBe(true);
+    expect(r.probes.filter((p) => p.category === "cross-task").every((p) => !p.ok && p.actual === "ALLOWED")).toBe(true);
   });
   it("fix A: per-task identities pass cross-task, the handoff over-shares, and the policy component accepts the escalation", async () => {
     const r = await evaluate(4, "answers/04-two-travelers/per-task.ts");
@@ -176,11 +182,13 @@ describe("stage 5: tenuo", () => {
     expect(snapshot({ ...r, runs: [r] }).handoffs).toEqual({
       "flight-to-checkin": expect.objectContaining({
         tools: ["check_in", "get_reservation", "issue_boarding_pass"],
+        constraintChecks: { passed: 9, total: 9 },
         holderBound: true,
         ttl: "under-6m",
       }),
       "checkin-to-boarding": expect.objectContaining({
         tools: ["issue_boarding_pass"],
+        constraintChecks: { passed: 3, total: 3 },
         holderBound: true,
         ttl: "under-3m",
       }),
@@ -190,6 +198,8 @@ describe("stage 5: tenuo", () => {
     const r = await evaluate(5, "answers/05-tenuo/chain.ts", "two-travelers");
     expect(r.functionality.ok).toBe(true);
     expect(r.probes.filter((p) => p.category === "cross-task").every((p) => p.ok)).toBe(true);
+    expect(r.probes.find((p) => p.label === "Task B agent: book_flight(UA214, CUN)")?.reason)
+      .toContain("destination CUN is outside");
   });
 });
 
@@ -238,6 +248,8 @@ describe("stage 7: the incident", () => {
     expect(r.probes.every((p) => p.ok)).toBe(true);
     expect(r.probes.find((p) => p.label.startsWith("7."))?.code).toBe("TENUO_DEPTH_EXCEEDED");
     expect(r.probes.find((p) => p.label.startsWith("8."))?.code).toBe("TENUO_INVALID_POP");
+    expect(r.probes.find((p) => p.label.startsWith("2."))?.reason).toContain("city Tulum is outside");
+    expect(r.probes.find((p) => p.label.startsWith("3."))?.reason).toContain("nightlyRate 320 is outside");
     expect(r.score.total).toBeGreaterThanOrEqual(95);
   });
 });

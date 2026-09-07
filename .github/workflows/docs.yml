@@ -84,7 +84,38 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+
+  verify-lab-deploy:
+    name: Verify public lab landing page
+    runs-on: ubuntu-latest
+    needs: deploy
+    timeout-minutes: 5
+    steps:
+      - name: Check the deployed index and Stage 5 disclosure
+        env:
+          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+          CACHE_BUSTER: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          base_url="${PAGE_URL%/}"
+          for attempt in {1..12}; do
+            index="$(curl --fail --silent --show-error --location "${base_url}/lab/?deploy=${CACHE_BUSTER}-${attempt}" || true)"
+            stage5="$(curl --fail --silent --show-error --location "${base_url}/lab/stage-5?deploy=${CACHE_BUSTER}-${attempt}" || true)"
+            if [[ "$index" == *"Book the trip. Stop the rogue agent."* ]] && \
+               [[ "$index" == *"A ninety-minute security game"* ]] && \
+               [[ "$index" != *"AI Agent Delegation Challenge"* ]] && \
+               [[ "$stage5" == *"Open the Stage 5 reference on GitHub"* ]] && \
+               [[ "$stage5" != *"One solution to the TODO"* ]]; then
+              echo "Public lab is current: ${base_url}/lab/"
+              exit 0
+            fi
+            echo "Waiting for the Pages deployment to reach the public URL (attempt ${attempt}/12)"
+            sleep 10
+          done
+          echo "The public lab did not match the deployed guide."
+          exit 1

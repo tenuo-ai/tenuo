@@ -6,6 +6,50 @@ layout: default
 </div>
 
 <style>
+  /* Match the public tenuo.ai visual foundation instead of the old explorer palette. */
+  :root {
+    --bg: #040a0f;
+    --surface: #0a1018;
+    --surface-2: #0e1620;
+    --text: #c8d8e4;
+    --text-bright: #e8e8e8;
+    --text-muted: #7a9aaa;
+    --accent: #38bdf8;
+    --accent2: #a855f7;
+    --accent-dim: #0ea5e9;
+    --green: #00ff88;
+    --red: #ff4466;
+    --gold: #c8a96e;
+    --code-bg: #071018;
+    --border: rgba(56, 189, 248, 0.09);
+  }
+  body { background: var(--bg); }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(56, 189, 248, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56, 189, 248, 0.03) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    top: -80px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 560px;
+    height: 420px;
+    background: radial-gradient(ellipse, rgba(56, 189, 248, 0.07) 0%, transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .top-nav { background: rgba(4, 10, 15, 0.92); border-color: rgba(56, 189, 248, 0.09); }
+  .layout, footer { position: relative; z-index: 1; }
+
   /* The lab pages are a guided path, not a reference: no heading sidebar, one wide column. */
   .sidebar { display: none; }
   .main { padding: 40px 32px; }
@@ -20,16 +64,16 @@ layout: default
   .lab-stepper a { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border); color: var(--text-muted); font-size: 0.8rem; font-weight: 600; text-decoration: none; transition: all 0.15s; }
   .lab-stepper a.home { width: auto; padding: 0 12px; border-radius: 15px; margin-right: 4px; }
   .lab-stepper a:hover { border-color: var(--accent); color: var(--text); }
-  .lab-stepper a.done { background: rgba(61, 220, 132, 0.15); border-color: #3ddc84; color: #3ddc84; }
+  .lab-stepper a.done { background: rgba(0, 255, 136, 0.12); border-color: var(--green); color: var(--green); }
   .lab-stepper a.current { background: var(--accent); border-color: var(--accent); color: #0a0a0a; }
 
   .lab-hero { margin-bottom: 1.2rem; }
   .lab-kicker { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 6px; }
   .lab-mode { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.7rem; letter-spacing: 0.06em; }
-  .lab-mode.shared { background: rgba(255, 92, 92, 0.15); color: #ff5c5c; }
-  .lab-mode.identity { background: rgba(255, 176, 0, 0.15); color: #ffb000; }
-  .lab-mode.scoped { background: rgba(255, 176, 0, 0.15); color: #ffb000; }
-  .lab-mode.tenuo { background: rgba(0, 212, 255, 0.15); color: var(--accent); }
+  .lab-mode.shared { background: rgba(255, 68, 102, 0.15); color: var(--red); }
+  .lab-mode.identity { background: rgba(200, 169, 110, 0.15); color: var(--gold); }
+  .lab-mode.scoped { background: rgba(200, 169, 110, 0.15); color: var(--gold); }
+  .lab-mode.tenuo { background: rgba(56, 189, 248, 0.15); color: var(--accent); }
   .lab-goal { font-size: 1.05rem; padding: 12px 16px; border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 8px 8px 0; }
   .lab-intro { color: var(--text); }
 
@@ -44,8 +88,8 @@ layout: default
 
   .lab-steps { list-style: none; padding: 0; margin: 0; counter-reset: step; }
   .lab-step { display: flex; gap: 14px; padding: 14px 16px; margin: 0 0 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; transition: border-color 0.15s; }
-  .lab-step.checked { border-color: rgba(61, 220, 132, 0.5); }
-  .lab-step.checked .lab-step-check span { background: #3ddc84; border-color: #3ddc84; color: #0a0a0a; }
+  .lab-step.checked { border-color: rgba(0, 255, 136, 0.45); }
+  .lab-step.checked .lab-step-check span { background: var(--green); border-color: var(--green); color: #0a0a0a; }
   .lab-step-check { flex: 0 0 auto; cursor: pointer; user-select: none; }
   .lab-step-check input { position: absolute; opacity: 0; width: 0; height: 0; }
   .lab-step-check span { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border); font-weight: 700; font-size: 0.85rem; color: var(--text-muted); transition: all 0.15s; }
@@ -58,13 +102,13 @@ layout: default
   .lab-copy { position: absolute; top: 8px; right: 8px; padding: 4px 10px; font-size: 0.72rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); cursor: pointer; }
   .lab-copy:hover { color: var(--text); border-color: var(--accent); }
 
-  .lab-term { margin: 0.6rem 0 0; border: 1px solid var(--border); border-radius: 8px; background: #0d0d0d; }
+  .lab-term { margin: 0.6rem 0 0; border: 1px solid var(--border); border-radius: 8px; background: var(--code-bg); }
   .lab-term summary { cursor: pointer; padding: 8px 12px; font-size: 0.82rem; color: var(--text); list-style: none; display: flex; justify-content: space-between; gap: 8px; }
   .lab-term summary::-webkit-details-marker { display: none; }
   .lab-term summary::before { content: '▸'; margin-right: 6px; color: var(--text-muted); }
   .lab-term[open] summary::before { content: '▾'; }
   .lab-term summary span { color: var(--text-muted); font-family: 'SF Mono', Consolas, monospace; font-size: 0.72rem; }
-  .lab-term pre { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0 0 8px 8px; background: #0d0d0d; font-size: 0.76rem; line-height: 1.5; max-height: 460px; overflow: auto; }
+  .lab-term pre { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0 0 8px 8px; background: var(--code-bg); font-size: 0.76rem; line-height: 1.5; max-height: 460px; overflow: auto; }
 
   .lab-tabs { margin-top: 0.6rem; }
   .lab-tabs > input { position: absolute; opacity: 0; width: 0; height: 0; }
@@ -79,19 +123,19 @@ layout: default
   .lab-callout { margin: 1.2rem 0; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--border); border-left-width: 3px; background: var(--surface); }
   .lab-callout ul { margin: 0.3rem 0 0 1.1rem; }
   .lab-callout li { margin: 0.3rem 0; }
-  .lab-callout.notice { border-left-color: #ffb000; }
+  .lab-callout.notice { border-left-color: var(--gold); }
   .lab-callout.question { border-left-color: var(--accent); }
-  .lab-callout.stuck { border-left-color: #ff5c5c; }
+  .lab-callout.stuck { border-left-color: var(--red); }
   .lab-callout-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 4px; }
 
   .lab-reveal { margin: 1rem 0; border: 1px dashed var(--border); border-radius: 10px; }
   .lab-reveal summary { cursor: pointer; padding: 10px 16px; color: var(--accent); font-weight: 600; font-size: 0.92rem; }
   .lab-reveal > div { padding: 4px 16px 12px; }
 
-  .lab-done { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 1.6rem 0 1rem; padding: 14px 16px; border-radius: 10px; background: rgba(0, 212, 255, 0.06); border: 1px solid rgba(0, 212, 255, 0.25); }
+  .lab-done { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 1.6rem 0 1rem; padding: 14px 16px; border-radius: 10px; background: rgba(56, 189, 248, 0.06); border: 1px solid rgba(56, 189, 248, 0.25); }
   .lab-done p { margin: 0; }
   .lab-mark { flex: 0 0 auto; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--accent); background: transparent; color: var(--accent); font-weight: 600; cursor: pointer; }
-  .lab-mark.is-done { background: #3ddc84; border-color: #3ddc84; color: #0a0a0a; }
+  .lab-mark.is-done { background: var(--green); border-color: var(--green); color: #0a0a0a; }
 
   .lab-nav { display: flex; justify-content: space-between; gap: 12px; margin: 1.6rem 0 0; padding-top: 16px; border-top: 1px solid var(--border); }
   .lab-nav a { text-decoration: none; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); color: var(--text); font-size: 0.9rem; }
@@ -108,8 +152,8 @@ layout: default
   .lab-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .lab-card { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); text-decoration: none; color: var(--text); transition: border-color 0.15s; }
   .lab-card:hover { border-color: var(--accent); }
-  .lab-card.done { border-color: rgba(61, 220, 132, 0.5); }
-  .lab-card.done .lab-card-n { background: #3ddc84; color: #0a0a0a; border-color: #3ddc84; }
+  .lab-card.done { border-color: rgba(0, 255, 136, 0.45); }
+  .lab-card.done .lab-card-n { background: var(--green); color: #0a0a0a; border-color: var(--green); }
   .lab-card-n { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.8rem; color: var(--text-muted); }
   .lab-card-title { font-weight: 600; }
   .lab-card-goal { font-size: 0.82rem; color: var(--text-muted); margin-top: 2px; }
@@ -121,7 +165,7 @@ layout: default
   .lab-bar div { height: 100%; background: var(--accent); border-radius: 3px; }
   .lab-grade p { margin: 0; font-size: 0.8rem; }
 
-  .lab-explainer { margin: 1.4rem 0; padding: 16px 18px 6px; border: 1px solid rgba(0, 212, 255, 0.35); border-radius: 12px; background: linear-gradient(180deg, rgba(0, 212, 255, 0.06), transparent 60%); }
+  .lab-explainer { margin: 1.4rem 0; padding: 16px 18px 6px; border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 12px; background: linear-gradient(180deg, rgba(56, 189, 248, 0.06), transparent 60%); }
   .lab-explainer h2 { margin: 0 0 0.4rem; }
   .lab-explainer h3 { margin: 1.2rem 0 0.4rem; }
   .lab-lead { font-size: 1.02rem; }
