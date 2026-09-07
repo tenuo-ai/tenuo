@@ -138,6 +138,29 @@ describe("createTenuo", () => {
       tenuo.tool(readFile, { capability: "read_file", allow: { path: under("/data") } }),
     ).toThrow(/already wrapped/);
   });
+
+  it("derives capability names from tool name or id when policy.capability is absent or empty", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const named = tenuo.tool(
+      { name: "read_file", execute: async () => "named" },
+      { capability: "", allow: {} },
+    );
+    const identified = tenuo.tool(
+      { name: "", id: "search", execute: async () => "identified" },
+      { allow: {} },
+    );
+
+    expect(tenuo.session({ tools: [named, identified] }).inspect().tools).toEqual([
+      "read_file",
+      "search",
+    ]);
+    expect(() => tenuo.tool({ execute: async () => "unnamed" }, { allow: {} })).toThrow(
+      /needs a capability name/,
+    );
+    expect(() => tenuo.tool({ id: "", execute: async () => "empty-id" }, { allow: {} })).toThrow(
+      /needs a capability name/,
+    );
+  });
 });
 
 describe("constraints", () => {

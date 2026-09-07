@@ -296,6 +296,36 @@ describe("issuer sessions and issue()", () => {
     );
   });
 
+  it("enforces approval gates added while issuing an execution session", async () => {
+    const { orchestrator, worker, issuer, workerKey } = setup();
+    const approver = createTenuo.generateHolderKey();
+    const handed = orchestrator.issue(issuer, {
+      allow: { read_file: { path: under("/data/reports") } },
+      holder: createTenuo.publicKeyFromHolderKey(workerKey),
+      ttlSeconds: 60,
+      requireApproval: {
+        approvers: [createTenuo.publicKeyFromHolderKey(approver)],
+        min: 1,
+      },
+    });
+    expect(handed.inspect().approvalGatedTools).toEqual(["read_file"]);
+
+    const mine = worker.sessionFromWire({ warrant: handed.toWire(), holderKey: workerKey });
+    const readFile = worker.tool(
+      { execute: async ({ path }: { path: string }) => path },
+      { capability: "read_file", allow: {} },
+    );
+    await expect(readFile.execute({ path: "/data/reports/q3" }, { session: mine })).rejects.toBeInstanceOf(
+      ApprovalRequiredError,
+    );
+
+    const request = worker.approvalRequest(mine, "read_file", { path: "/data/reports/q3" });
+    const approval = createTenuo.signApproval(request, approver, { externalId: "reviewer" });
+    await expect(
+      readFile.execute({ path: "/data/reports/q3" }, { session: mine, approvals: [approval] }),
+    ).resolves.toBe("/data/reports/q3");
+  });
+
   it("rejects issuer-only fields on an execution session", () => {
     const tenuo = dev();
     expect(() => tenuo.session({ allow: { read_file: {} }, issuableTools: ["read_file"] })).toThrow(/issuer/);
@@ -455,6 +485,7 @@ describe("approvals end to end", () => {
 
     expect(createTenuo.signedApprovalsFromResponseV1({ status: "approved", signed_approvals_b64: ["AAAA"] })).toEqual(["AAAA"]);
     expect(createTenuo.signedApprovalsFromResponseV1({ status: "denied", error: "no" })).toEqual([]);
+    expect(createTenuo.signedApprovalsFromResponseV1({ status: "denied", signed_approvals_b64: ["AAAA"] })).toEqual([]);
     expect(() => createTenuo.signedApprovalsFromResponseV1({ status: "approved", signed_approvals_b64: [1] as never })).toThrow(
       TenuoConfigurationError,
     );

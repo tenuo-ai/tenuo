@@ -417,14 +417,15 @@ export type NarrowOptions = {
 /** Options for `tenuo.issue()`: an execution session minted from an issuer session. */
 export type IssueInput = {
   readonly allow: SessionAllow;
-  /** The agent that will use it. Pass the issuer's own key to keep it local. */
+  /** The distinct agent that will use it. Issuer/holder separation is enforced. */
   readonly holder: PublicKeyHandle;
   readonly ttlSeconds?: number;
   readonly maxDepth?: number;
   readonly clearance?: Clearance;
   readonly sessionId?: string;
   readonly agentId?: string;
-  readonly requireApproval?: { readonly approvers: readonly PublicKeyHandle[]; readonly min: number };
+  /** Approval policy for the issued execution session. Defaults to gating every issued tool. */
+  readonly requireApproval?: RequireApproval;
 };
 
 /** Public view of a session's leaf. Never includes the holder secret. */

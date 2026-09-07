@@ -589,6 +589,7 @@ impl SdkContext {
                 "issue() requires at least one capability in allow",
             ));
         }
+        let tool_names: Vec<String> = allow.keys().cloned().collect();
         let holder = parse_public_key_hex(&options.holder)?;
         let mut builder = leaf
             .issue_execution_warrant()
@@ -617,7 +618,13 @@ impl SdkContext {
         }
         if let Some(require) = &options.require_approval {
             let keys = approver_keys(require)?;
+            let gates = build_gate_map(require, &tool_names)?;
+            let encoded = encode_approval_gate_map(&gates)
+                .map_err(|e| JsError::new(&format!("failed to encode approval gates: {e}")))?;
             builder = builder.required_approvers(keys).min_approvals(require.min);
+            builder
+                .set_approval_gates_extension(encoded)
+                .map_err(|e| JsError::new(&format!("failed to set approval gates: {e}")))?;
         }
         let warrant = builder.build(signer).map_err(|e| issue_error(&e))?;
         let holder_secret = if holder == signer.public_key() {

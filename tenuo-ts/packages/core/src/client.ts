@@ -485,8 +485,7 @@ class TenuoClient implements Tenuo {
       options.agentId = requireLabel(input.agentId, "issue().agentId");
     }
     if (input.requireApproval !== undefined) {
-      const require = requireApprovalJson({ ...input.requireApproval });
-      options.requireApproval = { approvers: require.approvers, min: require.min };
+      options.requireApproval = requireApprovalJson(input.requireApproval);
     }
     try {
       return new Session(this.context.issue(nativeSession(issuer), options));
@@ -1180,6 +1179,9 @@ export function controlPlaneApprovalRequestV1(
 export function signedApprovalsFromResponseV1(response: ControlPlaneApprovalResponseV1): string[] {
   if (response === null || typeof response !== "object" || typeof response.status !== "string") {
     throw new TenuoConfigurationError("approval response must be an object with a status");
+  }
+  if (response.status !== "approved") {
+    return [];
   }
   const list = response.signed_approvals_b64;
   if (list === undefined || list === null) {
