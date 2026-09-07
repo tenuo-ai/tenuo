@@ -50,6 +50,11 @@ function runPython<T>(bin: string, command: string, stdin: unknown): T {
 }
 
 const pythonBin = python();
+if (process.env.TENUO_REQUIRE_INTEROP === "1" && pythonBin === undefined) {
+  throw new Error(
+    "TENUO_REQUIRE_INTEROP=1 but `from tenuo.mcp.server import MCPVerifier` failed. Install tenuo and mcp before this suite.",
+  );
+}
 
 describe.skipIf(pythonBin === undefined)("Python ↔ TypeScript MCP wire", () => {
   it("verifies a Python-attached envelope in TypeScript", async () => {

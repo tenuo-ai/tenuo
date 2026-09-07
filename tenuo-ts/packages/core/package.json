@@ -1,6 +1,6 @@
 {
   "name": "@tenuo/core",
-  "version": "0.2.4-beta.0",
+  "version": "0.2.5-beta.0",
   "description": "Tenuo TypeScript SDK — authorization decisions run in the Rust core (WASM).",
   "license": "Apache-2.0",
   "author": "Tenuo Contributors",

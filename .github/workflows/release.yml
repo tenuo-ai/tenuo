@@ -204,10 +204,14 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           if npm view "@tenuo/core@${VERSION}" version >/dev/null 2>&1; then
-            echo "@tenuo/core@${VERSION} already exists; skipping"
+            echo "@tenuo/core@${VERSION} already exists; skipping publish"
           else
             npm publish --access public --provenance --tag beta
           fi
+          # Stay on the beta dist-tag. Also move latest so an untagged
+          # `npm i @tenuo/core` is not stuck on an older prerelease.
+          npm dist-tag add "@tenuo/core@${VERSION}" beta
+          npm dist-tag add "@tenuo/core@${VERSION}" latest
 
       - name: Publish @tenuo/mcp beta
         working-directory: tenuo-ts/packages/mcp
@@ -216,10 +220,12 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           if npm view "@tenuo/mcp@${VERSION}" version >/dev/null 2>&1; then
-            echo "@tenuo/mcp@${VERSION} already exists; skipping"
+            echo "@tenuo/mcp@${VERSION} already exists; skipping publish"
           else
             npm publish --access public --provenance --tag beta
           fi
+          npm dist-tag add "@tenuo/mcp@${VERSION}" beta
+          npm dist-tag add "@tenuo/mcp@${VERSION}" latest
 
   # Docker: native amd64 + arm64 per platform (no QEMU), then merge manifests.
   docker-authorizer-build:

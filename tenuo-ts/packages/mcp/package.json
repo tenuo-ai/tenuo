@@ -1,6 +1,6 @@
 {
   "name": "@tenuo/mcp",
-  "version": "0.2.4-beta.0",
+  "version": "0.2.5-beta.0",
   "description": "Optional adapter: guard @modelcontextprotocol/server v2 tools with @tenuo/core.",
   "license": "Apache-2.0",
   "author": "Tenuo Contributors",
@@ -51,7 +51,7 @@
   },
   "peerDependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
-    "@tenuo/core": ">=0.2.4-beta.0 <0.2.5"
+    "@tenuo/core": ">=0.2.5-beta.0 <0.2.6"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const coreDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -20,76 +20,51 @@ try {
   ]);
 
   writeFileSync(join(installDir, "package.json"), JSON.stringify({ private: true, type: "module" }));
-  execFileSync("npm", ["install", "--omit=dev", tarball], {
+  run("npm", ["install", "--omit=dev", tarball], { cwd: installDir, stdio: "inherit" });
+  copyFileSync(join(coreDir, "scripts", "pack-smoke-consumer.mjs"), join(installDir, "smoke.mjs"));
+  execFileSync(process.execPath, [join(installDir, "smoke.mjs")], {
     cwd: installDir,
     stdio: "inherit",
+    env: { ...process.env, NODE_ENV: "test" },
   });
-  execFileSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      `
-        import { createTenuo, under } from "@tenuo/core";
-        const tenuo = createTenuo({ root: createTenuo.devRoot() });
-        const readFile = tenuo.tool(
-          { execute: async ({ path }) => path },
-          { capability: "read_file", allow: { path: under("/data") } },
-        );
-        const session = tenuo.session({ tools: [readFile] });
-        const got = await tenuo.withSession(session, () =>
-          readFile.execute({ path: "/data/q3.pdf" }),
-        );
-        if (got !== "/data/q3.pdf") {
-          throw new Error("unexpected execute result: " + got);
-        }
-        await tenuo.withSession(session, () => readFile.execute({ path: "/etc/passwd" })).then(
-          () => { throw new Error("deny must not execute"); },
-          (error) => {
-            if (error?.code !== "TENUO_CONSTRAINT_VIOLATION") {
-              throw new Error("unexpected deny: " + error);
-            }
-          },
-        );
-        const call = tenuo.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
-        const verified = await tenuo.mcp.verify(call.name, call.arguments, call._meta, {
-          allow: { path: under("/data") },
-        });
-        if (verified.path !== "/data/q3.pdf") {
-          throw new Error("unexpected verify result: " + JSON.stringify(verified));
-        }
-        console.log("pack smoke ok");
-      `,
-    ],
-    {
-      cwd: installDir,
-      stdio: "inherit",
-      env: { ...process.env, NODE_ENV: "test" },
-    },
-  );
 } finally {
   rmSync(packDir, { recursive: true, force: true });
   rmSync(installDir, { recursive: true, force: true });
 }
 
+function run(command, args, options) {
+  return execFileSync(resolveBin(command), args, options);
+}
+
+function resolveBin(command) {
+  if (process.platform !== "win32") {
+    return command;
+  }
+  if (command.endsWith(".cmd") || command.endsWith(".exe")) {
+    return command;
+  }
+  return `${command}.cmd`;
+}
+
 function packPackage(cwd, destination) {
-  const packed = execFileSync("pnpm", ["pack", "--pack-destination", destination], {
+  const packed = run("pnpm", ["pack", "--pack-destination", destination], {
     cwd,
     encoding: "utf8",
   })
     .trim()
-    .split("\n")
+    .split(/\r?\n/)
     .at(-1);
   if (packed === undefined || packed.length === 0) {
     throw new Error("pnpm pack did not print a tarball path");
   }
-  return packed.startsWith("/") ? packed : join(destination, packed);
+  return isAbsolute(packed) ? packed : join(destination, packed);
 }
 
 function assertPacked(tarball, required) {
   const listing = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" });
+  const entries = listing.split(/\r?\n/);
   for (const path of required) {
-    if (!listing.split("\n").includes(path)) {
+    if (!entries.includes(path)) {
       throw new Error(`packed tarball is missing ${path}`);
     }
   }
