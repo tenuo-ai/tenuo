@@ -751,6 +751,66 @@ jobs:
         working-directory: tenuo-ts
         run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
 
+  agent-delegation-lab:
+    name: Agent Delegation Lab
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+        with:
+          workspaces: tenuo-wasm
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9.15.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: tenuo-ts/pnpm-lock.yaml
+
+      # The lab installs @tenuo/core from a vendored tarball so participants
+      # never need Rust. CI rebuilds that tarball from this checkout first, so
+      # every stage runs against the SDK as it is in this commit.
+      - name: Build @tenuo/core from this checkout
+        working-directory: tenuo-ts
+        run: pnpm install --frozen-lockfile && pnpm build:wasm && pnpm --filter @tenuo/core build
+
+      - name: Pack current @tenuo/core for the lab
+        working-directory: tenuo-ts/packages/core
+        env:
+          TENUO_LAB_PACKAGE: ${{ runner.temp }}/tenuo-lab-package
+        run: |
+          mkdir -p "$TENUO_LAB_PACKAGE"
+          npm pack --pack-destination "$TENUO_LAB_PACKAGE"
+
+      - name: Install and test the lab
+        working-directory: labs/agent-delegation
+        env:
+          TENUO_LAB_PACKAGE: ${{ runner.temp }}/tenuo-lab-package
+        run: |
+          # Install the lab reproducibly, then replace the participant-facing
+          # vendored SDK with the package built from this exact checkout.
+          npm ci --no-audit --no-fund
+          npm install --no-save --package-lock=false "$TENUO_LAB_PACKAGE"/*.tgz
+          npm run typecheck
+          npm test
+
   # ============================================================================
   # DOC CODE BLOCKS
   # ============================================================================

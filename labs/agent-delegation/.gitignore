@@ -1,0 +1,6 @@
+node_modules/
+.lab/
+.scratch/
+dist/
+# Session guides are handed out by the host, not tracked here.
+docs/

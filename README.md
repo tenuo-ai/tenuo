@@ -200,6 +200,21 @@ Runnable end-to-end: [MCP delegation demo](./tenuo-python/examples/mcp/mcp_deleg
 
 ---
 
+## Try It: The Agent Delegation Challenge
+
+A travel assistant made of six AI agents is booking a spring-break trip. One of them has been told to do something it shouldn't. Secure the system so the trip still happens and the rogue agent gets nowhere.
+
+```bash
+git clone https://github.com/tenuo-ai/tenuo
+cd tenuo/labs/agent-delegation
+npm install
+npm run lab
+```
+
+Seven stages, ninety minutes for the first five, no agent-framework experience needed. You watch three classic approaches fail in three different ways before Tenuo appears, then write the delegation chain yourself. Runs offline, no API key. Start in [`labs/agent-delegation`](./labs/agent-delegation/README.md).
+
+---
+
 ## How It Works
 
 Tenuo is capability-based authorization. A warrant is a capability: a signed grant that lists the tools an agent may call, the argument values it may pass, the key that may use it, and when it expires. The warrant travels with the request. The verifier uses the trusted issuer key and locally available revocation state.
@@ -275,6 +290,7 @@ These are deployment choices for one authorization system. A warrant can be veri
 
 | Resource | Description |
 |----------|-------------|
+| **[Agent Delegation Challenge](./labs/agent-delegation/README.md)** | A hands-on lab: six agents, one rogue, seven stages |
 | **[Quickstart](https://tenuo.ai/quickstart)** | Get running in 5 minutes |
 | **[Concepts](https://tenuo.ai/concepts)** | How warrants and attenuation work |
 | **[Constraints](https://tenuo.ai/constraints)** | All 11 constraint types explained |
