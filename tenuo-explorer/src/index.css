@@ -153,6 +153,24 @@ input:focus, textarea:focus, button:focus {
 }
 .nav-link:hover { color: var(--text-bright); background: var(--surface); }
 
+/* Public-site footer */
+.site-footer {
+  margin-top: auto;
+  padding: 48px 24px;
+  padding-bottom: 96px;
+  border-top: 1px solid rgba(56, 189, 248, 0.07);
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+.site-footer a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.site-footer a:hover { color: var(--text); }
+
 /* Badge */
 .badge {
   display: inline-flex;

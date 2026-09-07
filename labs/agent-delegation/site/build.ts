@@ -195,7 +195,7 @@ function indexPage(): string {
     ["No spare authority", 20, "Every grant stays at or below the mission's least-privilege ceiling."],
   ] as const;
   const body = `${stepper(0)}
-<header class="lab-hero"><div class="lab-kicker">A ninety-minute security game · TypeScript · no account needed</div><h1>Book the trip. Stop the rogue agent.</h1><p class="lab-goal">Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
+<header class="lab-hero"><div class="lab-kicker">A ninety-minute security game · TypeScript · no account needed</div><h1>AI Agent Delegation Security Challenge</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
 
 <section class="lab-start">
 <div>
@@ -262,7 +262,7 @@ npm run reset      # restore stage 1 and every starter exercise</code></pre>
 
 <nav class="lab-nav"><span></span><a class="next" href="/lab/stage-1">Stage 1: One key for everyone →</a></nav>
 `;
-  return frontMatter({ layout: "lab", title: "Agent Delegation Lab", description: `Six AI agents, one rogue, ${TOTAL_STAGE_COUNT} stages. Book the trip and stop the rogue agent.`, lab_stage: 0 }) + body;
+  return frontMatter({ layout: "lab", title: "AI Agent Delegation Security Challenge", description: `Six AI agents, one rogue, ${TOTAL_STAGE_COUNT} stages. Book the trip and stop the rogue agent.`, lab_stage: 0 }) + body;
 }
 
 function wrapUpPage(): string {

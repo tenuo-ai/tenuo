@@ -1,4 +1,4 @@
-# Agent Delegation Lab
+# AI Agent Delegation Security Challenge
 
 Your mission is simple: **book the trip and stop the rogue agent**. A travel
 assistant made of six AI agents is booking spring break in Cancún. One reads

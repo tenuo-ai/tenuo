@@ -30,4 +30,25 @@ describe("public-site theme", () => {
     expect(explorer).toContain(".site-glow");
     expect(explorer).not.toContain(".orb-1");
   });
+
+  it("keeps the documentation, lab, and explorer footer aligned with the main website", () => {
+    const main = readFileSync(join(REPO, "docs", "index.html"), "utf8");
+    const docs = readFileSync(join(REPO, "docs", "_layouts", "default.html"), "utf8");
+    const explorer = readFileSync(join(REPO, "tenuo-explorer", "src", "App.tsx"), "utf8");
+    const explorerCss = readFileSync(join(REPO, "tenuo-explorer", "src", "index.css"), "utf8");
+
+    for (const surface of [main, docs, explorer]) {
+      expect(surface).toContain("© 2026 Tenuo");
+      expect(surface).toContain(">Docs<");
+      expect(surface).toContain(">GitHub<");
+      expect(surface).toContain(">Early Access<");
+    }
+
+    for (const surface of [main, docs, explorerCss]) {
+      expect(surface).toContain("padding: 48px");
+      expect(surface).toContain("font-family: 'JetBrains Mono', monospace");
+      expect(surface).toContain("font-size: 0.75rem");
+      expect(surface).toContain("letter-spacing: 0.04em");
+    }
+  });
 });

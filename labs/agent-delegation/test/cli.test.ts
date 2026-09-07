@@ -96,9 +96,9 @@ describe("participant CLI", () => {
 describe("generated Stage 5 guide", () => {
   it("keeps the public landing-page promise and one reset command", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
+    expect(page).toContain("AI Agent Delegation Security Challenge");
     expect(page).toContain("Book the trip. Stop the rogue agent.");
     expect(page).toContain("A ninety-minute security game");
-    expect(page).not.toContain("AI Agent Delegation Challenge");
     expect(page.match(/npm run reset/g)).toHaveLength(1);
   });
 

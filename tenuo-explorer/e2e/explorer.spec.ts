@@ -122,6 +122,12 @@ test.describe('Regression Tests', () => {
             gridSize: '48px 48px, 48px 48px',
             hasGlow: true,
         });
+
+        const footer = page.locator('footer');
+        await expect(footer).toContainText('© 2026 Tenuo · Docs · GitHub · Early Access');
+        await expect(footer.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', 'https://tenuo.ai/quickstart');
+        await expect(footer.getByRole('link', { name: 'GitHub' })).toHaveAttribute('href', 'https://github.com/tenuo-ai/tenuo');
+        await expect(footer.getByRole('link', { name: 'Early Access' })).toHaveAttribute('href', 'https://tenuo.ai/early-access.html');
     });
 
     test('code generator shows correct Python API', async ({ page }) => {
