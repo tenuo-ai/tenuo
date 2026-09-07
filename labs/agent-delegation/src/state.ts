@@ -12,6 +12,14 @@ export interface LabState {
   completed: number[];
   /** The warm-up questions were shown once. */
   warmupDone?: boolean;
+  /** Opt-in progress events. Absent until the participant has been asked. */
+  telemetry?: {
+    enabled: boolean;
+    sessionId: string;
+    cohort?: string;
+    lastEventAt?: number;
+    lastStage?: number;
+  };
 }
 
 export function loadState(): LabState {
@@ -24,6 +32,9 @@ export function loadState(): LabState {
       stage: typeof parsed.stage === "number" && parsed.stage >= 1 && parsed.stage <= 9 ? parsed.stage : 1,
       completed: Array.isArray(parsed.completed) ? parsed.completed.filter((n): n is number => typeof n === "number") : [],
       ...(parsed.warmupDone === true ? { warmupDone: true } : {}),
+      ...(parsed.telemetry !== undefined && typeof parsed.telemetry === "object" && typeof parsed.telemetry.sessionId === "string"
+        ? { telemetry: parsed.telemetry }
+        : {}),
     };
   } catch {
     return { stage: 1, completed: [] };

@@ -1415,14 +1415,26 @@ interface ChainWarrant {
   error: string | null;
 }
 
-const ChainTester = () => {
-  const [warrants, setWarrants] = useState<ChainWarrant[]>([
-    { id: generateId(), b64: '', decoded: null, error: null },
-    { id: generateId(), b64: '', decoded: null, error: null },
-  ]);
-  const [tool, setTool] = useState('read_file');
-  const [argsJson, setArgsJson] = useState('{"path": "docs/readme.md"}');
-  const [rootKeyHex, setRootKeyHex] = useState('');
+/** A chain handed in by a share link: `?s=` with `chain: string[]`, plus optional root key, tool, and args. */
+export interface SharedChain {
+  chain: string[];
+  rootKey?: string;
+  tool?: string;
+  args?: string;
+}
+
+const ChainTester = ({ initial }: { initial?: SharedChain }) => {
+  const [warrants, setWarrants] = useState<ChainWarrant[]>(
+    initial && initial.chain.length > 0
+      ? initial.chain.map((b64) => ({ id: generateId(), b64, decoded: null, error: null }))
+      : [
+          { id: generateId(), b64: '', decoded: null, error: null },
+          { id: generateId(), b64: '', decoded: null, error: null },
+        ],
+  );
+  const [tool, setTool] = useState(initial?.tool ?? 'read_file');
+  const [argsJson, setArgsJson] = useState(initial?.args ?? '{"path": "docs/readme.md"}');
+  const [rootKeyHex, setRootKeyHex] = useState(initial?.rootKey ?? '');
   const [verifyResult, setVerifyResult] = useState<AuthResult | null>(null);
 
   // Load sample chain: Root → Orchestrator → Worker
@@ -2356,6 +2368,7 @@ function App() {
   const [showSamples, setShowSamples] = useState(false);
   const [activeTab, setActiveTab] = useState<'decode' | 'debug' | 'code'>('decode');
   const [mode, setMode] = useState<'decoder' | 'builder' | 'chain' | 'diff' | 'receipt'>('decoder');
+  const [sharedChain, setSharedChain] = useState<SharedChain | undefined>(undefined);
   const [builderPreview, setBuilderPreview] = useState<unknown>(null);
   const [showBuilderJson, setShowBuilderJson] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(true);
@@ -2404,6 +2417,16 @@ function App() {
         if (parsed.warrant) setWarrantB64(parsed.warrant);
         if (parsed.tool) setTool(parsed.tool);
         if (parsed.args) setArgsJson(parsed.args);
+        // A whole chain (root first) opens the chain verifier with every hop filled in.
+        if (Array.isArray(parsed.chain) && parsed.chain.length > 0 && parsed.chain.every((w: unknown) => typeof w === 'string')) {
+          setSharedChain({
+            chain: parsed.chain as string[],
+            ...(typeof parsed.rootKey === 'string' ? { rootKey: parsed.rootKey } : {}),
+            ...(typeof parsed.tool === 'string' ? { tool: parsed.tool } : {}),
+            ...(typeof parsed.args === 'string' ? { args: parsed.args } : {}),
+          });
+          setMode('chain');
+        }
       } catch { }
     }
   }, []);
@@ -2843,7 +2866,7 @@ function App() {
           {/* Chain Mode */}
           {mode === 'chain' && (
             <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-              <ChainTester />
+              <ChainTester initial={sharedChain} />
             </div>
           )}
 

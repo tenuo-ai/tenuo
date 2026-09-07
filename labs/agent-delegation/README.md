@@ -47,8 +47,19 @@ npm run reset      # start over from stage 1
 ```
 
 Run `attack` and `score` as often as you like. Nothing is limited and nothing
-penalizes retries. Each stage explains itself when you run `npm run lab`; your
-session host has the full participant guide.
+penalizes retries. Each stage explains itself when you run `npm run lab`, and
+the full guide is at [tenuo.ai/lab](https://tenuo.ai/lab/), one page per stage.
+
+## What leaves your machine
+
+Nothing, unless you say yes. The first `npm run lab` asks once whether to
+share anonymous progress with the Tenuo team: stage numbers, which command
+ran, whether the trip worked, the score, the names of checks that did not
+land, and the time between runs. Never your code, your files, your name, or
+anything about your machine beyond OS and Node version. `npm run telemetry`
+shows the current setting and endpoint; `npm run telemetry -- off` stops it.
+Everything is sent to a small open collector whose source is in
+`collector/`, so you can read exactly what it keeps.
 
 ## How it works
 
@@ -96,6 +107,8 @@ src/
 exercises/          the files you edit, one folder per stage
 answers/            reference solutions (npm run ambassador -- answers N)
 explainers/         optional reading; you can finish without opening one
+collector/          the opt-in event collector, a Cloudflare Worker; logic tested here
+scripts/            guide-to-site.py turns the participant guide into docs/lab
 test/               every stage, run with its reference solution
 ```
 

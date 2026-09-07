@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src", "exercises", "answers", "test"]
+  "include": ["src", "exercises", "answers", "test", "collector"]
 }
