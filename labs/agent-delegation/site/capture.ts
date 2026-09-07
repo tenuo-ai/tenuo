@@ -23,14 +23,14 @@ export function capture(cmd: string, stage: number, answer?: string): string {
   }
   const home = mkdtempSync(join(tmpdir(), "tenuo-lab-site-"));
   try {
-    const result = spawnSync(process.execPath, [join(ROOT, "node_modules", "tsx", "dist", "cli.mjs"), join(ROOT, "src", "cli", "index.ts"), cmd, "--stage", String(stage)], {
+    const result = spawnSync(process.execPath, ["--import", "tsx", join(ROOT, "src", "cli", "index.ts"), cmd, "--stage", String(stage)], {
       cwd: ROOT,
       env: {
         ...process.env,
         TENUO_LAB_HOME: home,
         ...(answer !== undefined ? { TENUO_LAB_ANSWER: answer } : {}),
         // Captured pages must not send events, whatever the builder's own install says.
-        TENUO_LAB_EVENTS_URL: "http://127.0.0.1:9/",
+        TENUO_LAB_EVENTS_URL: "off",
         NODE_ENV: "development",
       },
       encoding: "utf8",

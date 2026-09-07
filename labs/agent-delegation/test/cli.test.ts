@@ -15,13 +15,16 @@ function home(): string {
 }
 
 function cli(labHome: string, command: string, stage?: number, answer?: string): string {
-  const args = [join(ROOT, "node_modules", "tsx", "dist", "cli.mjs"), join(ROOT, "src", "cli", "index.ts"), command];
+  // Use Node's loader entry directly: unlike the tsx CLI it does not need an
+  // IPC socket, so this end-to-end test also runs in locked-down CI sandboxes.
+  const args = ["--import", "tsx", join(ROOT, "src", "cli", "index.ts"), command];
   if (stage !== undefined) args.push("--stage", String(stage));
   const result = spawnSync(process.execPath, args, {
     cwd: ROOT,
     env: {
       ...process.env,
       TENUO_LAB_HOME: labHome,
+      TENUO_LAB_EVENTS_URL: "off",
       ...(answer !== undefined ? { TENUO_LAB_ANSWER: answer } : {}),
       NODE_ENV: "development",
     },
@@ -74,11 +77,21 @@ describe("participant CLI", () => {
     expect(share).toContain("works locally and in Codespaces");
     const report = JSON.parse(readFileSync(join(labHome, "share-stage-5.json"), "utf8")) as {
       schema: string;
+      sessionId: string;
+      challengeVersion: string;
+      sdkVersion: string;
       stage: number;
+      runtime: { nodeMajor: number; platform: string };
       attempts: { count: number; firstAttempt: AttemptSnapshot; firstGreen?: AttemptSnapshot };
     };
-    expect(report.schema).toBe("tenuo-lab-share-v1");
+    expect(report.schema).toBe("tenuo-lab-share-v2");
     expect(report.stage).toBe(5);
+    expect(report).toMatchObject({
+      challengeVersion: "0.2.0",
+      sdkVersion: "0.2.5-beta.0",
+      runtime: { nodeMajor: expect.any(Number), platform: expect.any(String) },
+    });
+    expect(report.sessionId).toMatch(/^[0-9a-f-]{36}$/i);
     expect(report.attempts.count).toBe(2);
     expect(report.attempts.firstAttempt.starsMissing.length).toBeGreaterThan(0);
     const firstGreen = report.attempts.firstGreen;
@@ -91,13 +104,15 @@ describe("participant CLI", () => {
       if (handoffs === undefined) throw new Error("share artifact omitted handoff telemetry");
       expect(Object.keys(handoffs)).toEqual(["flight-to-checkin", "checkin-to-boarding"]);
       for (const handoff of Object.values(handoffs)) {
-        if (handoff === "missing") continue;
+        if (handoff === "missing" || handoff === null) continue;
         expect(Object.keys(handoff).sort()).toEqual(["constraintChecks", "holderBound", "tools", "ttl"]);
       }
     }
     const serialized = JSON.stringify(report);
     expect(serialized).not.toMatch(/Alice|Cancún|source|privateKey|publicKey|timestamp/i);
     expect(serialized).not.toMatch(/[0-9a-f]{64}/i);
+    expect(share).toContain("Submission disabled; no data left this machine.");
+    expect(share).toContain("--username YOUR_GITHUB_USERNAME");
   }, 120_000);
 
   it("marks observation stages complete when the documented next command advances them", () => {

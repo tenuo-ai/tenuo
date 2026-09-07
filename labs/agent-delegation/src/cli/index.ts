@@ -7,7 +7,7 @@
  *   npm run score      see your score and why
  *   npm run audit      what every agent can currently do
  *   npm run next       move to the next stage
- *   npm run share      write an anonymized score breakdown you can hand to your host
+ *   npm run share      submit a redacted scorecard (optionally add --username)
  *   npm run star       optionally star Tenuo without leaving the terminal
  *   npm run reset      back to stage 1
  */
@@ -28,6 +28,7 @@ import { LAB_HOME, loadState, ROOT, saveState } from "../state.ts";
 import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stages.ts";
 import { recordAttempt, snapshot } from "../telemetry.ts";
 import { starRepository } from "../star.ts";
+import { buildShareReport, submitShareReport } from "../share.ts";
 
 const SITE = "https://tenuo.ai";
 
@@ -438,18 +439,41 @@ async function cmdShare(def: StageDef): Promise<void> {
     console.log("Your exercise file does not load; fix that first (npm run lab shows the error).");
     return;
   }
-  const report = {
-    schema: "tenuo-lab-share-v1",
-    stage: def.n,
-    stars: Object.fromEntries(e.score.stars.map((star) => [star.id, star.earned])),
-    attempts: loadState().attempts?.[String(def.n)] ?? { count: 0 },
-  };
+  let report;
+  try {
+    report = buildShareReport(
+      def.n,
+      Object.fromEntries(e.score.stars.map((star) => [star.id, star.earned])),
+      loadState().attempts?.[String(def.n)],
+      flag("username"),
+    );
+  } catch (error) {
+    console.log(red(`  ${error instanceof Error ? error.message : String(error)}`));
+    process.exitCode = 1;
+    return;
+  }
   const dir = LAB_HOME;
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `share-stage-${def.n}.json`);
   writeFileSync(file, JSON.stringify(report, null, 2));
   printHud(walletLine(e.runs[0]!.built), e.probes, e.score, e.runs.length);
-  console.log(dim(`  Anonymous local artifact: ${file}`));
+  console.log(dim(`  Redacted scorecard saved locally: ${file}`));
+  try {
+    const receipt = await submitShareReport(report);
+    if (receipt === undefined) {
+      console.log(dim("  Submission disabled; no data left this machine."));
+    } else {
+      console.log(green(`  Scorecard received. Receipt: ${receipt.receiptId}`));
+      if (receipt.leaderboardEligible) console.log(dim(`  Leaderboard display name: ${report.username} (unverified)`));
+    }
+  } catch (error) {
+    console.log(yellow(`  Tenuo did not receive it: ${error instanceof Error ? error.message : String(error)}`));
+    console.log(dim("  Your local scorecard is intact; run npm run share again when online."));
+  }
+  if (report.username === undefined) {
+    console.log(dim("  Want a display name on future challenge leaderboards?"));
+    console.log(`  ${bold("npm run share -- --username YOUR_GITHUB_USERNAME")} ${dim("(optional; not identity-verified)")}`);
+  }
   console.log(dim("  If the lab was useful, you can support the project without leaving this terminal:"));
   console.log(`  ${bold("npm run star")} ${dim("(optional; works locally and in Codespaces)")}`);
   console.log("");
