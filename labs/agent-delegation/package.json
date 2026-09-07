@@ -1,0 +1,32 @@
+{
+  "name": "agent-delegation-lab",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Agent Delegation Challenge: secure a six-agent travel assistant so the trip still happens and the rogue agent gets nowhere.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lab": "tsx src/cli/index.ts lab",
+    "trace": "tsx src/cli/index.ts trace",
+    "attack": "tsx src/cli/index.ts attack",
+    "score": "tsx src/cli/index.ts score",
+    "audit": "tsx src/cli/index.ts audit",
+    "next": "tsx src/cli/index.ts next",
+    "share": "tsx src/cli/index.ts share",
+    "reset": "tsx src/cli/index.ts reset",
+    "ambassador": "tsx src/cli/index.ts ambassador",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tenuo/core": "file:vendor/tenuo-core-0.2.4-beta.0.tgz"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}
