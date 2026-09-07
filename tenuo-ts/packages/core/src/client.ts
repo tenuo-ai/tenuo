@@ -882,9 +882,10 @@ function importWireError(error: unknown): TenuoError {
   }
   if (message.startsWith("TENUO_INVALID_POP")) {
     // The warrant is fine; the key is not the one it was issued to.
+    const separator = /[.!?]$/.test(message.trim()) ? "" : ".";
     return new AuthorizationDeniedError(
       "TENUO_INVALID_POP",
-      `${message}. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.`,
+      `${message}${separator} If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.`,
     );
   }
   return new TenuoConfigurationError(message);

@@ -172,6 +172,12 @@ function printBattery(results: readonly ProbeResult[]): void {
     if (!r.ok || r.actual === "DENIED") {
       console.log(dim(`      ${r.ok ? "reason" : `expected ${r.expected}`}: ${r.reason}${r.code !== undefined ? `  [${r.code}]` : ""}`));
     }
+    if (r.keyBinding !== undefined) {
+      console.log(dim(`      warrant.bound_key             ${r.keyBinding.warrantBoundKey}`));
+      console.log(dim(`      activity holder_key.public   ${r.keyBinding.presenterPublicKey}`));
+      console.log(dim("      comparison                    holder_key != warrant.bound_key"));
+      console.log(dim("      Ed25519 signature             FAILED"));
+    }
   }
   console.log("");
 }

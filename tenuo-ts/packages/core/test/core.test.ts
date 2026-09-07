@@ -196,7 +196,7 @@ describe("actionable delegation diagnostics", () => {
     expect(() => receiver.sessionFromWire({
       warrant: child.toWire(),
       holderKey: createTenuo.generateHolderKey(),
-    })).toThrow(/set \{ holder: receiverPublicKey \}.*imports the child/);
+    })).toThrow(/use it\. If this followed narrow\(\), set \{ holder: receiverPublicKey \}.*imports the child/);
   });
 });
 

@@ -291,13 +291,13 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     }),
     steps: [
       { text: "Read the theft. The file is short.", cmd: "code exercises/06-extensions/steal.ts" },
-      { text: "Run the checks and read the reason on the **STOLEN WARRANT** line carefully.", cmd: "npm run attack", expect: { cmd: "attack", label: "What you should see" } },
+      { text: "Run the checks and read the **STOLEN** replay panel carefully. It prints both public keys, the failed comparison, and the Ed25519 signature result.", cmd: "npm run attack", expect: { cmd: "attack", label: "What you should see" } },
       { text: "Now find the Flight → Check-in link in the chain and add `terminal: true` to its options.", cmd: "code exercises/06-extensions/chain.ts" },
       { text: "Run the trip and see which step fails and with what code. This stage breaks the trip on purpose.", cmd: "npm run lab", expect: [{ cmd: "lab", label: "Before" }, { cmd: "lab", answer: "answers/06-extensions/chain.ts", label: "After" }] },
       { text: "Second version: lower `maxDepth` on the root instead, and watch where the chain stops." },
     ],
     notice: [
-      "The import fails with `TENUO_INVALID_POP`. The warrant names the key it was issued to, and Activity Agent does not have that key.",
+      "The replay fails with `TENUO_INVALID_POP`. The warrant's `bound_key` and Activity Agent's public holder key are visibly different, so the Ed25519 proof cannot verify. This is a holder-bound warrant, not a bearer token.",
       "With the terminal link, Boarding Agent never gets its permission: `TENUO_DEPTH_EXCEEDED` at the Check-in → Boarding hop. Check-in Agent did not agree to that restriction and cannot remove it.",
     ],
     question: "If having a copy of a permission is not enough to use it, what else does using it require? And who in a chain gets to decide how many agents a job passes through?",

@@ -86,7 +86,7 @@ INCIDENT
   7. hand wallet access to Activity Agent                  ALLOWED  ✗
       expected DENIED: hotel-agent delegated wallet.charge to activity-agent
   8. import a warrant copied from Flight Agent             DENIED   ✓
-      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it.. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
+      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
 
   3 of 8 checks did not land as expected
   central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When it is fixed <span>npm run attack · 58 lines</span></summary><pre><code>
@@ -143,7 +143,7 @@ INCIDENT
   7. hand wallet access to Activity Agent                  DENIED   ✓
       reason: TENUO_DEPTH_EXCEEDED: delegation depth 2 exceeds maximum 1  [TENUO_DEPTH_EXCEEDED]
   8. import a warrant copied from Flight Agent             DENIED   ✓
-      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it.. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
+      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
 
   clean: all 8 checks landed as expected
   central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div></div></div>

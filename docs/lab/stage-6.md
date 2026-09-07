@@ -37,7 +37,7 @@ export function steal(tenuo: TenuoMode, boardingSession: Session): StealOutcome 
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="6:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the checks and read the reason on the <strong>STOLEN WARRANT</strong> line carefully.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 75 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks and read the <strong>STOLEN</strong> replay panel carefully. It prints both public keys, the failed comparison, and the Ed25519 signature result.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 79 lines</span></summary><pre><code>
 Stage 6 of 7: Boss: stolen authority   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-6
 
@@ -105,7 +105,11 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
       reason: DENIED at narrow(), in checkin-agent's own process, before any token existed: TENUO_CHAIN_INVALID: attenuation would expand capabilities: tool 'cancel_reservation' not in parent's tools. narrow() cannot add 'cancel_reservation': remove it or delegate from a parent that grants it.  [TENUO_CHAIN_INVALID]
 STOLEN: activity-agent presents boarding-agent's warrant
   issue_boarding_pass(UA214) with a copied warrant         DENIED   ✓
-      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it.. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
+      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
+      warrant.bound_key             …
+      activity holder_key.public   …
+      comparison                    holder_key != warrant.bound_key
+      Ed25519 signature             FAILED
 TERMINAL
   checkin-agent narrow → boarding-agent                    ALLOWED  ✗
       expected DENIED: boarding-agent now holds {issue_boarding_pass} at depth 3
@@ -273,7 +277,7 @@ THE TRIP
 </li>
 </ol>
 
-<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The import fails with <code>TENUO_INVALID_POP</code>. The warrant names the key it was issued to, and Activity Agent does not have that key.</li><li>With the terminal link, Boarding Agent never gets its permission: <code>TENUO_DEPTH_EXCEEDED</code> at the Check-in → Boarding hop. Check-in Agent did not agree to that restriction and cannot remove it.</li></ul></aside>
+<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The replay fails with <code>TENUO_INVALID_POP</code>. The warrant's <code>bound_key</code> and Activity Agent's public holder key are visibly different, so the Ed25519 proof cannot verify. This is a holder-bound warrant, not a bearer token.</li><li>With the terminal link, Boarding Agent never gets its permission: <code>TENUO_DEPTH_EXCEEDED</code> at the Check-in → Boarding hop. Check-in Agent did not agree to that restriction and cannot remove it.</li></ul></aside>
 
 <aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>If having a copy of a permission is not enough to use it, what else does using it require? And who in a chain gets to decide how many agents a job passes through?</p></aside>
 

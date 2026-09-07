@@ -200,6 +200,12 @@ describe("stage 6: a stolen permission, and the end of the line", () => {
     const stolen = r.probes.find((p) => p.section.startsWith("STOLEN"));
     expect(stolen?.ok).toBe(true);
     expect(stolen?.code).toBe("TENUO_INVALID_POP");
+    expect(stolen?.keyBinding).toEqual({
+      warrantBoundKey: expect.stringMatching(/^[0-9a-f]{64}$/),
+      presenterPublicKey: expect.stringMatching(/^[0-9a-f]{64}$/),
+      signatureVerified: false,
+    });
+    expect(stolen?.keyBinding?.presenterPublicKey).not.toBe(stolen?.keyBinding?.warrantBoundKey);
     expect(r.probes.find((p) => p.section === "TERMINAL")?.ok).toBe(false);
   });
   it("with the terminal link: the handoff stops with TENUO_DEPTH_EXCEEDED and the trip breaks there", async () => {
