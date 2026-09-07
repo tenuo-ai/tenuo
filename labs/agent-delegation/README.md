@@ -55,8 +55,11 @@ the full guide is at [tenuo.ai/lab](https://tenuo.ai/lab/), one page per stage.
 Nothing, unless you say yes. The first `npm run lab` asks once whether to
 share anonymous progress with the Tenuo team: stage numbers, which command
 ran, whether the trip worked, the score, the names of checks that did not
-land, and the time between runs. Never your code, your files, your name, or
-anything about your machine beyond OS and Node version. `npm run telemetry`
+land, the time between runs, which stage 4 fix you used, the lab version,
+whether you run locally or in Codespaces, and, from the hosted guide, which
+pages and hints you open from the links the lab prints. Never your code, your
+files, your name, or anything about your machine beyond OS and Node version.
+`npm run telemetry`
 shows the current setting and endpoint; `npm run telemetry -- off` stops it.
 Everything is sent to a small open collector whose source is in
 `collector/`, so you can read exactly what it keeps.

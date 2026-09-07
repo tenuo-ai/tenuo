@@ -3,6 +3,7 @@ layout: "lab"
 title: "What you just learned"
 description: "The two sentences the lab was built around, and the terms for them."
 lab_stage: 0
+lab_version: "0.1.0"
 ---
 <nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a></nav>
 <header class="lab-hero"><div class="lab-kicker">After stage 7</div><h1>What you just learned</h1><p class="lab-goal">If you can say this in your own words, the lab worked.</p></header>

@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS events (
   received_at         TEXT NOT NULL,
   event               TEXT NOT NULL,
   stage               INTEGER NOT NULL,
+  lab_version         TEXT,
+  env                 TEXT,
   command             TEXT,
   scenario            TEXT,
   functionality_ok    INTEGER,
@@ -14,6 +16,9 @@ CREATE TABLE IF NOT EXISTS events (
   central_calls       INTEGER,
   exercise_load_error INTEGER,
   elapsed_ms          INTEGER,
+  fix                 TEXT,
+  margin_points       INTEGER,
+  margin_agents       TEXT NOT NULL DEFAULT '[]',
   platform            TEXT,
   node                INTEGER
 );

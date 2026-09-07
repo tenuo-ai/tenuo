@@ -3,6 +3,7 @@ layout: "lab"
 title: "Agent Delegation Challenge"
 description: "Six AI agents, one rogue, nine stages. Change how permissions work until the damage stops and the trip still happens."
 lab_stage: 0
+lab_version: "0.1.0"
 ---
 <nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a></nav>
 <header class="lab-hero"><div class="lab-kicker">A ninety-minute lab · TypeScript · no account needed</div><h1>AI Agent Delegation Challenge</h1><p class="lab-goal">Six AI agents book a trip. One of them reads an instruction it should not follow. You change how permissions work, stage by stage, until the damage stops and the trip still happens.</p></header>
@@ -74,7 +75,7 @@ npm run next       # move on to the next stage
 npm run reset      # start over from stage 1
 npm run share      # write an anonymous score breakdown for your session host
 npm run telemetry  # see, turn on, or turn off anonymous progress events</code></pre>
-<p class="lab-muted">The first run asks once whether to share anonymous progress with the Tenuo team: stage numbers, scores, which checks did not land. Never your code or your name. If you say no, the lab sends nothing.</p>
+<p class="lab-muted">The first run asks once whether to share anonymous progress with the Tenuo team: stage numbers, scores, which checks did not land, the lab version, whether you run locally or in Codespaces, and which pages and hints you open here from the links the lab prints. Never your code or your name. If you say no, the lab sends nothing and these pages send nothing.</p>
 
 <aside class="lab-callout notice"><div class="lab-callout-title">One ground rule</div><p>You will be tempted to fix the agent that misbehaves: filter what it reads, tell it to ignore suspicious instructions, pick a smarter model. This lab sets those aside. Assume the agent will sometimes be fooled, and work on what still holds when it is.</p></aside>
 

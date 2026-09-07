@@ -5,9 +5,12 @@ Receives the opt-in, anonymous progress events the lab CLI sends (see
 function in `src/collector.ts` so it is tested with the rest of the lab.
 
 What arrives per event: a random per-install session id, an optional cohort
-code, the stage, the command, whether the trip worked, the score, the labels
-of checks that did not land, the central-call count, and the time since the
-previous event. Nothing else is accepted; off-shape fields reject the event.
+code, the stage, the lab version, local or Codespaces, the command, whether
+the trip worked, the score, the labels of checks that did not land, the
+central-call count, the stage 4 fix, the over-granted agents, and the time
+since the previous event. The hosted guide sends page, hint, reference, and
+mark-done events under the same id when the CLI's link carried it. Nothing
+else is accepted; off-shape fields reject the event.
 
 ## Deploy
 
@@ -24,5 +27,5 @@ Then either route the Worker at the address in `DEFAULT_EVENTS_URL` or set
 ## Endpoints
 
 - `POST /v1/events` — one event or an array of up to 50. Returns `{ accepted, rejected }`.
-- `GET /v1/summary?cohort=CODE` — per-stage counts: sessions that entered, sessions with a working trip, runs.
+- `GET /v1/summary?cohort=CODE` — sessions, opt-ins, environments, versions, stage 4 fixes, and per stage: sessions entered, sessions with a working trip, runs, median attempts before the first working trip, median minutes in the stage, median score, the five most common failed checks, and how many sessions viewed the page, opened the hint, opened the reference, or marked the stage done.
 - `GET /healthz`

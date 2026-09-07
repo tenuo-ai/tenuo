@@ -3,15 +3,21 @@
  *
  * What is sent: stage numbers, which command ran, whether the trip worked,
  * the score, the labels of checks that did not land, the central-call count,
- * and how long since the previous run. What is never sent: your code, your
+ * which stage 4 fix was used, which agents were over-granted, the lab version,
+ * whether the lab runs locally or in Codespaces, how long since the previous
+ * event, and (from the hosted guide, under the same id) which pages, hints,
+ * and reference solutions were opened. What is never sent: your code, your
  * exercise files, your name, your machine's identity, or anything you typed.
  *
  * Nothing is sent unless you said yes to the one-time question, and
  * `npm run telemetry -- off` stops it. Sending never blocks or fails the lab:
  * a dead endpoint is silently ignored.
  */
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { loadState, saveState, type LabState } from "./state.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { loadState, ROOT, saveState, type LabState } from "./state.ts";
 
 /** Override with TENUO_LAB_EVENTS_URL. */
 export const DEFAULT_EVENTS_URL = "https://lab-events.tenuo.ai/v1/events";
@@ -26,7 +32,20 @@ export interface TelemetryState {
   readonly lastStage?: number;
 }
 
-export type EventName = "opt_in" | "opt_out" | "stage_enter" | "run" | "share";
+export type EventName =
+  | "opt_in"
+  | "opt_out"
+  | "stage_enter"
+  | "run"
+  | "share"
+  // Sent by the hosted guide, under the same session id, when the CLI's link carried it.
+  | "page_view"
+  | "hint_open"
+  | "answer_open"
+  | "mark_done";
+
+export type LabEnv = "local" | "codespaces" | "web";
+export type Fix = "per-task" | "policy-service";
 
 export interface LabEvent {
   readonly v: 1;
@@ -35,6 +54,9 @@ export interface LabEvent {
   readonly sentAt: string;
   readonly event: EventName;
   readonly stage: number;
+  /** Package version plus the short commit, so cohorts can be compared across changes to the lab. */
+  readonly labVersion: string;
+  readonly env: LabEnv;
   readonly command?: string;
   readonly scenario?: string;
   readonly functionalityOk?: boolean;
@@ -43,6 +65,11 @@ export interface LabEvent {
   readonly centralCalls?: number;
   readonly exerciseLoadError?: boolean;
   readonly elapsedMs?: number;
+  /** Which stage 4 repair the policy file uses. */
+  readonly fix?: Fix;
+  readonly marginPoints?: number;
+  /** Agents the least-privilege check found over-granted. */
+  readonly marginAgents?: readonly string[];
   readonly platform: string;
   readonly node: number;
 }
@@ -52,8 +79,40 @@ export function eventsUrl(): string {
   return override !== undefined && override.length > 0 ? override : DEFAULT_EVENTS_URL;
 }
 
+let cachedVersion: string | undefined;
+
+/** "0.1.0+1a2b3c4", or just the package version when git is not around. */
+export function labVersion(): string {
+  if (cachedVersion !== undefined) return cachedVersion;
+  let version = "0.0.0";
+  try {
+    version = String((JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version?: string }).version ?? version);
+  } catch {
+    // Keep the placeholder.
+  }
+  let sha = "";
+  try {
+    const r = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT, encoding: "utf8", timeout: 2000 });
+    if (r.status === 0) sha = r.stdout.trim();
+  } catch {
+    // No git: the version alone still says which release this is.
+  }
+  cachedVersion = sha.length > 0 ? `${version}+${sha}` : version;
+  return cachedVersion;
+}
+
+export function labEnv(): LabEnv {
+  return process.env["CODESPACES"] === "true" ? "codespaces" : "local";
+}
+
 export function telemetry(): TelemetryState | undefined {
   return loadState().telemetry;
+}
+
+/** The session id, when events are on, so the hosted guide can file its own events under it. */
+export function sessionParam(): string | undefined {
+  const t = telemetry();
+  return t !== undefined && t.enabled ? t.sessionId : undefined;
 }
 
 export function setTelemetry(enabled: boolean, cohort?: string): TelemetryState {
@@ -75,15 +134,13 @@ function nodeMajor(): number {
   return Number.isFinite(major) ? major : 0;
 }
 
+export type EventFields = Omit<Partial<LabEvent>, "v" | "session" | "cohort" | "sentAt" | "event" | "stage" | "platform" | "node" | "labVersion" | "env">;
+
 /**
  * Send one event if telemetry is on. Fire and forget: resolves quickly, never
  * throws, never delays the command that called it.
  */
-export async function emit(
-  event: EventName,
-  stage: number,
-  fields: Omit<Partial<LabEvent>, "v" | "session" | "cohort" | "sentAt" | "event" | "stage" | "platform" | "node"> = {},
-): Promise<void> {
+export async function emit(event: EventName, stage: number, fields: EventFields = {}): Promise<void> {
   const state: LabState = loadState();
   const t = state.telemetry;
   if (t === undefined || !t.enabled) {
@@ -98,6 +155,8 @@ export async function emit(
     sentAt: new Date(now).toISOString(),
     event,
     stage,
+    labVersion: labVersion(),
+    env: labEnv(),
     ...(elapsed !== undefined ? { elapsedMs: elapsed } : {}),
     platform: process.platform,
     node: nodeMajor(),
@@ -144,7 +203,9 @@ export const CONSENT_LINES = [
   "Share anonymous progress with the Tenuo team, to make the lab better?",
   "",
   "  Sent: stage numbers, which command ran, whether the trip worked, the score,",
-  "        the names of checks that did not land, and time between runs.",
+  "        the names of checks that did not land, time between runs, the lab",
+  "        version, whether you run locally or in Codespaces, and which guide",
+  "        pages and hints you open from the links the lab prints.",
   "  Never: your code, your files, your name, or anything about your machine",
   "        beyond OS and Node version.",
   "",

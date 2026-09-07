@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT } from "../src/state.ts";
+import { labVersion } from "../src/telemetry.ts";
 import { capture } from "./capture.ts";
 import { CODESPACES_URL, GOOD_FIRST_ISSUES_URL, MISSION_DIAGRAM, REPO_URL, STAGES, type Capture, type CodeRef, type Explainer, type Snippet, type StageSpec, type Step } from "./spec.ts";
 
@@ -103,6 +104,8 @@ function callout(kind: "notice" | "question" | "hint" | "stuck", title: string, 
 }
 
 function frontMatter(fields: Record<string, string | number>): string {
+  // The package version only: the commit changes on every push and would make every page stale.
+  fields = { ...fields, lab_version: labVersion().split("+")[0] ?? "0.0.0" };
   return `---\n${Object.entries(fields).map(([k, v]) => `${k}: ${typeof v === "number" ? v : JSON.stringify(v)}`).join("\n")}\n---\n`;
 }
 
@@ -226,7 +229,7 @@ npm run next       # move on to the next stage
 npm run reset      # start over from stage 1
 npm run share      # write an anonymous score breakdown for your session host
 npm run telemetry  # see, turn on, or turn off anonymous progress events</code></pre>
-<p class="lab-muted">The first run asks once whether to share anonymous progress with the Tenuo team: stage numbers, scores, which checks did not land. Never your code or your name. If you say no, the lab sends nothing.</p>
+<p class="lab-muted">The first run asks once whether to share anonymous progress with the Tenuo team: stage numbers, scores, which checks did not land, the lab version, whether you run locally or in Codespaces, and which pages and hints you open here from the links the lab prints. Never your code or your name. If you say no, the lab sends nothing and these pages send nothing.</p>
 
 <aside class="lab-callout notice"><div class="lab-callout-title">One ground rule</div><p>You will be tempted to fix the agent that misbehaves: filter what it reads, tell it to ignore suspicious instructions, pick a smarter model. This lab sets those aside. Assume the agent will sometimes be fooled, and work on what still holds when it is.</p></aside>
 

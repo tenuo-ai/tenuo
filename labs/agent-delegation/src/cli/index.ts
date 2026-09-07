@@ -26,13 +26,27 @@ import type { AuditRecord } from "../audit.ts";
 import { AGENTS } from "../mission.ts";
 import { loadState, ROOT, saveState } from "../state.ts";
 import { STAGES, stage as stageDef, type Scenario, type StageDef } from "../stages.ts";
-import { CONSENT_LINES, emit, enterStage, eventsUrl, setTelemetry, telemetry } from "../telemetry.ts";
+import { CONSENT_LINES, emit, enterStage, eventsUrl, sessionParam, setTelemetry, telemetry, type Fix } from "../telemetry.ts";
 
 const SITE = "https://tenuo.ai";
 /** The stage page, with the stages this install has completed, so the site's progress matches the terminal. */
 function guideUrl(n: number): string {
+  const params = new URLSearchParams();
   const done = [...loadState().completed].sort((a, b) => a - b);
-  return `${SITE}/lab/stage-${n}${done.length > 0 ? `?done=${done.join(",")}` : ""}`;
+  if (done.length > 0) params.set("done", done.join(","));
+  // Only when events are on: lets the guide file page and hint events under the same anonymous id.
+  const sid = sessionParam();
+  if (sid !== undefined) params.set("sid", sid);
+  const query = params.toString();
+  return `${SITE}/lab/stage-${n}${query.length > 0 ? `?${query}` : ""}`;
+}
+
+/** Which stage 4 repair a scoped policy file uses, for the progress events. */
+function fixOf(built: Built): Fix | undefined {
+  const config = built.exercise?.config;
+  if (config === undefined) return undefined;
+  if (config.policyService === true) return "policy-service";
+  return Object.keys(config.policy).some((k) => k.includes(":")) ? "per-task" : undefined;
 }
 
 /** Open a URL in the default browser without blocking or failing the command. */
@@ -273,6 +287,7 @@ async function cmdTrace(def: StageDef): Promise<void> {
     console.log("");
     console.log(centralCallsLine(built));
     console.log("");
+    await emit("run", def.n, { command: "trace", scenario, centralCalls: built.runtime.audit.centralCalls() });
   }
 }
 
@@ -324,12 +339,14 @@ async function cmdAttack(def: StageDef): Promise<void> {
     console.log(centralCallsLine(built));
     console.log("");
     printExplorerLink(built);
+    const fix = fixOf(built);
     await emit("run", def.n, {
       command: "attack",
       scenario: built.plan.name,
       functionalityOk: functionality.ok,
       failedChecks: probes.filter((p) => !p.ok).map((p) => p.label),
       centralCalls: built.runtime.audit.centralCalls(),
+      ...(fix !== undefined ? { fix } : {}),
     });
   }
   if (def.starAsk === true) {
@@ -408,13 +425,17 @@ async function cmdScore(def: StageDef): Promise<void> {
       console.log("");
     }
   }
+  const fix = e.runs[0] !== undefined ? fixOf(e.runs[0].built) : undefined;
   await emit("run", def.n, {
     command: "score",
     scenario: def.scenario,
     functionalityOk: functionality.ok,
     score: s.total,
     failedChecks: failed.map((p) => p.label),
+    marginPoints: s.margin.points,
+    marginAgents: AGENTS.filter((a) => margin.perAgent[a] > 0),
     ...(e.runs[0] !== undefined ? { centralCalls: e.runs[0].built.runtime.audit.centralCalls() } : {}),
+    ...(fix !== undefined ? { fix } : {}),
   });
 }
 
@@ -482,6 +503,7 @@ async function cmdAudit(def: StageDef): Promise<void> {
     for (const line of text) console.log(dim(line));
   }
   console.log("");
+  await emit("run", def.n, { command: "audit", scenario: def.scenario });
 }
 
 async function cmdNext(): Promise<void> {
@@ -492,15 +514,20 @@ async function cmdNext(): Promise<void> {
     return;
   }
   saveState({ ...state, stage: to });
+  await emit("run", to, { command: "next" });
   console.log(`Now on stage ${to}: ${stageDef(to).title}. Run npm run lab.`);
   console.log(dim(`  guide: ${guideUrl(to)}`));
   if (args.includes("--open")) openInBrowser(guideUrl(to));
   await enterStage(to);
 }
 
-function cmdReset(): void {
-  saveState({ stage: 1, completed: [] });
+async function cmdReset(): Promise<void> {
+  const state = loadState();
+  const before = state.stage;
+  // Progress goes; the consent answer and the warm-up flag stay.
+  saveState({ ...state, stage: 1, completed: [] });
   console.log("Back to stage 1. Your edits in exercises/ are untouched; `git checkout exercises` restores the originals.");
+  await emit("run", before, { command: "reset" });
 }
 
 function cmdAmbassador(): void {
