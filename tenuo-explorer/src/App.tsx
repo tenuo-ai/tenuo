@@ -1415,14 +1415,65 @@ interface ChainWarrant {
   error: string | null;
 }
 
-const ChainTester = () => {
-  const [warrants, setWarrants] = useState<ChainWarrant[]>([
-    { id: generateId(), b64: '', decoded: null, error: null },
-    { id: generateId(), b64: '', decoded: null, error: null },
-  ]);
-  const [tool, setTool] = useState('read_file');
-  const [argsJson, setArgsJson] = useState('{"path": "docs/readme.md"}');
-  const [rootKeyHex, setRootKeyHex] = useState('');
+/** A chain handed in by a share link: `?s=` with `chain: string[]`, plus optional root key, tool, and args. */
+export interface SharedChain {
+  chain: string[];
+  rootKey?: string;
+  tool?: string;
+  args?: string;
+}
+
+/** Decode one pasted or shared warrant. Never throws; a bad input becomes `error`. */
+function decodeChainInput(input: string): Omit<ChainWarrant, 'id'> {
+  if (!input.trim()) {
+    return { b64: input, decoded: null, error: null };
+  }
+  const { b64 } = cleanInput(input);
+  try {
+    const result = decode_warrant(b64);
+    // WASM returns a string on error, not a DecodedWarrant
+    if (typeof result === 'string') {
+      return { b64: input, decoded: null, error: result };
+    }
+    if (result && typeof result === 'object' && 'id' in result && 'issuer' in result) {
+      // Normalize the result to ensure tools is always an array
+      return {
+        b64: input,
+        error: null,
+        decoded: {
+          id: result.id || '',
+          issuer: result.issuer || '',
+          tools: Array.isArray(result.tools) ? result.tools : [],
+          capabilities: result.capabilities || {},
+          issued_at: result.issued_at || 0,
+          expires_at: result.expires_at || 0,
+          authorized_holder: result.authorized_holder || '',
+          depth: result.depth || 0,
+        },
+      };
+    }
+    return { b64: input, decoded: null, error: 'Invalid warrant format' };
+  } catch (e) {
+    return { b64: input, decoded: null, error: e instanceof Error ? e.message : 'Invalid warrant' };
+  }
+}
+
+const ChainTester = ({ initial }: { initial?: SharedChain }) => {
+  const [warrants, setWarrants] = useState<ChainWarrant[]>(
+    initial && initial.chain.length > 0
+      ? initial.chain.map((b64) => ({ id: generateId(), ...decodeChainInput(b64) }))
+      : [
+          { id: generateId(), b64: '', decoded: null, error: null },
+          { id: generateId(), b64: '', decoded: null, error: null },
+        ],
+  );
+  const [tool, setTool] = useState(initial?.tool ?? 'read_file');
+  const [argsJson, setArgsJson] = useState(initial?.args ?? '{"path": "docs/readme.md"}');
+  const [rootKeyHex, setRootKeyHex] = useState(() => {
+    if (initial?.rootKey) return initial.rootKey;
+    if (initial && initial.chain.length > 0) return decodeChainInput(initial.chain[0]).decoded?.issuer ?? '';
+    return '';
+  });
   const [verifyResult, setVerifyResult] = useState<AuthResult | null>(null);
 
   // Load sample chain: Root → Orchestrator → Worker
@@ -1509,44 +1560,12 @@ const ChainTester = () => {
 
   // Decode warrant when b64 changes
   const updateWarrant = (id: string, input: string) => {
-    let decoded: DecodedWarrant | null = null;
-    let error: string | null = null;
-    let b64 = input;
-
-    if (input.trim()) {
-      const cleaned = cleanInput(input);
-      b64 = cleaned.b64;
-
-      try {
-        const result = decode_warrant(b64);
-        // WASM returns a string on error, not a DecodedWarrant
-        if (typeof result === 'string') {
-          error = result;
-        } else if (result && typeof result === 'object' && 'id' in result && 'issuer' in result) {
-          // Normalize the result to ensure tools is always an array
-          decoded = {
-            id: result.id || '',
-            issuer: result.issuer || '',
-            tools: Array.isArray(result.tools) ? result.tools : [],
-            capabilities: result.capabilities || {},
-            issued_at: result.issued_at || 0,
-            expires_at: result.expires_at || 0,
-            authorized_holder: result.authorized_holder || '',
-            depth: result.depth || 0,
-          };
-          // Auto-fill root key from first warrant's issuer
-          if (warrants.findIndex(w => w.id === id) === 0) {
-            setRootKeyHex(decoded.issuer);
-          }
-        } else {
-          error = 'Invalid warrant format';
-        }
-      } catch (e) {
-        error = e instanceof Error ? e.message : 'Invalid warrant';
-      }
+    const next = decodeChainInput(input);
+    // Auto-fill root key from first warrant's issuer
+    if (next.decoded && warrants.findIndex(w => w.id === id) === 0) {
+      setRootKeyHex(next.decoded.issuer);
     }
-
-    setWarrants(warrants.map(w => w.id === id ? { ...w, b64: input, decoded, error } : w));
+    setWarrants(warrants.map(w => w.id === id ? { ...w, ...next } : w));
     setVerifyResult(null);
   };
 
@@ -2356,6 +2375,7 @@ function App() {
   const [showSamples, setShowSamples] = useState(false);
   const [activeTab, setActiveTab] = useState<'decode' | 'debug' | 'code'>('decode');
   const [mode, setMode] = useState<'decoder' | 'builder' | 'chain' | 'diff' | 'receipt'>('decoder');
+  const [sharedChain, setSharedChain] = useState<SharedChain | undefined>(undefined);
   const [builderPreview, setBuilderPreview] = useState<unknown>(null);
   const [showBuilderJson, setShowBuilderJson] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(true);
@@ -2404,6 +2424,16 @@ function App() {
         if (parsed.warrant) setWarrantB64(parsed.warrant);
         if (parsed.tool) setTool(parsed.tool);
         if (parsed.args) setArgsJson(parsed.args);
+        // A whole chain (root first) opens the chain verifier with every hop filled in.
+        if (Array.isArray(parsed.chain) && parsed.chain.length > 0 && parsed.chain.every((w: unknown) => typeof w === 'string')) {
+          setSharedChain({
+            chain: parsed.chain as string[],
+            ...(typeof parsed.rootKey === 'string' ? { rootKey: parsed.rootKey } : {}),
+            ...(typeof parsed.tool === 'string' ? { tool: parsed.tool } : {}),
+            ...(typeof parsed.args === 'string' ? { args: parsed.args } : {}),
+          });
+          setMode('chain');
+        }
       } catch { }
     }
   }, []);
@@ -2841,9 +2871,9 @@ function App() {
           )}
 
           {/* Chain Mode */}
-          {mode === 'chain' && (
+          {mode === 'chain' && (sharedChain === undefined || wasmReady) && (
             <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-              <ChainTester />
+              <ChainTester initial={sharedChain} />
             </div>
           )}
 
