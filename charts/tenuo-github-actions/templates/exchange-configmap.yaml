@@ -1,0 +1,56 @@
+{{- include "tenuo-github-actions.validate" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tenuo-github-actions.exchangeName" . }}
+  labels:
+    {{- include "tenuo-github-actions.labels" . | nindent 4 }}
+    app.kubernetes.io/component: exchange
+data:
+  gateway.yaml: |
+    version: 1
+    trust:
+      root_public_keys:
+        {{- range .Values.trust.rootPublicKeys }}
+        - {{ . | quote }}
+        {{- end }}
+      require_pop: {{ .Values.trust.requirePop }}
+      clock_tolerance_seconds: {{ .Values.trust.clockToleranceSeconds }}
+    signing:
+      profile: secret
+      secret:
+        mount: {{ .Values.signing.secret.mount | quote }}
+        issuer_key: {{ .Values.signing.secret.issuerKey | quote }}
+    exchange:
+      audience: {{ .Values.exchange.audience | quote }}
+      issuer: {{ .Values.exchange.issuer | quote }}
+      ttl_max: {{ .Values.exchange.ttlMax | quote }}
+      {{- if .Values.exchange.jwksUrl }}
+      jwks_url: {{ .Values.exchange.jwksUrl | quote }}
+      {{- end }}
+      conditions:
+        {{- if .Values.exchange.conditions.repositoryOwnerId }}
+        repository_owner_id: {{ .Values.exchange.conditions.repositoryOwnerId | quote }}
+        {{- end }}
+        {{- if .Values.exchange.conditions.repositoryId }}
+        repository_id:
+          {{- range .Values.exchange.conditions.repositoryId }}
+          - {{ . | quote }}
+          {{- end }}
+        {{- end }}
+        {{- if .Values.exchange.conditions.jobWorkflowRef }}
+        job_workflow_ref: {{ .Values.exchange.conditions.jobWorkflowRef | quote }}
+        {{- end }}
+        {{- if .Values.exchange.conditions.eventName }}
+        event_name:
+          {{- range .Values.exchange.conditions.eventName }}
+          - {{ . | quote }}
+          {{- end }}
+        {{- end }}
+    ceiling:
+      repositories:
+        {{- range .Values.ceiling.repositories }}
+        - {{ . | quote }}
+        {{- end }}
+    receipts:
+      path: {{ .Values.receipts.path | quote }}

@@ -1,26 +1,32 @@
 name: Tenuo
-description: Start a holder process and write mcp_config for the agent step
+description: Exchange OIDC for a holder-bound warrant and write mcp_config
 inputs:
   gateway_url:
     required: true
-    description: Shared gateway URL
+    description: Customer gateway URL (MCP). Never point this at Tenuo Cloud.
   exchange_url:
     required: false
-    description: Shared exchange URL. Omitted, the gateway URL is used.
+    description: Exchange URL. Cloud or self-hosted POST /v1/exchange. Omitted, gateway_url is used.
+  audience:
+    required: false
+    description: OIDC audience. Self-hosted exchange.audience, or Cloud tenuo:org/<tenant>. Defaults to TENUO_EXCHANGE_AUDIENCE.
+  ttl:
+    required: false
+    default: "900"
+    description: Requested warrant lifetime in seconds
+  trusted_roots:
+    required: false
+    description: Deploy-time root public keys (hex or base64). The action checks advertised root_public_keys against this list. Never installed as the gateway trust anchor.
 outputs:
   mcp_config:
     description: Path to mcp-config.json
-    value: ${{ steps.start.outputs.mcp_config }}
+  warrant_id:
+    description: Issued warrant id
+  expires_at:
+    description: Warrant expiry
+  gateway_url:
+    description: Gateway URL passed through
 runs:
-  using: composite
-  steps:
-    - id: start
-      shell: bash
-      run: |
-        set -euo pipefail
-        mkdir -p "${RUNNER_TEMP}/tenuo"
-        python -m tenuo_gha action \
-          --gateway-url "${{ inputs.gateway_url }}" \
-          --mcp-config "${RUNNER_TEMP}/tenuo/mcp-config.json" \
-          --socket "${RUNNER_TEMP}/tenuo/holder.sock" \
-          --pid "${RUNNER_TEMP}/tenuo/holder.pid"
+  using: node20
+  main: index.mjs
+  post: cleanup.mjs

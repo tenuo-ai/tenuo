@@ -1,0 +1,7 @@
+httpx==0.28.1
+PyJWT==2.13.0
+cryptography==46.0.1
+PyYAML==6.0.3
+starlette==0.52.1
+uvicorn==0.40.0
+fastmcp==3.2.1

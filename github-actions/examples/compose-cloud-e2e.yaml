@@ -1,0 +1,5 @@
+# Local override: trust Cloud staging roots. Not for commit.
+services:
+  gateway:
+    volumes:
+      - ./gateway-cloud-e2e.yaml:/etc/tenuo/gateway.yaml:ro

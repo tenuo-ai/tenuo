@@ -1,0 +1,20 @@
+{{- include "tenuo-github-actions.validate" . }}
+Tenuo for GitHub Actions (secret profile)
+
+Exchange: {{ include "tenuo-github-actions.exchangeName" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.exchange.service.port }}
+Gateway:  {{ include "tenuo-github-actions.gatewayName" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.gateway.service.port }}
+
+Set these org/repo variables, then pin the action SHA:
+
+  TENUO_EXCHANGE_URL=http://{{ include "tenuo-github-actions.exchangeName" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.exchange.service.port }}
+  TENUO_GATEWAY_URL=http://{{ include "tenuo-github-actions.gatewayName" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.gateway.service.port }}
+  TENUO_EXCHANGE_AUDIENCE={{ .Values.exchange.audience }}
+
+The exchange Secret must contain {{ .Values.signing.secret.issuerKey }}.
+The gateway Secret must contain {{ .Values.signing.secret.receiptKey }} and {{ .Values.signing.secret.githubAppKey }}.
+Those Secrets are not interchangeable. Do not mount the issuer key on the gateway.
+
+Ready is a sign self-test, not /health:
+
+  kubectl rollout status deploy/{{ include "tenuo-github-actions.exchangeName" . }}
+  kubectl rollout status deploy/{{ include "tenuo-github-actions.gatewayName" . }}

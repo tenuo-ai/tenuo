@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("tenuo_core")
 
-from tenuo import Exact, Range
+from tenuo import Exact, Pattern, Range
 from tenuo.mcp import TENUO_CONSTRAINT_VIOLATION, TENUO_TOOL_NOT_AUTHORIZED
 from tenuo_core import SigningKey, Warrant, verify_receipt
 
@@ -162,40 +162,41 @@ def test_cross_repo_receipt_is_a_constraint_denial(tmp_path):
     assert payload.outcome in {"allow", "deny"}
 
 
-def test_tripwire_denies_even_when_the_warrant_names_it(tmp_path):
+def test_named_tripwire_is_allowed_but_cannot_execute(tmp_path):
     issuer = SigningKey.generate()
     holder = SigningKey.generate()
     os.environ["TENUO_ALLOW_INSECURE_MEMORY_KEYS"] = "1"
     gateway = Gateway(_config(tmp_path, issuer, {}))
     warrant = (
         Warrant.mint_builder()
-        .capability("github.workflow_dispatch", repository=Exact("acme/widgets"))
+        .capability(
+            "github.workflow_dispatch",
+            repository=Exact("acme/widgets"),
+            workflow=Pattern("*"),
+        )
         .holder(holder.public_key)
         .ttl(900)
         .mint(issuer)
     )
-    import base64
-    import time
+    from tenuo_gha.holder import Holder
 
-    args = {"repository": "acme/widgets", "workflow": "release.yml"}
-    sig = warrant.sign(holder, "github.workflow_dispatch", args, int(time.time()))
-    result = gateway.verify(
+    process = Holder(key=holder)
+    process.set_warrant(warrant.to_base64())
+    envelope = process.envelope(
         "github.workflow_dispatch",
-        args,
-        meta={
-            "tenuo": {
-                "warrant": warrant.to_base64(),
-                "signature": base64.b64encode(bytes(sig)).decode(),
-            }
-        },
+        {"repository": "acme/widgets", "workflow": "release.yml"},
     )
-    assert not result.allowed
-    assert result.error_code == TENUO_TOOL_NOT_AUTHORIZED
-    assert result.presented_chain
+    result, payload = gateway.execute(
+        "github.workflow_dispatch",
+        envelope.get("arguments") or {},
+        meta={"tenuo": envelope},
+    )
+    assert result.allowed
+    assert payload == {"executed": False, "tool": "github.workflow_dispatch"}
     assert gateway.flush_receipts()
     import json
 
     lines = Path(tmp_path / "receipts.jsonl").read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
-    payload = verify_receipt(json.loads(lines[0])["receipt"])
-    assert payload.outcome == "deny"
+    receipt = verify_receipt(json.loads(lines[0])["receipt"])
+    assert receipt.outcome == "allow"

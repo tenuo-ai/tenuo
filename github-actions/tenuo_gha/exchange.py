@@ -11,10 +11,12 @@ from typing import Any, Callable, Dict, Mapping, Optional
 
 from tenuo import PublicKey, SigningKey, Warrant
 from tenuo.mcp import exact_argument_constraints
+from tenuo_core import encode_warrant_stack
 
-from .catalog import PACKS, TRIPWIRE_NAMES
+from .commitment import CommitmentError, compact_task_binding, exchange_request_hash, verify_holder_proof
 from .config import ConfigError, GatewayConfig
 from .oidc import OidcError, assert_conditions, load_jwks, verify_oidc
+from .task import expand_issuance_constraints
 
 
 class ExchangeError(ValueError):
@@ -33,6 +35,48 @@ class ExchangeResult:
     warrant_id: str
     expires_at: str
     root_public_keys: list[str]
+    task_binding: Optional[Dict[str, Any]] = None
+
+
+GITHUB_EXCHANGE_FIELDS = frozenset(
+    {"holder_public_key", "holder_proof", "ttl_seconds", "capabilities", "task_binding"}
+)
+
+
+def assert_github_exchange_fields(body: Mapping[str, Any]) -> None:
+    """Cloud ``DisallowUnknownFields``: reject ``task_context`` and identifiers."""
+    unknown = sorted(set(body) - GITHUB_EXCHANGE_FIELDS)
+    if unknown:
+        raise ExchangeError("invalid_request", f"unknown field: {unknown[0]}", status=400)
+
+
+def normalize_task_binding(raw: Any) -> Optional[Dict[str, Any]]:
+    """Accept only ``{type, number}``. Assurance is not runner-supplied."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ExchangeError("invalid_request", "task_binding must be a mapping", status=400)
+    extra = sorted(set(raw) - {"type", "number"})
+    if extra:
+        raise ExchangeError("invalid_request", "task_binding must contain only type and number", status=400)
+    kind = raw.get("type")
+    number = raw.get("number")
+    if kind not in {"issue", "pull_request"}:
+        raise ExchangeError("invalid_request", "task_binding.type must be issue or pull_request", status=400)
+    try:
+        parsed = int(number)
+    except (TypeError, ValueError) as exc:
+        raise ExchangeError("invalid_request", "task_binding.number must be a positive integer", status=400) from exc
+    if parsed <= 0:
+        raise ExchangeError("invalid_request", "task_binding.number must be a positive integer", status=400)
+    return compact_task_binding({"type": str(kind), "number": parsed})
+
+
+def encode_exchange_stack(warrants: list) -> str:
+    encoded = encode_warrant_stack(warrants)
+    if not encoded:
+        raise ExchangeError("outside_ceiling", "could not encode warrant stack", status=500)
+    return encoded
 
 
 class ReplayCache:
@@ -59,6 +103,12 @@ class ReplayCache:
 def _signing_key(config: GatewayConfig, override: Optional[SigningKey]) -> SigningKey:
     if override is not None:
         return override
+    if config.signing_provider == "secret":
+        if config.secret_mount is None or not config.secret_issuer_key:
+            raise ConfigError("issuer_key is required under signing.secret.mount")
+        from .secrets import signing_key_from_mount
+
+        return signing_key_from_mount(config.secret_mount, config.secret_issuer_key)
     raw = config.exchange_signing_key
     if not raw:
         if config.signing_provider == "memory":
@@ -80,14 +130,6 @@ def _public_key(value: str) -> PublicKey:
         return PublicKey.from_bytes(bytes.fromhex(raw))
     except Exception:
         return PublicKey.from_bytes(base64.b64decode(raw))
-
-
-def _allowed_tools(packs: list[str]) -> set[str]:
-    names: set[str] = set()
-    for pack in packs:
-        for spec in PACKS.get(pack, ()):
-            names.add(spec.name)
-    return names
 
 
 def _token_id(claims: Mapping[str, Any], token: str) -> str:
@@ -119,15 +161,40 @@ class Exchange:
         self._issuer = _signing_key(config, issuer_key)
         self._jwks = load_jwks(jwks=jwks, jwks_url=config.jwks_url, fetcher=jwks_fetcher)
         self._replay = replay or ReplayCache()
-        self._allowed = _allowed_tools(config.packs)
+        self.self_test()
 
-    def mint(
+    def self_test(self) -> None:
+        """Sign with the issuer key. Never log material."""
+        try:
+            self._issuer.sign_raw(b"tenuo-gha-ready")
+        except Exception as exc:
+            raise ConfigError("issuer key self-test failed") from exc
+
+    def bind_capabilities(
+        self,
+        capabilities: Mapping[str, Any],
+        *,
+        repository: str,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Bind requested tools. Repository comes from the OIDC subject."""
+        bound: Dict[str, Dict[str, Any]] = {}
+        for tool, raw_args in capabilities.items():
+            args = dict(raw_args or {})
+            requested_repo = args.get("repository")
+            if requested_repo is not None and str(requested_repo) != repository:
+                raise ExchangeError("outside_ceiling", "repository does not match the OIDC subject")
+            args["repository"] = repository
+            bound[str(tool)] = expand_issuance_constraints(str(tool), exact_argument_constraints(args))
+        return bound
+
+    def validate(
         self,
         token: str,
         body: Mapping[str, Any],
         *,
         now: Optional[int] = None,
-    ) -> ExchangeResult:
+    ) -> tuple[Dict[str, Any], Any, int, Dict[str, Any], Optional[Dict[str, Any]]]:
+        """OIDC, holder proof, replay, and issuance identity. Returns claims, holder, ttl, capabilities, task."""
         if now is None:
             now = int(time.time())
         try:
@@ -150,10 +217,7 @@ class Exchange:
         except OidcError as exc:
             raise ExchangeError(exc.code, exc.detail) from exc
 
-        token_id = _token_id(claims, token)
-        expires = int(claims.get("exp") or now)
-        if not self._replay.check_and_record(token_id, expires, now=now):
-            raise ExchangeError("token_reused", "OIDC token was already exchanged")
+        assert_github_exchange_fields(body)
 
         holder_raw = body.get("holder_public_key")
         if not holder_raw or not isinstance(holder_raw, str):
@@ -178,30 +242,55 @@ class Exchange:
         capabilities = body.get("capabilities")
         if not isinstance(capabilities, dict) or not capabilities:
             raise ExchangeError("outside_ceiling", "capabilities are required", status=400)
+        task_binding = normalize_task_binding(body.get("task_binding"))
 
+        proof = body.get("holder_proof")
+        if not isinstance(proof, str) or not proof:
+            raise ExchangeError("holder_proof_invalid", "holder_proof is required", status=403)
+        try:
+            request_hash = exchange_request_hash(
+                issuer=str(claims.get("iss") or ""),
+                jti=str(claims.get("jti") or ""),
+                holder_public_key=holder_raw,
+                ttl_seconds=ttl_i,
+                capabilities=capabilities,
+                task_binding=task_binding,
+            )
+            verify_holder_proof(holder_raw, proof, request_hash)
+        except CommitmentError as exc:
+            raise ExchangeError("holder_proof_invalid", "holder_proof is invalid", status=403) from exc
+
+        token_id = _token_id(claims, token)
+        expires = int(claims.get("exp") or now)
+        if not self._replay.check_and_record(token_id, expires, now=now):
+            raise ExchangeError("token_reused", "OIDC token was already exchanged")
+        return claims, holder, ttl_i, capabilities, task_binding
+
+    def mint(
+        self,
+        token: str,
+        body: Mapping[str, Any],
+        *,
+        now: Optional[int] = None,
+    ) -> ExchangeResult:
+        claims, holder, ttl_i, capabilities, task_binding = self.validate(token, body, now=now)
         repository = str(claims["repository"])
+        bound = self.bind_capabilities(capabilities, repository=repository)
         builder = Warrant.mint_builder().holder(holder).ttl(ttl_i)
         run_id = claims.get("run_id")
         if run_id is not None:
             builder = builder.session_id(str(run_id))
-
-        for tool, raw_args in capabilities.items():
-            if tool in TRIPWIRE_NAMES or tool not in self._allowed:
-                raise ExchangeError("outside_ceiling", f"{tool} is not in the configured packs")
-            args = dict(raw_args or {})
-            requested_repo = args.get("repository")
-            if requested_repo is not None and str(requested_repo) != repository:
-                raise ExchangeError("outside_ceiling", "repository does not match the OIDC subject")
-            args["repository"] = repository
-            builder = builder.capability(tool, exact_argument_constraints(args))
+        for tool, constraints in bound.items():
+            builder = builder.capability(tool, constraints)
 
         warrant = builder.mint(self._issuer)
         expires_at = warrant.expires_at()
         if callable(expires_at):
             expires_at = expires_at()
         return ExchangeResult(
-            warrant=warrant.to_base64(),
+            warrant=encode_exchange_stack([warrant]),
             warrant_id=str(warrant.id),
             expires_at=str(expires_at),
             root_public_keys=list(self.config.root_public_keys),
+            task_binding=task_binding,
         )

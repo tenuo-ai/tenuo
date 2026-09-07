@@ -277,8 +277,10 @@ jobs:
       - name: GitHub Actions gateway tests
         working-directory: github-actions
         run: |
+          python package_runtime.py
+          test -n "$(ls vendor/tenuo-*.whl)"
           uv pip install --system pytest pyyaml PyJWT cryptography starlette httpx
-          pytest -v
+          pytest -v -m "not live"
 
   # ============================================================================
   # TEMPORAL INTEGRATION (live Temporal server)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import time
+import urllib.parse
 import urllib.request
 from typing import Any, Callable, Dict, Mapping, Optional
 
@@ -28,12 +29,55 @@ def fetch_jwks(url: str, *, timeout: float = 5.0) -> Dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
+def fetch_actions_oidc(
+    audience: str,
+    environ: Optional[Mapping[str, str]] = None,
+    *,
+    opener: Optional[Callable[..., Any]] = None,
+) -> str:
+    """Request a GitHub Actions OIDC JWT for ``audience``."""
+    import os
+
+    env = environ if environ is not None else os.environ
+    url = env.get("ACTIONS_ID_TOKEN_REQUEST_URL")
+    token = env.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+    if not url or not token:
+        raise OidcError("untrusted_workflow", "ACTIONS_ID_TOKEN_REQUEST_URL is required")
+    if not audience:
+        raise OidcError("untrusted_workflow", "OIDC audience is required")
+    request = urllib.request.Request(
+        f"{url}{'&' if '?' in url else '?'}audience={urllib.parse.quote(audience)}",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+    )
+    open_url = opener or urllib.request.urlopen
+    try:
+        with open_url(request, timeout=10.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise OidcError("untrusted_workflow", "OIDC token request failed") from exc
+    jwt_token = payload.get("value") or payload.get("token")
+    if not jwt_token or not isinstance(jwt_token, str):
+        raise OidcError("untrusted_workflow", "OIDC token request returned no token")
+    return jwt_token
+
+
 def _audience_values(aud: Any) -> list[str]:
     if aud is None:
         return []
     if isinstance(aud, str):
         return [aud]
     return [str(item) for item in aud]
+
+
+def peek_oidc_claims(token: str) -> Dict[str, Any]:
+    """Read iss/jti for the exchange commitment. This is not verification."""
+    try:
+        payload = jwt.decode(token, options={"verify_signature": False, "verify_aud": False})
+    except jwt.InvalidTokenError as exc:
+        raise OidcError("untrusted_workflow", "malformed token") from exc
+    if not isinstance(payload, dict):
+        raise OidcError("untrusted_workflow", "malformed token")
+    return payload
 
 
 def verify_oidc(
@@ -94,7 +138,7 @@ def assert_conditions(
     event_names: list[str],
     repositories: list[str],
 ) -> None:
-    """Match numeric ids, workflow ref, event, and repository ceiling."""
+    """Match numeric ids, workflow ref, event, and issuance repository."""
     if repository_owner_id is not None:
         got = str(claims.get("repository_owner_id") or "")
         if got != str(repository_owner_id):

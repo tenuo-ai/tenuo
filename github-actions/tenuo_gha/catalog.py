@@ -1,7 +1,13 @@
-"""Tool catalog. Ceiling tools are registered and always refused."""
+"""Execution recipes for MCP registration and GitHub HTTP.
+
+Packs are how the gateway knows the method and path. They are not an
+allow-list. A name with no path cannot execute. Authorization is the warrant.
+Tripwire names are containment fixtures, not a deny list, and are not registered.
+"""
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -83,7 +89,12 @@ TRIPWIRES: Tuple[ToolSpec, ...] = (
 
 PACKS: Dict[str, Tuple[ToolSpec, ...]] = {"github-triage": TRIAGE}
 
-TRIPWIRE_NAMES = frozenset(spec.name for spec in TRIPWIRES)
+# Written onto the warrant at issuance (OSS stand-in for a Cloud template).
+COMMENT_BODY_CEL = "value.size() >= 1 && value.size() <= 65536"
+
+
+def comment_body_digest(body: str) -> str:
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def tools_for_packs(packs: List[str]) -> List[ToolSpec]:
@@ -96,10 +107,6 @@ def tools_for_packs(packs: List[str]) -> List[ToolSpec]:
             if spec.name not in seen:
                 chosen.append(spec)
                 seen.add(spec.name)
-    for spec in TRIPWIRES:
-        if spec.name not in seen:
-            chosen.append(spec)
-            seen.add(spec.name)
     return chosen
 
 

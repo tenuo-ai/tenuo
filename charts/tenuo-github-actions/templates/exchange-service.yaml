@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tenuo-github-actions.exchangeName" . }}
+  labels:
+    {{- include "tenuo-github-actions.labels" . | nindent 4 }}
+    app.kubernetes.io/component: exchange
+  {{- with .Values.exchange.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.exchange.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.exchange.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "tenuo-github-actions.exchangeSelectorLabels" . | nindent 4 }}
