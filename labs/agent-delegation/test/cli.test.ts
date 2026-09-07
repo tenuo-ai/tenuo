@@ -60,7 +60,9 @@ describe("participant CLI", () => {
     expect(state.attempts?.["5"]?.count).toBe(1);
     expect(state.attempts?.["5"]?.firstGreen).toBeUndefined();
 
-    cli(labHome, "attack", 5, "answers/05-tenuo/chain.ts");
+    const attack = cli(labHome, "attack", 5, "answers/05-tenuo/chain.ts");
+    expect(attack).toContain("npm run star");
+    expect(attack).toContain("works locally and in Codespaces");
     state = JSON.parse(readFileSync(join(labHome, "state.json"), "utf8")) as LabState;
     expect(state.attempts?.["5"]?.count).toBe(2);
     expect(state.attempts?.["5"]?.firstGreen).toBeDefined();
@@ -122,14 +124,14 @@ describe("participant CLI", () => {
 describe("generated Stage 5 guide", () => {
   it("keeps the public landing-page promise and one reset command", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
-    expect(page).toContain("AI Agent Delegation Security Challenge");
+    expect(page).toContain("AI Agent Delegation Security Lab");
     expect(page).toContain("Book the trip. Stop the rogue agent.");
-    expect(page).toContain("A ninety-minute security challenge");
-    expect(page).not.toContain("security game");
+    expect(page).toContain("A ninety-minute security lab");
+    expect(page).not.toMatch(/security (?:game|challenge)/);
     expect(page.match(/npm run reset/g)).toHaveLength(1);
     const deployWorkflow = readFileSync(join(ROOT, "..", "..", ".github", "workflows", "docs.yml"), "utf8");
-    expect(deployWorkflow).toContain("A ninety-minute security challenge");
-    expect(deployWorkflow).not.toContain("A ninety-minute security game");
+    expect(deployWorkflow).toContain("A ninety-minute security lab");
+    expect(deployWorkflow).not.toMatch(/A ninety-minute security (?:game|challenge)/);
   });
 
   it("keeps the reference implementation out of the page body", () => {

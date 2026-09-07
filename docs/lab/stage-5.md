@@ -5,7 +5,7 @@ description: "Complete one narrowing handoff so the trip works, the rogue stops,
 lab_stage: 5
 lab_version: "0.2.0"
 ---
-<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Challenge</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" class="current" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" class="current" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
 
 <header class="lab-hero"><div class="lab-kicker">Stage 5 of 7 · <span class="lab-mode tenuo">tenuo</span> · about 25 min</div><h1>Access that travels with the work</h1><p class="lab-goal"><strong>Goal.</strong> Complete one narrowing handoff so the trip works, the rogue stops, and no central lookup is needed.</p></header>
 
@@ -240,7 +240,7 @@ THE TRIP
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="5:2"><span>3</span></label>
-<div class="lab-step-body"><p>Run the checks. The two-traveler run happens here too, with no policy file to edit. Read <strong>CROSS-TASK</strong> and the escalation attempt, then find <code>central_calls</code>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 157 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks. The two-traveler run happens here too, with no policy file to edit. Read <strong>CROSS-TASK</strong> and the escalation attempt, then find <code>central_calls</code>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 158 lines</span></summary><pre><code>
 Stage 5 of 7: Access that travels with the work   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-5
 
@@ -396,7 +396,8 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
 
   That check ran locally, in the agent's own process, with no server to ask.
   The code that did it is open source: github.com/tenuo-ai/tenuo
-  A star helps other people find it.</code></pre></details></div>
+  If this changed how you think about agent permissions, you can star Tenuo without leaving the terminal:
+  npm run star (optional; works locally and in Codespaces)</code></pre></details></div>
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="5:3"><span>4</span></label>

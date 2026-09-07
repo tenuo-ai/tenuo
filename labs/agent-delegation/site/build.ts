@@ -27,7 +27,7 @@ function readmeStageMap(): string {
     const title = stage.tier === "boss" ? `${stage.title} *(optional boss)*` : stage.title;
     return `| ${stage.n}. ${title} | ${stage.goal} | ${stage.minutes} min |`;
   });
-  return `<!-- stage-map:start -->\n## The levels\n\n| Level | Mission | Time |\n|---|---|---:|\n${rows.join("\n")}\n\nAfter the game, the hosted guide has an unnumbered, optional contribution epilogue.\n<!-- stage-map:end -->`;
+  return `<!-- stage-map:start -->\n## The levels\n\n| Level | Mission | Time |\n|---|---|---:|\n${rows.join("\n")}\n\nAfter the core lab, the hosted guide has an unnumbered, optional contribution epilogue.\n<!-- stage-map:end -->`;
 }
 
 function expectedReadme(): string {
@@ -120,7 +120,7 @@ function stepper(current: number | "wrap" | "contribute"): string {
   }
   const epilogueClass = current === "contribute" ? ' class="current"' : "";
   items.push(`<a href="/lab/${EPILOGUE.slug}"${epilogueClass} title="Optional: ${esc(EPILOGUE.title)}">+</a>`);
-  return `<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Challenge</a>${items.join("")}</nav>`;
+  return `<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a>${items.join("")}</nav>`;
 }
 
 function callout(kind: "notice" | "question" | "hint" | "stuck", title: string, body: string): string {
@@ -195,7 +195,7 @@ function indexPage(): string {
     ["No spare authority", 20, "Every grant stays at or below the mission's least-privilege ceiling."],
   ] as const;
   const body = `${stepper(0)}
-<header class="lab-hero"><div class="lab-kicker">A ninety-minute security challenge · TypeScript · no account needed</div><h1>AI Agent Delegation Security Challenge</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
+<header class="lab-hero"><div class="lab-kicker">A ninety-minute security lab · TypeScript · no account needed</div><h1>AI Agent Delegation Security Lab</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
 
 <section class="lab-start">
 <div>
@@ -204,7 +204,7 @@ function indexPage(): string {
 cd tenuo/labs/agent-delegation
 npm install
 npm run lab</code></pre>
-<p class="lab-muted">Node 20 or newer. No account, no API key, no network needed. The challenge runs its own recorded agents; every check and score is real.</p>
+<p class="lab-muted">Node 20 or newer. No account, no API key, no network needed. The lab runs its own recorded agents; every check and score is real.</p>
 </div>
 <div>
 <h2>What to expect</h2>
@@ -242,7 +242,7 @@ npm run lab</code></pre>
 
 <h2>The stages</h2>
 <div class="lab-grid">${cards.join("\n")}</div>
-<p class="lab-muted">Stages 1 to ${MAIN_STAGE_COUNT} are the main game, about ninety minutes. Stages ${MAIN_STAGE_COUNT + 1} and ${TOTAL_STAGE_COUNT} are optional boss levels. Your progress is kept in this browser, and the links the lab prints keep it in step with your terminal.</p>
+<p class="lab-muted">Stages 1 to ${MAIN_STAGE_COUNT} are the core lab, about ninety minutes. Stages ${MAIN_STAGE_COUNT + 1} and ${TOTAL_STAGE_COUNT} are optional boss levels. Your progress is kept in this browser, and the links the lab prints keep it in step with your terminal.</p>
 
 <h2>Your four stars</h2>
 <div class="lab-grading">${grading.map(([label, _pts, note]) => `<div class="lab-grade"><div class="lab-grade-row"><span>${esc(label)}</span><strong>☆</strong></div><p class="lab-muted">${esc(note)}</p></div>`).join("")}</div>
@@ -262,7 +262,7 @@ npm run reset      # restore stage 1 and every starter exercise</code></pre>
 
 <nav class="lab-nav"><span></span><a class="next" href="/lab/stage-1">Stage 1: One key for everyone →</a></nav>
 `;
-  return frontMatter({ layout: "lab", title: "AI Agent Delegation Security Challenge", description: `Six AI agents, one rogue, ${TOTAL_STAGE_COUNT} stages. Book the trip and stop the rogue agent.`, lab_stage: 0 }) + body;
+  return frontMatter({ layout: "lab", title: "AI Agent Delegation Security Lab", description: `Six AI agents, one rogue, ${TOTAL_STAGE_COUNT} stages. Book the trip and stop the rogue agent.`, lab_stage: 0 }) + body;
 }
 
 function wrapUpPage(): string {

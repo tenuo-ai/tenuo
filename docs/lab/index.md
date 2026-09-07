@@ -1,12 +1,12 @@
 ---
 layout: "lab"
-title: "AI Agent Delegation Security Challenge"
+title: "AI Agent Delegation Security Lab"
 description: "Six AI agents, one rogue, 7 stages. Book the trip and stop the rogue agent."
 lab_stage: 0
 lab_version: "0.2.0"
 ---
-<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Challenge</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
-<header class="lab-hero"><div class="lab-kicker">A ninety-minute security challenge · TypeScript · no account needed</div><h1>AI Agent Delegation Security Challenge</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/contribute" title="Optional: Contribute to Tenuo">+</a></nav>
+<header class="lab-hero"><div class="lab-kicker">A ninety-minute security lab · TypeScript · no account needed</div><h1>AI Agent Delegation Security Lab</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
 
 <section class="lab-start">
 <div>
@@ -15,7 +15,7 @@ lab_version: "0.2.0"
 cd tenuo/labs/agent-delegation
 npm install
 npm run lab</code></pre>
-<p class="lab-muted">Node 20 or newer. No account, no API key, no network needed. The challenge runs its own recorded agents; every check and score is real.</p>
+<p class="lab-muted">Node 20 or newer. No account, no API key, no network needed. The lab runs its own recorded agents; every check and score is real.</p>
 </div>
 <div>
 <h2>What to expect</h2>
@@ -60,7 +60,7 @@ npm run lab</code></pre>
 <a class="lab-card" data-n="6" href="/lab/stage-6"><div class="lab-card-n">6</div><div><div class="lab-card-title">Boss: stolen authority</div><div class="lab-card-goal">See why a copied permission cannot be used by another agent, then deliberately end a delegation chain.</div></div><div class="lab-card-time">15 min</div></a>
 <a class="lab-card" data-n="7" href="/lab/stage-7"><div class="lab-card-n">7</div><div><div class="lab-card-title">Boss: contain the incident</div><div class="lab-card-goal">Contain a compromised Hotel Agent while legitimate bookings keep working.</div></div><div class="lab-card-time">20 min</div></a>
 <a class="lab-card" href="/lab/contribute"><div class="lab-card-n">+</div><div><div class="lab-card-title">Contribute to Tenuo</div><div class="lab-card-goal">Optional: take what you used in the lab and open a small pull request.</div></div><div class="lab-card-time">optional</div></a></div>
-<p class="lab-muted">Stages 1 to 5 are the main game, about ninety minutes. Stages 6 and 7 are optional boss levels. Your progress is kept in this browser, and the links the lab prints keep it in step with your terminal.</p>
+<p class="lab-muted">Stages 1 to 5 are the core lab, about ninety minutes. Stages 6 and 7 are optional boss levels. Your progress is kept in this browser, and the links the lab prints keep it in step with your terminal.</p>
 
 <h2>Your four stars</h2>
 <div class="lab-grading"><div class="lab-grade"><div class="lab-grade-row"><span>Trip booked</span><strong>☆</strong></div><p class="lab-muted">Alice gets a flight, hotel, activity, and boarding pass within budget.</p></div><div class="lab-grade"><div class="lab-grade-row"><span>Rogue stopped</span><strong>☆</strong></div><p class="lab-muted">Every injected or adversarial action lands as expected.</p></div><div class="lab-grade"><div class="lab-grade-row"><span>Tight handoff</span><strong>☆</strong></div><p class="lab-muted">The next agent receives only what its piece of work needs.</p></div><div class="lab-grade"><div class="lab-grade-row"><span>No spare authority</span><strong>☆</strong></div><p class="lab-muted">Every grant stays at or below the mission's least-privilege ceiling.</p></div></div>
