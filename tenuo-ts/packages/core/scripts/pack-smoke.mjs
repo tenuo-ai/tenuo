@@ -33,17 +33,10 @@ try {
 }
 
 function run(command, args, options) {
-  return execFileSync(resolveBin(command), args, options);
-}
-
-function resolveBin(command) {
-  if (process.platform !== "win32") {
-    return command;
-  }
-  if (command.endsWith(".cmd") || command.endsWith(".exe")) {
-    return command;
-  }
-  return `${command}.cmd`;
+  return execFileSync(command, args, {
+    ...options,
+    shell: process.platform === "win32",
+  });
 }
 
 function packPackage(cwd, destination) {
