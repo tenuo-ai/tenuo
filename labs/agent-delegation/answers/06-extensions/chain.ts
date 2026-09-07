@@ -1,14 +1,9 @@
 /**
- * Stage 9: the incident.
+ * Reference solution for stage 6.
  *
- *   Hotel Agent has been compromised. The travel system has to stay
- *   online. Legitimate bookings have to keep working.
- *
- * The compromised Hotel Agent will try eight things. One must work and seven
- * must fail. Configure this chain so that all eight land correctly, and
- * keep an eye on your least-privilege score while you do it. Number 3
- * catches more people than any other: blocking it is different from
- * blocking number 2.
+ * This is a completed stage 6 chain. Find the Flight → Check-in link and
+ * mark what Flight Agent hands over as terminal, so that Check-in Agent
+ * cannot hand it on. Then run the trip and see what fails, and who decided.
  */
 import { exact, max, oneOf, pattern, type Session, type Tenuo } from "@tenuo/core";
 import type { Fleet } from "../../src/keys.ts";
@@ -79,21 +74,12 @@ export function travelToFlight(travel: Session, fleet: Fleet, trip: Trip): Sessi
   );
 }
 
-/**
- * Travel → Hotel. This link is where the incident lives. Right now it hands
- * Hotel Agent far more than a hotel booking needs. Fix it: only hotel tools,
- * only Cancún, only the approved nightly rate, only the traveler's name,
- * only the hotel's share of the wallet, and no ability to hand anything on.
- */
+/** Travel → Hotel: Cancún hotels under the nightly rate, name only, hotel share of the wallet. */
 export function travelToHotel(travel: Session, fleet: Fleet, trip: Trip): Session {
-  const reservation = oneOf([...trip.candidateReservations]);
-  const destination = oneOf([trip.destination]);
   return fleet["travel-agent"].tenuo.narrow(
     travel,
     {
-      "traveler.read": { traveler: exact(trip.traveler), field: oneOf(["name", "passportNumber"]) },
-      search_flights: { destination },
-      book_flight: { flightId: reservation, destination, price: max(trip.flightBudget), passenger: exact(trip.traveler) },
+      "traveler.read": { traveler: exact(trip.traveler), field: oneOf(["name"]) },
       search_hotels: { city: exact(trip.city) },
       book_hotel: {
         hotelId: any(),
@@ -103,7 +89,7 @@ export function travelToHotel(travel: Session, fleet: Fleet, trip: Trip): Sessio
         guest: exact(trip.traveler),
         taskId: exact(trip.taskId),
       },
-      "wallet.charge": { taskId: exact(trip.taskId), amount: max(trip.budget) },
+      "wallet.charge": { taskId: exact(trip.taskId), amount: max(trip.hotelRateBudget * trip.nights) },
     },
     { holder: fleet["hotel-agent"].publicKey, ttlSeconds: 10 * 60 },
   );
@@ -142,7 +128,7 @@ export function flightToCheckin(flight: Session, fleet: Fleet, trip: Trip, reser
       check_in: { reservation: only },
       issue_boarding_pass: { reservation: only },
     },
-    { holder: fleet["checkin-agent"].publicKey, ttlSeconds: 5 * 60 },
+    { holder: fleet["checkin-agent"].publicKey, ttlSeconds: 5 * 60, terminal: true },
   );
 }
 

@@ -1,5 +1,5 @@
 /**
- * Reference solution for stage 6. The chain the participant completes.
+ * Reference solution for stage 7. Stage 5's chain, with the hotel branch terminal.
  *
  * Every function returns a session bound to the *next* agent's key. The
  * caller cannot use it (it has no secret for it); the receiver imports it
@@ -92,7 +92,7 @@ export function travelToHotel(travel: Session, fleet: Fleet, trip: Trip): Sessio
       },
       "wallet.charge": { taskId: exact(trip.taskId), amount: max(trip.hotelRateBudget * trip.nights) },
     },
-    { holder: fleet["hotel-agent"].publicKey, ttlSeconds: 10 * 60 },
+    { holder: fleet["hotel-agent"].publicKey, ttlSeconds: 10 * 60, terminal: true },
   );
 }
 

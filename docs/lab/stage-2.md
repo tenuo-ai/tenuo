@@ -4,9 +4,9 @@ title: "Stage 2: Every agent gets its own account"
 description: "Give each agent its own credential and see which damage that removes and which damage remains."
 lab_stage: 2
 ---
-<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" class="current" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a><a href="/lab/stage-9" data-n="9" title="Stage 9">9</a><a href="/lab/stage-10" data-n="10" title="Stage 10">10</a></nav>
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" class="current" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a></nav>
 
-<header class="lab-hero"><div class="lab-kicker">Stage 2 of 9 · <span class="lab-mode identity">identity</span> · about 5 min</div><h1>Every agent gets its own account</h1><p class="lab-goal"><strong>Goal.</strong> Give each agent its own credential and see which damage that removes and which damage remains.</p></header>
+<header class="lab-hero"><div class="lab-kicker">Stage 2 of 7 · <span class="lab-mode identity">identity</span> · about 5 min</div><h1>Every agent gets its own account</h1><p class="lab-goal"><strong>Goal.</strong> Give each agent its own credential and see which damage that removes and which damage remains.</p></header>
 
 <p class="lab-intro">Now each agent has its own credential with permissions that match its role. Flight Agent does flight things. Check-in Agent reads reservations and checks people in.</p>
 
@@ -21,7 +21,7 @@ lab_stage: 2
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="2:1"><span>2</span></label>
 <div class="lab-step-body"><p>Run the checks and compare with stage 1. Count what is still <strong>ALLOWED</strong> with a ✗ next to it.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 49 lines</span></summary><pre><code>
-Stage 2 of 9: Every agent gets its own account   mode=identity  scenario=spring-break
+Stage 2 of 7: Every agent gets its own account   mode=identity  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-2
 
 WALLET  Alice: $459 of $1200

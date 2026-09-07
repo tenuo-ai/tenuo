@@ -1,5 +1,5 @@
 /**
- * Stage 7: someone stole a permission.
+ * Stage 6: someone stole a permission.
  *
  * Boarding Agent's permission for UA214 is a piece of data: `toWire()` is a
  * list of strings. Here Activity Agent gets a copy and tries to import it

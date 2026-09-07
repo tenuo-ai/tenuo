@@ -214,12 +214,12 @@ async function warmup(): Promise<void> {
     return;
   }
   console.log("");
-  console.log(bold("Warm-up (from the three sections you read, not graded)"));
+  console.log(bold("Warm-up (not graded)"));
   console.log("");
   WARMUP.forEach(([q], i) => console.log(`  ${i + 1}. ${q}`));
   console.log("");
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  await rl.question(dim("  Answer each in one line in your head, then press enter to see the answers and start stage 1. "));
+  await rl.question(dim("  Answer each in one line in your head, or just read them. Press enter to see the answers and start stage 1. "));
   rl.close();
   console.log("");
   WARMUP.forEach(([q, a], i) => {
@@ -254,8 +254,8 @@ async function cmdLab(def: StageDef): Promise<void> {
   printFunctionality(functionality);
   printExplorerLink(built);
   await emit("run", def.n, { command: "lab", scenario, functionalityOk: functionality.ok, centralCalls: built.runtime.audit.centralCalls() });
-  if (def.n === 8) {
-    console.log(dim("  This stage is supposed to break the trip. Notice where, and who decided."));
+  if (def.breaksTrip === true) {
+    console.log(dim("  The terminal link breaks the trip on purpose. Notice where, and who decided."));
     console.log("");
   }
   console.log(dim("  npm run attack   the rogue behavior and the tests      npm run score   points and why"));
@@ -332,7 +332,7 @@ async function cmdAttack(def: StageDef): Promise<void> {
       centralCalls: built.runtime.audit.centralCalls(),
     });
   }
-  if (def.n === 6) {
+  if (def.starAsk === true) {
     console.log(dim("  That check ran locally, in the agent's own process, with no server to ask."));
     console.log(dim("  The code that did it is open source: github.com/tenuo-ai/tenuo"));
     console.log(dim("  A star helps other people find it."));
@@ -399,7 +399,7 @@ async function cmdScore(def: StageDef): Promise<void> {
     }
     console.log("");
   }
-  if (functionality.ok && def.n !== 8) {
+  if (functionality.ok && def.breaksTrip !== true) {
     const state = loadState();
     if (!state.completed.includes(def.n)) {
       state.completed.push(def.n);
@@ -510,11 +510,9 @@ function cmdAmbassador(): void {
     const files: Record<number, string[]> = {
       3: ["answers/03-scoped/policy.ts"],
       4: ["answers/04-two-travelers/per-task.ts", "answers/04-two-travelers/policy-service.ts"],
-      5: ["answers/04-two-travelers/per-task.ts"],
-      6: ["answers/06-tenuo/chain.ts"],
-      7: ["answers/06-tenuo/chain.ts"],
-      8: ["answers/08-terminal/chain.ts"],
-      9: ["answers/09-incident/chain.ts"],
+      5: ["answers/05-tenuo/chain.ts"],
+      6: ["answers/06-extensions/chain.ts"],
+      7: ["answers/07-incident/chain.ts"],
     };
     for (const f of files[n] ?? []) {
       console.log(bold(`── ${f}`));

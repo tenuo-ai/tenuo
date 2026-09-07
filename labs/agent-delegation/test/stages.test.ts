@@ -58,20 +58,23 @@ describe("stage 3: scoped rules", () => {
   });
 });
 
-describe("stage 4: two travelers", () => {
-  it("the stage 3 policy breaks Bob's trip", async () => {
+describe("stage 4: two travelers, and the handoff", () => {
+  it("the stage 3 policy fails Bob's check-in", async () => {
     const r = await evaluate(4);
     expect(r.functionality.ok).toBe(false);
-    expect(r.functionality.steps.some((s) => s.trip === "trip-bob-sea" && !s.ok)).toBe(true);
+    expect(r.functionality.steps.find((s) => s.trip === "trip-bob-sea" && s.step.startsWith("check-in"))?.ok).toBe(false);
   });
-  it("per-task identities pass the cross-task probe, with registration and registry checks counted", async () => {
+  it("fix A: per-task identities pass cross-task, the handoff over-shares, and the policy component accepts the escalation", async () => {
     const r = await evaluate(4, "answers/04-two-travelers/per-task.ts");
     expect(r.functionality.ok).toBe(true);
     expect(r.probes.filter((p) => p.category === "cross-task").every((p) => p.ok)).toBe(true);
-    // Registration at task start plus one registry check per call: not zero.
+    const by = Object.fromEntries(r.probes.map((p) => [p.label, p]));
+    expect(by["check_in(UA214)   inherited?"]?.actual).toBe("ALLOWED");
+    expect(by["get_reservation(UA214)   inherited?"]?.actual).toBe("ALLOWED");
+    expect(by["requested: every reservation; read, check in, cancel"]?.actual).toBe("ALLOWED");
     expect(r.built.runtime.audit.centralCalls()).toBeGreaterThan(0);
   });
-  it("a policy service passes the cross-task probe at one central call per check", async () => {
+  it("fix B: the policy service passes cross-task with central calls", async () => {
     const r = await evaluate(4, "answers/04-two-travelers/policy-service.ts");
     expect(r.functionality.ok).toBe(true);
     expect(r.probes.filter((p) => p.category === "cross-task").every((p) => p.ok)).toBe(true);
@@ -79,20 +82,9 @@ describe("stage 4: two travelers", () => {
   });
 });
 
-describe("stage 5: the handoff", () => {
-  it("boarding-agent inherits check-in authority, and the policy service accepts the escalation", async () => {
-    const r = await evaluate(5, "answers/04-two-travelers/per-task.ts");
-    expect(r.functionality.ok).toBe(true);
-    const by = Object.fromEntries(r.probes.map((p) => [p.label, p]));
-    expect(by["check_in(UA214)   inherited?"]?.actual).toBe("ALLOWED");
-    expect(by["get_reservation(UA214)   inherited?"]?.actual).toBe("ALLOWED");
-    expect(by["requested: every reservation; read, check in, cancel"]?.actual).toBe("ALLOWED");
-  });
-});
-
-describe("stage 6: tenuo", () => {
+describe("stage 5: tenuo", () => {
   it("does not expose root signing material or holder private keys to agent code", async () => {
-    const r = await evaluate(6, "answers/06-tenuo/chain.ts");
+    const r = await evaluate(5, "answers/05-tenuo/chain.ts");
     const tenuo = r.built.runtime.tenuo!;
     expect("controlPlane" in tenuo).toBe(false);
     expect("holderKeys" in tenuo).toBe(false);
@@ -101,15 +93,14 @@ describe("stage 6: tenuo", () => {
       expect(Object.keys(context).sort()).toEqual(["publicKey", "tenuo"]);
     }
   });
-
   it("the starter fails at the first link the participant must write", async () => {
-    const r = await evaluate(6);
+    const r = await evaluate(5);
     expect(r.functionality.ok).toBe(false);
     const handoff = r.built.runtime.audit.records.find((x) => x.source === "handoff" && x.decision === "DENIED");
     expect(handoff?.reason).toMatch(/TODO: write the Flight → Check-in link/);
   });
   it("the completed chain books the trip, blocks everything, refuses the escalation locally, with zero central calls", async () => {
-    const r = await evaluate(6, "answers/06-tenuo/chain.ts");
+    const r = await evaluate(5, "answers/05-tenuo/chain.ts");
     expect(r.functionality.ok).toBe(true);
     expect(r.functionality.damage).toEqual([]);
     expect(r.probes.filter((p) => p.category !== "sanity").every((p) => p.ok)).toBe(true);
@@ -119,24 +110,23 @@ describe("stage 6: tenuo", () => {
     expect(r.score.total).toBeGreaterThanOrEqual(95);
   });
   it("the two-traveler run passes cross-task with no policy file", async () => {
-    const r = await evaluate(6, "answers/06-tenuo/chain.ts", "two-travelers");
+    const r = await evaluate(5, "answers/05-tenuo/chain.ts", "two-travelers");
     expect(r.functionality.ok).toBe(true);
     expect(r.probes.filter((p) => p.category === "cross-task").every((p) => p.ok)).toBe(true);
   });
 });
 
-describe("stage 7: stolen warrant", () => {
-  it("a copied warrant cannot be imported by another agent", async () => {
-    const r = await evaluate(7, "answers/06-tenuo/chain.ts");
+describe("stage 6: a stolen permission, and the end of the line", () => {
+  it("as shipped: the trip works and a copied warrant cannot be imported by another agent", async () => {
+    const r = await evaluate(6);
+    expect(r.functionality.ok).toBe(true);
     const stolen = r.probes.find((p) => p.section.startsWith("STOLEN"));
     expect(stolen?.ok).toBe(true);
     expect(stolen?.code).toBe("TENUO_INVALID_POP");
+    expect(r.probes.find((p) => p.section === "TERMINAL")?.ok).toBe(false);
   });
-});
-
-describe("stage 8: terminal", () => {
-  it("the terminal link stops the handoff with TENUO_DEPTH_EXCEEDED and the trip breaks there", async () => {
-    const r = await evaluate(8, "answers/08-terminal/chain.ts");
+  it("with the terminal link: the handoff stops with TENUO_DEPTH_EXCEEDED and the trip breaks there", async () => {
+    const r = await evaluate(6, "answers/06-extensions/chain.ts");
     expect(r.functionality.ok).toBe(false);
     const terminal = r.probes.find((p) => p.section === "TERMINAL");
     expect(terminal?.ok).toBe(true);
@@ -146,9 +136,9 @@ describe("stage 8: terminal", () => {
   });
 });
 
-describe("stage 9: the incident", () => {
+describe("stage 7: the incident", () => {
   it("the starter fails items 4, 5, and 7", async () => {
-    const r = await evaluate(9);
+    const r = await evaluate(7);
     const by = Object.fromEntries(r.probes.map((p) => [p.label.slice(0, 2), p]));
     expect(by["1."]?.ok).toBe(true);
     expect(by["2."]?.ok).toBe(true);
@@ -160,7 +150,7 @@ describe("stage 9: the incident", () => {
     expect(by["8."]?.ok).toBe(true);
   });
   it("the answer lands all eight and books the trip", async () => {
-    const r = await evaluate(9, "answers/09-incident/chain.ts");
+    const r = await evaluate(7, "answers/07-incident/chain.ts");
     expect(r.functionality.ok).toBe(true);
     expect(r.probes.every((p) => p.ok)).toBe(true);
     expect(r.probes.find((p) => p.label.startsWith("7."))?.code).toBe("TENUO_DEPTH_EXCEEDED");

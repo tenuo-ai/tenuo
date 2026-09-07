@@ -1,23 +1,29 @@
 /**
- * Stage 8: how far can this travel?
+ * Stage 5: access that travels with the work.
  *
- * This is a completed stage 6 chain. Find the Flight → Check-in link and
- * mark what Flight Agent hands over as terminal, so that Check-in Agent
- * cannot hand it on. Then run the trip and see what fails, and who decided.
+ * Each function returns a session bound to the *next* agent's key. The
+ * caller cannot use what it hands over (it holds no secret for it); the
+ * receiver imports it with its own holder key. Core refuses any link that
+ * is not within its parent before a token exists.
+ *
+ * The first four links are written for you. Read them first:
+ *   - the root lists everything anyone further down will ever need, because
+ *     a child can never hold what its parent does not;
+ *   - `reservation` at the root means "any Cancún flight this trip might
+ *     book". Notice which link narrows that to the one that was booked.
+ *
+ * You write the last two: flightToCheckin and checkinToBoarding.
+ *
+ * Policies are zero-trust: every argument a tool is called with must be
+ * named. `any()` names a free-form string argument without constraining it.
  */
 import { exact, max, oneOf, pattern, type Session, type Tenuo } from "@tenuo/core";
 import type { Fleet } from "../../src/keys.ts";
 import type { Trip } from "../../src/mission.ts";
 
-/** A free-form string argument. Named because policies are zero-trust: every argument must be listed. */
 const any = () => pattern("*");
 
-/**
- * Root. Minted by the control plane, bound to Travel Agent's key. It must
- * carry everything any agent further down will ever need, because a child
- * can never hold what its parent does not. `reservation` says "any Cancún
- * flight this trip might book"; Flight Agent narrows it to the one it booked.
- */
+/** Root: minted by the control plane, held by Travel Agent. Written for you. */
 export function issueTrip(controlPlane: Tenuo, fleet: Fleet, trip: Trip): Session {
   const reservation = oneOf([...trip.candidateReservations]);
   const destination = oneOf([trip.destination]);
@@ -55,7 +61,7 @@ export function issueTrip(controlPlane: Tenuo, fleet: Fleet, trip: Trip): Sessio
   });
 }
 
-/** Travel → Flight: the flight branch, with the flight's share of the wallet. */
+/** Travel → Flight. Written for you. */
 export function travelToFlight(travel: Session, fleet: Fleet, trip: Trip): Session {
   const reservation = oneOf([...trip.candidateReservations]);
   const destination = oneOf([trip.destination]);
@@ -74,7 +80,7 @@ export function travelToFlight(travel: Session, fleet: Fleet, trip: Trip): Sessi
   );
 }
 
-/** Travel → Hotel: Cancún hotels under the nightly rate, name only, hotel share of the wallet. */
+/** Travel → Hotel. Written for you. */
 export function travelToHotel(travel: Session, fleet: Fleet, trip: Trip): Session {
   return fleet["travel-agent"].tenuo.narrow(
     travel,
@@ -95,7 +101,7 @@ export function travelToHotel(travel: Session, fleet: Fleet, trip: Trip): Sessio
   );
 }
 
-/** Travel → Activity. */
+/** Travel → Activity. Written for you. */
 export function travelToActivity(travel: Session, fleet: Fleet, trip: Trip): Session {
   return fleet["travel-agent"].tenuo.narrow(
     travel,
@@ -116,29 +122,23 @@ export function travelToActivity(travel: Session, fleet: Fleet, trip: Trip): Ses
 }
 
 /**
- * Flight → Check-in. Flight Agent has booked and knows the reservation, so
- * this is the link that narrows "any Cancún flight" to "this one."
+ * Flight → Check-in. YOU WRITE THIS.
+ *
+ * Flight Agent has just booked `reservation`. Check-in Agent needs to read
+ * that reservation and check it in, and it needs to be able to hand the
+ * boarding pass on. Nothing else. Bind the result to Check-in Agent's key
+ * (`fleet["checkin-agent"].publicKey`) with a short lifetime.
  */
 export function flightToCheckin(flight: Session, fleet: Fleet, trip: Trip, reservation: string): Session {
-  const only = oneOf([reservation]);
-  return fleet["flight-agent"].tenuo.narrow(
-    flight,
-    {
-      get_reservation: { reservation: only },
-      check_in: { reservation: only },
-      issue_boarding_pass: { reservation: only },
-    },
-    // Add `terminal: true` to these options.
-    { holder: fleet["checkin-agent"].publicKey, ttlSeconds: 5 * 60 },
-  );
+  throw new Error(`TODO: write the Flight → Check-in link for ${reservation} (exercises/05-tenuo/chain.ts)`);
 }
 
-/** Check-in → Boarding: one reservation, the boarding pass, nothing else. */
+/**
+ * Check-in → Boarding. YOU WRITE THIS.
+ *
+ * Boarding Agent needs to issue the boarding pass for `reservation`, and
+ * nothing else at all.
+ */
 export function checkinToBoarding(checkin: Session, fleet: Fleet, trip: Trip, reservation: string): Session {
-  const only = oneOf([reservation]);
-  return fleet["checkin-agent"].tenuo.narrow(
-    checkin,
-    { issue_boarding_pass: { reservation: only } },
-    { holder: fleet["boarding-agent"].publicKey, ttlSeconds: 2 * 60 },
-  );
+  throw new Error(`TODO: write the Check-in → Boarding link for ${reservation} (exercises/05-tenuo/chain.ts)`);
 }

@@ -211,7 +211,7 @@ npm install
 npm run lab
 ```
 
-Nine stages, ninety minutes, no agent-framework experience needed. You watch three classic approaches fail in three different ways before Tenuo appears, then write the delegation chain yourself. Runs offline, no API key. The guide is at [tenuo.ai/lab](https://tenuo.ai/lab/); the code is in [`labs/agent-delegation`](./labs/agent-delegation/README.md).
+Seven stages, ninety minutes for the first five, no agent-framework experience needed. You watch three classic approaches fail in three different ways before Tenuo appears, then write the delegation chain yourself. Runs offline, no API key. The guide is at [tenuo.ai/lab](https://tenuo.ai/lab/); the code is in [`labs/agent-delegation`](./labs/agent-delegation/README.md).
 
 ---
 
@@ -290,7 +290,7 @@ These are deployment choices for one authorization system. A warrant can be veri
 
 | Resource | Description |
 |----------|-------------|
-| **[Agent Delegation Challenge](./labs/agent-delegation/README.md)** | A hands-on lab: six agents, one rogue, nine stages |
+| **[Agent Delegation Challenge](./labs/agent-delegation/README.md)** | A hands-on lab: six agents, one rogue, seven stages |
 | **[Quickstart](https://tenuo.ai/quickstart)** | Get running in 5 minutes |
 | **[Concepts](https://tenuo.ai/concepts)** | How warrants and attenuation work |
 | **[Constraints](https://tenuo.ai/constraints)** | All 11 constraint types explained |

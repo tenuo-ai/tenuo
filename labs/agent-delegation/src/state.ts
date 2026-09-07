@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { STAGES } from "./stages.ts";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Override for the site builder and tests, so a captured run never touches a participant's state. */
@@ -30,7 +31,7 @@ export function loadState(): LabState {
   try {
     const parsed = JSON.parse(readFileSync(STATE_FILE, "utf8")) as Partial<LabState>;
     return {
-      stage: typeof parsed.stage === "number" && parsed.stage >= 1 && parsed.stage <= 9 ? parsed.stage : 1,
+      stage: typeof parsed.stage === "number" && parsed.stage >= 1 && parsed.stage <= STAGES.length ? parsed.stage : 1,
       completed: Array.isArray(parsed.completed) ? parsed.completed.filter((n): n is number => typeof n === "number") : [],
       ...(parsed.warmupDone === true ? { warmupDone: true } : {}),
       ...(parsed.telemetry !== undefined && typeof parsed.telemetry === "object" && typeof parsed.telemetry.sessionId === "string"

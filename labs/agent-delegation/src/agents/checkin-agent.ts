@@ -40,7 +40,7 @@ export async function runCheckinAgent(rt: Runtime, trip: Trip, reservation: stri
   //          credential. Look at what Boarding Agent can do afterward.
   // Stage 6+: Check-in Agent narrows what it holds to exactly that pass and
   //          binds it to Boarding Agent's key. The participant writes this
-  //          link in exercises/06-tenuo/chain.ts.
+  //          link in exercises/05-tenuo/chain.ts.
   const boardingCredential = rt.stage.handoff === "pass-credential" ? me.credential : undefined;
   const to: AgentId = "boarding-agent";
   const ok = me.handoff(to, (chain, mine) => chain.checkinToBoarding(mine, rt.tenuo!.fleet, trip, reservation), reservation);

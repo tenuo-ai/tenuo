@@ -4,9 +4,9 @@ title: "Stage 1: One key for everyone"
 description: "See what a rogue agent can do when every agent shares one credential."
 lab_stage: 1
 ---
-<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" class="current" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a><a href="/lab/stage-9" data-n="9" title="Stage 9">9</a><a href="/lab/stage-10" data-n="10" title="Stage 10">10</a></nav>
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" class="current" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a></nav>
 
-<header class="lab-hero"><div class="lab-kicker">Stage 1 of 9 · <span class="lab-mode shared">shared</span> · about 5 min</div><h1>One key for everyone</h1><p class="lab-goal"><strong>Goal.</strong> See what a rogue agent can do when every agent shares one credential.</p></header>
+<header class="lab-hero"><div class="lab-kicker">Stage 1 of 7 · <span class="lab-mode shared">shared</span> · about 5 min</div><h1>One key for everyone</h1><p class="lab-goal"><strong>Goal.</strong> See what a rogue agent can do when every agent shares one credential.</p></header>
 
 <p class="lab-intro">Six agents book Alice's trip. All six carry the same key, and it opens everything: flights, hotels, the wallet, her passport number, the calendar.</p>
 <p class="lab-intro">There is no setup in this stage. Its job is to show you the damage before anything protects against it.</p>
@@ -18,7 +18,7 @@ lab_stage: 1
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="1:0"><span>1</span></label>
 <div class="lab-step-body"><p>Start the lab and watch the trip get booked.</p><pre class="lab-cmd"><code>npm run lab</code></pre><details class="lab-term"><summary>What you should see <span>npm run lab · 55 lines</span></summary><pre><code>
-Stage 1 of 9: One key for everyone   mode=shared  scenario=spring-break
+Stage 1 of 7: One key for everyone   mode=shared  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-1
 
   Every agent carries the same credential. It opens flights, hotels, activities, the wallet,
@@ -76,7 +76,7 @@ WHAT ELSE HAPPENED
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="1:1"><span>2</span></label>
 <div class="lab-step-body"><p>Run the rogue behavior and the security checks. Read <strong>WHAT ELSE HAPPENED</strong> and look at the wallet.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 51 lines</span></summary><pre><code>
-Stage 1 of 9: One key for everyone   mode=shared  scenario=spring-break
+Stage 1 of 7: One key for everyone   mode=shared  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-1
 
 WALLET  Alice: $47 of $1200

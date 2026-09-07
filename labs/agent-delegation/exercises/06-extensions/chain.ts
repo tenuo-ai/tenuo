@@ -1,5 +1,5 @@
 /**
- * Reference solution for stage 8.
+ * Stage 6: how far can this travel?
  *
  * This is a completed stage 6 chain. Find the Flight → Check-in link and
  * mark what Flight Agent hands over as terminal, so that Check-in Agent
@@ -128,7 +128,8 @@ export function flightToCheckin(flight: Session, fleet: Fleet, trip: Trip, reser
       check_in: { reservation: only },
       issue_boarding_pass: { reservation: only },
     },
-    { holder: fleet["checkin-agent"].publicKey, ttlSeconds: 5 * 60, terminal: true },
+    // Add `terminal: true` to these options.
+    { holder: fleet["checkin-agent"].publicKey, ttlSeconds: 5 * 60 },
   );
 }
 

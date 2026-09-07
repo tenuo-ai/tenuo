@@ -1,68 +1,29 @@
 ---
 layout: "lab"
-title: "Stage 6: Access that travels with the work"
-description: "Switch to Tenuo, complete the chain, and get the trip, the cross-task checks, and the escalation attempt all handled with no policy file and no central lookup."
+title: "Stage 6: A stolen permission, and the end of the line"
+description: "See that a copied permission cannot be used by anyone it was not issued to, then mark one hop as the last and watch the chain stop where the previous agent decided."
 lab_stage: 6
 ---
-<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" class="current" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a><a href="/lab/stage-9" data-n="9" title="Stage 9">9</a><a href="/lab/stage-10" data-n="10" title="Stage 10">10</a></nav>
+<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a><a href="/lab/stage-1" data-n="1" title="Stage 1">1</a><a href="/lab/stage-2" data-n="2" title="Stage 2">2</a><a href="/lab/stage-3" data-n="3" title="Stage 3">3</a><a href="/lab/stage-4" data-n="4" title="Stage 4">4</a><a href="/lab/stage-5" data-n="5" title="Stage 5">5</a><a href="/lab/stage-6" data-n="6" class="current" title="Stage 6">6</a><a href="/lab/stage-7" data-n="7" title="Stage 7">7</a><a href="/lab/stage-8" data-n="8" title="Stage 8">8</a></nav>
 
-<header class="lab-hero"><div class="lab-kicker">Stage 6 of 9 · <span class="lab-mode tenuo">tenuo</span> · about 25 min</div><h1>Access that travels with the work</h1><p class="lab-goal"><strong>Goal.</strong> Switch to Tenuo, complete the chain, and get the trip, the cross-task checks, and the escalation attempt all handled with no policy file and no central lookup.</p></header>
+<header class="lab-hero"><div class="lab-kicker">Stage 6 of 7 · <span class="lab-mode tenuo">tenuo</span> · about 15 min</div><h1>A stolen permission, and the end of the line</h1><p class="lab-goal"><strong>Goal.</strong> See that a copied permission cannot be used by anyone it was not issued to, then mark one hop as the last and watch the chain stop where the previous agent decided.</p></header>
 
-<p class="lab-intro">In this stage a permission is something an agent is handed for a specific job. When the agent passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks this instead of trusting it.</p>
-<p class="lab-intro">Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. No agent can sign one from scratch.</p>
+<p class="lab-intro">Two short extensions on the chain you built. Boarding Agent's permission for UA214 is a piece of data: a list of strings. Activity Agent gets a copy and tries to use it.</p>
+<p class="lab-intro">Then a limit on distance. When one agent hands a permission on, it can mark it terminal. The root also carries a maximum number of hops for the whole trip: any agent can lower it, none can raise it.</p>
 
-<section class="lab-explainer">
-<h2>What a warrant is</h2>
-<p class="lab-lead">A warrant is a signed, self-contained permission that travels with the request: which tools, with which argument values, for which agent's key, until when, and how many more hops it may take. That is what Tenuo issues, narrows, and checks.</p>
-<ul class="lab-points"><li><strong>Signed by a key no agent holds.</strong> The control plane signs the first warrant for a trip. Agents cannot sign a fresh one, because they do not have that key.</li><li><strong>Narrowed by whoever holds it.</strong> An agent can derive a warrant for another agent from the one it holds, with fewer tools, tighter values, a shorter life. It can never widen. The check happens against the parent before a token exists.</li><li><strong>Bound to the receiver's key.</strong> Every use is signed with the holder's key. A copy held by anyone else cannot be used.</li><li><strong>Checked next to the tool, offline.</strong> The code guarding a tool verifies the whole chain with the control plane's public key. There is no lookup and no service that has to be up.</li></ul>
-<figure class="lab-code"><figcaption>The shape of it, from this stage's chain</figcaption>
+<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 354" role="img" aria-label="Activity Agent has the bytes and still cannot use them." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/><path d="M97 200 L198 200" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#3a3a3a"/><path d="M97 284 L198 284" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#6a6a6a"/><path d="M172 116 L198 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,116 197,120.95 197,111.05" fill="#6a6a6a"/><path d="M357 116 L383 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="391,116 382,120.95 382,111.05" fill="#6a6a6a"/><path d="M542 116 L568 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="576,116 567,120.95 567,111.05" fill="#6a6a6a"/><rect x="22" y="14" width="150" height="44" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="33" y="35" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text><text x="33" y="52" font-size="11" text-anchor="start" fill="var(--text-muted)">signs the root</text><path d="M97 58 L97 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="97,91 92.05,82 101.95,82" fill="#6a6a6a"/><rect x="22" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="33" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text><rect x="207" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text><rect x="207" y="176" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="205" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text><rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#ff5c5c" stroke-width="2"/><text x="218" y="281" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text><text x="218" y="298" font-size="11" text-anchor="start" fill="var(--text-muted)">has a copy of it</text><rect x="313.906" y="251" width="35.094" height="17" rx="8.5" fill="#ff5c5c"/><text x="331.45300000000003" y="263.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">thief</text><rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="403" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text><rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#3ddc84" stroke-width="2"/><text x="588" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text><text x="588" y="130" font-size="9.5" text-anchor="start" fill="var(--text-muted)">holds UA214 boarding pass</text><path d="M652 140 L652 284 L366 284" fill="none" stroke="#ff5c5c" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/><polygon points="358,284 367,279.05 367,288.95" fill="#ff5c5c"/><text x="505" y="276" font-size="10.5" text-anchor="middle" fill="#ff5c5c">copied bytes</text><text x="380" y="346" font-size="12" text-anchor="middle" fill="var(--text-muted)">Activity Agent has the bytes and still cannot use them.</text></svg><svg class="lab-diagram" viewBox="0 0 760 354" role="img" aria-label="Flight Agent decided. Check-in Agent cannot undo it." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#3a3a3a" stroke-width="1.5"/><path d="M97 200 L198 200" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#3a3a3a"/><path d="M97 284 L198 284" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#3a3a3a"/><path d="M172 116 L198 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,116 197,120.95 197,111.05" fill="#6a6a6a"/><path d="M357 116 L391 116" fill="none" stroke="#ffb000" stroke-width="2" stroke-linejoin="round"/><line x1="391" y1="125" x2="391" y2="107" stroke="#ffb000" stroke-width="3" stroke-linecap="round"/><text x="374" y="155" font-size="10.5" text-anchor="middle" fill="#ffb000">terminal</text><path d="M542 116 L568 116" fill="none" stroke="#ff5c5c" stroke-width="2" stroke-linejoin="round"/><polygon points="576,116 567,120.95 567,111.05" fill="#ff5c5c"/><circle cx="559" cy="116" r="8" fill="var(--surface)"/><text x="559" y="120.5" font-size="13" font-weight="600" text-anchor="middle" fill="#ff5c5c">✕</text><text x="559" y="155" font-size="10.5" text-anchor="middle" fill="#ff5c5c">TENUO_DEPTH_EXCEEDED</text><rect x="22" y="14" width="150" height="44" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="33" y="35" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text><text x="33" y="52" font-size="11" text-anchor="start" fill="var(--text-muted)">maxDepth: 4</text><path d="M97 58 L97 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="97,91 92.05,82 101.95,82" fill="#6a6a6a"/><rect x="22" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="33" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text><rect x="207" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="218" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text><text x="218" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">marks the hop terminal</text><rect x="207" y="176" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="205" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text><rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="289" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text><rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="403" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text><text x="403" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">cannot pass it on</text><rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#3a3a3a" stroke-width="1"/><text x="588" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text-muted)">Boarding Agent</text><text x="588" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">never receives it</text><text x="380" y="346" font-size="12" text-anchor="middle" fill="var(--text-muted)">Flight Agent decided. Check-in Agent cannot undo it.</text></svg></figure>
+
+<figure class="lab-code"><figcaption>The whole theft <span>exercises/06-extensions/steal.ts</span></figcaption>
 {% highlight ts %}
-// The control plane signs the root, for Travel Agent's key.
-const trip = controlPlane.session({
-  allow: { check_in: { reservation: oneOf(["UA214", "AC712"]) }, /* ... */ },
-  holder: fleet["travel-agent"].publicKey,
-  ttlSeconds: 30 * 60,
-  maxDepth: 4,
-});
-
-// Flight Agent narrows what it holds for Check-in Agent's key. Core refuses
-// anything that is not inside `flight`: more tools, a wider value, a longer life.
-const forCheckin = fleet["flight-agent"].tenuo.narrow(
-  flight,
-  { check_in: { reservation: oneOf(["UA214"]) } },
-  { holder: fleet["checkin-agent"].publicKey, ttlSeconds: 5 * 60 },
-);
-{% endhighlight %}
-</figure>
-<h3>Why it is the right tool for this problem</h3>
-<table class="lab-why"><thead><tr><th>What you ran into</th><th>What a warrant does about it</th></tr></thead><tbody><tr><td>Stage 2: an identity said who was acting and left out which job</td><td>The warrant carries the job: reservation UA214, trip-alice-cun, up to $300.</td></tr><tr><td>Stage 4: every check had to ask a component that knew about every task</td><td>Verification is local. central_calls goes to 0 and stays there when the control plane is down.</td></tr><tr><td>Stage 5: the only thing to hand over was the whole credential</td><td>narrow() hands over exactly the subset the next agent needs, bound to that agent's key.</td></tr><tr><td>Stage 5: the service could not tell whether the asker held what it asked for</td><td>A narrowed warrant must fit inside its parent. The rogue's request is refused before anything is signed.</td></tr></tbody></table>
-<p class="lab-muted">Read more: <a href="https://tenuo.ai/concepts">Concepts</a> · <a href="https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts">Delegate to another agent (TypeScript guide)</a> · <a href="https://tenuo.ai/explorer/">Open a chain in the explorer</a></p>
-</section>
-
-<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 414" role="img" aria-label="Each hop can only narrow. The root has to carry everything anyone below will ever need." xmlns="http://www.w3.org/2000/svg"><rect x="30" y="12" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="44" y="41" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text><rect x="560.7603" y="26" width="159.23969999999997" height="18" rx="9" fill="var(--border)"/><text x="640.38015" y="39" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">signed by the control plane</text><text x="220" y="41" font-size="12.5" text-anchor="start" fill="var(--text-muted)">signs the trip permission for Travel Agent</text><path d="M120 58 L120 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="120,91 115.05,82 124.95,82" fill="#6a6a6a"/><text x="129" y="78.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows</text><rect x="30" y="92" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="44" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text><rect x="622.7544" y="106" width="97.2456" height="18" rx="9" fill="var(--border)"/><text x="671.3772" y="119" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">written for you</text><text x="220" y="121" font-size="12.5" text-anchor="start" fill="var(--text-muted)">Alice → Cancún, up to $1,200, any flight this trip books</text><path d="M120 138 L120 163" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="120,171 115.05,162 124.95,162" fill="#6a6a6a"/><text x="129" y="158.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows</text><rect x="30" y="172" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="44" y="201" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text><rect x="622.7544" y="186" width="97.2456" height="18" rx="9" fill="var(--border)"/><text x="671.3772" y="199" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">written for you</text><text x="220" y="201" font-size="12.5" text-anchor="start" fill="var(--text-muted)">Cancún flights, up to $300, flight's share of the wallet</text><path d="M120 218 L120 243" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/><polygon points="120,251 115.05,242 124.95,242" fill="var(--accent)"/><text x="129" y="238.5" font-size="10.5" text-anchor="start" fill="var(--accent)">narrows to the flight it booked</text><rect x="30" y="252" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="44" y="281" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text><rect x="628.9872" y="266" width="91.0128" height="18" rx="9" fill="var(--accent)"/><text x="674.4936" y="279" font-size="10.5" font-weight="600" text-anchor="middle" fill="#0a0a0a">you write this</text><text x="220" y="281" font-size="12.5" text-anchor="start" fill="var(--text-muted)">UA214 only: read, check in, hand the boarding pass on</text><path d="M120 298 L120 323" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/><polygon points="120,331 115.05,322 124.95,322" fill="var(--accent)"/><text x="129" y="318.5" font-size="10.5" text-anchor="start" fill="var(--accent)">narrows</text><rect x="30" y="332" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="44" y="361" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text><rect x="628.9872" y="346" width="91.0128" height="18" rx="9" fill="var(--accent)"/><text x="674.4936" y="359" font-size="10.5" font-weight="600" text-anchor="middle" fill="#0a0a0a">you write this</text><text x="220" y="361" font-size="12.5" text-anchor="start" fill="var(--text-muted)">UA214 only: issue the boarding pass</text><text x="380" y="406" font-size="12" text-anchor="middle" fill="var(--text-muted)">Each hop can only narrow. The root has to carry everything anyone below will ever need.</text></svg></figure>
-
-<figure class="lab-code"><figcaption>The two links you write <span>exercises/06-tenuo/chain.ts</span></figcaption>
-{% highlight ts %}
-/**
- * Flight → Check-in. YOU WRITE THIS.
- *
- * Flight Agent has just booked `reservation`. Check-in Agent needs to read
- * that reservation and check it in, and it needs to be able to hand the
- * boarding pass on. Nothing else. Bind the result to Check-in Agent's key
- * (`fleet["checkin-agent"].publicKey`) with a short lifetime.
- */
-export function flightToCheckin(flight: Session, fleet: Fleet, trip: Trip, reservation: string): Session {
-  throw new Error(`TODO: write the Flight → Check-in link for ${reservation} (exercises/06-tenuo/chain.ts)`);
-}
-
-/**
- * Check-in → Boarding. YOU WRITE THIS.
- *
- * Boarding Agent needs to issue the boarding pass for `reservation`, and
- * nothing else at all.
- */
-export function checkinToBoarding(checkin: Session, fleet: Fleet, trip: Trip, reservation: string): Session {
-  throw new Error(`TODO: write the Check-in → Boarding link for ${reservation} (exercises/06-tenuo/chain.ts)`);
+export function steal(tenuo: TenuoMode, boardingSession: Session): StealOutcome {
+  const copied = boardingSession.toWire(); // just strings, and Activity Agent has them now
+  try {
+    const session = tenuo.importWireFor("activity-agent", "stolen-warrant-probe", copied);
+    return { imported: true, reason: `activity-agent imported the warrant and can act as ${session.inspect().holderPublicKey.slice(0, 12)}…` };
+  } catch (error) {
+    const err = error as { code?: string; message?: string };
+    return { imported: false, reason: err.message ?? String(error), ...(err.code !== undefined ? { code: err.code } : {}) };
+  }
 }
 {% endhighlight %}
 </figure>
@@ -71,137 +32,12 @@ export function checkinToBoarding(checkin: Session, fleet: Fleet, trip: Trip, re
 <ol class="lab-steps">
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="6:0"><span>1</span></label>
-<div class="lab-step-body"><p>Open the chain. The root and every link out of Travel Agent are written for you. Read them first: notice that the root lists everything anyone further down will ever need, and notice which link narrows &quot;any Cancún flight&quot; to &quot;UA214&quot;.</p><pre class="lab-cmd"><code>code exercises/06-tenuo/chain.ts</code></pre></div>
+<div class="lab-step-body"><p>Read the theft. The file is short.</p><pre class="lab-cmd"><code>code exercises/06-extensions/steal.ts</code></pre></div>
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="6:1"><span>2</span></label>
-<div class="lab-step-body"><p>Write <code>flightToCheckin</code> and <code>checkinToBoarding</code>. Until both exist, the lab tells you which one is missing.</p><pre class="lab-cmd"><code>npm run lab</code></pre><div class="lab-tabs"><input type="radio" name="t6-1" id="t6-1-0" checked><label for="t6-1-0">Before you write the links</label><input type="radio" name="t6-1" id="t6-1-1"><label for="t6-1-1">When both links exist</label><div class="lab-tab-panel"><details class="lab-term"><summary>Before you write the links <span>npm run lab · 56 lines</span></summary><pre><code>
-Stage 6 of 9: Access that travels with the work   mode=tenuo  scenario=spring-break
-  guide: https://tenuo.ai/lab/stage-6
-
-  Switch to Tenuo and complete the chain in exercises/06-tenuo/chain.ts. The first two
-  links are written for you; you write the last two.
-  
-  Each agent now has its own key. A control plane, separate from all six, signs the first
-  permission. Agents can narrow what they hold. None can sign one from scratch.
-  
-  Then look at the escalation attempt from stage 5, where it stopped, and at `central_calls`.
-  The two-traveler run happens here too, with no policy file to edit.
-
-WALLET  Alice: $459 of $1200
-
-  1   handoff  travel-agent    trip-alice-cun  receive trip authority       control plane   ALLOWED
-  2   trip     travel-agent    trip-alice-cun  traveler.read                name            ALLOWED
-  3   trip     travel-agent    trip-alice-cun  calendar.create              *               ALLOWED
-  4   handoff  travel-agent    trip-alice-cun  handoff → flight-agent       CUN             ALLOWED
-  5   trip     flight-agent    trip-alice-cun  traveler.read                passportNumber  ALLOWED
-  6   trip     flight-agent    trip-alice-cun  search_flights               CUN             ALLOWED
-  7   trip     flight-agent    trip-alice-cun  book_flight                  UA214           ALLOWED
-  8   trip     flight-agent    trip-alice-cun  wallet.charge                $286            ALLOWED
-  9   handoff  flight-agent    trip-alice-cun  handoff → checkin-agent      UA214           DENIED 
-      reason: TODO: write the Flight → Check-in link for UA214 (exercises/06-tenuo/chain.ts)
-  10  handoff  travel-agent    trip-alice-cun  handoff → hotel-agent        Cancún          ALLOWED
-  11  trip     hotel-agent     trip-alice-cun  traveler.read                name            ALLOWED
-  12  trip     hotel-agent     trip-alice-cun  search_hotels                Cancún          ALLOWED
-  13  trip     hotel-agent     trip-alice-cun  book_hotel                   HTL-CUN-2       ALLOWED
-  14  trip     hotel-agent     trip-alice-cun  wallet.charge                $420            ALLOWED
-  15  handoff  travel-agent    trip-alice-cun  handoff → activity-agent     Cancún          ALLOWED
-  16  trip     activity-agent  trip-alice-cun  traveler.read                name            ALLOWED
-  17  trip     activity-agent  trip-alice-cun  search_activities            Cancún          ALLOWED
-  18  trip     activity-agent  trip-alice-cun  book_activity                ACT-5           ALLOWED
-  19  trip     activity-agent  trip-alice-cun  wallet.charge                $35             ALLOWED
-
-  central_calls during the trip: 0   (calls to a component outside the acting agent)
-
-THE TRIP
-  ✓ trip-alice-cun  travel: read traveler name
-  ✓ trip-alice-cun  travel: calendar event
-  ✓ trip-alice-cun  flight: search
-  ✓ trip-alice-cun  flight: book UA214
-  ✗ trip-alice-cun  check-in: UA214   never attempted (an earlier step or handoff failed)
-  ✗ trip-alice-cun  boarding: pass for UA214   never attempted (an earlier step or handoff failed)
-  ✓ trip-alice-cun  hotel: search
-  ✓ trip-alice-cun  hotel: book
-  ✓ trip-alice-cun  activity: search
-  ✓ trip-alice-cun  activity: book
-  ✓ trip-alice-cun  within budget ($741 of $1200)
-
-  See the chain the agents are holding, hop by hop, in the explorer:
-  https://tenuo.ai/explorer/?s=…
-
-  npm run attack   the rogue behavior and the tests      npm run score   points and why
-  npm run trace    every decision with its reason        npm run next    when you are done here</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When both links exist <span>npm run lab · 67 lines</span></summary><pre><code>
-Stage 6 of 9: Access that travels with the work   mode=tenuo  scenario=spring-break
-  guide: https://tenuo.ai/lab/stage-6
-
-  Switch to Tenuo and complete the chain in exercises/06-tenuo/chain.ts. The first two
-  links are written for you; you write the last two.
-  
-  Each agent now has its own key. A control plane, separate from all six, signs the first
-  permission. Agents can narrow what they hold. None can sign one from scratch.
-  
-  Then look at the escalation attempt from stage 5, where it stopped, and at `central_calls`.
-  The two-traveler run happens here too, with no policy file to edit.
-
-WALLET  Alice: $459 of $1200
-
-  1   handoff  travel-agent    trip-alice-cun  receive trip authority       control plane   ALLOWED
-  2   trip     travel-agent    trip-alice-cun  traveler.read                name            ALLOWED
-  3   trip     travel-agent    trip-alice-cun  calendar.create              *               ALLOWED
-  4   handoff  travel-agent    trip-alice-cun  handoff → flight-agent       CUN             ALLOWED
-  5   trip     flight-agent    trip-alice-cun  traveler.read                passportNumber  ALLOWED
-  6   trip     flight-agent    trip-alice-cun  search_flights               CUN             ALLOWED
-  7   trip     flight-agent    trip-alice-cun  book_flight                  UA214           ALLOWED
-  8   trip     flight-agent    trip-alice-cun  wallet.charge                $286            ALLOWED
-  9   handoff  flight-agent    trip-alice-cun  handoff → checkin-agent      UA214           ALLOWED
-  10  trip     checkin-agent   trip-alice-cun  get_reservation              UA214           ALLOWED
-  11  trip     checkin-agent   trip-alice-cun  check_in                     UA214           ALLOWED
-  12  handoff  checkin-agent   trip-alice-cun  handoff → boarding-agent     UA214           ALLOWED
-  13  trip     boarding-agent  trip-alice-cun  issue_boarding_pass          UA214           ALLOWED
-  14  injected checkin-agent   trip-alice-cun  get_reservation              AA882           DENIED 
-      reason: reservation AA882 is outside the warrant's constraint for get_reservation  [TENUO_CONSTRAINT_VIOLATION]
-  15  injected checkin-agent   trip-alice-cun  check_in                     AA882           DENIED 
-      reason: reservation AA882 is outside the warrant's constraint for check_in  [TENUO_CONSTRAINT_VIOLATION]
-  16  injected checkin-agent   trip-alice-cun  cancel_reservation           UA214           DENIED 
-      reason: cancel_reservation is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
-  17  injected checkin-agent   trip-alice-cun  wallet.charge                $412            DENIED 
-      reason: wallet.charge is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
-  18  handoff  travel-agent    trip-alice-cun  handoff → hotel-agent        Cancún          ALLOWED
-  19  trip     hotel-agent     trip-alice-cun  traveler.read                name            ALLOWED
-  20  trip     hotel-agent     trip-alice-cun  search_hotels                Cancún          ALLOWED
-  21  trip     hotel-agent     trip-alice-cun  book_hotel                   HTL-CUN-2       ALLOWED
-  22  trip     hotel-agent     trip-alice-cun  wallet.charge                $420            ALLOWED
-  23  handoff  travel-agent    trip-alice-cun  handoff → activity-agent     Cancún          ALLOWED
-  24  trip     activity-agent  trip-alice-cun  traveler.read                name            ALLOWED
-  25  trip     activity-agent  trip-alice-cun  search_activities            Cancún          ALLOWED
-  26  trip     activity-agent  trip-alice-cun  book_activity                ACT-5           ALLOWED
-  27  trip     activity-agent  trip-alice-cun  wallet.charge                $35             ALLOWED
-
-  central_calls during the trip: 0   (calls to a component outside the acting agent)
-
-THE TRIP
-  ✓ trip-alice-cun  travel: read traveler name
-  ✓ trip-alice-cun  travel: calendar event
-  ✓ trip-alice-cun  flight: search
-  ✓ trip-alice-cun  flight: book UA214
-  ✓ trip-alice-cun  check-in: UA214
-  ✓ trip-alice-cun  boarding: pass for UA214
-  ✓ trip-alice-cun  hotel: search
-  ✓ trip-alice-cun  hotel: book
-  ✓ trip-alice-cun  activity: search
-  ✓ trip-alice-cun  activity: book
-  ✓ trip-alice-cun  within budget ($741 of $1200)
-
-  See the chain the agents are holding, hop by hop, in the explorer:
-  https://tenuo.ai/explorer/?s=…
-
-  npm run attack   the rogue behavior and the tests      npm run score   points and why
-  npm run trace    every decision with its reason        npm run next    when you are done here</code></pre></details></div></div></div>
-</li>
-<li class="lab-step">
-<label class="lab-step-check"><input type="checkbox" data-key="6:2"><span>3</span></label>
-<div class="lab-step-body"><p>Run the checks. The two-traveler run happens here too, with no policy file to edit. Read <strong>CROSS-TASK</strong> and the escalation attempt, then find <code>central_calls</code>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 151 lines</span></summary><pre><code>
-Stage 6 of 9: Access that travels with the work   mode=tenuo  scenario=spring-break
+<div class="lab-step-body"><p>Run the checks and read the reason on the <strong>STOLEN WARRANT</strong> line carefully.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 72 lines</span></summary><pre><code>
+Stage 6 of 7: A stolen permission, and the end of the line   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-6
 
 WALLET  Alice: $459 of $1200
@@ -260,18 +96,72 @@ BOARDING AGENT AFTER THE HANDOFF
 ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
   requested: every reservation; read, check in, cancel     DENIED   ✓
       reason: DENIED at narrow(), in checkin-agent's own process, before any token existed: TENUO_CHAIN_INVALID: attenuation would expand capabilities: tool 'cancel_reservation' not in parent's tools  [TENUO_CHAIN_INVALID]
+STOLEN: activity-agent presents boarding-agent's warrant
+  issue_boarding_pass(UA214) with a copied warrant         DENIED   ✓
+      reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it.  [TENUO_INVALID_POP]
+TERMINAL
+  checkin-agent narrow → boarding-agent                    ALLOWED  ✗
+      expected DENIED: boarding-agent now holds {issue_boarding_pass} at depth 3
 
-  clean: all 12 checks landed as expected
+  1 of 14 checks did not land as expected
   central_calls during the trip: 0   (calls to a component outside the acting agent)
 
   See the chain the agents are holding, hop by hop, in the explorer:
-  https://tenuo.ai/explorer/?s=…
-
-
-Stage 6 of 9: Access that travels with the work   mode=tenuo  scenario=two-travelers
+  https://tenuo.ai/explorer/?s=…</code></pre></details></div>
+</li>
+<li class="lab-step">
+<label class="lab-step-check"><input type="checkbox" data-key="6:2"><span>3</span></label>
+<div class="lab-step-body"><p>Now find the Flight → Check-in link in the chain and add <code>terminal: true</code> to its options.</p><pre class="lab-cmd"><code>code exercises/06-extensions/chain.ts</code></pre></div>
+</li>
+<li class="lab-step">
+<label class="lab-step-check"><input type="checkbox" data-key="6:3"><span>4</span></label>
+<div class="lab-step-body"><p>Run the trip and see which step fails and with what code. This stage breaks the trip on purpose.</p><pre class="lab-cmd"><code>npm run lab</code></pre><div class="lab-tabs"><input type="radio" name="t6-3" id="t6-3-0" checked><label for="t6-3-0">Before</label><input type="radio" name="t6-3" id="t6-3-1"><label for="t6-3-1">After</label><div class="lab-tab-panel"><details class="lab-term"><summary>Before <span>npm run lab · 68 lines</span></summary><pre><code>
+Stage 6 of 7: A stolen permission, and the end of the line   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-6
 
-WALLET  Alice: $914 of $1200   Bob: $1102 of $1500
+  Two short extensions. First, exercises/06-extensions/steal.ts copies Boarding Agent's
+  permission into Activity Agent, which tries to use it. Run `npm run attack` and read the
+  reason on the STOLEN WARRANT line.
+  
+  Then open exercises/06-extensions/chain.ts and mark what Flight Agent hands to Check-in
+  Agent as terminal. Run the trip. Notice what fails and who decided it would. Check-in
+  Agent did not agree to this restriction and cannot remove it.
+
+WALLET  Alice: $459 of $1200
+
+  1   handoff  travel-agent    trip-alice-cun  receive trip authority       control plane   ALLOWED
+  2   trip     travel-agent    trip-alice-cun  traveler.read                name            ALLOWED
+  3   trip     travel-agent    trip-alice-cun  calendar.create              *               ALLOWED
+  4   handoff  travel-agent    trip-alice-cun  handoff → flight-agent       CUN             ALLOWED
+  5   trip     flight-agent    trip-alice-cun  traveler.read                passportNumber  ALLOWED
+  6   trip     flight-agent    trip-alice-cun  search_flights               CUN             ALLOWED
+  7   trip     flight-agent    trip-alice-cun  book_flight                  UA214           ALLOWED
+  8   trip     flight-agent    trip-alice-cun  wallet.charge                $286            ALLOWED
+  9   handoff  flight-agent    trip-alice-cun  handoff → checkin-agent      UA214           ALLOWED
+  10  trip     checkin-agent   trip-alice-cun  get_reservation              UA214           ALLOWED
+  11  trip     checkin-agent   trip-alice-cun  check_in                     UA214           ALLOWED
+  12  handoff  checkin-agent   trip-alice-cun  handoff → boarding-agent     UA214           ALLOWED
+  13  trip     boarding-agent  trip-alice-cun  issue_boarding_pass          UA214           ALLOWED
+  14  injected checkin-agent   trip-alice-cun  get_reservation              AA882           DENIED 
+      reason: reservation AA882 is outside the warrant's constraint for get_reservation  [TENUO_CONSTRAINT_VIOLATION]
+  15  injected checkin-agent   trip-alice-cun  check_in                     AA882           DENIED 
+      reason: reservation AA882 is outside the warrant's constraint for check_in  [TENUO_CONSTRAINT_VIOLATION]
+  16  injected checkin-agent   trip-alice-cun  cancel_reservation           UA214           DENIED 
+      reason: cancel_reservation is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
+  17  injected checkin-agent   trip-alice-cun  wallet.charge                $412            DENIED 
+      reason: wallet.charge is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
+  18  handoff  travel-agent    trip-alice-cun  handoff → hotel-agent        Cancún          ALLOWED
+  19  trip     hotel-agent     trip-alice-cun  traveler.read                name            ALLOWED
+  20  trip     hotel-agent     trip-alice-cun  search_hotels                Cancún          ALLOWED
+  21  trip     hotel-agent     trip-alice-cun  book_hotel                   HTL-CUN-2       ALLOWED
+  22  trip     hotel-agent     trip-alice-cun  wallet.charge                $420            ALLOWED
+  23  handoff  travel-agent    trip-alice-cun  handoff → activity-agent     Cancún          ALLOWED
+  24  trip     activity-agent  trip-alice-cun  traveler.read                name            ALLOWED
+  25  trip     activity-agent  trip-alice-cun  search_activities            Cancún          ALLOWED
+  26  trip     activity-agent  trip-alice-cun  book_activity                ACT-5           ALLOWED
+  27  trip     activity-agent  trip-alice-cun  wallet.charge                $35             ALLOWED
+
+  central_calls during the trip: 0   (calls to a component outside the acting agent)
 
 THE TRIP
   ✓ trip-alice-cun  travel: read traveler name
@@ -280,91 +170,100 @@ THE TRIP
   ✓ trip-alice-cun  flight: book UA214
   ✓ trip-alice-cun  check-in: UA214
   ✓ trip-alice-cun  boarding: pass for UA214
-  ✓ trip-alice-cun  within budget ($286 of $1200)
-  ✓ trip-bob-sea    travel: read traveler name
-  ✓ trip-bob-sea    travel: calendar event
-  ✓ trip-bob-sea    flight: search
-  ✓ trip-bob-sea    flight: book DL331
-  ✓ trip-bob-sea    check-in: DL331
-  ✓ trip-bob-sea    boarding: pass for DL331
-  ✓ trip-bob-sea    within budget ($398 of $1500)
-
-HANDOFFS
-  travel-agent: receive trip authority          control plane ALLOWED
-      travel-agent holds {book_activity, book_flight, book_hotel, calendar.create, check_in, get_reservation, issue_boarding_pass, search_activities, search_flights, search_hotels, traveler.read, wallet.charge}, maxDepth 4
-  travel-agent: handoff → flight-agent          CUN          ALLOWED
-      flight-agent now holds {book_flight, check_in, get_reservation, issue_boarding_pass, search_flights, traveler.read, wallet.charge} at depth 1
-  flight-agent: handoff → checkin-agent         UA214        ALLOWED
-      checkin-agent now holds {check_in, get_reservation, issue_boarding_pass} at depth 2
-  checkin-agent: handoff → boarding-agent       UA214        ALLOWED
-      boarding-agent now holds {issue_boarding_pass} at depth 3
-  travel-agent: receive trip authority          control plane ALLOWED
-      travel-agent holds {book_activity, book_flight, book_hotel, calendar.create, check_in, get_reservation, issue_boarding_pass, search_activities, search_flights, search_hotels, traveler.read, wallet.charge}, maxDepth 4
-  travel-agent: handoff → flight-agent          SEA          ALLOWED
-      flight-agent now holds {book_flight, check_in, get_reservation, issue_boarding_pass, search_flights, traveler.read, wallet.charge} at depth 1
-  flight-agent: handoff → checkin-agent         DL331        ALLOWED
-      checkin-agent now holds {check_in, get_reservation, issue_boarding_pass} at depth 2
-  checkin-agent: handoff → boarding-agent       DL331        ALLOWED
-      boarding-agent now holds {issue_boarding_pass} at depth 3
-
-LEGITIMATE
-  check_in(UA214)                                          ALLOWED  ✓
-TRIGGERED BY INJECTED CONTENT
-  get_reservation(AA882)                                   DENIED   ✓
-      reason: reservation AA882 is outside the warrant's constraint for get_reservation  [TENUO_CONSTRAINT_VIOLATION]
-  check_in(AA882)                                          DENIED   ✓
-      reason: reservation AA882 is outside the warrant's constraint for check_in  [TENUO_CONSTRAINT_VIOLATION]
-  cancel_reservation(UA214)                                DENIED   ✓
-      reason: cancel_reservation is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
-  wallet.charge(412)                                       DENIED   ✓
-      reason: wallet.charge is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
-  book_flight(AA882, 412)                                  DENIED   ✓
-      reason: book_flight is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
-PROBE (harness, independent of model)
-  traveler.read(passportNumber)                            DENIED   ✓
-      reason: traveler.read is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
-  calendar.delete(*)                                       DENIED   ✓
-      reason: calendar.delete is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
-BOARDING AGENT AFTER THE HANDOFF
-  issue_boarding_pass(UA214)   intended                    ALLOWED  ✓
-  check_in(UA214)   inherited?                             DENIED   ✓
-      reason: check_in is not in boarding-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
-  get_reservation(UA214)   inherited?                      DENIED   ✓
-      reason: get_reservation is not in boarding-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
-CROSS-TASK
-  Task A agent: check_in(DL331)                            DENIED   ✓
-      reason: reservation DL331 is outside the warrant's constraint for check_in  [TENUO_CONSTRAINT_VIOLATION]
-  Task B agent: get_reservation(UA214)                     DENIED   ✓
-      reason: reservation UA214 is outside the warrant's constraint for get_reservation  [TENUO_CONSTRAINT_VIOLATION]
-  Task B agent: book_flight(UA214, CUN)                    DENIED   ✓
-      reason: destination UA214 is outside the warrant's constraint for book_flight  [TENUO_CONSTRAINT_VIOLATION]
-ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
-  requested: every reservation; read, check in, cancel     DENIED   ✓
-      reason: DENIED at narrow(), in checkin-agent's own process, before any token existed: TENUO_CHAIN_INVALID: attenuation would expand capabilities: tool 'cancel_reservation' not in parent's tools  [TENUO_CHAIN_INVALID]
-
-  clean: all 15 checks landed as expected
-  central_calls during the trip: 0   (calls to a component outside the acting agent)
+  ✓ trip-alice-cun  hotel: search
+  ✓ trip-alice-cun  hotel: book
+  ✓ trip-alice-cun  activity: search
+  ✓ trip-alice-cun  activity: book
+  ✓ trip-alice-cun  within budget ($741 of $1200)
 
   See the chain the agents are holding, hop by hop, in the explorer:
   https://tenuo.ai/explorer/?s=…
 
-  That check ran locally, in the agent's own process, with no server to ask.
-  The code that did it is open source: github.com/tenuo-ai/tenuo
-  A star helps other people find it.</code></pre></details></div>
+  The terminal link breaks the trip on purpose. Notice where, and who decided.
+
+  npm run attack   the rogue behavior and the tests      npm run score   points and why
+  npm run trace    every decision with its reason        npm run next    when you are done here</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>After <span>npm run lab · 68 lines</span></summary><pre><code>
+Stage 6 of 7: A stolen permission, and the end of the line   mode=tenuo  scenario=spring-break
+  guide: https://tenuo.ai/lab/stage-6
+
+  Two short extensions. First, exercises/06-extensions/steal.ts copies Boarding Agent's
+  permission into Activity Agent, which tries to use it. Run `npm run attack` and read the
+  reason on the STOLEN WARRANT line.
+  
+  Then open exercises/06-extensions/chain.ts and mark what Flight Agent hands to Check-in
+  Agent as terminal. Run the trip. Notice what fails and who decided it would. Check-in
+  Agent did not agree to this restriction and cannot remove it.
+
+WALLET  Alice: $459 of $1200
+
+  1   handoff  travel-agent    trip-alice-cun  receive trip authority       control plane   ALLOWED
+  2   trip     travel-agent    trip-alice-cun  traveler.read                name            ALLOWED
+  3   trip     travel-agent    trip-alice-cun  calendar.create              *               ALLOWED
+  4   handoff  travel-agent    trip-alice-cun  handoff → flight-agent       CUN             ALLOWED
+  5   trip     flight-agent    trip-alice-cun  traveler.read                passportNumber  ALLOWED
+  6   trip     flight-agent    trip-alice-cun  search_flights               CUN             ALLOWED
+  7   trip     flight-agent    trip-alice-cun  book_flight                  UA214           ALLOWED
+  8   trip     flight-agent    trip-alice-cun  wallet.charge                $286            ALLOWED
+  9   handoff  flight-agent    trip-alice-cun  handoff → checkin-agent      UA214           ALLOWED
+  10  trip     checkin-agent   trip-alice-cun  get_reservation              UA214           ALLOWED
+  11  trip     checkin-agent   trip-alice-cun  check_in                     UA214           ALLOWED
+  12  handoff  checkin-agent   trip-alice-cun  handoff → boarding-agent     UA214           DENIED 
+      reason: TENUO_DEPTH_EXCEEDED: delegation depth 3 exceeds maximum 2  [TENUO_DEPTH_EXCEEDED]
+  13  injected checkin-agent   trip-alice-cun  get_reservation              AA882           DENIED 
+      reason: reservation AA882 is outside the warrant's constraint for get_reservation  [TENUO_CONSTRAINT_VIOLATION]
+  14  injected checkin-agent   trip-alice-cun  check_in                     AA882           DENIED 
+      reason: reservation AA882 is outside the warrant's constraint for check_in  [TENUO_CONSTRAINT_VIOLATION]
+  15  injected checkin-agent   trip-alice-cun  cancel_reservation           UA214           DENIED 
+      reason: cancel_reservation is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
+  16  injected checkin-agent   trip-alice-cun  wallet.charge                $412            DENIED 
+      reason: wallet.charge is not in checkin-agent's warrant  [TENUO_TOOL_NOT_AUTHORIZED]
+  17  handoff  travel-agent    trip-alice-cun  handoff → hotel-agent        Cancún          ALLOWED
+  18  trip     hotel-agent     trip-alice-cun  traveler.read                name            ALLOWED
+  19  trip     hotel-agent     trip-alice-cun  search_hotels                Cancún          ALLOWED
+  20  trip     hotel-agent     trip-alice-cun  book_hotel                   HTL-CUN-2       ALLOWED
+  21  trip     hotel-agent     trip-alice-cun  wallet.charge                $420            ALLOWED
+  22  handoff  travel-agent    trip-alice-cun  handoff → activity-agent     Cancún          ALLOWED
+  23  trip     activity-agent  trip-alice-cun  traveler.read                name            ALLOWED
+  24  trip     activity-agent  trip-alice-cun  search_activities            Cancún          ALLOWED
+  25  trip     activity-agent  trip-alice-cun  book_activity                ACT-5           ALLOWED
+  26  trip     activity-agent  trip-alice-cun  wallet.charge                $35             ALLOWED
+
+  central_calls during the trip: 0   (calls to a component outside the acting agent)
+
+THE TRIP
+  ✓ trip-alice-cun  travel: read traveler name
+  ✓ trip-alice-cun  travel: calendar event
+  ✓ trip-alice-cun  flight: search
+  ✓ trip-alice-cun  flight: book UA214
+  ✓ trip-alice-cun  check-in: UA214
+  ✗ trip-alice-cun  boarding: pass for UA214   never attempted (an earlier step or handoff failed)
+  ✓ trip-alice-cun  hotel: search
+  ✓ trip-alice-cun  hotel: book
+  ✓ trip-alice-cun  activity: search
+  ✓ trip-alice-cun  activity: book
+  ✓ trip-alice-cun  within budget ($741 of $1200)
+
+  See the chain the agents are holding, hop by hop, in the explorer:
+  https://tenuo.ai/explorer/?s=…
+
+  The terminal link breaks the trip on purpose. Notice where, and who decided.
+
+  npm run attack   the rogue behavior and the tests      npm run score   points and why
+  npm run trace    every decision with its reason        npm run next    when you are done here</code></pre></details></div></div></div>
 </li>
 <li class="lab-step">
-<label class="lab-step-check"><input type="checkbox" data-key="6:3"><span>4</span></label>
-<div class="lab-step-body"><p>Open the link the lab prints and look at the chain Boarding Agent holds, hop by hop, in the explorer.</p></div>
+<label class="lab-step-check"><input type="checkbox" data-key="6:4"><span>5</span></label>
+<div class="lab-step-body"><p>Second version: lower <code>maxDepth</code> on the root instead, and watch where the chain stops.</p></div>
 </li>
 </ol>
 
-<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The escalation attempt from stage 5 is refused before any permission exists, inside Check-in Agent's own process, because the narrowed copy would not fit inside what Check-in Agent holds.</li><li><code>central_calls</code> is 0. No component outside the acting agent was consulted. Compare that with the sentence you wrote at the end of stage 4.</li></ul></aside>
+<aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The import fails with <code>TENUO_INVALID_POP</code>. The warrant names the key it was issued to, and Activity Agent does not have that key.</li><li>With the terminal link, Boarding Agent never gets its permission: <code>TENUO_DEPTH_EXCEEDED</code> at the Check-in → Boarding hop. Check-in Agent did not agree to that restriction and cannot remove it.</li></ul></aside>
 
-<aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>Who decided what Boarding Agent may do, and when? Compare that with who decided in stage 4.</p></aside>
+<aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>If having a copy of a permission is not enough to use it, what else does using it require? And who in a chain gets to decide how many agents a job passes through?</p></aside>
 
-<details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>Flight Agent knows which flight it booked, so it is the link that narrows <code>reservation</code> to that one flight. Bind each result to the next agent's key with <code>holder</code>, and keep lifetimes short. Every argument a tool is called with must be named: leave one out and the call is refused.</div></details>
+<details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>Using a permission requires proof that you hold the key it was bound to; every use is signed with that key. Distance is decided by whoever is upstream: the control plane with <code>maxDepth</code>, or any agent with <code>terminal</code>, and nobody downstream can undo it.</div></details>
 
-<details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try your own first. The score checks behavior, so yours does not need to match this one.</p><figure class="lab-code"><figcaption>Reference <span>answers/06-tenuo/chain.ts</span></figcaption>
+<details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try your own first. The score checks behavior, so yours does not need to match this one.</p><figure class="lab-code"><figcaption>One option added <span>answers/06-extensions/chain.ts</span></figcaption>
 {% highlight ts %}
 /**
  * Flight → Check-in. Flight Agent has booked and knows the reservation, so
@@ -379,23 +278,12 @@ export function flightToCheckin(flight: Session, fleet: Fleet, trip: Trip, reser
       check_in: { reservation: only },
       issue_boarding_pass: { reservation: only },
     },
-    { holder: fleet["checkin-agent"].publicKey, ttlSeconds: 5 * 60 },
-  );
-}
-
-export function checkinToBoarding(checkin: Session, fleet: Fleet, trip: Trip, reservation: string): Session {
-  const only = oneOf([reservation]);
-  return fleet["checkin-agent"].tenuo.narrow(
-    checkin,
-    { issue_boarding_pass: { reservation: only } },
-    { holder: fleet["boarding-agent"].publicKey, ttlSeconds: 2 * 60 },
+    { holder: fleet["checkin-agent"].publicKey, ttlSeconds: 5 * 60, terminal: true },
   );
 }
 {% endhighlight %}
 </figure></div></details>
 
-<aside class="lab-callout stuck"><div class="lab-callout-title">If it does not work</div><ul><li>When a denial says &quot;not in parent's tools&quot;, look one link up the chain.</li><li>The receiver imports what it is handed with its own key. If you bind to the wrong <code>holder</code>, the import fails with <code>TENUO_INVALID_POP</code>.</li><li>The trip has to work. If Boarding Agent cannot issue the pass, the other checks do not count.</li></ul></aside>
+<section class="lab-done"><div><div class="lab-callout-title">Done when</div><p>You can explain why the thief's copy did not work, and you have seen the trip fail at the hop you chose.</p></div><button type="button" class="lab-mark" data-mark-done="6">Mark stage 6 done</button></section>
 
-<section class="lab-done"><div><div class="lab-callout-title">Done when</div><p><code>npm run attack</code> is clean for both scenarios and <code>central_calls</code> is 0.</p></div><button type="button" class="lab-mark" data-mark-done="6">Mark stage 6 done</button></section>
-
-<nav class="lab-nav"><a class="prev" href="/lab/stage-5">← Stage 5</a><a class="next" href="/lab/stage-7">Stage 7: Someone stole a permission →</a></nav>
+<nav class="lab-nav"><a class="prev" href="/lab/stage-5">← Stage 5</a><a class="next" href="/lab/stage-7">Stage 7: The incident →</a></nav>

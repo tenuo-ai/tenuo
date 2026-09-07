@@ -173,7 +173,7 @@ layout: default
         el.classList.toggle('done', !!p.stages[n]);
       });
     }
-    for (var n = 1; n <= 10; n++) paintStage(String(n));
+    for (var n = 1; n <= 8; n++) paintStage(String(n));
 
     document.querySelectorAll('.lab-step input[type=checkbox]').forEach(function (cb) {
       var key = cb.getAttribute('data-key');

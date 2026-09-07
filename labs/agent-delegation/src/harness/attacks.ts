@@ -125,15 +125,15 @@ export async function runBattery(rt: Runtime, plan: ScenarioPlan): Promise<Probe
   }
 
   // The escalation attempt: Check-in Agent tries to arrange broader access for Boarding Agent.
-  if (stage.n >= 5 && plan.name !== "incident") {
+  if (stage.probes?.includes("escalation") === true && plan.name !== "incident") {
     out.push(await escalationProbe(rt, alice));
   }
 
-  if (stage.n === 7) {
+  if (stage.probes?.includes("stolen") === true) {
     out.push(await stolenWarrantProbe(rt, alice));
   }
 
-  if (stage.n === 8) {
+  if (stage.probes?.includes("terminal") === true) {
     out.push(
       fromAudit(rt, "handoff", "TERMINAL", "checkin-agent narrow → boarding-agent", "DENIED",
         (r) => r.source === "handoff" && r.agent === "checkin-agent" && r.action.startsWith("handoff"),
@@ -214,7 +214,7 @@ async function stolenWarrantProbe(rt: Runtime, alice: Trip): Promise<ProbeResult
   if (boarding === undefined) {
     return { category: "blocked", section, label, expected: "DENIED", actual: "DENIED", reason: "boarding-agent holds no session to steal", ok: false };
   }
-  const { steal } = await import("../../exercises/07-stolen-warrant/steal.ts");
+  const { steal } = await import("../../exercises/06-extensions/steal.ts");
   const outcome = steal(tenuo, boarding);
   rt.audit.record({ agent: "activity-agent", task: alice.taskId, action: "import boarding-agent's warrant", resource: "copied warrant", mode: "tenuo", decision: outcome.imported ? "ALLOWED" : "DENIED", reason: outcome.reason, ...(outcome.code !== undefined ? { code: outcome.code } : {}), centralCalls: 0, source: "probe" });
   return { category: "blocked", section, label, expected: "DENIED", actual: outcome.imported ? "ALLOWED" : "DENIED", reason: outcome.reason, ...(outcome.code !== undefined ? { code: outcome.code } : {}), ok: !outcome.imported };
