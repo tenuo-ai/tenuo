@@ -4,11 +4,11 @@
  * this agent imported with its own holder key; the chain must lead back to
  * the control plane's key or it is refused before any constraint is read.
  */
-import { ApprovalRequiredError, AuthorizationDeniedError, TenuoError, type ProtectedTool, type Session, type Tenuo } from "@tenuo/core";
+import { ApprovalRequiredError, AuthorizationDeniedError, TenuoError, type ProtectedTool, type Session } from "@tenuo/core";
 import { resourceOf } from "../audit.ts";
 import { AGENTS, TOOLS, type AgentId } from "../mission.ts";
 import { ServiceError, services, type World } from "../services/index.ts";
-import type { Fleet } from "../keys.ts";
+import type { Fleet, HolderKeyring } from "../keys.ts";
 import type { AuthMode, Call, Ctx, Decision } from "./types.ts";
 
 type Executor = ProtectedTool<{ execute: (args: Record<string, unknown>) => unknown }>;
@@ -16,15 +16,43 @@ type Executor = ProtectedTool<{ execute: (args: Record<string, unknown>) => unkn
 export class TenuoMode implements AuthMode {
   readonly name = "tenuo" as const;
   readonly fleet: Fleet;
-  readonly controlPlane: Tenuo;
+  readonly #holderKeys: HolderKeyring;
+  readonly #issuanceErrors = new Map<string, { readonly code?: string; readonly message: string }>();
   /** Session per (agent, task), set at handoff by the participant's chain code. */
   private readonly sessions = new Map<string, Session>();
   private readonly tools = new Map<string, Executor>();
   private world: World | undefined;
 
-  constructor(controlPlane: Tenuo, fleet: Fleet) {
-    this.controlPlane = controlPlane;
+  constructor(fleet: Fleet, holderKeys: HolderKeyring) {
     this.fleet = fleet;
+    this.#holderKeys = holderKeys;
+  }
+
+  recordIssuanceError(taskId: string, error: unknown): void {
+    const err = error as { code?: string; message?: string };
+    this.#issuanceErrors.set(taskId, {
+      ...(err.code !== undefined ? { code: err.code } : {}),
+      message: err.message ?? String(error),
+    });
+  }
+
+  issuanceError(taskId: string): { readonly code?: string; readonly message: string } | undefined {
+    return this.#issuanceErrors.get(taskId);
+  }
+
+  /** Deliver wire data to one agent, which imports it using only that agent's private key. */
+  importFor(agent: AgentId, taskId: string, handed: Session): Session {
+    return this.importWireFor(agent, taskId, handed.toWire());
+  }
+
+  /** Model an agent receiving serialized warrant data without exposing its holder key. */
+  importWireFor(agent: AgentId, taskId: string, warrant: readonly string[]): Session {
+    const session = this.fleet[agent].tenuo.sessionFromWire({
+      warrant,
+      holderKey: this.#holderKeys[agent],
+    });
+    this.setSession(agent, taskId, session);
+    return session;
   }
 
   key(agent: AgentId, taskId: string): string {

@@ -19,9 +19,8 @@ export interface StealOutcome {
 
 export function steal(tenuo: TenuoMode, boardingSession: Session): StealOutcome {
   const copied = boardingSession.toWire(); // just strings, and Activity Agent has them now
-  const thief = tenuo.fleet["activity-agent"];
   try {
-    const session = thief.tenuo.sessionFromWire({ warrant: copied, holderKey: thief.holderKey });
+    const session = tenuo.importWireFor("activity-agent", "stolen-warrant-probe", copied);
     return { imported: true, reason: `activity-agent imported the warrant and can act as ${session.inspect().holderPublicKey.slice(0, 12)}…` };
   } catch (error) {
     const err = error as { code?: string; message?: string };

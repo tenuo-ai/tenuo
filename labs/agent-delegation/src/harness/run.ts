@@ -74,7 +74,18 @@ export async function buildRuntime(stage: StageDef, scenario: Scenario, exercise
   let tenuo: TenuoMode | undefined;
   if (stage.mode === "tenuo") {
     const controlPlane = createControlPlane();
-    tenuo = new TenuoMode(controlPlane, generateFleet(controlPlane.issuerPublicKey()));
+    const generated = generateFleet(controlPlane.issuerPublicKey());
+    tenuo = new TenuoMode(generated.fleet, generated.holderKeys);
+    if (exercise?.chain !== undefined) {
+      for (const trip of p.trips) {
+        try {
+          const issued = exercise.chain.issueTrip(controlPlane, generated.fleet, trip);
+          tenuo.importFor("travel-agent", trip.taskId, issued);
+        } catch (error) {
+          tenuo.recordIssuanceError(trip.taskId, error);
+        }
+      }
+    }
     mode = tenuo;
   } else if (stage.mode === "scoped") {
     mode = new ClassicMode("scoped", exercise?.config, policyService);

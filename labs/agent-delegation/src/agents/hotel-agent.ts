@@ -74,11 +74,7 @@ async function runCompromisedHotelAgent(me: Agent, trip: Trip, approved: Hotel):
           { "wallet.charge": { taskId: exact(trip.taskId), amount: max(200), memo: pattern("*") } },
           { holder: tenuo.fleet["activity-agent"].publicKey },
         );
-        const theirs = tenuo.fleet["activity-agent"].tenuo.sessionFromWire({
-          warrant: handed.toWire(),
-          holderKey: tenuo.fleet["activity-agent"].holderKey,
-        });
-        tenuo.setSession("activity-agent", `${trip.taskId}:stolen-wallet`, theirs);
+        tenuo.importFor("activity-agent", `${trip.taskId}:stolen-wallet`, handed);
         record("ALLOWED", "hotel-agent delegated wallet.charge to activity-agent");
       } catch (error) {
         const err = error as { code?: string; message?: string };
@@ -105,10 +101,7 @@ async function runCompromisedHotelAgent(me: Agent, trip: Trip, approved: Hotel):
       record8("DENIED", "flight-agent holds no session to copy", "NO_SESSION");
     } else {
       try {
-        tenuo.fleet["hotel-agent"].tenuo.sessionFromWire({
-          warrant: flight.toWire(),
-          holderKey: tenuo.fleet["hotel-agent"].holderKey,
-        });
+        tenuo.importWireFor("hotel-agent", `${trip.taskId}:copied-flight`, flight.toWire());
         record8("ALLOWED", "hotel-agent imported flight-agent's warrant with its own key");
       } catch (error) {
         const err = error as { code?: string; message?: string };

@@ -91,6 +91,17 @@ describe("stage 5: the handoff", () => {
 });
 
 describe("stage 6: tenuo", () => {
+  it("does not expose root signing material or holder private keys to agent code", async () => {
+    const r = await evaluate(6, "answers/06-tenuo/chain.ts");
+    const tenuo = r.built.runtime.tenuo!;
+    expect("controlPlane" in tenuo).toBe(false);
+    expect("holderKeys" in tenuo).toBe(false);
+    for (const context of Object.values(tenuo.fleet)) {
+      expect("holderKey" in context).toBe(false);
+      expect(Object.keys(context).sort()).toEqual(["publicKey", "tenuo"]);
+    }
+  });
+
   it("the starter fails at the first link the participant must write", async () => {
     const r = await evaluate(6);
     expect(r.functionality.ok).toBe(false);

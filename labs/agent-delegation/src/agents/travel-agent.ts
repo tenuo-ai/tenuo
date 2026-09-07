@@ -36,12 +36,16 @@ export async function runTravelAgent(rt: Runtime, trip: Trip, options: TripOptio
         source: "handoff",
       });
     try {
-      const issued = chain.issueTrip(tenuo.controlPlane, tenuo.fleet, trip);
-      const mine = tenuo.fleet["travel-agent"].tenuo.sessionFromWire({
-        warrant: issued.toWire(),
-        holderKey: tenuo.fleet["travel-agent"].holderKey,
-      });
-      tenuo.setSession("travel-agent", trip.taskId, mine);
+      const mine = me.session();
+      const issuanceError = tenuo.issuanceError(trip.taskId);
+      if (issuanceError !== undefined) {
+        record("DENIED", issuanceError.message, issuanceError.code);
+        return;
+      }
+      if (mine === undefined) {
+        record("DENIED", "control plane issued no authority for this task", "NO_SESSION");
+        return;
+      }
       const info = mine.inspect();
       record("ALLOWED", `travel-agent holds {${info.tools.join(", ")}}, maxDepth ${info.maxDepth}`);
     } catch (error) {

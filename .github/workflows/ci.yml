@@ -791,13 +791,25 @@ jobs:
         working-directory: tenuo-ts
         run: pnpm install --frozen-lockfile && pnpm build:wasm && pnpm --filter @tenuo/core build
 
-      - name: Pack it over the vendored tarball
+      - name: Pack current @tenuo/core for the lab
         working-directory: tenuo-ts/packages/core
-        run: npm pack --pack-destination ../../../labs/agent-delegation/vendor
+        env:
+          TENUO_LAB_PACKAGE: ${{ runner.temp }}/tenuo-lab-package
+        run: |
+          mkdir -p "$TENUO_LAB_PACKAGE"
+          npm pack --pack-destination "$TENUO_LAB_PACKAGE"
 
       - name: Install and test the lab
         working-directory: labs/agent-delegation
-        run: npm install --no-audit --no-fund && npm run typecheck && npm test
+        env:
+          TENUO_LAB_PACKAGE: ${{ runner.temp }}/tenuo-lab-package
+        run: |
+          # Install the lab reproducibly, then replace the participant-facing
+          # vendored SDK with the package built from this exact checkout.
+          npm ci --no-audit --no-fund
+          npm install --no-save --package-lock=false "$TENUO_LAB_PACKAGE"/*.tgz
+          npm run typecheck
+          npm test
 
   # ============================================================================
   # DOC CODE BLOCKS

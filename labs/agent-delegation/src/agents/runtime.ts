@@ -100,9 +100,7 @@ export class Agent {
     }
     try {
       const handed = link(chain, mine);
-      const receiver = tenuo.fleet[to];
-      const theirs = receiver.tenuo.sessionFromWire({ warrant: handed.toWire(), holderKey: receiver.holderKey });
-      tenuo.setSession(to, this.trip.taskId, theirs);
+      const theirs = tenuo.importFor(to, this.trip.taskId, handed);
       const info = theirs.inspect();
       record("ALLOWED", `${to} now holds {${info.tools.join(", ")}} at depth ${info.depth}${info.terminal ? ", terminal" : ""}`);
       return true;
