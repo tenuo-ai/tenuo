@@ -1,17 +1,29 @@
 import { createHash } from "node:crypto";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+  all,
+  anyOf,
   ApprovalRequiredError,
   AuthorizationDeniedError,
+  cel,
+  cidr,
+  contains,
   createTenuo,
   email,
   exact,
   max,
+  min,
+  notOneOf,
   oneOf,
   pattern,
+  range,
+  regex,
+  shlex,
+  subset,
   TenuoConfigurationError,
   TenuoError,
   under,
+  urlPattern,
 } from "../src/index.ts";
 import type { ExecuteOptions, ProtectedTool, ToolLike } from "../src/index.ts";
 import {
@@ -209,8 +221,31 @@ describe("constraints", () => {
     expect(pattern("*@acme.com")).toEqual({ kind: "pattern", pattern: "*@acme.com" });
   });
 
-  it("rejects relative under() roots", () => {
-    expect(() => under("data")).toThrow(/absolute path/);
+  it.each<[string, () => unknown, RegExp]>([
+    ["under() with a relative root", () => under("data"), /absolute path/],
+    ["max() with a non-finite value", () => max(Number.POSITIVE_INFINITY), /finite number/],
+    ["min() with NaN", () => min(Number.NaN), /finite number/],
+    ["range() with no bounds", () => range({}), /min, max, or both/],
+    ["range() with a non-finite bound", () => range({ min: Number.NEGATIVE_INFINITY }), /finite numbers/],
+    ["range() with min above max", () => range({ min: 5, max: 1 }), /min must not exceed max/],
+    ["oneOf() with no values", () => oneOf([]), /at least one value/],
+    ["notOneOf() with no values", () => notOneOf([]), /at least one value/],
+    ["pattern() with an empty pattern", () => pattern(""), /non-empty pattern/],
+    ["regex() with an empty expression", () => regex(""), /non-empty expression/],
+    ["cidr() without a prefix length", () => cidr("10.0.0.0"), /CIDR notation/],
+    ["urlPattern() with an empty pattern", () => urlPattern(""), /non-empty pattern/],
+    ["shlex() with no allowed commands", () => shlex([]), /at least one allowed command/],
+    ["contains() with no values", () => contains([]), /at least one value/],
+    ["subset() with no values", () => subset([]), /at least one value/],
+    ["anyOf() with no constraints", () => anyOf([]), /at least one constraint/],
+    ["all() with no constraints", () => all([]), /at least one constraint/],
+    ["cel() with a blank expression", () => cel("   "), /non-empty expression/],
+  ])("%s throws TenuoConfigurationError", (_label, build, message) => {
+    expect(build).toThrow(TenuoConfigurationError);
+    expect(build).toThrow(message);
+    expect(build).toThrow(
+      expect.objectContaining({ code: "TENUO_CONFIGURATION", name: "TenuoConfigurationError" }),
+    );
   });
 });
 
