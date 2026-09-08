@@ -203,7 +203,7 @@ function indexPage(): string {
     ["No spare authority", 20, "Every grant stays at or below the mission's least-privilege ceiling."],
   ] as const;
   const body = `${stepper(0)}
-<header class="lab-hero"><div class="lab-kicker">A ninety-minute security lab · TypeScript · no account needed</div><h1>AI Agent Delegation Security Lab</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
+<header class="lab-hero"><div class="lab-kicker">A ninety-minute security challenge · TypeScript · no account needed</div><h1>AI Agent Delegation Security Challenge</h1><p class="lab-goal"><strong>Book the trip. Stop the rogue agent.</strong> Six AI agents book a trip. One reads an injected instruction and follows it. Change what the agents may do until the trip succeeds and the rogue gets nowhere.</p></header>
 
 <figure class="lab-cover"><img src="/images/challenge-image.svg" width="1200" height="630" alt="A boarding pass from Toronto to Cancún for Alice Chen, stamped denied because it is outside the granted scope." decoding="async" fetchpriority="high"></figure>
 
@@ -215,7 +215,7 @@ cd tenuo/labs/agent-delegation
 npm install
 npm run star       # optional; skip if you are not signed in to GitHub
 npm run lab</code></pre>
-<p class="lab-muted">Node 20 or newer. The lab itself needs no account, API key, or network. The optional star command uses GitHub CLI; skip it if you are not signed in. Every lab check and score is real.</p>
+<p class="lab-muted">Node 20 or newer. The core challenge runs locally with no account or API key; only <code>npm run share</code> and the optional star command use the network. Skip the star command if you are not signed in to GitHub. Every challenge check and score is real.</p>
 </div>
 <div>
 <h2>What to expect</h2>
@@ -278,7 +278,7 @@ npm run reset      # restore stage 1 and every starter exercise</code></pre>
 `;
   return frontMatter({
     layout: "lab",
-    title: "AI Agent Delegation Security Lab",
+    title: "AI Agent Delegation Security Challenge",
     og_title: "Security Challenge: Stop a Rogue AI Agent From Ruining Your Trip",
     description: "Give each agent only the authority its part of the trip needs. A free, hands-on lab in AI agent delegation security.",
     og_image: "/images/challenge-image.png",

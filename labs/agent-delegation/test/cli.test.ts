@@ -115,6 +115,25 @@ describe("participant CLI", () => {
     expect(share).toContain("--username YOUR_GITHUB_USERNAME");
   }, 120_000);
 
+  it("shares the Stage 5 handoff history from the final boss level", () => {
+    const labHome = home();
+    cli(labHome, "lab", 5);
+    cli(labHome, "attack", 5, "answers/05-tenuo/chain.ts");
+
+    const share = cli(labHome, "share", 7, "answers/07-incident/chain.ts");
+    expect(share).toContain("Sharing the Stage 5 first-attempt → first-green handoff scorecard.");
+    expect(share).toMatch(/ROGUE ATTEMPTS BLOCKED \(2 SCENARIOS\)\s+14 \/ 14/);
+    expect(existsSync(join(labHome, "share-stage-7.json"))).toBe(false);
+
+    const report = JSON.parse(readFileSync(join(labHome, "share-stage-5.json"), "utf8")) as {
+      stage: number;
+      attempts: { firstAttempt?: AttemptSnapshot; firstGreen?: AttemptSnapshot };
+    };
+    expect(report.stage).toBe(5);
+    expect(report.attempts.firstAttempt?.handoffs).toBeDefined();
+    expect(report.attempts.firstGreen?.handoffs).toBeDefined();
+  }, 120_000);
+
   it("marks observation stages complete when the documented next command advances them", () => {
     const labHome = home();
     cli(labHome, "next");
@@ -141,14 +160,16 @@ describe("participant CLI", () => {
 describe("generated lab guide", () => {
   it("keeps the public landing-page promise and one reset command", () => {
     const page = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
-    expect(page).toContain("AI Agent Delegation Security Lab");
+    expect(page).toContain("AI Agent Delegation Security Challenge");
     expect(page).toContain("Book the trip. Stop the rogue agent.");
-    expect(page).toContain("A ninety-minute security lab");
-    expect(page).not.toMatch(/security (?:game|challenge)/);
+    expect(page).toContain("A ninety-minute security challenge");
+    expect(page).not.toMatch(/security (?:game|lab)/);
+    expect(page).toContain("The core challenge runs locally");
+    expect(page).toContain("only <code>npm run share</code> and the optional star command use the network");
     expect(page.match(/npm run reset/g)).toHaveLength(1);
     const deployWorkflow = readFileSync(join(ROOT, "..", "..", ".github", "workflows", "docs.yml"), "utf8");
-    expect(deployWorkflow).toContain("A ninety-minute security lab");
-    expect(deployWorkflow).not.toMatch(/A ninety-minute security (?:game|challenge)/);
+    expect(deployWorkflow).toContain("A ninety-minute security challenge");
+    expect(deployWorkflow).not.toMatch(/A ninety-minute security (?:game|lab)/);
   });
 
   it("keeps the first action focused on setup and offers the optional star in both terminals", () => {

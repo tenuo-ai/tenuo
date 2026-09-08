@@ -107,8 +107,8 @@ jobs:
             index="$(curl --fail --silent --show-error --location "${base_url}/lab/?deploy=${CACHE_BUSTER}-${attempt}" || true)"
             stage5="$(curl --fail --silent --show-error --location "${base_url}/lab/stage-5?deploy=${CACHE_BUSTER}-${attempt}" || true)"
             if [[ "$index" == *"Book the trip. Stop the rogue agent."* ]] && \
-               [[ "$index" == *"A ninety-minute security lab"* ]] && \
-               [[ "$index" != *"AI Agent Delegation Challenge"* ]] && \
+               [[ "$index" == *"A ninety-minute security challenge"* ]] && \
+               [[ "$index" == *"AI Agent Delegation Security Challenge"* ]] && \
                [[ "$stage5" == *"Open the Stage 5 reference on GitHub"* ]] && \
                [[ "$stage5" != *"One solution to the TODO"* ]]; then
               echo "Public lab is current: ${base_url}/lab/"
