@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or failure. The worker retries the same signed artifact after a sink
   error and does not mark the queue item complete on failure, so
   `flush_receipts()` cannot report success after a lost receipt.
+- **Python Runtime multi-hop sessions.** `session_scope` and `Session`
+  install the decoded parent chain on `chain_scope`, so a root →
+  intermediate → holder stack authorizes instead of failing as
+  `UntrustedRoot`.
+- **Receipt outbox overflow.** A full collector no longer turns an allow
+  into a denial. The new receipt is dropped, `receipt_overflows` counts
+  it, and the authorized call proceeds.
+- **`HolderIdentity.load_or_create` races.** Concurrent callers exclusive-
+  create the file at mode `0600` and load the winner instead of
+  overwriting it.
 
 ## [0.2.5] - 2026-09-06
 

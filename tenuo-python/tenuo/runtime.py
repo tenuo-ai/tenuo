@@ -12,10 +12,10 @@ from typing import Any, Iterator, List, Optional, Sequence, Union
 from tenuo_core import Authorizer, PublicKey, Warrant
 
 from .bound_warrant import BoundWarrant
-from .decorators import _keypair_context, _warrant_context
+from .decorators import _chain_context, _keypair_context, _warrant_context
 from .exceptions import ConfigurationError
 from .identity import HolderIdentity
-from .receipts import ReceiptCollector
+from .receipts import ReceiptBufferFull, ReceiptCollector
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def apply_runtime_revocation(authorizer: Any) -> None:
 class Session:
     """One warrant bound to a Runtime's holder key and trust context."""
 
-    __slots__ = ("_bound", "_runtime", "_parents", "_runtime_token")
+    __slots__ = ("_bound", "_runtime", "_parents", "_runtime_token", "_chain_token")
 
     def __init__(
         self,
@@ -67,6 +67,7 @@ class Session:
         self._runtime = runtime
         self._parents = list(parents or [])
         self._runtime_token: Any = None
+        self._chain_token: Any = None
 
     @property
     def warrant(self) -> Warrant:
@@ -96,9 +97,14 @@ class Session:
     def __enter__(self) -> "Session":
         self._bound.__enter__()
         self._runtime_token = _runtime_context.set(self._runtime)
+        # Always install parents (possibly empty) so an outer chain cannot leak in.
+        self._chain_token = _chain_context.set(list(self._parents))
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._chain_token is not None:
+            _chain_context.reset(self._chain_token)
+            self._chain_token = None
         if self._runtime_token is not None:
             _runtime_context.reset(self._runtime_token)
             self._runtime_token = None
@@ -182,7 +188,13 @@ class Runtime:
 
     @contextmanager
     def session_scope(self, session: Union[Session, BoundWarrant]) -> Iterator[Session]:
-        """Bind warrant, holder key, and this Runtime for decorators and adapters."""
+        """Bind warrant, holder key, parent chain, and this Runtime.
+
+        The decoded parent chain (root-first, excluding the leaf) is installed
+        on ``chain_scope`` so ``@guard``, ``enforce_tool_call``, and MCP
+        clients can verify a multi-hop stack. An empty parent list is still
+        installed so an outer chain cannot leak into this session.
+        """
         if isinstance(session, BoundWarrant):
             session = Session(session, self)
         if not isinstance(session, Session):
@@ -190,9 +202,11 @@ class Runtime:
         warrant_token = _warrant_context.set(session.warrant)
         key_token = _keypair_context.set(self.identity.signing_key)
         runtime_token = _runtime_context.set(self)
+        chain_token = _chain_context.set(list(session._parents))
         try:
             yield session
         finally:
+            _chain_context.reset(chain_token)
             _runtime_context.reset(runtime_token)
             _keypair_context.reset(key_token)
             _warrant_context.reset(warrant_token)
@@ -212,6 +226,13 @@ class Runtime:
         if self._collector is None:
             return 0
         return self._collector.acknowledge(count)
+
+    @property
+    def receipt_overflows(self) -> int:
+        """Receipts dropped because the outbox was full. Never evicts stored evidence."""
+        if self._collector is None:
+            return 0
+        return self._collector.overflowed
 
     def close(self) -> None:
         """No background worker to stop; receipts stay until acknowledged."""
@@ -284,8 +305,16 @@ class Runtime:
         except Exception as exc:  # noqa: BLE001 — must not fail the tool call
             logger.warning("runtime receipt signing failed for %r", tool, exc_info=exc)
             return
-        if wire:
+        if not wire:
+            return
+        try:
             self._collector.push(wire)
+        except ReceiptBufferFull:
+            logger.warning(
+                "receipt outbox is full (%s); authorized call continues, "
+                "receipt was not stored",
+                self._collector.maxsize,
+            )
 
     def _decode_wire(self, warrant: SessionWarrant):
         if isinstance(warrant, Warrant):

@@ -59,6 +59,10 @@ A receipt is removed only by `acknowledge_receipts(n)`. Prefer peek → durable
 copy → ack so a crash between peek and persist cannot drop evidence. Do not
 treat an acknowledged receipt as uploaded until the ingest call succeeds.
 
+A full outbox must not deny an authorized tool. The new receipt is dropped,
+`runtime.receipt_overflows` counts it, and the call still returns allow.
+Hosted upload can observe backpressure without blocking the tool path.
+
 `DeferredEmitter.flush()` is now honest: it does not return `True` after a
 sink failure. Transient sink errors retry the same signed artifact.
 

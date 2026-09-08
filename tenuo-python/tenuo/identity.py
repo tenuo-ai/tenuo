@@ -7,6 +7,7 @@ and path-owned: this module does not choose a default file or read env vars.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -57,20 +58,43 @@ class HolderIdentity:
         """Load a hex secret from ``path``, or generate and persist one.
 
         The file is hex-encoded secret-key bytes plus a trailing newline.
-        The write is ``*.tmp`` then rename. On Unix the file is ``0600``.
-        A corrupt existing file is an error; it is never overwritten.
+        Creation is exclusive (``O_CREAT|O_EXCL``) with mode ``0600`` so a
+        concurrent caller loads the winner instead of overwriting it. A
+        corrupt existing file is an error; it is never overwritten.
         """
         dest = Path(path)
-        if dest.exists():
-            contents = dest.read_text(encoding="ascii")
-            identity = cls._from_hex_file(dest, contents)
+        last_error: Optional[Exception] = None
+        for _ in range(32):
+            try:
+                return cls._load_existing(dest)
+            except FileNotFoundError:
+                pass
+            except ConfigurationError as exc:
+                last_error = exc
+                if dest.exists() and dest.stat().st_size == 0:
+                    time.sleep(0.005)
+                    continue
+                raise
+            identity = cls.generate()
+            try:
+                _create_exclusive(dest, identity._key)
+            except FileExistsError:
+                time.sleep(0.005)
+                continue
             identity._path = dest
-            _set_owner_only(dest)
             return identity
+        if last_error is not None:
+            raise last_error
+        return cls._load_existing(dest)
 
-        identity = cls.generate()
-        _persist_key(dest, identity._key)
+    @classmethod
+    def _load_existing(cls, dest: Path) -> "HolderIdentity":
+        contents = dest.read_text(encoding="ascii")
+        if not contents.strip():
+            raise FileNotFoundError(dest)
+        identity = cls._from_hex_file(dest, contents)
         identity._path = dest
+        _set_owner_only(dest)
         return identity
 
     @staticmethod
@@ -114,23 +138,32 @@ class HolderIdentity:
         raise TypeError("HolderIdentity cannot be pickled")
 
 
-def _persist_key(path: Path, key: SigningKey) -> None:
+def _create_exclusive(path: Path, key: SigningKey) -> None:
     parent = path.parent
     if str(parent) not in ("", "."):
         parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    secret = bytes(key.secret_key_bytes()).hex()
+    secret = bytes(key.secret_key_bytes()).hex() + "\n"
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    fd = os.open(str(path), flags, 0o600)
     try:
-        tmp.write_text(secret + "\n", encoding="ascii")
-        _set_owner_only(tmp)
-        os.replace(tmp, path)
-        _set_owner_only(path)
+        if os.name == "posix":
+            os.fchmod(fd, 0o600)
+        view = memoryview(secret.encode("ascii"))
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+        os.fsync(fd)
     except Exception:
+        os.close(fd)
         try:
-            tmp.unlink()
+            path.unlink()
         except OSError:
             pass
         raise
+    else:
+        os.close(fd)
 
 
 def _set_owner_only(path: Path) -> None:

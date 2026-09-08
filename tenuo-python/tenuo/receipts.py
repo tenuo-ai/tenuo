@@ -170,12 +170,18 @@ class ReceiptCollector:
         self._max = maxsize
         self._items: List[str] = []
         self._lock = threading.Lock()
+        self.overflowed = 0
+
+    @property
+    def maxsize(self) -> int:
+        return self._max
 
     def push(self, receipt: str) -> None:
         if not receipt:
             return
         with self._lock:
             if len(self._items) >= self._max:
+                self.overflowed += 1
                 raise ReceiptBufferFull(
                     f"receipt outbox is full ({self._max}); "
                     "acknowledge or raise maxsize — receipts are not evicted"

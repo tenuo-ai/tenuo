@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import pickle
 import stat
+import threading
 
 import pytest
 from tenuo_core import SigningKey
@@ -67,3 +68,27 @@ def test_load_or_create_rejects_wrong_length(tmp_path):
     path.write_text("aa\n", encoding="ascii")
     with pytest.raises(ConfigurationError, match="32 bytes"):
         HolderIdentity.load_or_create(path)
+
+
+def test_load_or_create_race_returns_persisted_winner(tmp_path):
+    path = tmp_path / "holder.key"
+    results = []
+    errors = []
+
+    def worker():
+        try:
+            results.append(HolderIdentity.load_or_create(path).public_key)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(16)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    assert len(results) == 16
+    persisted = HolderIdentity.load_or_create(path)
+    assert all(key == persisted.public_key for key in results)
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from tenuo_core import Authorizer, Pattern, SigningKey, Warrant
+from tenuo_core import Authorizer, Pattern, SigningKey, Warrant, encode_warrant_stack
 
 from tenuo import HolderIdentity, Runtime
+from tenuo.decorators import chain_scope, warrant_scope
 from tenuo.mcp.server import MCPVerifier
 
 
@@ -15,6 +16,74 @@ def _runtime_for(root: SigningKey, holder: HolderIdentity) -> Runtime:
         trusted_roots=[root.public_key],
         receipts="collect",
     )
+
+
+def test_mcp_client_encodes_parent_chain_from_session_scope():
+    pytest.importorskip("tenuo.mcp")
+    import base64
+    import time
+
+    root_key = SigningKey.generate()
+    mid = SigningKey.generate()
+    worker = SigningKey.generate()
+    holder = HolderIdentity.generate()
+    root = (
+        Warrant.mint_builder()
+        .capability("read_file")
+        .capability("list_dir")
+        .holder(mid.public_key)
+        .ttl(3600)
+        .mint(root_key)
+    )
+    intermediate = (
+        root.grant_builder()
+        .capability("read_file")
+        .capability("list_dir")
+        .holder(worker.public_key)
+        .ttl(1800)
+        .grant(mid)
+    )
+    leaf = (
+        intermediate.grant_builder()
+        .capability("read_file")
+        .holder(holder.public_key)
+        .ttl(900)
+        .grant(worker)
+    )
+    runtime = _runtime_for(root_key, holder)
+    session = runtime.session_from_wire([root, intermediate, leaf])
+    verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=[root_key.public_key]))
+
+    with runtime.session_scope(session):
+        parents = chain_scope()
+        warrant = warrant_scope()
+        assert parents
+        assert warrant is not None
+        wire = encode_warrant_stack(list(parents) + [warrant])
+        pop = warrant.sign(holder.signing_key, "read_file", {"path": "/data"}, int(time.time()))
+        meta = {
+            "tenuo": {
+                "warrant": wire,
+                "signature": base64.b64encode(bytes(pop)).decode(),
+            }
+        }
+        allowed = verifier.verify("read_file", {"path": "/data"}, meta=meta)
+        orphan_pop = leaf.sign(holder.signing_key, "read_file", {"path": "/data"}, int(time.time()))
+        orphan = verifier.verify(
+            "read_file",
+            {"path": "/data"},
+            meta={
+                "tenuo": {
+                    "warrant": leaf.to_base64(),
+                    "signature": base64.b64encode(bytes(orphan_pop)).decode(),
+                }
+            },
+        )
+
+    assert allowed.allowed
+    assert not orphan.allowed
+    receipts = runtime.peek_receipts()
+    assert len(receipts) == 2
 
 
 def test_mcp_verify_collects_allow_and_deny():

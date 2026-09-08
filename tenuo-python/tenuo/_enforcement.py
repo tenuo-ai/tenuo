@@ -737,6 +737,18 @@ except ImportError:
     from typing_extensions import Literal  # type: ignore
 
 
+def _resolve_presented_parents(warrant_chain: Optional[List[Any]]) -> List[Any]:
+    """Use an explicit chain, otherwise the parents installed by session_scope."""
+    if warrant_chain is not None:
+        return list(warrant_chain)
+    try:
+        from .decorators import chain_scope
+    except Exception:  # pragma: no cover
+        return []
+    parents = chain_scope()
+    return list(parents) if parents else []
+
+
 def _enforce_tool_call_impl(
     tool_name: str,
     tool_args: Dict[str, Any],
@@ -939,7 +951,8 @@ def _enforce_tool_call_impl(
     # every except arm — including ones reached before the sign/verify branch
     # runs — can stamp the chain that was presented, and so a failure during
     # PoP signing cannot leave `_auth` unbound in the handler reporting it.
-    _presented_chain = list(warrant_chain or []) + [bound_warrant.warrant]
+    warrant_chain = _resolve_presented_parents(warrant_chain)
+    _presented_chain = list(warrant_chain) + [bound_warrant.warrant]
     _pop = None
     _auth = None
     # Overwritten with the stripped PoP view once derived; the fallback keeps
@@ -1376,7 +1389,8 @@ async def _enforce_tool_call_async_impl(
     # every except arm — including ones reached before the sign/verify branch
     # runs — can stamp the chain that was presented, and so a failure during
     # PoP signing cannot leave `_auth` unbound in the handler reporting it.
-    _presented_chain = list(warrant_chain or []) + [bound_warrant.warrant]
+    warrant_chain = _resolve_presented_parents(warrant_chain)
+    _presented_chain = list(warrant_chain) + [bound_warrant.warrant]
     _pop = None
     _auth = None
     # Overwritten with the stripped PoP view once derived; the fallback keeps

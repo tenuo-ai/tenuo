@@ -5,13 +5,12 @@ from __future__ import annotations
 import threading
 
 import pytest
-from tenuo_core import Pattern, SigningKey, Warrant
+from tenuo_core import Pattern, SigningKey, Warrant, encode_warrant_stack
 
 from tenuo import HolderIdentity, Runtime, get_runtime, guard
 from tenuo._enforcement import enforce_tool_call
-from tenuo.decorators import get_signing_key_context, get_warrant_context
-from tenuo.exceptions import ConfigurationError
-from tenuo.receipts import ReceiptBufferFull
+from tenuo.decorators import chain_scope, get_signing_key_context, get_warrant_context
+from tenuo.exceptions import ConfigurationError, UntrustedRoot
 
 
 @pytest.fixture
@@ -125,7 +124,7 @@ def test_guard_inside_session_scope(pair):
     assert len(runtime.peek_receipts()) == 1
 
 
-def test_overflow_is_explicit(pair):
+def test_overflow_does_not_deny_authorized_call(pair):
     root, holder, warrant, _runtime = pair
     runtime = Runtime(
         identity=holder,
@@ -135,10 +134,82 @@ def test_overflow_is_explicit(pair):
     )
     session = runtime.session_from_wire(warrant)
     with runtime.session_scope(session):
-        enforce_tool_call("read_file", {"path": "/data/a.pdf"}, session.bound)
-        with pytest.raises(ReceiptBufferFull):
-            enforce_tool_call("read_file", {"path": "/data/b.pdf"}, session.bound)
+        first = enforce_tool_call("read_file", {"path": "/data/a.pdf"}, session.bound)
+        second = enforce_tool_call("read_file", {"path": "/data/b.pdf"}, session.bound)
+    assert first.allowed
+    assert second.allowed
     assert len(runtime.peek_receipts()) == 1
+    assert runtime.receipt_overflows == 1
+
+
+def _three_hop_stack(root_key: SigningKey, holder: HolderIdentity):
+    mid = SigningKey.generate()
+    worker = SigningKey.generate()
+    root = (
+        Warrant.mint_builder()
+        .capability("read_file")
+        .capability("list_dir")
+        .holder(mid.public_key)
+        .ttl(3600)
+        .mint(root_key)
+    )
+    intermediate = (
+        root.grant_builder()
+        .capability("read_file")
+        .capability("list_dir")
+        .holder(worker.public_key)
+        .ttl(1800)
+        .grant(mid)
+    )
+    leaf = (
+        intermediate.grant_builder()
+        .capability("read_file")
+        .holder(holder.public_key)
+        .ttl(900)
+        .grant(worker)
+    )
+    return root, intermediate, leaf
+
+
+def test_session_scope_installs_parent_chain_for_guard(pair):
+    root_key, holder, _warrant, _runtime = pair
+    root, intermediate, leaf = _three_hop_stack(root_key, holder)
+    runtime = Runtime(identity=holder, trusted_roots=[root_key.public_key], receipts="collect")
+    session = runtime.session_from_wire([root, intermediate, leaf])
+    assert [w.id for w in session._parents] == [root.id, intermediate.id]
+
+    @guard(tool="read_file")
+    def read_file() -> str:
+        return "ok"
+
+    with runtime.session_scope(session):
+        parents = chain_scope()
+        assert [w.id for w in parents] == [root.id, intermediate.id]
+        assert read_file() == "ok"
+        orphan = runtime.session_from_wire(leaf)
+        with runtime.session_scope(orphan):
+            assert chain_scope() == []
+            with pytest.raises(UntrustedRoot):
+                read_file()
+        assert [w.id for w in chain_scope()] == [root.id, intermediate.id]
+    assert chain_scope() is None
+
+
+def test_session_context_manager_installs_parent_chain(pair):
+    root_key, holder, _warrant, _runtime = pair
+    root, intermediate, leaf = _three_hop_stack(root_key, holder)
+    runtime = Runtime(identity=holder, trusted_roots=[root_key.public_key])
+    session = runtime.session_from_wire(encode_warrant_stack([root, intermediate, leaf]))
+    with session:
+        result = enforce_tool_call("read_file", {}, session.bound)
+    assert result.allowed
+    orphan = runtime.session_from_wire(leaf)
+    with orphan:
+        denied = enforce_tool_call("read_file", {}, orphan.bound)
+    assert not denied.allowed
+    assert "root" in (denied.denial_reason or "").lower() or "issuer" in (
+        denied.denial_reason or ""
+    ).lower()
 
 
 def test_concurrent_producers_serialized_ack(pair):
