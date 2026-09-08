@@ -36,7 +36,7 @@ import type {
 import { parseConnectToken } from "./connect.ts";
 import { generateIdentity, identityFromKey } from "./identity.ts";
 import { createMcp, presentCall, verifyPresented, type Decide } from "./mcp.ts";
-import { collectReceipt, emitIsolatedReceipt } from "./receipts.ts";
+import { collectReceipt, emitIsolatedReceipt, inheritSessionCollector } from "./receipts.ts";
 import { createRuntime } from "./runtime.ts";
 import { AuthorizationDeniedError, ApprovalRequiredError, TenuoConfigurationError, TenuoError } from "./errors.ts";
 import { Session, isSession, nativeSession } from "./session.ts";
@@ -543,7 +543,9 @@ class TenuoClient implements Tenuo {
     }
     const native = options === undefined ? undefined : narrowOptionsJson(options);
     try {
-      return new Session(this.context.narrow(nativeSession(session), allow, native));
+      const child = new Session(this.context.narrow(nativeSession(session), allow, native));
+      inheritSessionCollector(session, child);
+      return child;
     } catch (error) {
       throw chainError(error);
     }

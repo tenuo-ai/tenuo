@@ -70,7 +70,7 @@ pub enum ConnectTokenError {
     MissingField(&'static str),
     /// Agent claim HTTP request failed.
     ClaimFailed(String),
-    /// Token version is newer than this SDK supports.
+    /// Token version is not supported by this SDK.
     UnsupportedVersion(u8),
 }
 
@@ -110,7 +110,7 @@ impl ConnectToken {
             .map_err(|e| ConnectTokenError::Json(e.to_string()))?;
 
         const MAX_SUPPORTED_VERSION: u8 = 1;
-        if token.version > MAX_SUPPORTED_VERSION {
+        if token.version != MAX_SUPPORTED_VERSION {
             return Err(ConnectTokenError::UnsupportedVersion(token.version));
         }
 
@@ -273,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_v0_token_without_version() {
+    fn parse_token_without_version_defaults_to_v1() {
         let raw = make_token_str(
             r#"{"e":"https://control.example.com/v1","k":"tc_old","a":"ag","t":"rt"}"#,
         );
@@ -310,6 +310,15 @@ mod tests {
         assert!(matches!(
             ConnectToken::parse(&raw),
             Err(ConnectTokenError::UnsupportedVersion(2))
+        ));
+    }
+
+    #[test]
+    fn reject_version_zero() {
+        let raw = make_token_str(r#"{"v":0,"e":"https://control.example.com","k":"tc_abc"}"#);
+        assert!(matches!(
+            ConnectToken::parse(&raw),
+            Err(ConnectTokenError::UnsupportedVersion(0))
         ));
     }
 

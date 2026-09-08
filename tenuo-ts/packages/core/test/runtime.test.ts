@@ -34,6 +34,10 @@ describe("parseConnectToken", () => {
     expect(token.agentId).toBe("agt_1");
     expect(token.registrationToken).toBe("tok_1");
     expect(token.needsEndpointBase).toBe(false);
+    expect(JSON.stringify(token)).not.toContain("tc_secret");
+    expect(JSON.stringify(token)).not.toContain("tok_1");
+    expect(inspect(token)).not.toContain("tc_secret");
+    expect(inspect(token)).not.toContain("tok_1");
   });
 
   it("accepts padded Base64URL and the registration-token aliases", () => {
@@ -192,6 +196,19 @@ describe("Runtime", () => {
     expect(otherSession.peekReceipts()).toEqual([]);
   });
 
+  it("acknowledges only successfully persisted receipts", async () => {
+    const { session, readFile } = issuedRuntime();
+    await readFile.execute({ path: "/data/a.pdf" }, { session });
+    await readFile.execute({ path: "/data/b.pdf" }, { session });
+    await readFile.execute({ path: "/data/c.pdf" }, { session });
+
+    expect(session.peekReceipts()).toHaveLength(3);
+    expect(session.acknowledgeReceipts(1)).toBe(1);
+    expect(session.peekReceipts()).toHaveLength(2);
+    expect(session.drainReceipts()).toHaveLength(2);
+    expect(session.peekReceipts()).toEqual([]);
+  });
+
   it("collects present and MCP receipts without a per-call onReceipt", async () => {
     const { runtime, session, issuer } = issuedRuntime();
     const presented = runtime.tenuo.present(session, "read_file", { path: "/data/q3.pdf" });
@@ -209,6 +226,15 @@ describe("Runtime", () => {
     expect(verified).toHaveLength(2);
     expect(verifyReceipt(verified[0]!)).toMatchObject({ outcome: "allow" });
     expect(server.drainReceipts()).toEqual([]);
+  });
+
+  it("keeps receipt collection on narrowed runtime sessions", async () => {
+    const { runtime, session, readFile } = issuedRuntime();
+    const child = runtime.tenuo.narrow(session, { read_file: { path: under("/data/reports") } });
+
+    await readFile.execute({ path: "/data/reports/q3.pdf" }, { session: child });
+    expect(child.drainReceipts()).toHaveLength(1);
+    expect(session.drainReceipts()).toEqual([]);
   });
 
   it("keeps explicit onReceipt compatible and still collects", async () => {

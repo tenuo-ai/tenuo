@@ -1221,7 +1221,7 @@ pub fn sign_receipt(payload_json: JsValue, authorizer_key_hex: &str) -> JsValue 
 /// Parse a complete `tenuo_ct_…` token into its component fields.
 ///
 /// Accepts padded and unpadded Base64URL. Missing `v` defaults to 1; versions
-/// greater than 1 are rejected. Trailing `/v1` is stripped from `e`.
+/// other than 1 are rejected. Trailing `/v1` is stripped from `e`.
 /// Registration-token aliases: `t`, `r`.
 ///
 /// Returns `{ endpoint, apiKey, agentId?, registrationToken?, error? }`.
@@ -1284,7 +1284,7 @@ pub fn parse_connect_token(token: &str) -> JsValue {
         Ok(t) => t,
         Err(e) => return fail(format!("JSON parse: {}", e)),
     };
-    if raw.v > 1 {
+    if raw.v != 1 {
         return fail(format!("unsupported token version: {}", raw.v));
     }
     if raw.e.is_empty() || raw.k.is_empty() {

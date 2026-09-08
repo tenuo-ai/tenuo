@@ -1,40 +1,36 @@
 import type { Session as SessionContract } from "./api.ts";
 
 /**
- * In-memory receipt buffer with a drain cursor.
+ * In-memory receipt buffer containing only unacknowledged receipts.
  *
  * Delivery: receipts are appended in emission order. `peek()` is
- * non-consuming. `drain()` returns everything after the cursor and advances
- * it (at-most-once from this buffer). A hosted adapter that retries uploads
+ * non-consuming. `drain()` removes and returns everything currently buffered
+ * (at-most-once from this buffer). A hosted adapter that retries uploads
  * should `peek()`, copy into its own retry buffer, then `acknowledge()`.
  * Process crash after drain and before the caller persists the batch loses
  * those receipts here. Upload remains the caller's job.
  */
 export class ReceiptCollector {
   readonly #items: string[] = [];
-  #cursor = 0;
 
   push(receipt: string): void {
     this.#items.push(receipt);
   }
 
   peek(): string[] {
-    return this.#items.slice(this.#cursor);
+    return [...this.#items];
   }
 
   drain(): string[] {
-    const batch = this.peek();
-    this.#cursor = this.#items.length;
-    return batch;
+    return this.#items.splice(0);
   }
 
   acknowledge(count: number): number {
     if (!Number.isInteger(count) || count < 0) {
       return 0;
     }
-    const available = this.#items.length - this.#cursor;
-    const n = Math.min(count, available);
-    this.#cursor += n;
+    const n = Math.min(count, this.#items.length);
+    this.#items.splice(0, n);
     return n;
   }
 }
@@ -44,6 +40,13 @@ const hostCollectors = new WeakMap<object, ReceiptCollector>();
 
 export function bindSessionCollector(session: object, collector: ReceiptCollector): void {
   sessionCollectors.set(session, collector);
+}
+
+/** Give a derived session its own collector when its parent was runtime-managed. */
+export function inheritSessionCollector(parent: object, child: object): void {
+  if (sessionCollectors.has(parent)) {
+    sessionCollectors.set(child, new ReceiptCollector());
+  }
 }
 
 export function bindHostCollector(host: object, collector: ReceiptCollector): void {

@@ -13,9 +13,17 @@ const secrets = new WeakMap<HolderIdentity, Uint8Array>();
 export class HolderIdentity {
   readonly publicKey: PublicKeyHandle;
 
-  constructor(holderKey: Uint8Array, publicKey: PublicKeyHandle) {
+  constructor(holderKey: Uint8Array) {
+    if (!(holderKey instanceof Uint8Array) || holderKey.length !== 32) {
+      throw new TenuoConfigurationError("HolderIdentity requires a 32-byte holder key");
+    }
+    loadWasm();
     secrets.set(this, new Uint8Array(holderKey));
-    this.publicKey = publicKey;
+    this.publicKey = {
+      kind: "public-key",
+      source: "bytes",
+      hex: publicKeyHexFromHolderKey(holderKey),
+    };
   }
 
   /** Copy of the 32-byte Ed25519 secret. */
@@ -46,11 +54,7 @@ export function identityFromKey(holderKey: Uint8Array): HolderIdentity {
     throw new TenuoConfigurationError("identity() requires a 32-byte holder key");
   }
   loadWasm();
-  return new HolderIdentity(holderKey, {
-    kind: "public-key",
-    source: "bytes",
-    hex: publicKeyHexFromHolderKey(holderKey),
-  });
+  return new HolderIdentity(holderKey);
 }
 
 /** Fresh holder identity. Uses Web Crypto; does not touch the filesystem. */

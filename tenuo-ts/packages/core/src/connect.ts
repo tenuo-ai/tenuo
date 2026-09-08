@@ -2,6 +2,7 @@ import { TenuoConfigurationError } from "./errors.ts";
 
 const TOKEN_PREFIX = "tenuo_ct_";
 const MAX_SUPPORTED_VERSION = 1;
+const inspect = Symbol.for("nodejs.util.inspect.custom");
 
 export type ResolveEndpointOptions = {
   /**
@@ -62,6 +63,27 @@ export class ConnectToken {
     }
     this.endpoint = origin;
     return this;
+  }
+
+  /** Credential-safe JSON view. API and registration secrets are never serialized. */
+  toJSON(): {
+    readonly version: number;
+    readonly endpoint: string;
+    readonly agentId?: string;
+  } {
+    return {
+      version: this.version,
+      endpoint: this.endpoint,
+      ...(this.agentId !== undefined ? { agentId: this.agentId } : {}),
+    };
+  }
+
+  toString(): string {
+    return `TenuoConnectToken(${this.endpoint || "relative endpoint"})`;
+  }
+
+  [inspect](): ReturnType<ConnectToken["toJSON"]> {
+    return this.toJSON();
   }
 }
 
