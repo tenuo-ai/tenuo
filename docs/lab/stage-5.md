@@ -12,6 +12,8 @@ lab_version: "0.2.0"
 <p class="lab-intro">In this stage a permission is something an agent is handed for a specific job. When the agent passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks this instead of trusting it.</p>
 <p class="lab-intro">Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. No agent can sign one from scratch.</p>
 
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>Capability-based delegation: a short-lived, signed, holder-bound permission travels with the request and is attenuated at each handoff. Unlike an ordinary bearer token, possessing the bytes is not enough to use it.</p></aside>
+
 <section class="lab-explainer">
 <h2>What a warrant is</h2>
 <p class="lab-lead">A warrant is a signed, self-contained permission that travels with the request: which tools, with which argument values, for which agent's key, until when, and how many more hops it may take. That is what Tenuo issues, narrows, and checks.</p>
@@ -269,7 +271,7 @@ THE TRIP
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="5:2"><span>3</span></label>
-<div class="lab-step-body"><p>Run the checks. The two-traveler run happens here too, with no policy file to edit. Read <strong>CROSS-TASK</strong> and the escalation attempt, then find <code>central_calls</code>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 158 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks. The two-traveler run happens here too, with no policy file to edit. Read <strong>CROSS-TASK</strong> and the escalation attempt, then find <code>central_calls</code>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 162 lines</span></summary><pre><code>
 Stage 5 of 7: Access that travels with the work   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-5
 
@@ -307,6 +309,8 @@ HANDOFFS
       hotel-agent now holds {book_hotel, search_hotels, traveler.read, wallet.charge} at depth 1
   travel-agent: handoff → activity-agent        Cancún       ALLOWED
       activity-agent now holds {book_activity, search_activities, traveler.read, wallet.charge} at depth 1
+
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
 
 LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓
@@ -384,6 +388,8 @@ HANDOFFS
       checkin-agent now holds {check_in, get_reservation, issue_boarding_pass} at depth 2
   checkin-agent: handoff → boarding-agent       DL331        ALLOWED
       boarding-agent now holds {issue_boarding_pass} at depth 3
+
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
 
 LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓

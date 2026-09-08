@@ -12,6 +12,8 @@ lab_version: "0.2.0"
 <p class="lab-intro">Six agents book Alice's trip. All six carry the same key, and it opens everything: flights, hotels, the wallet, her passport number, the calendar.</p>
 <p class="lab-intro">There is no setup in this stage. Its job is to show you the damage before anything protects against it.</p>
 
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>A shared API key or long-lived cloud credential copied into every service. Compromise of any workload exposes the whole account.</p></aside>
+
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="The same key in every agent. Check-in Agent reads a departure board with an instruction hidden on it." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 200 L198 200" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#6a6a6a"/>
 <path d="M97 284 L198 284" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#6a6a6a"/>
@@ -97,7 +99,7 @@ WHAT ELSE HAPPENED
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="1:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the rogue behavior and the security checks. Read <strong>WHAT ELSE HAPPENED</strong> and look at the wallet.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 57 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the rogue behavior and the security checks. Read <strong>WHAT ELSE HAPPENED</strong> and look at the wallet.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 59 lines</span></summary><pre><code>
 Stage 1 of 7: One key for everyone   mode=shared  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-1
 
@@ -126,6 +128,8 @@ WHAT ELSE HAPPENED
   ! $412 left the wallet on the rogue agent's say-so (balance now $47)
   ! UA214 is cancelled: Alice Chen has a boarding pass for a flight that no longer exists
   ! AA882, another traveler's reservation, was checked in by your agent
+
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
 
 LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓

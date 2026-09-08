@@ -11,6 +11,8 @@ lab_version: "0.2.0"
 
 <p class="lab-intro">Now each agent has its own credential with permissions that match its role. Flight Agent does flight things. Check-in Agent reads reservations and checks people in.</p>
 
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>A service account, workload identity, or IAM role per agent. It identifies the workload and grants role-level permissions, but usually does not say which individual trip or request that workload is handling.</p></aside>
+
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 268" aria-hidden="true" focusable="false" data-caption="One account per agent, sized to its role." xmlns="http://www.w3.org/2000/svg"><path d="M97 78 L97 222" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 138 L198 138" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,138 197,142.95 197,133.05" fill="#6a6a6a"/>
 <path d="M97 222 L198 222" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,222 197,226.95 197,217.05" fill="#6a6a6a"/>
@@ -34,7 +36,7 @@ lab_version: "0.2.0"
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="2:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the checks and compare with stage 1. Count what is still <strong>ALLOWED</strong> with a ✗ next to it.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 55 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks and compare with stage 1. Count what is still <strong>ALLOWED</strong> with a ✗ next to it.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 57 lines</span></summary><pre><code>
 Stage 2 of 7: Every agent gets its own account   mode=identity  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-2
 
@@ -61,6 +63,8 @@ THE TRIP
 
 WHAT ELSE HAPPENED
   ! AA882, another traveler's reservation, was checked in by your agent
+
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
 
 LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓

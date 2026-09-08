@@ -21,15 +21,17 @@ lab_version: "0.2.0"
 <pre class="lab-cmd"><code>git clone https://github.com/tenuo-ai/tenuo
 cd tenuo/labs/agent-delegation
 npm install
-npm run star       # optional; skip if you are not signed in to GitHub
+npm run star       # optional
 npm run lab</code></pre>
-<p class="lab-muted">Node 20 or newer. The core challenge runs locally with no account or API key; only <code>npm run share</code> and the optional star command use the network. Skip the star command if you are not signed in to GitHub. Every challenge check and score is real.</p>
+<p class="lab-muted">Node 20 or newer. The core challenge runs locally with no account or API key; only <code>npm run share</code> and the optional star command use the network. Every challenge check and score is real.</p>
 </div>
+<details class="lab-reveal lab-expect">
+<summary>What to expect <span>5 stages · about 90 min · 2 optional bosses</span></summary>
 <div>
-<h2>What to expect</h2>
-<p>Five stages in about ninety minutes, then two optional boss levels. You run a command, read what happened, change a file, and run it again. Retries are free, speed is not scored, and copying the shown <code>narrow()</code> shape is allowed.</p>
-<p class="lab-muted">If you want the vocabulary early, the TypeScript guide's <a href="https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts">Protect your first tool</a> and <a href="https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts">Delegate to another agent</a> take about seven minutes.</p>
+<ul><li>A self-guided challenge: run a command, read the result, change a file, and run it again.</li><li>Retries are free, speed is not scored, and copying the shown <code>narrow()</code> shape is allowed.</li></ul>
+<p class="lab-muted">Want the vocabulary first? The TypeScript guide's <a href="https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts">Protect your first tool</a> and <a href="https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts">Delegate to another agent</a> take about seven minutes.</p>
 </div>
+</details>
 </section>
 <details class="lab-reveal">
 <summary>Prefer a hosted terminal? Use Codespaces</summary>

@@ -131,7 +131,7 @@ function stepper(current: number | "wrap" | "contribute"): string {
   return `<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a>${items.join("")}</nav>`;
 }
 
-function callout(kind: "notice" | "question" | "hint" | "stuck", title: string, body: string): string {
+function callout(kind: "notice" | "question" | "hint" | "stuck" | "infrastructure", title: string, body: string): string {
   return `<aside class="lab-callout ${kind}"><div class="lab-callout-title">${title}</div>${body}</aside>`;
 }
 
@@ -164,6 +164,7 @@ function stagePage(spec: StageSpec): string {
   const tier = spec.n > MAIN_STAGE_COUNT ? " · optional boss level" : "";
   parts.push(`<header class="lab-hero"><div class="lab-kicker">Stage ${spec.n} of ${TOTAL_STAGE_COUNT}${tier} · <span class="lab-mode ${spec.mode}">${spec.mode}</span> · about ${spec.minutes} min</div><h1>${esc(spec.title)}</h1><p class="lab-goal"><strong>Goal.</strong> ${inline(spec.goal)}</p></header>`);
   parts.push(spec.intro.map((p) => `<p class="lab-intro">${inline(p)}</p>`).join("\n"));
+  parts.push(callout("infrastructure", "Closest infrastructure analogy", `<p>${inline(spec.infrastructure)}</p>`));
   if (spec.explainer !== undefined) {
     parts.push(explainerHtml(spec.explainer));
   }
@@ -213,15 +214,17 @@ function indexPage(): string {
 <pre class="lab-cmd"><code>git clone ${REPO_URL}
 cd tenuo/labs/agent-delegation
 npm install
-npm run star       # optional; skip if you are not signed in to GitHub
+npm run star       # optional
 npm run lab</code></pre>
-<p class="lab-muted">Node 20 or newer. The core challenge runs locally with no account or API key; only <code>npm run share</code> and the optional star command use the network. Skip the star command if you are not signed in to GitHub. Every challenge check and score is real.</p>
+<p class="lab-muted">Node 20 or newer. The core challenge runs locally with no account or API key; only <code>npm run share</code> and the optional star command use the network. Every challenge check and score is real.</p>
 </div>
+<details class="lab-reveal lab-expect">
+<summary>What to expect <span>5 stages · about 90 min · 2 optional bosses</span></summary>
 <div>
-<h2>What to expect</h2>
-<p>Five stages in about ninety minutes, then two optional boss levels. You run a command, read what happened, change a file, and run it again. Retries are free, speed is not scored, and copying the shown <code>narrow()</code> shape is allowed.</p>
-<p class="lab-muted">If you want the vocabulary early, the TypeScript guide's <a href="${REPO_URL}/tree/main/tenuo-ts">Protect your first tool</a> and <a href="${REPO_URL}/tree/main/tenuo-ts">Delegate to another agent</a> take about seven minutes.</p>
+<ul><li>A self-guided challenge: run a command, read the result, change a file, and run it again.</li><li>Retries are free, speed is not scored, and copying the shown <code>narrow()</code> shape is allowed.</li></ul>
+<p class="lab-muted">Want the vocabulary first? The TypeScript guide's <a href="${REPO_URL}/tree/main/tenuo-ts">Protect your first tool</a> and <a href="${REPO_URL}/tree/main/tenuo-ts">Delegate to another agent</a> take about seven minutes.</p>
 </div>
+</details>
 </section>
 <details class="lab-reveal">
 <summary>Prefer a hosted terminal? Use Codespaces</summary>

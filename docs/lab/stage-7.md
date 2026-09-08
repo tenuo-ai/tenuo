@@ -11,6 +11,8 @@ lab_version: "0.2.0"
 
 <p class="lab-intro">This stage gives less guidance than the others. The compromised Hotel Agent will try eight things.</p>
 
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>Incident containment with least-privilege, short-lived workload credentials: preserve the approved operation while removing unrelated tools, data fields, budget, and onward delegation.</p></aside>
+
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Everything Hotel Agent can do is decided by one link. Fix that link." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 200 L198 200" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="var(--accent)"/><text x="151.5" y="239" font-size="10.5" text-anchor="middle" fill="var(--accent)">the link you fix</text>
 <path d="M97 284 L198 284" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#3a3a3a"/>
@@ -46,7 +48,7 @@ lab_version: "0.2.0"
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="7:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the checks. All eight attempts are listed under <strong>INCIDENT</strong>. Make one land and seven fail, and keep an eye on the least-privilege row of your score.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t7-1" id="t7-1-0" checked><label for="t7-1-0">As it ships</label><input type="radio" name="t7-1" id="t7-1-1"><label for="t7-1-1">When it is fixed</label><div class="lab-tab-panel"><details class="lab-term"><summary>As it ships <span>npm run attack · 58 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks. All eight attempts are listed under <strong>INCIDENT</strong>. Make one land and seven fail, and keep an eye on the least-privilege row of your score.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t7-1" id="t7-1-0" checked><label for="t7-1-0">As it ships</label><input type="radio" name="t7-1" id="t7-1-1"><label for="t7-1-1">When it is fixed</label><div class="lab-tab-panel"><details class="lab-term"><summary>As it ships <span>npm run attack · 60 lines</span></summary><pre><code>
 Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
@@ -85,6 +87,8 @@ HANDOFFS
   travel-agent: handoff → activity-agent        Cancún       ALLOWED
       activity-agent now holds {book_activity, search_activities, traveler.read, wallet.charge} at depth 1
 
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
+
 INCIDENT
   1. book the approved Cancún hotel                        ALLOWED  ✓
   2. book a hotel in Tulum                                 DENIED   ✓
@@ -103,7 +107,7 @@ INCIDENT
       reason: TENUO_INVALID_POP: holder key does not match the warrant's authorized holder. Holding a copy of a warrant is not authority; only the key it was issued to can use it. If this followed narrow(), set { holder: receiverPublicKey } for the agent that imports the child.  [TENUO_INVALID_POP]
 
   3 of 8 checks did not land as expected
-  central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When it is fixed <span>npm run attack · 58 lines</span></summary><pre><code>
+  central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When it is fixed <span>npm run attack · 60 lines</span></summary><pre><code>
 Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
@@ -142,6 +146,8 @@ HANDOFFS
   travel-agent: handoff → activity-agent        Cancún       ALLOWED
       activity-agent now holds {book_activity, search_activities, traveler.read, wallet.charge} at depth 1
 
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
+
 INCIDENT
   1. book the approved Cancún hotel                        ALLOWED  ✓
   2. book a hotel in Tulum                                 DENIED   ✓
@@ -164,7 +170,7 @@ INCIDENT
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="7:2"><span>3</span></label>
-<div class="lab-step-body"><p>Check the score. Blocking attempt 3 the same way you blocked attempt 2 costs points.</p><pre class="lab-cmd"><code>npm run score</code></pre><details class="lab-term" open><summary>Full marks <span>npm run score · 19 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Check the score. Blocking attempt 3 the same way you blocked attempt 2 costs points.</p><pre class="lab-cmd"><code>npm run score</code></pre><details class="lab-term" open><summary>Full marks <span>npm run score · 22 lines</span></summary><pre><code>
 Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
@@ -182,7 +188,10 @@ STARS   ★★★★
   No spare authority                           20  / 20  0 findings, capped at -5 per agent
                                                100 / 100
 
-  Stage 7 done.</code></pre></details></div>
+  Challenge complete.
+  Wrap up: https://tenuo.ai/lab/wrap-up?done=7
+  npm run share   submit your redacted Stage 5 learning signal
+  npm run star    support Tenuo from this terminal (optional)</code></pre></details></div>
 </li>
 </ol>
 

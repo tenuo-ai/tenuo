@@ -12,6 +12,8 @@ lab_version: "0.2.0"
 <p class="lab-intro">Two short extensions on the chain you built. Boarding Agent's permission for UA214 is a piece of data: a list of strings. Activity Agent gets a copy and tries to use it.</p>
 <p class="lab-intro">Then a limit on distance. When one agent hands a permission on, it can mark it terminal. The root also carries a maximum number of hops for the whole trip: any agent can lower it, none can raise it.</p>
 
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>Proof-of-possession credentials, such as holder-bound OAuth tokens or mTLS-bound access, plus deliberately non-forwardable delegation. The analogy is proof of key possession, not the token format.</p></aside>
+
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Activity Agent has the bytes and still cannot use them." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 200 L198 200" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#3a3a3a"/>
 <path d="M97 284 L198 284" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#6a6a6a"/>
@@ -65,7 +67,7 @@ export function steal(tenuo: TenuoMode, boardingSession: Session): StealOutcome 
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="6:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the checks and read the <strong>STOLEN</strong> replay panel carefully. It prints both public keys, the failed comparison, and the Ed25519 signature result.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 79 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks and read the <strong>STOLEN</strong> replay panel carefully. It prints both public keys, the failed comparison, and the Ed25519 signature result.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 81 lines</span></summary><pre><code>
 Stage 6 of 7: Boss: stolen authority   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-6
 
@@ -103,6 +105,8 @@ HANDOFFS
       hotel-agent now holds {book_hotel, search_hotels, traveler.read, wallet.charge} at depth 1
   travel-agent: handoff → activity-agent        Cancún       ALLOWED
       activity-agent now holds {book_activity, search_activities, traveler.read, wallet.charge} at depth 1
+
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
 
 LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓

@@ -12,6 +12,8 @@ lab_version: "0.2.0"
 <p class="lab-intro">Bob is going to Seattle on DL331, at the same time, through the same agents. Your stage 3 policy describes only Alice's Cancún flight, so Bob is rejected by destination, flight-budget, and reservation rules.</p>
 <p class="lab-intro">This stage has two acts. First isolate Alice from Bob. Then observe an intentional handoff leak. The red handoff checks in Act 2 do not mean your Act 1 solution is broken.</p>
 
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>Per-job workload identities backed by a registry, or a central authorization service that acts as a policy decision point. Each decision depends on current task context outside the acting agent.</p></aside>
+
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Two trips through the same six agents. Then Check-in Agent passes the only thing it has, and asks for more." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 200 L198 200" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#6a6a6a"/>
 <path d="M97 284 L198 284" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#6a6a6a"/>
@@ -121,7 +123,7 @@ THE TRIP
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="4:1"><span>2</span></label>
-<div class="lab-step-body"><p>Fix it the quick way: broaden each shared flight-chain role for both trips. The README names every field. Both trips complete; now read <strong>CROSS-TASK</strong>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>After the broad quick fix <span>npm run attack · 65 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Fix it the quick way: broaden each shared flight-chain role for both trips. The README names every field. Both trips complete; now read <strong>CROSS-TASK</strong>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>After the broad quick fix <span>npm run attack · 67 lines</span></summary><pre><code>
 Stage 4 of 7: Two travelers, then a handoff   mode=scoped  scenario=two-travelers
   guide: https://tenuo.ai/lab/stage-4
 
@@ -148,6 +150,8 @@ THE TRIP
   ✓ trip-bob-sea    check-in: DL331
   ✓ trip-bob-sea    boarding: pass for DL331
   ✓ trip-bob-sea    within budget ($398 of $1500)
+
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
 
 LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓
@@ -189,7 +193,7 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="4:2"><span>3</span></label>
-<div class="lab-step-body"><p>Give the agent a different identity for each trip. <code>exercises/04-two-travelers/README.md</code> walks through it. Get <strong>CROSS-TASK</strong> clean.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>With one identity per task <span>npm run attack · 79 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Give the agent a different identity for each trip. <code>exercises/04-two-travelers/README.md</code> walks through it. Get <strong>CROSS-TASK</strong> clean.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>With one identity per task <span>npm run attack · 81 lines</span></summary><pre><code>
 Stage 4 of 7: Two travelers, then a handoff   mode=scoped  scenario=two-travelers
   guide: https://tenuo.ai/lab/stage-4
 
@@ -230,6 +234,8 @@ HANDOFFS
       orchestrator registered a per-task identity with the registry before the task's first call
   travel-agent: register identity               boarding-agent:trip-bob-sea ALLOWED
       orchestrator registered a per-task identity with the registry before the task's first call
+
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
 
 LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓
