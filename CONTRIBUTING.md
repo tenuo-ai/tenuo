@@ -177,6 +177,7 @@ catch problems that workspace imports can hide.
 pnpm example:mcp          # quarterly-close wire scenario
 pnpm example:mcp:host     # official MCP v1 recipe
 pnpm example:mcp:adapter  # @tenuo/mcp v2 adapter tests
+pnpm example:sessions     # concurrent session isolation
 ```
 
 ### TypeScript contribution rules

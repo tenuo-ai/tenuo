@@ -171,6 +171,44 @@ const reports = tenuo.narrow(session, {
 To hand that narrower authority to a different agent, bind the child to that
 agent's key. See [Delegate to another agent](#delegate-to-another-agent).
 
+### Concurrent requests keep separate sessions
+
+`withSession()` scopes the session with Node's `AsyncLocalStorage`. Two
+requests that run at the same time, await in between, and call the same
+protected tool each see only their own session:
+
+```ts
+await Promise.all([
+  tenuo.withSession(reportsSession, () => runReportAgent()),
+  tenuo.withSession(financeSession, () => runFinanceAgent()),
+]);
+```
+
+Each session denies the other flow's path before the tool runs. A plain
+closure does not capture its creation-time session; it uses the context in
+which it is invoked. For queues or callbacks that do not preserve the
+originating context, pass the intended local session on the call:
+
+```ts
+await readFile.execute({ path }, { session });
+```
+
+An explicit session takes precedence for that call and does not replace the
+surrounding ambient session. After both flows finish, the caller has no
+ambient session if it started without one. This scopes access to the handle;
+it does not revoke the signed warrant or isolate arbitrary JavaScript code.
+
+Session handles do not cross process or worker-thread boundaries. Send the
+warrant chain and import it with the receiver's local holder key using
+`sessionFromWire()`, then scope or explicitly pass that local session. See
+[Delegate to another agent](#delegate-to-another-agent). Never send holder
+secrets with the job.
+
+The runnable version is
+[`concurrent-sessions.ts`](packages/core/examples/concurrent-sessions.ts)
+in `packages/core/examples`; `pnpm example:sessions` runs both flows with a
+fixed interleaving plus the queued-job case.
+
 ## Production setup
 
 Development puts issuance and enforcement in one process. Production separates

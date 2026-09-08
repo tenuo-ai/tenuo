@@ -9,6 +9,7 @@
     "example:mcp": "pnpm --filter @tenuo/core exec vitest run test/mcp.test.ts -t quarterly-close",
     "example:mcp:host": "pnpm --filter @tenuo/core exec vitest run test/mcp-host.smoke.test.ts",
     "example:mcp:adapter": "pnpm --filter @tenuo/mcp test",
+    "example:sessions": "pnpm --filter @tenuo/core exec vitest run test/session-isolation.test.ts",
     "test:mutation": "stryker run stryker.core.config.mjs && stryker run stryker.mcp.config.mjs"
   },
   "engines": {
