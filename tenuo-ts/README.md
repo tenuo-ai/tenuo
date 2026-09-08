@@ -453,6 +453,12 @@ Every constraint is evaluated in the Rust core and attenuates monotonically.
 Every named field is required. `wildcard()` admits any value, not the absence
 of one.
 
+Builders check their own input when you call them. A relative `under()` root,
+an empty `oneOf()` list, or a `range()` whose minimum exceeds its maximum
+throws `TenuoConfigurationError` with code `TENUO_CONFIGURATION` at the call
+site. Checks that need the core, such as regex syntax or CIDR validity, run
+when `session()` compiles the policy and throw the same error.
+
 ### Approvals end to end
 
 Gate a tool, or only some of its arguments, on signed human approval:
@@ -631,12 +637,6 @@ try {
 
 An approval is a signed Tenuo approval envelope. A boolean such as
 `userApproved: true` is not authorization evidence.
-
-Invalid constraint definitions are configuration mistakes, not authorization
-outcomes. Builders such as `under()`, `range()`, and `oneOf()` validate their
-input when called and throw `TenuoConfigurationError` with code
-`TENUO_CONFIGURATION`, so a malformed policy fails where it is written rather
-than at the first denied call.
 
 ## Receipts and revocation
 
