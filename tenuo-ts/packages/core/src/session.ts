@@ -1,5 +1,10 @@
 import type { Session as SessionContract, SessionInfo } from "./api.ts";
 import { TenuoConfigurationError } from "./errors.ts";
+import {
+  acknowledgeSessionReceipts,
+  drainSessionReceipts,
+  peekSessionReceipts,
+} from "./runtime.ts";
 import type { WasmSession, WasmSessionInfo } from "./wasm.ts";
 
 const inspect = Symbol.for("nodejs.util.inspect.custom");
@@ -92,6 +97,23 @@ export class Session implements SessionContract {
       out.minApprovals = info.min_approvals;
     }
     return out;
+  }
+
+  /**
+   * Receipts produced through this session since the last drain. Empty when
+   * collection is off or nothing new has been decided. See Runtime receipts
+   * documentation for peek/ack vs drain.
+   */
+  peekReceipts(): string[] {
+    return peekSessionReceipts(this);
+  }
+
+  drainReceipts(): string[] {
+    return drainSessionReceipts(this);
+  }
+
+  acknowledgeReceipts(count: number): number {
+    return acknowledgeSessionReceipts(this, count);
   }
 }
 

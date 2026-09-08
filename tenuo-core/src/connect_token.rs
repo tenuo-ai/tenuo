@@ -43,7 +43,13 @@ pub struct ConnectToken {
     #[serde(rename = "a", default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     /// One-time registration token for claiming the agent.
-    #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "t",
+        alias = "r",
+        alias = "registration_token",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub registration_token: Option<String>,
 }
 
@@ -97,6 +103,7 @@ impl ConnectToken {
 
         let json_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(encoded)
+            .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(encoded))
             .map_err(|e| ConnectTokenError::Base64(e.to_string()))?;
 
         let token: ConnectToken = serde_json::from_slice(&json_bytes)
@@ -126,6 +133,33 @@ impl ConnectToken {
             endpoint: ep,
             ..token
         })
+    }
+
+    /// True when `e` was a relative path such as `/v1` and parse stripped it
+    /// to an empty or path-only origin. The caller must supply a base URL.
+    pub fn needs_endpoint_base(&self) -> bool {
+        self.endpoint.is_empty() || self.endpoint.starts_with('/')
+    }
+
+    /// Resolve a relative connect-token endpoint against a caller-provided base.
+    ///
+    /// `base` is an origin such as `https://control.example.com` or the same
+    /// origin with a `/v1` suffix. This method never invents an origin.
+    /// Absolute endpoints are left unchanged.
+    pub fn resolve_endpoint(&mut self, base: &str) -> Result<(), ConnectTokenError> {
+        if !self.needs_endpoint_base() {
+            return Ok(());
+        }
+        let mut origin = base.trim().trim_end_matches('/').to_string();
+        if origin.ends_with("/v1") {
+            origin.truncate(origin.len() - 3);
+            origin = origin.trim_end_matches('/').to_string();
+        }
+        if origin.is_empty() || origin.starts_with('/') {
+            return Err(ConnectTokenError::MissingField("endpoint"));
+        }
+        self.endpoint = origin;
+        Ok(())
     }
 
     /// Claim the pre-created agent using the embedded registration token.
@@ -192,6 +226,7 @@ impl ConnectToken {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
 
     fn make_token_str(payload: &str) -> String {
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload);
@@ -275,6 +310,49 @@ mod tests {
         assert!(matches!(
             ConnectToken::parse(&raw),
             Err(ConnectTokenError::UnsupportedVersion(2))
+        ));
+    }
+
+    #[test]
+    fn parse_padded_base64url_and_registration_alias() {
+        let payload =
+            r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc","r":"tok-alias"}"#;
+        let padded = base64::engine::general_purpose::URL_SAFE.encode(payload);
+        let raw = format!("{TOKEN_PREFIX}{padded}");
+        let ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.registration_token.as_deref(), Some("tok-alias"));
+    }
+
+    #[test]
+    fn relative_v1_endpoint_needs_caller_base() {
+        let raw = make_token_str(r#"{"v":1,"e":"/v1","k":"tc_abc"}"#);
+        let mut ct = ConnectToken::parse(&raw).unwrap();
+        assert!(ct.needs_endpoint_base());
+        ct.resolve_endpoint("https://control.example.com/v1")
+            .unwrap();
+        assert_eq!(ct.endpoint, "https://control.example.com");
+        assert!(!ct.needs_endpoint_base());
+    }
+
+    #[test]
+    fn resolve_endpoint_does_not_replace_absolute_origin() {
+        let raw = make_token_str(r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc"}"#);
+        let mut ct = ConnectToken::parse(&raw).unwrap();
+        ct.resolve_endpoint("https://other.example").unwrap();
+        assert_eq!(ct.endpoint, "https://control.example.com");
+    }
+
+    #[test]
+    fn resolve_endpoint_rejects_empty_or_relative_base() {
+        let raw = make_token_str(r#"{"v":1,"e":"/v1","k":"tc_abc"}"#);
+        let mut ct = ConnectToken::parse(&raw).unwrap();
+        assert!(matches!(
+            ct.resolve_endpoint("/v1"),
+            Err(ConnectTokenError::MissingField("endpoint"))
+        ));
+        assert!(matches!(
+            ct.resolve_endpoint(""),
+            Err(ConnectTokenError::MissingField("endpoint"))
         ));
     }
 }

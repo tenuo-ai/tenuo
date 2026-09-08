@@ -619,6 +619,19 @@ export interface Session {
   dedupKey(tool: string, args: Readonly<Record<string, unknown>>): string;
   /** Holder public key, depth, ceiling, lifetime, tools. Never the secret. */
   inspect(): SessionInfo;
+  /**
+   * Receipts collected for this session and not yet drained. Empty when the
+   * session was not created by a Runtime with `receipts: "collect"`.
+   */
+  peekReceipts(): readonly string[];
+  /**
+   * Return collected receipts and advance the cursor. A second call is empty
+   * until a new decision. Caller must persist the batch; this is at-most-once
+   * from the session buffer.
+   */
+  drainReceipts(): readonly string[];
+  /** Advance the drain cursor by `count` without returning receipts. */
+  acknowledgeReceipts(count: number): number;
 }
 
 export interface Tenuo {

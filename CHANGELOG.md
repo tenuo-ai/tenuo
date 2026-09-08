@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TypeScript holder Runtime.** `createTenuo.runtime({ identity, trustedRoots,
+  revocationList?, receipts })` owns identity, roots, SRL refresh
+  (`applyRevocationList`), and `sessionFromWire`. `receipts: "collect"` retains
+  tool, `present()`, MCP attach, and verify/handler receipts until
+  `session.drainReceipts()` / `runtime.drainReceipts()`. Peek + acknowledge
+  are available for retrying uploaders. No network and no hosted defaults.
+- **TypeScript connect-token parse.** `createTenuo.parseConnectToken` accepts
+  a complete `tenuo_ct_…` token (padded or unpadded Base64URL, version 1).
+  Relative endpoints resolve only with `token.resolveEndpoint({ localBase })`.
+  Rust and WASM parsers now share prefix, padding, `/v1` strip, and the `r` /
+  `registration_token` aliases.
+- **TypeScript holder identity.** `createTenuo.generateIdentity()` and
+  `createTenuo.identity(holderKey)` redact the secret from JSON, inspect, and
+  `toString`. No filesystem API in core.
+
 ## [0.2.5] - 2026-09-06
 
 Python `tenuo==0.2.5`, Rust `tenuo@0.2.5`, TypeScript `@tenuo/core@0.2.5-beta.0`
