@@ -107,6 +107,20 @@ impl MemoryReceiptSink {
     pub fn stored(&self) -> Vec<Receipt> {
         self.stored.lock().map(|g| g.clone()).unwrap_or_default()
     }
+
+    /// Receipts at and after `cursor`, then advance `cursor` to the current length.
+    ///
+    /// A second call with the same cursor returns nothing until a new receipt
+    /// is persisted. HTTP upload and idempotency stay in the adapter.
+    pub fn drain_from(&self, cursor: &mut usize) -> Vec<Receipt> {
+        let stored = self.stored();
+        if *cursor >= stored.len() {
+            return Vec::new();
+        }
+        let out = stored[*cursor..].to_vec();
+        *cursor = stored.len();
+        out
+    }
 }
 
 impl ReceiptSink for MemoryReceiptSink {
@@ -210,6 +224,9 @@ mod tests {
         let reference = sink.persist(&receipt).unwrap();
         assert!(reference.id.starts_with("mem:"));
         assert_eq!(sink.stored().len(), 1);
+        let mut cursor = 0;
+        assert_eq!(sink.drain_from(&mut cursor).len(), 1);
+        assert!(sink.drain_from(&mut cursor).is_empty());
     }
 
     #[test]

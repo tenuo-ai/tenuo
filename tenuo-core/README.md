@@ -65,6 +65,33 @@ guard.guard(&authority, &call, |_authorized| do_read())?;
 
 An enforcement point uses `Tenuo::enforcement()` and `Guard::guard_received` on a `ReceivedAuthorization` decoded from `_meta.tenuo` or HTTP headers. The holder path always signs; the received path never does.
 
+A long-lived process that receives warrants over time uses `Runtime`: persist
+the holder key, apply signed revocation lists as they arrive, and bind each
+warrant into a `Session`.
+
+```rust,ignore
+use std::time::Duration;
+use tenuo::sdk::prelude::*;
+use tenuo::EvidencePolicy;
+
+let identity = PersistentIdentity::load_or_generate(key_path)?;
+let runtime = Runtime::builder()
+    .identity(identity)
+    .trusted_roots(roots)
+    .evidence_policy(EvidencePolicy::BestEffort)
+    .ttl_fallback(Duration::from_secs(600))
+    .build()?;
+
+runtime.apply_signed_revocation_list_now(srl)?;
+let session = runtime.session_from_warrant(warrant)?;
+let result = session.guard(&call, |_| perform_call())?;
+for receipt in session.drain_receipts() {
+    upload(receipt)?;
+}
+```
+
+Hosted adapters fetch warrants, SRLs, and upload receipts. They should not assemble `Authorizer`, `PresentedAuthority`, `LocalReceiptSigner`, or `MemoryReceiptSink`.
+
 | Feature | Description |
 |---------|-------------|
 | `sdk` | Guard, Call, delegation, observe |
@@ -75,10 +102,11 @@ An enforcement point uses `Tenuo::enforcement()` and `Guard::guard_received` on 
 | `otel` | OpenTelemetry API spans only; no exporter |
 | `test-utils` | `FixedClock` and `sdk::test_utils` scaffolding — not for production |
 
-Run the MCP hop demo:
+Run the MCP hop and runtime demos:
 
 ```bash
 cd tenuo-core && cargo run --example sdk_mcp_demo --features sdk,mcp-transport
+cd tenuo-core && cargo run --example sdk_runtime --features sdk,receipts
 ```
 
 ## Features

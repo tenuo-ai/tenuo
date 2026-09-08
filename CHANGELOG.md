@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-09-08
+
+### Added
+
+- **Holder `Runtime` and `Session` (`sdk`).** Persist an Ed25519 identity,
+  configure trust / TTL fallback / receipt policy once, bind each warrant
+  into a session, and drain receipts without duplicates. Signed SRLs can
+  arrive later; until then sessions use the explicit TTL fallback.
+  `SignedRevocationList::{from_base64,to_base64}` is the decode API.
+  `ConnectToken::resolve_endpoint` accepts a caller-provided base for
+  relative `/v1` tokens. No Cloud URLs, env vars, or `reqwest` in this
+  surface.
+
 ## [0.2.5] - 2026-09-06
 
 Python `tenuo==0.2.5`, Rust `tenuo@0.2.5`, TypeScript `@tenuo/core@0.2.5-beta.0`
