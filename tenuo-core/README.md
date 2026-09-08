@@ -94,7 +94,7 @@ Hosted adapters fetch warrants, SRLs, and upload receipts. They should not assem
 
 | Feature | Description |
 |---------|-------------|
-| `sdk` | Guard, Call, delegation, observe |
+| `sdk` | Guard, Call, delegation, observe, Runtime / Session |
 | `mcp-transport` | `params._meta.tenuo` encode/decode |
 | `http-transport` | Signed header binding |
 | `receipts` | Authorization receipts (draft `receipt-v1`) |
