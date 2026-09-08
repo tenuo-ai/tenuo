@@ -163,6 +163,8 @@ BOARDING AGENT AFTER THE HANDOFF
 
 <aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The trip books correctly. Every step is green.</li><li>Then $412 leaves the wallet, Alice's flight is cancelled, and a stranger's reservation gets checked in. No one instructed Check-in Agent to do any of that.</li></ul></aside>
 
+<aside class="lab-callout learning"><div class="lab-callout-title">What this stage establishes</div><p>A shared credential turns one fooled agent into a compromise of the whole system. Authorization must contain prompt injection when prevention fails.</p></aside>
+
 <aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>Where did the instruction come from? Open <code>src/services/flights.ts</code> and find it. It sits on the departure board Check-in Agent reads every time it does its job.</p></aside>
 
 <aside class="lab-callout stuck"><div class="lab-callout-title">If it does not work</div><ul><li>There is no fix in this stage. Once you have looked at the wallet, run <code>npm run next</code>.</li></ul></aside>

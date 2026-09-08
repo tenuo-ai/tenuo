@@ -249,8 +249,8 @@ describe("generated lab guide", () => {
     const overview = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
     const stage4 = readFileSync(join(ROOT, "..", "..", "docs", "lab", "stage-4.md"), "utf8");
     expect(overview).toContain("either per-task identities backed by a registry or a policy service");
-    expect(stage4).toContain("Whichever secure fix you use");
-    expect(stage4).not.toContain("Whichever fix you use");
+    expect(stage4).toContain("With either working fix in this stage");
+    expect(stage4).not.toContain("Whichever secure fix you use");
     expect(stage4).toContain("checkin-agent:trip-alice-cun");
     expect(stage4).toContain("Act 2 exploits exactly this over-grant");
   });
@@ -264,11 +264,25 @@ describe("generated lab guide", () => {
 
   it("connects every stage to a familiar infrastructure pattern", () => {
     const pages = Array.from({ length: 7 }, (_, index) => readFileSync(join(ROOT, "..", "..", "docs", "lab", `stage-${index + 1}.md`), "utf8"));
-    for (const page of pages) expect(page).toContain("How this maps to familiar infrastructure");
+    for (const page of pages) {
+      expect(page).toContain("How this maps to familiar infrastructure");
+      expect(page).toContain("What this stage establishes");
+    }
     expect(pages[1]).toMatch(/service account, workload identity, or IAM role/);
     expect(pages[4]).toContain("Stealing the token is not enough to use it");
     expect(pages[5]).toContain("Activity Agent stole the token and still cannot use it");
     expect(pages[5]).toContain("the permission works only for the agent that holds the matching private key");
     expect(pages[5]).toContain("prevents it from passing that authority to another agent");
+  });
+
+  it("ends with a scoped comparison of Tenuo to the approaches the participant tried", () => {
+    const wrapUp = readFileSync(join(ROOT, "..", "..", "docs", "lab", "wrap-up.md"), "utf8");
+    expect(wrapUp).toContain("Why Tenuo fits this problem");
+    expect(wrapUp).toContain("Shared credential");
+    expect(wrapUp).toContain("Identity and roles");
+    expect(wrapUp).toContain("Detailed central policy");
+    expect(wrapUp).toContain("Tenuo warrants");
+    expect(wrapUp).toContain("for dynamic, multi-hop agent delegation, Tenuo is the best fit");
+    expect(wrapUp).toContain("A control plane is still needed to issue the first warrant");
   });
 });

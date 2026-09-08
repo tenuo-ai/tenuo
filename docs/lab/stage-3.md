@@ -210,6 +210,8 @@ STARS   ★★★★
 
 <aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>It works. Everything the rogue agent tried is blocked and Alice still gets to Cancún.</li><li>Keep this file. Stage 4 breaks it.</li></ul></aside>
 
+<aside class="lab-callout learning"><div class="lab-callout-title">What this stage establishes</div><p>Detailed constraints can enforce least privilege for one known job, but static rules become difficult to manage as jobs change and overlap.</p></aside>
+
 <details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>Pin <code>checkin-agent</code> and <code>boarding-agent</code> to <code>reservations: [&quot;UA214&quot;]</code>. Give <code>flight-agent</code> a <code>destination</code> and a <code>maxPrice</code>. Cut <code>traveler.read</code> down with <code>profileFields</code>, and give every agent a <code>maxCharge</code> that matches its share of the budget.</div></details>
 
 <details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try your own first. The score checks behavior, so yours does not need to match this one.</p><figure class="lab-code"><figcaption>One policy that scores 100 <span>answers/03-scoped/policy.ts</span></figcaption>

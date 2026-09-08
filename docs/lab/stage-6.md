@@ -9,7 +9,7 @@ lab_version: "0.2.0"
 
 <header class="lab-hero"><div class="lab-kicker">Stage 6 of 7 · optional boss level · <span class="lab-mode tenuo">tenuo</span> · about 15 min</div><h1>Boss: stolen authority</h1><p class="lab-goal"><strong>Goal.</strong> See why a copied permission cannot be used by another agent, then deliberately end a delegation chain.</p></header>
 
-<p class="lab-intro">Two short extensions on the chain you built. Boarding Agent's permission for UA214 is a piece of data: a list of strings. Activity Agent gets a copy and tries to use it.</p>
+<p class="lab-intro">Two short extensions on the chain you built. Activity Agent steals Boarding Agent's token for UA214 and tries to use it.</p>
 <p class="lab-intro">Then a limit on distance. When one agent hands a permission on, it can mark it terminal. The root also carries a maximum number of hops for the whole trip: any agent can lower it, none can raise it.</p>
 
 <aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This combines two familiar controls. Like a proof-of-possession credential, the permission works only for the agent that holds the matching private key. Like a non-delegable role, a terminal permission lets an agent do its job but prevents it from passing that authority to another agent.</p></aside>
@@ -310,6 +310,8 @@ THE TRIP
 </ol>
 
 <aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The replay fails with <code>TENUO_INVALID_POP</code>. The warrant's <code>bound_key</code> and Activity Agent's public holder key are visibly different, so the Ed25519 proof cannot verify. This is a holder-bound warrant, not a bearer token.</li><li>With the terminal link, Boarding Agent never gets its permission: <code>TENUO_DEPTH_EXCEEDED</code> at the Check-in → Boarding hop. Check-in Agent did not agree to that restriction and cannot remove it.</li></ul></aside>
+
+<aside class="lab-callout learning"><div class="lab-callout-title">What this stage establishes</div><p>A stolen Tenuo token cannot be used without the private key it was issued to, and an upstream agent can prevent its permission from being delegated again.</p></aside>
 
 <aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>If having a copy of a permission is not enough to use it, what else does using it require? And who in a chain gets to decide how many agents a job passes through?</p></aside>
 

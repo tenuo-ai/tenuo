@@ -98,6 +98,8 @@ BOARDING AGENT AFTER THE HANDOFF
 
 <aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The wallet charge and the cancellation are gone. Check-in Agent's role never included them.</li><li>Checking in AA882, another traveler's flight, still works, because reading reservations and checking people in is part of Check-in Agent's job.</li></ul></aside>
 
+<aside class="lab-callout learning"><div class="lab-callout-title">What this stage establishes</div><p>Separate identities reduce the blast radius, but an agent's identity still does not say which specific job a call belongs to.</p></aside>
+
 <aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>The actions that still succeed are all part of Check-in Agent's role. What separates the ones you want from the ones you do not?</p></aside>
 
 <details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>The tool is the same in both cases. What differs is the reservation, and whose trip it belongs to. A role says what kind of work an agent does. It does not say which job the agent is doing right now.</div></details>

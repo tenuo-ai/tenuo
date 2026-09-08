@@ -197,6 +197,8 @@ STARS   ★★★★
 
 <aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>Attempt 3 trips up the most people. The approved hotel is $140 a night and the priciest place in the catalog is $340, so a ceiling wide enough to book anything in Cancún lets $320 through.</li><li>Work out where the number should come from instead. It is in the mission, on the index page.</li></ul></aside>
 
+<aside class="lab-callout learning"><div class="lab-callout-title">What this stage establishes</div><p>Narrowing one handoff contains a compromised agent while preserving the exact operation the trip still needs.</p></aside>
+
 <details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>Only hotel tools, only Cancún, only the approved nightly rate, only the traveler's name, only the hotel's share of the wallet, and <code>terminal: true</code> so nothing can be handed on.</div></details>
 
 <details class="lab-reveal answer"><summary>Show a reference solution</summary><div><p class="lab-muted">Try your own first. The score checks behavior, so yours does not need to match this one.</p><figure class="lab-code"><figcaption>The fixed link <span>answers/07-incident/chain.ts</span></figcaption>

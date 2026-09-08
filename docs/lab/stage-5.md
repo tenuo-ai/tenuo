@@ -38,7 +38,7 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
 {% endhighlight %}
 </figure>
 <h3>Why it is the right tool for this problem</h3>
-<table class="lab-why"><thead><tr><th>What you ran into</th><th>What a warrant does about it</th></tr></thead><tbody><tr><td>Stage 2: an identity said who was acting and left out which job</td><td>The warrant carries the job: reservation UA214, trip-alice-cun, up to $300.</td></tr><tr><td>Stage 4: every check had to ask a component that knew about every task</td><td>Verification is local. central_calls goes to 0 and stays there when the control plane is down.</td></tr><tr><td>Stage 4: the only thing to hand over was the whole credential</td><td>narrow() hands over exactly the subset the next agent needs, bound to that agent's key.</td></tr><tr><td>Stage 4: the service could not tell whether the asker held what it asked for</td><td>A narrowed warrant must fit inside its parent. The rogue's request is refused before anything is signed.</td></tr></tbody></table>
+<table class="lab-why"><thead><tr><th>What you ran into</th><th>What a warrant does about it</th></tr></thead><tbody><tr><td>Stage 2: an identity said who was acting and left out which job</td><td>The warrant carries the job: reservation UA214, trip-alice-cun, up to $300.</td></tr><tr><td>Stage 4: every check had to ask a component that knew about every task</td><td>After the control plane issues the root warrant, verification is local. Existing work continues with central_calls at 0 even if the control plane becomes unavailable.</td></tr><tr><td>Stage 4: the only thing to hand over was the whole credential</td><td>narrow() hands over exactly the subset the next agent needs, bound to that agent's key.</td></tr><tr><td>Stage 4: the service could not tell whether the asker held what it asked for</td><td>A narrowed warrant must fit inside its parent. The rogue's request is refused before anything is signed.</td></tr></tbody></table>
 <p class="lab-muted">Read more: <a href="https://tenuo.ai/concepts">Concepts</a> · <a href="https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts">Delegate to another agent (TypeScript guide)</a> · <a href="https://tenuo.ai/explorer/">Open a chain in the explorer</a></p>
 </section>
 
@@ -441,6 +441,8 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
 </ol>
 
 <aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The escalation attempt from stage 4 is refused before any permission exists, inside Check-in Agent's own process, because the narrowed copy would not fit inside what Check-in Agent holds.</li><li><code>central_calls</code> is 0. No component outside the acting agent was consulted. Compare that with the sentence you wrote at the end of stage 4.</li></ul></aside>
+
+<aside class="lab-callout learning"><div class="lab-callout-title">What this stage establishes</div><p>Tenuo makes authority follow the job. Each agent can pass only a smaller permission, attempts to widen it fail, and the code guarding each tool can verify the result without a central call.</p></aside>
 
 <aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>Who decided what Boarding Agent may do, and when? Compare that with who decided in stage 4.</p></aside>
 
