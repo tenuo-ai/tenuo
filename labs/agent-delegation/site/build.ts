@@ -92,7 +92,10 @@ function codeFigure(item: CodeRef | Snippet): string {
 function diagramFigure(svg: string): string {
   const caption = / data-caption="([^"]+)"/.exec(svg)?.[1];
   if (caption === undefined) throw new Error("Lab diagram is missing its text description");
-  return `<figure class="lab-figure">${svg}\n<figcaption>${caption}</figcaption></figure>`;
+  // Whitespace between SVG elements does not affect the picture, but it keeps
+  // DOM textContent, crawlers, and copy/paste from joining adjacent labels.
+  const extractableSvg = svg.replace(/></g, ">\n<");
+  return `<figure class="lab-figure">${extractableSvg}\n<figcaption>${caption}</figcaption></figure>`;
 }
 
 function terminal(c: Capture, stage: number): string {
@@ -241,7 +244,7 @@ npm run lab</code></pre>
 
 <h2>The mission</h2>
 ${diagramFigure(MISSION_DIAGRAM)}
-<p><strong>The cast:</strong> Travel Agent, Flight Agent, Check-in Agent, Boarding Agent, Hotel Agent, and Activity Agent. The diagram above is the handoff graph; the three-hop flight branch matters in stage 5.</p>
+<p><strong>The cast:</strong> Travel Agent, Flight Agent, Check-in Agent, Boarding Agent, Hotel Agent, and Activity Agent. The diagram above is the handoff graph; its three-hop flight branch exposes the handoff problem in stage 4 and is secured in stage 5.</p>
 <div class="lab-mission">
 <table><tbody>
 <tr><th>Traveler</th><td>Alice Chen</td><th>Budget</th><td>$1,200 total</td></tr>
@@ -254,7 +257,7 @@ ${diagramFigure(MISSION_DIAGRAM)}
 
 <h2>What you will use</h2>
 <div class="lab-two">
-<div><h3>Stages 1 to 4: the usual tools</h3><p>A shared key, then one account per agent, then rules you write yourself, then either per-task identities backed by a registry or a policy service to tell two jobs apart. Each fixes something and costs something. By the end of stage 4 you will have hit the limit of all of them.</p></div>
+<div><h3>Stages 1 to 4: the usual tools</h3><p>A shared key, then one account per agent, then rules you write yourself, then task-aware authorization: either per-task identities backed by a registry or a policy service that can tell two jobs apart. Each fixes something and costs something. By the end of stage 4 you will have hit the limit of all of them.</p></div>
 <div><h3>Stages 5 to 7: Tenuo warrants</h3><p>A <strong>warrant</strong> is a signed permission that travels with the request: which tools, which argument values, for which agent's key, until when. The control plane signs the first one; agents can only narrow it for the next agent; the code next to each tool checks the whole chain offline. <a href="/lab/stage-5">Stage 5 explains it</a> before you write your first one.</p></div>
 </div>
 
@@ -264,7 +267,7 @@ ${diagramFigure(MISSION_DIAGRAM)}
 
 <h2>Your four stars</h2>
 <div class="lab-grading">${grading.map(([label, _pts, note]) => `<div class="lab-grade"><div class="lab-grade-row"><span>${esc(label)}</span><strong>☆</strong></div><p class="lab-muted">${esc(note)}</p></div>`).join("")}</div>
-<p><code>npm run score</code> shows the four-star HUD first, then the detailed diagnostics. A failed trip does not hide which security boundaries already worked.</p>
+<p><code>npm run score</code> shows the four-star HUD first, then the detailed diagnostics. A failed trip does not hide which security boundaries already worked, but those stars are provisional until the trip works.</p>
 
 <h2>The commands</h2>
 <pre class="lab-cmd"><code>npm run lab        # start or resume where you left off

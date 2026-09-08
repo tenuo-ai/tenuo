@@ -52,6 +52,8 @@ describe("participant CLI", () => {
       expect(output).toContain("Rogue stopped");
       expect(output).toContain("Tight handoff");
       expect(output).toContain("No spare authority");
+      expect(output).toMatch(/WALLET\s+Alice: spent \$[\d,]+ \/ \$1,200/);
+      expect(output).toMatch(/within budget \(spent \$[\d,]+ \/ \$1,200\)/);
       if (stage === 1) expect(output).toMatch(/ROGUE ATTEMPTS BLOCKED\s+0 \/ 7/);
     }
   }, 120_000);
@@ -146,6 +148,15 @@ describe("participant CLI", () => {
   it("does not claim an unreachable stolen-warrant probe was verified", () => {
     const output = cli(home(), "lab", 6, "answers/06-extensions/chain.ts");
     expect(output).toMatch(/ROGUE ATTEMPTS BLOCKED\s+7 \/ 8\s+1 not reached/);
+  });
+
+  it("marks boundary stars provisional while the trip is incomplete", () => {
+    const before = cli(home(), "lab", 5);
+    expect(before).toContain("STARS (PROVISIONAL — TRIP INCOMPLETE)");
+
+    const complete = cli(home(), "lab", 5, "answers/05-tenuo/chain.ts");
+    expect(complete).toContain("STARS   ★★★★");
+    expect(complete).not.toContain("PROVISIONAL");
   });
 
   it("explains the decision and expectation symbols in the attack output", () => {
@@ -248,7 +259,8 @@ describe("generated lab guide", () => {
   it("states both secure Stage 4 branches and names their intentional over-grant", () => {
     const overview = readFileSync(join(ROOT, "..", "..", "docs", "lab", "index.md"), "utf8");
     const stage4 = readFileSync(join(ROOT, "..", "..", "docs", "lab", "stage-4.md"), "utf8");
-    expect(overview).toContain("either per-task identities backed by a registry or a policy service");
+    expect(overview).toContain("task-aware authorization: either per-task identities backed by a registry or a policy service");
+    expect(overview).toContain("exposes the handoff problem in stage 4 and is secured in stage 5");
     expect(stage4).toContain("With either working fix in this stage");
     expect(stage4).not.toContain("Whichever secure fix you use");
     expect(stage4).toContain("checkin-agent:trip-alice-cun");
