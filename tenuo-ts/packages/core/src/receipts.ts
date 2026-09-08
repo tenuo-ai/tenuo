@@ -76,9 +76,7 @@ export function collectReceipt(
     return;
   }
   sessionCollector(session)?.push(receipt);
-  if (session === undefined) {
-    hostCollector(host)?.push(receipt);
-  }
+  hostCollector(host)?.push(receipt);
 }
 
 export function emitIsolatedReceipt(

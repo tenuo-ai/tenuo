@@ -392,7 +392,7 @@ class TenuoClient implements Tenuo {
         policy.allow,
         requestIdFrom(callOptions),
       );
-      emitReceipt(callOptions, decision.receipt, session);
+      emitReceipt(callOptions, decision.receipt, session, this);
       if (decision.outcome === "allow") {
         return original(plainArgs(decision.args), forwardExecuteOptions(callOptions));
       }
@@ -914,8 +914,13 @@ function normalizeWireBytes(value: string | Uint8Array): string {
   return bytesToHex(value);
 }
 
-function emitReceipt(callOptions: unknown, receipt: string | undefined, session: Session): void {
-  collectReceipt(receipt, session);
+function emitReceipt(
+  callOptions: unknown,
+  receipt: string | undefined,
+  session: Session,
+  host: object,
+): void {
+  collectReceipt(receipt, session, host);
   if (receipt === undefined || callOptions === null || typeof callOptions !== "object") {
     return;
   }

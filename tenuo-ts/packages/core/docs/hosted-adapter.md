@@ -42,9 +42,9 @@ await tool.execute(args, { session });
 const presented = runtime.tenuo.present(session, name, args);
 runtime.tenuo.mcp.attach(session, name, args); // no onReceipt required
 
-const batch = session.peekReceipts();
+const batch = runtime.peekReceipts();
 await persistRetryBuffer(batch);
-session.acknowledgeReceipts(batch.length);
+runtime.acknowledgeReceipts(batch.length);
 for (const receipt of batch) {
   await uploadReceipt(receipt); // ack in the adapter buffer only after 2xx
 }

@@ -197,7 +197,7 @@ describe("Runtime", () => {
   });
 
   it("acknowledges only successfully persisted receipts", async () => {
-    const { session, readFile } = issuedRuntime();
+    const { runtime, session, readFile } = issuedRuntime();
     await readFile.execute({ path: "/data/a.pdf" }, { session });
     await readFile.execute({ path: "/data/b.pdf" }, { session });
     await readFile.execute({ path: "/data/c.pdf" }, { session });
@@ -207,6 +207,10 @@ describe("Runtime", () => {
     expect(session.peekReceipts()).toHaveLength(2);
     expect(session.drainReceipts()).toHaveLength(2);
     expect(session.peekReceipts()).toEqual([]);
+    expect(runtime.peekReceipts()).toHaveLength(3);
+    expect(runtime.acknowledgeReceipts(2)).toBe(2);
+    expect(runtime.drainReceipts()).toHaveLength(1);
+    expect(runtime.peekReceipts()).toEqual([]);
   });
 
   it("collects present and MCP receipts without a per-call onReceipt", async () => {

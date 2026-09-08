@@ -60,14 +60,14 @@ export class Runtime {
     return session;
   }
 
-  /** Undrained receipts from presented-path verify / MCP handlers on this runtime. */
+  /** Undrained receipts from every session and presented call handled by this runtime. */
   peekReceipts(): string[] {
     return hostCollector(this.tenuo)?.peek() ?? [];
   }
 
   /**
-   * Receipts since the last drain on the presented-path collector.
-   * Holder-session receipts live on `session.drainReceipts()`.
+   * Receipts since the last runtime drain, across holder sessions and
+   * presented-path verification. Per-session collectors are independent views.
    */
   drainReceipts(): string[] {
     return hostCollector(this.tenuo)?.drain() ?? [];
