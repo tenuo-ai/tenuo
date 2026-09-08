@@ -115,8 +115,7 @@ class Runtime:
     """Long-lived holder runtime.
 
     Owns identity, trusted roots, the current signed revocation list, and
-    optional aggregate receipt collection. Does not perform network I/O or
-    invent hosted-service defaults.
+    optional aggregate receipt collection. Does not perform network I/O.
     """
 
     def __init__(
@@ -132,10 +131,7 @@ class Runtime:
             raise ConfigurationError("Runtime requires a HolderIdentity")
         roots = list(trusted_roots)
         if not roots:
-            raise ConfigurationError(
-                "Runtime requires at least one trusted root. "
-                "Discovery stays in the hosted adapter."
-            )
+            raise ConfigurationError("Runtime requires at least one trusted root")
         if receipts not in ("collect", "off"):
             raise ConfigurationError("receipts must be 'collect' or 'off'")
         self.identity = identity

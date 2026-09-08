@@ -1,9 +1,7 @@
-//! Connect token support for streamlined onboarding.
+//! Connect token parse (`tenuo_ct_<base64url-json>`).
 //!
-//! A connect token (`tenuo_ct_<base64url-json>`) bundles all credentials needed
-//! to register an authorizer with the Tenuo Cloud control plane into a single
-//! copy-pasteable string. The token is created via the dashboard's Quick Connect
-//! dialog and can be shared across multiple authorizer instances.
+//! A connect token bundles an endpoint, API key, and optional agent fields
+//! into one string. This module only decodes and normalizes that wire format.
 //!
 //! # Token format (v1)
 //!

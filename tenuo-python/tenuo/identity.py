@@ -148,8 +148,9 @@ def _create_exclusive(path: Path, key: SigningKey) -> None:
         flags |= os.O_CLOEXEC
     fd = os.open(str(path), flags, 0o600)
     try:
-        if os.name == "posix":
-            os.fchmod(fd, 0o600)
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is not None:
+            fchmod(fd, 0o600)
         view = memoryview(secret.encode("ascii"))
         while view:
             written = os.write(fd, view)

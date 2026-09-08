@@ -200,7 +200,7 @@ if result:
 
 `Runtime` owns identity, trusted roots, the current signed revocation list, and
 an optional receipt outbox so application code does not coordinate those pieces
-by hand. Hosted adapters stay responsible for HTTP.
+by hand.
 
 ```python
 from tenuo import HolderIdentity, Runtime
@@ -221,8 +221,8 @@ batch = runtime.peek_receipts()
 runtime.acknowledge_receipts(len(batch))
 ```
 
-See [docs/hosted-adapter.md](docs/hosted-adapter.md) for the Cloud thinning
-sketch and `ConnectToken.parse`.
+`ConnectToken.parse` decodes a `tenuo_ct_…` token. It does not read
+environment variables.
 
 ## Key Management
 
