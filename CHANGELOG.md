@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Python holder Runtime.** `HolderIdentity`, `ConnectToken.parse`, and
+  `Runtime` own the generic authorization lifecycle: identity, trusted roots,
+  the current signed revocation list, `session_from_wire` /
+  `session_scope`, and an aggregate receipt outbox (`peek_receipts` /
+  `drain_receipts` / `acknowledge_receipts`). Receipts are removed only after
+  acknowledgement. Hosted adapters stay responsible for HTTP, claim, trust
+  discovery, triggers, approvals, and upload.
+- **`tenuo_core.ReceiptIssuer`.** Local receipt-v1 signing without a control
+  plane heartbeat. `ConnectToken` parse is strict version 1, redacts
+  credentials in `repr`/`str`/`Debug`, accepts padded Base64URL and
+  `r` / `registration_token` aliases, and exposes `needs_endpoint_base` /
+  `resolve_endpoint`.
+
+### Fixed
+
+- **`DeferredEmitter` delivery contract.** `deliver()` now returns success
+  or failure. The worker retries the same signed artifact after a sink
+  error and does not mark the queue item complete on failure, so
+  `flush_receipts()` cannot report success after a lost receipt.
+
 ## [0.2.5] - 2026-09-06
 
 Python `tenuo==0.2.5`, Rust `tenuo@0.2.5`, TypeScript `@tenuo/core@0.2.5-beta.0`

@@ -134,6 +134,19 @@ def test_journal_output_feeds_the_chain_walker(decision, tmp_path):
     assert verify_receipt_chain(str(path)) is True
 
 
+def test_flush_is_false_while_delivery_is_still_failing(decision):
+    authorizer, result = decision
+
+    class DeadSink:
+        def handle(self, wire):
+            raise RuntimeError("downstream down")
+
+    client = _client(receipt_emitter=DeferredEmitter(DeadSink(), maxsize=16))
+    client.bind_authorizer(authorizer)
+    client._emit_receipt(result, "read_file", True, "req-0", None)
+    assert client.flush_receipts(timeout=0.3) is False
+
+
 def test_a_failing_delivery_does_not_kill_the_deferred_worker(decision):
     authorizer, result = decision
 
@@ -160,10 +173,11 @@ def test_a_failing_delivery_does_not_kill_the_deferred_worker(decision):
         client._emit_receipt(result, "read_file", True, f"req-{i}", None)
     assert client.flush_receipts()
 
-    # One receipt lost at delivery — reported, and chain-visible: the third
-    # receipt's link dangles. The worker survived to sign it.
-    assert len(sink.receipts) == 2
+    # Transient sink failure retries the same signed artifact. Nothing is
+    # lost or duplicated, the worker survives, and flush is honest.
+    assert len(sink.receipts) == 3
     assert len(seen) == 1
+    assert sink.calls >= 4
 
 
 def test_shutdown_drains_the_deferred_queue(decision):

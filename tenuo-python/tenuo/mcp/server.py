@@ -481,11 +481,25 @@ class MCPVerifier:
         # diverge the signed-bytes shape between sides.
         pop_args: Dict[str, Any] = strip_none_values(args)
 
+        presented: List[Any] = []
+
         def _emit_and_return(
             result: MCPVerificationResult,
             chain_result: Any = None,
             latency_us: int = 0,
         ) -> MCPVerificationResult:
+            try:
+                setattr(result, "authorizer", self._authorizer)
+                if presented:
+                    setattr(result, "presented_chain", list(presented))
+            except Exception:
+                pass
+            try:
+                from tenuo.receipts import collect_enforcement_receipt
+
+                collect_enforcement_receipt(result, chain_result)
+            except Exception:
+                logger.warning("runtime receipt collection failed for '%s'", result.tool, exc_info=True)
             if self._control_plane:
                 try:
                     self._control_plane.emit_for_enforcement(
@@ -668,6 +682,7 @@ class MCPVerifier:
             ))
 
         warrant_id: Optional[str] = getattr(warrant, "id", None)
+        presented[:] = list(_chain_parents or []) + [warrant]
 
         # ------------------------------------------------------------------
         # Step 4: decode PoP signature

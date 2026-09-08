@@ -737,7 +737,7 @@ except ImportError:
     from typing_extensions import Literal  # type: ignore
 
 
-def enforce_tool_call(
+def _enforce_tool_call_impl(
     tool_name: str,
     tool_args: Dict[str, Any],
     bound_warrant: BoundWarrant,
@@ -1011,6 +1011,11 @@ def enforce_tool_call(
                     from .config import resolve_trusted_roots as _resolve_roots
                     trusted_roots = _resolve_roots(None)
                     if trusted_roots is None:
+                        from .runtime import get_runtime
+                        _rt = get_runtime()
+                        if _rt is not None:
+                            trusted_roots = list(_rt.trusted_roots)
+                    if trusted_roots is None:
                         raise ConfigurationError(
                             "enforce_tool_call requires trusted_roots in the sign path. "
                             "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
@@ -1035,6 +1040,8 @@ def enforce_tool_call(
                     _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
                 )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
+                from .runtime import apply_runtime_revocation
+                apply_runtime_revocation(_auth)
                 use_split_view = (
                     pop_args is not None
                     or constraint_args is not None
@@ -1279,7 +1286,7 @@ def enforce_tool_call(
         )
 
 
-async def enforce_tool_call_async(
+async def _enforce_tool_call_async_impl(
     tool_name: str,
     tool_args: Dict[str, Any],
     bound_warrant: BoundWarrant,
@@ -1422,6 +1429,11 @@ async def enforce_tool_call_async(
                     from .config import resolve_trusted_roots as _resolve_roots
                     trusted_roots = _resolve_roots(None)
                     if trusted_roots is None:
+                        from .runtime import get_runtime
+                        _rt = get_runtime()
+                        if _rt is not None:
+                            trusted_roots = list(_rt.trusted_roots)
+                    if trusted_roots is None:
                         raise ConfigurationError(
                             "enforce_tool_call requires trusted_roots in the sign path. "
                             "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
@@ -1441,6 +1453,8 @@ async def enforce_tool_call_async(
                     _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
                 )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
+                from .runtime import apply_runtime_revocation
+                apply_runtime_revocation(_auth)
                 use_split_view = (
                     pop_args is not None
                     or constraint_args is not None
@@ -1705,11 +1719,32 @@ def filter_tools_by_warrant(
     return filtered
 
 
+def _collect_runtime_receipt(result: EnforcementResult) -> EnforcementResult:
+    from .receipts import collect_enforcement_receipt
+
+    collect_enforcement_receipt(result, getattr(result, "chain_result", None))
+    return result
+
+
+from functools import wraps as _wraps  # noqa: E402
+
+
+@_wraps(_enforce_tool_call_impl)
+def enforce_tool_call(*args, **kwargs):
+    return _collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs))
+
+
+@_wraps(_enforce_tool_call_async_impl)
+async def enforce_tool_call_async(*args, **kwargs):
+    return _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
+
+
 __all__ = [
     "EnforcementResult",
     "DenialPolicy",
     "DenialResult",
     "enforce_tool_call",
+    "enforce_tool_call_async",
     "filter_tools_by_warrant",
     "handle_denial",
 ]

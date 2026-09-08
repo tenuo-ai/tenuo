@@ -56,7 +56,10 @@ __all__ = [
     "FileReceiptSink",
     "DeferredEmitter",
     "JournalEmitter",
+    "ReceiptCollector",
+    "ReceiptBufferFull",
     "deliver",
+    "collect_enforcement_receipt",
 ]
 
 
@@ -149,30 +152,111 @@ class FileReceiptSink:
         return self._path
 
 
+class ReceiptBufferFull(RuntimeError):
+    """The in-process receipt outbox is full. Nothing was evicted."""
+
+
+class ReceiptCollector:
+    """Thread-safe in-memory receipt outbox with peek / drain / ack.
+
+    Receipts stay in the buffer until ``acknowledge``. ``drain`` is a
+    non-consuming snapshot — the same contract as ``peek`` — so a failed
+    upload can retry without loss or silent eviction.
+    """
+
+    def __init__(self, maxsize: int = 10_000) -> None:
+        if not isinstance(maxsize, int) or maxsize < 1:
+            raise ValueError("maxsize must be a positive int")
+        self._max = maxsize
+        self._items: List[str] = []
+        self._lock = threading.Lock()
+
+    def push(self, receipt: str) -> None:
+        if not receipt:
+            return
+        with self._lock:
+            if len(self._items) >= self._max:
+                raise ReceiptBufferFull(
+                    f"receipt outbox is full ({self._max}); "
+                    "acknowledge or raise maxsize — receipts are not evicted"
+                )
+            self._items.append(receipt)
+
+    def peek(self) -> List[str]:
+        with self._lock:
+            return list(self._items)
+
+    def drain(self) -> List[str]:
+        """Return pending receipts without removing them."""
+        return self.peek()
+
+    def acknowledge(self, count: int) -> int:
+        if not isinstance(count, int) or count < 0:
+            return 0
+        with self._lock:
+            n = min(count, len(self._items))
+            del self._items[:n]
+            return n
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._items)
+
+
 def deliver(
     sink: Optional[ReceiptSink],
     receipt_hex: Optional[str],
     on_error: Optional[Callable[[BaseException], None]] = None,
-) -> None:
+) -> bool:
     """Hand a receipt to a sink without letting failure reach the caller.
 
     Authorization is already decided by the time this runs, so a sink must not
     turn a permitted call into a denied one. The failure is reported rather
     than swallowed: an evidence gap nobody knows about is worse than one that
     shows up in the logs.
+
+    Returns True when there was nothing to deliver or the sink accepted the
+    receipt. Returns False when the sink raised — callers must retry the same
+    signed artifact rather than marking the item complete.
     """
     if sink is None or receipt_hex is None:
-        return
+        return True
     try:
         sink.handle(receipt_hex)
+        return True
     except BaseException as exc:  # noqa: BLE001 - isolation is the point
         if on_error is not None:
             try:
                 on_error(exc)
-                return
             except BaseException:  # noqa: BLE001
                 pass
         logger.warning("receipt sink failed; evidence for this decision was not stored", exc_info=exc)
+        return False
+
+
+def collect_enforcement_receipt(
+    result: object,
+    chain_result: Optional[object] = None,
+) -> None:
+    """Sign and enqueue a receipt when a Runtime with ``receipts='collect'`` is active.
+
+    Safe to call more than once for the same result: a second call is a no-op.
+    Structural refusals (no presented chain) produce no receipt.
+    """
+    if result is None or getattr(result, "_tenuo_runtime_receipt", False):
+        return
+    try:
+        from .runtime import get_runtime
+    except Exception:  # pragma: no cover
+        return
+    runtime = get_runtime()
+    if runtime is None:
+        return
+    runtime.collect_result(result, chain_result)
+    try:
+        setattr(result, "_tenuo_runtime_receipt", True)
+    except (AttributeError, TypeError):
+        pass
 
 
 # ── emission postures ────────────────────────────────────────────────────────
@@ -220,6 +304,7 @@ class DeferredEmitter:
         self._inner: Optional[_ReceiptIssuer] = None
         self._on_error: Optional[Callable[[BaseException], None]] = None
         self._worker: Optional[threading.Thread] = None
+        self._stop = threading.Event()
 
     # Called by ControlPlaneClient: the emitter signs with the client's own
     # key so both postures share one identity and one chain.
@@ -248,7 +333,9 @@ class DeferredEmitter:
                 inner = self._inner
                 if inner is None:
                     raise RuntimeError("DeferredEmitter is not attached")
-                if item[0] == "allow":
+                if item[0] == "signed":
+                    wire = item[1]
+                elif item[0] == "allow":
                     _, chain_result, tool, allowed, ts, request_id, code = item
                     wire = inner.issue_receipt(
                         chain_result, tool, allowed, ts, request_id, code
@@ -258,7 +345,24 @@ class DeferredEmitter:
                     wire = inner.issue_denial_receipt(
                         chain, tool, args, ts, request_id, code, pop
                     )
-                deliver(self._sink, wire, self._on_error)
+                delay = 0.01
+                while not deliver(self._sink, wire, self._on_error):
+                    if self._stop.wait(delay):
+                        if deliver(self._sink, wire, self._on_error):
+                            break
+                        # Shutdown requested and the sink still failed: keep
+                        # the signed artifact as an unfinished task so flush
+                        # cannot report success. The worker exits; the host
+                        # must persist or retry from another path.
+                        try:
+                            self._q.put_nowait(("signed", wire))
+                        except queue.Full:
+                            logger.error(
+                                "deferred receipt emitter dropped a signed "
+                                "receipt on close because the queue was full"
+                            )
+                        break
+                    delay = min(delay * 2, 0.5)
             except Exception as exc:  # noqa: BLE001 — one bad item must not kill the worker
                 logger.warning("deferred receipt emission failed", exc_info=exc)
             finally:
@@ -284,6 +388,7 @@ class DeferredEmitter:
     def close(self, timeout: float = 10.0) -> None:
         if self._worker is None:
             return
+        self._stop.set()
         # put() without a timeout hangs forever when the queue is full and
         # the worker is blocked in the sink — shutdown must not.
         try:

@@ -1433,25 +1433,30 @@ class TenuoActivityInboundInterceptor:
                 latency_seconds=latency_s,
             )
 
-        if self._config.control_plane:
-            from tenuo._enforcement import EnforcementResult
-            latency_us = int(latency_s * 1e6)
+        from tenuo._enforcement import EnforcementResult
+        latency_us = int(latency_s * 1e6)
+        res = EnforcementResult(
+            allowed=True,
+            tool=tool,
+            # Respect ``redact_args_in_logs`` for the control-plane sink
+            # just like the in-process audit callback below; otherwise a
+            # user setting the flag still leaks plaintext arguments
+            # off-host.
+            arguments=self._redact_args(args),
+            warrant_id=getattr(warrant, "id", None),
+            chain_result=chain_result,
+            authorizer=authorizer,
+            presented_chain=presented_chain,
+            verified_pop=verified_pop,
+            pop_auth_args=pop_auth_args if pop_auth_args is not None else args,
+        )
+        try:
+            from tenuo.receipts import collect_enforcement_receipt
 
-            res = EnforcementResult(
-                allowed=True,
-                tool=tool,
-                # Respect ``redact_args_in_logs`` for the control-plane sink
-                # just like the in-process audit callback below; otherwise a
-                # user setting the flag still leaks plaintext arguments
-                # off-host.
-                arguments=self._redact_args(args),
-                warrant_id=getattr(warrant, "id", None),
-                chain_result=chain_result,
-                authorizer=authorizer,
-                presented_chain=presented_chain,
-                verified_pop=verified_pop,
-                pop_auth_args=pop_auth_args if pop_auth_args is not None else args,
-            )
+            collect_enforcement_receipt(res, chain_result)
+        except Exception:
+            logger.warning("runtime receipt collection failed for '%s'", tool, exc_info=True)
+        if self._config.control_plane:
             try:
                 self._config.control_plane.emit_for_enforcement(
                     res, chain_result=chain_result, latency_us=latency_us
@@ -1574,10 +1579,33 @@ class TenuoActivityInboundInterceptor:
                 latency_seconds=latency_s,
             )
 
-        if self._config.control_plane:
-            from tenuo._enforcement import EnforcementResult
-            latency_us = int(latency_s * 1e6)
+        from tenuo._enforcement import EnforcementResult
+        latency_us = int(latency_s * 1e6)
+        res = EnforcementResult(
+            allowed=False,
+            tool=tool,
+            # See parity comment in ``_emit_allow_event``.
+            arguments=self._redact_args(args),
+            denial_reason=reason,
+            constraint_violated=constraint,
+            warrant_id=getattr(warrant, "id", None),
+            authorizer=authorizer,
+            presented_chain=presented_chain if presented_chain is not None else (
+                [warrant] if warrant is not None else None
+            ),
+            verified_pop=verified_pop,
+            pop_auth_args=pop_auth_args if pop_auth_args is not None else args,
+            error_type=_activity_denial_error_type(
+                exc=exc, constraint=constraint, error_type=error_type
+            ),
+        )
+        try:
+            from tenuo.receipts import collect_enforcement_receipt
 
+            collect_enforcement_receipt(res)
+        except Exception:
+            logger.warning("runtime receipt collection failed for '%s'", tool, exc_info=True)
+        if self._config.control_plane:
             warrant_stack_b64 = None
             try:
                 from tenuo_core import encode_warrant_stack
@@ -1588,25 +1616,6 @@ class TenuoActivityInboundInterceptor:
                     "proceeding without warrant_stack_override",
                     exc_info=True,
                 )
-
-            res = EnforcementResult(
-                allowed=False,
-                tool=tool,
-                # See parity comment in ``_emit_allow_event``.
-                arguments=self._redact_args(args),
-                denial_reason=reason,
-                constraint_violated=constraint,
-                warrant_id=getattr(warrant, "id", None),
-                authorizer=authorizer,
-                presented_chain=presented_chain if presented_chain is not None else (
-                    [warrant] if warrant is not None else None
-                ),
-                verified_pop=verified_pop,
-                pop_auth_args=pop_auth_args if pop_auth_args is not None else args,
-                error_type=_activity_denial_error_type(
-                    exc=exc, constraint=constraint, error_type=error_type
-                ),
-            )
             try:
                 self._config.control_plane.emit_for_enforcement(
                     res, chain_result=None, latency_us=latency_us,
