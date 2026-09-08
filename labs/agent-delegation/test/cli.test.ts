@@ -264,9 +264,10 @@ describe("generated lab guide", () => {
 
   it("connects every stage to a familiar infrastructure pattern", () => {
     const pages = Array.from({ length: 7 }, (_, index) => readFileSync(join(ROOT, "..", "..", "docs", "lab", `stage-${index + 1}.md`), "utf8"));
-    for (const page of pages) expect(page).toContain("Closest infrastructure analogy");
+    for (const page of pages) expect(page).toContain("How this maps to familiar infrastructure");
     expect(pages[1]).toMatch(/service account, workload identity, or IAM role/);
-    expect(pages[4]).toContain("Unlike an ordinary bearer token");
-    expect(pages[5]).toContain("The analogy is proof of key possession, not the token format");
+    expect(pages[4]).toContain("Copying the permission alone is not enough to use it");
+    expect(pages[5]).toContain("the permission works only for the agent that holds the matching private key");
+    expect(pages[5]).toContain("prevents it from passing that authority to another agent");
   });
 });

@@ -12,7 +12,7 @@ lab_version: "0.2.0"
 <p class="lab-intro">Bob is going to Seattle on DL331, at the same time, through the same agents. Your stage 3 policy describes only Alice's Cancún flight, so Bob is rejected by destination, flight-budget, and reservation rules.</p>
 <p class="lab-intro">This stage has two acts. First isolate Alice from Bob. Then observe an intentional handoff leak. The red handoff checks in Act 2 do not mean your Act 1 solution is broken.</p>
 
-<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>Per-job workload identities backed by a registry, or a central authorization service that acts as a policy decision point. Each decision depends on current task context outside the acting agent.</p></aside>
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This is like creating a separate workload identity for every job and looking it up in a registry, or asking a central authorization service on every call. Both separate Alice's job from Bob's, but the agents depend on that central system being current and available.</p></aside>
 
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Two trips through the same six agents. Then Check-in Agent passes the only thing it has, and asks for more." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 200 L198 200" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#6a6a6a"/>

@@ -11,7 +11,7 @@ lab_version: "0.2.0"
 
 <p class="lab-intro">Each rule now names the specifics. Check-in Agent may read one reservation. Flight Agent may book flights to one destination, up to a price.</p>
 
-<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>IAM or attribute-based access-control conditions and resource policies: constrain actions with resource IDs, destinations, fields, and spending ceilings. Someone still has to author and distribute policy for each kind of job.</p></aside>
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This is like adding conditions to an IAM or resource policy. The rules can limit resource IDs, destinations, fields, and spending, but someone must keep those detailed rules up to date and distribute them to every agent.</p></aside>
 
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 268" aria-hidden="true" focusable="false" data-caption="Each rule names the job: the destination, the reservation, the ceiling." xmlns="http://www.w3.org/2000/svg"><path d="M97 78 L97 222" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 138 L198 138" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,138 197,142.95 197,133.05" fill="#6a6a6a"/>

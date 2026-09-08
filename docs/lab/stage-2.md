@@ -11,7 +11,7 @@ lab_version: "0.2.0"
 
 <p class="lab-intro">Now each agent has its own credential with permissions that match its role. Flight Agent does flight things. Check-in Agent reads reservations and checks people in.</p>
 
-<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>A service account, workload identity, or IAM role per agent. It identifies the workload and grants role-level permissions, but usually does not say which individual trip or request that workload is handling.</p></aside>
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This is like giving each workload its own service account, workload identity, or IAM role. It limits each agent to a category of work, but does not say which individual request the agent is handling right now.</p></aside>
 
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 268" aria-hidden="true" focusable="false" data-caption="One account per agent, sized to its role." xmlns="http://www.w3.org/2000/svg"><path d="M97 78 L97 222" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 138 L198 138" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,138 197,142.95 197,133.05" fill="#6a6a6a"/>

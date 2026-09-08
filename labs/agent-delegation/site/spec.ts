@@ -81,7 +81,7 @@ export const STAGES: readonly StageSpec[] = [
       "Six agents book Alice's trip. All six carry the same key, and it opens everything: flights, hotels, the wallet, her passport number, the calendar.",
       "There is no setup in this stage. Its job is to show you the damage before anything protects against it.",
     ],
-    infrastructure: "A shared API key or long-lived cloud credential copied into every service. Compromise of any workload exposes the whole account.",
+    infrastructure: "This is like copying one API key or long-lived cloud credential into every service. If any agent is compromised, the attacker can use everything that shared credential unlocks.",
     diagram: fleetDiagram({
       travelers: ["Alice → Cancún, $1,200"],
       wallet: "$1,200",
@@ -107,7 +107,7 @@ export const STAGES: readonly StageSpec[] = [
     intro: [
       "Now each agent has its own credential with permissions that match its role. Flight Agent does flight things. Check-in Agent reads reservations and checks people in.",
     ],
-    infrastructure: "A service account, workload identity, or IAM role per agent. It identifies the workload and grants role-level permissions, but usually does not say which individual trip or request that workload is handling.",
+    infrastructure: "This is like giving each workload its own service account, workload identity, or IAM role. It limits each agent to a category of work, but does not say which individual request the agent is handling right now.",
     diagram: fleetDiagram({
       wallet: "$1,200",
       sub: { travel: "traveler, calendar", flight: "flights, wallet", hotel: "hotels, wallet", activity: "activities, wallet", checkin: "any reservation", boarding: "boarding passes" },
@@ -132,7 +132,7 @@ export const STAGES: readonly StageSpec[] = [
     intro: [
       "Each rule now names the specifics. Check-in Agent may read one reservation. Flight Agent may book flights to one destination, up to a price.",
     ],
-    infrastructure: "IAM or attribute-based access-control conditions and resource policies: constrain actions with resource IDs, destinations, fields, and spending ceilings. Someone still has to author and distribute policy for each kind of job.",
+    infrastructure: "This is like adding conditions to an IAM or resource policy. The rules can limit resource IDs, destinations, fields, and spending, but someone must keep those detailed rules up to date and distribute them to every agent.",
     diagram: fleetDiagram({
       wallet: "$1,200",
       sub: { travel: "name only, calendar", flight: "CUN, ≤ $300", hotel: "Cancún, ≤ $200/night", activity: "Cancún, ≤ $200", checkin: "UA214 only", boarding: "UA214 only" },
@@ -165,7 +165,7 @@ export const STAGES: readonly StageSpec[] = [
       "Bob is going to Seattle on DL331, at the same time, through the same agents. Your stage 3 policy describes only Alice's Cancún flight, so Bob is rejected by destination, flight-budget, and reservation rules.",
       "This stage has two acts. First isolate Alice from Bob. Then observe an intentional handoff leak. The red handoff checks in Act 2 do not mean your Act 1 solution is broken.",
     ],
-    infrastructure: "Per-job workload identities backed by a registry, or a central authorization service that acts as a policy decision point. Each decision depends on current task context outside the acting agent.",
+    infrastructure: "This is like creating a separate workload identity for every job and looking it up in a registry, or asking a central authorization service on every call. Both separate Alice's job from Bob's, but the agents depend on that central system being current and available.",
     diagram: fleetDiagram({
       travelers: ["Alice → Cancún, UA214", "Bob → Seattle, DL331"],
       service: "Your policy component",
@@ -220,7 +220,7 @@ export const STAGES: readonly StageSpec[] = [
       "In this stage a permission is something an agent is handed for a specific job. When the agent passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks this instead of trusting it.",
       "Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. No agent can sign one from scratch.",
     ],
-    infrastructure: "Capability-based delegation: a short-lived, signed, holder-bound permission travels with the request and is attenuated at each handoff. Unlike an ordinary bearer token, possessing the bytes is not enough to use it.",
+    infrastructure: "This is capability-based delegation: a short-lived, signed permission travels with the request. Each agent can only make the permission smaller before passing it on, and the next agent must prove it holds the key named in the permission. Copying the permission alone is not enough to use it.",
     explainer: {
       title: "What a warrant is",
       lead: "A warrant is a signed, self-contained permission that travels with the request: which tools, with which argument values, for which agent's key, until when, and how many more hops it may take. That is what Tenuo issues, narrows, and checks.",
@@ -299,7 +299,7 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
       "Two short extensions on the chain you built. Boarding Agent's permission for UA214 is a piece of data: a list of strings. Activity Agent gets a copy and tries to use it.",
       "Then a limit on distance. When one agent hands a permission on, it can mark it terminal. The root also carries a maximum number of hops for the whole trip: any agent can lower it, none can raise it.",
     ],
-    infrastructure: "Proof-of-possession credentials, such as holder-bound OAuth tokens or mTLS-bound access, plus deliberately non-forwardable delegation. The analogy is proof of key possession, not the token format.",
+    infrastructure: "This combines two familiar controls. Like a proof-of-possession credential, the permission works only for the agent that holds the matching private key. Like a non-delegable role, a terminal permission lets an agent do its job but prevents it from passing that authority to another agent.",
     diagram: fleetDiagram({
       controlPlane: "signs the root",
       sub: { boarding: "holds UA214 boarding pass", activity: "has a copy of it" },
@@ -338,7 +338,7 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     intro: [
       "This stage gives less guidance than the others. The compromised Hotel Agent will try eight things.",
     ],
-    infrastructure: "Incident containment with least-privilege, short-lived workload credentials: preserve the approved operation while removing unrelated tools, data fields, budget, and onward delegation.",
+    infrastructure: "This is like moving a compromised service onto a tightly scoped emergency role. The approved hotel booking still works, while unrelated tools, sensitive data, extra budget, and the ability to delegate are removed.",
     diagram: fleetDiagram({
       controlPlane: "signs the root",
       sub: { hotel: "compromised", travel: "hands the hotel branch out" },

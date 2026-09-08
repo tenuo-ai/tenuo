@@ -12,7 +12,7 @@ lab_version: "0.2.0"
 <p class="lab-intro">Two short extensions on the chain you built. Boarding Agent's permission for UA214 is a piece of data: a list of strings. Activity Agent gets a copy and tries to use it.</p>
 <p class="lab-intro">Then a limit on distance. When one agent hands a permission on, it can mark it terminal. The root also carries a maximum number of hops for the whole trip: any agent can lower it, none can raise it.</p>
 
-<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>Proof-of-possession credentials, such as holder-bound OAuth tokens or mTLS-bound access, plus deliberately non-forwardable delegation. The analogy is proof of key possession, not the token format.</p></aside>
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This combines two familiar controls. Like a proof-of-possession credential, the permission works only for the agent that holds the matching private key. Like a non-delegable role, a terminal permission lets an agent do its job but prevents it from passing that authority to another agent.</p></aside>
 
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Activity Agent has the bytes and still cannot use them." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 200 L198 200" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#3a3a3a"/>

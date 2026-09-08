@@ -12,7 +12,7 @@ lab_version: "0.2.0"
 <p class="lab-intro">Six agents book Alice's trip. All six carry the same key, and it opens everything: flights, hotels, the wallet, her passport number, the calendar.</p>
 <p class="lab-intro">There is no setup in this stage. Its job is to show you the damage before anything protects against it.</p>
 
-<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>A shared API key or long-lived cloud credential copied into every service. Compromise of any workload exposes the whole account.</p></aside>
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This is like copying one API key or long-lived cloud credential into every service. If any agent is compromised, the attacker can use everything that shared credential unlocks.</p></aside>
 
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="The same key in every agent. Check-in Agent reads a departure board with an instruction hidden on it." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 200 L198 200" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#6a6a6a"/>

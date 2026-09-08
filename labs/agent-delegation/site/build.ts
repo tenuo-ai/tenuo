@@ -164,7 +164,7 @@ function stagePage(spec: StageSpec): string {
   const tier = spec.n > MAIN_STAGE_COUNT ? " · optional boss level" : "";
   parts.push(`<header class="lab-hero"><div class="lab-kicker">Stage ${spec.n} of ${TOTAL_STAGE_COUNT}${tier} · <span class="lab-mode ${spec.mode}">${spec.mode}</span> · about ${spec.minutes} min</div><h1>${esc(spec.title)}</h1><p class="lab-goal"><strong>Goal.</strong> ${inline(spec.goal)}</p></header>`);
   parts.push(spec.intro.map((p) => `<p class="lab-intro">${inline(p)}</p>`).join("\n"));
-  parts.push(callout("infrastructure", "Closest infrastructure analogy", `<p>${inline(spec.infrastructure)}</p>`));
+  parts.push(callout("infrastructure", "How this maps to familiar infrastructure", `<p>${inline(spec.infrastructure)}</p>`));
   if (spec.explainer !== undefined) {
     parts.push(explainerHtml(spec.explainer));
   }

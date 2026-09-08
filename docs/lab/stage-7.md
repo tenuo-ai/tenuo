@@ -11,7 +11,7 @@ lab_version: "0.2.0"
 
 <p class="lab-intro">This stage gives less guidance than the others. The compromised Hotel Agent will try eight things.</p>
 
-<aside class="lab-callout infrastructure"><div class="lab-callout-title">Closest infrastructure analogy</div><p>Incident containment with least-privilege, short-lived workload credentials: preserve the approved operation while removing unrelated tools, data fields, budget, and onward delegation.</p></aside>
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This is like moving a compromised service onto a tightly scoped emergency role. The approved hotel booking still works, while unrelated tools, sensitive data, extra budget, and the ability to delegate are removed.</p></aside>
 
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Everything Hotel Agent can do is decided by one link. Fix that link." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 200 L198 200" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="var(--accent)"/><text x="151.5" y="239" font-size="10.5" text-anchor="middle" fill="var(--accent)">the link you fix</text>
