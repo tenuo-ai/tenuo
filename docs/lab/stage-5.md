@@ -12,7 +12,7 @@ lab_version: "0.2.0"
 <p class="lab-intro">In this stage a permission is something an agent is handed for a specific job. When the agent passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks this instead of trusting it.</p>
 <p class="lab-intro">Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. No agent can sign one from scratch.</p>
 
-<aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This is capability-based delegation: a short-lived, signed permission travels with the request. Each agent can only make the permission smaller before passing it on, and the next agent must prove it holds the key named in the permission. Copying the permission alone is not enough to use it.</p></aside>
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This is capability-based delegation: a short-lived, signed permission travels with the request. Each agent can only make the permission smaller before passing it on, and the next agent must prove it holds the key named in the permission. Stealing the token is not enough to use it.</p></aside>
 
 <section class="lab-explainer">
 <h2>What a warrant is</h2>

@@ -220,7 +220,7 @@ export const STAGES: readonly StageSpec[] = [
       "In this stage a permission is something an agent is handed for a specific job. When the agent passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks this instead of trusting it.",
       "Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. No agent can sign one from scratch.",
     ],
-    infrastructure: "This is capability-based delegation: a short-lived, signed permission travels with the request. Each agent can only make the permission smaller before passing it on, and the next agent must prove it holds the key named in the permission. Copying the permission alone is not enough to use it.",
+    infrastructure: "This is capability-based delegation: a short-lived, signed permission travels with the request. Each agent can only make the permission smaller before passing it on, and the next agent must prove it holds the key named in the permission. Stealing the token is not enough to use it.",
     explainer: {
       title: "What a warrant is",
       lead: "A warrant is a signed, self-contained permission that travels with the request: which tools, with which argument values, for which agent's key, until when, and how many more hops it may take. That is what Tenuo issues, narrows, and checks.",
@@ -306,8 +306,8 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
       state: { boarding: "ok", activity: "rogue" },
       tag: { activity: "thief" },
       edges: { "travel-hotel": "dim" },
-      extra: [{ from: "boarding", to: "activity", style: "stolen", label: "copied bytes" }],
-      caption: "Activity Agent has the bytes and still cannot use them.",
+      extra: [{ from: "boarding", to: "activity", style: "stolen", label: "stolen token" }],
+      caption: "Activity Agent stole the token and still cannot use it.",
     }) + fleetDiagram({
       controlPlane: "maxDepth: 4",
       sub: { flight: "marks the hop terminal", checkin: "cannot pass it on", boarding: "never receives it" },

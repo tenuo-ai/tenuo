@@ -266,7 +266,8 @@ describe("generated lab guide", () => {
     const pages = Array.from({ length: 7 }, (_, index) => readFileSync(join(ROOT, "..", "..", "docs", "lab", `stage-${index + 1}.md`), "utf8"));
     for (const page of pages) expect(page).toContain("How this maps to familiar infrastructure");
     expect(pages[1]).toMatch(/service account, workload identity, or IAM role/);
-    expect(pages[4]).toContain("Copying the permission alone is not enough to use it");
+    expect(pages[4]).toContain("Stealing the token is not enough to use it");
+    expect(pages[5]).toContain("Activity Agent stole the token and still cannot use it");
     expect(pages[5]).toContain("the permission works only for the agent that holds the matching private key");
     expect(pages[5]).toContain("prevents it from passing that authority to another agent");
   });
