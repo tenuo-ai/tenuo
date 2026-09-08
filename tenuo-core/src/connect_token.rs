@@ -309,7 +309,8 @@ mod tests {
         let raw = make_token_str(r#"{"v":1,"e":"/v1","k":"tc_abc"}"#);
         let mut ct = ConnectToken::parse(&raw).unwrap();
         assert!(ct.needs_endpoint_base());
-        ct.resolve_endpoint("https://control.example.com/v1").unwrap();
+        ct.resolve_endpoint("https://control.example.com/v1")
+            .unwrap();
         assert_eq!(ct.endpoint, "https://control.example.com");
         assert!(!ct.needs_endpoint_base());
     }
