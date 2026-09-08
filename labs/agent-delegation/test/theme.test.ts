@@ -61,4 +61,23 @@ describe("public-site theme", () => {
       expect(surface).toContain("letter-spacing: 0.04em");
     }
   });
+
+  it("keeps the documentation and challenge header as focused as the main website", () => {
+    const main = readFileSync(join(REPO, "docs", "index.html"), "utf8");
+    const docs = readFileSync(join(REPO, "docs", "_layouts", "default.html"), "utf8");
+    const mainNav = /<nav>([\s\S]*?)<\/nav>/.exec(main)?.[1];
+    const docsNav = /<nav class="top-nav">([\s\S]*?)<\/nav>/.exec(docs)?.[1];
+
+    expect(mainNav).toBeDefined();
+    expect(docsNav).toBeDefined();
+    expect(docsNav?.match(/<a /g)).toHaveLength(5); // brand plus the four main-site links
+    for (const label of ["Docs", "Explorer", "GitHub", "Tenuo Cloud"]) {
+      expect(mainNav).toContain(`>${label}<`);
+      expect(docsNav).toContain(`>${label}<`);
+    }
+    for (const label of ["OpenAI", "CrewAI", "LangChain", "Temporal", "Google ADK"]) {
+      expect(docsNav).not.toContain(`>${label}<`);
+    }
+    expect(docs).toContain("@media (max-width: 480px)");
+  });
 });
