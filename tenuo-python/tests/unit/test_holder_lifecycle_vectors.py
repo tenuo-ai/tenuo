@@ -10,11 +10,17 @@ import pytest
 from tenuo import ConnectToken, HolderIdentity
 from tenuo.exceptions import ConfigurationError
 
-VECTORS = Path(__file__).resolve().parents[1] / "vectors" / "holder-lifecycle.json"
+
+def _vectors_path() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "tests" / "vectors" / "holder-lifecycle.json"
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError("tests/vectors/holder-lifecycle.json")
 
 
 def _vectors() -> dict:
-    return json.loads(VECTORS.read_text(encoding="utf-8"))
+    return json.loads(_vectors_path().read_text(encoding="utf-8"))
 
 
 def test_connect_token_vectors():
@@ -42,7 +48,7 @@ def test_identity_vector_derives_and_redacts():
     identity = HolderIdentity.from_bytes(secret)
     assert bytes(identity.public_key.to_bytes()).hex() == case["public_key_hex"]
     rendered = repr(identity)
-    assert rendered == case["repr_prefix"]
+    assert rendered == case["python_repr"]
     assert case["secret_hex"] not in rendered
     assert case["secret_hex"] not in str(identity)
 

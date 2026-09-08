@@ -5,7 +5,7 @@
     "ConnectToken parse is strict: missing v, v=0, and future versions are errors.",
     "drain_receipts is a non-consuming snapshot; only acknowledge_receipts removes.",
     "A full receipt buffer must not deny an authorized call; overflow is counted.",
-    "HolderIdentity public key is derived from the secret; repr never includes the secret."
+    "Public key is derived from the secret; secret never appears in Debug/repr/str."
   ],
   "connect_tokens": [
     {
@@ -77,7 +77,7 @@
   "identity": {
     "secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
     "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
-    "repr_prefix": "HolderIdentity(public_key=d04ab232\u2026)"
+    "python_repr": "HolderIdentity(public_key=d04ab232…)"
   },
   "receipts": {
     "drain_is_snapshot": true,

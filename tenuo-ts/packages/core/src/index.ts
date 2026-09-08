@@ -105,4 +105,7 @@ export { memoryNonceStore } from "./nonce.ts";
 
 export { Session as SessionHandle, isSession } from "./session.ts";
 
+export { ConnectToken, parseConnectToken } from "./connect.ts";
+export type { ResolveEndpointOptions } from "./connect.ts";
+
 export { createTenuo } from "./client.ts";

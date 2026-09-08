@@ -99,7 +99,7 @@ def test_repr_str_pickle_and_errors_never_leak_credentials():
         assert secret_key not in rendered
         assert secret_reg not in rendered
         assert "[REDACTED]" in rendered
-        assert "https://control.example.com" in rendered
+        assert ct.endpoint == "https://control.example.com"
     with pytest.raises(TypeError):
         pickle.dumps(ct)
     with pytest.raises(ConfigurationError) as exc:

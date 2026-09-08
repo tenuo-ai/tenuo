@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `repr`/`str`/`Debug`, accepts padded Base64URL and `r` /
   `registration_token` aliases, and exposes `needs_endpoint_base` /
   `resolve_endpoint`.
+- **Shared holder-lifecycle vectors.** Rust, Python, and TypeScript load
+  `tests/vectors/holder-lifecycle.json` for connect-token parse, identity
+  derivation, and receipt outbox flags.
 
 ### Fixed
 

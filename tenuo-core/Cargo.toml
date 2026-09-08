@@ -185,6 +185,11 @@ tokio = { version = "1.35", features = ["full", "test-util"] }
 tempfile = "3.27"
 ci_group = "0.1"
 
+[[test]]
+name = "holder_lifecycle_vectors"
+path = "tests/holder_lifecycle_vectors.rs"
+required-features = ["server"]
+
 [[bench]]
 name = "warrant_benchmarks"
 harness = false
