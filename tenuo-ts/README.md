@@ -632,6 +632,12 @@ try {
 An approval is a signed Tenuo approval envelope. A boolean such as
 `userApproved: true` is not authorization evidence.
 
+Invalid constraint definitions are configuration mistakes, not authorization
+outcomes. Builders such as `under()`, `range()`, and `oneOf()` validate their
+input when called and throw `TenuoConfigurationError` with code
+`TENUO_CONFIGURATION`, so a malformed policy fails where it is written rather
+than at the first denied call.
+
 ## Receipts and revocation
 
 Use `onReceipt` to persist signed evidence of an authorization decision, and

@@ -27,7 +27,9 @@ import { TenuoConfigurationError } from "./errors.ts";
 /**
  * Constraint builders. These produce plain marker objects; every one is
  * evaluated by the Rust core, never in TypeScript. The set matches the
- * Python SDK and the core `Constraint` enum one for one.
+ * Python SDK and the core `Constraint` enum one for one. Invalid builder
+ * input throws `TenuoConfigurationError` (`TENUO_CONFIGURATION`) when the
+ * policy is constructed; nothing here makes an authorization decision.
  */
 
 /** Directory prefix. Evaluated in core as Subpath — not a string prefix check in TS. */
