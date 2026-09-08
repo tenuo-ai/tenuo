@@ -434,7 +434,13 @@ async function cmdScore(def: StageDef): Promise<void> {
 }
 
 async function cmdShare(def: StageDef): Promise<void> {
-  const e = await evaluateStage(def);
+  const state = loadState();
+  // Stage 5 contains the SDK interaction we most need to learn from: the
+  // participant's first narrowing attempt and their first complete chain.
+  // Keep sharing useful at the wrap-up by reporting that recorded stage even
+  // after the participant has moved on to the optional boss levels.
+  const reportDef = def.n > 5 && state.attempts?.["5"] !== undefined ? stageDef(5) : def;
+  const e = await evaluateStage(reportDef);
   if (e === undefined) {
     console.log("Your exercise file does not load; fix that first (npm run lab shows the error).");
     return;
@@ -442,9 +448,9 @@ async function cmdShare(def: StageDef): Promise<void> {
   let report;
   try {
     report = buildShareReport(
-      def.n,
+      reportDef.n,
       Object.fromEntries(e.score.stars.map((star) => [star.id, star.earned])),
-      loadState().attempts?.[String(def.n)],
+      state.attempts?.[String(reportDef.n)],
       flag("username"),
     );
   } catch (error) {
@@ -454,8 +460,11 @@ async function cmdShare(def: StageDef): Promise<void> {
   }
   const dir = LAB_HOME;
   mkdirSync(dir, { recursive: true });
-  const file = join(dir, `share-stage-${def.n}.json`);
+  const file = join(dir, `share-stage-${reportDef.n}.json`);
   writeFileSync(file, JSON.stringify(report, null, 2));
+  if (reportDef.n !== def.n) {
+    console.log(dim("  Sharing the Stage 5 first-attempt → first-green handoff scorecard."));
+  }
   printHud(walletLine(e.runs[0]!.built), e.probes, e.score, e.runs.length);
   console.log(dim(`  Redacted scorecard saved locally: ${file}`));
   try {

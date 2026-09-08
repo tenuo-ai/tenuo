@@ -1,4 +1,4 @@
-# AI Agent Delegation Security Lab
+# AI Agent Delegation Security Challenge
 
 Your mission is simple: **book the trip and stop the rogue agent**. A travel
 assistant made of six AI agents is booking spring break in Cancún. One reads
@@ -26,9 +26,10 @@ npm run star       # optional; skip if you are not signed in to GitHub
 npm run lab
 ```
 
-The lab itself needs no account, sign-in, API key, or credit card, and sends
-nothing automatically. The optional star command contacts GitHub through its
-CLI; skip it if you are not signed in. If npm fights you, open the repository
+The core challenge runs locally with no account, sign-in, API key, or credit
+card, and sends nothing automatically. Only `npm run share` and the optional
+star command use the network. The star command contacts GitHub through its CLI;
+skip it if you are not signed in. If npm fights you, open the repository
 in GitHub Codespaces and pick the "Agent Delegation Lab" configuration instead.
 Its terminal opens in this folder, so the same optional `npm run star` followed
 by `npm run lab` applies.
