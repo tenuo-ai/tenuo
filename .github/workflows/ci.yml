@@ -731,6 +731,12 @@ jobs:
         working-directory: tenuo-ts
         run: pnpm --filter @tenuo/core build && pnpm --filter @tenuo/core pack:smoke && pnpm --filter @tenuo/mcp build && pnpm --filter @tenuo/mcp pack:smoke
 
+      - name: Next.js Node runtime example
+        working-directory: tenuo-ts
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: node examples/nextjs-node/scripts/verify-packed.mjs
+
   # Test the committed WASM package on every supported active Node line without
   # rebuilding it. Node 20 above remains the reproducible Rust/WASM build lane.
   tenuo-ts-node-compat:
