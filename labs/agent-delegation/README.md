@@ -22,14 +22,14 @@ takes about ninety minutes; stages 6 and 7 are optional boss levels.
 git clone https://github.com/tenuo-ai/tenuo
 cd tenuo/labs/agent-delegation
 npm install
-npm run star       # optional; skip if you are not signed in to GitHub
+npm run star       # optional
 npm run lab
 ```
 
 The core challenge runs locally with no account, sign-in, API key, or credit
 card, and sends nothing automatically. Only `npm run share` and the optional
-star command use the network. The star command contacts GitHub through its CLI;
-skip it if you are not signed in. If npm fights you, open the repository
+star command use the network. The star command contacts GitHub through its CLI.
+If npm fights you, open the repository
 in GitHub Codespaces and pick the "Agent Delegation Lab" configuration instead.
 Its terminal opens in this folder, so the same optional `npm run star` followed
 by `npm run lab` applies.

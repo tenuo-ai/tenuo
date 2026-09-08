@@ -131,7 +131,7 @@ function stepper(current: number | "wrap" | "contribute"): string {
   return `<nav class="lab-stepper" aria-label="Stages"><a href="/lab/" class="home" title="Overview">Lab</a>${items.join("")}</nav>`;
 }
 
-function callout(kind: "notice" | "question" | "hint" | "stuck", title: string, body: string): string {
+function callout(kind: "notice" | "question" | "hint" | "stuck" | "infrastructure" | "learning", title: string, body: string): string {
   return `<aside class="lab-callout ${kind}"><div class="lab-callout-title">${title}</div>${body}</aside>`;
 }
 
@@ -164,6 +164,7 @@ function stagePage(spec: StageSpec): string {
   const tier = spec.n > MAIN_STAGE_COUNT ? " · optional boss level" : "";
   parts.push(`<header class="lab-hero"><div class="lab-kicker">Stage ${spec.n} of ${TOTAL_STAGE_COUNT}${tier} · <span class="lab-mode ${spec.mode}">${spec.mode}</span> · about ${spec.minutes} min</div><h1>${esc(spec.title)}</h1><p class="lab-goal"><strong>Goal.</strong> ${inline(spec.goal)}</p></header>`);
   parts.push(spec.intro.map((p) => `<p class="lab-intro">${inline(p)}</p>`).join("\n"));
+  parts.push(callout("infrastructure", "How this maps to familiar infrastructure", `<p>${inline(spec.infrastructure)}</p>`));
   if (spec.explainer !== undefined) {
     parts.push(explainerHtml(spec.explainer));
   }
@@ -173,6 +174,7 @@ function stagePage(spec: StageSpec): string {
   }
   parts.push(`<h2>Do this</h2>\n<ol class="lab-steps">\n${spec.steps.map((s, i) => stepHtml(s, spec.n, i)).join("\n")}\n</ol>`);
   parts.push(callout("notice", "Notice", `<ul>${spec.notice.map((n) => `<li>${inline(n)}</li>`).join("")}</ul>`));
+  parts.push(callout("learning", "What this stage establishes", `<p>${inline(spec.learning)}</p>`));
   if (spec.question !== undefined) {
     parts.push(callout("question", "Question to sit with", `<p>${inline(spec.question)}</p>`));
   }
@@ -213,15 +215,17 @@ function indexPage(): string {
 <pre class="lab-cmd"><code>git clone ${REPO_URL}
 cd tenuo/labs/agent-delegation
 npm install
-npm run star       # optional; skip if you are not signed in to GitHub
+npm run star       # optional
 npm run lab</code></pre>
-<p class="lab-muted">Node 20 or newer. The core challenge runs locally with no account or API key; only <code>npm run share</code> and the optional star command use the network. Skip the star command if you are not signed in to GitHub. Every challenge check and score is real.</p>
+<p class="lab-muted">Node 20 or newer. The core challenge runs locally with no account or API key; only <code>npm run share</code> and the optional star command use the network. Every challenge check and score is real.</p>
 </div>
+<details class="lab-reveal lab-expect">
+<summary>What to expect <span>5 stages · about 90 min · 2 optional bosses</span></summary>
 <div>
-<h2>What to expect</h2>
-<p>Five stages in about ninety minutes, then two optional boss levels. You run a command, read what happened, change a file, and run it again. Retries are free, speed is not scored, and copying the shown <code>narrow()</code> shape is allowed.</p>
-<p class="lab-muted">If you want the vocabulary early, the TypeScript guide's <a href="${REPO_URL}/tree/main/tenuo-ts">Protect your first tool</a> and <a href="${REPO_URL}/tree/main/tenuo-ts">Delegate to another agent</a> take about seven minutes.</p>
+<ul><li>A self-guided challenge: run a command, read the result, change a file, and run it again.</li><li>Retries are free, speed is not scored, and copying the shown <code>narrow()</code> shape is allowed.</li></ul>
+<p class="lab-muted">Want the vocabulary first? The TypeScript guide's <a href="${REPO_URL}/tree/main/tenuo-ts">Protect your first tool</a> and <a href="${REPO_URL}/tree/main/tenuo-ts">Delegate to another agent</a> take about seven minutes.</p>
 </div>
+</details>
 </section>
 <details class="lab-reveal">
 <summary>Prefer a hosted terminal? Use Codespaces</summary>
@@ -294,7 +298,7 @@ function wrapUpPage(): string {
     ["Ambient authority", "Stage 1. Permission that follows the agent everywhere instead of following the job."],
     ["Identity-based access control", "Stage 2. Permissions attached to who is acting."],
     ["Confused deputy", "Stage 4. An agent with real authority being steered into using it for the wrong job."],
-    ["Policy service", "Stage 4. A central place every check has to ask, which is what your fix built, whatever you called it."],
+    ["Central authorization", "Stage 4. A registry or policy service that every check depends on for current task context."],
     ["Delegation", "Stage 4. Passing work, and the access for it, to another agent."],
     ["Privilege escalation", "Stage 4. Ending up with more access than you were given."],
     ["Attenuation", "Stage 5. Access that can narrow when it is passed on, and can never widen."],
@@ -309,7 +313,18 @@ function wrapUpPage(): string {
 <blockquote class="lab-quote">An AI agent sometimes needs to pass work to another agent. The second agent should get only the access that piece of work requires, and it should not be able to give itself or anyone else more access than it received.</blockquote>
 <p>And if you got further than that:</p>
 <blockquote class="lab-quote">An agent's identity tells you which agent is acting. It does not tell you what that agent was allowed to do for this particular job.</blockquote>
-<p>Neither sentence uses a technical term. Here are the terms, now that you have the ideas they attach to.</p>
+<p>Those are the two principles the challenge was built to make concrete.</p>
+<h2>Why Tenuo fits this problem</h2>
+<p>Each earlier approach improved one part of the system. The lab also showed what remained when agents had to pass changing, job-specific authority to one another.</p>
+<table class="lab-terms"><thead><tr><th>Approach</th><th>What the lab showed</th></tr></thead><tbody>
+<tr><td><strong>Shared credential</strong></td><td>Simple, but one fooled agent gets the authority of the whole system.</td></tr>
+<tr><td><strong>Identity and roles</strong></td><td>Reduce the blast radius, but describe the agent's general job rather than the specific task.</td></tr>
+<tr><td><strong>Detailed central policy</strong></td><td>Can enforce task-specific rules, but needs current shared state during the work and does not make safe delegation automatic.</td></tr>
+<tr><td><strong>Tenuo warrants</strong></td><td>Carry the task's authority with the work, can only narrow at each handoff, are bound to the receiving agent's key, and are checked beside the tool without a runtime central call.</td></tr>
+</tbody></table>
+<p><strong>The conclusion:</strong> for dynamic, multi-hop agent delegation, Tenuo is the best fit of the approaches exercised here because least privilege survives every handoff without putting a central service on every tool call.</p>
+<p class="lab-muted">Tenuo complements workload identity, key management, and policy design; it supplies the delegation layer those systems do not provide on their own. A control plane is still needed to issue the first warrant for new work.</p>
+<p>Here are the technical terms, now that you have the ideas they attach to.</p>
 <table class="lab-terms"><thead><tr><th>Term</th><th>Where you met it</th></tr></thead><tbody>${terms.map(([t, d]) => `<tr><td><strong>${esc(t)}</strong></td><td>${esc(d)}</td></tr>`).join("")}</tbody></table>
 <aside class="lab-callout question"><div class="lab-callout-title">One last look</div><p>No one told any agent in this lab to misbehave. Find where the instruction came from, in <code>src/services/flights.ts</code>. It has been sitting there since stage 1, on a departure board your check-in agent reads every time it does its job.</p></aside>
 <h2>Going further</h2>

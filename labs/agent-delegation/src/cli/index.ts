@@ -40,6 +40,14 @@ function guideUrl(n: number): string {
   return `${SITE}/lab/stage-${n}${query.length > 0 ? `?${query}` : ""}`;
 }
 
+function wrapUpUrl(): string {
+  const params = new URLSearchParams();
+  const done = [...loadState().completed].sort((a, b) => a - b);
+  if (done.length > 0) params.set("done", done.join(","));
+  const query = params.toString();
+  return `${SITE}/lab/wrap-up${query.length > 0 ? `?${query}` : ""}`;
+}
+
 function openInBrowser(url: string): void {
   const [bin, pre] = process.platform === "darwin" ? ["open", []] : process.platform === "win32" ? ["cmd", ["/c", "start", ""]] : ["xdg-open", []];
   try {
@@ -177,6 +185,8 @@ function printFunctionality(f: Functionality): void {
 }
 
 function printBattery(results: readonly ProbeResult[]): void {
+  console.log(dim("  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result"));
+  console.log("");
   let section = "";
   for (const r of results) {
     if (r.section !== section) {
@@ -196,6 +206,22 @@ function printBattery(results: readonly ProbeResult[]): void {
       console.log(dim("      Ed25519 signature             FAILED"));
     }
   }
+  console.log("");
+}
+
+function markComplete(n: number): boolean {
+  const state = loadState();
+  if (state.completed.includes(n)) return false;
+  state.completed.push(n);
+  saveState(state);
+  return true;
+}
+
+function printChallengeComplete(): void {
+  console.log(green("  Challenge complete."));
+  console.log(dim(`  Wrap up: ${wrapUpUrl()}`));
+  console.log(`  ${bold("npm run share")}   submit your redacted Stage 5 learning signal`);
+  console.log(`  ${bold("npm run star")}    support Tenuo from this terminal (optional)`);
   console.log("");
 }
 
@@ -390,6 +416,20 @@ async function cmdScore(def: StageDef): Promise<void> {
   recordAttempt(def.n, snapshot(e));
   const { functionality, probes, margin, score: s } = e;
   printHud(walletLine(e.runs[0]!.built), probes, s);
+  if (def.breaksTrip === true) {
+    const terminal = probes.find((probe) => probe.section === "TERMINAL");
+    console.log(bold("TERMINAL HANDOFF"));
+    if (terminal?.ok === true) {
+      console.log(`  ${green("✓")} The deliberately terminal link blocked Check-in Agent from forwarding authority.`);
+      console.log(dim("  That break is the point of this exercise, so this boss level is complete and is not scored out of 100."));
+      if (markComplete(def.n)) console.log(green(`  Stage ${def.n} done.`) + dim(`  Next: npm run next, then ${guideUrl(def.n + 1)}`));
+    } else {
+      console.log(`  ${red("✗")} The handoff is not terminal yet.`);
+      console.log(dim("  Make the final Check-in → Boarding link terminal, then run npm run score again."));
+    }
+    console.log("");
+    return;
+  }
   const row = (label: string, points: number, max: number, note: string) =>
     console.log(`  ${pad(label, 44)} ${pad(`${points}`, 3)} / ${pad(String(max), 3)} ${dim(note)}`);
   row("Trip booked", s.functionality.points, 25, s.functionality.ok ? "" : "the trip is incomplete");
@@ -422,13 +462,12 @@ async function cmdScore(def: StageDef): Promise<void> {
     }
     console.log("");
   }
-  if (functionality.ok && def.breaksTrip !== true) {
-    const state = loadState();
-    if (!state.completed.includes(def.n)) {
-      state.completed.push(def.n);
-      saveState(state);
-      console.log(green(`  Stage ${def.n} done.`) + (def.n < STAGES.length ? dim(`  Next: npm run next, then ${guideUrl(def.n + 1)}`) : ""));
+  if (functionality.ok && markComplete(def.n)) {
+    if (def.n < STAGES.length) {
+      console.log(green(`  Stage ${def.n} done.`) + dim(`  Next: npm run next, then ${guideUrl(def.n + 1)}`));
       console.log("");
+    } else {
+      printChallengeComplete();
     }
   }
 }
@@ -505,6 +544,11 @@ async function cmdAudit(def: StageDef): Promise<void> {
 async function cmdNext(): Promise<void> {
   const state = loadState();
   const to = flag("stage") !== undefined ? Number(flag("stage")) : state.stage + 1;
+  if (flag("stage") === undefined && state.stage === STAGES.length && to === STAGES.length + 1) {
+    printChallengeComplete();
+    if (args.includes("--open")) openInBrowser(wrapUpUrl());
+    return;
+  }
   if (!Number.isInteger(to) || to < 1 || to > STAGES.length) {
     console.log(`Stages run 1 to ${STAGES.length}. You are on ${state.stage}.`);
     return;

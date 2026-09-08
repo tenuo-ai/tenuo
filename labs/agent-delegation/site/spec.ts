@@ -44,6 +44,10 @@ export interface StageSpec {
   readonly mode: "shared" | "identity" | "scoped" | "tenuo";
   readonly goal: string;
   readonly intro: readonly string[];
+  /** A familiar comparison that locates the stage without claiming equivalence. */
+  readonly infrastructure: string;
+  /** The security conclusion the participant should carry into the next stage. */
+  readonly learning: string;
   readonly diagram: string;
   readonly steps: readonly Step[];
   readonly notice: readonly string[];
@@ -79,6 +83,8 @@ export const STAGES: readonly StageSpec[] = [
       "Six agents book Alice's trip. All six carry the same key, and it opens everything: flights, hotels, the wallet, her passport number, the calendar.",
       "There is no setup in this stage. Its job is to show you the damage before anything protects against it.",
     ],
+    infrastructure: "This is like copying one API key or long-lived cloud credential into every service. If any agent is compromised, the attacker can use everything that shared credential unlocks.",
+    learning: "A shared credential turns one fooled agent into a compromise of the whole system. Authorization must contain prompt injection when prevention fails.",
     diagram: fleetDiagram({
       travelers: ["Alice → Cancún, $1,200"],
       wallet: "$1,200",
@@ -104,6 +110,8 @@ export const STAGES: readonly StageSpec[] = [
     intro: [
       "Now each agent has its own credential with permissions that match its role. Flight Agent does flight things. Check-in Agent reads reservations and checks people in.",
     ],
+    infrastructure: "This is like giving each workload its own service account, workload identity, or IAM role. It limits each agent to a category of work, but does not say which individual request the agent is handling right now.",
+    learning: "Separate identities reduce the blast radius, but an agent's identity still does not say which specific job a call belongs to.",
     diagram: fleetDiagram({
       wallet: "$1,200",
       sub: { travel: "traveler, calendar", flight: "flights, wallet", hotel: "hotels, wallet", activity: "activities, wallet", checkin: "any reservation", boarding: "boarding passes" },
@@ -128,6 +136,8 @@ export const STAGES: readonly StageSpec[] = [
     intro: [
       "Each rule now names the specifics. Check-in Agent may read one reservation. Flight Agent may book flights to one destination, up to a price.",
     ],
+    infrastructure: "This is like adding conditions to an IAM or resource policy. The rules can limit resource IDs, destinations, fields, and spending, but someone must keep those detailed rules up to date and distribute them to every agent.",
+    learning: "Detailed constraints can enforce least privilege for one known job, but static rules become difficult to manage as jobs change and overlap.",
     diagram: fleetDiagram({
       wallet: "$1,200",
       sub: { travel: "name only, calendar", flight: "CUN, ≤ $300", hotel: "Cancún, ≤ $200/night", activity: "Cancún, ≤ $200", checkin: "UA214 only", boarding: "UA214 only" },
@@ -160,6 +170,8 @@ export const STAGES: readonly StageSpec[] = [
       "Bob is going to Seattle on DL331, at the same time, through the same agents. Your stage 3 policy describes only Alice's Cancún flight, so Bob is rejected by destination, flight-budget, and reservation rules.",
       "This stage has two acts. First isolate Alice from Bob. Then observe an intentional handoff leak. The red handoff checks in Act 2 do not mean your Act 1 solution is broken.",
     ],
+    infrastructure: "This is like creating a separate workload identity for every job and looking it up in a registry, or asking a central authorization service on every call. Both separate Alice's job from Bob's, but the agents depend on that central system being current and available.",
+    learning: "Central task context can separate concurrent jobs, but these fixes depend on shared state at runtime and still hand the next agent a whole credential instead of only its part of the job.",
     diagram: fleetDiagram({
       travelers: ["Alice → Cancún, UA214", "Bob → Seattle, DL331"],
       service: "Your policy component",
@@ -181,7 +193,7 @@ export const STAGES: readonly StageSpec[] = [
     ],
     notice: [
       "After the quick fix, Alice's Check-in Agent can check Bob in. There is one `checkin-agent`, it is doing two jobs, and the file never says which job a call belongs to.",
-      "Whichever secure fix you use, `central_calls` is above zero and cannot be brought to zero. Something outside the agent has to know about every task before it starts, and it has to be reachable while the task runs.",
+      "With either working fix in this stage, `central_calls` is above zero and cannot be brought to zero. Something outside the agent has to know about every task before it starts, and it has to be reachable while the task runs.",
       "Boarding Agent came out of the handoff able to read reservations and check people in as well as issue a pass. Check-in Agent had only one thing it could give: its whole credential.",
       "The rogue Check-in Agent then asks your policy component to write a rule for Boarding Agent that is broader than anything Check-in Agent holds itself.",
     ],
@@ -214,6 +226,8 @@ export const STAGES: readonly StageSpec[] = [
       "In this stage a permission is something an agent is handed for a specific job. When the agent passes work along, it hands over a narrowed copy. It cannot hand over more, and the system checks this instead of trusting it.",
       "Each agent now has its own key. A small control plane, separate from all six, signs the first permission for each trip. No agent can sign one from scratch.",
     ],
+    infrastructure: "This is capability-based delegation: a short-lived, signed permission travels with the request. Each agent can only make the permission smaller before passing it on, and the next agent must prove it holds the key named in the permission. Stealing the token is not enough to use it.",
+    learning: "Tenuo makes authority follow the job. Each agent can pass only a smaller permission, attempts to widen it fail, and the code guarding each tool can verify the result without a central call.",
     explainer: {
       title: "What a warrant is",
       lead: "A warrant is a signed, self-contained permission that travels with the request: which tools, with which argument values, for which agent's key, until when, and how many more hops it may take. That is what Tenuo issues, narrows, and checks.",
@@ -225,7 +239,7 @@ export const STAGES: readonly StageSpec[] = [
       ],
       why: [
         ["Stage 2: an identity said who was acting and left out which job", "The warrant carries the job: reservation UA214, trip-alice-cun, up to $300."],
-        ["Stage 4: every check had to ask a component that knew about every task", "Verification is local. central_calls goes to 0 and stays there when the control plane is down."],
+        ["Stage 4: every check had to ask a component that knew about every task", "After the control plane issues the root warrant, verification is local. Existing work continues with central_calls at 0 even if the control plane becomes unavailable."],
         ["Stage 4: the only thing to hand over was the whole credential", "narrow() hands over exactly the subset the next agent needs, bound to that agent's key."],
         ["Stage 4: the service could not tell whether the asker held what it asked for", "A narrowed warrant must fit inside its parent. The rogue's request is refused before anything is signed."],
       ],
@@ -289,17 +303,19 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
   {
     ...stageMeta(6),
     intro: [
-      "Two short extensions on the chain you built. Boarding Agent's permission for UA214 is a piece of data: a list of strings. Activity Agent gets a copy and tries to use it.",
+      "Two short extensions on the chain you built. Activity Agent steals Boarding Agent's token for UA214 and tries to use it.",
       "Then a limit on distance. When one agent hands a permission on, it can mark it terminal. The root also carries a maximum number of hops for the whole trip: any agent can lower it, none can raise it.",
     ],
+    infrastructure: "This combines two familiar controls. Like a proof-of-possession credential, the permission works only for the agent that holds the matching private key. Like a non-delegable role, a terminal permission lets an agent do its job but prevents it from passing that authority to another agent.",
+    learning: "A stolen Tenuo token cannot be used without the private key it was issued to, and an upstream agent can prevent its permission from being delegated again.",
     diagram: fleetDiagram({
       controlPlane: "signs the root",
       sub: { boarding: "holds UA214 boarding pass", activity: "has a copy of it" },
       state: { boarding: "ok", activity: "rogue" },
       tag: { activity: "thief" },
       edges: { "travel-hotel": "dim" },
-      extra: [{ from: "boarding", to: "activity", style: "stolen", label: "copied bytes" }],
-      caption: "Activity Agent has the bytes and still cannot use them.",
+      extra: [{ from: "boarding", to: "activity", style: "stolen", label: "stolen token" }],
+      caption: "Activity Agent stole the token and still cannot use it.",
     }) + fleetDiagram({
       controlPlane: "maxDepth: 4",
       sub: { flight: "marks the hop terminal", checkin: "cannot pass it on", boarding: "never receives it" },
@@ -330,6 +346,8 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
     intro: [
       "This stage gives less guidance than the others. The compromised Hotel Agent will try eight things.",
     ],
+    infrastructure: "This is like moving a compromised service onto a tightly scoped emergency role. The approved hotel booking still works, while unrelated tools, sensitive data, extra budget, and the ability to delegate are removed.",
+    learning: "Narrowing one handoff contains a compromised agent while preserving the exact operation the trip still needs.",
     diagram: fleetDiagram({
       controlPlane: "signs the root",
       sub: { hotel: "compromised", travel: "hands the hotel branch out" },

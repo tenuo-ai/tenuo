@@ -11,6 +11,8 @@ lab_version: "0.2.0"
 
 <p class="lab-intro">Each rule now names the specifics. Check-in Agent may read one reservation. Flight Agent may book flights to one destination, up to a price.</p>
 
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This is like adding conditions to an IAM or resource policy. The rules can limit resource IDs, destinations, fields, and spending, but someone must keep those detailed rules up to date and distribute them to every agent.</p></aside>
+
 <figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 268" aria-hidden="true" focusable="false" data-caption="Each rule names the job: the destination, the reservation, the ceiling." xmlns="http://www.w3.org/2000/svg"><path d="M97 78 L97 222" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 138 L198 138" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,138 197,142.95 197,133.05" fill="#6a6a6a"/>
 <path d="M97 222 L198 222" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,222 197,226.95 197,217.05" fill="#6a6a6a"/>
@@ -71,7 +73,7 @@ export const config: PolicyConfig = {
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="3:1"><span>2</span></label>
-<div class="lab-step-body"><p>Narrow the rules. Run the checks after every change until the result line says <strong>clean</strong>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t3-1" id="t3-1-0" checked><label for="t3-1-0">Before you change anything</label><input type="radio" name="t3-1" id="t3-1-1"><label for="t3-1-1">When you are done</label><div class="lab-tab-panel"><details class="lab-term"><summary>Before you change anything <span>npm run attack · 55 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Narrow the rules. Run the checks after every change until the result line says <strong>clean</strong>.</p><pre class="lab-cmd"><code>npm run attack</code></pre><div class="lab-tabs"><input type="radio" name="t3-1" id="t3-1-0" checked><label for="t3-1-0">Before you change anything</label><input type="radio" name="t3-1" id="t3-1-1"><label for="t3-1-1">When you are done</label><div class="lab-tab-panel"><details class="lab-term"><summary>Before you change anything <span>npm run attack · 57 lines</span></summary><pre><code>
 Stage 3 of 7: Rules that fit the job   mode=scoped  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-3
 
@@ -99,6 +101,8 @@ THE TRIP
 WHAT ELSE HAPPENED
   ! AA882, another traveler's reservation, was checked in by your agent
 
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
+
 LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓
 TRIGGERED BY INJECTED CONTENT
@@ -125,7 +129,7 @@ BOARDING AGENT AFTER THE HANDOFF
       reason: boarding-agent may not get_reservation (actions: issue_boarding_pass)  [POLICY]
 
   2 of 11 checks did not land as expected
-  central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When you are done <span>npm run attack · 52 lines</span></summary><pre><code>
+  central_calls during the trip: 0   (calls to a component outside the acting agent)</code></pre></details></div><div class="lab-tab-panel"><details class="lab-term"><summary>When you are done <span>npm run attack · 54 lines</span></summary><pre><code>
 Stage 3 of 7: Rules that fit the job   mode=scoped  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-3
 
@@ -149,6 +153,8 @@ THE TRIP
   ✓ trip-alice-cun  activity: search
   ✓ trip-alice-cun  activity: book
   ✓ trip-alice-cun  within budget ($741 of $1200)
+
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
 
 LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓
@@ -203,6 +209,8 @@ STARS   ★★★★
 </ol>
 
 <aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>It works. Everything the rogue agent tried is blocked and Alice still gets to Cancún.</li><li>Keep this file. Stage 4 breaks it.</li></ul></aside>
+
+<aside class="lab-callout learning"><div class="lab-callout-title">What this stage establishes</div><p>Detailed constraints can enforce least privilege for one known job, but static rules become difficult to manage as jobs change and overlap.</p></aside>
 
 <details class="lab-reveal hint"><summary>I'm stuck. Give me a hint.</summary><div>Pin <code>checkin-agent</code> and <code>boarding-agent</code> to <code>reservations: [&quot;UA214&quot;]</code>. Give <code>flight-agent</code> a <code>destination</code> and a <code>maxPrice</code>. Cut <code>traveler.read</code> down with <code>profileFields</code>, and give every agent a <code>maxCharge</code> that matches its share of the budget.</div></details>
 

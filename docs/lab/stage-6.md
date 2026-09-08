@@ -9,10 +9,12 @@ lab_version: "0.2.0"
 
 <header class="lab-hero"><div class="lab-kicker">Stage 6 of 7 · optional boss level · <span class="lab-mode tenuo">tenuo</span> · about 15 min</div><h1>Boss: stolen authority</h1><p class="lab-goal"><strong>Goal.</strong> See why a copied permission cannot be used by another agent, then deliberately end a delegation chain.</p></header>
 
-<p class="lab-intro">Two short extensions on the chain you built. Boarding Agent's permission for UA214 is a piece of data: a list of strings. Activity Agent gets a copy and tries to use it.</p>
+<p class="lab-intro">Two short extensions on the chain you built. Activity Agent steals Boarding Agent's token for UA214 and tries to use it.</p>
 <p class="lab-intro">Then a limit on distance. When one agent hands a permission on, it can mark it terminal. The root also carries a maximum number of hops for the whole trip: any agent can lower it, none can raise it.</p>
 
-<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Activity Agent has the bytes and still cannot use them." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
+<aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This combines two familiar controls. Like a proof-of-possession credential, the permission works only for the agent that holds the matching private key. Like a non-delegable role, a terminal permission lets an agent do its job but prevents it from passing that authority to another agent.</p></aside>
+
+<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Activity Agent stole the token and still cannot use it." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
 <path d="M97 200 L198 200" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#3a3a3a"/>
 <path d="M97 284 L198 284" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#6a6a6a"/>
 <path d="M172 116 L198 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,116 197,120.95 197,111.05" fill="#6a6a6a"/>
@@ -26,7 +28,7 @@ lab_version: "0.2.0"
 <rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#ff5c5c" stroke-width="2"/><text x="218" y="281" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text><text x="218" y="298" font-size="11" text-anchor="start" fill="var(--text-muted)">has a copy of it</text><rect x="313.906" y="251" width="35.094" height="17" rx="8.5" fill="#ff5c5c"/><text x="331.45300000000003" y="263.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">thief</text>
 <rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="403" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text>
 <rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#3ddc84" stroke-width="2"/><text x="588" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text><text x="588" y="130" font-size="9.5" text-anchor="start" fill="var(--text-muted)">holds UA214 boarding pass</text>
-<path d="M652 140 L652 284 L366 284" fill="none" stroke="#ff5c5c" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/><polygon points="358,284 367,279.05 367,288.95" fill="#ff5c5c"/><text x="505" y="276" font-size="10.5" text-anchor="middle" fill="#ff5c5c">copied bytes</text></svg><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Flight Agent decided. Check-in Agent cannot undo it." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#3a3a3a" stroke-width="1.5"/>
+<path d="M652 140 L652 284 L366 284" fill="none" stroke="#ff5c5c" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/><polygon points="358,284 367,279.05 367,288.95" fill="#ff5c5c"/><text x="505" y="276" font-size="10.5" text-anchor="middle" fill="#ff5c5c">stolen token</text></svg><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Flight Agent decided. Check-in Agent cannot undo it." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#3a3a3a" stroke-width="1.5"/>
 <path d="M97 200 L198 200" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#3a3a3a"/>
 <path d="M97 284 L198 284" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#3a3a3a"/>
 <path d="M172 116 L198 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,116 197,120.95 197,111.05" fill="#6a6a6a"/>
@@ -40,7 +42,7 @@ lab_version: "0.2.0"
 <rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="289" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text>
 <rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="403" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text><text x="403" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">cannot pass it on</text>
 <rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#3a3a3a" stroke-width="1"/><text x="588" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text-muted)">Boarding Agent</text><text x="588" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">never receives it</text></svg>
-<figcaption>Activity Agent has the bytes and still cannot use them.</figcaption></figure>
+<figcaption>Activity Agent stole the token and still cannot use it.</figcaption></figure>
 
 <figure class="lab-code"><figcaption>The whole theft <span>exercises/06-extensions/steal.ts</span></figcaption>
 {% highlight ts %}
@@ -65,7 +67,7 @@ export function steal(tenuo: TenuoMode, boardingSession: Session): StealOutcome 
 </li>
 <li class="lab-step">
 <label class="lab-step-check"><input type="checkbox" data-key="6:1"><span>2</span></label>
-<div class="lab-step-body"><p>Run the checks and read the <strong>STOLEN</strong> replay panel carefully. It prints both public keys, the failed comparison, and the Ed25519 signature result.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 79 lines</span></summary><pre><code>
+<div class="lab-step-body"><p>Run the checks and read the <strong>STOLEN</strong> replay panel carefully. It prints both public keys, the failed comparison, and the Ed25519 signature result.</p><pre class="lab-cmd"><code>npm run attack</code></pre><details class="lab-term"><summary>What you should see <span>npm run attack · 81 lines</span></summary><pre><code>
 Stage 6 of 7: Boss: stolen authority   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-6
 
@@ -103,6 +105,8 @@ HANDOFFS
       hotel-agent now holds {book_hotel, search_hotels, traveler.read, wallet.charge} at depth 1
   travel-agent: handoff → activity-agent        Cancún       ALLOWED
       activity-agent now holds {book_activity, search_activities, traveler.read, wallet.charge} at depth 1
+
+  ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
 
 LEGITIMATE
   check_in(UA214)                                          ALLOWED  ✓
@@ -306,6 +310,8 @@ THE TRIP
 </ol>
 
 <aside class="lab-callout notice"><div class="lab-callout-title">Notice</div><ul><li>The replay fails with <code>TENUO_INVALID_POP</code>. The warrant's <code>bound_key</code> and Activity Agent's public holder key are visibly different, so the Ed25519 proof cannot verify. This is a holder-bound warrant, not a bearer token.</li><li>With the terminal link, Boarding Agent never gets its permission: <code>TENUO_DEPTH_EXCEEDED</code> at the Check-in → Boarding hop. Check-in Agent did not agree to that restriction and cannot remove it.</li></ul></aside>
+
+<aside class="lab-callout learning"><div class="lab-callout-title">What this stage establishes</div><p>A stolen Tenuo token cannot be used without the private key it was issued to, and an upstream agent can prevent its permission from being delegated again.</p></aside>
 
 <aside class="lab-callout question"><div class="lab-callout-title">Question to sit with</div><p>If having a copy of a permission is not enough to use it, what else does using it require? And who in a chain gets to decide how many agents a job passes through?</p></aside>
 

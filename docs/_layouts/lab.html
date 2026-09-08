@@ -129,6 +129,10 @@ layout: default
   .lab-callout.notice { border-left-color: var(--gold); }
   .lab-callout.question { border-left-color: var(--accent); }
   .lab-callout.stuck { border-left-color: var(--red); }
+  .lab-callout.infrastructure { border-left-color: var(--green); }
+  .lab-callout.infrastructure p { margin: 0; }
+  .lab-callout.learning { border-left-color: var(--accent); background: rgba(56, 189, 248, 0.06); }
+  .lab-callout.learning p { margin: 0; }
   .lab-callout-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 4px; }
 
   .lab-reveal { margin: 1rem 0; border: 1px dashed var(--border); border-radius: 10px; }
@@ -147,6 +151,10 @@ layout: default
 
   .lab-start { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 1rem 0; }
   .lab-start h2 { margin-top: 0.4rem; }
+  .lab-start > .lab-expect { margin: 0.4rem 0 0; align-self: start; }
+  .lab-expect summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; }
+  .lab-expect summary span { color: var(--text-muted); font-size: 0.76rem; font-weight: 500; }
+  .lab-expect ul { margin: 0.35rem 0 0.7rem 1.1rem; }
   .lab-button { display: inline-block; padding: 10px 16px; border-radius: 8px; background: var(--accent); color: #0a0a0a !important; font-weight: 600; text-decoration: none; margin: 6px 0; }
   .lab-prep { margin: 0.3rem 0 0 1.1rem; font-size: 0.9rem; }
   .lab-mission table { font-size: 0.9rem; }
