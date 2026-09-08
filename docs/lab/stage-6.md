@@ -14,34 +14,80 @@ lab_version: "0.2.0"
 
 <aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This combines two familiar controls. Like a proof-of-possession credential, the permission works only for the agent that holds the matching private key. Like a non-delegable role, a terminal permission lets an agent do its job but prevents it from passing that authority to another agent.</p></aside>
 
-<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Activity Agent stole the token and still cannot use it." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
-<path d="M97 200 L198 200" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#3a3a3a"/>
-<path d="M97 284 L198 284" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#6a6a6a"/>
-<path d="M172 116 L198 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,116 197,120.95 197,111.05" fill="#6a6a6a"/>
-<path d="M357 116 L383 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="391,116 382,120.95 382,111.05" fill="#6a6a6a"/>
-<path d="M542 116 L568 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="576,116 567,120.95 567,111.05" fill="#6a6a6a"/>
-<rect x="22" y="14" width="150" height="44" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="33" y="35" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text><text x="33" y="52" font-size="11" text-anchor="start" fill="var(--text-muted)">signs the root</text>
-<path d="M97 58 L97 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="97,91 92.05,82 101.95,82" fill="#6a6a6a"/>
-<rect x="22" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="33" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text>
-<rect x="207" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text>
-<rect x="207" y="176" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="205" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text>
-<rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#ff5c5c" stroke-width="2"/><text x="218" y="281" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text><text x="218" y="298" font-size="11" text-anchor="start" fill="var(--text-muted)">has a copy of it</text><rect x="313.906" y="251" width="35.094" height="17" rx="8.5" fill="#ff5c5c"/><text x="331.45300000000003" y="263.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">thief</text>
-<rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="403" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text>
-<rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#3ddc84" stroke-width="2"/><text x="588" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text><text x="588" y="130" font-size="9.5" text-anchor="start" fill="var(--text-muted)">holds UA214 boarding pass</text>
-<path d="M652 140 L652 284 L366 284" fill="none" stroke="#ff5c5c" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/><polygon points="358,284 367,279.05 367,288.95" fill="#ff5c5c"/><text x="505" y="276" font-size="10.5" text-anchor="middle" fill="#ff5c5c">stolen token</text></svg><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Flight Agent decided. Check-in Agent cannot undo it." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#3a3a3a" stroke-width="1.5"/>
-<path d="M97 200 L198 200" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#3a3a3a"/>
-<path d="M97 284 L198 284" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#3a3a3a"/>
-<path d="M172 116 L198 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,116 197,120.95 197,111.05" fill="#6a6a6a"/>
-<path d="M357 116 L391 116" fill="none" stroke="#ffb000" stroke-width="2" stroke-linejoin="round"/><line x1="391" y1="125" x2="391" y2="107" stroke="#ffb000" stroke-width="3" stroke-linecap="round"/><text x="374" y="155" font-size="10.5" text-anchor="middle" fill="#ffb000">terminal</text>
-<path d="M542 116 L568 116" fill="none" stroke="#ff5c5c" stroke-width="2" stroke-linejoin="round"/><polygon points="576,116 567,120.95 567,111.05" fill="#ff5c5c"/><circle cx="559" cy="116" r="8" fill="var(--surface)"/><text x="559" y="120.5" font-size="13" font-weight="600" text-anchor="middle" fill="#ff5c5c">✕</text><text x="559" y="155" font-size="10.5" text-anchor="middle" fill="#ff5c5c">TENUO_DEPTH_EXCEEDED</text>
-<rect x="22" y="14" width="150" height="44" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="33" y="35" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text><text x="33" y="52" font-size="11" text-anchor="start" fill="var(--text-muted)">maxDepth: 4</text>
-<path d="M97 58 L97 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="97,91 92.05,82 101.95,82" fill="#6a6a6a"/>
-<rect x="22" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="33" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text>
-<rect x="207" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="218" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text><text x="218" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">marks the hop terminal</text>
-<rect x="207" y="176" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="205" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text>
-<rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="289" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text>
-<rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="403" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text><text x="403" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">cannot pass it on</text>
-<rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#3a3a3a" stroke-width="1"/><text x="588" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text-muted)">Boarding Agent</text><text x="588" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">never receives it</text></svg>
+<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Activity Agent stole the token and still cannot use it." xmlns="http://www.w3.org/2000/svg">
+<path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
+<path d="M97 200 L198 200" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,200 197,204.95 197,195.05" fill="#3a3a3a"/>
+<path d="M97 284 L198 284" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,284 197,288.95 197,279.05" fill="#6a6a6a"/>
+<path d="M172 116 L198 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,116 197,120.95 197,111.05" fill="#6a6a6a"/>
+<path d="M357 116 L383 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="391,116 382,120.95 382,111.05" fill="#6a6a6a"/>
+<path d="M542 116 L568 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="576,116 567,120.95 567,111.05" fill="#6a6a6a"/>
+<rect x="22" y="14" width="150" height="44" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+<text x="33" y="35" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text>
+<text x="33" y="52" font-size="11" text-anchor="start" fill="var(--text-muted)">signs the root</text>
+<path d="M97 58 L97 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="97,91 92.05,82 101.95,82" fill="#6a6a6a"/>
+<rect x="22" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="33" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text>
+<rect x="207" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="218" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text>
+<rect x="207" y="176" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="218" y="205" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text>
+<rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#ff5c5c" stroke-width="2"/>
+<text x="218" y="281" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text>
+<text x="218" y="298" font-size="11" text-anchor="start" fill="var(--text-muted)">has a copy of it</text>
+<rect x="313.906" y="251" width="35.094" height="17" rx="8.5" fill="#ff5c5c"/>
+<text x="331.45300000000003" y="263.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">thief</text>
+<rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="403" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text>
+<rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#3ddc84" stroke-width="2"/>
+<text x="588" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text>
+<text x="588" y="130" font-size="9.5" text-anchor="start" fill="var(--text-muted)">holds UA214 boarding pass</text>
+<path d="M652 140 L652 284 L366 284" fill="none" stroke="#ff5c5c" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/>
+<polygon points="358,284 367,279.05 367,288.95" fill="#ff5c5c"/>
+<text x="505" y="276" font-size="10.5" text-anchor="middle" fill="#ff5c5c">stolen token</text>
+</svg>
+<svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Flight Agent decided. Check-in Agent cannot undo it." xmlns="http://www.w3.org/2000/svg">
+<path d="M97 140 L97 284" fill="none" stroke="#3a3a3a" stroke-width="1.5"/>
+<path d="M97 200 L198 200" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,200 197,204.95 197,195.05" fill="#3a3a3a"/>
+<path d="M97 284 L198 284" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,284 197,288.95 197,279.05" fill="#3a3a3a"/>
+<path d="M172 116 L198 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,116 197,120.95 197,111.05" fill="#6a6a6a"/>
+<path d="M357 116 L391 116" fill="none" stroke="#ffb000" stroke-width="2" stroke-linejoin="round"/>
+<line x1="391" y1="125" x2="391" y2="107" stroke="#ffb000" stroke-width="3" stroke-linecap="round"/>
+<text x="374" y="155" font-size="10.5" text-anchor="middle" fill="#ffb000">terminal</text>
+<path d="M542 116 L568 116" fill="none" stroke="#ff5c5c" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="576,116 567,120.95 567,111.05" fill="#ff5c5c"/>
+<circle cx="559" cy="116" r="8" fill="var(--surface)"/>
+<text x="559" y="120.5" font-size="13" font-weight="600" text-anchor="middle" fill="#ff5c5c">✕</text>
+<text x="559" y="155" font-size="10.5" text-anchor="middle" fill="#ff5c5c">TENUO_DEPTH_EXCEEDED</text>
+<rect x="22" y="14" width="150" height="44" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+<text x="33" y="35" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text>
+<text x="33" y="52" font-size="11" text-anchor="start" fill="var(--text-muted)">maxDepth: 4</text>
+<path d="M97 58 L97 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="97,91 92.05,82 101.95,82" fill="#6a6a6a"/>
+<rect x="22" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="33" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text>
+<rect x="207" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+<text x="218" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text>
+<text x="218" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">marks the hop terminal</text>
+<rect x="207" y="176" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="218" y="205" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text>
+<rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="218" y="289" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text>
+<rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="403" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text>
+<text x="403" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">cannot pass it on</text>
+<rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#3a3a3a" stroke-width="1"/>
+<text x="588" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text-muted)">Boarding Agent</text>
+<text x="588" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">never receives it</text>
+</svg>
 <figcaption>Activity Agent stole the token and still cannot use it.</figcaption></figure>
 
 <figure class="lab-code"><figcaption>The whole theft <span>exercises/06-extensions/steal.ts</span></figcaption>
@@ -71,7 +117,7 @@ export function steal(tenuo: TenuoMode, boardingSession: Session): StealOutcome 
 Stage 6 of 7: Boss: stolen authority   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-6
 
-WALLET  Alice: $459 of $1200
+WALLET  Alice: spent $741 / $1,200
 ROGUE ATTEMPTS BLOCKED  8 / 8
 STARS   ★★☆★
   ★ Trip booked
@@ -90,7 +136,7 @@ THE TRIP
   ✓ trip-alice-cun  hotel: book
   ✓ trip-alice-cun  activity: search
   ✓ trip-alice-cun  activity: book
-  ✓ trip-alice-cun  within budget ($741 of $1200)
+  ✓ trip-alice-cun  within budget (spent $741 / $1,200)
 
 HANDOFFS
   travel-agent: receive trip authority          control plane ALLOWED
@@ -167,7 +213,7 @@ Stage 6 of 7: Boss: stolen authority   mode=tenuo  scenario=spring-break
   Agent as terminal. Run the trip. Notice what fails and who decided it would. Check-in
   Agent did not agree to this restriction and cannot remove it.
 
-WALLET  Alice: $459 of $1200
+WALLET  Alice: spent $741 / $1,200
 ROGUE ATTEMPTS BLOCKED  8 / 8
 STARS   ★★☆★
   ★ Trip booked
@@ -220,7 +266,7 @@ THE TRIP
   ✓ trip-alice-cun  hotel: book
   ✓ trip-alice-cun  activity: search
   ✓ trip-alice-cun  activity: book
-  ✓ trip-alice-cun  within budget ($741 of $1200)
+  ✓ trip-alice-cun  within budget (spent $741 / $1,200)
 
   Explorer link saved as explorer-stage-6.url in the lab state directory.
   Run npm run trace -- --open-explorer to open it.
@@ -240,9 +286,9 @@ Stage 6 of 7: Boss: stolen authority   mode=tenuo  scenario=spring-break
   Agent as terminal. Run the trip. Notice what fails and who decided it would. Check-in
   Agent did not agree to this restriction and cannot remove it.
 
-WALLET  Alice: $459 of $1200
+WALLET  Alice: spent $741 / $1,200
 ROGUE ATTEMPTS BLOCKED  7 / 8   1 not reached
-STARS   ☆☆☆★
+STARS (PROVISIONAL — TRIP INCOMPLETE)   ☆☆☆★
   ☆ Trip booked
   ☆ Rogue stopped
   ☆ Tight handoff
@@ -293,7 +339,7 @@ THE TRIP
   ✓ trip-alice-cun  hotel: book
   ✓ trip-alice-cun  activity: search
   ✓ trip-alice-cun  activity: book
-  ✓ trip-alice-cun  within budget ($741 of $1200)
+  ✓ trip-alice-cun  within budget (spent $741 / $1,200)
 
   Explorer link saved as explorer-stage-6.url in the lab state directory.
   Run npm run trace -- --open-explorer to open it.

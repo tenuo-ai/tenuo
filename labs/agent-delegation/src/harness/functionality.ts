@@ -70,7 +70,7 @@ export function checkFunctionality(plan: ScenarioPlan, records: readonly AuditRe
       .reduce((n, r) => n + Number(r.resource.replace("$", "")), 0);
     steps.push({
       trip: trip.taskId,
-      step: `within budget ($${legitSpend} of $${trip.budget})`,
+      step: `within budget (spent $${legitSpend.toLocaleString("en-US")} / $${trip.budget.toLocaleString("en-US")})`,
       ok: legitSpend <= trip.budget,
       detail: legitSpend <= trip.budget ? "legitimate spending inside the budget" : "over budget",
     });

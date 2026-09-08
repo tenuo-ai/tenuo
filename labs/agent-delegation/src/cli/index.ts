@@ -114,7 +114,10 @@ function printExplorerLink(built: Built): void {
 
 function walletLine(built: Built): string {
   return built.plan.trips
-    .map((t) => `${t.traveler.split(" ")[0]}: $${built.runtime.world.balance(t.taskId)} of $${t.budget}`)
+    .map((t) => {
+      const spent = t.budget - built.runtime.world.balance(t.taskId);
+      return `${t.traveler.split(" ")[0]}: spent $${spent.toLocaleString("en-US")} / $${t.budget.toLocaleString("en-US")}`;
+    })
     .join("   ");
 }
 
@@ -135,7 +138,8 @@ function printHud(wallet: string, probes: readonly ProbeResult[], s?: Score, sce
   console.log(bold(`ROGUE ATTEMPTS BLOCKED${scope}  `) + `${rogue.blocked} / ${rogue.total}${unverified}`);
   if (s !== undefined) {
     const stars = s.stars.map((star) => star.earned ? green("★") : dim("☆")).join("");
-    console.log(bold("STARS   ") + stars);
+    const label = s.gated ? "STARS (PROVISIONAL — TRIP INCOMPLETE)   " : "STARS   ";
+    console.log(bold(label) + stars);
     for (const star of s.stars) console.log(`  ${star.earned ? green("★") : dim("☆")} ${star.label}`);
   }
   console.log("");
