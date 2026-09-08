@@ -111,7 +111,7 @@ impl MemoryReceiptSink {
     /// Receipts at and after `cursor`, then advance `cursor` to the current length.
     ///
     /// A second call with the same cursor returns nothing until a new receipt
-    /// is persisted. HTTP upload and idempotency stay in the adapter.
+    /// is persisted.
     pub fn drain_from(&self, cursor: &mut usize) -> Vec<Receipt> {
         let stored = self.stored();
         if *cursor >= stored.len() {

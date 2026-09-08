@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 
 /// Ed25519 holder key loaded from, or created at, a caller-supplied path.
 ///
-/// The file is hex-encoded secret-key bytes plus a trailing newline — the same
-/// format Tenuo Cloud already writes — so existing holder files keep working.
-/// Core does not choose a default path and does not read environment variables.
+/// The file is hex-encoded secret-key bytes plus a trailing newline.
+/// This type does not choose a default path and does not read environment
+/// variables.
 #[derive(Clone)]
 pub struct PersistentIdentity {
     key: SigningKey,

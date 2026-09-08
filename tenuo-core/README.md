@@ -90,7 +90,7 @@ for receipt in session.drain_receipts() {
 }
 ```
 
-Hosted adapters fetch warrants, SRLs, and upload receipts. They should not assemble `Authorizer`, `PresentedAuthority`, `LocalReceiptSigner`, or `MemoryReceiptSink`.
+Callers that obtain warrants and SRLs over the network should not assemble `Authorizer`, `PresentedAuthority`, `LocalReceiptSigner`, or `MemoryReceiptSink`.
 
 | Feature | Description |
 |---------|-------------|

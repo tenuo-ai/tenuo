@@ -1,9 +1,8 @@
 //! Connect token support for streamlined onboarding.
 //!
-//! A connect token (`tenuo_ct_<base64url-json>`) bundles all credentials needed
-//! to register an authorizer with the Tenuo Cloud control plane into a single
-//! copy-pasteable string. The token is created via the dashboard's Quick Connect
-//! dialog and can be shared across multiple authorizer instances.
+//! A connect token (`tenuo_ct_<base64url-json>`) bundles the credentials
+//! needed to register an authorizer with a control plane into a single
+//! string. It can be shared across multiple authorizer instances.
 //!
 //! # Token format (v1)
 //!
@@ -136,9 +135,9 @@ impl ConnectToken {
 
     /// Resolve a relative connect-token endpoint against a caller-provided base.
     ///
-    /// `base` is an origin such as `https://cloud.example.com` or the same
-    /// origin with a `/v1` suffix. Core never substitutes localhost or a
-    /// Cloud URL. Absolute endpoints are left unchanged.
+    /// `base` is an origin such as `https://control.example.com` or the same
+    /// origin with a `/v1` suffix. This method never invents an origin.
+    /// Absolute endpoints are left unchanged.
     pub fn resolve_endpoint(&mut self, base: &str) -> Result<(), ConnectTokenError> {
         if !self.needs_endpoint_base() {
             return Ok(());
@@ -310,8 +309,8 @@ mod tests {
         let raw = make_token_str(r#"{"v":1,"e":"/v1","k":"tc_abc"}"#);
         let mut ct = ConnectToken::parse(&raw).unwrap();
         assert!(ct.needs_endpoint_base());
-        ct.resolve_endpoint("https://cloud.example.com/v1").unwrap();
-        assert_eq!(ct.endpoint, "https://cloud.example.com");
+        ct.resolve_endpoint("https://control.example.com/v1").unwrap();
+        assert_eq!(ct.endpoint, "https://control.example.com");
         assert!(!ct.needs_endpoint_base());
     }
 

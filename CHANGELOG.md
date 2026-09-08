@@ -17,8 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arrive later; until then sessions use the explicit TTL fallback.
   `SignedRevocationList::{from_base64,to_base64}` is the decode API.
   `ConnectToken::resolve_endpoint` accepts a caller-provided base for
-  relative `/v1` tokens. No Cloud URLs, env vars, or `reqwest` in this
-  surface.
+  relative `/v1` tokens.
 
 ## [0.2.5] - 2026-09-06
 

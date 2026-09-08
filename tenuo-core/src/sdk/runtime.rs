@@ -3,8 +3,9 @@
 //! [`Tenuo::local`] still builds one guard bound to one chain. A [`Runtime`]
 //! holds the pieces that stay the same across warrants — holder key, trusted
 //! roots, receipt policy, TTL fallback — and binds each new warrant into a
-//! [`Session`]. Hosted adapters fetch warrants and SRLs; they should not
-//! assemble `Authorizer`, `LocalReceiptSigner`, and `MemoryReceiptSink`.
+//! [`Session`]. Callers that obtain warrants and SRLs from the network
+//! should not assemble `Authorizer`, `LocalReceiptSigner`, and
+//! `MemoryReceiptSink`.
 
 use super::authority::{AuthorityError, PresentedAuthority};
 use super::call::Call;
@@ -104,8 +105,8 @@ impl Runtime {
     /// Install or refresh a decoded signed revocation list.
     ///
     /// The first successful call switches later sessions from TTL-only to
-    /// signed-SRL enforcement. Later calls update the same tracker. Fetching
-    /// and polling stay in the adapter.
+    /// signed-SRL enforcement. Later calls update the same tracker. How the
+    /// list is fetched is the caller's concern.
     pub fn apply_signed_revocation_list(
         &self,
         srl: SignedRevocationList,
@@ -233,7 +234,7 @@ impl Session {
     }
 
     /// Receipts produced since the last drain. Empty on a second call with no
-    /// new decisions. HTTP upload stays in the adapter.
+    /// new decisions. Persistence beyond this process is the caller's concern.
     #[cfg(feature = "receipts")]
     pub fn drain_receipts(&self) -> Vec<Receipt> {
         let Some(sink) = self.receipts.as_ref() else {
