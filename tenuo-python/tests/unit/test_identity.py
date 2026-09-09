@@ -115,8 +115,13 @@ def _mp_load_or_create(path_str: str, queue: multiprocessing.Queue) -> None:
 
 
 def _mp_paused_create(path_str: str, signal_path: str, queue: multiprocessing.Queue) -> None:
-    os.environ["TENUO_IDENTITY_TEST_PAUSE_BEFORE_CLAIM"] = "0.5"
-    os.environ["TENUO_IDENTITY_TEST_PAUSE_SIGNAL"] = signal_path
+    import tenuo.identity as identity_mod
+
+    def _pause(_tmp, _dest) -> None:
+        Path(signal_path).touch()
+        time.sleep(0.5)
+
+    identity_mod._before_claim = _pause
     _mp_load_or_create(path_str, queue)
 
 

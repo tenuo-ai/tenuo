@@ -11,7 +11,7 @@ import os
 import secrets
 import time
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 from tenuo_core import PublicKey, SigningKey
 
@@ -138,7 +138,9 @@ def _persist_new(dest: Path, key: SigningKey) -> None:
         parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(f"{dest.name}.tmp.{os.getpid()}.{secrets.token_hex(8)}")
     _write_complete_0600(tmp, key)
-    _pause_before_claim_for_tests()
+    hook = _before_claim
+    if hook is not None:
+        hook(tmp, dest)
     if not _claim_destination(tmp, dest):
         raise FileExistsError(dest)
 
@@ -200,13 +202,7 @@ def _claim_destination(tmp: Path, dest: Path) -> bool:
                 pass
 
 
-def _pause_before_claim_for_tests() -> None:
-    signal = os.environ.get("TENUO_IDENTITY_TEST_PAUSE_SIGNAL")
-    if signal:
-        Path(signal).touch()
-    raw = os.environ.get("TENUO_IDENTITY_TEST_PAUSE_BEFORE_CLAIM")
-    if raw:
-        time.sleep(float(raw))
+_before_claim: Optional[Callable[[Path, Path], None]] = None
 
 
 def _set_owner_only(path: Path) -> None:
