@@ -22,11 +22,15 @@ import type {
   UrlSafeConstraint,
   WildcardConstraint,
 } from "./api.ts";
+import { TenuoConfigurationError } from "./errors.ts";
 
 /**
  * Constraint builders. These produce plain marker objects; every one is
  * evaluated by the Rust core, never in TypeScript. The set matches the
- * Python SDK and the core `Constraint` enum one for one.
+ * Python SDK and the core `Constraint` enum one for one. Builders that
+ * validate their input throw `TenuoConfigurationError` at the call site.
+ * Deeper checks, such as regex syntax, run in the core when `session()`
+ * compiles the policy. Nothing here makes an authorization decision.
  */
 
 /** Directory prefix. Evaluated in core as Subpath — not a string prefix check in TS. */
@@ -35,7 +39,7 @@ export function under(
   options?: { readonly caseSensitive?: boolean; readonly allowEqual?: boolean },
 ): UnderConstraint {
   if (!root.startsWith("/")) {
-    throw new Error("tenuo.under() expects an absolute path (start with /)");
+    throw new TenuoConfigurationError("tenuo.under() expects an absolute path (start with /)");
   }
   const out: { kind: "under"; root: string; caseSensitive?: boolean; allowEqual?: boolean } = {
     kind: "under",
@@ -56,14 +60,14 @@ export function email(options: { domain: string }): EmailConstraint {
 
 export function max(value: number): MaxConstraint {
   if (!Number.isFinite(value)) {
-    throw new Error("tenuo.max() requires a finite number");
+    throw new TenuoConfigurationError("tenuo.max() requires a finite number");
   }
   return { kind: "max", value };
 }
 
 export function min(value: number): MinConstraint {
   if (!Number.isFinite(value)) {
-    throw new Error("tenuo.min() requires a finite number");
+    throw new TenuoConfigurationError("tenuo.min() requires a finite number");
   }
   return { kind: "min", value };
 }
@@ -76,15 +80,15 @@ export function range(options: {
   readonly maxExclusive?: boolean;
 }): RangeConstraint {
   if (options.min === undefined && options.max === undefined) {
-    throw new Error("tenuo.range() requires min, max, or both");
+    throw new TenuoConfigurationError("tenuo.range() requires min, max, or both");
   }
   for (const bound of [options.min, options.max]) {
     if (bound !== undefined && !Number.isFinite(bound)) {
-      throw new Error("tenuo.range() bounds must be finite numbers");
+      throw new TenuoConfigurationError("tenuo.range() bounds must be finite numbers");
     }
   }
   if (options.min !== undefined && options.max !== undefined && options.min > options.max) {
-    throw new Error("tenuo.range() min must not exceed max");
+    throw new TenuoConfigurationError("tenuo.range() min must not exceed max");
   }
   const out: {
     kind: "range";
@@ -110,7 +114,7 @@ export function range(options: {
 
 export function oneOf(values: readonly string[]): OneOfConstraint {
   if (values.length === 0) {
-    throw new Error("tenuo.oneOf() requires at least one value");
+    throw new TenuoConfigurationError("tenuo.oneOf() requires at least one value");
   }
   return { kind: "oneOf", values };
 }
@@ -118,14 +122,14 @@ export function oneOf(values: readonly string[]): OneOfConstraint {
 /** Any value except these. */
 export function notOneOf(values: readonly string[]): NotOneOfConstraint {
   if (values.length === 0) {
-    throw new Error("tenuo.notOneOf() requires at least one value");
+    throw new TenuoConfigurationError("tenuo.notOneOf() requires at least one value");
   }
   return { kind: "notOneOf", values };
 }
 
 export function pattern(pattern: string): PatternConstraint {
   if (pattern.length === 0) {
-    throw new Error("tenuo.pattern() requires a non-empty pattern");
+    throw new TenuoConfigurationError("tenuo.pattern() requires a non-empty pattern");
   }
   return { kind: "pattern", pattern };
 }
@@ -133,7 +137,7 @@ export function pattern(pattern: string): PatternConstraint {
 /** Regular expression, compiled and evaluated in core. */
 export function regex(source: string): RegexConstraint {
   if (source.length === 0) {
-    throw new Error("tenuo.regex() requires a non-empty expression");
+    throw new TenuoConfigurationError("tenuo.regex() requires a non-empty expression");
   }
   return { kind: "regex", source };
 }
@@ -150,7 +154,7 @@ export function wildcard(): WildcardConstraint {
 /** IP address inside a network, e.g. `cidr("10.0.0.0/8")`. */
 export function cidr(network: string): CidrConstraint {
   if (!network.includes("/")) {
-    throw new Error("tenuo.cidr() expects CIDR notation like 10.0.0.0/8");
+    throw new TenuoConfigurationError("tenuo.cidr() expects CIDR notation like 10.0.0.0/8");
   }
   return { kind: "cidr", network };
 }
@@ -158,7 +162,7 @@ export function cidr(network: string): CidrConstraint {
 /** URL glob, e.g. `urlPattern("https://*.example.com/api/*")`. Parsed as a URL, not a string. */
 export function urlPattern(pattern: string): UrlPatternConstraint {
   if (pattern.length === 0) {
-    throw new Error("tenuo.urlPattern() requires a non-empty pattern");
+    throw new TenuoConfigurationError("tenuo.urlPattern() requires a non-empty pattern");
   }
   return { kind: "urlPattern", pattern };
 }
@@ -193,7 +197,7 @@ export function urlSafe(options?: {
 /** Shell command whose first word must be one of `allow`. Parsed with shell quoting rules in core. */
 export function shlex(allow: readonly string[]): ShlexConstraint {
   if (allow.length === 0) {
-    throw new Error("tenuo.shlex() requires at least one allowed command");
+    throw new TenuoConfigurationError("tenuo.shlex() requires at least one allowed command");
   }
   return { kind: "shlex", allow };
 }
@@ -201,7 +205,7 @@ export function shlex(allow: readonly string[]): ShlexConstraint {
 /** List argument that must include every one of these values. */
 export function contains(values: readonly (string | number | boolean)[]): ContainsConstraint {
   if (values.length === 0) {
-    throw new Error("tenuo.contains() requires at least one value");
+    throw new TenuoConfigurationError("tenuo.contains() requires at least one value");
   }
   return { kind: "contains", values };
 }
@@ -209,7 +213,7 @@ export function contains(values: readonly (string | number | boolean)[]): Contai
 /** List argument whose every element must be one of these values. */
 export function subset(values: readonly (string | number | boolean)[]): SubsetConstraint {
   if (values.length === 0) {
-    throw new Error("tenuo.subset() requires at least one value");
+    throw new TenuoConfigurationError("tenuo.subset() requires at least one value");
   }
   return { kind: "subset", values };
 }
@@ -217,7 +221,7 @@ export function subset(values: readonly (string | number | boolean)[]): SubsetCo
 /** Satisfied when at least one inner constraint is. */
 export function anyOf(constraints: readonly ConstraintExpr[]): AnyOfConstraint {
   if (constraints.length === 0) {
-    throw new Error("tenuo.anyOf() requires at least one constraint");
+    throw new TenuoConfigurationError("tenuo.anyOf() requires at least one constraint");
   }
   return { kind: "anyOf", constraints };
 }
@@ -225,7 +229,7 @@ export function anyOf(constraints: readonly ConstraintExpr[]): AnyOfConstraint {
 /** Satisfied only when every inner constraint is. */
 export function all(constraints: readonly ConstraintExpr[]): AllConstraint {
   if (constraints.length === 0) {
-    throw new Error("tenuo.all() requires at least one constraint");
+    throw new TenuoConfigurationError("tenuo.all() requires at least one constraint");
   }
   return { kind: "all", constraints };
 }
@@ -238,7 +242,7 @@ export function not(constraint: ConstraintExpr): NotConstraint {
 /** Common Expression Language predicate over the argument value, evaluated in core. */
 export function cel(expression: string): CelConstraint {
   if (expression.trim().length === 0) {
-    throw new Error("tenuo.cel() requires a non-empty expression");
+    throw new TenuoConfigurationError("tenuo.cel() requires a non-empty expression");
   }
   return { kind: "cel", expression };
 }
