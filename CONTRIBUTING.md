@@ -175,9 +175,9 @@ Published source maps follow one policy in both packages, and the smoke
 scripts fail when it drifts. JavaScript maps embed the original TypeScript
 (`inlineSources`), because the tarball ships `dist` only and the `../src/*.ts`
 paths inside a map point at files consumers never receive. Declaration maps
-(`.d.ts.map`) are not emitted: TypeScript cannot embed source in them, and
-shipping `src` just to serve editor navigation would also ship build inputs.
-Editors resolve to the published `.d.ts` files instead.
+(`.d.ts.map`) are not emitted: TypeScript 5.8 does not embed source in them,
+and shipping `src` just to serve editor navigation would also ship build
+inputs. Editors fall back to the published `.d.ts` files.
 
 ### Run the MCP scenarios
 

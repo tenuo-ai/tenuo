@@ -20,8 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@tenuo/mcp` JavaScript maps embed the original TypeScript
   (`sourcesContent`), so debuggers and `node --enable-source-maps` show SDK
   source instead of pointing at `../src/*.ts` files that are not in the
-  package. Declaration maps are no longer published; editors resolve to the
-  `.d.ts` files as before.
+  package. Declaration maps are no longer published; editors fall back to the
+  `.d.ts` files.
 
 ## [0.2.5] - 2026-09-06
 
