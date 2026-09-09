@@ -22,6 +22,9 @@ concurrency:
 
 jobs:
   analyze:
+    # Keep this false during the default-to-advanced setup transition. Enable
+    # CODEQL_ADVANCED_ENABLED immediately before disabling default setup.
+    if: vars.CODEQL_ADVANCED_ENABLED == 'true'
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
