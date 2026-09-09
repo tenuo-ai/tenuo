@@ -173,44 +173,12 @@ agent's key. See [Delegate to another agent](#delegate-to-another-agent).
 
 ### Concurrent requests keep separate sessions
 
-`withSession()` scopes the session with Node's `AsyncLocalStorage`. Two
-requests that run at the same time, await in between, and call the same
-protected tool each see only their own session:
-
-```ts
-await Promise.all([
-  tenuo.withSession(reportsSession, () => runReportAgent()),
-  tenuo.withSession(financeSession, () => runFinanceAgent()),
-]);
-```
-
-Each session denies the other flow's path before the tool runs. A plain
-closure does not capture its creation-time session; it uses the context in
-which it is invoked. For queues or callbacks that do not preserve the
-originating context, pass the intended local session on the call:
-
-```ts
-await readFile.execute({ path }, { session });
-```
-
-An explicit session takes precedence for that call and does not replace the
-surrounding ambient session. Pass the key only when you hold a session:
-`{ session: undefined }` is rejected as a configuration error rather than
-falling back to the ambient one. After both flows finish, the caller has no
-ambient session if it started without one. This scopes access to the handle;
-it does not revoke the signed warrant or isolate arbitrary JavaScript code.
-
-Session handles do not cross process or worker-thread boundaries. Send a
-warrant chain that was delegated to the receiver's key, import it there with
-`sessionFromWire()` and that key, then scope or explicitly pass the local
-session. The core rejects a chain and key that do not match. See
-[Delegate to another agent](#delegate-to-another-agent). Never send holder
-secrets with the job.
-
-The example is
-[`concurrent-sessions.ts`](packages/core/examples/concurrent-sessions.ts)
-in `packages/core/examples`; `pnpm example:sessions` runs its flows and the
-queued-job case through the regression test.
+`withSession()` scopes the session with Node's `AsyncLocalStorage`, so
+requests that run at the same time each see only their own session. Work that
+a queue or worker runs from outside `withSession()` has no ambient session;
+pass `{ session }` on that call. `pnpm example:sessions` runs
+[`concurrent-sessions.ts`](packages/core/examples/concurrent-sessions.ts),
+which shows both.
 
 ## Production setup
 

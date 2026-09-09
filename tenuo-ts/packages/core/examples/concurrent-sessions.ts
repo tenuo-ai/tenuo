@@ -250,9 +250,12 @@ function failure(error: unknown): JobOutcome {
 /**
  * Jobs enqueued inside withSession() and run by a worker outside it. The job
  * that relies on ambient context fails closed; the job that carries
- * `{ session }` runs. The jobs are two named fields rather than an array
- * because this package compiles with `noUncheckedIndexedAccess`, under which
- * array destructuring yields possibly-undefined values.
+ * `{ session }` runs. Pass the key only when a session is in hand:
+ * `{ session: undefined }` is rejected as a configuration error rather than
+ * falling back to the ambient one, because the SDK checks for the key, not
+ * the value. The jobs are two named fields rather than an array because
+ * this package compiles with `noUncheckedIndexedAccess`, under which array
+ * destructuring yields possibly-undefined values.
  */
 export async function runQueuedJobs(harness: Harness): Promise<QueuedRun> {
   const { tenuo, readFile, sessions } = harness;
