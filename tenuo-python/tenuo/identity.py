@@ -6,7 +6,9 @@ and path-owned: this module does not choose a default file or read env vars.
 
 from __future__ import annotations
 
+import errno
 import os
+import secrets
 import time
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -58,40 +60,30 @@ class HolderIdentity:
         """Load a hex secret from ``path``, or generate and persist one.
 
         The file is hex-encoded secret-key bytes plus a trailing newline.
-        Creation is exclusive (``O_CREAT|O_EXCL``) with mode ``0600`` so a
-        concurrent caller loads the winner instead of overwriting it. A
-        corrupt existing file is an error; it is never overwritten.
+        The complete key is written and fsynced to a unique ``0600`` temp
+        file, then the destination is claimed atomically. A concurrent
+        loser loads the winner. A corrupt existing file is an error; it
+        is never overwritten.
         """
         dest = Path(path)
-        last_error: Optional[Exception] = None
         for _ in range(32):
             try:
                 return cls._load_existing(dest)
             except FileNotFoundError:
                 pass
-            except ConfigurationError as exc:
-                last_error = exc
-                if dest.exists() and dest.stat().st_size == 0:
-                    time.sleep(0.005)
-                    continue
-                raise
             identity = cls.generate()
             try:
-                _create_exclusive(dest, identity._key)
+                _persist_new(dest, identity._key)
             except FileExistsError:
                 time.sleep(0.005)
                 continue
             identity._path = dest
             return identity
-        if last_error is not None:
-            raise last_error
         return cls._load_existing(dest)
 
     @classmethod
     def _load_existing(cls, dest: Path) -> "HolderIdentity":
         contents = dest.read_text(encoding="ascii")
-        if not contents.strip():
-            raise FileNotFoundError(dest)
         identity = cls._from_hex_file(dest, contents)
         identity._path = dest
         _set_owner_only(dest)
@@ -100,6 +92,8 @@ class HolderIdentity:
     @staticmethod
     def _from_hex_file(path: Path, contents: str) -> "HolderIdentity":
         trimmed = contents.strip()
+        if not trimmed:
+            raise ConfigurationError(f"holder identity at {path} is empty")
         try:
             raw = bytes.fromhex(trimmed)
         except ValueError as exc:
@@ -138,10 +132,18 @@ class HolderIdentity:
         raise TypeError("HolderIdentity cannot be pickled")
 
 
-def _create_exclusive(path: Path, key: SigningKey) -> None:
-    parent = path.parent
+def _persist_new(dest: Path, key: SigningKey) -> None:
+    parent = dest.parent
     if str(parent) not in ("", "."):
         parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(f"{dest.name}.tmp.{os.getpid()}.{secrets.token_hex(8)}")
+    _write_complete_0600(tmp, key)
+    _pause_before_claim_for_tests()
+    if not _claim_destination(tmp, dest):
+        raise FileExistsError(dest)
+
+
+def _write_complete_0600(path: Path, key: SigningKey) -> None:
     secret = bytes(key.secret_key_bytes()).hex() + "\n"
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
     if hasattr(os, "O_CLOEXEC"):
@@ -165,6 +167,46 @@ def _create_exclusive(path: Path, key: SigningKey) -> None:
         raise
     else:
         os.close(fd)
+
+
+def _claim_destination(tmp: Path, dest: Path) -> bool:
+    """Atomically publish ``tmp`` as ``dest``. ``tmp`` is always removed."""
+    remove_tmp = True
+    try:
+        os.link(os.fspath(tmp), os.fspath(dest))
+        return True
+    except FileExistsError:
+        return False
+    except OSError as exc:
+        if exc.errno == errno.EEXIST:
+            return False
+        if os.name != "nt":
+            raise
+        try:
+            os.rename(os.fspath(tmp), os.fspath(dest))
+            remove_tmp = False
+            return True
+        except FileExistsError:
+            return False
+        except OSError as rename_exc:
+            if rename_exc.errno == errno.EEXIST or getattr(rename_exc, "winerror", None) == 183:
+                return False
+            raise
+    finally:
+        if remove_tmp:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def _pause_before_claim_for_tests() -> None:
+    signal = os.environ.get("TENUO_IDENTITY_TEST_PAUSE_SIGNAL")
+    if signal:
+        Path(signal).touch()
+    raw = os.environ.get("TENUO_IDENTITY_TEST_PAUSE_BEFORE_CLAIM")
+    if raw:
+        time.sleep(float(raw))
 
 
 def _set_owner_only(path: Path) -> None:

@@ -36,9 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Receipt outbox overflow.** A full collector no longer turns an allow
   into a denial. The new receipt is dropped, `receipt_overflows` counts
   it, and the authorized call proceeds.
-- **`HolderIdentity.load_or_create` races.** Concurrent callers exclusive-
-  create the file at mode `0600` and load the winner instead of
-  overwriting it.
+- **`HolderIdentity.load_or_create` races.** The complete key is written
+  and fsynced to a unique `0600` temp file, then the destination is
+  claimed atomically. A concurrent loser loads the winner. Destination
+  is never visible half-written.
 
 ## [0.2.5] - 2026-09-06
 
