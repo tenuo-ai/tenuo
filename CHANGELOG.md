@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   messages are unchanged. Code that catches `TenuoError` or switches on `code`
   now sees builder mistakes too.
 
+### Fixed
+
+- **TypeScript: published source maps are usable.** `@tenuo/core` and
+  `@tenuo/mcp` JavaScript maps embed the original TypeScript
+  (`sourcesContent`), so debuggers and `node --enable-source-maps` show SDK
+  source instead of pointing at `../src/*.ts` files that are not in the
+  package. Declaration maps are no longer published; editors resolve to the
+  `.d.ts` files as before.
+
 ## [0.2.5] - 2026-09-06
 
 Python `tenuo==0.2.5`, Rust `tenuo@0.2.5`, TypeScript `@tenuo/core@0.2.5-beta.0`

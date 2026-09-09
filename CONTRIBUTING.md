@@ -171,6 +171,14 @@ pnpm --filter @tenuo/mcp pack:smoke
 The smoke scripts create temporary projects and install packed tarballs. They
 catch problems that workspace imports can hide.
 
+Published source maps follow one policy in both packages, and the smoke
+scripts fail when it drifts. JavaScript maps embed the original TypeScript
+(`inlineSources`), because the tarball ships `dist` only and the `../src/*.ts`
+paths inside a map point at files consumers never receive. Declaration maps
+(`.d.ts.map`) are not emitted: TypeScript cannot embed source in them, and
+shipping `src` just to serve editor navigation would also ship build inputs.
+Editors resolve to the published `.d.ts` files instead.
+
 ### Run the MCP scenarios
 
 ```bash
