@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const coreDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -19,6 +19,15 @@ try {
     "dist/generated/tenuo_wasm.js",
     "LICENSE",
     "README.md",
+  ]);
+  assertPackageContents(installDir, "@tenuo/core", [
+    /^package\.json$/,
+    /^LICENSE$/,
+    /^README\.md$/,
+    /^dist\/[^/]+\.js$/,
+    /^dist\/[^/]+\.js\.map$/,
+    /^dist\/[^/]+\.d\.ts$/,
+    /^dist\/generated\/(package\.json|tenuo_wasm\.js|tenuo_wasm\.d\.ts|tenuo_wasm_bg\.wasm|tenuo_wasm_bg\.wasm\.d\.ts)$/,
   ]);
   copyFileSync(join(coreDir, "scripts", "pack-smoke-consumer.mjs"), join(installDir, "smoke.mjs"));
   execFileSync(process.execPath, [join(installDir, "smoke.mjs")], {
@@ -57,6 +66,53 @@ function assertInstalled(root, packageName, required) {
   for (const path of required) {
     if (!existsSync(join(packageDir, path))) {
       throw new Error(`installed ${packageName} is missing ${path}`);
+    }
+  }
+}
+
+function listFiles(dir) {
+  const files = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listFiles(path));
+    } else {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
+// The tarball ships dist only, so a map's ../src/*.ts path never resolves for
+// a consumer. JavaScript maps must therefore carry sourcesContent, and nothing
+// outside the allowlist (tests, src, declaration maps, local files) may ship.
+function assertPackageContents(root, packageName, allowed) {
+  const packageDir = join(root, "node_modules", ...packageName.split("/"));
+  const files = listFiles(packageDir).map((file) => relative(packageDir, file).split(sep).join("/"));
+  const unexpected = files.filter((file) => !allowed.some((pattern) => pattern.test(file)));
+  if (unexpected.length > 0) {
+    throw new Error(`installed ${packageName} contains unexpected files: ${unexpected.join(", ")}`);
+  }
+  const scripts = files.filter((file) => /^dist\/[^/]+\.js$/.test(file));
+  if (scripts.length === 0) {
+    throw new Error(`installed ${packageName} has no dist/*.js files`);
+  }
+  for (const script of scripts) {
+    const map = `${script}.map`;
+    if (!files.includes(map)) {
+      throw new Error(`installed ${packageName} is missing ${map}`);
+    }
+    const parsed = JSON.parse(readFileSync(join(packageDir, map), "utf8"));
+    const sources = Array.isArray(parsed.sources) ? parsed.sources : [];
+    const contents = Array.isArray(parsed.sourcesContent) ? parsed.sourcesContent : [];
+    if (sources.length === 0 || contents.length !== sources.length) {
+      throw new Error(`${map} must embed sourcesContent for every source`);
+    }
+    if (contents.some((content) => typeof content !== "string" || content.length === 0)) {
+      throw new Error(`${map} has an empty sourcesContent entry`);
+    }
+    if (sources.some((source) => isAbsolute(source))) {
+      throw new Error(`${map} references an absolute path: ${sources.join(", ")}`);
     }
   }
 }
