@@ -194,20 +194,23 @@ await readFile.execute({ path }, { session });
 ```
 
 An explicit session takes precedence for that call and does not replace the
-surrounding ambient session. After both flows finish, the caller has no
+surrounding ambient session. Pass the key only when you hold a session:
+`{ session: undefined }` is rejected as a configuration error rather than
+falling back to the ambient one. After both flows finish, the caller has no
 ambient session if it started without one. This scopes access to the handle;
 it does not revoke the signed warrant or isolate arbitrary JavaScript code.
 
-Session handles do not cross process or worker-thread boundaries. Send the
-warrant chain and import it with the receiver's local holder key using
-`sessionFromWire()`, then scope or explicitly pass that local session. See
+Session handles do not cross process or worker-thread boundaries. Send a
+warrant chain that was delegated to the receiver's key, import it there with
+`sessionFromWire()` and that key, then scope or explicitly pass the local
+session. The core rejects a chain and key that do not match. See
 [Delegate to another agent](#delegate-to-another-agent). Never send holder
 secrets with the job.
 
-The runnable version is
+The example is
 [`concurrent-sessions.ts`](packages/core/examples/concurrent-sessions.ts)
-in `packages/core/examples`; `pnpm example:sessions` runs both flows with a
-fixed interleaving plus the queued-job case.
+in `packages/core/examples`; `pnpm example:sessions` runs its flows and the
+queued-job case through the regression test.
 
 ## Production setup
 

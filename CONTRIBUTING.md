@@ -171,7 +171,7 @@ pnpm --filter @tenuo/mcp pack:smoke
 The smoke scripts create temporary projects and install packed tarballs. They
 catch problems that workspace imports can hide.
 
-### Run the MCP scenarios
+### Run the examples
 
 ```bash
 pnpm example:mcp          # quarterly-close wire scenario

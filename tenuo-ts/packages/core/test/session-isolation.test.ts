@@ -1,14 +1,27 @@
-import { describe, expect, it } from "vitest";
+/**
+ * Regression test for concurrent session isolation.
+ *
+ * Drives `examples/concurrent-sessions.ts`. Each test is one acceptance
+ * criterion: two simultaneous requests never borrow each other's authority,
+ * a denied call never runs the tool, and the interleaving is fixed rather
+ * than timing-dependent. The first three tests share one execution on
+ * purpose, so they are facts about the same run rather than about three
+ * independent ones.
+ */
+import { beforeAll, describe, expect, it } from "vitest";
 import { AuthorizationDeniedError, TenuoConfigurationError } from "../src/index.ts";
 import {
   createHarness,
   PATHS,
   runConcurrentFlows,
   runQueuedJobs,
+  type ConcurrentRun,
   type FlowName,
   type FlowResult,
 } from "../examples/concurrent-sessions.ts";
 
+// Each flow's step lands between the other flow's steps, so this exact order
+// can only appear if the two flows really alternated.
 const EXPECTED_LOG = [
   "reports: read own",
   "finance: read own",
@@ -27,8 +40,14 @@ function byName(results: readonly FlowResult[], name: FlowName): FlowResult {
 }
 
 describe("concurrent session isolation", () => {
-  it("each flow reads only its own path while interleaved with the other", async () => {
-    const run = await runConcurrentFlows(createHarness());
+  // One execution shared by the criteria below, so own-path access, the
+  // cross-path denial, and the executed paths all describe the same run.
+  let run: ConcurrentRun;
+  beforeAll(async () => {
+    run = await runConcurrentFlows(createHarness());
+  });
+
+  it("each flow reads only its own path while interleaved with the other", () => {
     const reports = byName(run.results, "reports");
     const finance = byName(run.results, "finance");
     expect(reports.own).toBe(`contents:${PATHS.reports}`);
@@ -37,26 +56,24 @@ describe("concurrent session isolation", () => {
     expect(finance.ownAgain).toBe(`contents:${PATHS.finance}`);
   });
 
-  it("a flow cannot use the other flow's session", async () => {
-    const run = await runConcurrentFlows(createHarness());
+  it("a flow cannot use the other flow's session", () => {
     for (const result of run.results) {
       expect(result.crossed).toEqual({ code: "TENUO_CONSTRAINT_VIOLATION", field: "path" });
     }
   });
 
-  it("denied calls never reach the tool implementation", async () => {
-    const run = await runConcurrentFlows(createHarness());
+  it("denied calls never reach the tool implementation", () => {
     expect(run.executed).toEqual([PATHS.reports, PATHS.finance, PATHS.reports, PATHS.finance]);
   });
 
   it("interleaves the flows in a fixed order every run", async () => {
-    const first = await runConcurrentFlows(createHarness());
-    const second = await runConcurrentFlows(createHarness());
-    expect(first.log).toEqual(EXPECTED_LOG);
-    expect(second.log).toEqual(EXPECTED_LOG);
+    const again = await runConcurrentFlows(createHarness());
+    expect(run.log).toEqual(EXPECTED_LOG);
+    expect(again.log).toEqual(EXPECTED_LOG);
   });
 
   it("does not leave either session in the caller after concurrent work", async () => {
+    // withSession() ends with its callback, so nothing is ambient afterwards.
     const harness = createHarness();
     await runConcurrentFlows(harness);
     const executed = [...harness.executed];
@@ -64,19 +81,24 @@ describe("concurrent session isolation", () => {
       await expect(harness.readFile.execute({ path })).rejects.toThrow(TenuoConfigurationError);
       await expect(harness.readFile.execute({ path })).rejects.toMatchObject({
         code: "TENUO_CONFIGURATION",
+        message: expect.stringContaining("No session"),
       });
     }
     expect(harness.executed).toEqual(executed);
   });
 
   it("an explicit session overrides ambient authority for only that call", async () => {
+    // options.session wins over the ambient store for that one call and leaves
+    // the ambient session in place for the next.
     const { tenuo, readFile, sessions, executed } = createHarness();
     await tenuo.withSession(sessions.finance, async () => {
       await expect(readFile.execute({ path: PATHS.reports })).rejects.toThrow(AuthorizationDeniedError);
-      await expect(readFile.execute({ path: PATHS.reports }, { session: sessions.reports }))
-        .resolves.toBe(`contents:${PATHS.reports}`);
+      await expect(
+        readFile.execute({ path: PATHS.reports }, { session: sessions.reports }),
+      ).resolves.toBe(`contents:${PATHS.reports}`);
       await expect(readFile.execute({ path: PATHS.reports })).rejects.toMatchObject({
-        code: "TENUO_CONSTRAINT_VIOLATION", field: "path",
+        code: "TENUO_CONSTRAINT_VIOLATION",
+        field: "path",
       });
       await expect(readFile.execute({ path: PATHS.finance })).resolves.toBe(`contents:${PATHS.finance}`);
     });
@@ -85,9 +107,14 @@ describe("concurrent session isolation", () => {
 
   it("ambient context does not follow a job into a worker started outside withSession()", async () => {
     const harness = createHarness();
-    const run = await runQueuedJobs(harness);
-    expect(run.ambient).toBe("TenuoConfigurationError:TENUO_CONFIGURATION");
-    expect(run.explicit).toBe(`ok:contents:${PATHS.reports}`);
+    const queued = await runQueuedJobs(harness);
+    expect(queued.ambient).toMatchObject({
+      ok: false,
+      name: "TenuoConfigurationError",
+      code: "TENUO_CONFIGURATION",
+      message: expect.stringContaining("No session"),
+    });
+    expect(queued.explicit).toEqual({ ok: true, value: `contents:${PATHS.reports}` });
     expect(harness.executed).toEqual([PATHS.reports]);
   });
 });

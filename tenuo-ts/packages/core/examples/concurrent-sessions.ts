@@ -1,13 +1,19 @@
 /**
  * Concurrent session isolation.
  *
+ * This file answers one question for Node.js server authors: when two
+ * requests run at the same time and both call the same protected tool, can
+ * one request ever act with the other request's authority? It cannot, and
+ * the functions here show why in a form a test can assert.
+ *
  * `tenuo.withSession()` scopes a session with Node's AsyncLocalStorage. Two
  * request flows that share one protected tool and interleave their awaits
  * each keep their own session: a flow reads only under its own root, and a
  * denied call never reaches the tool implementation.
  *
- * The interleaving is forced with a turn token rather than timers, so the
- * order of events is fixed and every run produces the same log.
+ * The interleaving is forced with a turn token rather than timers. Timers
+ * would leave the order to the scheduler and the test could flake; the token
+ * fixes the order, so every run yields the same event sequence.
  *
  * A plain closure does not capture its creation-time session. If a worker
  * invokes it without an ambient session, the call needs an explicit
@@ -26,13 +32,20 @@ import {
   type Tenuo,
 } from "../src/index.ts";
 
+/** The two simulated requests. Each owns one directory under `/data`. */
 export type FlowName = "reports" | "finance";
 
+/** What a denial reports. Tests assert these stable fields, never message text. */
 export type Denied = {
   readonly code: string;
   readonly field: string | undefined;
 };
 
+/**
+ * What one flow observed. The reads happen in this order with the other flow
+ * running in between, so isolation is checked both before and after the other
+ * flow has had its turn.
+ */
 export type FlowResult = {
   readonly name: FlowName;
   /** Own path, read before the other flow runs. */
@@ -43,25 +56,45 @@ export type FlowResult = {
   readonly ownAgain: string;
 };
 
+/** Everything one `runConcurrentFlows()` execution produced, so a test can check it end to end. */
 export type ConcurrentRun = {
   readonly results: readonly [FlowResult, FlowResult];
-  /** Paths the tool implementation actually ran with, in order. */
+  /** Paths the tool implementation actually ran with, in order. A denied call never appears. */
   readonly executed: readonly string[];
-  /** Interleaving of the two flows, in order. */
+  /** The order in which the two flows took their steps. */
   readonly log: readonly string[];
 };
 
+/**
+ * Result of one queued job. Structured rather than a joined string so a test
+ * can assert `code` and `message` separately, the way the SDK reports errors
+ * everywhere else.
+ */
+export type JobOutcome =
+  | { readonly ok: true; readonly value: string }
+  | {
+      readonly ok: false;
+      readonly name: string;
+      readonly code: string | undefined;
+      readonly message: string;
+    };
+
+/** Both jobs from `runQueuedJobs()`: the same call without and with `{ session }`. */
 export type QueuedRun = {
   /** Outcome of the job that relied on the ambient session. */
-  readonly ambient: string;
+  readonly ambient: JobOutcome;
   /** Outcome of the same job with `{ session }` passed on the call. */
-  readonly explicit: string;
+  readonly explicit: JobOutcome;
 };
 
 type ReadFile = {
   execute: (args: { path: string }) => Promise<string>;
 };
 
+/**
+ * The fixture every scenario runs against: one client, one protected tool,
+ * two sessions. `executed` is the evidence that a denied call never ran.
+ */
 export type Harness = {
   readonly tenuo: Tenuo;
   readonly readFile: ProtectedTool<ReadFile>;
@@ -70,6 +103,11 @@ export type Harness = {
   readonly executed: string[];
 };
 
+/**
+ * One file per flow. Both sit under `/data`, which the tool itself allows, so
+ * when a cross-path read is denied the session is the only layer that could
+ * have denied it.
+ */
 export const PATHS: Readonly<Record<FlowName, string>> = {
   reports: "/data/reports/q3.pdf",
   finance: "/data/finance/ledger.csv",
@@ -80,7 +118,12 @@ const OTHER: Readonly<Record<FlowName, FlowName>> = {
   finance: "reports",
 };
 
-/** One dev-root client, one recording tool, two sessions with different roots. */
+/**
+ * Builds the fixture. The tool ceiling is all of `/data` on purpose: it admits
+ * both flows' paths, so a denial can only come from the session. The dev root
+ * keeps the example free of key material; vitest sets `NODE_ENV=test`, which
+ * the dev root requires.
+ */
 export function createHarness(): Harness {
   const tenuo = createTenuo({ root: createTenuo.devRoot() });
   const executed: string[] = [];
@@ -100,7 +143,15 @@ export function createHarness(): Harness {
   return { tenuo, readFile, sessions, executed };
 }
 
-/** Hands a single turn back and forth between two flows. */
+/**
+ * Hands a single turn back and forth between two flows.
+ *
+ * Timers would leave the interleaving to the scheduler. A turn token makes it
+ * exact: a flow parks until the other flow passes, so at every step one flow
+ * is provably mid-request while the other acts. `current` records whose turn
+ * it is, so a `pass()` that arrives before the peer has called `wait()` is
+ * not lost.
+ */
 class Turns {
   private current: FlowName;
   private readonly waiting = new Map<FlowName, () => void>();
@@ -109,6 +160,7 @@ class Turns {
     this.current = first;
   }
 
+  /** Resolves at once if it is already `name`'s turn, otherwise parks until `pass(name)`. */
   wait(name: FlowName): Promise<void> {
     if (this.current === name) {
       return Promise.resolve();
@@ -118,6 +170,7 @@ class Turns {
     });
   }
 
+  /** Gives the turn to `next` and wakes it if it is parked. */
   pass(next: FlowName): void {
     this.current = next;
     const wake = this.waiting.get(next);
@@ -128,6 +181,11 @@ class Turns {
   }
 }
 
+/**
+ * One simulated request. Three reads in a fixed order, own path, then the
+ * other flow's path, then own path again, so isolation is checked both before
+ * and after the other flow has run in between.
+ */
 async function flow(harness: Harness, name: FlowName, turns: Turns, log: string[]): Promise<FlowResult> {
   const { tenuo, readFile, sessions } = harness;
   const other = OTHER[name];
@@ -163,7 +221,12 @@ async function flow(harness: Harness, name: FlowName, turns: Turns, log: string[
   });
 }
 
-/** Two flows, one tool, fixed interleaving. */
+/**
+ * Two flows, one tool, fixed interleaving. `Promise.all` starts both flows
+ * synchronously, so the second flow registers its waiter before the first
+ * takes a step. From there every hand-off wakes exactly one parked flow, so
+ * the order is fixed with no dependence on timers or the scheduler.
+ */
 export async function runConcurrentFlows(harness: Harness): Promise<ConcurrentRun> {
   const turns = new Turns("reports");
   const log: string[] = [];
@@ -174,17 +237,22 @@ export async function runConcurrentFlows(harness: Harness): Promise<ConcurrentRu
   return { results, executed: [...harness.executed], log };
 }
 
-function describeError(error: unknown): string {
-  if (error instanceof TenuoError) {
-    return `${error.name}:${error.code}`;
-  }
-  return error instanceof Error ? error.name : String(error);
+/** Records why a job failed in fields a test can assert one by one. */
+function failure(error: unknown): JobOutcome {
+  return {
+    ok: false,
+    name: error instanceof Error ? error.name : "unknown",
+    code: error instanceof TenuoError ? error.code : undefined,
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 /**
  * Jobs enqueued inside withSession() and run by a worker outside it. The job
  * that relies on ambient context fails closed; the job that carries
- * `{ session }` runs.
+ * `{ session }` runs. The jobs are two named fields rather than an array
+ * because this package compiles with `noUncheckedIndexedAccess`, under which
+ * array destructuring yields possibly-undefined values.
  */
 export async function runQueuedJobs(harness: Harness): Promise<QueuedRun> {
   const { tenuo, readFile, sessions } = harness;
@@ -201,7 +269,8 @@ export async function runQueuedJobs(harness: Harness): Promise<QueuedRun> {
     throw new Error("jobs were not enqueued");
   }
   // This is the worker: it runs outside any withSession() scope.
-  const run = (job: Job): Promise<string> => job().then((value) => `ok:${value}`, describeError);
+  const run = (job: Job): Promise<JobOutcome> =>
+    job().then((value): JobOutcome => ({ ok: true, value }), failure);
   const [ambient, explicit] = await Promise.all([run(queued.ambient), run(queued.explicit)]);
   return { ambient, explicit };
 }
