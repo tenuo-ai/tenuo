@@ -135,15 +135,29 @@ def test_aggregates_across_sessions_and_derived(pair):
         .ttl(3600)
         .mint(root)
     )
+    third = (
+        Warrant.mint_builder()
+        .capability("read_file", path=Pattern("/data/c.pdf"))
+        .holder(holder.public_key)
+        .ttl(3600)
+        .mint(root)
+    )
     first = runtime.session_from_wire(warrant)
     second = runtime.session_from_wire(other)
-    derived = first.derive(warrant)
+    third_session = runtime.session_from_wire(third)
     with runtime.session_scope(first):
-        enforce_tool_call("read_file", {"path": "/data/a.pdf"}, first.bound)
+        first_result = enforce_tool_call("read_file", {"path": "/data/a.pdf"}, first.bound)
     with runtime.session_scope(second):
-        enforce_tool_call("read_file", {"path": "/data/other/b.pdf"}, second.bound)
-    with runtime.session_scope(derived):
-        enforce_tool_call("read_file", {"path": "/data/c.pdf"}, derived.bound)
+        second_result = enforce_tool_call(
+            "read_file", {"path": "/data/other/b.pdf"}, second.bound
+        )
+    with runtime.session_scope(third_session):
+        third_result = enforce_tool_call(
+            "read_file", {"path": "/data/c.pdf"}, third_session.bound
+        )
+    assert first_result.allowed
+    assert second_result.allowed
+    assert third_result.allowed
     assert len(runtime.peek_receipts()) == 3
 
 

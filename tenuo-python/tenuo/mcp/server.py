@@ -235,6 +235,9 @@ class MCPVerificationResult:
     approval_metadata: Optional[Dict[str, Any]] = field(default=None)
     """Structured approval counts for ``-32002`` responses (``got`` / ``need``)."""
 
+    error_type: Optional[str] = field(default=None)
+    """PEP ``error_type`` (``invalid_pop``, ``constraint_violation``, …)."""
+
     @property
     def is_approval_required(self) -> bool:
         """``True`` when an approval gate fired and approvals must be supplied."""
@@ -273,6 +276,8 @@ class MCPVerificationResult:
                 data["got"] = self.approval_metadata["got"]
             if "need" in self.approval_metadata:
                 data["need"] = self.approval_metadata["need"]
+        if self.error_type:
+            data["error_type"] = self.error_type
         if data:
             error["data"] = data
         return error
@@ -366,6 +371,19 @@ def _mcp_result_from_enforcement(
     """Map a shared PEP result onto the MCP JSON-RPC denial shape."""
     error_type = getattr(enforcement, "error_type", None) or ""
     meta = getattr(enforcement, "approval_metadata", None) or {}
+    reason = getattr(enforcement, "denial_reason", None) or "Authorization denied"
+    if error_type == "invalid_pop":
+        reason = (
+            f"Access denied: {reason} PoP covers the raw tool arguments "
+            "(with None values stripped). Check that the client signs with "
+            "the same key bound in the warrant and that the timestamp has "
+            "not drifted beyond the PoP window."
+        )
+    elif error_type == "missing_signature":
+        reason = (
+            f"Access denied: {reason} Ensure the client sends a PoP signature "
+            "in _meta.tenuo.signature."
+        )
     if error_type in ("insufficient_approvals", "approval_required", "approval_gate_misconfigured"):
         return MCPVerificationResult(
             allowed=False,
@@ -373,10 +391,11 @@ def _mcp_result_from_enforcement(
             clean_arguments=clean_arguments,
             constraints=constraints,
             warrant_id=warrant_id,
-            denial_reason=getattr(enforcement, "denial_reason", None) or "Authorization denied",
+            denial_reason=reason,
             jsonrpc_error_code=-32002,
             request_hash=meta.get("request_hash") or getattr(enforcement, "request_hash", None),
             approval_metadata=meta or None,
+            error_type=error_type or None,
         )
     return MCPVerificationResult(
         allowed=False,
@@ -384,8 +403,9 @@ def _mcp_result_from_enforcement(
         clean_arguments=clean_arguments,
         constraints=constraints,
         warrant_id=warrant_id,
-        denial_reason=getattr(enforcement, "denial_reason", None) or "Authorization denied",
+        denial_reason=reason,
         jsonrpc_error_code=-32001,
+        error_type=error_type or None,
     )
 
 

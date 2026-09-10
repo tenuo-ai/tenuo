@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   upgrade. This is a breaking change from 0.2.5.
 - **Drain is a snapshot.** `drain_receipts` / `drainReceipts()` match peek.
   Only acknowledge removes items. A second drain is not empty.
+- **TypeScript `Session` receipt methods.** Runtime-collected sessions expose
+  `peekReceipts`, `drainReceipts`, and `acknowledgeReceipts`. Acknowledge on
+  a session frees the same items from the runtime outbox.
 - **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
   (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
   messages are unchanged. Code that catches `TenuoError` or switches on `code`

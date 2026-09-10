@@ -93,7 +93,7 @@ describe("parseConnectToken", () => {
     ).toThrow(/endpoint/);
     expect(() =>
       createTenuo.parseConnectToken(encodeToken({ v: 1, e: "https://control.example.com", k: "" })),
-    ).toThrow(/apiKey/);
+    ).toThrow(/api_key/);
   });
 
   it("leaves loopback and scheme-less hosted endpoints unchanged", () => {
@@ -220,17 +220,13 @@ describe("Runtime", () => {
     await readFile.execute({ path: "/data/c.pdf" }, { session });
 
     expect(session.peekReceipts()).toHaveLength(3);
+    expect(runtime.peekReceipts()).toHaveLength(3);
     expect(session.acknowledgeReceipts(1)).toBe(1);
     expect(session.peekReceipts()).toHaveLength(2);
     expect(session.drainReceipts()).toHaveLength(2);
-    expect(session.peekReceipts()).toHaveLength(2);
+    expect(runtime.peekReceipts()).toHaveLength(2);
     expect(session.acknowledgeReceipts(2)).toBe(2);
     expect(session.peekReceipts()).toEqual([]);
-    expect(runtime.peekReceipts()).toHaveLength(3);
-    expect(runtime.acknowledgeReceipts(2)).toBe(2);
-    expect(runtime.drainReceipts()).toHaveLength(1);
-    expect(runtime.peekReceipts()).toHaveLength(1);
-    expect(runtime.acknowledgeReceipts(1)).toBe(1);
     expect(runtime.peekReceipts()).toEqual([]);
   });
 
@@ -263,7 +259,8 @@ describe("Runtime", () => {
 
     await readFile.execute({ path: "/data/reports/q3.pdf" }, { session: child });
     expect(child.drainReceipts()).toHaveLength(1);
-    expect(session.drainReceipts()).toEqual([]);
+    expect(session.drainReceipts()).toHaveLength(1);
+    expect(runtime.drainReceipts()).toHaveLength(1);
   });
 
   it("keeps explicit onReceipt compatible and still collects", async () => {
@@ -280,6 +277,34 @@ describe("Runtime", () => {
     );
     expect(hooked).toHaveLength(1);
     expect(session.drainReceipts()).toEqual(hooked);
+  });
+
+  it("does not deny an authorized call when the receipt outbox is full", async () => {
+    const identity = createTenuo.generateIdentity();
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const minted = issuer.session({
+      allow: { read_file: { path: under("/data") } },
+      holder: identity.publicKey,
+    });
+    const runtime = createTenuo.runtime({
+      identity,
+      trustedRoots: [issuer.issuerPublicKey()],
+      receipts: "collect",
+      receiptMax: 1,
+    });
+    const session = runtime.sessionFromWire(minted.toWire());
+    const readFile = runtime.tenuo.tool(
+      { execute: async ({ path }: { path: string }) => `ok:${path}` },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    await expect(readFile.execute({ path: "/data/a.pdf" }, { session })).resolves.toBe(
+      "ok:/data/a.pdf",
+    );
+    await expect(readFile.execute({ path: "/data/b.pdf" }, { session })).resolves.toBe(
+      "ok:/data/b.pdf",
+    );
+    expect(session.drainReceipts()).toHaveLength(1);
+    expect(runtime.receiptOverflows()).toBe(1);
   });
 
   it("requires trusted roots and does not invent hosted defaults", () => {

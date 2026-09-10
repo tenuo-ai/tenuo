@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from tenuo import ConnectToken, HolderIdentity
+from tenuo_core import Pattern, SigningKey, Warrant
+
+from tenuo import ConnectToken, HolderIdentity, Runtime
+from tenuo._enforcement import enforce_tool_call
 from tenuo.exceptions import ConfigurationError
 
 
@@ -53,9 +56,37 @@ def test_identity_vector_derives_and_redacts():
     assert case["secret_hex"] not in str(identity)
 
 
-def test_receipt_contract_flags():
+def test_receipt_contract():
     receipts = _vectors()["receipts"]
     assert receipts["drain_is_snapshot"] is True
     assert receipts["remove_only_on_acknowledge"] is True
     assert receipts["overflow_does_not_deny_authorized_call"] is True
     assert receipts["overflow_is_observable"] is True
+
+    root = SigningKey.generate()
+    holder = HolderIdentity.generate()
+    warrant = (
+        Warrant.mint_builder()
+        .capability("read_file", path=Pattern("/data/*"))
+        .holder(holder.public_key)
+        .ttl(3600)
+        .mint(root)
+    )
+    runtime = Runtime(
+        identity=holder,
+        trusted_roots=[root.public_key],
+        receipts="collect",
+        receipt_maxsize=1,
+    )
+    session = runtime.session_from_wire(warrant)
+    with runtime.session_scope(session):
+        first = enforce_tool_call("read_file", {"path": "/data/a.pdf"}, session.bound)
+        second = enforce_tool_call("read_file", {"path": "/data/b.pdf"}, session.bound)
+    assert first.allowed
+    assert second.allowed
+    drained = runtime.drain_receipts()
+    assert len(drained) == 1
+    assert runtime.drain_receipts() == drained
+    assert runtime.receipt_overflows == 1
+    assert runtime.acknowledge_receipts(1) == 1
+    assert runtime.drain_receipts() == []

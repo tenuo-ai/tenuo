@@ -485,8 +485,6 @@ class TenuoPluginConfig:
             roots = list(self.trusted_roots)
         elif self.runtime is not None:
             roots = list(self.runtime.trusted_roots)
-            if self.revocation_list is None and getattr(self.runtime, "revocation_list", None) is not None:
-                self.revocation_list = self.runtime.revocation_list
         else:
             from tenuo.config import resolve_trusted_roots as _resolve_tr
             _merged = _resolve_tr(None)
@@ -502,6 +500,13 @@ class TenuoPluginConfig:
         if not self._provider_snapshots_ready:
             self.trusted_roots = roots  # type: ignore[assignment]
             self._last_good_trusted_roots = list(roots)
+
+        if (
+            self.runtime is not None
+            and self.revocation_list is None
+            and getattr(self.runtime, "revocation_list", None) is not None
+        ):
+            self.revocation_list = self.runtime.revocation_list
 
         if self.revocation_list is not None and self.revocation_list_provider is not None:
             from tenuo.exceptions import ConfigurationError

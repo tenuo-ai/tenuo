@@ -610,6 +610,17 @@ def _get_allowed_tools(bound_warrant: BoundWarrant) -> Optional[List[str]]:
 # =============================================================================
 
 
+def _holder_for_request_hash(bound_warrant: Any) -> Any:
+    """Subject of the warrant, not the verify-mode dummy signing key."""
+    warrant = getattr(bound_warrant, "warrant", None)
+    if warrant is not None:
+        for attr in ("holder_key", "authorized_holder", "holder"):
+            holder = getattr(warrant, attr, None)
+            if holder is not None:
+                return holder
+    return getattr(bound_warrant, "holder_key", None)
+
+
 def _collect_approvals_for_approval_gate(
     tool_name: str,
     tool_args: Dict[str, Any],
@@ -644,7 +655,7 @@ def _collect_approvals_for_approval_gate(
         ApprovalVerificationError,
     )
 
-    holder_key = getattr(bound_warrant, "holder_key", None)
+    holder_key = _holder_for_request_hash(bound_warrant)
     warrant_id = getattr(bound_warrant, "id", None) or ""
     request_hash = _compute_hash(warrant_id, tool_name, tool_args, holder_key)
     request = ApprovalRequest.for_warrant_gate(
@@ -729,7 +740,7 @@ async def _collect_approvals_for_approval_gate_async(
         ApprovalVerificationError,
     )
 
-    holder_key = getattr(bound_warrant, "holder_key", None)
+    holder_key = _holder_for_request_hash(bound_warrant)
     warrant_id = getattr(bound_warrant, "id", None) or ""
     request_hash = _compute_hash(warrant_id, tool_name, tool_args, holder_key)
     request = ApprovalRequest.for_warrant_gate(
@@ -779,10 +790,20 @@ except ImportError:
     from typing_extensions import Literal  # type: ignore
 
 
-def _resolve_presented_parents(warrant_chain: Optional[List[Any]]) -> List[Any]:
-    """Use an explicit chain, otherwise the parents installed by session_scope."""
+def _resolve_presented_parents(
+    warrant_chain: Optional[List[Any]],
+    *,
+    verify_mode: Literal["sign", "verify"] = "sign",
+) -> List[Any]:
+    """Use an explicit chain, otherwise the parents installed by session_scope.
+
+    Verify mode never inherits the ambient holder chain — a server checking a
+    client leaf must not pick up the process Runtime's parents.
+    """
     if warrant_chain is not None:
         return list(warrant_chain)
+    if verify_mode == "verify":
+        return []
     try:
         from .decorators import chain_scope
     except Exception:  # pragma: no cover
@@ -993,7 +1014,7 @@ def _enforce_tool_call_impl(
     # every except arm — including ones reached before the sign/verify branch
     # runs — can stamp the chain that was presented, and so a failure during
     # PoP signing cannot leave `_auth` unbound in the handler reporting it.
-    warrant_chain = _resolve_presented_parents(warrant_chain)
+    warrant_chain = _resolve_presented_parents(warrant_chain, verify_mode=verify_mode)
     _presented_chain = list(warrant_chain) + [bound_warrant.warrant]
     _pop = None
     _auth = None
@@ -1452,7 +1473,7 @@ async def _enforce_tool_call_async_impl(
     # every except arm — including ones reached before the sign/verify branch
     # runs — can stamp the chain that was presented, and so a failure during
     # PoP signing cannot leave `_auth` unbound in the handler reporting it.
-    warrant_chain = _resolve_presented_parents(warrant_chain)
+    warrant_chain = _resolve_presented_parents(warrant_chain, verify_mode=verify_mode)
     _presented_chain = list(warrant_chain) + [bound_warrant.warrant]
     _pop = None
     _auth = None

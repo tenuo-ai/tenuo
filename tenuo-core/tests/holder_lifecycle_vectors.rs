@@ -74,11 +74,47 @@ fn identity_vector_derives_and_redacts() {
     assert!(!rendered.contains(case["secret_hex"].as_str().unwrap()));
 }
 
+#[cfg(all(feature = "sdk", feature = "receipts"))]
 #[test]
-fn receipt_contract_flags() {
-    let receipts = &vectors()["receipts"];
-    assert_eq!(receipts["drain_is_snapshot"], true);
-    assert_eq!(receipts["remove_only_on_acknowledge"], true);
-    assert_eq!(receipts["overflow_does_not_deny_authorized_call"], true);
-    assert_eq!(receipts["overflow_is_observable"], true);
+fn receipt_contract() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use tenuo::constraints::ConstraintSet;
+    use tenuo::sdk::{Call, EvidencePolicy, Runtime};
+    use tenuo::warrant::Warrant;
+    use tenuo::SigningKey;
+
+    let flags = &vectors()["receipts"];
+    assert_eq!(flags["drain_is_snapshot"], true);
+    assert_eq!(flags["remove_only_on_acknowledge"], true);
+    assert_eq!(flags["overflow_does_not_deny_authorized_call"], true);
+    assert_eq!(flags["overflow_is_observable"], true);
+
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
+    let warrant = Warrant::builder()
+        .capability("read", ConstraintSet::new())
+        .holder(holder.public_key())
+        .ttl(Duration::from_secs(300))
+        .build(&issuer)
+        .unwrap();
+    let runtime = Runtime::builder()
+        .holder(holder)
+        .trusted_root(issuer.public_key())
+        .ttl_fallback(Duration::from_secs(600))
+        .evidence_policy(EvidencePolicy::BestEffort)
+        .receipt_capacity(1)
+        .build()
+        .unwrap();
+    let session = runtime.session_from_warrant(warrant).unwrap();
+    let args = HashMap::new();
+    let call = Call::borrowed("read", &args);
+    assert!(session.check(&call).is_ok());
+    assert!(session.check(&call).is_ok());
+    let first = session.drain_receipts();
+    assert_eq!(first.len(), 1);
+    assert_eq!(session.drain_receipts().len(), 1);
+    assert_eq!(session.receipt_overflows(), 1);
+    assert_eq!(session.acknowledge_receipts(1), 1);
+    assert!(session.drain_receipts().is_empty());
 }

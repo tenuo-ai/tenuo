@@ -8,8 +8,22 @@ import type { Session as SessionContract } from "./api.ts";
  */
 export class ReceiptCollector {
   readonly #items: string[] = [];
+  readonly #max: number;
+  #overflowed = 0;
+
+  constructor(max = 10_000) {
+    this.#max = Number.isInteger(max) && max > 0 ? max : 10_000;
+  }
+
+  get overflowed(): number {
+    return this.#overflowed;
+  }
 
   push(receipt: string): void {
+    if (this.#items.length >= this.#max) {
+      this.#overflowed += 1;
+      return;
+    }
     this.#items.push(receipt);
   }
 
@@ -38,10 +52,11 @@ export function bindSessionCollector(session: object, collector: ReceiptCollecto
   sessionCollectors.set(session, collector);
 }
 
-/** Give a derived session its own collector when its parent was runtime-managed. */
+/** Derived sessions share the parent's outbox so acknowledge frees both. */
 export function inheritSessionCollector(parent: object, child: object): void {
-  if (sessionCollectors.has(parent)) {
-    sessionCollectors.set(child, new ReceiptCollector());
+  const parentCollector = sessionCollectors.get(parent);
+  if (parentCollector !== undefined) {
+    sessionCollectors.set(child, parentCollector);
   }
 }
 
@@ -71,7 +86,11 @@ export function collectReceipt(
   if (receipt === undefined) {
     return;
   }
-  sessionCollector(session)?.push(receipt);
+  const sessionCol = sessionCollector(session);
+  if (sessionCol !== undefined) {
+    sessionCol.push(receipt);
+    return;
+  }
   hostCollector(host)?.push(receipt);
 }
 

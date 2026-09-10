@@ -154,12 +154,7 @@ def _raise_a2a_from_enforcement(enforcement: Any, skill_id: str, arguments: Dict
         )
     if "Proof-of-Possession" in reason or "signature" in reason.lower():
         raise PopVerificationError(reason)
-    raise ConstraintViolationError(
-        param=skill_id,
-        constraint_type="warrant",
-        value="<unknown>",
-        reason=reason,
-    )
+    raise A2AError(reason)
 
 # HTTP header names — imported from tenuo_core so they stay in sync with the wire spec.
 try:

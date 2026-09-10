@@ -85,10 +85,36 @@ describe("holder-lifecycle vectors", () => {
     expect(JSON.stringify(pub)).not.toContain(vectors.identity.secret_hex);
   });
 
-  it("keeps the receipt contract flags", () => {
+  it("enforces the receipt contract on a live runtime", async () => {
     expect(vectors.receipts.drain_is_snapshot).toBe(true);
     expect(vectors.receipts.remove_only_on_acknowledge).toBe(true);
     expect(vectors.receipts.overflow_does_not_deny_authorized_call).toBe(true);
     expect(vectors.receipts.overflow_is_observable).toBe(true);
+
+    const identity = createTenuo.generateIdentity();
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const minted = issuer.session({
+      allow: { read_file: {} },
+      holder: identity.publicKey,
+    });
+    const runtime = createTenuo.runtime({
+      identity,
+      trustedRoots: [issuer.issuerPublicKey()],
+      receipts: "collect",
+      receiptMax: 1,
+    });
+    const session = runtime.sessionFromWire(minted.toWire());
+    const readFile = runtime.tenuo.tool(
+      { execute: async () => "ok" },
+      { capability: "read_file" },
+    );
+    await readFile.execute({}, { session });
+    await readFile.execute({}, { session });
+    const first = session.drainReceipts();
+    expect(first).toHaveLength(1);
+    expect(session.drainReceipts()).toEqual(first);
+    expect(runtime.receiptOverflows()).toBe(1);
+    expect(session.acknowledgeReceipts(1)).toBe(1);
+    expect(session.drainReceipts()).toEqual([]);
   });
 });

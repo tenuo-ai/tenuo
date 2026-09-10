@@ -397,6 +397,7 @@ class DeferredEmitter:
     def close(self, timeout: float = 10.0) -> None:
         if self._worker is None:
             return
+        self.flush(timeout)
         self._stop.set()
         # put() without a timeout hangs forever when the queue is full and
         # the worker is blocked in the sink — shutdown must not.
