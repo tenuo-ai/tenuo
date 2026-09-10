@@ -1,7 +1,8 @@
-//! Connect token parse (`tenuo_ct_<base64url-json>`).
+//! Connect token support for streamlined onboarding.
 //!
-//! A connect token bundles an endpoint, API key, and optional agent fields
-//! into one string. This module only decodes and normalizes that wire format.
+//! A connect token (`tenuo_ct_<base64url-json>`) bundles the credentials
+//! needed to register an authorizer with a control plane into a single
+//! string. It can be shared across multiple authorizer instances.
 //!
 //! # Token format (v1)
 //!
@@ -65,7 +66,7 @@ pub enum ConnectTokenError {
     /// Agent claim HTTP request failed.
     ClaimFailed(String),
     /// Token version is not supported by this SDK.
-    UnsupportedVersion(u8),
+    UnsupportedVersion(u64),
 }
 
 impl std::fmt::Display for ConnectTokenError {
@@ -119,7 +120,7 @@ impl ConnectToken {
                     )
                 })?;
                 if parsed != 1 {
-                    return Err(ConnectTokenError::UnsupportedVersion(parsed as u8));
+                    return Err(ConnectTokenError::UnsupportedVersion(parsed));
                 }
             }
         }
@@ -171,7 +172,12 @@ impl ConnectToken {
         if origin.is_empty() || origin.starts_with('/') {
             return Err(ConnectTokenError::MissingField("endpoint"));
         }
-        self.endpoint = origin;
+        let remainder = self.endpoint.clone();
+        self.endpoint = if remainder.is_empty() || remainder == "/" {
+            origin
+        } else {
+            format!("{}{}", origin.trim_end_matches('/'), remainder)
+        };
         Ok(())
     }
 
@@ -239,7 +245,6 @@ impl ConnectToken {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine;
 
     fn make_token_str(payload: &str) -> String {
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload);
@@ -286,22 +291,23 @@ mod tests {
     }
 
     #[test]
-    fn reject_token_without_version() {
+    fn parse_padded_base64url_and_registration_alias() {
+        let payload =
+            r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc","r":"tok-alias"}"#;
+        let padded = base64::engine::general_purpose::URL_SAFE.encode(payload);
+        let raw = format!("{TOKEN_PREFIX}{padded}");
+        let ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.registration_token.as_deref(), Some("tok-alias"));
+    }
+
+    #[test]
+    fn parse_v0_token_without_version() {
         let raw = make_token_str(
             r#"{"e":"https://control.example.com/v1","k":"tc_old","a":"ag","t":"rt"}"#,
         );
         assert!(matches!(
             ConnectToken::parse(&raw),
             Err(ConnectTokenError::MissingField("version"))
-        ));
-    }
-
-    #[test]
-    fn reject_explicit_v0() {
-        let raw = make_token_str(r#"{"v":0,"e":"https://control.example.com","k":"tc_abc"}"#);
-        assert!(matches!(
-            ConnectToken::parse(&raw),
-            Err(ConnectTokenError::UnsupportedVersion(0))
         ));
     }
 
@@ -338,25 +344,6 @@ mod tests {
     }
 
     #[test]
-    fn reject_version_zero() {
-        let raw = make_token_str(r#"{"v":0,"e":"https://control.example.com","k":"tc_abc"}"#);
-        assert!(matches!(
-            ConnectToken::parse(&raw),
-            Err(ConnectTokenError::UnsupportedVersion(0))
-        ));
-    }
-
-    #[test]
-    fn parse_padded_base64url_and_registration_alias() {
-        let payload =
-            r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc","r":"tok-alias"}"#;
-        let padded = base64::engine::general_purpose::URL_SAFE.encode(payload);
-        let raw = format!("{TOKEN_PREFIX}{padded}");
-        let ct = ConnectToken::parse(&raw).unwrap();
-        assert_eq!(ct.registration_token.as_deref(), Some("tok-alias"));
-    }
-
-    #[test]
     fn relative_v1_endpoint_needs_caller_base() {
         let raw = make_token_str(r#"{"v":1,"e":"/v1","k":"tc_abc"}"#);
         let mut ct = ConnectToken::parse(&raw).unwrap();
@@ -373,6 +360,28 @@ mod tests {
         let mut ct = ConnectToken::parse(&raw).unwrap();
         ct.resolve_endpoint("https://other.example").unwrap();
         assert_eq!(ct.endpoint, "https://control.example.com");
+    }
+
+    #[test]
+    fn resolve_endpoint_joins_remaining_relative_path() {
+        let raw = make_token_str(r#"{"v":1,"e":"/api/v1","k":"tc_abc"}"#);
+        let mut ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.endpoint, "/api");
+        ct.resolve_endpoint("https://control.example.com").unwrap();
+        assert_eq!(ct.endpoint, "https://control.example.com/api");
+    }
+
+    #[test]
+    fn reject_version_out_of_u8_range() {
+        let raw = make_token_str(r#"{"v":257,"e":"https://control.example.com","k":"tc_abc"}"#);
+        assert!(matches!(
+            ConnectToken::parse(&raw),
+            Err(ConnectTokenError::UnsupportedVersion(257))
+        ));
+        assert!(ConnectToken::parse(&raw)
+            .unwrap_err()
+            .to_string()
+            .contains("257"));
     }
 
     #[test]

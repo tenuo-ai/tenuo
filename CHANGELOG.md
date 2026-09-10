@@ -36,6 +36,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   messages are unchanged. Code that catches `TenuoError` or switches on `code`
   now sees builder mistakes too.
 
+## [0.2.6] - 2026-09-08
+
+### Added
+
+- **Holder `Runtime` and `Session` (`sdk`).** Persist an Ed25519 identity,
+  configure trust / TTL fallback / receipt policy once, and bind each
+  warrant into a session. `drain_receipts` / `peek_receipts` are the same
+  snapshot; only `acknowledge_receipts` removes items. Sessions created
+  before the first SRL keep the TTL fallback until a list is applied, then
+  enforce that list on the next check. `SignedRevocationList::{from_base64,
+  to_base64}` is the decode API. `ConnectToken::resolve_endpoint` accepts a
+  caller-provided base for relative `/v1` tokens.
+
+### Changed
+
+- **Connect token version is required.** `ConnectToken::parse` rejects a
+  missing `v`, `v=0`, and any version other than 1. Tokens issued without
+  `v` fail at parse after upgrade. This is a breaking change from 0.2.5.
+
 ## [0.2.5] - 2026-09-06
 
 Python `tenuo==0.2.5`, Rust `tenuo@0.2.5`, TypeScript `@tenuo/core@0.2.5-beta.0`
