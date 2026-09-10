@@ -72,24 +72,23 @@ warrant into a `Session`.
 ```rust,ignore
 use std::time::Duration;
 use tenuo::sdk::prelude::*;
-use tenuo::EvidencePolicy;
 
 let identity = PersistentIdentity::load_or_generate(key_path)?;
 let runtime = Runtime::builder()
     .identity(identity)
     .trusted_roots(roots)
-    .evidence_policy(EvidencePolicy::BestEffort)
     .ttl_fallback(Duration::from_secs(600))
     .build()?;
 
 runtime.apply_signed_revocation_list_now(srl)?;
 let session = runtime.session_from_warrant(warrant)?;
-let result = session.guard(&call, |_| perform_call())?;
-for receipt in session.drain_receipts() {
-    upload(receipt)?;
-    session.acknowledge_receipts(1);
-}
+session.guard(&call, |_| perform_call())?;
 ```
+
+Receipt collection needs the `receipts` feature: set
+`evidence_policy(EvidencePolicy::BestEffort)`, then `peek_receipts` /
+`drain_receipts` (same snapshot) and `acknowledge_receipts` to drop uploaded
+items.
 
 Callers that obtain warrants and SRLs over the network should not assemble `Authorizer`, `PresentedAuthority`, `LocalReceiptSigner`, or `MemoryReceiptSink`.
 

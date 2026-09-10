@@ -108,7 +108,12 @@ impl MemoryReceiptSink {
         self.stored.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
-    /// Receipts at and after `cursor` without advancing it.
+    /// Unacknowledged receipts. Same as [`Self::stored`] after prefix drops.
+    pub fn pending(&self) -> Vec<Receipt> {
+        self.stored()
+    }
+
+    /// Receipts at and after `cursor` without removing them.
     pub fn peek_from(&self, cursor: usize) -> Vec<Receipt> {
         let stored = self.stored();
         if cursor >= stored.len() {
@@ -117,13 +122,19 @@ impl MemoryReceiptSink {
         stored[cursor..].to_vec()
     }
 
-    /// Receipts at and after `cursor`, then advance `cursor` to the current length.
+    /// Snapshot from `cursor`. Does not remove anything.
     pub fn drain_from(&self, cursor: &mut usize) -> Vec<Receipt> {
-        let out = self.peek_from(*cursor);
-        if !out.is_empty() {
-            *cursor = self.stored().len();
-        }
-        out
+        self.peek_from(*cursor)
+    }
+
+    /// Remove the first `count` stored receipts.
+    pub fn drop_prefix(&self, count: usize) -> usize {
+        let Ok(mut stored) = self.stored.lock() else {
+            return 0;
+        };
+        let n = count.min(stored.len());
+        stored.drain(..n);
+        n
     }
 }
 
@@ -228,9 +239,10 @@ mod tests {
         let reference = sink.persist(&receipt).unwrap();
         assert!(reference.id.starts_with("mem:"));
         assert_eq!(sink.stored().len(), 1);
-        let mut cursor = 0;
-        assert_eq!(sink.drain_from(&mut cursor).len(), 1);
-        assert!(sink.drain_from(&mut cursor).is_empty());
+        assert_eq!(sink.drain_from(&mut 0).len(), 1);
+        assert_eq!(sink.drain_from(&mut 0).len(), 1);
+        assert_eq!(sink.drop_prefix(1), 1);
+        assert!(sink.pending().is_empty());
     }
 
     #[test]

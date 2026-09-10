@@ -65,8 +65,8 @@ pub enum ConnectTokenError {
     MissingField(&'static str),
     /// Agent claim HTTP request failed.
     ClaimFailed(String),
-    /// Token version is newer than this SDK supports.
-    UnsupportedVersion(u8),
+    /// Token version is not supported by this SDK.
+    UnsupportedVersion(u64),
 }
 
 impl std::fmt::Display for ConnectTokenError {
@@ -120,7 +120,7 @@ impl ConnectToken {
                     )
                 })?;
                 if parsed != 1 {
-                    return Err(ConnectTokenError::UnsupportedVersion(parsed as u8));
+                    return Err(ConnectTokenError::UnsupportedVersion(parsed));
                 }
             }
         }
@@ -172,7 +172,12 @@ impl ConnectToken {
         if origin.is_empty() || origin.starts_with('/') {
             return Err(ConnectTokenError::MissingField("endpoint"));
         }
-        self.endpoint = origin;
+        let remainder = self.endpoint.clone();
+        self.endpoint = if remainder.is_empty() || remainder == "/" {
+            origin
+        } else {
+            format!("{}{}", origin.trim_end_matches('/'), remainder)
+        };
         Ok(())
     }
 
@@ -355,6 +360,28 @@ mod tests {
         let mut ct = ConnectToken::parse(&raw).unwrap();
         ct.resolve_endpoint("https://other.example").unwrap();
         assert_eq!(ct.endpoint, "https://control.example.com");
+    }
+
+    #[test]
+    fn resolve_endpoint_joins_remaining_relative_path() {
+        let raw = make_token_str(r#"{"v":1,"e":"/api/v1","k":"tc_abc"}"#);
+        let mut ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.endpoint, "/api");
+        ct.resolve_endpoint("https://control.example.com").unwrap();
+        assert_eq!(ct.endpoint, "https://control.example.com/api");
+    }
+
+    #[test]
+    fn reject_version_out_of_u8_range() {
+        let raw = make_token_str(r#"{"v":257,"e":"https://control.example.com","k":"tc_abc"}"#);
+        assert!(matches!(
+            ConnectToken::parse(&raw),
+            Err(ConnectTokenError::UnsupportedVersion(257))
+        ));
+        assert!(ConnectToken::parse(&raw)
+            .unwrap_err()
+            .to_string()
+            .contains("257"));
     }
 
     #[test]

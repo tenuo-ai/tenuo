@@ -170,21 +170,40 @@ fn claim_destination(tmp: &Path, dest: &Path) -> Result<bool, IdentityError> {
     let claimed = match fs::hard_link(tmp, dest) {
         Ok(()) => true,
         Err(error) if error.kind() == ErrorKind::AlreadyExists => false,
-        Err(_error) if cfg!(windows) => match fs::rename(tmp, dest) {
-            Ok(()) => {
-                remove_tmp = false;
-                true
+        Err(_error) if cfg!(windows) => {
+            match OpenOptions::new().write(true).create_new(true).open(dest) {
+                Ok(file) => {
+                    drop(file);
+                    match fs::rename(tmp, dest) {
+                        Ok(()) => {
+                            remove_tmp = false;
+                            true
+                        }
+                        Err(rename_error) if rename_error.kind() == ErrorKind::AlreadyExists => {
+                            false
+                        }
+                        Err(rename_error) => {
+                            let _ = fs::remove_file(tmp);
+                            let _ = fs::remove_file(dest);
+                            return Err(IdentityError::Io {
+                                path: dest.to_path_buf(),
+                                operation: "rename",
+                                source: rename_error,
+                            });
+                        }
+                    }
+                }
+                Err(create_error) if create_error.kind() == ErrorKind::AlreadyExists => false,
+                Err(create_error) => {
+                    let _ = fs::remove_file(tmp);
+                    return Err(IdentityError::Io {
+                        path: dest.to_path_buf(),
+                        operation: "create",
+                        source: create_error,
+                    });
+                }
             }
-            Err(rename_error) if rename_error.kind() == ErrorKind::AlreadyExists => false,
-            Err(rename_error) => {
-                let _ = fs::remove_file(tmp);
-                return Err(IdentityError::Io {
-                    path: dest.to_path_buf(),
-                    operation: "rename",
-                    source: rename_error,
-                });
-            }
-        },
+        }
         Err(error) => {
             let _ = fs::remove_file(tmp);
             return Err(IdentityError::Io {
@@ -229,7 +248,12 @@ fn already_exists(path: &Path) -> IdentityError {
 }
 
 fn tighten_permissions(path: &Path) -> Result<(), IdentityError> {
-    set_owner_only(path)
+    match set_owner_only(path) {
+        Err(IdentityError::Io { source, .. }) if source.kind() == ErrorKind::PermissionDenied => {
+            Ok(())
+        }
+        other => other,
+    }
 }
 
 #[cfg(unix)]
