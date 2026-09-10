@@ -54,30 +54,7 @@ runtime.applyRevocationList(await fetchSignedRevocationList(token));
 
 ## Receipt retry
 
-`drainReceipts()` is at-most-once from the in-process buffer. Prefer
-`peekReceipts()` + durable copy + `acknowledgeReceipts(n)` so a crash between
-peek and persist cannot drop evidence. Do not treat a drained receipt as
-uploaded until the ingest call succeeds.
-
-## `@tenuo/cloud` compatibility
-
-When thinning `@tenuo/cloud`:
-
-1. Replace local `parseConnectToken` / `normalizeEndpoint` with
-   `createTenuo.parseConnectToken`. After parse, `endpoint` is a bare origin
-   (no `/v1`). Append `/v1/` in the HTTP client. For `/v1` tokens, call
-   `resolveEndpoint({ localBase: process.env.TENUO_API_URL })` in the adapter
-   — core will not default to localhost or invent `https://`.
-2. Replace `loadOrCreateHolderKey` + raw `Uint8Array` with
-   `createTenuo.identity` / `generateIdentity`. Keep `node:fs` persistence in
-   the Cloud package (or a future `@tenuo/node`).
-3. Hold a `Runtime` instead of assembling `createTenuo` + `sessionFromWire` +
-   a `receiptSink` passed to every `onReceipt`. Use `runtime.sessionFromWire`
-   and `session.drainReceipts()` / peek+ack.
-4. Keep Cloud-only HTTP: claim, tenant, `.well-known` roots, trigger fire,
-   receipt ingest, authorizer register/heartbeat, approvals, schema report,
-   doctor.
-5. Peer-depend on `@tenuo/core@0.2.6-beta.0`. `createTenuo.publicKeyFromHolderKey`
-   remains; `identity.publicKey` is the same handle.
-6. Stop uploading from a fire-and-forget `onReceipt` Promise chain. Drain or
-   peek/ack, then upload from the adapter retry buffer.
+`drainReceipts()` is a snapshot of the in-process buffer. It does not remove
+anything. Prefer `peekReceipts()` + durable copy + `acknowledgeReceipts(n)` so a
+crash between peek and persist cannot drop evidence. Do not treat a drained
+receipt as uploaded until the ingest call succeeds.

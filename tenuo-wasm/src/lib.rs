@@ -1220,9 +1220,9 @@ pub fn sign_receipt(payload_json: JsValue, authorizer_key_hex: &str) -> JsValue 
 
 /// Parse a complete `tenuo_ct_…` token into its component fields.
 ///
-/// Accepts padded and unpadded Base64URL. Missing `v` defaults to 1; versions
-/// other than 1 are rejected. Trailing `/v1` is stripped from `e`.
-/// Registration-token aliases: `t`, `r`.
+/// Accepts padded and unpadded Base64URL. Version must be 1; omitted `v`
+/// is an error. Trailing `/v1` is stripped from `e`.
+/// Registration-token aliases: `t`, `r`, `registration_token`.
 ///
 /// Returns `{ endpoint, apiKey, agentId?, registrationToken?, error? }`.
 #[wasm_bindgen]
@@ -1231,8 +1231,7 @@ pub fn parse_connect_token(token: &str) -> JsValue {
 
     #[derive(serde::Deserialize)]
     struct RawToken {
-        #[serde(default = "default_connect_token_version")]
-        v: u32,
+        v: Option<u32>,
         e: String,
         k: String,
         #[serde(default)]
@@ -1284,8 +1283,10 @@ pub fn parse_connect_token(token: &str) -> JsValue {
         Ok(t) => t,
         Err(e) => return fail(format!("JSON parse: {}", e)),
     };
-    if raw.v != 1 {
-        return fail(format!("unsupported token version: {}", raw.v));
+    match raw.v {
+        None => return fail("version is required. This SDK supports version 1.".to_string()),
+        Some(1) => {}
+        Some(other) => return fail(format!("unsupported token version: {}", other)),
     }
     if raw.e.is_empty() || raw.k.is_empty() {
         return fail("token missing required fields (e, k)".to_string());
@@ -1302,10 +1303,6 @@ pub fn parse_connect_token(token: &str) -> JsValue {
         error: None,
     })
     .unwrap()
-}
-
-fn default_connect_token_version() -> u32 {
-    1
 }
 
 fn to_auth_error(msg: &str) -> JsValue {

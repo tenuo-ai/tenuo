@@ -1,9 +1,7 @@
-//! Connect token support for streamlined onboarding.
+//! Connect token parse (`tenuo_ct_<base64url-json>`).
 //!
-//! A connect token (`tenuo_ct_<base64url-json>`) bundles all credentials needed
-//! to register an authorizer with the Tenuo Cloud control plane into a single
-//! copy-pasteable string. The token is created via the dashboard's Quick Connect
-//! dialog and can be shared across multiple authorizer instances.
+//! A connect token bundles an endpoint, API key, and optional agent fields
+//! into one string. This module only decodes and normalizes that wire format.
 //!
 //! # Token format (v1)
 //!
@@ -26,8 +24,8 @@ const TOKEN_PREFIX: &str = "tenuo_ct_";
 /// Parsed connect token payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectToken {
-    /// Token format version (currently 1).
-    #[serde(rename = "v", default = "default_version")]
+    /// Token format version. [`ConnectToken::parse`] accepts only version 1.
+    #[serde(rename = "v")]
     pub version: u8,
     /// Control plane API base endpoint.
     ///
@@ -51,10 +49,6 @@ pub struct ConnectToken {
         skip_serializing_if = "Option::is_none"
     )]
     pub registration_token: Option<String>,
-}
-
-fn default_version() -> u8 {
-    1
 }
 
 /// Errors specific to connect token operations.
@@ -106,13 +100,32 @@ impl ConnectToken {
             .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(encoded))
             .map_err(|e| ConnectTokenError::Base64(e.to_string()))?;
 
-        let token: ConnectToken = serde_json::from_slice(&json_bytes)
+        let value: serde_json::Value = serde_json::from_slice(&json_bytes)
             .map_err(|e| ConnectTokenError::Json(e.to_string()))?;
-
-        const MAX_SUPPORTED_VERSION: u8 = 1;
-        if token.version != MAX_SUPPORTED_VERSION {
-            return Err(ConnectTokenError::UnsupportedVersion(token.version));
+        if !value.is_object() {
+            return Err(ConnectTokenError::Json(
+                "connect token payload must be a JSON object".into(),
+            ));
         }
+        match value.get("v") {
+            None | Some(serde_json::Value::Null) => {
+                return Err(ConnectTokenError::MissingField("version"));
+            }
+            Some(v) => {
+                let parsed = v.as_u64().ok_or_else(|| {
+                    ConnectTokenError::Json(
+                        "version must be a non-negative integer. This SDK supports version 1."
+                            .into(),
+                    )
+                })?;
+                if parsed != 1 {
+                    return Err(ConnectTokenError::UnsupportedVersion(parsed as u8));
+                }
+            }
+        }
+
+        let token: ConnectToken =
+            serde_json::from_value(value).map_err(|e| ConnectTokenError::Json(e.to_string()))?;
 
         if token.endpoint.is_empty() {
             return Err(ConnectTokenError::MissingField("endpoint"));
@@ -273,12 +286,23 @@ mod tests {
     }
 
     #[test]
-    fn parse_token_without_version_defaults_to_v1() {
+    fn reject_token_without_version() {
         let raw = make_token_str(
             r#"{"e":"https://control.example.com/v1","k":"tc_old","a":"ag","t":"rt"}"#,
         );
-        let ct = ConnectToken::parse(&raw).unwrap();
-        assert_eq!(ct.version, 1); // default
+        assert!(matches!(
+            ConnectToken::parse(&raw),
+            Err(ConnectTokenError::MissingField("version"))
+        ));
+    }
+
+    #[test]
+    fn reject_explicit_v0() {
+        let raw = make_token_str(r#"{"v":0,"e":"https://control.example.com","k":"tc_abc"}"#);
+        assert!(matches!(
+            ConnectToken::parse(&raw),
+            Err(ConnectTokenError::UnsupportedVersion(0))
+        ));
     }
 
     #[test]
