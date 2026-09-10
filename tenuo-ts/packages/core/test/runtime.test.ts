@@ -38,6 +38,18 @@ describe("parseConnectToken", () => {
     expect(JSON.stringify(token)).not.toContain("tok_1");
     expect(inspect(token)).not.toContain("tc_secret");
     expect(inspect(token)).not.toContain("tok_1");
+    expect(JSON.stringify({ ...token })).not.toContain("tc_secret");
+    expect(Object.entries(token).flat().join()).not.toContain("tc_secret");
+    expect(JSON.stringify(structuredClone(token))).not.toContain("tc_secret");
+  });
+
+  it("joins a remaining relative path onto localBase", () => {
+    const token = createTenuo.parseConnectToken(
+      encodeToken({ v: 1, e: "/api/v1", k: "tc_secret" }),
+    );
+    expect(token.endpoint).toBe("/api");
+    token.resolveEndpoint({ localBase: "https://control.example.com" });
+    expect(token.endpoint).toBe("https://control.example.com/api");
   });
 
   it("accepts padded Base64URL and the registration-token aliases", () => {

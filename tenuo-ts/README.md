@@ -657,55 +657,47 @@ const runtime = createTenuo.runtime({
 
 const session = runtime.sessionFromWire(warrant);
 await readFile.execute({ path: "/data/q3.pdf" }, { session });
-const receipts = session.drainReceipts();
+const receipts = session.peekReceipts();
+session.acknowledgeReceipts(receipts.length);
 ```
 
 `createTenuo.parseConnectToken(raw)` parses a complete `tenuo_ct_…` token
-(padded or unpadded Base64URL, version 1 only). Trailing `/v1` is stripped.
-Scheme-less hostnames and loopback origins are left as written. Relative `/v1`
-needs `token.resolveEndpoint({ localBase })` — core never reads env vars or
+(padded or unpadded Base64URL, version 1 only). Tokens without `v` are
+rejected. Trailing `/v1` is stripped. Scheme-less hostnames and loopback
+origins are left as written. Relative `/v1` needs
+`token.resolveEndpoint({ localBase })` — core never reads env vars or
 defaults to localhost.
 
 `createTenuo.generateIdentity()` / `createTenuo.identity(holderKey)` keep the
-secret out of `JSON.stringify`, `util.inspect`, and `toString`. Filesystem
-persistence stays in the caller (or a later Node adapter).
-
-A hosted-service adapter should: parse the token in core, resolve a relative
-endpoint with a caller-supplied base, persist the identity itself, discover
-roots and fetch the SRL over HTTP, construct `Runtime`, fire triggers to
-obtain warrants, `sessionFromWire`, then persist `drainReceipts()` (or
-`peekReceipts()` + `acknowledgeReceipts()`) before upload. Agent claim,
-approval polling, heartbeat, and schema reporting stay in the adapter.
+secret out of `JSON.stringify`, `util.inspect`, `toString`, spread, and
+`structuredClone`. Filesystem persistence stays in the caller.
 
 ## Receipt delivery
 
-Collected receipts are **at-most-once from the in-process buffer** after
-`drainReceipts()` or `acknowledgeReceipts()`.
+`drainReceipts()` and `peekReceipts()` are the same snapshot. Nothing is
+removed until `acknowledgeReceipts(n)`.
 
 | API | Effect |
 |---|---|
-| `peekReceipts()` | Copy undrained receipts. Does not advance the cursor. |
-| `drainReceipts()` | Return undrained receipts and advance the cursor. |
-| `acknowledgeReceipts(n)` | Advance the cursor by `n` without returning them. |
+| `peekReceipts()` | Copy pending receipts. Does not remove them. |
+| `drainReceipts()` | Same as `peekReceipts()`. |
+| `acknowledgeReceipts(n)` | Remove the first `n` pending receipts. |
 
 Guarantees:
 
 - Emission order is preserved.
-- A second drain is empty until a new decision.
+- Two consecutive drains return the same items until acknowledge.
 - Unrelated sessions do not share a buffer. Presented-path verify / MCP
-  handler receipts drain from `runtime.drainReceipts()`.
+  handler receipts are on `runtime.peekReceipts()`.
 - Allow and deny receipts are both collected.
 - Explicit `onReceipt` still works and stays isolated (hook failures never
   deny). Collection itself is synchronous; it does not use fire-and-forget
   Promises.
-- Persistence and upload are the caller's job. If the process exits after
-  drain and before the caller stores the batch, those receipts are gone from
-  the runtime.
+- Persistence and upload are the caller's job.
 
-For a retrying uploader: `peek()`, copy into a durable retry buffer, then
+For a retrying uploader: peek, copy into a durable retry buffer, then
 `acknowledgeReceipts(batch.length)`. Only drop a receipt from the retry
-buffer after a successful upload. `drainReceipts()` is the convenience form
-when the caller can persist the returned array in the same turn.
+buffer after a successful upload.
 
 ## Receipts and revocation
 

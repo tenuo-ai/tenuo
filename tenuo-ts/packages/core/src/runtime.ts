@@ -19,7 +19,8 @@ export type RuntimeOptions = {
   /**
    * `collect` retains receipts produced through this runtime's sessions
    * (tools, present, MCP attach) and through this runtime's tenuo
-   * (verify, MCP verify/handler) until `drainReceipts()`. Default `off`.
+   * (verify, MCP verify/handler) until `acknowledgeReceipts()`.
+   * `drainReceipts()` is a snapshot. Default `off`.
    */
   readonly receipts?: ReceiptsMode;
 };

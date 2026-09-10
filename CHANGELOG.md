@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   revocationList?, receipts })` owns identity, roots, SRL refresh
   (`applyRevocationList`), and `sessionFromWire`. `receipts: "collect"` retains
   tool, `present()`, MCP attach, and verify/handler receipts until
-  `session.drainReceipts()` / `runtime.drainReceipts()`. Peek + acknowledge
-  are available for retrying uploaders. No network and no hosted defaults.
+  `acknowledgeReceipts()`. `drainReceipts()` is a snapshot of the same buffer.
+  No network and no hosted defaults.
 - **TypeScript connect-token parse.** `createTenuo.parseConnectToken` accepts
   a complete `tenuo_ct_…` token (padded or unpadded Base64URL, version 1).
   Relative endpoints resolve only with `token.resolveEndpoint({ localBase })`.
@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Connect token version is required.** Omitted `v`, `v=0`, and future
+  versions are rejected. Tokens issued without `v` fail at parse after
+  upgrade. This is a breaking change from 0.2.5.
+- **`drainReceipts()` is a snapshot.** It matches `peekReceipts()`. Only
+  `acknowledgeReceipts(n)` removes items. A second drain is not empty.
 - **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
   (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
   messages are unchanged. Code that catches `TenuoError` or switches on `code`

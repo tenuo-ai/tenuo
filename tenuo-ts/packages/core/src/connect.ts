@@ -3,6 +3,10 @@ import { TenuoConfigurationError } from "./errors.ts";
 const TOKEN_PREFIX = "tenuo_ct_";
 const MAX_SUPPORTED_VERSION = 1;
 const inspect = Symbol.for("nodejs.util.inspect.custom");
+const credentials = new WeakMap<
+  ConnectToken,
+  { readonly apiKey: string; readonly registrationToken?: string }
+>();
 
 export type ResolveEndpointOptions = {
   /**
@@ -19,9 +23,7 @@ export type ResolveEndpointOptions = {
 export class ConnectToken {
   readonly version: number;
   endpoint: string;
-  readonly apiKey: string;
   readonly agentId?: string;
-  readonly registrationToken?: string;
 
   constructor(fields: {
     readonly version: number;
@@ -32,13 +34,27 @@ export class ConnectToken {
   }) {
     this.version = fields.version;
     this.endpoint = fields.endpoint;
-    this.apiKey = fields.apiKey;
     if (fields.agentId !== undefined) {
       this.agentId = fields.agentId;
     }
-    if (fields.registrationToken !== undefined) {
-      this.registrationToken = fields.registrationToken;
+    credentials.set(this, {
+      apiKey: fields.apiKey,
+      ...(fields.registrationToken !== undefined
+        ? { registrationToken: fields.registrationToken }
+        : {}),
+    });
+  }
+
+  get apiKey(): string {
+    const stored = credentials.get(this);
+    if (stored === undefined) {
+      throw new TenuoConfigurationError("connect token is not bound");
     }
+    return stored.apiKey;
+  }
+
+  get registrationToken(): string | undefined {
+    return credentials.get(this)?.registrationToken;
   }
 
   /** True when parse left a path-only or empty origin. */
@@ -61,7 +77,11 @@ export class ConnectToken {
         "Connect token endpoint is relative. Pass resolveEndpoint({ localBase }) with an origin such as https://control.example.com.",
       );
     }
-    this.endpoint = origin;
+    const remainder = this.endpoint;
+    this.endpoint =
+      remainder.length === 0 || remainder === "/"
+        ? origin
+        : `${origin.replace(/\/$/, "")}${remainder.startsWith("/") ? remainder : `/${remainder}`}`;
     return this;
   }
 
@@ -131,9 +151,15 @@ export function parseConnectToken(rawToken: string): ConnectToken {
   const endpointRaw = readRequiredString(payload.e, "endpoint");
   const apiKey = readRequiredString(payload.k, "apiKey");
   const agentId = readOptionalString(payload.a);
-  const registrationToken = readOptionalString(
-    payload.t ?? payload.r ?? payload.registration_token,
+  const registrationAliases = [payload.t, payload.r, payload.registration_token].filter(
+    (value) => typeof value === "string" && value.length > 0,
   );
+  if (registrationAliases.length > 1) {
+    throw new TenuoConfigurationError(
+      "Connect token has more than one registration-token field. Use only t.",
+    );
+  }
+  const registrationToken = readOptionalString(registrationAliases[0]);
 
   return new ConnectToken({
     version,
