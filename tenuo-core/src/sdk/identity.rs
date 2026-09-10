@@ -2,9 +2,12 @@
 
 use crate::crypto::{PublicKey, SigningKey};
 use std::fmt;
-use std::fs;
-use std::io::{self, ErrorKind};
+use std::fs::{self, OpenOptions};
+use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Ed25519 holder key loaded from, or created at, a caller-supplied path.
 ///
@@ -20,28 +23,26 @@ pub struct PersistentIdentity {
 impl PersistentIdentity {
     /// Load an existing key, or generate and persist one if the file is absent.
     ///
-    /// Parent directories are created as needed. The write is `*.tmp` then
-    /// rename. On Unix the file is `0600`. A corrupt existing file is an error;
-    /// it is never overwritten.
+    /// Parent directories are created as needed. The complete key is written
+    /// and fsynced to a unique `0600` temp file, then the destination is
+    /// claimed with a hard link (Unix) so a concurrent loser loads the winner.
+    /// A corrupt existing file is an error; it is never overwritten.
     pub fn load_or_generate(path: impl AsRef<Path>) -> Result<Self, IdentityError> {
         let path = path.as_ref().to_path_buf();
-        match fs::read_to_string(&path) {
-            Ok(contents) => {
-                let key = parse_key(&path, &contents)?;
-                tighten_permissions(&path)?;
-                Ok(Self { key, path })
+        for _ in 0..32 {
+            match load_existing(&path) {
+                Ok(identity) => return Ok(identity),
+                Err(error) if is_not_found(&error) => {}
+                Err(error) => return Err(error),
             }
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                let key = SigningKey::generate();
-                persist_key(&path, &key)?;
-                Ok(Self { key, path })
+            let key = SigningKey::generate();
+            match persist_new(&path, &key) {
+                Ok(()) => return Ok(Self { key, path }),
+                Err(error) if is_already_exists(&error) => continue,
+                Err(error) => return Err(error),
             }
-            Err(error) => Err(IdentityError::Io {
-                path,
-                operation: "read",
-                source: error,
-            }),
         }
+        load_existing(&path)
     }
 
     /// In-process key that is not written to disk. For tests and one-shot tools.
@@ -92,7 +93,21 @@ fn parse_key(path: &Path, contents: &str) -> Result<SigningKey, IdentityError> {
     Ok(SigningKey::from_bytes(&secret))
 }
 
-fn persist_key(path: &Path, key: &SigningKey) -> Result<(), IdentityError> {
+fn load_existing(path: &Path) -> Result<PersistentIdentity, IdentityError> {
+    let contents = fs::read_to_string(path).map_err(|source| IdentityError::Io {
+        path: path.to_path_buf(),
+        operation: "read",
+        source,
+    })?;
+    let key = parse_key(path, &contents)?;
+    tighten_permissions(path)?;
+    Ok(PersistentIdentity {
+        key,
+        path: path.to_path_buf(),
+    })
+}
+
+fn persist_new(path: &Path, key: &SigningKey) -> Result<(), IdentityError> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|source| IdentityError::Io {
@@ -103,28 +118,114 @@ fn persist_key(path: &Path, key: &SigningKey) -> Result<(), IdentityError> {
         }
     }
 
-    let tmp = tmp_path(path);
-    fs::write(&tmp, format!("{}\n", hex::encode(key.secret_key_bytes()))).map_err(|source| {
-        IdentityError::Io {
-            path: tmp.clone(),
-            operation: "write",
-            source,
-        }
-    })?;
-    set_owner_only(&tmp)?;
-    fs::rename(&tmp, path).map_err(|source| IdentityError::Io {
-        path: path.to_path_buf(),
-        operation: "rename",
-        source,
-    })?;
+    let tmp = unique_tmp(path);
+    write_complete_0600(&tmp, key)?;
+    if !claim_destination(&tmp, path)? {
+        return Err(already_exists(path));
+    }
     set_owner_only(path)?;
     Ok(())
 }
 
-fn tmp_path(path: &Path) -> PathBuf {
-    let mut name = path.as_os_str().to_os_string();
-    name.push(".tmp");
-    PathBuf::from(name)
+fn unique_tmp(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(
+        ".tmp.{}.{}",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    path.with_file_name(name)
+}
+
+fn write_complete_0600(path: &Path, key: &SigningKey) -> Result<(), IdentityError> {
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(path).map_err(|source| IdentityError::Io {
+        path: path.to_path_buf(),
+        operation: "write",
+        source,
+    })?;
+    let payload = format!("{}\n", hex::encode(key.secret_key_bytes()));
+    let write_result = file
+        .write_all(payload.as_bytes())
+        .and_then(|_| file.sync_all());
+    if let Err(source) = write_result {
+        let _ = fs::remove_file(path);
+        return Err(IdentityError::Io {
+            path: path.to_path_buf(),
+            operation: "write",
+            source,
+        });
+    }
+    Ok(())
+}
+
+fn claim_destination(tmp: &Path, dest: &Path) -> Result<bool, IdentityError> {
+    let mut remove_tmp = true;
+    let claimed = match fs::hard_link(tmp, dest) {
+        Ok(()) => true,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => false,
+        Err(_error) if cfg!(windows) => match fs::rename(tmp, dest) {
+            Ok(()) => {
+                remove_tmp = false;
+                true
+            }
+            Err(rename_error) if rename_error.kind() == ErrorKind::AlreadyExists => false,
+            Err(rename_error) => {
+                let _ = fs::remove_file(tmp);
+                return Err(IdentityError::Io {
+                    path: dest.to_path_buf(),
+                    operation: "rename",
+                    source: rename_error,
+                });
+            }
+        },
+        Err(error) => {
+            let _ = fs::remove_file(tmp);
+            return Err(IdentityError::Io {
+                path: dest.to_path_buf(),
+                operation: "link",
+                source: error,
+            });
+        }
+    };
+    if remove_tmp {
+        let _ = fs::remove_file(tmp);
+    }
+    Ok(claimed)
+}
+
+fn is_not_found(error: &IdentityError) -> bool {
+    matches!(
+        error,
+        IdentityError::Io {
+            source,
+            ..
+        } if source.kind() == ErrorKind::NotFound
+    )
+}
+
+fn is_already_exists(error: &IdentityError) -> bool {
+    matches!(
+        error,
+        IdentityError::Io {
+            source,
+            ..
+        } if source.kind() == ErrorKind::AlreadyExists
+    )
+}
+
+fn already_exists(path: &Path) -> IdentityError {
+    IdentityError::Io {
+        path: path.to_path_buf(),
+        operation: "link",
+        source: io::Error::new(ErrorKind::AlreadyExists, "holder identity already exists"),
+    }
 }
 
 fn tighten_permissions(path: &Path) -> Result<(), IdentityError> {
@@ -264,5 +365,28 @@ mod tests {
         PersistentIdentity::load_or_generate(&path).unwrap();
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn concurrent_first_boot_shares_one_key() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = tempdir().unwrap();
+        let path = Arc::new(dir.path().join("holder.key"));
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let path = Arc::clone(&path);
+                thread::spawn(move || {
+                    PersistentIdentity::load_or_generate(&*path)
+                        .unwrap()
+                        .public_key()
+                })
+            })
+            .collect();
+        let keys: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        for key in &keys[1..] {
+            assert_eq!(&keys[0], key);
+        }
     }
 }

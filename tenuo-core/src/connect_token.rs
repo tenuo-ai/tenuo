@@ -42,7 +42,13 @@ pub struct ConnectToken {
     #[serde(rename = "a", default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     /// One-time registration token for claiming the agent.
-    #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "t",
+        alias = "r",
+        alias = "registration_token",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub registration_token: Option<String>,
 }
 
@@ -92,6 +98,7 @@ impl ConnectToken {
 
         let json_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(encoded)
+            .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(encoded))
             .map_err(|e| ConnectTokenError::Base64(e.to_string()))?;
 
         let value: serde_json::Value = serde_json::from_slice(&json_bytes)
@@ -276,6 +283,16 @@ mod tests {
         assert_eq!(ct.endpoint, "https://control.example.com");
         assert!(ct.agent_id.is_none());
         assert!(ct.registration_token.is_none());
+    }
+
+    #[test]
+    fn parse_padded_base64url_and_registration_alias() {
+        let payload =
+            r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc","r":"tok-alias"}"#;
+        let padded = base64::engine::general_purpose::URL_SAFE.encode(payload);
+        let raw = format!("{TOKEN_PREFIX}{padded}");
+        let ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.registration_token.as_deref(), Some("tok-alias"));
     }
 
     #[test]
