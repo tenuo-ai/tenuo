@@ -1144,18 +1144,23 @@ class TenuoActivityInboundInterceptor:
             )
 
             # -- 12. Cryptographic Authorization Evaluation --
-            if chain:
-                chain_result = authorizer.check_chain(
-                    chain, tool_name, args,
-                    signature=pop_bytes,
+            from tenuo._enforcement import parents_from_presented_chain, verify_inbound_call
+            from tenuo.runtime import bind_runtime, get_runtime
+
+            runtime = getattr(self._config, "runtime", None) or get_runtime()
+            with bind_runtime(runtime):
+                enforcement = verify_inbound_call(
+                    tool_name=tool_name,
+                    tool_args=args,
+                    warrant=warrant,
+                    pop_signature=pop_bytes,
+                    authorizer=authorizer,
+                    warrant_chain=parents_from_presented_chain(chain, warrant),
                     approvals=gate_approvals,
                 )
-            else:
-                chain_result = authorizer.authorize_one(
-                    warrant, tool_name, args,
-                    signature=pop_bytes,
-                    approvals=gate_approvals,
-                )
+            if not enforcement.allowed:
+                enforcement.raise_if_denied()
+            chain_result = enforcement.chain_result
 
             # -- 13. Replay Deduplication --
             if info.attempt <= 1:

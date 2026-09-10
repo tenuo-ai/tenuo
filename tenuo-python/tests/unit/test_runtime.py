@@ -7,7 +7,7 @@ import threading
 import pytest
 from tenuo_core import Pattern, SigningKey, Warrant, encode_warrant_stack
 
-from tenuo import HolderIdentity, Runtime, get_runtime, guard
+from tenuo import HolderIdentity, Runtime, bind_runtime, get_runtime, guard
 from tenuo._enforcement import enforce_tool_call
 from tenuo.decorators import chain_scope, get_signing_key_context, get_warrant_context
 from tenuo.exceptions import ConfigurationError, UntrustedRoot
@@ -30,6 +30,42 @@ def pair():
         receipts="collect",
     )
     return root, holder, warrant, runtime
+
+
+def test_install_is_process_default_without_session_scope(pair):
+    _root, _holder, warrant, runtime = pair
+    assert get_runtime() is None
+    runtime.install()
+    try:
+        assert get_runtime() is runtime
+        session = runtime.session_from_wire(warrant)
+        result = enforce_tool_call(
+            "read_file", {"path": "/data/q3.pdf"}, session.bound
+        )
+        assert result.allowed
+        assert len(runtime.peek_receipts()) == 1
+    finally:
+        Runtime.uninstall()
+    assert get_runtime() is None
+
+
+def test_bind_overrides_process_default(pair):
+    _root, _holder, warrant, runtime = pair
+    other = Runtime(
+        identity=HolderIdentity.generate(),
+        trusted_roots=runtime.trusted_roots,
+        receipts="collect",
+    )
+    runtime.install()
+    try:
+        with bind_runtime(other):
+            assert get_runtime() is other
+        assert get_runtime() is runtime
+        with other.bind():
+            assert get_runtime() is other
+        assert get_runtime() is runtime
+    finally:
+        Runtime.uninstall()
 
 
 def test_session_from_wire_and_scope_isolation(pair):

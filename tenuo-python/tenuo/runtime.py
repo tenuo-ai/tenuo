@@ -23,19 +23,34 @@ __all__ = [
     "Runtime",
     "Session",
     "get_runtime",
+    "bind_runtime",
     "apply_runtime_revocation",
 ]
 
 _runtime_context: ContextVar[Optional["Runtime"]] = ContextVar(
     "_runtime_context", default=None
 )
+_process_runtime: Optional["Runtime"] = None
 
 SessionWarrant = Union[Warrant, str, bytes, bytearray, Sequence[Any]]
 
 
 def get_runtime() -> Optional["Runtime"]:
-    """Return the Runtime bound by ``session_scope``, if any."""
-    return _runtime_context.get()
+    """Return the Runtime bound by ``session_scope`` or ``Runtime.install``."""
+    scoped = _runtime_context.get()
+    if scoped is not None:
+        return scoped
+    return _process_runtime
+
+
+@contextmanager
+def bind_runtime(runtime: Optional["Runtime"]) -> Iterator[Optional["Runtime"]]:
+    """Bind ``runtime`` for the current task, or yield without changing scope."""
+    if runtime is None:
+        yield None
+        return
+    with runtime.bind():
+        yield runtime
 
 
 def apply_runtime_revocation(authorizer: Any) -> None:
@@ -166,6 +181,36 @@ class Runtime:
         if self._revocation_list is not None:
             auth.set_revocation_list(self._revocation_list)
         return auth
+
+    def install(self) -> "Runtime":
+        """Make this the process default when no ``session_scope`` is active.
+
+        Inbound adapters (MCP verify, FastAPI, A2A, Temporal) collect receipts
+        and apply this Runtime's revocation list without a per-request scope.
+        """
+        global _process_runtime
+        _process_runtime = self
+        return self
+
+    @staticmethod
+    def uninstall() -> None:
+        """Clear the process-default Runtime."""
+        global _process_runtime
+        _process_runtime = None
+
+    @contextmanager
+    def bind(self) -> Iterator["Runtime"]:
+        """Install this Runtime for inbound verify without binding a holder key.
+
+        Unlike ``session_scope``, this does not require the presented warrant's
+        holder to match this process. Use it on MCP, FastAPI, A2A, and Temporal
+        verify paths so receipts and the signed revocation list apply.
+        """
+        token = _runtime_context.set(self)
+        try:
+            yield self
+        finally:
+            _runtime_context.reset(token)
 
     def session_from_wire(self, warrant: SessionWarrant) -> Session:
         """Bind a wire warrant to this runtime's holder key."""

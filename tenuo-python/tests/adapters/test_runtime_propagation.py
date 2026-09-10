@@ -1,4 +1,4 @@
-"""Runtime receipt collection through Temporal, MCP, and LangGraph."""
+"""Runtime receipt collection through inbound adapters and the shared PEP."""
 
 from __future__ import annotations
 
@@ -244,3 +244,243 @@ def test_temporal_nexus_collects_allow_and_deny():
     assert tenuo_core.verify_receipt(receipts[0]).action == nexus_tool_name(
         "billing-prod", "refund", service="BillingService"
     )
+
+
+def test_mcp_process_install_collects_without_session_scope():
+    pytest.importorskip("tenuo.mcp")
+    root = SigningKey.generate()
+    holder = HolderIdentity.generate()
+    warrant = Warrant.issue(
+        root,
+        capabilities={"read_file": {"path": Pattern("/data/*")}},
+        holder=holder.public_key,
+    )
+    runtime = _runtime_for(root, holder)
+    runtime.install()
+    try:
+        verifier = MCPVerifier(runtime=runtime)
+        from tests.adapters.test_mcp_server import _make_arguments
+
+        args, meta = _make_arguments(
+            warrant, holder.signing_key, "read_file", {"path": "/data/a.txt"}
+        )
+        allowed = verifier.verify("read_file", args, meta=meta)
+        denied = verifier.verify(
+            "read_file",
+            {"path": "/etc/passwd"},
+            meta=_make_arguments(
+                warrant, holder.signing_key, "read_file", {"path": "/etc/passwd"}
+            )[1],
+        )
+    finally:
+        Runtime.uninstall()
+    assert allowed.allowed
+    assert not denied.allowed
+    receipts = runtime.peek_receipts()
+    assert len(receipts) == 2
+    import tenuo_core
+
+    assert tenuo_core.verify_receipt(receipts[0]).outcome == "allow"
+    assert tenuo_core.verify_receipt(receipts[1]).outcome == "deny"
+
+
+def test_fastapi_runtime_collects_allow_and_deny():
+    pytest.importorskip("fastapi")
+    from types import SimpleNamespace
+
+    from tenuo import fastapi as fastapi_mod
+    from tenuo.fastapi import TenuoGuard, configure_tenuo
+
+    root = SigningKey.generate()
+    holder = HolderIdentity.generate()
+    warrant = Warrant.issue(
+        root,
+        capabilities={"search": {}},
+        holder=holder.public_key,
+    )
+    runtime = _runtime_for(root, holder)
+    previous = dict(fastapi_mod._config)
+    try:
+        configure_tenuo(SimpleNamespace(state=SimpleNamespace()), runtime=runtime)
+        guard = TenuoGuard("search")
+        import time
+
+        pop = bytes(warrant.sign(holder.signing_key, "search", {"query": "ok"}, int(time.time())))
+        allow = guard._enforce_with_pop_signature(
+            warrant, "search", {"query": "ok"}, pop
+        )
+        deny = guard._enforce_with_pop_signature(
+            warrant, "delete", {}, bytes(warrant.sign(holder.signing_key, "delete", {}, int(time.time())))
+        )
+    finally:
+        fastapi_mod._config.clear()
+        fastapi_mod._config.update(previous)
+    assert allow.allowed
+    assert not deny.allowed
+    receipts = runtime.peek_receipts()
+    assert len(receipts) == 2
+    import tenuo_core
+
+    assert tenuo_core.verify_receipt(receipts[0]).outcome == "allow"
+    assert tenuo_core.verify_receipt(receipts[1]).outcome == "deny"
+
+
+@pytest.mark.asyncio
+async def test_a2a_runtime_three_hop_and_orphan_leaf():
+    pytest.importorskip("tenuo.a2a")
+    import time
+
+    from tenuo.a2a import A2AServer
+    from tenuo.a2a.errors import UntrustedIssuerError
+    from tenuo.exceptions import UntrustedRoot
+
+    root_key = SigningKey.generate()
+    mid = SigningKey.generate()
+    worker = SigningKey.generate()
+    holder = HolderIdentity.generate()
+    root = (
+        Warrant.mint_builder()
+        .capability("search", query=Pattern("ok*"))
+        .holder(mid.public_key)
+        .ttl(3600)
+        .mint(root_key)
+    )
+    intermediate = (
+        root.grant_builder()
+        .capability("search", query=Pattern("ok*"))
+        .holder(worker.public_key)
+        .ttl(1800)
+        .grant(mid)
+    )
+    leaf = (
+        intermediate.grant_builder()
+        .capability("search", query=Pattern("ok*"))
+        .holder(holder.public_key)
+        .ttl(900)
+        .grant(worker)
+    )
+    runtime = _runtime_for(root_key, holder)
+    server = A2AServer(
+        name="Runtime Agent",
+        url="https://runtime.example.com",
+        public_key=holder.public_key.to_bytes().hex(),
+        trusted_issuers=[root_key.public_key.to_bytes().hex()],
+        require_pop=True,
+        require_audience=False,
+        check_replay=False,
+        runtime=runtime,
+    )
+    pop = bytes(leaf.sign(holder.signing_key, "search", {"query": "ok"}, int(time.time())))
+    allowed = await server.validate_warrant(
+        leaf.to_base64(),
+        "search",
+        {"query": "ok"},
+        _preloaded_parents=[root, intermediate],
+        pop_signature=pop,
+    )
+    assert allowed.id == leaf.id
+    from tenuo.a2a.errors import ConstraintViolationError
+
+    deny_pop = bytes(leaf.sign(holder.signing_key, "search", {"query": "nope"}, int(time.time())))
+    with pytest.raises(ConstraintViolationError):
+        await server.validate_warrant(
+            leaf.to_base64(),
+            "search",
+            {"query": "nope"},
+            _preloaded_parents=[root, intermediate],
+            pop_signature=deny_pop,
+        )
+    orphan_pop = bytes(leaf.sign(holder.signing_key, "search", {"query": "ok"}, int(time.time())))
+    with pytest.raises((UntrustedIssuerError, UntrustedRoot)):
+        await server.validate_warrant(
+            leaf.to_base64(),
+            "search",
+            {"query": "ok"},
+            pop_signature=orphan_pop,
+        )
+    receipts = runtime.peek_receipts()
+    assert len(receipts) >= 2
+    import tenuo_core
+
+    outcomes = [tenuo_core.verify_receipt(r).outcome for r in receipts]
+    assert "allow" in outcomes
+    assert "deny" in outcomes
+
+
+def test_fastapi_overflow_does_not_deny():
+    pytest.importorskip("fastapi")
+    from types import SimpleNamespace
+
+    from tenuo import fastapi as fastapi_mod
+    from tenuo.fastapi import TenuoGuard, configure_tenuo
+
+    root = SigningKey.generate()
+    holder = HolderIdentity.generate()
+    warrant = Warrant.issue(
+        root,
+        capabilities={"search": {}},
+        holder=holder.public_key,
+    )
+    runtime = Runtime(
+        identity=holder,
+        trusted_roots=[root.public_key],
+        receipts="collect",
+        receipt_maxsize=1,
+    )
+    previous = dict(fastapi_mod._config)
+    try:
+        configure_tenuo(SimpleNamespace(state=SimpleNamespace()), runtime=runtime)
+        guard = TenuoGuard("search")
+        import time
+
+        first = guard._enforce_with_pop_signature(
+            warrant,
+            "search",
+            {"q": "a"},
+            bytes(warrant.sign(holder.signing_key, "search", {"q": "a"}, int(time.time()))),
+        )
+        second = guard._enforce_with_pop_signature(
+            warrant,
+            "search",
+            {"q": "b"},
+            bytes(warrant.sign(holder.signing_key, "search", {"q": "b"}, int(time.time()))),
+        )
+    finally:
+        fastapi_mod._config.clear()
+        fastapi_mod._config.update(previous)
+    assert first.allowed
+    assert second.allowed
+    assert len(runtime.peek_receipts()) == 1
+    assert runtime.receipt_overflows >= 1
+
+
+def test_adk_guard_collects_through_runtime_scope():
+    pytest.importorskip("google.adk")
+    from types import SimpleNamespace
+
+    from tenuo.google_adk.guard import TenuoGuard
+
+    root = SigningKey.generate()
+    holder = HolderIdentity.generate()
+    warrant = Warrant.issue(
+        root,
+        capabilities={"search": {}},
+        holder=holder.public_key,
+    )
+    runtime = _runtime_for(root, holder)
+    session = runtime.session_from_wire(warrant)
+    guard = TenuoGuard(
+        warrant=warrant,
+        signing_key=holder.signing_key,
+        trusted_roots=[root.public_key],
+        on_denial="return",
+    )
+    tool = SimpleNamespace(name="search")
+    ctx = SimpleNamespace(state={})
+    with runtime.session_scope(session):
+        allowed = guard.before_tool(tool, {"query": "ok"}, ctx)
+        denied = guard.before_tool(SimpleNamespace(name="delete"), {}, ctx)
+    assert allowed is None or allowed is True
+    assert denied not in (None, True)
+    receipts = runtime.peek_receipts()
+    assert len(receipts) >= 1

@@ -113,6 +113,54 @@ __all__ = [
 # to the extracted leaf token passed into validate_warrant.
 MAX_WARRANT_TOKEN_BYTES = 65_536
 
+
+def _raise_a2a_from_enforcement(enforcement: Any, skill_id: str, arguments: Dict[str, Any]) -> None:
+    """Map a shared PEP denial onto A2A error types."""
+    error_type = getattr(enforcement, "error_type", None) or ""
+    reason = getattr(enforcement, "denial_reason", None) or "Authorization denied"
+    meta = getattr(enforcement, "approval_metadata", None) or {}
+    if error_type == "approval_required":
+        raise ApprovalRequiredError(
+            skill_id,
+            request_hash=str(meta.get("request_hash", "") or ""),
+            min_approvals=int(meta.get("min_approvals", 1) or 1),
+            message=reason,
+        )
+    if error_type == "insufficient_approvals":
+        raise InsufficientApprovalsError(
+            reason,
+            required=meta.get("need", 0),
+            received=meta.get("got", 0),
+        )
+    if error_type == "invalid_approval":
+        raise InvalidApprovalError(reason)
+    if error_type == "invalid_pop":
+        raise PopVerificationError(reason)
+    if error_type == "untrusted_issuer":
+        raise UntrustedIssuerError(reason)
+    if error_type == "expired":
+        raise WarrantExpiredError()
+    if error_type == "revoked":
+        raise RevokedError(reason)
+    if error_type == "tool_not_allowed":
+        raise SkillNotGrantedError(skill_id, [])
+    if error_type == "constraint_violation":
+        field = getattr(enforcement, "constraint_violated", None) or skill_id
+        raise ConstraintViolationError(
+            param=field,
+            constraint_type="warrant",
+            value=arguments.get(field, "<unknown>"),
+            reason=reason,
+        )
+    if "Proof-of-Possession" in reason or "signature" in reason.lower():
+        raise PopVerificationError(reason)
+    raise ConstraintViolationError(
+        param=skill_id,
+        constraint_type="warrant",
+        value="<unknown>",
+        reason=reason,
+    )
+
 # HTTP header names — imported from tenuo_core so they stay in sync with the wire spec.
 try:
     from tenuo_core import WARRANT_HEADER
@@ -360,6 +408,7 @@ class A2AServerBuilder:
         self._replay_backend: Optional[Any] = None
         self._revoked_issuers: List[Any] = []
         self._registration_handler: Optional[Any] = None
+        self._runtime: Optional[Any] = None
 
     def name(self, name: str) -> "A2AServerBuilder":
         """Set the agent display name (required)."""
@@ -420,6 +469,11 @@ class A2AServerBuilder:
     def trust(self, *issuers: Any) -> "A2AServerBuilder":
         """Alias for accept_warrants_from(). Kept for brevity."""
         return self.accept_warrants_from(*issuers)
+
+    def runtime(self, runtime: Any) -> "A2AServerBuilder":
+        """Use a holder Runtime for inbound PoP and receipt collection."""
+        self._runtime = runtime
+        return self
 
     def trust_delegated(self, enabled: bool = True) -> "A2AServerBuilder":
         """Accept warrants attenuated from trusted issuers (default: True)."""
@@ -588,6 +642,7 @@ class A2AServerBuilder:
             revoked_issuers=self._revoked_issuers if self._revoked_issuers else None,
             signing_key=self._signing_key,
             registration_handler=self._registration_handler,
+            runtime=self._runtime,
         )
 
 
@@ -641,6 +696,7 @@ class A2AServer:
         signing_key: Optional[Any] = None,
         registration_handler: Optional[Callable] = None,
         control_plane: Optional[Any] = None,
+        runtime: Optional[Any] = None,
     ) -> None:
         """
         Initialize A2A server.
@@ -669,6 +725,9 @@ class A2AServer:
                 registration (CSR pattern). Called after key ownership is verified.
             control_plane: Optional ControlPlaneClient for reporting authorization
                 events. Auto-discovered from env vars when None.
+            runtime: Optional holder ``Runtime``. When set (or installed as the
+                process default), inbound PoP goes through the shared PEP and
+                receipts land on that Runtime.
 
         Rate limiting:
             A2AServer does not throttle requests. In production, put a
@@ -744,6 +803,7 @@ class A2AServer:
             except Exception:
                 pass
         self._control_plane = control_plane
+        self._runtime = runtime
 
         # ASGI app (lazy init)
         self._app = None
@@ -1145,26 +1205,42 @@ class A2AServer:
             if pop_signature is None:
                 raise PopRequiredError()
 
-            # Verify PoP via the cached Authorizer.
-            # Both authorize_one and check_chain accept plain bytes for the
-            # signature and a plain dict for args — no ConstraintValue needed.
-            # When a delegation chain was supplied, use check_chain so the full
-            # chain (issuer trust + linkage + capabilities + PoP) is verified
-            # atomically.  Using authorize_one on the leaf alone would fail
-            # because the leaf's issuer is a delegated agent, not a trusted root.
+            # Shared inbound PEP — same Authorizer + receipt path as MCP/FastAPI.
+            from tenuo._enforcement import verify_inbound_call
+            from tenuo.runtime import bind_runtime, get_runtime
+
+            runtime = self._runtime or get_runtime()
             try:
-                if _resolved_chain_parents:
-                    all_chain = list(_resolved_chain_parents) + [warrant]
-                    self._authorizer.check_chain(
-                        all_chain, skill_id, arguments,
-                        signature=pop_signature, approvals=approvals,
+                with bind_runtime(runtime):
+                    enforcement = verify_inbound_call(
+                        tool_name=skill_id,
+                        tool_args=arguments,
+                        warrant=warrant,
+                        pop_signature=pop_signature,
+                        authorizer=self._authorizer,
+                        warrant_chain=_resolved_chain_parents or [],
+                        approvals=approvals,
                     )
+                    from tenuo.receipts import collect_enforcement_receipt
+                    collect_enforcement_receipt(
+                        enforcement, getattr(enforcement, "chain_result", None)
+                    )
+                if enforcement.allowed:
+                    logger.debug(f"PoP verified for skill '{skill_id}'")
                 else:
-                    self._authorizer.authorize_one(
-                        warrant, skill_id, arguments,
-                        signature=pop_signature, approvals=approvals,
-                    )
-                logger.debug(f"PoP verified for skill '{skill_id}'")
+                    _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
+            except (
+                ApprovalRequiredError,
+                InsufficientApprovalsError,
+                InvalidApprovalError,
+                PopVerificationError,
+                SkillNotGrantedError,
+                ConstraintViolationError,
+                UntrustedIssuerError,
+                WarrantExpiredError,
+                RevokedError,
+            ):
+                raise
             except Exception as e:
                 from tenuo.exceptions import (
                     ApprovalExpired as _ApprovalExpired,
@@ -1190,11 +1266,9 @@ class A2AServer:
                     raise InvalidApprovalError(str(e)) from e
                 if isinstance(e, _ApprovalExpired):
                     raise InvalidApprovalError(str(e)) from e
-                # Map PoP errors
                 error_msg = str(e)
                 if "Proof-of-Possession" in error_msg or "signature" in error_msg.lower():
                     raise PopVerificationError(error_msg)
-                # Re-raise other errors (constraint violations, etc.)
                 raise
 
         # Check skill is granted in warrant — only when PoP was NOT verified by the

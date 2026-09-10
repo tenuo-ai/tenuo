@@ -13,7 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Runtime` own identity, trusted roots, the current signed revocation list,
   `session_from_wire` / `session_scope`, and an aggregate receipt outbox
   (`peek_receipts` / `drain_receipts` / `acknowledge_receipts`). Receipts
-  are removed only after acknowledgement.
+  are removed only after acknowledgement. `Runtime.install()` is the
+  process default when no session is in scope. MCP, FastAPI, A2A, and
+  Temporal accept `runtime=` and authorize inbound calls through
+  `verify_inbound_call`.
 - **`tenuo_core.ReceiptIssuer`.** Local receipt-v1 signing.
   `ConnectToken` parse is strict version 1, redacts credentials in
   `repr`/`str`/`Debug`, accepts padded Base64URL and `r` /

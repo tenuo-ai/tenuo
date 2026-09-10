@@ -1318,22 +1318,23 @@ def _verify_nexus_operation(
             revocation_list=revocation_list,
         )
         approvals = _decode_approvals_header(raw_headers)
-        if chain:
-            chain_result = authorizer.check_chain(
-                chain,
-                tool_name,
-                args,
-                signature=pop_bytes,
+        from tenuo._enforcement import parents_from_presented_chain, verify_inbound_call
+        from tenuo.runtime import bind_runtime, get_runtime
+
+        runtime = getattr(config, "runtime", None) or get_runtime()
+        with bind_runtime(runtime):
+            enforcement = verify_inbound_call(
+                tool_name=tool_name,
+                tool_args=args,
+                warrant=warrant,
+                pop_signature=pop_bytes,
+                authorizer=authorizer,
+                warrant_chain=parents_from_presented_chain(chain, warrant),
                 approvals=approvals,
             )
-        else:
-            chain_result = authorizer.authorize_one(
-                warrant,
-                tool_name,
-                args,
-                signature=pop_bytes,
-                approvals=approvals,
-            )
+        if not enforcement.allowed:
+            enforcement.raise_if_denied()
+        chain_result = enforcement.chain_result
         _check_nexus_pop_replay(config, ctx, pop_bytes, tool_name)
         _emit_nexus_control_plane_event(
             config,

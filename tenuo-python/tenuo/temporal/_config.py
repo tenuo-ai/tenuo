@@ -174,6 +174,12 @@ class TenuoPluginConfig:
     Default: True (secure by default).
     """
 
+    runtime: Optional[Any] = None
+    """Optional holder ``Runtime``. When set, inbound verify uses its roots,
+    signed revocation list, and receipt outbox unless those fields are set
+    explicitly on this config.
+    """
+
     trusted_roots: Optional[List[Any]] = None
     """
     Trusted issuer public keys for warrant chain-of-trust and PoP verification.
@@ -477,6 +483,10 @@ class TenuoPluginConfig:
                 roots = list(self.trusted_roots_provider())
         elif self.trusted_roots:
             roots = list(self.trusted_roots)
+        elif self.runtime is not None:
+            roots = list(self.runtime.trusted_roots)
+            if self.revocation_list is None and getattr(self.runtime, "revocation_list", None) is not None:
+                self.revocation_list = self.runtime.revocation_list
         else:
             from tenuo.config import resolve_trusted_roots as _resolve_tr
             _merged = _resolve_tr(None)
@@ -486,7 +496,8 @@ class TenuoPluginConfig:
             raise ConfigurationError(
                 "TenuoPluginConfig requires trusted_roots (issuer public keys). "
                 "Pass trusted_roots=[control_key.public_key], trusted_roots_provider=..., "
-                "or call tenuo.configure(trusted_roots=[...]) at application startup."
+                "runtime=Runtime(...), or call tenuo.configure(trusted_roots=[...]) "
+                "at application startup."
             )
         if not self._provider_snapshots_ready:
             self.trusted_roots = roots  # type: ignore[assignment]

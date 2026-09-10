@@ -171,7 +171,7 @@ from .bound_warrant import BoundWarrant
 # Holder runtime (identity, connect token, session lifecycle)
 from .connect import ConnectToken
 from .identity import HolderIdentity
-from .runtime import Runtime, Session, get_runtime
+from .runtime import Runtime, Session, bind_runtime, get_runtime
 
 # Protection decorator
 from .decorators import (
@@ -263,6 +263,7 @@ __all__ = [
     "Runtime",
     "Session",
     "get_runtime",
+    "bind_runtime",
     "Authorizer",
     # Chain verification (returned by Authorizer.authorize_one / check_chain)
     "ChainVerificationResult",
