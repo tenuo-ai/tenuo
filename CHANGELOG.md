@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/vectors/holder-lifecycle.json` for connect-token parse, identity
   derivation, and receipt outbox flags.
 
+### Changed
+
+- **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
+  (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
+  messages are unchanged. Code that catches `TenuoError` or switches on `code`
+  now sees builder mistakes too.
+
 ### Fixed
 
 - **`DeferredEmitter` delivery contract.** `deliver()` now returns success
