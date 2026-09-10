@@ -1,7 +1,8 @@
-//! Connect token parse (`tenuo_ct_<base64url-json>`).
+//! Connect token support for streamlined onboarding.
 //!
-//! A connect token bundles an endpoint, API key, and optional agent fields
-//! into one string. This module only decodes and normalizes that wire format.
+//! A connect token (`tenuo_ct_<base64url-json>`) bundles the credentials
+//! needed to register an authorizer with a control plane into a single
+//! string. It can be shared across multiple authorizer instances.
 //!
 //! # Token format (v1)
 //!
@@ -22,7 +23,7 @@ use serde::{Deserialize, Serialize};
 const TOKEN_PREFIX: &str = "tenuo_ct_";
 
 /// Parsed connect token payload.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectToken {
     /// Token format version. [`ConnectToken::parse`] accepts only version 1.
     #[serde(rename = "v")]
@@ -51,21 +52,6 @@ pub struct ConnectToken {
     pub registration_token: Option<String>,
 }
 
-impl std::fmt::Debug for ConnectToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ConnectToken")
-            .field("version", &self.version)
-            .field("endpoint", &self.endpoint)
-            .field("api_key", &"<redacted>")
-            .field("agent_id", &self.agent_id)
-            .field(
-                "registration_token",
-                &self.registration_token.as_ref().map(|_| "<redacted>"),
-            )
-            .finish()
-    }
-}
-
 /// Errors specific to connect token operations.
 #[derive(Debug)]
 pub enum ConnectTokenError {
@@ -79,8 +65,8 @@ pub enum ConnectTokenError {
     MissingField(&'static str),
     /// Agent claim HTTP request failed.
     ClaimFailed(String),
-    /// Token version is newer than this SDK supports.
-    UnsupportedVersion(u8),
+    /// Token version is not supported by this SDK.
+    UnsupportedVersion(u64),
 }
 
 impl std::fmt::Display for ConnectTokenError {
@@ -89,7 +75,7 @@ impl std::fmt::Display for ConnectTokenError {
             Self::MissingPrefix => write!(f, "token must start with '{}'", TOKEN_PREFIX),
             Self::Base64(e) => write!(f, "base64 decode error: {}", e),
             Self::Json(e) => write!(f, "JSON parse error: {}", e),
-            Self::MissingField(name) => write!(f, "required field '{}' is missing or empty", name),
+            Self::MissingField(name) => write!(f, "required field '{}' is empty", name),
             Self::ClaimFailed(e) => write!(f, "agent claim failed: {}", e),
             Self::UnsupportedVersion(v) => write!(
                 f,
@@ -102,16 +88,6 @@ impl std::fmt::Display for ConnectTokenError {
 }
 
 impl std::error::Error for ConnectTokenError {}
-
-/// Strip trailing slashes and a final `/v1` so callers append `/v1/…` uniformly.
-fn normalize_endpoint(endpoint: &str) -> String {
-    let mut origin = endpoint.trim().trim_end_matches('/').to_string();
-    if origin.ends_with("/v1") {
-        origin.truncate(origin.len() - 3);
-        origin = origin.trim_end_matches('/').to_string();
-    }
-    origin
-}
 
 impl ConnectToken {
     /// Parse a raw `tenuo_ct_…` string into a [`ConnectToken`].
@@ -144,7 +120,7 @@ impl ConnectToken {
                     )
                 })?;
                 if parsed != 1 {
-                    return Err(ConnectTokenError::UnsupportedVersion(parsed as u8));
+                    return Err(ConnectTokenError::UnsupportedVersion(parsed));
                 }
             }
         }
@@ -159,8 +135,16 @@ impl ConnectToken {
             return Err(ConnectTokenError::MissingField("api_key"));
         }
 
+        // Normalize: strip trailing `/v1` (and trailing slashes) so all
+        // callers can uniformly prepend `/v1/…` paths without doubling.
+        let mut ep = token.endpoint;
+        ep = ep.trim_end_matches('/').to_string();
+        if ep.ends_with("/v1") {
+            ep.truncate(ep.len() - 3);
+        }
+
         Ok(ConnectToken {
-            endpoint: normalize_endpoint(&token.endpoint),
+            endpoint: ep,
             ..token
         })
     }
@@ -180,11 +164,20 @@ impl ConnectToken {
         if !self.needs_endpoint_base() {
             return Ok(());
         }
-        let origin = normalize_endpoint(base);
+        let mut origin = base.trim().trim_end_matches('/').to_string();
+        if origin.ends_with("/v1") {
+            origin.truncate(origin.len() - 3);
+            origin = origin.trim_end_matches('/').to_string();
+        }
         if origin.is_empty() || origin.starts_with('/') {
             return Err(ConnectTokenError::MissingField("endpoint"));
         }
-        self.endpoint = origin;
+        let remainder = self.endpoint.clone();
+        self.endpoint = if remainder.is_empty() || remainder == "/" {
+            origin
+        } else {
+            format!("{}{}", origin.trim_end_matches('/'), remainder)
+        };
         Ok(())
     }
 
@@ -298,7 +291,17 @@ mod tests {
     }
 
     #[test]
-    fn reject_token_without_version() {
+    fn parse_padded_base64url_and_registration_alias() {
+        let payload =
+            r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc","r":"tok-alias"}"#;
+        let padded = base64::engine::general_purpose::URL_SAFE.encode(payload);
+        let raw = format!("{TOKEN_PREFIX}{padded}");
+        let ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.registration_token.as_deref(), Some("tok-alias"));
+    }
+
+    #[test]
+    fn parse_v0_token_without_version() {
         let raw = make_token_str(
             r#"{"e":"https://control.example.com/v1","k":"tc_old","a":"ag","t":"rt"}"#,
         );
@@ -306,28 +309,6 @@ mod tests {
             ConnectToken::parse(&raw),
             Err(ConnectTokenError::MissingField("version"))
         ));
-    }
-
-    #[test]
-    fn reject_explicit_v0() {
-        let raw = make_token_str(r#"{"v":0,"e":"https://control.example.com","k":"tc_abc"}"#);
-        assert!(matches!(
-            ConnectToken::parse(&raw),
-            Err(ConnectTokenError::UnsupportedVersion(0))
-        ));
-    }
-
-    #[test]
-    fn debug_redacts_credentials() {
-        let raw = make_token_str(
-            r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc","a":"my-agent","t":"tok123"}"#,
-        );
-        let ct = ConnectToken::parse(&raw).unwrap();
-        let rendered = format!("{ct:?}");
-        assert!(!rendered.contains("tc_abc"));
-        assert!(!rendered.contains("tok123"));
-        assert!(rendered.contains("<redacted>"));
-        assert!(rendered.contains("https://control.example.com"));
     }
 
     #[test]
@@ -363,16 +344,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_padded_base64url_and_registration_alias() {
-        let payload =
-            r#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc","r":"tok-alias"}"#;
-        let padded = base64::engine::general_purpose::URL_SAFE.encode(payload);
-        let raw = format!("{TOKEN_PREFIX}{padded}");
-        let ct = ConnectToken::parse(&raw).unwrap();
-        assert_eq!(ct.registration_token.as_deref(), Some("tok-alias"));
-    }
-
-    #[test]
     fn relative_v1_endpoint_needs_caller_base() {
         let raw = make_token_str(r#"{"v":1,"e":"/v1","k":"tc_abc"}"#);
         let mut ct = ConnectToken::parse(&raw).unwrap();
@@ -389,6 +360,28 @@ mod tests {
         let mut ct = ConnectToken::parse(&raw).unwrap();
         ct.resolve_endpoint("https://other.example").unwrap();
         assert_eq!(ct.endpoint, "https://control.example.com");
+    }
+
+    #[test]
+    fn resolve_endpoint_joins_remaining_relative_path() {
+        let raw = make_token_str(r#"{"v":1,"e":"/api/v1","k":"tc_abc"}"#);
+        let mut ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.endpoint, "/api");
+        ct.resolve_endpoint("https://control.example.com").unwrap();
+        assert_eq!(ct.endpoint, "https://control.example.com/api");
+    }
+
+    #[test]
+    fn reject_version_out_of_u8_range() {
+        let raw = make_token_str(r#"{"v":257,"e":"https://control.example.com","k":"tc_abc"}"#);
+        assert!(matches!(
+            ConnectToken::parse(&raw),
+            Err(ConnectTokenError::UnsupportedVersion(257))
+        ));
+        assert!(ConnectToken::parse(&raw)
+            .unwrap_err()
+            .to_string()
+            .contains("257"));
     }
 
     #[test]

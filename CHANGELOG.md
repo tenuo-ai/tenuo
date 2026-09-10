@@ -25,14 +25,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Shared holder-lifecycle vectors.** Rust, Python, and TypeScript load
   `tests/vectors/holder-lifecycle.json` for connect-token parse, identity
   derivation, and receipt outbox flags.
+- **TypeScript holder Runtime.** `createTenuo.runtime({ identity, trustedRoots,
+  revocationList?, receipts })` owns identity, roots, SRL refresh
+  (`applyRevocationList`), and `sessionFromWire`. `receipts: "collect"` retains
+  tool, `present()`, MCP attach, and verify/handler receipts until
+  `acknowledgeReceipts()`. `drainReceipts()` is a snapshot of the same buffer.
+  No network and no hosted defaults.
+- **TypeScript connect-token parse.** `createTenuo.parseConnectToken` accepts
+  a complete `tenuo_ct_…` token (padded or unpadded Base64URL, version 1).
+  Relative endpoints resolve only with `token.resolveEndpoint({ localBase })`.
+  Rust and WASM parsers now share prefix, padding, `/v1` strip, and the `r` /
+  `registration_token` aliases.
+- **TypeScript holder identity.** `createTenuo.generateIdentity()` and
+  `createTenuo.identity(holderKey)` redact the secret from JSON, inspect, and
+  `toString`. No filesystem API in core.
 
 ### Changed
 
-- **Connect token version is required.** `ConnectToken.parse` rejects a
-  missing `v`, `v=0`, and any version other than 1. Tokens issued without
-  `v` fail at parse after upgrade. This is a breaking change from 0.2.5.
-- **`drain_receipts` is a snapshot.** It matches `peek_receipts`. Only
-  `acknowledge_receipts` removes items.
+- **Connect token version is required.** Omitted `v`, `v=0`, and future
+  versions are rejected. Tokens issued without `v` fail at parse after
+  upgrade. This is a breaking change from 0.2.5.
+- **Drain is a snapshot.** `drain_receipts` / `drainReceipts()` match peek.
+  Only acknowledge removes items. A second drain is not empty.
 - **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
   (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
   messages are unchanged. Code that catches `TenuoError` or switches on `code`
@@ -40,10 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`DeferredEmitter` delivery contract.** `deliver()` now returns success
-  or failure. The worker retries the same signed artifact after a sink
-  error and does not mark the queue item complete on failure, so
-  `flush_receipts()` cannot report success after a lost receipt.
+- **`DeferredEmitter` delivery contract.** A full queue no longer blocks
+  the request thread. Failed sink delivery is logged and the signed
+  artifact is re-queued once; it is not retried in a tight loop.
 - **Python Runtime multi-hop sessions.** `session_scope` and `Session`
   install the decoded parent chain on `chain_scope`, so a root →
   intermediate → holder stack authorizes instead of failing as
@@ -55,6 +68,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and fsynced to a unique `0600` temp file, then the destination is
   claimed atomically. A concurrent loser loads the winner. Destination
   is never visible half-written.
+
+## [0.2.6] - 2026-09-08
+
+### Added
+
+- **Holder `Runtime` and `Session` (`sdk`).** Persist an Ed25519 identity,
+  configure trust / TTL fallback / receipt policy once, and bind each
+  warrant into a session. `drain_receipts` / `peek_receipts` are the same
+  snapshot; only `acknowledge_receipts` removes items. Sessions created
+  before the first SRL keep the TTL fallback until a list is applied, then
+  enforce that list on the next check. `SignedRevocationList::{from_base64,
+  to_base64}` is the decode API. `ConnectToken::resolve_endpoint` accepts a
+  caller-provided base for relative `/v1` tokens.
+
+### Changed
+
+- **Connect token version is required.** `ConnectToken::parse` rejects a
+  missing `v`, `v=0`, and any version other than 1. Tokens issued without
+  `v` fail at parse after upgrade. This is a breaking change from 0.2.5.
 
 ## [0.2.5] - 2026-09-06
 

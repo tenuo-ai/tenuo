@@ -107,6 +107,35 @@ impl MemoryReceiptSink {
     pub fn stored(&self) -> Vec<Receipt> {
         self.stored.lock().map(|g| g.clone()).unwrap_or_default()
     }
+
+    /// Unacknowledged receipts. Same as [`Self::stored`] after prefix drops.
+    pub fn pending(&self) -> Vec<Receipt> {
+        self.stored()
+    }
+
+    /// Receipts at and after `cursor` without removing them.
+    pub fn peek_from(&self, cursor: usize) -> Vec<Receipt> {
+        let stored = self.stored();
+        if cursor >= stored.len() {
+            return Vec::new();
+        }
+        stored[cursor..].to_vec()
+    }
+
+    /// Snapshot from `cursor`. Does not remove anything.
+    pub fn drain_from(&self, cursor: &mut usize) -> Vec<Receipt> {
+        self.peek_from(*cursor)
+    }
+
+    /// Remove the first `count` stored receipts.
+    pub fn drop_prefix(&self, count: usize) -> usize {
+        let Ok(mut stored) = self.stored.lock() else {
+            return 0;
+        };
+        let n = count.min(stored.len());
+        stored.drain(..n);
+        n
+    }
 }
 
 impl ReceiptSink for MemoryReceiptSink {
@@ -210,6 +239,10 @@ mod tests {
         let reference = sink.persist(&receipt).unwrap();
         assert!(reference.id.starts_with("mem:"));
         assert_eq!(sink.stored().len(), 1);
+        assert_eq!(sink.drain_from(&mut 0).len(), 1);
+        assert_eq!(sink.drain_from(&mut 0).len(), 1);
+        assert_eq!(sink.drop_prefix(1), 1);
+        assert!(sink.pending().is_empty());
     }
 
     #[test]

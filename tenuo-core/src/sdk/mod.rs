@@ -5,6 +5,10 @@
 //!
 //! `ObservingGuard` is an assessment window, not enforcement. Receipts, async,
 //! and OpenTelemetry are separate default-off features.
+//!
+//! [`Runtime`] is the long-lived holder surface: persist identity, apply SRLs,
+//! and bind warrants into [`Session`]s. [`Tenuo::local`] remains the one-shot
+//! constructor.
 
 mod approvals;
 mod authority;
@@ -14,10 +18,12 @@ mod decision;
 mod delegation;
 mod diagnostics;
 mod guard;
+mod identity;
 #[macro_use]
 mod macros;
 mod observe;
 pub mod prelude;
+mod runtime;
 mod signer;
 mod tenuo;
 
@@ -52,11 +58,13 @@ pub use guard::{
     AuthorizationAttempt, AuthorizedCall, Guard, GuardBuildError, GuardBuilder, Guarded,
     RevocationMode,
 };
+pub use identity::{IdentityError, PersistentIdentity};
 pub use observe::{
     ArgumentShape, ArgumentShapePolicy, ObservationRecord, ObservationVerdict, ObserveBuildError,
     ObserveError, Observed, ObservedOutcome, ObservingGuard, ObservingGuardBuilder,
     PresentedRequest, ValueClass,
 };
+pub use runtime::{Runtime, RuntimeBuilder, RuntimeError, Session, SessionWarrant};
 pub use signer::{
     DelegationSigningRequest, HolderSigner, LocalSigner, PopSigningRequest, SignerError,
 };

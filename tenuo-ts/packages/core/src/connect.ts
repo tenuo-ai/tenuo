@@ -2,6 +2,11 @@ import { TenuoConfigurationError } from "./errors.ts";
 
 const TOKEN_PREFIX = "tenuo_ct_";
 const MAX_SUPPORTED_VERSION = 1;
+const inspect = Symbol.for("nodejs.util.inspect.custom");
+const credentials = new WeakMap<
+  ConnectToken,
+  { readonly apiKey: string; readonly registrationToken?: string }
+>();
 
 export type ResolveEndpointOptions = {
   /**
@@ -18,9 +23,7 @@ export type ResolveEndpointOptions = {
 export class ConnectToken {
   readonly version: number;
   endpoint: string;
-  readonly apiKey: string;
   readonly agentId?: string;
-  readonly registrationToken?: string;
 
   constructor(fields: {
     readonly version: number;
@@ -31,13 +34,27 @@ export class ConnectToken {
   }) {
     this.version = fields.version;
     this.endpoint = fields.endpoint;
-    this.apiKey = fields.apiKey;
     if (fields.agentId !== undefined) {
       this.agentId = fields.agentId;
     }
-    if (fields.registrationToken !== undefined) {
-      this.registrationToken = fields.registrationToken;
+    credentials.set(this, {
+      apiKey: fields.apiKey,
+      ...(fields.registrationToken !== undefined
+        ? { registrationToken: fields.registrationToken }
+        : {}),
+    });
+  }
+
+  get apiKey(): string {
+    const stored = credentials.get(this);
+    if (stored === undefined) {
+      throw new TenuoConfigurationError("connect token is not bound");
     }
+    return stored.apiKey;
+  }
+
+  get registrationToken(): string | undefined {
+    return credentials.get(this)?.registrationToken;
   }
 
   /** True when parse left a path-only or empty origin. */
@@ -47,30 +64,55 @@ export class ConnectToken {
 
   /**
    * Resolve a relative endpoint against `localBase`. Absolute endpoints,
-   * including scheme-less hostnames, are left unchanged.
+   * including scheme-less hostnames and loopback hosts, are left unchanged.
+   * Does not invent `https://` or a localhost default.
    */
   resolveEndpoint(options: ResolveEndpointOptions = {}): this {
     if (!this.needsEndpointBase) {
       return this;
     }
-    const origin = stripApiSuffix(options.localBase ?? "");
+    const origin = normalizeOrigin(options.localBase ?? "");
     if (origin.length === 0 || origin.startsWith("/")) {
       throw new TenuoConfigurationError(
-        "Connect token endpoint is relative. Pass resolveEndpoint({ localBase }) with an absolute origin.",
+        "Connect token endpoint is relative. Pass resolveEndpoint({ localBase }) with an origin such as https://control.example.com.",
       );
     }
-    this.endpoint = origin;
+    const remainder = this.endpoint;
+    this.endpoint =
+      remainder.length === 0 || remainder === "/"
+        ? origin
+        : `${origin.replace(/\/$/, "")}${remainder.startsWith("/") ? remainder : `/${remainder}`}`;
     return this;
+  }
+
+  /** Credential-safe JSON view. API and registration secrets are never serialized. */
+  toJSON(): {
+    readonly version: number;
+    readonly endpoint: string;
+    readonly agentId?: string;
+  } {
+    return {
+      version: this.version,
+      endpoint: this.endpoint,
+      ...(this.agentId !== undefined ? { agentId: this.agentId } : {}),
+    };
+  }
+
+  toString(): string {
+    return `TenuoConnectToken(${this.endpoint || "relative endpoint"})`;
+  }
+
+  [inspect](): ReturnType<ConnectToken["toJSON"]> {
+    return this.toJSON();
   }
 }
 
 /**
  * Parse a complete `tenuo_ct_<base64url-json>` token.
  *
- * Accepts padded and unpadded Base64URL. Version must be explicitly 1.
- * Missing, `v=0`, and future versions are errors. Registration-token
- * aliases: `t`, `r`, `registration_token`. Does not read environment
- * variables.
+ * Accepts padded and unpadded Base64URL. Version must be 1; omitted `v`
+ * is an error. Registration-token aliases: `t`, `r`, `registration_token`.
+ * Does not read environment variables.
  */
 export function parseConnectToken(rawToken: string): ConnectToken {
   if (typeof rawToken !== "string" || rawToken.trim().length === 0) {
@@ -107,11 +149,17 @@ export function parseConnectToken(rawToken: string): ConnectToken {
 
   const version = readVersion(payload.v);
   const endpointRaw = readRequiredString(payload.e, "endpoint");
-  const apiKey = readRequiredString(payload.k, "api_key");
+  const apiKey = readRequiredString(payload.k, "apiKey");
   const agentId = readOptionalString(payload.a);
-  const registrationToken = readOptionalString(
-    payload.t ?? payload.r ?? payload.registration_token,
+  const registrationAliases = [payload.t, payload.r, payload.registration_token].filter(
+    (value) => typeof value === "string" && value.length > 0,
   );
+  if (registrationAliases.length > 1) {
+    throw new TenuoConfigurationError(
+      "Connect token has more than one registration-token field. Use only t.",
+    );
+  }
+  const registrationToken = readOptionalString(registrationAliases[0]);
 
   return new ConnectToken({
     version,
@@ -125,7 +173,7 @@ export function parseConnectToken(rawToken: string): ConnectToken {
 function readVersion(value: unknown): number {
   if (value === undefined || value === null) {
     throw new TenuoConfigurationError(
-      "required field 'version' is missing or empty. This SDK supports version 1.",
+      "Connect token version is required. This SDK supports version 1.",
     );
   }
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
@@ -135,7 +183,7 @@ function readVersion(value: unknown): number {
   }
   if (value !== MAX_SUPPORTED_VERSION) {
     throw new TenuoConfigurationError(
-      `connect token version ${value} is not supported by this SDK (max: ${MAX_SUPPORTED_VERSION}).`,
+      `Connect token version ${value} is not supported by this SDK (max: ${MAX_SUPPORTED_VERSION}). Upgrade @tenuo/core to use this token.`,
     );
   }
   return value;
@@ -144,7 +192,7 @@ function readVersion(value: unknown): number {
 function readRequiredString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new TenuoConfigurationError(
-      `required field '${field}' is missing or empty.`,
+      `Connect token is missing required field '${field}'. Generate a new token.`,
     );
   }
   return value;
@@ -170,6 +218,10 @@ export function stripApiSuffix(endpoint: string): string {
     }
   }
   return origin;
+}
+
+function normalizeOrigin(base: string): string {
+  return stripApiSuffix(base);
 }
 
 function decodeBase64Url(encoded: string): Uint8Array {
