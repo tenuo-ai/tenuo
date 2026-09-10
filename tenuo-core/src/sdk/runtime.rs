@@ -233,17 +233,38 @@ impl Session {
         self.enforcer.check(&self.authority, call)
     }
 
-    /// Receipts produced since the last drain. Empty on a second call with no
-    /// new decisions. Persistence beyond this process is the caller's concern.
+    /// Snapshot of pending receipts. They are removed only by
+    /// [`acknowledge_receipts`].
     #[cfg(feature = "receipts")]
     pub fn drain_receipts(&self) -> Vec<Receipt> {
+        self.peek_receipts()
+    }
+
+    /// Snapshot of pending receipts. Same as [`drain_receipts`].
+    #[cfg(feature = "receipts")]
+    pub fn peek_receipts(&self) -> Vec<Receipt> {
         let Some(sink) = self.receipts.as_ref() else {
             return Vec::new();
         };
-        let Ok(mut cursor) = self.drained.lock() else {
+        let Ok(cursor) = self.drained.lock() else {
             return Vec::new();
         };
-        sink.drain_from(&mut cursor)
+        sink.peek_from(*cursor)
+    }
+
+    /// Remove the first `count` pending receipts.
+    #[cfg(feature = "receipts")]
+    pub fn acknowledge_receipts(&self, count: usize) -> usize {
+        let Some(sink) = self.receipts.as_ref() else {
+            return 0;
+        };
+        let Ok(mut cursor) = self.drained.lock() else {
+            return 0;
+        };
+        let available = sink.stored().len().saturating_sub(*cursor);
+        let n = count.min(available);
+        *cursor += n;
+        n
     }
 }
 
@@ -566,9 +587,12 @@ mod tests {
         session.check(&call).unwrap();
         let first = session.drain_receipts();
         assert_eq!(first.len(), 2);
+        assert_eq!(session.drain_receipts().len(), 2);
+        assert_eq!(session.acknowledge_receipts(2), 2);
         assert!(session.drain_receipts().is_empty());
         session.check(&call).unwrap();
         assert_eq!(session.drain_receipts().len(), 1);
+        assert_eq!(session.acknowledge_receipts(1), 1);
         assert!(session.drain_receipts().is_empty());
     }
 

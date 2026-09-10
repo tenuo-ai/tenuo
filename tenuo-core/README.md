@@ -87,6 +87,7 @@ let session = runtime.session_from_warrant(warrant)?;
 let result = session.guard(&call, |_| perform_call())?;
 for receipt in session.drain_receipts() {
     upload(receipt)?;
+    session.acknowledge_receipts(1);
 }
 ```
 

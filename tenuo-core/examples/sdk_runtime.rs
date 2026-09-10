@@ -46,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let receipts = session.drain_receipts();
     assert_eq!(receipts.len(), 1);
+    assert_eq!(session.acknowledge_receipts(1), 1);
     assert!(session.drain_receipts().is_empty());
 
     println!(

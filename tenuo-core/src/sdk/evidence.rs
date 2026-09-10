@@ -108,17 +108,21 @@ impl MemoryReceiptSink {
         self.stored.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
-    /// Receipts at and after `cursor`, then advance `cursor` to the current length.
-    ///
-    /// A second call with the same cursor returns nothing until a new receipt
-    /// is persisted.
-    pub fn drain_from(&self, cursor: &mut usize) -> Vec<Receipt> {
+    /// Receipts at and after `cursor` without advancing it.
+    pub fn peek_from(&self, cursor: usize) -> Vec<Receipt> {
         let stored = self.stored();
-        if *cursor >= stored.len() {
+        if cursor >= stored.len() {
             return Vec::new();
         }
-        let out = stored[*cursor..].to_vec();
-        *cursor = stored.len();
+        stored[cursor..].to_vec()
+    }
+
+    /// Receipts at and after `cursor`, then advance `cursor` to the current length.
+    pub fn drain_from(&self, cursor: &mut usize) -> Vec<Receipt> {
+        let out = self.peek_from(*cursor);
+        if !out.is_empty() {
+            *cursor = self.stored().len();
+        }
         out
     }
 }
