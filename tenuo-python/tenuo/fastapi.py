@@ -413,7 +413,9 @@ class TenuoGuard:
                 approvals=approvals,
             )
             from tenuo.receipts import collect_enforcement_receipt
-            collect_enforcement_receipt(result, getattr(result, "chain_result", None))
+            collect_enforcement_receipt(
+                result, getattr(result, "chain_result", None), runtime=runtime
+            )
             return result
 
     def __call__(

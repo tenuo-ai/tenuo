@@ -243,19 +243,24 @@ def deliver(
 def collect_enforcement_receipt(
     result: object,
     chain_result: Optional[object] = None,
+    runtime: Optional[object] = None,
 ) -> None:
     """Sign and enqueue a receipt when a Runtime with ``receipts='collect'`` is active.
 
     Safe to call more than once for the same result: a second call is a no-op.
     Structural refusals (no presented chain) produce no receipt.
+
+    ``runtime`` is the adapter's constructor Runtime when one was passed.
+    Otherwise the process-default or ``session_scope`` Runtime is used.
     """
     if result is None or getattr(result, "_tenuo_runtime_receipt", False):
         return
-    try:
-        from .runtime import get_runtime
-    except Exception:  # pragma: no cover
-        return
-    runtime = get_runtime()
+    if runtime is None:
+        try:
+            from .runtime import get_runtime
+        except Exception:  # pragma: no cover
+            return
+        runtime = get_runtime()
     if runtime is None:
         return
     runtime.collect_result(result, chain_result)

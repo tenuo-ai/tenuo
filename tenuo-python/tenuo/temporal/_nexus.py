@@ -1425,7 +1425,9 @@ def _emit_nexus_control_plane_event(
                 verified_pop=verified_pop,
                 pop_auth_args=args,
             )
-            collect_enforcement_receipt(result, chain_result)
+            collect_enforcement_receipt(
+                result, chain_result, runtime=getattr(config, "runtime", None)
+            )
             if control_plane:
                 control_plane.emit_for_enforcement(
                     result,
@@ -1445,7 +1447,9 @@ def _emit_nexus_control_plane_event(
             presented_chain=presented_chain,
             verified_pop=verified_pop,
         )
-        collect_enforcement_receipt(result)
+        collect_enforcement_receipt(
+            result, runtime=getattr(config, "runtime", None)
+        )
         if control_plane:
             warrant_stack_b64 = _encode_nexus_warrant_stack_for_denial(warrant, chain)
             control_plane.emit_for_enforcement(

@@ -195,10 +195,10 @@ def test_temporal_nexus_collects_allow_and_deny():
         trusted_roots=[root_key.public_key],
         receipts="collect",
     )
-    session = runtime.session_from_wire(warrant)
     config = TenuoPluginConfig(
         key_resolver=StaticResolver(agent_key),
         trusted_roots=[root_key.public_key],
+        runtime=runtime,
     )
     allow_input = RefundInput("ord_123", 2500)
     from types import SimpleNamespace
@@ -217,25 +217,24 @@ def test_temporal_nexus_collects_allow_and_deny():
             input=allow_input,
         ),
     )
-    with runtime.session_scope(session):
-        verify_nexus_operation(ctx, allow_input, config, endpoint="billing-prod")
-        bad = RefundInput("ord_999", 2500)
-        deny_ctx = SimpleNamespace(
-            request_id="req-runtime-nexus-deny",
+    verify_nexus_operation(ctx, allow_input, config, endpoint="billing-prod")
+    bad = RefundInput("ord_999", 2500)
+    deny_ctx = SimpleNamespace(
+        request_id="req-runtime-nexus-deny",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
             service="BillingService",
             operation="refund",
-            headers=tenuo_nexus_headers(
-                warrant,
-                "agent-key",
-                agent_key,
-                endpoint="billing-prod",
-                service="BillingService",
-                operation="refund",
-                input=bad,
-            ),
-        )
-        with pytest.raises(ConstraintViolation):
-            verify_nexus_operation(deny_ctx, bad, config, endpoint="billing-prod")
+            input=bad,
+        ),
+    )
+    with pytest.raises(ConstraintViolation):
+        verify_nexus_operation(deny_ctx, bad, config, endpoint="billing-prod")
 
     receipts = runtime.peek_receipts()
     assert len(receipts) == 2
@@ -244,6 +243,41 @@ def test_temporal_nexus_collects_allow_and_deny():
     assert tenuo_core.verify_receipt(receipts[0]).action == nexus_tool_name(
         "billing-prod", "refund", service="BillingService"
     )
+
+
+def test_mcp_constructor_runtime_collects_without_install():
+    pytest.importorskip("tenuo.mcp")
+    root = SigningKey.generate()
+    holder = HolderIdentity.generate()
+    warrant = Warrant.issue(
+        root,
+        capabilities={"read_file": {"path": Pattern("/data/*")}},
+        holder=holder.public_key,
+    )
+    Runtime.uninstall()
+    runtime = _runtime_for(root, holder)
+    verifier = MCPVerifier(runtime=runtime)
+    from tests.adapters.test_mcp_server import _make_arguments
+
+    args, meta = _make_arguments(
+        warrant, holder.signing_key, "read_file", {"path": "/data/a.txt"}
+    )
+    allowed = verifier.verify("read_file", args, meta=meta)
+    denied = verifier.verify(
+        "read_file",
+        {"path": "/etc/passwd"},
+        meta=_make_arguments(
+            warrant, holder.signing_key, "read_file", {"path": "/etc/passwd"}
+        )[1],
+    )
+    assert allowed.allowed
+    assert not denied.allowed
+    receipts = runtime.peek_receipts()
+    assert len(receipts) == 2
+    import tenuo_core
+
+    assert tenuo_core.verify_receipt(receipts[0]).outcome == "allow"
+    assert tenuo_core.verify_receipt(receipts[1]).outcome == "deny"
 
 
 def test_mcp_process_install_collects_without_session_scope():

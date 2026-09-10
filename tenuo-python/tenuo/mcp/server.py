@@ -543,7 +543,9 @@ class MCPVerifier:
             try:
                 from tenuo.receipts import collect_enforcement_receipt
 
-                collect_enforcement_receipt(result, chain_result)
+                collect_enforcement_receipt(
+                    result, chain_result, runtime=self._runtime
+                )
             except Exception:
                 logger.warning("runtime receipt collection failed for '%s'", result.tool, exc_info=True)
             if self._control_plane:

@@ -1458,7 +1458,9 @@ class TenuoActivityInboundInterceptor:
         try:
             from tenuo.receipts import collect_enforcement_receipt
 
-            collect_enforcement_receipt(res, chain_result)
+            collect_enforcement_receipt(
+                res, chain_result, runtime=getattr(self._config, "runtime", None)
+            )
         except Exception:
             logger.warning("runtime receipt collection failed for '%s'", tool, exc_info=True)
         if self._config.control_plane:
@@ -1607,7 +1609,9 @@ class TenuoActivityInboundInterceptor:
         try:
             from tenuo.receipts import collect_enforcement_receipt
 
-            collect_enforcement_receipt(res)
+            collect_enforcement_receipt(
+                res, runtime=getattr(self._config, "runtime", None)
+            )
         except Exception:
             logger.warning("runtime receipt collection failed for '%s'", tool, exc_info=True)
         if self._config.control_plane:

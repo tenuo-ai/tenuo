@@ -1223,7 +1223,9 @@ class A2AServer:
                     )
                     from tenuo.receipts import collect_enforcement_receipt
                     collect_enforcement_receipt(
-                        enforcement, getattr(enforcement, "chain_result", None)
+                        enforcement,
+                        getattr(enforcement, "chain_result", None),
+                        runtime=runtime,
                     )
                 if enforcement.allowed:
                     logger.debug(f"PoP verified for skill '{skill_id}'")
