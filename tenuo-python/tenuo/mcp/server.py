@@ -113,6 +113,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .._pop_canonicalize import strip_none_values
+from ..approval import ApprovalRequired
 from ..exceptions import (
     ApprovalExpired,
     ApprovalGateTriggered,
@@ -478,9 +479,8 @@ class MCPVerifier:
         if authorizer is None:
             from tenuo.runtime import get_runtime
             src = runtime or get_runtime()
-            if src is None:
-                raise TypeError("MCPVerifier requires authorizer= or a Runtime")
-            authorizer = src.authorizer()
+            if src is not None:
+                authorizer = src.authorizer()
         self._authorizer = authorizer
         self._config = config
         self._require_warrant = require_warrant
@@ -862,6 +862,26 @@ class MCPVerifier:
                 warrant_id=warrant_id,
                 request_hash=gate_exc.request_hash or None,
                 denial_reason=gate_exc.message,
+                jsonrpc_error_code=-32002,
+            )
+        except ApprovalRequired as req_exc:
+            req = req_exc.request
+            logger.info(
+                "Approval required for '%s' (warrant=%s) — approvals required",
+                tool_name,
+                warrant_id,
+            )
+            request_hash = getattr(req, "request_hash", None)
+            if hasattr(request_hash, "hex"):
+                request_hash = request_hash.hex()
+            result = MCPVerificationResult(
+                allowed=False,
+                tool=tool_name,
+                clean_arguments=clean_arguments,
+                constraints=constraints,
+                warrant_id=warrant_id,
+                request_hash=request_hash or None,
+                denial_reason=req.message or str(req_exc),
                 jsonrpc_error_code=-32002,
             )
         except InsufficientApprovals as insuf_exc:

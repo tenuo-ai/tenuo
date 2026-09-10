@@ -372,34 +372,32 @@ class TenuoGuard:
 
         runtime = _config.get("runtime") or get_runtime()
 
-        # Resolve trusted issuer keys with a two-level priority:
-        #   1. FastAPI-local config from configure_tenuo(app, trusted_issuers=[...])
-        #   2. Global config from tenuo.configure(trusted_roots=[...])
-        # If neither is set, fail-closed — reject the request.
-        if runtime is not None:
+        # Resolve trusted issuer keys:
+        #   1. FastAPI-local configure_tenuo(..., trusted_issuers=[...])
+        #   2. Runtime.authorizer() when a Runtime is bound
+        #   3. tenuo.configure(trusted_roots=[...])
+        # If none are set, fail-closed.
+        trusted_issuers = _config.get("trusted_issuers") or []
+        if trusted_issuers:
+            authorizer = _Authorizer(trusted_roots=list(trusted_issuers))
+        elif runtime is not None:
             authorizer = runtime.authorizer()
         else:
-            trusted_issuers = _config.get("trusted_issuers") or []
-            if trusted_issuers:
-                roots = list(trusted_issuers)
+            from tenuo.config import resolve_trusted_roots as _resolve_roots
+            _global_roots = _resolve_roots(None)
+            if _global_roots:
+                authorizer = _Authorizer(trusted_roots=list(_global_roots))
             else:
-                from tenuo.config import resolve_trusted_roots as _resolve_roots
-                _global_roots = _resolve_roots(None)
-                if _global_roots:
-                    roots = list(_global_roots)
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail={
-                            "error": "configuration_error",
-                            "message": (
-                                "No trusted_issuers configured. "
-                                "Call configure_tenuo(app, trusted_issuers=[issuer_key.public_key]) at startup."
-                            ),
-                        },
-                    )
-
-            authorizer = _Authorizer(trusted_roots=roots)
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "error": "configuration_error",
+                        "message": (
+                            "No trusted_issuers configured. "
+                            "Call configure_tenuo(app, trusted_issuers=[issuer_key.public_key]) at startup."
+                        ),
+                    },
+                )
 
         with bind_runtime(runtime):
             result = verify_inbound_call(
@@ -578,6 +576,20 @@ class TenuoGuard:
                         "message": reason,
                         "got": meta.get("got", 0),
                         "need": meta.get("need", 0),
+                        "request_id": request_id,
+                    },
+                )
+
+            if enforcement.error_type == "approval_required":
+                meta = enforcement.approval_metadata or {}
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "approval_required",
+                        "message": reason,
+                        "tool": self.tool,
+                        "request_hash": meta.get("request_hash", ""),
+                        "min_approvals": meta.get("min_approvals", 1),
                         "request_id": request_id,
                     },
                 )

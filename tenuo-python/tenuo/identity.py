@@ -86,7 +86,11 @@ class HolderIdentity:
         contents = dest.read_text(encoding="ascii")
         identity = cls._from_hex_file(dest, contents)
         identity._path = dest
-        _set_owner_only(dest)
+        try:
+            _set_owner_only(dest)
+        except OSError as exc:
+            if exc.errno not in (errno.EPERM, errno.EACCES):
+                raise
         return identity
 
     @staticmethod

@@ -66,6 +66,7 @@ from .exceptions import (
     ToolNotAuthorized,
     UntrustedRoot,
 )
+from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
 from .schemas import TOOL_SCHEMAS, ToolSchema
 
 logger = logging.getLogger("tenuo.enforcement")
@@ -1011,7 +1012,7 @@ def _enforce_tool_call_impl(
         from ._pop_canonicalize import strip_none_values as _strip_none_values
 
         _warrant_obj = bound_warrant.warrant
-        _gate_approvals: Optional[List[Any]] = None
+        _gate_approvals: Optional[List[Any]] = list(approvals or [])
         _raw_pop_args = pop_args if pop_args is not None else tool_args
         _raw_constraint_args = (
             constraint_args if constraint_args is not None else tool_args
@@ -1021,11 +1022,7 @@ def _enforce_tool_call_impl(
         _pop_auth_args = _strip_none_values(_raw_pop_args)
         _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
-        if verify_mode == "verify":
-            # Inbound adapters already decoded approvals. Let Authorizer
-            # evaluate gates so hash and error types stay on one path.
-            _gate_approvals = list(approvals or [])
-        elif _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
+        if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
             _gate_approvers = _warrant_obj.required_approvers()
             _gate_threshold = _warrant_obj.approval_threshold()
 
@@ -1211,9 +1208,27 @@ def _enforce_tool_call_impl(
                     or constraint_args is not None
                     or _pop_auth_args != _constraint_auth_args
                 )
-                if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
-                    _chain_result = authorizer.check_chain_with_pop_args(
-                        full_chain,
+                if warrant_chain:
+                    if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
+                        _chain_result = authorizer.check_chain_with_pop_args(
+                            full_chain,
+                            tool_name,
+                            _pop_auth_args,
+                            _constraint_auth_args,
+                            signature=precomputed_signature,
+                            approvals=_gate_approvals or [],
+                        )
+                    else:
+                        _chain_result = authorizer.check_chain(
+                            full_chain,
+                            tool_name,
+                            _constraint_auth_args,
+                            signature=precomputed_signature,
+                            approvals=_gate_approvals or [],
+                        )
+                elif use_split_view and hasattr(authorizer, "authorize_one_with_pop_args"):
+                    _chain_result = authorizer.authorize_one_with_pop_args(
+                        bound_warrant.warrant,
                         tool_name,
                         _pop_auth_args,
                         _constraint_auth_args,
@@ -1221,8 +1236,8 @@ def _enforce_tool_call_impl(
                         approvals=_gate_approvals or [],
                     )
                 else:
-                    _chain_result = authorizer.check_chain(
-                        full_chain,
+                    _chain_result = authorizer.authorize_one(
+                        bound_warrant.warrant,
                         tool_name,
                         _constraint_auth_args,
                         signature=precomputed_signature,
@@ -1281,7 +1296,9 @@ def _enforce_tool_call_impl(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
-    except (InvalidApproval, ApprovalExpired):
+    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
+        raise
+    except ApprovalRequired:
         raise
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:
         # Known authorization failures - expected behavior
@@ -1326,7 +1343,6 @@ def _enforce_tool_call_impl(
             verified_pop=_pop,
         )
     except Exception as e:
-        from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
         if isinstance(e, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
             raise
 
@@ -1448,7 +1464,7 @@ async def _enforce_tool_call_async_impl(
         from ._pop_canonicalize import strip_none_values as _strip_none_values
 
         _warrant_obj = bound_warrant.warrant
-        _gate_approvals: Optional[List[Any]] = None
+        _gate_approvals: Optional[List[Any]] = list(approvals or [])
         _raw_pop_args = pop_args if pop_args is not None else tool_args
         _raw_constraint_args = (
             constraint_args if constraint_args is not None else tool_args
@@ -1456,9 +1472,7 @@ async def _enforce_tool_call_async_impl(
         _pop_auth_args = _strip_none_values(_raw_pop_args)
         _constraint_auth_args = _strip_none_values(_raw_constraint_args)
 
-        if verify_mode == "verify":
-            _gate_approvals = list(approvals or [])
-        elif _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
+        if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
             _gate_approvers = _warrant_obj.required_approvers()
             _gate_threshold = _warrant_obj.approval_threshold()
 
@@ -1609,9 +1623,27 @@ async def _enforce_tool_call_async_impl(
                     or constraint_args is not None
                     or _pop_auth_args != _constraint_auth_args
                 )
-                if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
-                    _chain_result = authorizer.check_chain_with_pop_args(
-                        full_chain,
+                if warrant_chain:
+                    if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
+                        _chain_result = authorizer.check_chain_with_pop_args(
+                            full_chain,
+                            tool_name,
+                            _pop_auth_args,
+                            _constraint_auth_args,
+                            signature=precomputed_signature,
+                            approvals=_gate_approvals or [],
+                        )
+                    else:
+                        _chain_result = authorizer.check_chain(
+                            full_chain,
+                            tool_name,
+                            _constraint_auth_args,
+                            signature=precomputed_signature,
+                            approvals=_gate_approvals or [],
+                        )
+                elif use_split_view and hasattr(authorizer, "authorize_one_with_pop_args"):
+                    _chain_result = authorizer.authorize_one_with_pop_args(
+                        bound_warrant.warrant,
                         tool_name,
                         _pop_auth_args,
                         _constraint_auth_args,
@@ -1619,8 +1651,8 @@ async def _enforce_tool_call_async_impl(
                         approvals=_gate_approvals or [],
                     )
                 else:
-                    _chain_result = authorizer.check_chain(
-                        full_chain,
+                    _chain_result = authorizer.authorize_one(
+                        bound_warrant.warrant,
                         tool_name,
                         _constraint_auth_args,
                         signature=precomputed_signature,
@@ -1666,7 +1698,9 @@ async def _enforce_tool_call_async_impl(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
-    except (InvalidApproval, ApprovalExpired):
+    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
+        raise
+    except ApprovalRequired:
         raise
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:
         logger.debug(f"Authorization denied for {tool_name}: {e}")
@@ -1699,7 +1733,6 @@ async def _enforce_tool_call_async_impl(
             verified_pop=_pop,
         )
     except Exception as e:
-        from .approval import ApprovalDenied, ApprovalRequired, ApprovalVerificationError
         if isinstance(e, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
             raise
         logger.exception(f"Unexpected error during authorization for {tool_name}")

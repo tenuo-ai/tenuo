@@ -326,10 +326,18 @@ class DeferredEmitter:
         self._worker.start()
 
     def emit_allow(self, chain_result, tool, allowed, ts, request_id, decision_code) -> None:
-        self._q.put(("allow", chain_result, tool, allowed, ts, request_id, decision_code))
+        self._enqueue(("allow", chain_result, tool, allowed, ts, request_id, decision_code))
 
     def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop) -> None:
-        self._q.put(("deny", chain, tool, args, ts, request_id, decision_code, verified_pop))
+        self._enqueue(("deny", chain, tool, args, ts, request_id, decision_code, verified_pop))
+
+    def _enqueue(self, item: Any) -> None:
+        try:
+            self._q.put_nowait(item)
+        except queue.Full:
+            logger.warning(
+                "deferred receipt queue is full; this decision was not queued"
+            )
 
     def qsize(self) -> int:
         return self._q.qsize()
@@ -356,24 +364,14 @@ class DeferredEmitter:
                     wire = inner.issue_denial_receipt(
                         chain, tool, args, ts, request_id, code, pop
                     )
-                delay = 0.01
-                while not deliver(self._sink, wire, self._on_error):
-                    if self._stop.wait(delay):
-                        if deliver(self._sink, wire, self._on_error):
-                            break
-                        # Shutdown requested and the sink still failed: keep
-                        # the signed artifact as an unfinished task so flush
-                        # cannot report success. The worker exits; the host
-                        # must persist or retry from another path.
-                        try:
-                            self._q.put_nowait(("signed", wire))
-                        except queue.Full:
-                            logger.error(
-                                "deferred receipt emitter dropped a signed "
-                                "receipt on close because the queue was full"
-                            )
-                        break
-                    delay = min(delay * 2, 0.5)
+                if not deliver(self._sink, wire, self._on_error):
+                    try:
+                        self._q.put_nowait(("signed", wire))
+                    except queue.Full:
+                        logger.warning(
+                            "deferred receipt sink failed and the queue is full; "
+                            "this signed receipt was not re-queued"
+                        )
             except Exception as exc:  # noqa: BLE001 — one bad item must not kill the worker
                 logger.warning("deferred receipt emission failed", exc_info=exc)
             finally:

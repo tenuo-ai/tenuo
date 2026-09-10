@@ -54,12 +54,19 @@ def bind_runtime(runtime: Optional["Runtime"]) -> Iterator[Optional["Runtime"]]:
 
 
 def apply_runtime_revocation(authorizer: Any) -> None:
-    """Install the current Runtime SRL on ``authorizer`` when one is in scope."""
+    """Install the current Runtime SRL only when the authorizer has none.
+
+    Never overwrites a list the caller already installed — a newer adapter
+    SRL must not be rolled back by a stale Runtime list.
+    """
     runtime = get_runtime()
     if runtime is None:
         return
     srl = runtime.revocation_list
     if srl is None:
+        return
+    installed = getattr(authorizer, "installed_revocation_list", None)
+    if callable(installed) and installed() is not None:
         return
     setter = getattr(authorizer, "set_revocation_list", None)
     if setter is None:
