@@ -274,7 +274,7 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
       { who: "Flight Agent", scope: "Cancún flights, up to $300, flight's share of the wallet", tag: "written", hop: "narrows" },
       { who: "Check-in Agent", scope: "UA214 only: read, check in, hand the boarding pass on", tag: "tutorial", hop: "narrows to the flight it booked" },
       { who: "Boarding Agent", scope: "UA214 only: issue the boarding pass", tag: "you", hop: "narrows" },
-    ], "Each hop can only narrow. The root has to carry everything anyone below will ever need."),
+    ], "The control plane signs the root warrant for Travel Agent. Travel Agent narrows it for Flight Agent, Flight Agent narrows it to reservation UA214 for Check-in Agent, and Check-in Agent narrows it to boarding-pass authority for Boarding Agent. Each holder receives less authority than its parent."),
     steps: [
       { text: "Open the chain. Flight → Check-in is a complete, annotated tutorial: it narrows to one reservation, binds the next holder, and shortens the TTL. Copying its `narrow()` shape is allowed.", cmd: "code exercises/05-tenuo/chain.ts" },
       { text: "Write the one TODO, `checkinToBoarding`. Boarding Agent needs one tool for one reservation, bound to its key, for a short time.", cmd: "npm run lab", expect: [{ cmd: "lab", label: "Before you write the link" }, { cmd: "lab", answer: "answers/05-tenuo/chain.ts", label: "When the link exists" }] },
@@ -386,5 +386,5 @@ export const MISSION_DIAGRAM = fleetDiagram({
   travelers: ["Alice → Cancún, 3 nights, $1,200"],
   wallet: "$1,200",
   sub: { travel: "talks to you", flight: "books the flight", hotel: "books the hotel", activity: "books one activity", checkin: "checks Alice in", boarding: "issues the pass" },
-  caption: "You talk to Travel Agent. The flight side runs three handoffs deep, and that matters later.",
+  caption: "You ask Travel Agent to book Alice's Cancún trip. Travel Agent delegates the flight to Flight Agent, then Check-in Agent, then Boarding Agent; it separately delegates the hotel and activity bookings to Hotel Agent and Activity Agent.",
 });

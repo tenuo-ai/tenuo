@@ -42,36 +42,46 @@ const forCheckin = fleet["flight-agent"].tenuo.narrow(
 <p class="lab-muted">Read more: <a href="https://tenuo.ai/concepts">Concepts</a> · <a href="https://github.com/tenuo-ai/tenuo/tree/main/tenuo-ts">Delegate to another agent (TypeScript guide)</a> · <a href="https://tenuo.ai/explorer/">Open a chain in the explorer</a></p>
 </section>
 
-<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 390" aria-hidden="true" focusable="false" data-caption="Each hop can only narrow. The root has to carry everything anyone below will ever need." xmlns="http://www.w3.org/2000/svg"><rect x="30" y="12" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 390" aria-hidden="true" focusable="false" data-caption="The control plane signs the root warrant for Travel Agent. Travel Agent narrows it for Flight Agent, Flight Agent narrows it to reservation UA214 for Check-in Agent, and Check-in Agent narrows it to boarding-pass authority for Boarding Agent. Each holder receives less authority than its parent." xmlns="http://www.w3.org/2000/svg">
+<rect x="30" y="12" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
 <text x="44" y="41" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text>
 <rect x="560.7603" y="26" width="159.23969999999997" height="18" rx="9" fill="var(--border)"/>
 <text x="640.38015" y="39" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">signed by the control plane</text>
 <text x="220" y="41" font-size="12.5" text-anchor="start" fill="var(--text-muted)">signs the trip permission for Travel Agent</text>
-<path d="M120 58 L120 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="120,91 115.05,82 124.95,82" fill="#6a6a6a"/><text x="129" y="78.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows</text>
+<path d="M120 58 L120 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="120,91 115.05,82 124.95,82" fill="#6a6a6a"/>
+<text x="129" y="78.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows</text>
 <rect x="30" y="92" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
 <text x="44" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text>
 <rect x="622.7544" y="106" width="97.2456" height="18" rx="9" fill="var(--border)"/>
 <text x="671.3772" y="119" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">written for you</text>
 <text x="220" y="121" font-size="12.5" text-anchor="start" fill="var(--text-muted)">Alice → Cancún, up to $1,200, any flight this trip books</text>
-<path d="M120 138 L120 163" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="120,171 115.05,162 124.95,162" fill="#6a6a6a"/><text x="129" y="158.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows</text>
+<path d="M120 138 L120 163" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="120,171 115.05,162 124.95,162" fill="#6a6a6a"/>
+<text x="129" y="158.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows</text>
 <rect x="30" y="172" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
 <text x="44" y="201" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text>
 <rect x="622.7544" y="186" width="97.2456" height="18" rx="9" fill="var(--border)"/>
 <text x="671.3772" y="199" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--text-muted)">written for you</text>
 <text x="220" y="201" font-size="12.5" text-anchor="start" fill="var(--text-muted)">Cancún flights, up to $300, flight's share of the wallet</text>
-<path d="M120 218 L120 243" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="120,251 115.05,242 124.95,242" fill="#6a6a6a"/><text x="129" y="238.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows to the flight it booked</text>
+<path d="M120 218 L120 243" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="120,251 115.05,242 124.95,242" fill="#6a6a6a"/>
+<text x="129" y="238.5" font-size="10.5" text-anchor="start" fill="var(--text-muted)">narrows to the flight it booked</text>
 <rect x="30" y="252" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
 <text x="44" y="281" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text>
 <rect x="664.158" y="266" width="55.842000000000006" height="18" rx="9" fill="var(--accent)"/>
 <text x="692.079" y="279" font-size="10.5" font-weight="600" text-anchor="middle" fill="#0a0a0a">tutorial</text>
 <text x="220" y="281" font-size="12.5" text-anchor="start" fill="var(--text-muted)">UA214 only: read, check in, hand the boarding pass on</text>
-<path d="M120 298 L120 323" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/><polygon points="120,331 115.05,322 124.95,322" fill="var(--accent)"/><text x="129" y="318.5" font-size="10.5" text-anchor="start" fill="var(--accent)">narrows</text>
+<path d="M120 298 L120 323" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/>
+<polygon points="120,331 115.05,322 124.95,322" fill="var(--accent)"/>
+<text x="129" y="318.5" font-size="10.5" text-anchor="start" fill="var(--accent)">narrows</text>
 <rect x="30" y="332" width="700" height="46" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
 <text x="44" y="361" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text>
 <rect x="628.9872" y="346" width="91.0128" height="18" rx="9" fill="var(--accent)"/>
 <text x="674.4936" y="359" font-size="10.5" font-weight="600" text-anchor="middle" fill="#0a0a0a">you write this</text>
-<text x="220" y="361" font-size="12.5" text-anchor="start" fill="var(--text-muted)">UA214 only: issue the boarding pass</text></svg>
-<figcaption>Each hop can only narrow. The root has to carry everything anyone below will ever need.</figcaption></figure>
+<text x="220" y="361" font-size="12.5" text-anchor="start" fill="var(--text-muted)">UA214 only: issue the boarding pass</text>
+</svg>
+<figcaption>The control plane signs the root warrant for Travel Agent. Travel Agent narrows it for Flight Agent, Flight Agent narrows it to reservation UA214 for Check-in Agent, and Check-in Agent narrows it to boarding-pass authority for Boarding Agent. Each holder receives less authority than its parent.</figcaption></figure>
 
 <figure class="lab-code"><figcaption>Tutorial, then your level <span>exercises/05-tenuo/chain.ts</span></figcaption>
 {% highlight ts %}
@@ -136,9 +146,9 @@ Stage 5 of 7: Access that travels with the work   mode=tenuo  scenario=spring-br
   Then look at the escalation attempt from stage 4, where it stopped, and at `central_calls`.
   The two-traveler run happens here too, with no policy file to edit.
 
-WALLET  Alice: $459 of $1200
+WALLET  Alice: spent $741 / $1,200
 ROGUE ATTEMPTS BLOCKED  7 / 7
-STARS   ☆★☆★
+STARS (PROVISIONAL — TRIP INCOMPLETE)   ☆★☆★
   ☆ Trip booked
   ★ Rogue stopped
   ☆ Tight handoff
@@ -189,7 +199,7 @@ THE TRIP
   ✓ trip-alice-cun  hotel: book
   ✓ trip-alice-cun  activity: search
   ✓ trip-alice-cun  activity: book
-  ✓ trip-alice-cun  within budget ($741 of $1200)
+  ✓ trip-alice-cun  within budget (spent $741 / $1,200)
 
   Explorer link saved as explorer-stage-5.url in the lab state directory.
   Run npm run trace -- --open-explorer to open it.
@@ -208,7 +218,7 @@ Stage 5 of 7: Access that travels with the work   mode=tenuo  scenario=spring-br
   Then look at the escalation attempt from stage 4, where it stopped, and at `central_calls`.
   The two-traveler run happens here too, with no policy file to edit.
 
-WALLET  Alice: $459 of $1200
+WALLET  Alice: spent $741 / $1,200
 ROGUE ATTEMPTS BLOCKED  7 / 7
 STARS   ★★★★
   ★ Trip booked
@@ -261,7 +271,7 @@ THE TRIP
   ✓ trip-alice-cun  hotel: book
   ✓ trip-alice-cun  activity: search
   ✓ trip-alice-cun  activity: book
-  ✓ trip-alice-cun  within budget ($741 of $1200)
+  ✓ trip-alice-cun  within budget (spent $741 / $1,200)
 
   Explorer link saved as explorer-stage-5.url in the lab state directory.
   Run npm run trace -- --open-explorer to open it.
@@ -275,7 +285,7 @@ THE TRIP
 Stage 5 of 7: Access that travels with the work   mode=tenuo  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-5
 
-WALLET  Alice: $459 of $1200
+WALLET  Alice: spent $741 / $1,200
 ROGUE ATTEMPTS BLOCKED  7 / 7
 STARS   ★★★★
   ★ Trip booked
@@ -294,7 +304,7 @@ THE TRIP
   ✓ trip-alice-cun  hotel: book
   ✓ trip-alice-cun  activity: search
   ✓ trip-alice-cun  activity: book
-  ✓ trip-alice-cun  within budget ($741 of $1200)
+  ✓ trip-alice-cun  within budget (spent $741 / $1,200)
 
 HANDOFFS
   travel-agent: receive trip authority          control plane ALLOWED
@@ -347,7 +357,7 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
 Stage 5 of 7: Access that travels with the work   mode=tenuo  scenario=two-travelers
   guide: https://tenuo.ai/lab/stage-5
 
-WALLET  Alice: $914 of $1200   Bob: $1102 of $1500
+WALLET  Alice: spent $286 / $1,200   Bob: spent $398 / $1,500
 ROGUE ATTEMPTS BLOCKED  7 / 7
 STARS   ★★★★
   ★ Trip booked
@@ -362,14 +372,14 @@ THE TRIP
   ✓ trip-alice-cun  flight: book UA214
   ✓ trip-alice-cun  check-in: UA214
   ✓ trip-alice-cun  boarding: pass for UA214
-  ✓ trip-alice-cun  within budget ($286 of $1200)
+  ✓ trip-alice-cun  within budget (spent $286 / $1,200)
   ✓ trip-bob-sea    travel: read traveler name
   ✓ trip-bob-sea    travel: calendar event
   ✓ trip-bob-sea    flight: search
   ✓ trip-bob-sea    flight: book DL331
   ✓ trip-bob-sea    check-in: DL331
   ✓ trip-bob-sea    boarding: pass for DL331
-  ✓ trip-bob-sea    within budget ($398 of $1500)
+  ✓ trip-bob-sea    within budget (spent $398 / $1,500)
 
 HANDOFFS
   travel-agent: receive trip authority          control plane ALLOWED

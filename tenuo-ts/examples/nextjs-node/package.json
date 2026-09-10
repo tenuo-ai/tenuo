@@ -1,0 +1,28 @@
+{
+  "name": "@tenuo/example-nextjs-node",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "verify:packed": "node scripts/verify-packed.mjs"
+  },
+  "dependencies": {
+    "@tenuo/core": "0.2.5-beta.0",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "typescript": "5.8.3"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}

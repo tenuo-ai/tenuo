@@ -14,23 +14,51 @@ lab_version: "0.2.0"
 
 <aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This is like creating a separate workload identity for every job and looking it up in a registry, or asking a central authorization service on every call. Both separate Alice's job from Bob's, but the agents depend on that central system being current and available.</p></aside>
 
-<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Two trips through the same six agents. Then Check-in Agent passes the only thing it has, and asks for more." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
-<path d="M97 200 L198 200" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="#6a6a6a"/>
-<path d="M97 284 L198 284" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#6a6a6a"/>
-<path d="M172 116 L198 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,116 197,120.95 197,111.05" fill="#6a6a6a"/>
-<path d="M357 116 L383 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="391,116 382,120.95 382,111.05" fill="#6a6a6a"/>
-<path d="M542 116 L568 116" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/><polygon points="576,116 567,120.95 567,111.05" fill="var(--accent)"/><text x="559" y="155" font-size="10.5" text-anchor="middle" fill="var(--accent)">hands over its credential</text>
-<rect x="22" y="22" width="158" height="26" rx="13" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/><text x="101" y="39" font-size="12" text-anchor="middle" fill="var(--text)">Alice → Cancún, UA214</text>
-<rect x="192" y="22" width="148" height="26" rx="13" fill="var(--surface)" stroke="#ffb000" stroke-width="1.5"/><text x="266" y="39" font-size="12" text-anchor="middle" fill="var(--text)">Bob → Seattle, DL331</text>
-<path d="M101 48 L101 74 L97 74 L97 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round" stroke-dasharray="6 4"/><polygon points="97,91 92.05,82 101.95,82" fill="#6a6a6a"/>
-<rect x="22" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="33" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text>
-<rect x="207" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="218" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text><text x="218" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">two destinations</text>
-<rect x="207" y="176" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="205" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text>
-<rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="289" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text>
-<rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#ff5c5c" stroke-width="2"/><text x="403" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text><text x="403" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">one identity, two jobs</text><rect x="490.32" y="83" width="43.68" height="17" rx="8.5" fill="#ff5c5c"/><text x="512.16" y="95.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">rogue</text>
-<rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="588" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text><text x="588" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">holds too much</text><rect x="659.632" y="83" width="59.36800000000001" height="17" rx="8.5" fill="#ffb000"/><text x="689.3159999999999" y="95.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">too much</text>
-<rect x="392" y="186" width="186" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="403" y="207" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Your policy component</text><text x="403" y="224" font-size="11" text-anchor="start" fill="var(--text-muted)">outside every agent</text>
-<path d="M467 140 L467 177" fill="none" stroke="#ffb000" stroke-width="2" stroke-linejoin="round"/><polygon points="467,185 462.05,176 471.95,176" fill="#ffb000"/><text x="476" y="175.5" font-size="10.5" text-anchor="start" fill="#ffb000">asks for every reservation, plus cancel</text></svg>
+<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Two trips through the same six agents. Then Check-in Agent passes the only thing it has, and asks for more." xmlns="http://www.w3.org/2000/svg">
+<path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
+<path d="M97 200 L198 200" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,200 197,204.95 197,195.05" fill="#6a6a6a"/>
+<path d="M97 284 L198 284" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,284 197,288.95 197,279.05" fill="#6a6a6a"/>
+<path d="M172 116 L198 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,116 197,120.95 197,111.05" fill="#6a6a6a"/>
+<path d="M357 116 L383 116" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="391,116 382,120.95 382,111.05" fill="#6a6a6a"/>
+<path d="M542 116 L568 116" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="576,116 567,120.95 567,111.05" fill="var(--accent)"/>
+<text x="559" y="155" font-size="10.5" text-anchor="middle" fill="var(--accent)">hands over its credential</text>
+<rect x="22" y="22" width="158" height="26" rx="13" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="101" y="39" font-size="12" text-anchor="middle" fill="var(--text)">Alice → Cancún, UA214</text>
+<rect x="192" y="22" width="148" height="26" rx="13" fill="var(--surface)" stroke="#ffb000" stroke-width="1.5"/>
+<text x="266" y="39" font-size="12" text-anchor="middle" fill="var(--text)">Bob → Seattle, DL331</text>
+<path d="M101 48 L101 74 L97 74 L97 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round" stroke-dasharray="6 4"/>
+<polygon points="97,91 92.05,82 101.95,82" fill="#6a6a6a"/>
+<rect x="22" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="33" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text>
+<rect x="207" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+<text x="218" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text>
+<text x="218" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">two destinations</text>
+<rect x="207" y="176" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="218" y="205" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text>
+<rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="218" y="289" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text>
+<rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#ff5c5c" stroke-width="2"/>
+<text x="403" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text>
+<text x="403" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">one identity, two jobs</text>
+<rect x="490.32" y="83" width="43.68" height="17" rx="8.5" fill="#ff5c5c"/>
+<text x="512.16" y="95.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">rogue</text>
+<rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+<text x="588" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text>
+<text x="588" y="130" font-size="11" text-anchor="start" fill="var(--text-muted)">holds too much</text>
+<rect x="659.632" y="83" width="59.36800000000001" height="17" rx="8.5" fill="#ffb000"/>
+<text x="689.3159999999999" y="95.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">too much</text>
+<rect x="392" y="186" width="186" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+<text x="403" y="207" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Your policy component</text>
+<text x="403" y="224" font-size="11" text-anchor="start" fill="var(--text-muted)">outside every agent</text>
+<path d="M467 140 L467 177" fill="none" stroke="#ffb000" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="467,185 462.05,176 471.95,176" fill="#ffb000"/>
+<text x="476" y="175.5" font-size="10.5" text-anchor="start" fill="#ffb000">asks for every reservation, plus cancel</text>
+</svg>
 <figcaption>Two trips through the same six agents. Then Check-in Agent passes the only thing it has, and asks for more.</figcaption></figure>
 
 <figure class="lab-code"><figcaption>Part of the broad quick fix. The README covers Boarding too.</figcaption>
@@ -69,9 +97,9 @@ Stage 4 of 7: Two travelers, then a handoff   mode=scoped  scenario=two-traveler
   Find `central_calls` in `npm run trace` and write down, in one sentence, what your fix
   depends on.
 
-WALLET  Alice: $914 of $1200   Bob: $1500 of $1500
+WALLET  Alice: spent $286 / $1,200   Bob: spent $0 / $1,500
 ROGUE ATTEMPTS BLOCKED  7 / 7
-STARS   ☆★☆☆
+STARS (PROVISIONAL — TRIP INCOMPLETE)   ☆★☆☆
   ☆ Trip booked
   ★ Rogue stopped
   ☆ Tight handoff
@@ -109,14 +137,14 @@ THE TRIP
   ✓ trip-alice-cun  flight: book UA214
   ✓ trip-alice-cun  check-in: UA214
   ✓ trip-alice-cun  boarding: pass for UA214
-  ✓ trip-alice-cun  within budget ($286 of $1200)
+  ✓ trip-alice-cun  within budget (spent $286 / $1,200)
   ✓ trip-bob-sea    travel: read traveler name
   ✓ trip-bob-sea    travel: calendar event
   ✗ trip-bob-sea    flight: search   destination SEA is not CUN
   ✗ trip-bob-sea    flight: book DL331   never attempted (an earlier step or handoff failed)
   ✗ trip-bob-sea    check-in: DL331   never attempted (an earlier step or handoff failed)
   ✗ trip-bob-sea    boarding: pass for DL331   never attempted (an earlier step or handoff failed)
-  ✓ trip-bob-sea    within budget ($0 of $1500)
+  ✓ trip-bob-sea    within budget (spent $0 / $1,500)
 
   npm run attack   the rogue behavior and the tests      npm run score   points and why
   npm run trace    every decision with its reason        npm run next    when you are done here</code></pre></details></div>
@@ -127,7 +155,7 @@ THE TRIP
 Stage 4 of 7: Two travelers, then a handoff   mode=scoped  scenario=two-travelers
   guide: https://tenuo.ai/lab/stage-4
 
-WALLET  Alice: $914 of $1200   Bob: $1102 of $1500
+WALLET  Alice: spent $286 / $1,200   Bob: spent $398 / $1,500
 ROGUE ATTEMPTS BLOCKED  7 / 7
 STARS   ★★☆☆
   ★ Trip booked
@@ -142,14 +170,14 @@ THE TRIP
   ✓ trip-alice-cun  flight: book UA214
   ✓ trip-alice-cun  check-in: UA214
   ✓ trip-alice-cun  boarding: pass for UA214
-  ✓ trip-alice-cun  within budget ($286 of $1200)
+  ✓ trip-alice-cun  within budget (spent $286 / $1,200)
   ✓ trip-bob-sea    travel: read traveler name
   ✓ trip-bob-sea    travel: calendar event
   ✓ trip-bob-sea    flight: search
   ✓ trip-bob-sea    flight: book DL331
   ✓ trip-bob-sea    check-in: DL331
   ✓ trip-bob-sea    boarding: pass for DL331
-  ✓ trip-bob-sea    within budget ($398 of $1500)
+  ✓ trip-bob-sea    within budget (spent $398 / $1,500)
 
   ALLOWED / DENIED = authorization decision   ✓ = expected result   ✗ = unexpected result
 
@@ -197,7 +225,7 @@ ESCALATION: checkin-agent tries to arrange broader access for boarding-agent
 Stage 4 of 7: Two travelers, then a handoff   mode=scoped  scenario=two-travelers
   guide: https://tenuo.ai/lab/stage-4
 
-WALLET  Alice: $914 of $1200   Bob: $1102 of $1500
+WALLET  Alice: spent $286 / $1,200   Bob: spent $398 / $1,500
 ROGUE ATTEMPTS BLOCKED  7 / 7
 STARS   ★★☆☆
   ★ Trip booked
@@ -212,14 +240,14 @@ THE TRIP
   ✓ trip-alice-cun  flight: book UA214
   ✓ trip-alice-cun  check-in: UA214
   ✓ trip-alice-cun  boarding: pass for UA214
-  ✓ trip-alice-cun  within budget ($286 of $1200)
+  ✓ trip-alice-cun  within budget (spent $286 / $1,200)
   ✓ trip-bob-sea    travel: read traveler name
   ✓ trip-bob-sea    travel: calendar event
   ✓ trip-bob-sea    flight: search
   ✓ trip-bob-sea    flight: book DL331
   ✓ trip-bob-sea    check-in: DL331
   ✓ trip-bob-sea    boarding: pass for DL331
-  ✓ trip-bob-sea    within budget ($398 of $1500)
+  ✓ trip-bob-sea    within budget (spent $398 / $1,500)
 
 HANDOFFS
   travel-agent: register identity               flight-agent:trip-alice-cun ALLOWED

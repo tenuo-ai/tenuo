@@ -13,19 +13,41 @@ lab_version: "0.2.0"
 
 <aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This is like giving each workload its own service account, workload identity, or IAM role. It limits each agent to a category of work, but does not say which individual request the agent is handling right now.</p></aside>
 
-<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 268" aria-hidden="true" focusable="false" data-caption="One account per agent, sized to its role." xmlns="http://www.w3.org/2000/svg"><path d="M97 78 L97 222" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
-<path d="M97 138 L198 138" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,138 197,142.95 197,133.05" fill="#6a6a6a"/>
-<path d="M97 222 L198 222" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,222 197,226.95 197,217.05" fill="#6a6a6a"/>
-<path d="M172 54 L198 54" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,54 197,58.95 197,49.05" fill="#6a6a6a"/>
-<path d="M357 54 L383 54" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="391,54 382,58.95 382,49.05" fill="#6a6a6a"/>
-<path d="M542 54 L568 54" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="576,54 567,58.95 567,49.05" fill="#6a6a6a"/>
-<rect x="22" y="30" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="33" y="51" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text><text x="33" y="68" font-size="11" text-anchor="start" fill="var(--text-muted)">traveler, calendar</text>
-<rect x="207" y="30" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="51" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text><text x="218" y="68" font-size="11" text-anchor="start" fill="var(--text-muted)">flights, wallet</text>
-<rect x="207" y="114" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="135" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text><text x="218" y="152" font-size="11" text-anchor="start" fill="var(--text-muted)">hotels, wallet</text>
-<rect x="207" y="198" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="219" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text><text x="218" y="236" font-size="11" text-anchor="start" fill="var(--text-muted)">activities, wallet</text>
-<rect x="392" y="30" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#ff5c5c" stroke-width="2"/><text x="403" y="51" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text><text x="403" y="68" font-size="11" text-anchor="start" fill="var(--text-muted)">any reservation</text><rect x="490.32" y="21" width="43.68" height="17" rx="8.5" fill="#ff5c5c"/><text x="512.16" y="33.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">rogue</text>
-<rect x="577" y="30" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="588" y="51" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text><text x="588" y="68" font-size="11" text-anchor="start" fill="var(--text-muted)">boarding passes</text>
-<rect x="577" y="209" width="101" height="26" rx="13" fill="var(--surface)" stroke="#ffb000" stroke-width="1.5"/><text x="627.5" y="226" font-size="12" text-anchor="middle" fill="var(--text)">Wallet $1,200</text></svg>
+<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 268" aria-hidden="true" focusable="false" data-caption="One account per agent, sized to its role." xmlns="http://www.w3.org/2000/svg">
+<path d="M97 78 L97 222" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
+<path d="M97 138 L198 138" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,138 197,142.95 197,133.05" fill="#6a6a6a"/>
+<path d="M97 222 L198 222" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,222 197,226.95 197,217.05" fill="#6a6a6a"/>
+<path d="M172 54 L198 54" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,54 197,58.95 197,49.05" fill="#6a6a6a"/>
+<path d="M357 54 L383 54" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="391,54 382,58.95 382,49.05" fill="#6a6a6a"/>
+<path d="M542 54 L568 54" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="576,54 567,58.95 567,49.05" fill="#6a6a6a"/>
+<rect x="22" y="30" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="33" y="51" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text>
+<text x="33" y="68" font-size="11" text-anchor="start" fill="var(--text-muted)">traveler, calendar</text>
+<rect x="207" y="30" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="218" y="51" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text>
+<text x="218" y="68" font-size="11" text-anchor="start" fill="var(--text-muted)">flights, wallet</text>
+<rect x="207" y="114" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="218" y="135" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text>
+<text x="218" y="152" font-size="11" text-anchor="start" fill="var(--text-muted)">hotels, wallet</text>
+<rect x="207" y="198" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="218" y="219" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text>
+<text x="218" y="236" font-size="11" text-anchor="start" fill="var(--text-muted)">activities, wallet</text>
+<rect x="392" y="30" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#ff5c5c" stroke-width="2"/>
+<text x="403" y="51" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text>
+<text x="403" y="68" font-size="11" text-anchor="start" fill="var(--text-muted)">any reservation</text>
+<rect x="490.32" y="21" width="43.68" height="17" rx="8.5" fill="#ff5c5c"/>
+<text x="512.16" y="33.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">rogue</text>
+<rect x="577" y="30" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="588" y="51" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text>
+<text x="588" y="68" font-size="11" text-anchor="start" fill="var(--text-muted)">boarding passes</text>
+<rect x="577" y="209" width="101" height="26" rx="13" fill="var(--surface)" stroke="#ffb000" stroke-width="1.5"/>
+<text x="627.5" y="226" font-size="12" text-anchor="middle" fill="var(--text)">Wallet $1,200</text>
+</svg>
 <figcaption>One account per agent, sized to its role.</figcaption></figure>
 
 <h2>Do this</h2>
@@ -40,7 +62,7 @@ lab_version: "0.2.0"
 Stage 2 of 7: Every agent gets its own account   mode=identity  scenario=spring-break
   guide: https://tenuo.ai/lab/stage-2
 
-WALLET  Alice: $459 of $1200
+WALLET  Alice: spent $741 / $1,200
 ROGUE ATTEMPTS BLOCKED  5 / 7
 STARS   ★☆★☆
   ★ Trip booked
@@ -59,7 +81,7 @@ THE TRIP
   ✓ trip-alice-cun  hotel: book
   ✓ trip-alice-cun  activity: search
   ✓ trip-alice-cun  activity: book
-  ✓ trip-alice-cun  within budget ($741 of $1200)
+  ✓ trip-alice-cun  within budget (spent $741 / $1,200)
 
 WHAT ELSE HAPPENED
   ! AA882, another traveler's reservation, was checked in by your agent

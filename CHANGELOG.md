@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `createTenuo.identity(holderKey)` redact the secret from JSON, inspect, and
   `toString`. No filesystem API in core.
 
+### Changed
+
+- **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
+  (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
+  messages are unchanged. Code that catches `TenuoError` or switches on `code`
+  now sees builder mistakes too.
+
 ## [0.2.5] - 2026-09-06
 
 Python `tenuo==0.2.5`, Rust `tenuo@0.2.5`, TypeScript `@tenuo/core@0.2.5-beta.0`
