@@ -55,11 +55,12 @@ describe("parseConnectToken", () => {
     expect(createTenuo.parseConnectToken(named).registrationToken).toBe("named-token");
   });
 
-  it("defaults a missing version to 1 and rejects any other version", () => {
-    const omitted = createTenuo.parseConnectToken(
-      encodeToken({ e: "https://control.example.com/v1", k: "tc_secret" }),
-    );
-    expect(omitted.version).toBe(1);
+  it("rejects a missing version and any version other than 1", () => {
+    expect(() =>
+      createTenuo.parseConnectToken(
+        encodeToken({ e: "https://control.example.com/v1", k: "tc_secret" }),
+      ),
+    ).toThrow(/version/i);
     expect(() =>
       createTenuo.parseConnectToken(
         encodeToken({ v: 2, e: "https://control.example.com", k: "tc_secret" }),
@@ -191,8 +192,12 @@ describe("Runtime", () => {
     expect(first).toHaveLength(2);
     expect(verifyReceipt(first[0]!)).toMatchObject({ outcome: "allow" });
     expect(verifyReceipt(first[1]!)).toMatchObject({ outcome: "deny" });
+    expect(session.drainReceipts()).toEqual(first);
+    expect(session.acknowledgeReceipts(2)).toBe(2);
     expect(session.drainReceipts()).toEqual([]);
     expect(otherSession.drainReceipts()).toHaveLength(1);
+    expect(otherSession.peekReceipts()).toHaveLength(1);
+    expect(otherSession.acknowledgeReceipts(1)).toBe(1);
     expect(otherSession.peekReceipts()).toEqual([]);
   });
 
@@ -206,10 +211,14 @@ describe("Runtime", () => {
     expect(session.acknowledgeReceipts(1)).toBe(1);
     expect(session.peekReceipts()).toHaveLength(2);
     expect(session.drainReceipts()).toHaveLength(2);
+    expect(session.peekReceipts()).toHaveLength(2);
+    expect(session.acknowledgeReceipts(2)).toBe(2);
     expect(session.peekReceipts()).toEqual([]);
     expect(runtime.peekReceipts()).toHaveLength(3);
     expect(runtime.acknowledgeReceipts(2)).toBe(2);
     expect(runtime.drainReceipts()).toHaveLength(1);
+    expect(runtime.peekReceipts()).toHaveLength(1);
+    expect(runtime.acknowledgeReceipts(1)).toBe(1);
     expect(runtime.peekReceipts()).toEqual([]);
   });
 
@@ -218,6 +227,8 @@ describe("Runtime", () => {
     const presented = runtime.tenuo.present(session, "read_file", { path: "/data/q3.pdf" });
     const attached = runtime.tenuo.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
     expect(session.drainReceipts()).toHaveLength(2);
+    expect(session.acknowledgeReceipts(2)).toBe(2);
+    expect(session.drainReceipts()).toEqual([]);
 
     const server = createTenuo.runtime({
       identity: createTenuo.generateIdentity(),
@@ -229,6 +240,8 @@ describe("Runtime", () => {
     const verified = server.drainReceipts();
     expect(verified).toHaveLength(2);
     expect(verifyReceipt(verified[0]!)).toMatchObject({ outcome: "allow" });
+    expect(server.drainReceipts()).toEqual(verified);
+    expect(server.acknowledgeReceipts(2)).toBe(2);
     expect(server.drainReceipts()).toEqual([]);
   });
 

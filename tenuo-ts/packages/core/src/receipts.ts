@@ -3,12 +3,8 @@ import type { Session as SessionContract } from "./api.ts";
 /**
  * In-memory receipt buffer containing only unacknowledged receipts.
  *
- * Delivery: receipts are appended in emission order. `peek()` is
- * non-consuming. `drain()` removes and returns everything currently buffered
- * (at-most-once from this buffer). A hosted adapter that retries uploads
- * should `peek()`, copy into its own retry buffer, then `acknowledge()`.
- * Process crash after drain and before the caller persists the batch loses
- * those receipts here. Upload remains the caller's job.
+ * Delivery: receipts are appended in emission order. `peek()` and `drain()`
+ * are the same non-consuming snapshot. Only `acknowledge()` removes items.
  */
 export class ReceiptCollector {
   readonly #items: string[] = [];
@@ -22,7 +18,7 @@ export class ReceiptCollector {
   }
 
   drain(): string[] {
-    return this.#items.splice(0);
+    return this.peek();
   }
 
   acknowledge(count: number): number {

@@ -100,9 +100,8 @@ export class Session implements SessionContract {
   }
 
   /**
-   * Receipts produced through this session since the last drain. Empty when
-   * collection is off or nothing new has been decided. See Runtime receipts
-   * documentation for peek/ack vs drain.
+   * Snapshot of collected receipts. Same as `drainReceipts`; nothing is
+   * removed until `acknowledgeReceipts`.
    */
   peekReceipts(): string[] {
     return peekSessionReceipts(this);

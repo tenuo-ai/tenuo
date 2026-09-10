@@ -66,8 +66,9 @@ export class Runtime {
   }
 
   /**
-   * Receipts since the last runtime drain, across holder sessions and
-   * presented-path verification. Per-session collectors are independent views.
+   * Snapshot of receipts across holder sessions and presented-path
+   * verification. Same as `peekReceipts`; nothing is removed until
+   * `acknowledgeReceipts`.
    */
   drainReceipts(): string[] {
     return hostCollector(this.tenuo)?.drain() ?? [];

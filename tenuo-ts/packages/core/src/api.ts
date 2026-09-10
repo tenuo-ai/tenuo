@@ -625,12 +625,11 @@ export interface Session {
    */
   peekReceipts(): readonly string[];
   /**
-   * Return collected receipts and advance the cursor. A second call is empty
-   * until a new decision. Caller must persist the batch; this is at-most-once
-   * from the session buffer.
+   * Snapshot of collected receipts. Same as `peekReceipts`; nothing is removed
+   * until `acknowledgeReceipts`.
    */
   drainReceipts(): readonly string[];
-  /** Advance the drain cursor by `count` without returning receipts. */
+  /** Remove the first `count` pending receipts. */
   acknowledgeReceipts(count: number): number;
 }
 

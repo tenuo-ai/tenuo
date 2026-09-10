@@ -90,8 +90,8 @@ export class ConnectToken {
 /**
  * Parse a complete `tenuo_ct_<base64url-json>` token.
  *
- * Accepts padded and unpadded Base64URL. Version must be 1 (omitted `v`
- * defaults to 1). Registration-token aliases: `t`, `r`, `registration_token`.
+ * Accepts padded and unpadded Base64URL. Version must be 1; omitted `v`
+ * is an error. Registration-token aliases: `t`, `r`, `registration_token`.
  * Does not read environment variables.
  */
 export function parseConnectToken(rawToken: string): ConnectToken {
@@ -146,7 +146,9 @@ export function parseConnectToken(rawToken: string): ConnectToken {
 
 function readVersion(value: unknown): number {
   if (value === undefined || value === null) {
-    return 1;
+    throw new TenuoConfigurationError(
+      "Connect token version is required. This SDK supports version 1.",
+    );
   }
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     throw new TenuoConfigurationError(
