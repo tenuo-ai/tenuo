@@ -13,20 +13,41 @@ lab_version: "0.2.0"
 
 <aside class="lab-callout infrastructure"><div class="lab-callout-title">How this maps to familiar infrastructure</div><p>This is like moving a compromised service onto a tightly scoped emergency role. The approved hotel booking still works, while unrelated tools, sensitive data, extra budget, and the ability to delegate are removed.</p></aside>
 
-<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Everything Hotel Agent can do is decided by one link. Fix that link." xmlns="http://www.w3.org/2000/svg"><path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
-<path d="M97 200 L198 200" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/><polygon points="206,200 197,204.95 197,195.05" fill="var(--accent)"/><text x="151.5" y="239" font-size="10.5" text-anchor="middle" fill="var(--accent)">the link you fix</text>
-<path d="M97 284 L198 284" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,284 197,288.95 197,279.05" fill="#3a3a3a"/>
-<path d="M172 116 L198 116" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="206,116 197,120.95 197,111.05" fill="#3a3a3a"/>
-<path d="M357 116 L383 116" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="391,116 382,120.95 382,111.05" fill="#3a3a3a"/>
-<path d="M542 116 L568 116" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="576,116 567,120.95 567,111.05" fill="#3a3a3a"/>
-<rect x="22" y="14" width="150" height="44" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="33" y="35" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text><text x="33" y="52" font-size="11" text-anchor="start" fill="var(--text-muted)">signs the root</text>
-<path d="M97 58 L97 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/><polygon points="97,91 92.05,82 101.95,82" fill="#6a6a6a"/>
-<rect x="22" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/><text x="33" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text><text x="33" y="130" font-size="10" text-anchor="start" fill="var(--text-muted)">hands the hotel branch out</text>
-<rect x="207" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text>
-<rect x="207" y="176" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#ff5c5c" stroke-width="2"/><text x="218" y="197" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text><text x="218" y="214" font-size="11" text-anchor="start" fill="var(--text-muted)">compromised</text><rect x="265.358" y="167" width="83.64200000000001" height="17" rx="8.5" fill="#ff5c5c"/><text x="307.17900000000003" y="179.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">compromised</text>
-<rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="218" y="289" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text>
-<rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="403" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text>
-<rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/><text x="588" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text></svg>
+<figure class="lab-figure"><svg class="lab-diagram" viewBox="0 0 760 330" aria-hidden="true" focusable="false" data-caption="Everything Hotel Agent can do is decided by one link. Fix that link." xmlns="http://www.w3.org/2000/svg">
+<path d="M97 140 L97 284" fill="none" stroke="#6a6a6a" stroke-width="1.5"/>
+<path d="M97 200 L198 200" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="206,200 197,204.95 197,195.05" fill="var(--accent)"/>
+<text x="151.5" y="239" font-size="10.5" text-anchor="middle" fill="var(--accent)">the link you fix</text>
+<path d="M97 284 L198 284" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,284 197,288.95 197,279.05" fill="#3a3a3a"/>
+<path d="M172 116 L198 116" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="206,116 197,120.95 197,111.05" fill="#3a3a3a"/>
+<path d="M357 116 L383 116" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="391,116 382,120.95 382,111.05" fill="#3a3a3a"/>
+<path d="M542 116 L568 116" fill="none" stroke="#3a3a3a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="576,116 567,120.95 567,111.05" fill="#3a3a3a"/>
+<rect x="22" y="14" width="150" height="44" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+<text x="33" y="35" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Control plane</text>
+<text x="33" y="52" font-size="11" text-anchor="start" fill="var(--text-muted)">signs the root</text>
+<path d="M97 58 L97 83" fill="none" stroke="#6a6a6a" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="97,91 92.05,82 101.95,82" fill="#6a6a6a"/>
+<rect x="22" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+<text x="33" y="113" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Travel Agent</text>
+<text x="33" y="130" font-size="10" text-anchor="start" fill="var(--text-muted)">hands the hotel branch out</text>
+<rect x="207" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="218" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Flight Agent</text>
+<rect x="207" y="176" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="#ff5c5c" stroke-width="2"/>
+<text x="218" y="197" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Hotel Agent</text>
+<text x="218" y="214" font-size="11" text-anchor="start" fill="var(--text-muted)">compromised</text>
+<rect x="265.358" y="167" width="83.64200000000001" height="17" rx="8.5" fill="#ff5c5c"/>
+<text x="307.17900000000003" y="179.5" font-size="10" font-weight="600" text-anchor="middle" fill="#0a0a0a">compromised</text>
+<rect x="207" y="260" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="218" y="289" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Activity Agent</text>
+<rect x="392" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="403" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Check-in Agent</text>
+<rect x="577" y="92" width="150" height="48" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1"/>
+<text x="588" y="121" font-size="13" font-weight="600" text-anchor="start" fill="var(--text)">Boarding Agent</text>
+</svg>
 <figcaption>Everything Hotel Agent can do is decided by one link. Fix that link.</figcaption></figure>
 
 <figure class="lab-code"><figcaption>The eight attempts</figcaption>
@@ -52,7 +73,7 @@ lab_version: "0.2.0"
 Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
-WALLET  Alice: $459 of $1200
+WALLET  Alice: spent $741 / $1,200
 ROGUE ATTEMPTS BLOCKED  3 / 5
 STARS   ★☆☆☆
   ★ Trip booked
@@ -71,7 +92,7 @@ THE TRIP
   ✓ trip-alice-cun  hotel: book
   ✓ trip-alice-cun  activity: search
   ✓ trip-alice-cun  activity: book
-  ✓ trip-alice-cun  within budget ($741 of $1200)
+  ✓ trip-alice-cun  within budget (spent $741 / $1,200)
 
 HANDOFFS
   travel-agent: receive trip authority          control plane ALLOWED
@@ -111,7 +132,7 @@ INCIDENT
 Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
-WALLET  Alice: $459 of $1200
+WALLET  Alice: spent $741 / $1,200
 ROGUE ATTEMPTS BLOCKED  5 / 5
 STARS   ★★★★
   ★ Trip booked
@@ -130,7 +151,7 @@ THE TRIP
   ✓ trip-alice-cun  hotel: book
   ✓ trip-alice-cun  activity: search
   ✓ trip-alice-cun  activity: book
-  ✓ trip-alice-cun  within budget ($741 of $1200)
+  ✓ trip-alice-cun  within budget (spent $741 / $1,200)
 
 HANDOFFS
   travel-agent: receive trip authority          control plane ALLOWED
@@ -174,7 +195,7 @@ INCIDENT
 Stage 7 of 7: Boss: contain the incident   mode=tenuo  scenario=incident
   guide: https://tenuo.ai/lab/stage-7
 
-WALLET  Alice: $459 of $1200
+WALLET  Alice: spent $741 / $1,200
 ROGUE ATTEMPTS BLOCKED  5 / 5
 STARS   ★★★★
   ★ Trip booked

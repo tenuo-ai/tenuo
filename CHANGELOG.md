@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
+  (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
+  messages are unchanged. Code that catches `TenuoError` or switches on `code`
+  now sees builder mistakes too.
+
 ## [0.2.6] - 2026-09-08
 
 ### Added
