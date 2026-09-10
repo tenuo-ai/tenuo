@@ -88,7 +88,7 @@ export function createRuntime(
 ): Runtime {
   if (options.trustedRoots.length === 0) {
     throw new TenuoConfigurationError(
-      "createTenuo.runtime() requires at least one trusted root. Discovery stays in the hosted adapter.",
+      "createTenuo.runtime() requires at least one trusted root.",
     );
   }
   const tenuoOptions: {

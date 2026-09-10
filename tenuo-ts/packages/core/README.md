@@ -60,8 +60,7 @@ read environment variables or invent an origin. Relative `/v1` endpoints need
 origin.
 
 See [Receipt delivery](../../README.md#receipt-delivery) for peek / drain / ack
-guarantees. A hosted adapter should keep HTTP, discovery, and upload outside
-this package; [hosted-adapter.md](docs/hosted-adapter.md) is the thinning sketch.
+guarantees. This package does not perform HTTP, discovery, or upload.
 
 Delegation to another agent rebinds a narrower child to that agent's key. The
 current holder signs; core refuses any child that is not within its parent
