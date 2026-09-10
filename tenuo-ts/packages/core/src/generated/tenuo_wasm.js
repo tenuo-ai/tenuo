@@ -800,9 +800,9 @@ exports.init_panic_hook = init_panic_hook;
 /**
  * Parse a complete `tenuo_ct_…` token into its component fields.
  *
- * Accepts padded and unpadded Base64URL. Missing `v` defaults to 1; versions
- * other than 1 are rejected. Trailing `/v1` is stripped from `e`.
- * Registration-token aliases: `t`, `r`.
+ * Accepts padded and unpadded Base64URL. Version must be 1; omitted `v`
+ * is an error. Trailing `/v1` is stripped from `e`.
+ * Registration-token aliases: `t`, `r`, `registration_token`.
  *
  * Returns `{ endpoint, apiKey, agentId?, registrationToken?, error? }`.
  * @param {string} token
