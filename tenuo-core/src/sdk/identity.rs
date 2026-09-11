@@ -6,6 +6,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use zeroize::Zeroize;
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -150,10 +151,11 @@ fn write_complete_0600(path: &Path, key: &SigningKey) -> Result<(), IdentityErro
         operation: "write",
         source,
     })?;
-    let payload = format!("{}\n", hex::encode(key.secret_key_bytes()));
+    let mut payload = format!("{}\n", hex::encode(key.secret_key_bytes()));
     let write_result = file
         .write_all(payload.as_bytes())
         .and_then(|_| file.sync_all());
+    payload.zeroize();
     if let Err(source) = write_result {
         let _ = fs::remove_file(path);
         return Err(IdentityError::Io {
