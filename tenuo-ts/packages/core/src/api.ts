@@ -620,6 +620,11 @@ export interface Session {
   /** Holder public key, depth, ceiling, lifetime, tools. Never the secret. */
   inspect(): SessionInfo;
   /**
+   * Receipt helpers below are required for `createTenuo.runtime({ receipts:
+   * "collect" })`. Implementers that are not runtime sessions can return
+   * empty snapshots and `0` from acknowledge.
+   */
+  /**
    * Receipts collected for this session and not yet drained. Empty when the
    * session was not created by a Runtime with `receipts: "collect"`.
    */

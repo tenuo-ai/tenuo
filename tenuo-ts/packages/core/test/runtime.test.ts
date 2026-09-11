@@ -213,6 +213,19 @@ describe("Runtime", () => {
     expect(otherSession.peekReceipts()).toEqual([]);
   });
 
+  it("acks runtime receipts in emission order, not host-then-session", async () => {
+    const { runtime, session, readFile } = issuedRuntime();
+    await readFile.execute({ path: "/data/a.pdf" }, { session });
+    const first = session.peekReceipts()[0];
+    expect(first).toBeDefined();
+    const presented = runtime.tenuo.present(session, "read_file", { path: "/data/q3.pdf" });
+    await runtime.tenuo.verify(presented, "read_file", { path: "/data/q3.pdf" });
+    expect(runtime.peekReceipts()[0]).toBe(first);
+    expect(runtime.acknowledgeReceipts(1)).toBe(1);
+    expect(session.peekReceipts()).not.toContain(first);
+    expect(runtime.peekReceipts()).not.toContain(first);
+  });
+
   it("acknowledges only successfully persisted receipts", async () => {
     const { runtime, session, readFile } = issuedRuntime();
     await readFile.execute({ path: "/data/a.pdf" }, { session });
@@ -261,6 +274,19 @@ describe("Runtime", () => {
     expect(child.drainReceipts()).toHaveLength(1);
     expect(session.drainReceipts()).toHaveLength(1);
     expect(runtime.drainReceipts()).toHaveLength(1);
+  });
+
+  it("collects on the runtime outbox when the tool was built on another createTenuo", async () => {
+    const { issuer, runtime, session } = issuedRuntime();
+    const other = createTenuo({ trustedRoots: [issuer.issuerPublicKey()] });
+    const readFile = other.tool(
+      { execute: async ({ path }: { path: string }) => `ok:${path}` },
+      { capability: "read_file", allow: { path: under("/data") } },
+    );
+    await readFile.execute({ path: "/data/q3.pdf" }, { session });
+    expect(session.peekReceipts()).toHaveLength(1);
+    expect(runtime.peekReceipts()).toHaveLength(1);
+    expect(runtime.peekReceipts()[0]).toBe(session.peekReceipts()[0]);
   });
 
   it("keeps explicit onReceipt compatible and still collects", async () => {
