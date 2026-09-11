@@ -382,47 +382,33 @@ fn build_authorizer(
     trusted_keys: &Option<String>,
     revocation_path: &Option<PathBuf>,
 ) -> Result<(Authorizer, Option<u64>), Box<dyn std::error::Error>> {
-    // Start with a dummy authorizer if no keys provided
-    // This still validates signatures, just doesn't check the issuer
-    let first_key = if let Some(keys) = trusted_keys {
-        let first = keys.split(',').next().unwrap_or("");
-        if first.is_empty() {
-            return Err("TENUO_TRUSTED_KEYS is empty".into());
-        }
-        let bytes = hex::decode(first)?;
-        let arr: [u8; 32] = bytes.try_into().map_err(|_| "invalid key length")?;
-        PublicKey::from_bytes(&arr)?
-    } else {
-        // For development: create a dummy key
-        // In production, TENUO_TRUSTED_KEYS should always be set
-        eprintln!("WARNING: No trusted keys configured. Set TENUO_TRUSTED_KEYS for production.");
-        let dummy = [0u8; 32];
-        PublicKey::from_bytes(&dummy).unwrap_or_else(|_| {
-            // Generate a valid but useless key
-            tenuo::SigningKey::generate().public_key()
-        })
-    };
+    let mut authorizer = Authorizer::new();
 
-    let mut authorizer = Authorizer::new().with_trusted_root(first_key.clone());
-
-    // Add remaining keys
     if let Some(keys) = trusted_keys {
-        for key_hex in keys.split(',').skip(1) {
-            if !key_hex.is_empty() {
-                let bytes = hex::decode(key_hex)?;
-                let arr: [u8; 32] = bytes.try_into().map_err(|_| "invalid key length")?;
-                authorizer.add_trusted_root(PublicKey::from_bytes(&arr)?);
+        let mut any = false;
+        for key_hex in keys.split(',') {
+            let key_hex = key_hex.trim();
+            if key_hex.is_empty() {
+                continue;
             }
+            let bytes = hex::decode(key_hex)?;
+            let arr: [u8; 32] = bytes.try_into().map_err(|_| "invalid key length")?;
+            authorizer.add_trusted_root(PublicKey::from_bytes(&arr)?);
+            any = true;
+        }
+        if !any {
+            return Err("TENUO_TRUSTED_KEYS is empty".into());
         }
     }
 
-    // Load signed revocation list if provided
-    let initial_srl_version = if let Some(path) = revocation_path {
+    // Serve loads the SRL after YAML roots when CLI keys are absent.
+    let initial_srl_version = if let (Some(path), Some(first)) = (
+        revocation_path,
+        authorizer.trusted_root_keys().first().cloned(),
+    ) {
         let srl = load_signed_revocation_list(path)?;
         let version = srl.version();
-
-        // Verify against first trusted key (Control Plane key)
-        authorizer.set_revocation_list(srl, &first_key)?;
+        authorizer.set_revocation_list(srl, &first)?;
         eprintln!("Loaded signed revocation list from: {}", path.display());
         Some(version)
     } else {
@@ -526,6 +512,13 @@ struct AppState {
     metrics: Option<MetricsCollector>,
     /// Process start time for uptime reporting in /status
     started_at: std::time::Instant,
+    /// Decision-time SRL freshness. `None` when no tracker was requested.
+    revocation_tracker: Option<Arc<tenuo::revocation_tracker::RevocationTracker>>,
+}
+
+struct HeartbeatShutdown {
+    handle: tokio::task::JoinHandle<()>,
+    stop: tokio::sync::oneshot::Sender<()>,
 }
 
 /// Structured denial reason for logging
@@ -599,6 +592,8 @@ struct ServeReady {
     state: Arc<AppState>,
     debug_mode: bool,
     control_plane_enabled: bool,
+    heartbeat: Option<HeartbeatShutdown>,
+    srl_version: Option<u64>,
 }
 
 /// Load gateway config, resolve control-plane credentials, build [`AppState`], and
@@ -609,25 +604,34 @@ async fn prepare_serve(
     config_path: &PathBuf,
     cli: &Cli,
 ) -> Result<ServeReady, Box<dyn std::error::Error>> {
-    // Load and compile gateway configuration
-    let mut config = GatewayConfig::from_file(config_path)?;
-
-    // Merge trusted keys from env/cli
-    if let Some(keys) = &cli.trusted_keys {
-        for key in keys.split(',') {
-            if !key.trim().is_empty() {
-                config.settings.trusted_roots.push(key.trim().to_string());
-            }
-        }
-    }
+    // Load and compile gateway configuration. CLI/env keys are already on
+    // `authorizer`; do not merge them into YAML or they are applied twice.
+    let config = GatewayConfig::from_file(config_path)?;
 
     let mut authorizer = authorizer;
     apply_settings_trusted_roots(&mut authorizer, &config.settings.trusted_roots)?;
-    let settings_first_root = config
-        .settings
-        .trusted_roots
-        .iter()
-        .find_map(|hex| parse_root_hex(hex));
+    authorizer.set_clock_tolerance(chrono::Duration::seconds(
+        config.settings.clock_tolerance_secs as i64,
+    ));
+    if authorizer.trusted_root_keys().is_empty() {
+        eprintln!(
+            "WARNING: No trusted keys configured. Set TENUO_TRUSTED_KEYS or settings.trusted_roots."
+        );
+    }
+    let settings_first_root = authorizer.trusted_root_keys().first().cloned();
+
+    let loaded_srl_version = if let Some(path) = &cli.revocation_list {
+        let srl = load_signed_revocation_list(path)?;
+        let version = srl.version();
+        let Some(first) = authorizer.trusted_root_keys().first().cloned() else {
+            return Err("a trusted root is required to verify the revocation list".into());
+        };
+        authorizer.set_revocation_list(srl, &first)?;
+        eprintln!("Loaded signed revocation list from: {}", path.display());
+        Some(version)
+    } else {
+        initial_srl_version
+    };
 
     let debug_mode = config.settings.debug_mode;
     let compiled = CompiledGatewayConfig::compile(config)?;
@@ -697,128 +701,135 @@ async fn prepare_serve(
         .or(settings_first_root);
 
     // Create audit channel, metrics collector, and spawn heartbeat task if control plane is configured
-    let (audit_tx, metrics) = if let (Some(url), Some(key), Some(name)) =
-        (resolved_url, resolved_key, resolved_name)
-    {
-        // Create audit event channel (buffer 1000 events)
-        let (tx, rx) = create_audit_channel(1000);
+    let (audit_tx, metrics, heartbeat, revocation_tracker) =
+        if let (Some(url), Some(key), Some(name)) = (resolved_url, resolved_key, resolved_name) {
+            // Create audit event channel (buffer 1000 events)
+            let (tx, rx) = create_audit_channel(1000);
 
-        // Create metrics collector for runtime stats
-        let metrics = MetricsCollector::new();
+            // Create metrics collector for runtime stats
+            let metrics = MetricsCollector::new();
 
-        // If SRL was loaded from file at startup, record its version in metrics
-        if let Some(version) = initial_srl_version {
-            metrics.record_srl_fetch(true, Some(version)).await;
-        }
+            // If SRL was loaded from file at startup, record its version in metrics
+            if let Some(version) = loaded_srl_version {
+                metrics.record_srl_fetch(true, Some(version)).await;
+            }
 
-        // Get environment info from standard env vars; inject agent_id from
-        // connect token so the backend can bind this authorizer to the agent.
-        let mut environment = EnvironmentInfo::from_env();
-        if let Some(ref agent_id) = resolved_agent_id {
-            environment
-                .metadata
-                .insert("agent_id".to_string(), agent_id.clone());
-        }
+            // Get environment info from standard env vars; inject agent_id from
+            // connect token so the backend can bind this authorizer to the agent.
+            let mut environment = EnvironmentInfo::from_env();
+            if let Some(ref agent_id) = resolved_agent_id {
+                environment
+                    .metadata
+                    .insert("agent_id".to_string(), agent_id.clone());
+            }
 
-        // Parse signing key; auto-generate if not supplied so connect-token
-        // onboarding works without any additional key management step.
-        let signing_key = match &cli.signing_key {
-            Some(hex_key) => match hex::decode(hex_key) {
-                Ok(bytes) if bytes.len() == 32 => {
-                    let mut arr = [0u8; 32];
-                    arr.copy_from_slice(&bytes);
-                    let key = SigningKey::from_bytes(&arr);
+            // Parse signing key; auto-generate if not supplied so connect-token
+            // onboarding works without any additional key management step.
+            let signing_key = match &cli.signing_key {
+                Some(hex_key) => match hex::decode(hex_key) {
+                    Ok(bytes) if bytes.len() == 32 => {
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(&bytes);
+                        let key = SigningKey::from_bytes(&arr);
+                        info!(
+                            public_key = %hex::encode(key.public_key().to_bytes()),
+                            "Signing key configured"
+                        );
+                        key
+                    }
+                    Ok(bytes) => {
+                        error!(
+                            got_len = bytes.len(),
+                            "TENUO_SIGNING_KEY must be 32 bytes (64 hex chars)"
+                        );
+                        std::process::exit(1);
+                    }
+                    Err(e) => {
+                        error!(error = %e, "TENUO_SIGNING_KEY must be valid hex");
+                        std::process::exit(1);
+                    }
+                },
+                None => {
+                    let key = SigningKey::generate();
                     info!(
                         public_key = %hex::encode(key.public_key().to_bytes()),
-                        "Signing key configured"
+                        "No TENUO_SIGNING_KEY set — using ephemeral signing key. \
+                         Set TENUO_SIGNING_KEY to persist the key across restarts."
                     );
                     key
                 }
-                Ok(bytes) => {
-                    error!(
-                        got_len = bytes.len(),
-                        "TENUO_SIGNING_KEY must be 32 bytes (64 hex chars)"
-                    );
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    error!(error = %e, "TENUO_SIGNING_KEY must be valid hex");
-                    std::process::exit(1);
-                }
-            },
-            None => {
-                let key = SigningKey::generate();
-                info!(
-                    public_key = %hex::encode(key.public_key().to_bytes()),
-                    "No TENUO_SIGNING_KEY set — using ephemeral signing key. \
-                     Set TENUO_SIGNING_KEY to persist the key across restarts."
-                );
-                key
-            }
-        };
+            };
 
-        let revocation_tracker = trusted_root.as_ref().and_then(|root| {
-                let floor = cli.revocation_floor.clone().unwrap_or_else(|| {
-                    std::env::temp_dir().join("tenuo-srl-floors")
-                });
-                match tenuo::revocation_tracker::FileFloorStore::open(&floor) {
-                    Ok(store) => {
-                        match tenuo::revocation_tracker::RevocationTracker::new(
-                            vec![root.clone()],
-                            Duration::from_secs(300),
-                            Duration::from_secs(30),
-                            Arc::new(store),
-                        ) {
-                            Ok(tracker) => Some(Arc::new(tracker)),
-                            Err(e) => {
-                                warn!(error = %e, "revocation tracker unavailable; SRL fetch will skip the floor");
-                                None
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!(error = %e, path = %floor.display(), "revocation floor unavailable");
-                        None
-                    }
-                }
+            let revocation_tracker = if let Some(root) = trusted_root.as_ref() {
+                let floor = cli
+                    .revocation_floor
+                    .clone()
+                    .unwrap_or_else(|| std::env::temp_dir().join("tenuo-srl-floors"));
+                let store =
+                    tenuo::revocation_tracker::FileFloorStore::open(&floor).map_err(|e| {
+                        format!(
+                            "revocation floor unavailable at {}: {e}. \
+                     Mount a writable path and set TENUO_REVOCATION_FLOOR",
+                            floor.display()
+                        )
+                    })?;
+                let tracker = tenuo::revocation_tracker::RevocationTracker::new(
+                    vec![root.clone()],
+                    Duration::from_secs(300),
+                    Duration::from_secs(30),
+                    Arc::new(store),
+                )
+                .map_err(|e| format!("revocation tracker unavailable: {e}"))?;
+                Some(Arc::new(tracker))
+            } else {
+                None
+            };
+
+            let heartbeat_config = HeartbeatConfig {
+                control_plane_url: tenuo::connect_token::normalize_control_plane_url(&url),
+                api_key: key.clone(),
+                authorizer_name: name.clone(),
+                authorizer_type: cli.authorizer_type.clone(),
+                version: authorizer_version(),
+                interval_secs: cli.heartbeat_interval,
+                authorizer: Some(shared_authorizer.clone()),
+                trusted_root: trusted_root.clone(),
+                audit_batch_size: cli.audit_batch_size,
+                audit_flush_interval_secs: cli.audit_flush_interval,
+                environment,
+                metrics: Some(metrics.clone()),
+                signing_key,
+                id_notify: None,
+                agent_id: resolved_agent_id,
+                connect_token: resolved_connect_token,
+                revocation_tracker: revocation_tracker.clone(),
+            };
+
+            let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+            let authorizer_id_writer = shared_authorizer_id.clone();
+            let handle = tokio::spawn(async move {
+                heartbeat::start_heartbeat_loop_until(
+                    heartbeat_config,
+                    Some(rx),
+                    authorizer_id_writer,
+                    Some(stop_rx),
+                )
+                .await;
             });
+            info!("Heartbeat, metrics, and audit streaming enabled for control plane");
 
-        let heartbeat_config = HeartbeatConfig {
-            control_plane_url: tenuo::connect_token::normalize_control_plane_url(&url),
-            api_key: key.clone(),
-            authorizer_name: name.clone(),
-            authorizer_type: cli.authorizer_type.clone(),
-            version: authorizer_version(),
-            interval_secs: cli.heartbeat_interval,
-            authorizer: Some(shared_authorizer.clone()),
-            trusted_root: trusted_root.clone(),
-            audit_batch_size: cli.audit_batch_size,
-            audit_flush_interval_secs: cli.audit_flush_interval,
-            environment,
-            metrics: Some(metrics.clone()),
-            signing_key,
-            id_notify: None,
-            agent_id: resolved_agent_id,
-            connect_token: resolved_connect_token,
-            revocation_tracker,
-        };
-
-        // Clone shared_authorizer_id for the heartbeat task to update
-        let authorizer_id_writer = shared_authorizer_id.clone();
-        tokio::spawn(async move {
-            heartbeat::start_heartbeat_loop_with_audit_and_id(
-                heartbeat_config,
-                Some(rx),
-                authorizer_id_writer,
+            (
+                Some(tx),
+                Some(metrics),
+                Some(HeartbeatShutdown {
+                    handle,
+                    stop: stop_tx,
+                }),
+                revocation_tracker,
             )
-            .await;
-        });
-        info!("Heartbeat, metrics, and audit streaming enabled for control plane");
-
-        (Some(tx), Some(metrics))
-    } else {
-        (None, None)
-    };
+        } else {
+            (None, None, None, None)
+        };
 
     let state = Arc::new(AppState {
         authorizer: shared_authorizer,
@@ -828,12 +839,15 @@ async fn prepare_serve(
         authorizer_id: shared_authorizer_id,
         metrics,
         started_at: std::time::Instant::now(),
+        revocation_tracker,
     });
 
     Ok(ServeReady {
         state,
         debug_mode,
         control_plane_enabled,
+        heartbeat,
+        srl_version: loaded_srl_version,
     })
 }
 
@@ -893,18 +907,19 @@ async fn serve_http(
         &format!("transport=tcp  listen={}:{}", bind, port),
         config_path,
         ready.debug_mode,
-        initial_srl_version,
+        ready.srl_version,
         ready.control_plane_enabled,
         cli.heartbeat_interval,
     );
 
-    let app = build_router(ready.state);
+    let app = build_router(ready.state.clone());
     let addr: SocketAddr = format!("{}:{}", bind, port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
+    finish_heartbeat(ready.state, ready.heartbeat).await;
     Ok(())
 }
 
@@ -1034,7 +1049,7 @@ async fn serve_unix(
         &format!("transport=unix socket={}", socket_path.display()),
         config_path,
         ready.debug_mode,
-        initial_srl_version,
+        ready.srl_version,
         ready.control_plane_enabled,
         cli.heartbeat_interval,
     );
@@ -1075,12 +1090,26 @@ async fn serve_unix(
         "Unix socket ready"
     );
 
-    let app = build_router(ready.state);
+    let app = build_router(ready.state.clone());
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
+    finish_heartbeat(ready.state, ready.heartbeat).await;
     Ok(())
+}
+
+async fn finish_heartbeat(state: Arc<AppState>, heartbeat: Option<HeartbeatShutdown>) {
+    let Some(heartbeat) = heartbeat else {
+        return;
+    };
+    drop(state);
+    let _ = heartbeat.stop.send(());
+    match tokio::time::timeout(Duration::from_secs(10), heartbeat.handle).await {
+        Ok(Ok(())) => info!("control-plane flush finished"),
+        Ok(Err(e)) => warn!(error = %e, "control-plane task failed during shutdown"),
+        Err(_) => warn!("control-plane flush timed out after 10s"),
+    }
 }
 
 /// Parse an octal socket-mode string (e.g. "0660", "660", "0o600") into bits.
@@ -1522,6 +1551,27 @@ async fn handle_request(
     // 8. Authorize with detailed timing instrumentation
     let total_start = std::time::Instant::now();
 
+    if let Some(tracker) = &state.revocation_tracker {
+        if let Err(e) = tracker.latest(chrono::Utc::now()) {
+            warn!(
+                request_id = %request_id,
+                event = "authorization_denied",
+                reason = "revocation_stale",
+                error = %e,
+                "Signed revocation list is missing or stale"
+            );
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "revocation_unavailable",
+                    "message": "signed revocation list is missing or stale",
+                    "request_id": request_id
+                })),
+            )
+                .into_response();
+        }
+    }
+
     // Phase 1: Lock acquisition
     let lock_start = std::time::Instant::now();
     let authorizer = state.authorizer.read().await;
@@ -1899,7 +1949,6 @@ fn parse_deny_reason(
                     ConstraintValue::List(l) => json!(l),
                     ConstraintValue::Object(o) => json!(o),
                     ConstraintValue::Null => json!(null),
-                    _ => json!(null),
                 })
                 .unwrap_or(json!(null));
 
@@ -2032,6 +2081,7 @@ routes:
             authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
             metrics: None,
             started_at: std::time::Instant::now(),
+            revocation_tracker: None,
         });
         Router::new()
             .route("/health", axum::routing::get(health_check))
@@ -2747,6 +2797,7 @@ routes:
             authorizer_id: Arc::new(tokio::sync::RwLock::new(None)),
             metrics: None,
             started_at: std::time::Instant::now(),
+            revocation_tracker: None,
         });
         let app = build_router(state);
 

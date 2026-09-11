@@ -984,7 +984,6 @@ fn handle_issue(
                 builder = builder.constraint_bound(key, constraint);
             }
         }
-        _ => return Err("unsupported warrant type".into()),
     }
 
     if let Some(id_str) = id {
@@ -1091,7 +1090,6 @@ fn handle_attenuate(
                 // For issuer warrants, tool parameter is ignored (use issuable_tools instead)
                 eprintln!("Warning: --tool is ignored for issuer warrants. Use constraint bounds instead.");
             }
-            _ => {}
         }
     }
 
@@ -2147,7 +2145,6 @@ fn format_value(v: &ConstraintValue) -> String {
         }
         ConstraintValue::Object(_) => "{...}".to_string(),
         ConstraintValue::Null => "null".to_string(),
-        _ => "...".to_string(),
     }
 }
 

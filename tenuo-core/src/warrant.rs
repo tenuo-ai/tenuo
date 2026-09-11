@@ -74,7 +74,6 @@ pub const CLOCK_SKEW_TOLERANCE_SECS: u64 = 30;
 /// - **EXECUTION**: Can invoke specific tools with specific constraints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-#[non_exhaustive]
 pub enum WarrantType {
     /// Execution warrant - can invoke tools.
     /// Wire value: 0

@@ -405,19 +405,19 @@ let warrant = Warrant::builder()
     .ttl(Duration::from_secs(300))
     .build(&root)?;
 
-let (guard, authority) = Tenuo::local()
+let runtime = Runtime::builder()
+    .holder(holder)
     .trusted_root(root.public_key())
-    .chain(vec![warrant])
-    .signer(holder)
     .revocation(RevocationMode::TtlOnly { max_lifetime: Duration::from_secs(600) })
     .build()?;
+let session = runtime.session_from_warrant(warrant)?;
 
 let allowed = Call::owned("read_file", args! { "path" => "/data/report.csv" })?;
-let out = guard.guard(&authority, &allowed, |_| Ok::<_, std::io::Error>("read"))?;
+let out = session.guard(&allowed, |_| Ok::<_, std::io::Error>("read"))?;
 assert_eq!(out.into_inner(), "read");
 
 let refused = Call::owned("read_file", args! { "path" => "/etc/shadow" })?;
-assert!(guard.check(&authority, &refused).is_err());
+assert!(session.check(&refused).is_err());
 ```
 
 The closure runs only after an allow. A call outside the constraint is denied before it runs, same as Python `@guard`. A guard with no trust root or no revocation policy does not compile.

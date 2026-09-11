@@ -118,6 +118,10 @@ impl RevocationSnapshot {
         self.fetched_at
     }
 
+    pub(crate) fn srl(&self) -> &SignedRevocationList {
+        &self.srl
+    }
+
     pub fn fresh_until(&self) -> Option<DateTime<Utc>> {
         self.fresh_until
     }

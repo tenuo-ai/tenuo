@@ -131,7 +131,6 @@ assert!(session
     .is_some());
 # }
 ```
-```
 
 Receipt collection needs the `receipts` feature: set
 `evidence_policy(EvidencePolicy::BestEffort)`, then `peek_receipts` /

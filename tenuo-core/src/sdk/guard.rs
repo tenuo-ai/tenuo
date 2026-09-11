@@ -63,6 +63,14 @@ pub enum RevocationMode {
     /// enforces freshness and a persistent rollback floor) or install one on
     /// the `Authorizer` before building.
     SignedSrl,
+    /// TTL ceiling until the tracker accepts an SRL, then signed enforcement.
+    ///
+    /// This is the explicit "until first SRL" mode. [`RuntimeBuilder::ttl_fallback`]
+    /// selects it. After a list is accepted, later checks use that list.
+    TtlUntilSrl {
+        /// Maximum `expires_at - issued_at` while no SRL has been accepted.
+        max_lifetime: Duration,
+    },
 }
 
 /// Enforcement surface. Holds configuration, nothing per-call.
@@ -119,12 +127,12 @@ impl Guard {
         authority: &PresentedAuthority,
         attempt: AuthorizationAttempt<'_, '_>,
     ) -> Result<Decision, Denial> {
-        match self.authorize_holder(authority, &attempt) {
+        match self.try_authorize_holder(authority, &attempt) {
             Ok(authorized) => self.complete_allow(&authorized),
-            Err(denial) => {
+            Err((denial, pop)) => {
                 self.record_deny(&denial);
                 #[cfg(feature = "receipts")]
-                self.emit_deny_receipt(authority, attempt.call, &denial);
+                self.emit_deny_receipt(authority.chain(), attempt.call, &denial, pop.as_ref());
                 Err(denial)
             }
         }
@@ -148,15 +156,15 @@ impl Guard {
     ///     .ttl(Duration::from_secs(300))
     ///     .build(&root)?;
     ///
-    /// let (guard, authority) = Tenuo::local()
+    /// let runtime = Runtime::builder()
+    ///     .holder(holder)
     ///     .trusted_root(root.public_key())
-    ///     .chain(vec![warrant])
-    ///     .signer(holder)
     ///     .revocation(RevocationMode::TtlOnly { max_lifetime: Duration::from_secs(600) })
     ///     .build()?;
+    /// let session = runtime.session_from_warrant(warrant)?;
     ///
     /// let call = Call::owned("read_file", args! { "path" => "/data/x" })?;
-    /// let out = guard.guard(&authority, &call, |authorized| {
+    /// let out = session.guard(&call, |authorized| {
     ///     // Tag the downstream write with the decision that permitted it.
     ///     let _idempotency_key = authorized.dedup_key();
     ///     Ok::<_, std::io::Error>("ran")
@@ -180,12 +188,14 @@ impl Guard {
         attempt: AuthorizationAttempt<'_, '_>,
         op: impl FnOnce(&AuthorizedCall<'_>) -> Result<T, E>,
     ) -> Result<Guarded<T>, GuardError<E>> {
-        let authorized = self
-            .authorize_holder(authority, &attempt)
-            .map_err(|denial| {
-                self.record_deny(&denial);
-                GuardError::Denied(denial)
-            })?;
+        let authorized =
+            self.try_authorize_holder(authority, &attempt)
+                .map_err(|(denial, pop)| {
+                    self.record_deny(&denial);
+                    #[cfg(feature = "receipts")]
+                    self.emit_deny_receipt(authority.chain(), attempt.call, &denial, pop.as_ref());
+                    GuardError::Denied(denial)
+                })?;
         let decision = self
             .complete_allow(&authorized)
             .map_err(GuardError::Denied)?;
@@ -206,6 +216,8 @@ impl Guard {
             Ok(authorized) => self.complete_allow(&authorized),
             Err(denial) => {
                 self.record_deny(&denial);
+                #[cfg(feature = "receipts")]
+                self.emit_deny_receipt(received.chain(), call, &denial, Some(received.signature()));
                 Err(denial)
             }
         }
@@ -220,6 +232,8 @@ impl Guard {
     ) -> Result<Guarded<T>, GuardError<E>> {
         let authorized = self.authorize_received(received, call).map_err(|denial| {
             self.record_deny(&denial);
+            #[cfg(feature = "receipts")]
+            self.emit_deny_receipt(received.chain(), call, &denial, Some(received.signature()));
             GuardError::Denied(denial)
         })?;
         let decision = self
@@ -452,15 +466,37 @@ impl Guard {
 
     #[cfg(feature = "receipts")]
     fn commit_receipt_links(&self, payload: &mut ReceiptPayload) {
-        if let Some(srl) = self.authorizer.installed_revocation_list() {
+        let srl = self
+            .tracker_srl()
+            .or_else(|| self.authorizer.installed_revocation_list().cloned());
+        if let Some(srl) = srl {
             payload.srl_version = Some(srl.version());
             if let Ok(bytes) = srl.to_bytes() {
                 payload.srl_hash = Some(crate::srl_commitment_digest(&bytes));
             }
         }
+        let roots: Vec<[u8; 32]> = self
+            .authorizer
+            .trusted_root_keys()
+            .iter()
+            .map(|k| k.to_bytes())
+            .collect();
+        payload.trusted_roots_hash = Some(crate::trusted_roots_digest(&roots));
         if let Ok(guard) = self.evidence.last_receipt_hash.lock() {
             payload.prev_receipt_hash = *guard;
         }
+    }
+
+    fn tracker_srl(&self) -> Option<crate::revocation::SignedRevocationList> {
+        let tracker = match &self.revocation {
+            ResolvedRevocation::Tracker(tracker)
+            | ResolvedRevocation::TtlUntilSrl { tracker, .. } => tracker,
+            _ => return None,
+        };
+        tracker
+            .latest(self.now())
+            .ok()
+            .map(|snap| snap.srl().clone())
     }
 
     #[cfg(feature = "receipts")]
@@ -473,23 +509,49 @@ impl Guard {
     }
 
     #[cfg(feature = "receipts")]
-    fn emit_deny_receipt(&self, authority: &PresentedAuthority, call: &Call<'_>, denial: &Denial) {
+    pub(crate) fn emit_deny_receipt(
+        &self,
+        chain: &[Warrant],
+        call: &Call<'_>,
+        denial: &Denial,
+        pop: Option<&Signature>,
+    ) {
         if self.evidence.policy == EvidencePolicy::Disabled {
             return;
         }
         let Some(signer) = self.evidence.signer.as_ref() else {
             return;
         };
-        let Ok(stack) = encode_stack(&WarrantStack(authority.chain().to_vec())) else {
+        let Ok(stack) = encode_stack(&WarrantStack(chain.to_vec())) else {
             return;
         };
-        let mut payload = ReceiptPayload::deny_before_pop(
-            stack,
-            format!("tool:{}", call.capability()),
-            self.now().timestamp(),
-            format!("deny:{}", denial.code()),
-            denial.code().to_string(),
-        );
+        let mut payload = if let Some(pop) = pop {
+            let mut payload = ReceiptPayload::deny(
+                stack,
+                format!("tool:{}", call.capability()),
+                self.now().timestamp(),
+                format!("deny:{}", denial.code()),
+                denial.code().to_string(),
+                pop.to_bytes(),
+            );
+            if let Some(leaf) = chain.last() {
+                payload.request_hash = Some(compute_request_hash(
+                    &leaf.id().to_string(),
+                    call.capability(),
+                    call.pop_args(),
+                    Some(leaf.authorized_holder()),
+                ));
+            }
+            payload
+        } else {
+            ReceiptPayload::deny_before_pop(
+                stack,
+                format!("tool:{}", call.capability()),
+                self.now().timestamp(),
+                format!("deny:{}", denial.code()),
+                denial.code().to_string(),
+            )
+        };
         self.commit_receipt_links(&mut payload);
         let Ok(bytes) = payload.to_cbor() else {
             return;
@@ -508,14 +570,27 @@ impl Guard {
         authority: &'a PresentedAuthority,
         attempt: &AuthorizationAttempt<'a, 'a>,
     ) -> Result<AuthorizedCall<'a>, Denial> {
+        self.try_authorize_holder(authority, attempt)
+            .map_err(|(denial, _)| denial)
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn try_authorize_holder<'a>(
+        &'a self,
+        authority: &'a PresentedAuthority,
+        attempt: &AuthorizationAttempt<'a, 'a>,
+    ) -> Result<AuthorizedCall<'a>, (Denial, Option<Signature>)> {
         let as_of = self.now();
         let instant = VerificationInstant::new(as_of);
 
         if !authority.signer_matches_leaf() {
-            return Err(Denial::sdk(
-                SdkDenialKind::SignerUnavailable,
-                Retryability::AfterBackoff,
-                "holder signer does not match leaf",
+            return Err((
+                Denial::sdk(
+                    SdkDenialKind::SignerUnavailable,
+                    Retryability::AfterBackoff,
+                    "holder signer does not match leaf",
+                ),
+                None,
             ));
         }
 
@@ -529,23 +604,27 @@ impl Guard {
                 as_of.timestamp(),
                 window_secs,
             )
-            .map_err(Denial::from_core)?;
+            .map_err(|e| (Denial::from_core(e), None))?;
         let request = PopSigningRequest::new(preimage, call.capability(), leaf.id().to_string());
         let pop_signature = authority.signer().sign_pop(&request).map_err(|_| {
-            Denial::sdk(
-                SdkDenialKind::SignerUnavailable,
-                Retryability::AfterBackoff,
-                "holder signer unavailable",
+            (
+                Denial::sdk(
+                    SdkDenialKind::SignerUnavailable,
+                    Retryability::AfterBackoff,
+                    "holder signer unavailable",
+                ),
+                None,
             )
         })?;
 
         self.decide(
             authority.chain(),
-            pop_signature,
+            pop_signature.clone(),
             attempt.approvals,
             call,
             instant,
         )
+        .map_err(|denial| (denial, Some(pop_signature)))
     }
 
     #[cfg(feature = "async")]
@@ -994,7 +1073,6 @@ pub struct GuardBuilder {
     authorizer: Option<Authorizer>,
     revocation: Option<RevocationMode>,
     tracker: Option<std::sync::Arc<RevocationTracker>>,
-    ttl_until_srl: Option<Duration>,
     denial_reporting: DenialReporting,
     clock: Option<Arc<dyn Clock>>,
     approval_provider: Option<Arc<dyn ApprovalProvider>>,
@@ -1006,6 +1084,8 @@ pub struct GuardBuilder {
     receipt_signer: Option<std::sync::Arc<dyn ReceiptSigner>>,
     #[cfg(feature = "receipts")]
     receipt_sink: Option<std::sync::Arc<dyn ReceiptSink>>,
+    #[cfg(feature = "receipts")]
+    receipt_link: Option<std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>>,
     #[cfg(feature = "async")]
     declared_sync_deadline: bool,
 }
@@ -1035,8 +1115,7 @@ impl GuardBuilder {
         max_lifetime: Duration,
         tracker: std::sync::Arc<RevocationTracker>,
     ) -> Self {
-        self.revocation = Some(RevocationMode::TtlOnly { max_lifetime });
-        self.ttl_until_srl = Some(max_lifetime);
+        self.revocation = Some(RevocationMode::TtlUntilSrl { max_lifetime });
         self.tracker = Some(tracker);
         self
     }
@@ -1092,6 +1171,16 @@ impl GuardBuilder {
         self
     }
 
+    /// Share previous-receipt hash across sessions of one runtime.
+    #[cfg(feature = "receipts")]
+    pub(crate) fn receipt_link(
+        mut self,
+        link: std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>,
+    ) -> Self {
+        self.receipt_link = Some(link);
+        self
+    }
+
     /// Sync surface cannot enforce a deadline. Calling this makes `build` fail.
     #[cfg(feature = "async")]
     pub fn deadline(mut self, _deadline: Duration) -> Self {
@@ -1114,6 +1203,9 @@ impl GuardBuilder {
         }
         #[cfg(feature = "receipts")]
         let evidence = {
+            let last_receipt_hash = self
+                .receipt_link
+                .unwrap_or_else(|| std::sync::Arc::new(std::sync::Mutex::new(None)));
             match self.evidence {
                 EvidencePolicy::Disabled => EvidenceConfig::disabled(),
                 EvidencePolicy::BestEffort => {
@@ -1124,7 +1216,7 @@ impl GuardBuilder {
                         policy: EvidencePolicy::BestEffort,
                         signer: self.receipt_signer,
                         sink: self.receipt_sink,
-                        last_receipt_hash: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                        last_receipt_hash,
                     }
                 }
                 EvidencePolicy::RequiredBeforeExecution => {
@@ -1138,35 +1230,33 @@ impl GuardBuilder {
                         policy: EvidencePolicy::RequiredBeforeExecution,
                         signer: self.receipt_signer,
                         sink: self.receipt_sink,
-                        last_receipt_hash: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                        last_receipt_hash,
                     }
                 }
             }
         };
-        let revocation = if let (Some(max_lifetime), Some(tracker)) =
-            (self.ttl_until_srl, self.tracker.clone())
-        {
-            ResolvedRevocation::TtlUntilSrl {
-                max_lifetime,
-                tracker,
+        let revocation = match mode {
+            RevocationMode::TtlOnly { max_lifetime } => {
+                ResolvedRevocation::TtlOnly { max_lifetime }
             }
-        } else {
-            match mode {
-                RevocationMode::TtlOnly { max_lifetime } => {
-                    ResolvedRevocation::TtlOnly { max_lifetime }
+            RevocationMode::TtlUntilSrl { max_lifetime } => {
+                let tracker = self.tracker.ok_or(GuardBuildError::SignedSrlUnavailable)?;
+                ResolvedRevocation::TtlUntilSrl {
+                    max_lifetime,
+                    tracker,
                 }
-                RevocationMode::SignedSrl => {
-                    if let Some(tracker) = self.tracker {
-                        ResolvedRevocation::Tracker(tracker)
-                    } else {
-                        let list = authorizer
-                            .installed_revocation_list()
-                            .cloned()
-                            .ok_or(GuardBuildError::SignedSrlUnavailable)?;
-                        ResolvedRevocation::Snapshot(Arc::new(
-                            RevocationSnapshot::from_accepted_list(list),
-                        ))
-                    }
+            }
+            RevocationMode::SignedSrl => {
+                if let Some(tracker) = self.tracker {
+                    ResolvedRevocation::Tracker(tracker)
+                } else {
+                    let list = authorizer
+                        .installed_revocation_list()
+                        .cloned()
+                        .ok_or(GuardBuildError::SignedSrlUnavailable)?;
+                    ResolvedRevocation::Snapshot(Arc::new(RevocationSnapshot::from_accepted_list(
+                        list,
+                    )))
                 }
             }
         };

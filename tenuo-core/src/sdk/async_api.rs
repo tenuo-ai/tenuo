@@ -236,6 +236,8 @@ impl Guard {
             }
             Err(denial) => {
                 self.record_deny(&denial);
+                #[cfg(feature = "receipts")]
+                self.emit_deny_receipt(authority.chain(), call, &denial, None);
                 Err(denial)
             }
         }
@@ -256,6 +258,8 @@ impl Guard {
             }
             Err(denial) => {
                 self.record_deny(&denial);
+                #[cfg(feature = "receipts")]
+                self.emit_deny_receipt(received.chain(), call, &denial, Some(received.signature()));
                 Err(denial)
             }
         }
@@ -279,6 +283,8 @@ impl Guard {
             .await
             .map_err(|denial| {
                 self.record_deny(&denial);
+                #[cfg(feature = "receipts")]
+                self.emit_deny_receipt(authority.chain(), call, &denial, None);
                 GuardError::Denied(denial)
             })?;
         self.reject_if_cancelled(control)
@@ -301,6 +307,8 @@ impl Guard {
         self.preflight_async(control).map_err(GuardError::Denied)?;
         let authorized = self.authorize_received(received, call).map_err(|denial| {
             self.record_deny(&denial);
+            #[cfg(feature = "receipts")]
+            self.emit_deny_receipt(received.chain(), call, &denial, Some(received.signature()));
             GuardError::Denied(denial)
         })?;
         self.reject_if_cancelled(control)

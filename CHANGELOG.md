@@ -7,33 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **Authorizer trust from gateway YAML and Helm env.** `settings.trusted_roots`
-  is applied to the live `Authorizer`. The chart sets `TENUO_TRUSTED_KEYS` from
-  `config.trustedRoots` and passes through `env`.
-- **Shared control-plane URL normalizer and status-aware retry.** Trailing
-  `/v1` is stripped once. Registration retries 429/5xx/network only.
-- **`RuntimeBuilder::revocation` and Session delegation/diagnostics.**
-  `Tenuo::local` and `DataPlane` are deprecated; `Runtime` is the primary
-  holder entry.
-- **Rust SDK receipt parity.** Deny receipts, previous-receipt hash, and SRL
-  commitment on the guard path. TypeScript `Runtime` signs verifier receipts
-  with the holder identity.
-- **`connect_token` is always compiled.** WASM uses the core parser. Rust
-  `Debug`/`Serialize` redact secrets.
-
-### Changed
-
-- **`tenuo-wasm` 0.2.6.** `make version-check` runs in CI and covers the four
-  artifacts. Compatibility matrix lists Rust, WASM, Python, and TypeScript.
-- **Python `AnyValue`.** `Any = Wildcard` is a deprecated alias. The OR
-  combinator is `AnyOf` (Rust type alias, Python, TypeScript `anyOf`).
-  `email`, `min`, `max`, and `Shlex` stay product features.
-- **Public enums `#[non_exhaustive]`.** Wrapping errors implement `source()`.
-- **Sidecar graceful shutdown.** SIGTERM/ctrl-c drain the HTTP server. SRL
-  fetch goes through `RevocationTracker` with a file floor.
-
 ## [0.2.6] - 2026-09-10
 
 ### Added
@@ -95,6 +68,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Runtime::build`. File-store errors name the floor path.
 - **`Authorizer::installed_revocation_list`.** Public so adapters can refuse
   to roll a newer verifier list back to a stale Runtime SRL.
+- **Authorizer trust from gateway YAML and Helm env.** `settings.trusted_roots`
+  is applied to the live `Authorizer`. The chart sets `TENUO_TRUSTED_KEYS` from
+  `config.trustedRoots` and passes through `env`, including falsy values.
+- **Shared control-plane URL normalizer and status-aware retry.** Trailing
+  `/v1` is stripped once. Registration retries 429/5xx/network until shutdown
+  and honours `Retry-After`. Event batches that return 400 are dropped.
+- **`RuntimeBuilder::revocation` and Session delegation/diagnostics.**
+  `ttl_fallback` selects the public `RevocationMode::TtlUntilSrl`.
+  `Tenuo::local` and `DataPlane` are deprecated; `Runtime` is the primary
+  holder entry. `TtlOnly` runtimes reject `apply_signed_revocation_list`.
+- **Rust SDK receipt parity.** Deny receipts on check, guard, received, and
+  async paths. Previous-receipt hash, trusted-roots hash, and SRL commitment
+  come from the tracker when present. TypeScript `Runtime` signs verifier
+  receipts with the holder identity.
+- **`connect_token` is always compiled.** WASM uses the core parser. Rust
+  `Debug`/`Serialize` redact secrets.
+- **Sidecar SRL floor.** The chart mounts an `emptyDir` at
+  `/var/lib/tenuo/srl-floor` and sets `TENUO_REVOCATION_FLOOR`. Opening the
+  floor fails closed when a tracker was requested.
 
 ### Fixed
 
@@ -133,8 +125,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns `Unavailable` so the guard denies. Best-effort still proceeds and
   counts the overflow. The previous `Ok(overflow ref)` silently bypassed
   the required-evidence check. `MemoryReceiptSink` is now capped at 10,000
-  (unbounded in 0.2.5). Required-evidence callers must
-  `acknowledge_receipts` / drain or they are denied after the cap.
+  (unbounded in 0.2.5). Deny receipts use a separate budget so they cannot
+  starve allows. Required-evidence callers must
+  `acknowledge_receipts` / drain or they are denied after the allow cap.
+- **Sidecar shutdown flush.** After HTTP drains, the audit sender is dropped
+  and the flush loop is joined so queued events are delivered.
 - **TypeScript: published source maps are usable.** `@tenuo/core` and
   `@tenuo/mcp` JavaScript maps embed the original TypeScript
   (`sourcesContent`), so debuggers and `node --enable-source-maps` show SDK
@@ -158,6 +153,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
   messages are unchanged. Code that catches `TenuoError` or switches on `code`
   now sees builder mistakes too.
+- **`tenuo-wasm` 0.2.6.** `make version-check` runs in CI and covers Rust,
+  WASM, Python, TypeScript, and `@tenuo/mcp`. Compatibility matrix lists
+  those artifacts.
+- **Python `AnyValue`.** Importing `Any` emits `DeprecationWarning`. The OR
+  combinator is `AnyOf` (Rust type alias, Python, TypeScript `anyOf`).
+  `email`, `min`, `max`, and `Shlex` stay product features.
+- **Gateway `clock_tolerance_secs` is applied** to the live `Authorizer`.
+- **Malformed `settings.trusted_roots` entries fail startup** instead of
+  being ignored. This is a breaking change for existing configs that
+  contained invalid hex.
+- **Sidecar graceful shutdown.** SIGTERM/ctrl-c drain the HTTP server, then
+  the audit flush. SRL fetch goes through `RevocationTracker` with a file
+  floor. Request checks consult `latest()` and deny when the list is stale.
 
 ## [0.2.5] - 2026-09-06
 

@@ -484,7 +484,7 @@ def _enhance_constraint_suggestion(
                 f"  Hint: {len(unknown_fields)} fields may be unknown: {fields_str}\n"
                 f"  This warrant uses zero-trust mode (constraints defined = closed world).\n\n"
                 f"  To fix, either:\n"
-                f"  1. Add constraints for needed fields: {', '.join(f'{f}=Any()' for f in unknown_fields[:3])}{'...' if len(unknown_fields) > 3 else ''}\n"
+                f"  1. Add constraints for needed fields: {', '.join(f'{f}=AnyValue()' for f in unknown_fields[:3])}{'...' if len(unknown_fields) > 3 else ''}\n"
                 f"  2. Or use _allow_unknown=True to opt out of zero-trust"
             )
         else:
@@ -494,7 +494,7 @@ def _enhance_constraint_suggestion(
                 f"  Hint: Field '{rejected_field}' not in warrant's constraints.\n"
                 f"  This capability uses zero-trust mode (unknown fields rejected).\n\n"
                 f"  To fix, either:\n"
-                f"  1. Add constraint: {rejected_field}=Any()  (allows any value)\n"
+                f"  1. Add constraint: {rejected_field}=AnyValue()  (allows any value)\n"
                 f"  2. Or use _allow_unknown=True to allow all unknown fields"
             )
 

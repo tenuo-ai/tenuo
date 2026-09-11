@@ -49,13 +49,15 @@ spec:
         env:
           - name: RUST_LOG
             value: "info"
+          - name: TENUO_REVOCATION_FLOOR
+            value: "/var/lib/tenuo/srl-floor/floors.json"
           {{- if .Values.config.trustedRoots }}
           - name: TENUO_TRUSTED_KEYS
             value: {{ join "," .Values.config.trustedRoots | quote }}
           {{- end }}
           {{- range .Values.env }}
           - name: {{ .name }}
-            {{- if .value }}
+            {{- if hasKey . "value" }}
             value: {{ .value | quote }}
             {{- end }}
             {{- if .valueFrom }}
@@ -77,6 +79,8 @@ spec:
           - name: config
             mountPath: /etc/tenuo
             readOnly: true
+          - name: srl-floor
+            mountPath: /var/lib/tenuo/srl-floor
           {{- with .Values.volumeMounts }}
           {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -84,6 +88,8 @@ spec:
         - name: config
           configMap:
             name: {{ include "tenuo-authorizer.fullname" . }}-config
+        - name: srl-floor
+          emptyDir: {}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

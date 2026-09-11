@@ -321,9 +321,9 @@ impl SdkContext {
     #[wasm_bindgen(js_name = withReceiptSigner)]
     pub fn with_receipt_signer(mut self, secret: &[u8]) -> Result<SdkContext, JsError> {
         init_panic_hook();
-        let arr: [u8; 32] = secret.try_into().map_err(|_| {
-            JsError::new("receipt signer must be a 32-byte Ed25519 seed")
-        })?;
+        let arr: [u8; 32] = secret
+            .try_into()
+            .map_err(|_| JsError::new("receipt signer must be a 32-byte Ed25519 seed"))?;
         self.receipt_signer = SigningKey::from_bytes(&arr);
         Ok(self)
     }
@@ -762,7 +762,6 @@ impl SdkSession {
             kind: match leaf.r#type() {
                 tenuo::WarrantType::Issuer => "issuer".into(),
                 tenuo::WarrantType::Execution => "execution".into(),
-                _ => "execution".into(),
             },
             holder_public_key: hex::encode(leaf.authorized_holder().to_bytes()),
             root_public_key: hex::encode(root.issuer().to_bytes()),

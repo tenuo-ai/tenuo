@@ -99,6 +99,7 @@ impl ReceiptSigner for LocalReceiptSigner {
 pub struct MemoryReceiptSink {
     stored: Mutex<Vec<Receipt>>,
     max: usize,
+    deny_max: usize,
     overflowed: AtomicUsize,
 }
 
@@ -121,6 +122,7 @@ impl MemoryReceiptSink {
         Self {
             stored: Mutex::new(Vec::new()),
             max: max.max(1),
+            deny_max: max.max(1),
             overflowed: AtomicUsize::new(0),
         }
     }
@@ -160,13 +162,32 @@ impl MemoryReceiptSink {
     }
 }
 
+fn receipt_is_deny(receipt: &Receipt) -> bool {
+    receipt
+        .verify_signature()
+        .map(|payload| payload.outcome == crate::receipt::Outcome::Deny)
+        .unwrap_or(false)
+}
+
 impl ReceiptSink for MemoryReceiptSink {
     fn persist(&self, receipt: &Receipt) -> Result<ReceiptRef, ReceiptSinkError> {
         let mut stored = self
             .stored
             .lock()
             .map_err(|_| ReceiptSinkError::Unavailable)?;
-        if stored.len() >= self.max {
+        let deny = receipt_is_deny(receipt);
+        let (used, cap) = if deny {
+            (
+                stored.iter().filter(|r| receipt_is_deny(r)).count(),
+                self.deny_max,
+            )
+        } else {
+            (
+                stored.iter().filter(|r| !receipt_is_deny(r)).count(),
+                self.max,
+            )
+        };
+        if used >= cap {
             self.overflowed.fetch_add(1, Ordering::Relaxed);
             return Err(ReceiptSinkError::Unavailable);
         }
@@ -282,6 +303,31 @@ mod tests {
         assert!(sink.persist(&receipt).is_ok());
         assert_eq!(sink.persist(&receipt), Err(ReceiptSinkError::Unavailable));
         assert_eq!(sink.stored().len(), 1);
+        assert_eq!(sink.overflowed(), 1);
+    }
+
+    #[test]
+    fn deny_receipts_do_not_consume_allow_budget() {
+        let sink = MemoryReceiptSink::with_capacity(1);
+        let signer = LocalReceiptSigner::for_development();
+        let deny = sign_payload(
+            &ReceiptPayload::deny_before_pop(vec![0xA0], "tool:read", 1, "deny-1", "denied")
+                .to_cbor()
+                .unwrap(),
+            &signer,
+        )
+        .unwrap();
+        let allow = sign_payload(
+            &ReceiptPayload::allow(vec![0xA0], "tool:read", 1, "inv-2", [1u8; 64])
+                .to_cbor()
+                .unwrap(),
+            &signer,
+        )
+        .unwrap();
+        assert!(sink.persist(&deny).is_ok());
+        assert_eq!(sink.persist(&deny), Err(ReceiptSinkError::Unavailable));
+        assert!(sink.persist(&allow).is_ok());
+        assert_eq!(sink.stored().len(), 2);
         assert_eq!(sink.overflowed(), 1);
     }
 

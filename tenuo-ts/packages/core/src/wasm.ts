@@ -275,7 +275,6 @@ type Generated = {
     new (): WasmContext;
     fromTrustedRoots(roots: string[]): WasmContext;
     fromIssuerSecret(secret: Uint8Array, extraRoots?: string[]): WasmContext;
-    withReceiptSigner(secret: Uint8Array): WasmContext;
   };
   SdkSession: {
     fromWire(warrant: string, holder: Uint8Array): WasmSession;
@@ -357,9 +356,13 @@ export function loadWasm(): Generated {
   }
 }
 
-export function createDevContext(): WasmContext {
+export function createDevContext(receiptSigner?: Uint8Array): WasmContext {
   const { SdkContext } = loadWasm();
-  return new SdkContext();
+  let context: WasmContext = new SdkContext();
+  if (receiptSigner !== undefined) {
+    context = context.withReceiptSigner(receiptSigner);
+  }
+  return context;
 }
 
 export function protocolLimits(): WasmProtocolLimits {
@@ -382,9 +385,17 @@ export function createVerifierContext(
   return context;
 }
 
-export function createIssuerContext(secret: Uint8Array, extraRootHexes: readonly string[]): WasmContext {
+export function createIssuerContext(
+  secret: Uint8Array,
+  extraRootHexes: readonly string[],
+  receiptSigner?: Uint8Array,
+): WasmContext {
   const { SdkContext } = loadWasm();
-  return SdkContext.fromIssuerSecret(secret, [...extraRootHexes]);
+  let context = SdkContext.fromIssuerSecret(secret, [...extraRootHexes]);
+  if (receiptSigner !== undefined) {
+    context = context.withReceiptSigner(receiptSigner);
+  }
+  return context;
 }
 
 export function importSessionFromWire(warrant: string, holderKey: Uint8Array): WasmSession {

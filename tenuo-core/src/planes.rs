@@ -1853,6 +1853,11 @@ impl Authorizer {
         self.trusted_keys.push(key);
     }
 
+    /// Trusted issuer public keys, in insertion order.
+    pub fn trusted_root_keys(&self) -> &[PublicKey] {
+        &self.trusted_keys
+    }
+
     /// Set the PoP window (mutable version).
     pub fn set_pop_window(&mut self, window_secs: i64, max_windows: u32) {
         self.pop_window_secs = window_secs;

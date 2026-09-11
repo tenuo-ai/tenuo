@@ -14,7 +14,8 @@
 //!
 //! 1. On startup, registers with the control plane to get an `authorizer_id`
 //! 2. Spawns a background task that sends heartbeats at the configured interval
-//! 3. If registration fails after 3 retries, continues in standalone mode
+//! 3. Registration retries retryable failures until shutdown; a non-retryable
+//!    status continues in standalone mode
 //! 4. If heartbeats fail, logs warnings and continues retrying
 //! 5. On each heartbeat, checks if SRL update is needed (version or urgent flag)
 //! 6. Fetches and applies new SRL when needed
@@ -34,13 +35,14 @@ use crate::crypto::SigningKey;
 use crate::planes::Authorizer;
 use crate::revocation::SignedRevocationList;
 use crate::PublicKey;
+use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
@@ -920,6 +922,19 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
     audit_rx: Option<mpsc::Receiver<AuthorizationEvent>>,
     shared_authorizer_id: Arc<RwLock<Option<String>>>,
 ) {
+    start_heartbeat_loop_until(config, audit_rx, shared_authorizer_id, None).await;
+}
+
+/// Same as [`start_heartbeat_loop_with_audit_and_id`], stopping when `shutdown` fires.
+///
+/// After the HTTP server drains, drop the audit sender and signal this receiver
+/// so the flush task can drain the remaining queue before the process exits.
+pub async fn start_heartbeat_loop_until(
+    config: HeartbeatConfig,
+    audit_rx: Option<mpsc::Receiver<AuthorizationEvent>>,
+    shared_authorizer_id: Arc<RwLock<Option<String>>>,
+    mut shutdown: Option<oneshot::Receiver<()>>,
+) {
     let client = Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -934,12 +949,12 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
         }
     }
 
-    // Register with retry
-    let authorizer_id = match register_with_retry(&client, &config).await {
+    // Register with retry until success, a non-retryable status, or shutdown.
+    let authorizer_id = match register_with_retry(&client, &config, &mut shutdown).await {
         Some(id) => id,
         None => {
             warn!(
-                "Failed to register with control plane after 3 attempts. \
+                "Failed to register with control plane. \
                  Authorizer will run in standalone mode without heartbeats."
             );
             return;
@@ -990,16 +1005,18 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
         }
     }
 
-    // Spawn audit event flush task if receiver provided
-    if let Some(rx) = audit_rx {
+    // Spawn audit event flush task if receiver provided; join it on shutdown.
+    let flush_handle = if let Some(rx) = audit_rx {
         let audit_client = client.clone();
         let audit_config = config.clone();
         let audit_authorizer_id = authorizer_id.clone();
-        tokio::spawn(async move {
-            run_audit_flush_loop(audit_client, audit_config, audit_authorizer_id, rx).await;
-        });
         info!("Audit event streaming enabled");
-    }
+        Some(tokio::spawn(async move {
+            run_audit_flush_loop(audit_client, audit_config, audit_authorizer_id, rx).await;
+        }))
+    } else {
+        None
+    };
 
     // Heartbeat loop
     let mut ticker = interval(Duration::from_secs(config.interval_secs));
@@ -1008,7 +1025,13 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
     ticker.tick().await;
 
     loop {
-        ticker.tick().await;
+        tokio::select! {
+            _ = wait_shutdown(&mut shutdown) => {
+                info!("Heartbeat loop stopping");
+                break;
+            }
+            _ = ticker.tick() => {}
+        }
 
         match send_heartbeat(&client, &config, &authorizer_id).await {
             Ok(response) => {
@@ -1068,6 +1091,23 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
                 );
             }
         }
+    }
+
+    if let Some(handle) = flush_handle {
+        match tokio::time::timeout(Duration::from_secs(10), handle).await {
+            Ok(Ok(())) => info!("Audit flush loop finished"),
+            Ok(Err(e)) => warn!(error = %e, "Audit flush task failed"),
+            Err(_) => warn!("Audit flush timed out after 10s"),
+        }
+    }
+}
+
+async fn wait_shutdown(shutdown: &mut Option<oneshot::Receiver<()>>) {
+    match shutdown.as_mut() {
+        Some(rx) => {
+            let _ = rx.await;
+        }
+        None => std::future::pending::<()>().await,
     }
 }
 
@@ -1241,7 +1281,25 @@ async fn flush_audit_events(
         }
         Ok(response) => {
             let status = response.status();
+            let retry_after = parse_retry_after(response.headers());
             let body = response.text().await.unwrap_or_default();
+            let retryable = status.as_u16() == 429 || status.is_server_error();
+            if !retryable {
+                warn!(
+                    authorizer_id = %authorizer_id,
+                    event_count = %event_count,
+                    status = %status,
+                    "Audit batch rejected; dropping"
+                );
+                eprintln!(
+                    "[tenuo] WARN: flush rejected status={} body={} (authorizer={}); dropping batch",
+                    status,
+                    &body[..body.len().min(200)],
+                    authorizer_id
+                );
+                buffer.clear();
+                return;
+            }
             warn!(
                 authorizer_id = %authorizer_id,
                 event_count = %event_count,
@@ -1254,15 +1312,10 @@ async fn flush_audit_events(
                 &body[..body.len().min(200)],
                 authorizer_id
             );
-            // Keep events in buffer for retry, but cap size to prevent unbounded growth
-            if buffer.len() > config.audit_batch_size * 10 {
-                let drain_count = buffer.len() - config.audit_batch_size;
-                warn!(
-                    dropped_events = %drain_count,
-                    "Dropping oldest audit events due to buffer overflow"
-                );
-                buffer.drain(0..drain_count);
+            if let Some(wait) = retry_after {
+                tokio::time::sleep(wait).await;
             }
+            cap_audit_buffer(buffer, config.audit_batch_size);
         }
         Err(e) => {
             warn!(
@@ -1271,24 +1324,43 @@ async fn flush_audit_events(
                 error = %e,
                 "Network error flushing audit events, will retry"
             );
-            // Same overflow protection
-            if buffer.len() > config.audit_batch_size * 10 {
-                let drain_count = buffer.len() - config.audit_batch_size;
-                warn!(
-                    dropped_events = %drain_count,
-                    "Dropping oldest audit events due to buffer overflow"
-                );
-                buffer.drain(0..drain_count);
-            }
+            cap_audit_buffer(buffer, config.audit_batch_size);
         }
     }
 }
 
-/// Attempt to register with the control plane, retrying up to 3 times.
-async fn register_with_retry(client: &Client, config: &HeartbeatConfig) -> Option<String> {
-    const MAX_ATTEMPTS: u32 = 3;
+fn cap_audit_buffer(buffer: &mut Vec<AuthorizationEvent>, batch_size: usize) {
+    if buffer.len() > batch_size * 10 {
+        let drain_count = buffer.len() - batch_size;
+        warn!(
+            dropped_events = %drain_count,
+            "Dropping oldest audit events due to buffer overflow"
+        );
+        buffer.drain(0..drain_count);
+    }
+}
 
-    for attempt in 1..=MAX_ATTEMPTS {
+fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let raw = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    if let Ok(secs) = raw.parse::<u64>() {
+        return Some(Duration::from_secs(secs.min(300)));
+    }
+    DateTime::parse_from_rfc2822(raw).ok().map(|dt| {
+        let delta = dt.with_timezone(&Utc) - Utc::now();
+        Duration::from_secs(delta.num_seconds().max(0) as u64)
+    })
+}
+
+/// Register with the control plane, retrying retryable failures until shutdown.
+async fn register_with_retry(
+    client: &Client,
+    config: &HeartbeatConfig,
+    shutdown: &mut Option<oneshot::Receiver<()>>,
+) -> Option<String> {
+    let mut attempt = 0u32;
+
+    loop {
+        attempt = attempt.saturating_add(1);
         match register(client, config).await {
             Ok(id) => return Some(id),
             Err(e) if !e.is_retryable() => {
@@ -1298,41 +1370,40 @@ async fn register_with_retry(client: &Client, config: &HeartbeatConfig) -> Optio
                     "Registration failed with a non-retryable status"
                 );
                 eprintln!(
-                    "[tenuo] registration attempt {}/{} failed permanently: {}",
-                    attempt, MAX_ATTEMPTS, e,
+                    "[tenuo] registration attempt {} failed permanently: {}",
+                    attempt, e,
                 );
-                break;
+                eprintln!(
+                    "[tenuo] WARN: failed to register '{}' with {}. \
+                     Running in standalone mode.",
+                    config.authorizer_name, config.control_plane_url,
+                );
+                return None;
             }
             Err(e) => {
-                let backoff = Duration::from_secs(2u64.pow(attempt));
+                let backoff = e
+                    .retry_after()
+                    .unwrap_or_else(|| Duration::from_secs(2u64.pow(attempt.min(6))));
                 warn!(
                     attempt = attempt,
-                    max_attempts = MAX_ATTEMPTS,
                     error = %e,
                     backoff_secs = backoff.as_secs(),
                     "Registration attempt failed, retrying..."
                 );
                 eprintln!(
-                    "[tenuo] registration attempt {}/{} failed: {} (retry in {}s)",
+                    "[tenuo] registration attempt {} failed: {} (retry in {}s)",
                     attempt,
-                    MAX_ATTEMPTS,
                     e,
                     backoff.as_secs(),
                 );
 
-                if attempt < MAX_ATTEMPTS {
-                    tokio::time::sleep(backoff).await;
+                tokio::select! {
+                    _ = wait_shutdown(shutdown) => return None,
+                    _ = tokio::time::sleep(backoff) => {}
                 }
             }
         }
     }
-
-    eprintln!(
-        "[tenuo] WARN: failed to register '{}' with {} after {} attempts. \
-         Running in standalone mode — events will not reach the dashboard.",
-        config.authorizer_name, config.control_plane_url, MAX_ATTEMPTS,
-    );
-    None
 }
 
 /// Register this authorizer with the control plane.
@@ -1373,15 +1444,7 @@ async fn register(client: &Client, config: &HeartbeatConfig) -> Result<String, H
         .map_err(|e| HeartbeatError::Network(e.to_string()))?;
 
     if !response.status().is_success() {
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "<no body>".to_string());
-        return Err(HeartbeatError::Api {
-            status: status.as_u16(),
-            message: body,
-        });
+        return Err(api_status_error(response).await);
     }
 
     let register_response: RegisterResponse = response
@@ -1433,15 +1496,7 @@ async fn send_heartbeat(
         .map_err(|e| HeartbeatError::Network(e.to_string()))?;
 
     if !response.status().is_success() {
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "<no body>".to_string());
-        return Err(HeartbeatError::Api {
-            status: status.as_u16(),
-            message: body,
-        });
+        return Err(api_status_error(response).await);
     }
 
     let heartbeat_response: HeartbeatResponse = response
@@ -1469,15 +1524,7 @@ async fn fetch_and_apply_srl(
         .map_err(|e| HeartbeatError::Network(e.to_string()))?;
 
     if !response.status().is_success() {
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "<no body>".to_string());
-        return Err(HeartbeatError::Api {
-            status: status.as_u16(),
-            message: body,
-        });
+        return Err(api_status_error(response).await);
     }
 
     let srl_response: SrlResponse = response
@@ -1507,14 +1554,33 @@ async fn fetch_and_apply_srl(
                 fetched_at,
             )
             .map_err(|e| HeartbeatError::Parse(format!("SRL tracker rejected update: {}", e)))?;
+        let snap = tracker
+            .latest(fetched_at)
+            .map_err(|e| HeartbeatError::Parse(format!("SRL tracker has no usable list: {}", e)))?;
+        let mut auth = authorizer.write().await;
+        auth.set_revocation_list(snap.srl().clone(), trusted_root)
+            .map_err(|e| HeartbeatError::Parse(format!("SRL verification failed: {}", e)))?;
+    } else {
+        let mut auth = authorizer.write().await;
+        auth.set_revocation_list(srl, trusted_root)
+            .map_err(|e| HeartbeatError::Parse(format!("SRL verification failed: {}", e)))?;
     }
 
-    // Apply to authorizer (this also verifies the signature)
-    let mut auth = authorizer.write().await;
-    auth.set_revocation_list(srl, trusted_root)
-        .map_err(|e| HeartbeatError::Parse(format!("SRL verification failed: {}", e)))?;
-
     Ok(srl_response.version)
+}
+
+async fn api_status_error(response: reqwest::Response) -> HeartbeatError {
+    let retry_after = parse_retry_after(response.headers());
+    let status = response.status().as_u16();
+    let message = response
+        .text()
+        .await
+        .unwrap_or_else(|_| "<no body>".to_string());
+    HeartbeatError::Api {
+        status,
+        message,
+        retry_after,
+    }
 }
 
 /// Errors that can occur during heartbeat operations.
@@ -1524,7 +1590,11 @@ pub enum HeartbeatError {
     /// Network error (connection failed, timeout, etc.)
     Network(String),
     /// API returned an error status
-    Api { status: u16, message: String },
+    Api {
+        status: u16,
+        message: String,
+        retry_after: Option<Duration>,
+    },
     /// Failed to parse response
     Parse(String),
 }
@@ -1533,7 +1603,9 @@ impl std::fmt::Display for HeartbeatError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HeartbeatError::Network(msg) => write!(f, "Network error: {}", msg),
-            HeartbeatError::Api { status, message } => {
+            HeartbeatError::Api {
+                status, message, ..
+            } => {
                 write!(f, "API error ({}): {}", status, message)
             }
             HeartbeatError::Parse(msg) => write!(f, "Parse error: {}", msg),
@@ -1547,6 +1619,13 @@ impl HeartbeatError {
             Self::Network(_) => true,
             Self::Api { status, .. } if *status == 429 || *status >= 500 => true,
             Self::Api { .. } | Self::Parse(_) => false,
+        }
+    }
+
+    fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::Api { retry_after, .. } => *retry_after,
+            _ => None,
         }
     }
 }
@@ -1786,6 +1865,7 @@ mod tests {
         let api_err = HeartbeatError::Api {
             status: 401,
             message: "Unauthorized".to_string(),
+            retry_after: None,
         };
         assert!(api_err.to_string().contains("401"));
 

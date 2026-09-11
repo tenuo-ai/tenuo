@@ -847,7 +847,6 @@ impl Constraint {
 /// This ensures canonical CBOR encoding for consistent warrant IDs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
-#[non_exhaustive]
 pub enum ConstraintValue {
     String(String),
     Integer(i64),
