@@ -287,6 +287,10 @@ class ControlPlaneClient:
         extracted in Rust — Python stays out of the signing trust path.
         """
         request_id = request_id or str(uuid.uuid4())
+        try:
+            _receipts.collect_enforcement_receipt(result, chain_result)
+        except Exception:  # noqa: BLE001 - collection must not fail the caller
+            logger.warning("runtime receipt collection failed", exc_info=True)
         allowed = getattr(result, "allowed", False)
         tool = getattr(result, "tool", "") or ""
 

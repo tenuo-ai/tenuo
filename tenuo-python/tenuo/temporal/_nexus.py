@@ -1318,22 +1318,23 @@ def _verify_nexus_operation(
             revocation_list=revocation_list,
         )
         approvals = _decode_approvals_header(raw_headers)
-        if chain:
-            chain_result = authorizer.check_chain(
-                chain,
-                tool_name,
-                args,
-                signature=pop_bytes,
+        from tenuo._enforcement import parents_from_presented_chain, verify_inbound_call
+        from tenuo.runtime import bind_runtime, get_runtime
+
+        runtime = getattr(config, "runtime", None) or get_runtime()
+        with bind_runtime(runtime):
+            enforcement = verify_inbound_call(
+                tool_name=tool_name,
+                tool_args=args,
+                warrant=warrant,
+                pop_signature=pop_bytes,
+                authorizer=authorizer,
+                warrant_chain=parents_from_presented_chain(chain, warrant),
                 approvals=approvals,
             )
-        else:
-            chain_result = authorizer.authorize_one(
-                warrant,
-                tool_name,
-                args,
-                signature=pop_bytes,
-                approvals=approvals,
-            )
+        if not enforcement.allowed:
+            enforcement.raise_if_denied()
+        chain_result = enforcement.chain_result
         _check_nexus_pop_replay(config, ctx, pop_bytes, tool_name)
         _emit_nexus_control_plane_event(
             config,
@@ -1406,10 +1407,9 @@ def _emit_nexus_control_plane_event(
     _emit_nexus_audit_event(config, ctx, warrant, tool_name, redacted_args, exc)
 
     control_plane = getattr(config, "control_plane", None)
-    if not control_plane:
-        return
     try:
         from tenuo._enforcement import EnforcementResult
+        from tenuo.receipts import collect_enforcement_receipt
 
         latency_us = int(latency_s * 1e6)
         presented_chain = _presented_nexus_chain(warrant, chain)
@@ -1425,12 +1425,16 @@ def _emit_nexus_control_plane_event(
                 verified_pop=verified_pop,
                 pop_auth_args=args,
             )
-            control_plane.emit_for_enforcement(
-                result,
-                chain_result=chain_result,
-                latency_us=latency_us,
-                request_id=str(request_id) if request_id else None,
+            collect_enforcement_receipt(
+                result, chain_result, runtime=getattr(config, "runtime", None)
             )
+            if control_plane:
+                control_plane.emit_for_enforcement(
+                    result,
+                    chain_result=chain_result,
+                    latency_us=latency_us,
+                    request_id=str(request_id) if request_id else None,
+                )
             return
 
         result = _nexus_denial_result(
@@ -1443,14 +1447,18 @@ def _emit_nexus_control_plane_event(
             presented_chain=presented_chain,
             verified_pop=verified_pop,
         )
-        warrant_stack_b64 = _encode_nexus_warrant_stack_for_denial(warrant, chain)
-        control_plane.emit_for_enforcement(
-            result,
-            chain_result=None,
-            latency_us=latency_us,
-            request_id=str(request_id) if request_id else None,
-            warrant_stack_override=warrant_stack_b64,
+        collect_enforcement_receipt(
+            result, runtime=getattr(config, "runtime", None)
         )
+        if control_plane:
+            warrant_stack_b64 = _encode_nexus_warrant_stack_for_denial(warrant, chain)
+            control_plane.emit_for_enforcement(
+                result,
+                chain_result=None,
+                latency_us=latency_us,
+                request_id=str(request_id) if request_id else None,
+                warrant_stack_override=warrant_stack_b64,
+            )
     except Exception:
         outcome = "allow" if exc is None else "denial"
         logger.warning(

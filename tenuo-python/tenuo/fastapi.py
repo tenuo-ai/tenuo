@@ -82,35 +82,13 @@ else:
 
 
 # =============================================================================
-# Verification-Only Key Sentinel
-# =============================================================================
-
-
-class _VerificationOnlyKey:
-    """
-    Sentinel class used when binding warrants for verification-only mode.
-
-    In FastAPI's client-side PoP pattern (Remote PEP), the server never
-    signs anything - it only verifies precomputed signatures from clients.
-    However, enforce_tool_call() requires a BoundWarrant for type safety.
-
-    This sentinel satisfies the type requirement while making it explicit
-    that the key is not used for cryptographic operations.
-
-    Security Note: This is safe because in verify_mode="verify", the
-    precomputed_signature parameter is used instead of the bound key.
-    """
-
-    pass
-
-
-# =============================================================================
 # Configuration
 # =============================================================================
 
 # Module-level config (set via configure_tenuo)
 _config: Dict[str, Any] = {
     "trusted_issuers": [],
+    "runtime": None,
     "strict": False,
     "error_handler": None,
     "expose_error_details": False,  # SECURITY: keep False in production
@@ -121,6 +99,7 @@ def configure_tenuo(
     app: Any,  # FastAPI
     *,
     trusted_issuers: Optional[List[PublicKey]] = None,
+    runtime: Optional[Any] = None,
     strict: bool = False,
     error_handler: Optional[Callable[[Exception], Any]] = None,
     expose_error_details: bool = False,
@@ -131,6 +110,9 @@ def configure_tenuo(
     Args:
         app: FastAPI application instance
         trusted_issuers: List of trusted issuer public keys for chain verification
+        runtime: Optional holder ``Runtime``. When set, inbound verify uses its
+            authorizer, signed revocation list, and receipt outbox. Roots fall
+            back to ``runtime.trusted_roots`` when ``trusted_issuers`` is omitted.
         strict: If True, require all routes to have Tenuo protection
         error_handler: Custom error handler for authorization failures
         expose_error_details: If True, include constraint details in error responses.
@@ -148,13 +130,19 @@ def configure_tenuo(
         )
     """
     global _config
+    if runtime is not None and not trusted_issuers:
+        trusted_issuers = list(runtime.trusted_roots)
     _config["trusted_issuers"] = trusted_issuers or []
+    _config["runtime"] = runtime
     _config["strict"] = strict
     _config["error_handler"] = error_handler
     _config["expose_error_details"] = expose_error_details
 
-    # Store config in app state for access in dependencies
-    app.state.tenuo_config = _config
+    if hasattr(app, "state"):
+        app.state.tenuo_config = _config
+
+    if not hasattr(app, "exception_handler"):
+        return
 
     # Register global exception handler for TenuoError
     @app.exception_handler(TenuoError)
@@ -371,34 +359,34 @@ class TenuoGuard:
         """
         Adapter for FastAPI's client-side PoP pattern.
 
-        Uses enforce_tool_call with verify_mode="verify" to leverage shared
-        logic (allowlists, critical tools) with pre-computed signatures.
+        Uses the shared inbound PEP (``verify_inbound_call``) so FastAPI,
+        MCP, A2A, and Temporal apply the same chain and receipt rules.
 
         When ``parents`` is provided (warrants extracted from a WarrantStack),
-        the full chain ``[*parents, warrant]`` is passed to
-        ``Authorizer.check_chain`` for cryptographic chain verification.
-
-        Note: This uses _VerificationOnlyKey sentinel since in verify mode,
-        the signing key is never used (precomputed_signature is used instead).
+        the parent chain is passed through to the shared verifier.
         """
         from tenuo_core import Authorizer as _Authorizer
 
-        from tenuo._enforcement import enforce_tool_call
+        from tenuo._enforcement import verify_inbound_call
+        from tenuo.runtime import bind_runtime, get_runtime
 
-        bound = warrant.bind(_VerificationOnlyKey())  # type: ignore[arg-type]
+        runtime = _config.get("runtime") or get_runtime()
 
-        # Resolve trusted issuer keys with a two-level priority:
-        #   1. FastAPI-local config from configure_tenuo(app, trusted_issuers=[...])
-        #   2. Global config from tenuo.configure(trusted_roots=[...])
-        # If neither is set, fail-closed — reject the request.
+        # Resolve trusted issuer keys:
+        #   1. FastAPI-local configure_tenuo(..., trusted_issuers=[...])
+        #   2. Runtime.authorizer() when a Runtime is bound
+        #   3. tenuo.configure(trusted_roots=[...])
+        # If none are set, fail-closed.
         trusted_issuers = _config.get("trusted_issuers") or []
         if trusted_issuers:
-            roots = list(trusted_issuers)
+            authorizer = _Authorizer(trusted_roots=list(trusted_issuers))
+        elif runtime is not None:
+            authorizer = runtime.authorizer()
         else:
             from tenuo.config import resolve_trusted_roots as _resolve_roots
             _global_roots = _resolve_roots(None)
             if _global_roots:
-                roots = list(_global_roots)
+                authorizer = _Authorizer(trusted_roots=list(_global_roots))
             else:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -411,19 +399,22 @@ class TenuoGuard:
                     },
                 )
 
-        authorizer = _Authorizer(trusted_roots=roots)
-
-        return enforce_tool_call(
-            tool_name=tool,
-            tool_args=args,
-            bound_warrant=bound,
-            verify_mode="verify",
-            precomputed_signature=pop_signature,
-            authorizer=authorizer,
-            warrant_chain=parents or [],
-            approval_handler=self._approval_handler,
-            approvals=approvals,
-        )
+        with bind_runtime(runtime):
+            result = verify_inbound_call(
+                tool_name=tool,
+                tool_args=args,
+                warrant=warrant,
+                pop_signature=pop_signature,
+                authorizer=authorizer,
+                warrant_chain=parents or [],
+                approval_handler=self._approval_handler,
+                approvals=approvals,
+            )
+            from tenuo.receipts import collect_enforcement_receipt
+            collect_enforcement_receipt(
+                result, getattr(result, "chain_result", None), runtime=runtime
+            )
+            return result
 
     def __call__(
         self,
@@ -585,6 +576,20 @@ class TenuoGuard:
                         "message": reason,
                         "got": meta.get("got", 0),
                         "need": meta.get("need", 0),
+                        "request_id": request_id,
+                    },
+                )
+
+            if enforcement.error_type == "approval_required":
+                meta = enforcement.approval_metadata or {}
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "approval_required",
+                        "message": reason,
+                        "tool": self.tool,
+                        "request_hash": meta.get("request_hash", ""),
+                        "min_approvals": meta.get("min_approvals", 1),
                         "request_id": request_id,
                     },
                 )

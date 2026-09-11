@@ -17,6 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enforce that list on the next check. `SignedRevocationList::{from_base64,
   to_base64}` is the decode API. `ConnectToken::resolve_endpoint` accepts a
   caller-provided base for relative `/v1` tokens.
+- **Python holder Runtime.** `HolderIdentity`, `ConnectToken.parse`, and
+  `Runtime` own identity, trusted roots, the current signed revocation list,
+  `session_from_wire` / `session_scope`, and an aggregate receipt outbox
+  (`peek_receipts` / `drain_receipts` / `acknowledge_receipts`). Receipts
+  are removed only after acknowledgement. `Runtime.install()` is the
+  process default when no session is in scope. MCP, FastAPI, A2A, and
+  Temporal accept `runtime=` and authorize inbound calls through
+  `verify_inbound_call`.
+- **`tenuo_core.ReceiptIssuer`.** Local receipt-v1 signing.
+  `ConnectToken` parse is strict version 1, redacts credentials in
+  `repr`/`str`/`Debug`, accepts padded Base64URL and `r` /
+  `registration_token` aliases, and exposes `needs_endpoint_base` /
+  `resolve_endpoint`.
+- **Shared holder-lifecycle vectors.** Rust, Python, and TypeScript load
+  `tests/vectors/holder-lifecycle.json` for connect-token parse, identity
+  derivation, and receipt outbox flags.
 - **TypeScript holder Runtime.** `createTenuo.runtime({ identity, trustedRoots,
   revocationList?, receipts })` owns identity, roots, SRL refresh
   (`applyRevocationList`), and `sessionFromWire`. `receipts: "collect"` retains
@@ -39,6 +55,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Sign-path `ApprovalRequired`.** `_enforce_tool_call` raises again when
+  `verify_mode == "sign"` and no handler is configured. Verify mode still
+  maps the gate to an `EnforcementResult`. Adapters that catch the
+  exception (`@guard`, LangChain, CrewAI, LangGraph, ADK) keep a request
+  hash instead of a false constraint explanation.
+- **`Authorizer.installed_revocation_list`.** Exported so
+  `apply_runtime_revocation` can refuse to roll a verifier holding v5
+  back to a Runtime list at v1.
+- **`DeferredEmitter` delivery contract.** A full queue no longer blocks
+  the request thread. The newest decision is shed and counted on
+  `shed_count`. Failed sink delivery is retried in place with backoff
+  (five attempts, interruptible by `close`) and then dropped and counted
+  on `retry_drops`. It is not re-queued and not retried in a tight loop.
+- **Python Runtime multi-hop sessions.** `session_scope` and `Session`
+  install the decoded parent chain on `chain_scope`, so a root →
+  intermediate → holder stack authorizes instead of failing as
+  `UntrustedRoot`.
+- **Receipt outbox overflow.** A full collector no longer turns an allow
+  into a denial. The new receipt is dropped, `receipt_overflows` counts
+  it, and the authorized call proceeds.
+- **`HolderIdentity.load_or_create` races.** The complete key is written
+  and fsynced to a unique `0600` temp file, then the destination is
+  claimed atomically. A concurrent loser loads the winner. Destination
+  is never visible half-written.
 - **Runtime `acknowledgeReceipts` follows emission order.** Session
   receipts always land on the runtime outbox, including when the tool was
   built on another `createTenuo` instance. Acking `n` removes the oldest
