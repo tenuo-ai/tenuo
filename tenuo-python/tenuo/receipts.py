@@ -295,12 +295,13 @@ class DeferredEmitter:
     The decision context is queued **by reference** — do not mutate the
     ``chain_result`` after emitting it.
 
-    The hot path pays a blocking enqueue. A single worker signs in FIFO
+    The hot path pays a non-blocking enqueue. A single worker signs in FIFO
     order — which is what preserves the receipt chain — and hands the wire
-    to the sink. ``maxsize`` is the loss budget: a SIGKILL loses at most the
-    queued decisions, and under sustained overload the enqueue blocks rather
-    than sheds, because anonymous interior gaps are the one thing the chain
-    cannot expose. Size it as ``rate × the longest outage to ride out``.
+    to the sink. Failed delivery is retried in place with backoff, then
+    dropped (never re-queued). ``maxsize`` is the loss budget: a SIGKILL
+    loses at most the queued decisions. Under sustained overload the newest
+    decision is shed and counted on ``shed_count`` rather than blocking the
+    caller. Size it as ``rate × the longest outage to ride out``.
 
     ``maxsize`` is required to be positive. The unbounded configuration lost
     five million receipts in one measured crash and is not constructible.
@@ -319,6 +320,7 @@ class DeferredEmitter:
         self._on_error: Optional[Callable[[BaseException], None]] = None
         self._worker: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        self._shed_count = 0
 
     # Called by ControlPlaneClient: the emitter signs with the client's own
     # key so both postures share one identity and one chain.
@@ -338,9 +340,17 @@ class DeferredEmitter:
         try:
             self._q.put_nowait(item)
         except queue.Full:
+            self._shed_count += 1
             logger.warning(
-                "deferred receipt queue is full; this decision was not queued"
+                "deferred receipt queue is full; newest decision shed "
+                "(shed_count=%s)",
+                self._shed_count,
             )
+
+    @property
+    def shed_count(self) -> int:
+        """Decisions dropped because the queue was full."""
+        return self._shed_count
 
     def qsize(self) -> int:
         return self._q.qsize()
@@ -368,12 +378,18 @@ class DeferredEmitter:
                         chain, tool, args, ts, request_id, code, pop
                     )
                 if not deliver(self._sink, wire, self._on_error):
-                    try:
-                        self._q.put_nowait(("signed", wire))
-                    except queue.Full:
+                    delay = 0.05
+                    delivered = False
+                    for _attempt in range(5):
+                        time.sleep(delay)
+                        if deliver(self._sink, wire, self._on_error):
+                            delivered = True
+                            break
+                        delay = min(delay * 2, 1.0)
+                    if not delivered:
                         logger.warning(
-                            "deferred receipt sink failed and the queue is full; "
-                            "this signed receipt was not re-queued"
+                            "deferred receipt sink failed after retries; "
+                            "this signed receipt was dropped (not re-queued)"
                         )
             except Exception as exc:  # noqa: BLE001 — one bad item must not kill the worker
                 logger.warning("deferred receipt emission failed", exc_info=exc)
@@ -400,7 +416,12 @@ class DeferredEmitter:
     def close(self, timeout: float = 10.0) -> None:
         if self._worker is None:
             return
-        self.flush(timeout)
+        if not self.flush(timeout):
+            logger.warning(
+                "deferred receipt emitter close abandoned queued or "
+                "in-flight receipts after %.1fs",
+                timeout,
+            )
         self._stop.set()
         # put() without a timeout hangs forever when the queue is full and
         # the worker is blocked in the sink — shutdown must not.

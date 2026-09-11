@@ -313,6 +313,26 @@ def test_concurrent_producers_serialized_ack(pair):
     assert runtime.peek_receipts() == []
 
 
+def test_apply_runtime_revocation_does_not_roll_back_newer_list(pair):
+    from tenuo_core import Authorizer, SignedRevocationList
+
+    from tenuo.runtime import apply_runtime_revocation
+
+    root, _holder, _warrant, runtime = pair
+    older_builder = SignedRevocationList.builder()
+    older_builder.version(1)
+    older = older_builder.build(root)
+    newer_builder = SignedRevocationList.builder()
+    newer_builder.version(5)
+    newer = newer_builder.build(root)
+    runtime.apply_revocation_list(older)
+    auth = Authorizer(trusted_roots=[root.public_key])
+    auth.set_revocation_list(newer)
+    assert auth.installed_revocation_list().version == 5
+    apply_runtime_revocation(auth)
+    assert auth.installed_revocation_list().version == 5
+
+
 def test_shutdown_leaves_unacked_receipts(pair):
     _root, _holder, warrant, runtime = pair
     session = runtime.session_from_wire(warrant)

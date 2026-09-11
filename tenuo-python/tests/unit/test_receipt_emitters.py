@@ -249,6 +249,35 @@ def test_flush_waits_for_a_receipt_already_in_the_workers_hands(decision):
     assert waited >= 0.05, "flush returned while the receipt was in flight"
 
 
+def test_deferred_sheds_newest_and_counts(decision):
+    authorizer, result = decision
+    sink = InMemoryReceiptSink()
+    emitter = DeferredEmitter(sink, maxsize=1)
+    client = _client(receipt_emitter=emitter)
+    client.bind_authorizer(authorizer)
+    blocker = threading.Event()
+
+    class BlockingSink:
+        def persist(self, _wire):
+            blocker.wait(1.0)
+
+    started = threading.Event()
+
+    class BlockingSink:
+        def handle(self, _wire):
+            started.set()
+            blocker.wait(1.0)
+
+    emitter._sink = BlockingSink()
+    client._emit_receipt(result, "read_file", True, "in-flight", None)
+    assert started.wait(1.0)
+    client._emit_receipt(result, "read_file", True, "queued", None)
+    client._emit_receipt(result, "read_file", True, "shed", None)
+    assert emitter.shed_count == 1
+    blocker.set()
+    emitter.close()
+
+
 def test_journal_survives_concurrent_producer_threads(decision, tmp_path):
     """Interleaved multi-KB appends tear lines without a lock; every line in
     an evidence file must verify."""

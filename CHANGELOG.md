@@ -57,9 +57,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Sign-path `ApprovalRequired`.** `_enforce_tool_call` raises again when
+  `verify_mode == "sign"` and no handler is configured. Verify mode still
+  maps the gate to an `EnforcementResult`. Adapters that catch the
+  exception (`@guard`, LangChain, CrewAI, LangGraph, ADK) keep a request
+  hash instead of a false constraint explanation.
+- **`Authorizer.installed_revocation_list`.** Exported so
+  `apply_runtime_revocation` can refuse to roll a verifier holding v5
+  back to a Runtime list at v1.
 - **`DeferredEmitter` delivery contract.** A full queue no longer blocks
-  the request thread. Failed sink delivery is logged and the signed
-  artifact is re-queued once; it is not retried in a tight loop.
+  the request thread. The newest decision is shed and counted on
+  `shed_count`. Failed sink delivery is retried in place with backoff
+  (five attempts) and then dropped. It is not re-queued and not retried
+  in a tight loop.
 - **Python Runtime multi-hop sessions.** `session_scope` and `Session`
   install the decoded parent chain on `chain_scope`, so a root →
   intermediate → holder stack authorizes instead of failing as

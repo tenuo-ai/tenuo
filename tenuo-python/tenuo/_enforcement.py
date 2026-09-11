@@ -517,6 +517,12 @@ def _log_chain_enforcement_denial(
         logger.debug(msg)
 
 
+def _reraise_sign_path_approval(exc: BaseException, verify_mode: str) -> None:
+    """Sign-path callers collect approvals via ``ApprovalRequired``; do not map it."""
+    if verify_mode == "sign" and isinstance(exc, ApprovalRequired):
+        raise exc
+
+
 def _enforcement_result_from_chain_error_with_logging(
     exc: BaseException,
     tool_name: str,
@@ -1202,6 +1208,7 @@ def _enforce_tool_call_impl(
                         authorizer=_auth,
                     )
             except Exception as _exc:
+                _reraise_sign_path_approval(_exc, verify_mode)
                 return _enforcement_result_from_chain_error_with_logging(
                     _exc,
                     tool_name,
@@ -1340,6 +1347,8 @@ def _enforce_tool_call_impl(
     except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
         raise
     except ApprovalRequired as e:
+        if verify_mode == "sign":
+            raise
         mapped = _enforcement_result_from_chain_error(
             e, tool_name, tool_args, warrant_id
         )
@@ -1637,6 +1646,7 @@ async def _enforce_tool_call_async_impl(
                         authorizer=_auth,
                     )
             except Exception as _exc:
+                _reraise_sign_path_approval(_exc, verify_mode)
                 return _enforcement_result_from_chain_error_with_logging(
                     _exc,
                     tool_name,
@@ -1750,6 +1760,8 @@ async def _enforce_tool_call_async_impl(
     except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
         raise
     except ApprovalRequired as e:
+        if verify_mode == "sign":
+            raise
         mapped = _enforcement_result_from_chain_error(
             e, tool_name, tool_args, warrant_id
         )

@@ -24,6 +24,7 @@ use crate::warrant::Warrant;
 use crate::Error;
 use chrono::{DateTime, Utc};
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -65,6 +66,7 @@ pub struct RuntimeBuilder {
     ttl_fallback: Option<Duration>,
     srl_max_age: Duration,
     srl_clock_tolerance: Duration,
+    floor_path: Option<PathBuf>,
     denial_reporting: DenialReporting,
     #[cfg(feature = "receipts")]
     evidence: EvidencePolicy,
@@ -81,6 +83,7 @@ impl Runtime {
             ttl_fallback: None,
             srl_max_age: DEFAULT_SRL_MAX_AGE,
             srl_clock_tolerance: DEFAULT_SRL_CLOCK_TOLERANCE,
+            floor_path: None,
             denial_reporting: DenialReporting::Error,
             #[cfg(feature = "receipts")]
             evidence: EvidencePolicy::Disabled,
@@ -285,6 +288,13 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Persist revocation floors at `path` instead of beside the identity
+    /// key. Use this when the key lives on a read-only or root-owned mount.
+    pub fn revocation_floor_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.floor_path = Some(path.into());
+        self
+    }
+
     /// Log level for denials. Never changes whether the operation runs.
     pub fn denial_reporting(mut self, reporting: DenialReporting) -> Self {
         self.denial_reporting = reporting;
@@ -299,7 +309,8 @@ impl RuntimeBuilder {
     }
 
     /// Bound on the session receipt outbox. A full sink drops the new
-    /// receipt and counts it; the authorized call still proceeds.
+    /// receipt, counts it, and returns Unavailable. Best-effort still
+    /// proceeds; RequiredBeforeExecution denies.
     #[cfg(feature = "receipts")]
     pub fn receipt_capacity(mut self, max: usize) -> Self {
         self.receipt_capacity = max.max(1);
@@ -324,6 +335,7 @@ impl RuntimeBuilder {
             self.roots.clone(),
             self.srl_max_age,
             self.srl_clock_tolerance,
+            self.floor_path,
         )?);
         Ok(Runtime {
             identity,
@@ -344,12 +356,15 @@ fn build_tracker(
     roots: Vec<PublicKey>,
     max_age: Duration,
     clock_tolerance: Duration,
+    floor_path: Option<PathBuf>,
 ) -> Result<RevocationTracker, RuntimeError> {
-    let floors: Arc<dyn RevocationFloorStore> = if identity.path().as_os_str().is_empty() {
+    let floors: Arc<dyn RevocationFloorStore> = if let Some(path) = floor_path {
+        Arc::new(FileFloorStore::open(path)?)
+    } else if identity.path().as_os_str().is_empty() {
         Arc::new(InMemoryFloorStore::for_development())
     } else {
-        let floor_path = identity.path().with_extension("srl-floors");
-        Arc::new(FileFloorStore::open(floor_path)?)
+        let default_path = identity.path().with_extension("srl-floors");
+        Arc::new(FileFloorStore::open(default_path)?)
     };
     Ok(RevocationTracker::new(
         roots,
@@ -657,6 +672,44 @@ mod tests {
         assert!(session.check(&call).is_ok());
         assert_eq!(session.drain_receipts().len(), 1);
         assert_eq!(session.receipt_overflows(), 1);
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn overflow_denies_when_evidence_is_required() {
+        let (issuer, holder, warrant) = mint_pair();
+        let runtime = Runtime::builder()
+            .holder(holder)
+            .trusted_root(issuer.public_key())
+            .ttl_fallback(Duration::from_secs(600))
+            .evidence_policy(EvidencePolicy::RequiredBeforeExecution)
+            .receipt_capacity(1)
+            .build()
+            .unwrap();
+        let session = runtime.session_from_warrant(warrant).unwrap();
+        let args = HashMap::new();
+        let call = Call::borrowed("read", &args);
+        assert!(session.check(&call).is_ok());
+        assert!(session.check(&call).is_err());
+        assert_eq!(session.drain_receipts().len(), 1);
+        assert_eq!(session.receipt_overflows(), 1);
+    }
+
+    #[test]
+    fn revocation_floor_path_does_not_write_beside_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("holder.key");
+        let floor = dir.path().join("custom.srl-floors");
+        let identity = PersistentIdentity::load_or_generate(&key_path).unwrap();
+        Runtime::builder()
+            .identity(identity)
+            .trusted_root(SigningKey::generate().public_key())
+            .ttl_fallback(Duration::from_secs(600))
+            .revocation_floor_path(&floor)
+            .build()
+            .unwrap();
+        assert!(floor.exists());
+        assert!(!key_path.with_extension("srl-floors").exists());
     }
 
     #[test]

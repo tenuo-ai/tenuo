@@ -661,7 +661,8 @@ impl Guard {
                     }
                     Ok(LoadedRevocation::Snapshot(snapshot))
                 }
-                Err(crate::revocation_tracker::RevocationError::Unavailable) => {
+                Err(crate::revocation_tracker::RevocationError::Unavailable)
+                | Err(crate::revocation_tracker::RevocationError::UnavailableAt { .. }) => {
                     Ok(LoadedRevocation::TtlOnly {
                         max_lifetime: *max_lifetime,
                     })

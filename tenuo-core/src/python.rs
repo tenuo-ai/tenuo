@@ -5680,6 +5680,14 @@ impl PyAuthorizer {
         self.srl_commitment
     }
 
+    /// Currently installed signed revocation list, if any.
+    fn installed_revocation_list(&self) -> Option<PySignedRevocationList> {
+        self.inner
+            .installed_revocation_list()
+            .cloned()
+            .map(|inner| PySignedRevocationList { inner })
+    }
+
     /// Install a signed revocation list from an already-trusted root.
     ///
     /// The Rust authorizer verifies both that the SRL issuer is in its trust
