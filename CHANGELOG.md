@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.6] - 2026-09-10
+## [0.3.0] - 2026-09-11
+
+0.2.6 was prepared on `main` but never published. This release supersedes
+it and carries the same changes under a minor version bump, because the
+Rust API changes below are source-incompatible with 0.2.5.
+
+### Breaking
+
+- **Public enums are `#[non_exhaustive]`.** Thirty-seven public enums in
+  `tenuo` now carry the attribute, including `GuardError`,
+  `DelegationError`, `RevocationMode`, `DenialReporting`, `RevocationError`
+  (new `UnavailableAt` arm names the floor path), `TransportError`,
+  `RuntimeError`, `ApprovalRequirement`, and the SDK build-error enums.
+  Exhaustive `match` expressions in downstream crates need a wildcard arm.
+  Cargo treats `0.2.x` as one compatible line, so this ships as 0.3.0 rather
+  than 0.2.6.
+- **Connect token version is required.** `ConnectToken::parse` rejects a
+  missing `v`, `v=0`, and any version other than 1. Tokens issued without
+  `v` fail at parse after upgrade.
+- **Malformed `settings.trusted_roots` entries fail startup** instead of
+  being ignored. Existing gateway configs that contained invalid hex must be
+  corrected before upgrading the authorizer.
+- **`Tenuo::local` and `DataPlane` are deprecated.** `Runtime` is the
+  primary holder entry (`Runtime::builder()`), and `drain_receipts` /
+  `drainReceipts` are deprecated in favour of `peek_receipts` +
+  `acknowledge_receipts`. Crates that deny warnings need to migrate or
+  allow `deprecated`.
 
 ### Added
 
@@ -150,6 +176,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PoP denials use the before-PoP shape. Async holder denials carry the
   PoP after it is signed. Preflight cancellation and deadline denials
   emit a deny receipt.
+- **TypeScript `ToolPolicy.allow` is typed against the wrapped tool.**
+  Keys are bound to the tool's argument keys, so a policy naming an
+  argument the tool does not take is a compile-time error. Partial,
+  optional, empty, zero-argument, and broad-index policies still
+  type-check.
 - **TypeScript: published source maps are usable.** `@tenuo/core` and
   `@tenuo/mcp` JavaScript maps embed the original TypeScript
   (`sourcesContent`), so debuggers and `node --enable-source-maps` show SDK
@@ -162,27 +193,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **WASM `evaluate_approval_gates` fails closed** on an invalid warrant,
   malformed gate map, or unparseable arguments (`approval_required: true`
   plus `error`). Previously those cases returned `approval_required: false`.
-- **Connect token version is required.** `ConnectToken::parse` rejects a
-  missing `v`, `v=0`, and any version other than 1. Tokens issued without
-  `v` fail at parse after upgrade. This is a breaking change from 0.2.5.
 - **`drainReceipts()` is a snapshot.** It matches `peekReceipts()`. Only
   `acknowledgeReceipts(n)` removes items. A second drain is not empty.
-- **`RevocationError` is `#[non_exhaustive]`.** A new `UnavailableAt` arm
-  names the floor path; downstream matches need a wildcard.
 - **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
   (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
   messages are unchanged. Code that catches `TenuoError` or switches on `code`
   now sees builder mistakes too.
-- **`tenuo-wasm` 0.2.6.** `make version-check` runs in CI and covers Rust,
+- **`tenuo-wasm` 0.3.0.** `make version-check` runs in CI and covers Rust,
   WASM, Python, TypeScript, and `@tenuo/mcp`. Compatibility matrix lists
   those artifacts.
 - **Python `AnyValue`.** Importing `Any` emits `DeprecationWarning`. The OR
   combinator is `AnyOf` (Rust type alias, Python, TypeScript `anyOf`).
   `email`, `min`, `max`, and `Shlex` stay product features.
 - **Gateway `clock_tolerance_secs` is applied** to the live `Authorizer`.
-- **Malformed `settings.trusted_roots` entries fail startup** instead of
-  being ignored. This is a breaking change for existing configs that
-  contained invalid hex.
 - **Sidecar graceful shutdown.** SIGTERM/ctrl-c drain the HTTP server, then
   the audit flush. SRL fetch goes through `RevocationTracker` with a file
   floor; a file-loaded list is accepted into the tracker. The sidecar

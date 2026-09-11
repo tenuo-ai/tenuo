@@ -238,7 +238,7 @@ impl Session {
     /// Snapshot of pending receipts. They are removed only by
     /// [`acknowledge_receipts`].
     #[cfg(feature = "receipts")]
-    #[deprecated(since = "0.2.6", note = "use `peek_receipts`")]
+    #[deprecated(since = "0.3.0", note = "use `peek_receipts`")]
     pub fn drain_receipts(&self) -> Vec<Receipt> {
         self.peek_receipts()
     }

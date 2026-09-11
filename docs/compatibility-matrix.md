@@ -4,17 +4,17 @@
 
 Tracks compatibility between Tenuo artifacts and upstream integration libraries.
 
-## Tenuo artifacts (0.2.6)
+## Tenuo artifacts (0.3.0)
 
 These four packages share the same protocol line. TypeScript stays on the
-`beta` npm dist-tag (`0.2.6-beta.0`).
+`beta` npm dist-tag (`0.3.0-beta.0`).
 
 | Artifact | Package | Version |
 |----------|---------|---------|
-| Rust core | `tenuo` | 0.2.6 |
-| WASM | `tenuo-wasm` | 0.2.6 |
-| Python | `tenuo` / `tenuo_core` | 0.2.6 |
-| TypeScript | `@tenuo/core` | 0.2.6-beta.0 |
+| Rust core | `tenuo` | 0.3.0 |
+| WASM | `tenuo-wasm` | 0.3.0 |
+| Python | `tenuo` / `tenuo_core` | 0.3.0 |
+| TypeScript | `@tenuo/core` | 0.3.0-beta.0 |
 
 `make version-check` (and the CI job of the same name) fails if the Rust,
 Python, and WASM crate versions diverge, or if `@tenuo/core` does not start
