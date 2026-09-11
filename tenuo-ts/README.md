@@ -173,6 +173,15 @@ const reports = tenuo.narrow(session, {
 To hand that narrower authority to a different agent, bind the child to that
 agent's key. See [Delegate to another agent](#delegate-to-another-agent).
 
+### Concurrent requests keep separate sessions
+
+`withSession()` scopes the session with Node's `AsyncLocalStorage`, so
+requests that run at the same time each see only their own session. Work that
+a queue or worker runs from outside `withSession()` has no ambient session;
+pass `{ session }` on that call. `pnpm example:sessions` runs
+[`concurrent-sessions.ts`](packages/core/examples/concurrent-sessions.ts),
+which shows both.
+
 ## Production setup
 
 Development puts issuance and enforcement in one process. Production separates
