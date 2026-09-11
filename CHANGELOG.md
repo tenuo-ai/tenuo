@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enforce that list on the next check. `SignedRevocationList::{from_base64,
   to_base64}` is the decode API. `ConnectToken::resolve_endpoint` accepts a
   caller-provided base for relative `/v1` tokens.
+- **TypeScript holder Runtime.** `createTenuo.runtime({ identity, trustedRoots,
+  revocationList?, receipts })` owns identity, roots, SRL refresh
+  (`applyRevocationList`), and `sessionFromWire`. `receipts: "collect"` retains
+  tool, `present()`, MCP attach, and verify/handler receipts until
+  `acknowledgeReceipts()`. `drainReceipts()` is a snapshot of the same buffer.
+  No network and no hosted defaults.
+- **TypeScript connect-token parse.** `createTenuo.parseConnectToken` accepts
+  a complete `tenuo_ct_…` token (padded or unpadded Base64URL, version 1).
+  Relative endpoints resolve only with `token.resolveEndpoint({ localBase })`.
+  Rust and WASM parsers now share prefix, padding, `/v1` strip, and the `r` /
+  `registration_token` aliases.
+- **TypeScript holder identity.** `createTenuo.generateIdentity()` and
+  `createTenuo.identity(holderKey)` redact the secret from JSON, inspect, and
+  `toString`. No filesystem API in core.
 - **`RuntimeBuilder::revocation_floor_path`.** Persist SRL floors at an
   explicit path so a read-only or root-owned identity mount does not fail
   `Runtime::build`. File-store errors name the floor path.
@@ -25,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Runtime `acknowledgeReceipts` follows emission order.** Session
+  receipts always land on the runtime outbox, including when the tool was
+  built on another `createTenuo` instance. Acking `n` removes the oldest
+  emitted wires by identity. `receiptMax` must be a positive integer.
+  `Session` now requires `peekReceipts` / `drainReceipts` /
+  `acknowledgeReceipts` (empty snapshots are fine for non-runtime
+  implementers).
 - **Receipt overflow under `RequiredBeforeExecution`.** A full memory sink
   returns `Unavailable` so the guard denies. Best-effort still proceeds and
   counts the overflow. The previous `Ok(overflow ref)` silently bypassed
@@ -37,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Connect token version is required.** `ConnectToken::parse` rejects a
   missing `v`, `v=0`, and any version other than 1. Tokens issued without
   `v` fail at parse after upgrade. This is a breaking change from 0.2.5.
+- **`drainReceipts()` is a snapshot.** It matches `peekReceipts()`. Only
+  `acknowledgeReceipts(n)` removes items. A second drain is not empty.
 - **`RevocationError` is `#[non_exhaustive]`.** A new `UnavailableAt` arm
   names the floor path; downstream matches need a wildcard.
 - **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**

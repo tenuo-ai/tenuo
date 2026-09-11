@@ -10,6 +10,7 @@ import type {
   TenuoMcp,
 } from "./api.ts";
 import { AuthorizationDeniedError, TenuoConfigurationError, TenuoError } from "./errors.ts";
+import { collectReceipt, emitIsolatedReceipt } from "./receipts.ts";
 import { nativeSession, type Session } from "./session.ts";
 import type { WasmContext, WasmDecision } from "./wasm.ts";
 
@@ -28,6 +29,7 @@ export function presentCall(
   args: Readonly<Record<string, unknown>>,
   options: McpAttachOptions | undefined,
   label: string,
+  host?: object,
 ): { readonly presented: PresentedCall; readonly wireArgs: Record<string, unknown> } {
   if (options !== undefined) {
     assertKnownKeys(options, ATTACH_OPTION_KEYS, `${label} options`);
@@ -42,7 +44,7 @@ export function presentCall(
     undefined,
     options?.requestId,
   );
-  emitReceipt(options?.onReceipt, local.receipt);
+  emitReceipt(options?.onReceipt, local.receipt, session, host);
   decide(local, name, native, wireArgs);
   const signature = context.signPop(native, name, wireArgs);
   const warrant = stackWire(native);
@@ -68,6 +70,7 @@ export async function verifyPresented(
   args: Readonly<Record<string, unknown>>,
   options: McpVerifyOptions | undefined,
   label: string,
+  host?: object,
 ): Promise<Readonly<Record<string, unknown>>> {
   if (options !== undefined) {
     assertKnownKeys(options, VERIFY_OPTION_KEYS, `${label} options`);
@@ -89,7 +92,7 @@ export async function verifyPresented(
   );
   // Rust already signed this envelope. Emit before the nonce store can
   // refuse a replay — otherwise an attacker leaves no audit artifact.
-  emitReceipt(options?.onReceipt, decision.receipt);
+  emitReceipt(options?.onReceipt, decision.receipt, undefined, host);
   if (decision.outcome === "allow") {
     await admitPop(options?.nonceStore, envelope.signature, options?.onNonceStoreError);
   }
@@ -97,10 +100,19 @@ export async function verifyPresented(
   return plainArgs(decision.args);
 }
 
-export function createMcp(context: WasmContext, decide: Decide): TenuoMcp {
+export function createMcp(context: WasmContext, decide: Decide, host?: object): TenuoMcp {
   const mcp: TenuoMcp = {
     attach(session, name, args, options) {
-      const { presented, wireArgs } = presentCall(context, decide, session, name, args, options, "mcp.attach()");
+      const { presented, wireArgs } = presentCall(
+        context,
+        decide,
+        session,
+        name,
+        args,
+        options,
+        "mcp.attach()",
+        host,
+      );
       return { name, arguments: wireArgs, _meta: { tenuo: presented } };
     },
 
@@ -111,7 +123,7 @@ export function createMcp(context: WasmContext, decide: Decide): TenuoMcp {
           "MCP call is missing _meta.tenuo. The client must call tenuo.mcp.attach().",
         );
       }
-      return verifyPresented(context, decide, envelope, name, args, options, "mcp.verify()");
+      return verifyPresented(context, decide, envelope, name, args, options, "mcp.verify()", host);
     },
 
     handler(name, policyOrExecute, maybeExecute?) {
@@ -304,18 +316,11 @@ function isThenable(value: unknown): value is Promise<boolean> {
 function emitReceipt(
   onReceipt: ((receipt: string) => void | Promise<void>) | undefined,
   receipt: string | undefined,
+  session?: SessionContract,
+  host?: object,
 ): void {
-  if (onReceipt === undefined || receipt === undefined) {
-    return;
-  }
-  try {
-    const result = onReceipt(receipt);
-    if (isThenable(result)) {
-      void Promise.resolve(result).catch(() => undefined);
-    }
-  } catch {
-    // Receipt hooks must not deny or fail the tool.
-  }
+  collectReceipt(receipt, session, host);
+  emitIsolatedReceipt(onReceipt, receipt);
 }
 
 function plainArgs(value: unknown): Record<string, unknown> {
