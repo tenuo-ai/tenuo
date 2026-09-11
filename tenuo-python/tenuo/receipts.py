@@ -263,7 +263,10 @@ def collect_enforcement_receipt(
         runtime = get_runtime()
     if runtime is None:
         return
-    runtime.collect_result(result, chain_result)
+    collect = getattr(runtime, "collect_result", None)
+    if not callable(collect):
+        return
+    collect(result, chain_result)
     try:
         setattr(result, "_tenuo_runtime_receipt", True)
     except (AttributeError, TypeError):

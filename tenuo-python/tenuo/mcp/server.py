@@ -892,8 +892,9 @@ class MCPVerifier:
                 warrant_id,
             )
             request_hash = getattr(req, "request_hash", None)
-            if hasattr(request_hash, "hex"):
-                request_hash = request_hash.hex()
+            hex_fn = getattr(request_hash, "hex", None)
+            if callable(hex_fn):
+                request_hash = hex_fn()
             result = MCPVerificationResult(
                 allowed=False,
                 tool=tool_name,
