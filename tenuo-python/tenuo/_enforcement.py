@@ -394,6 +394,24 @@ def _enforcement_result_from_chain_error(
                 "min_approvals": getattr(exc, "min_approvals", 1) or 1,
             },
         )
+    if isinstance(exc, ApprovalRequired):
+        request = getattr(exc, "request", None)
+        request_hash = getattr(request, "request_hash", None) if request is not None else None
+        hex_fn = getattr(request_hash, "hex", None)
+        if callable(hex_fn):
+            request_hash = hex_fn()
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(exc),
+            error_type="approval_required",
+            warrant_id=warrant_id,
+            approval_metadata={
+                "request_hash": request_hash or "",
+                "min_approvals": getattr(request, "min_approvals", 1) or 1,
+            },
+        )
     if isinstance(exc, InsufficientApprovals):
         details = getattr(exc, "details", {}) or {}
         return EnforcementResult(
@@ -1231,7 +1249,7 @@ def _enforce_tool_call_impl(
                     or constraint_args is not None
                     or _pop_auth_args != _constraint_auth_args
                 )
-                if warrant_chain:
+                if warrant_chain or hasattr(authorizer, "check_chain"):
                     if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
                         _chain_result = authorizer.check_chain_with_pop_args(
                             full_chain,
@@ -1321,8 +1339,14 @@ def _enforce_tool_call_impl(
         )
     except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
         raise
-    except ApprovalRequired:
-        raise
+    except ApprovalRequired as e:
+        mapped = _enforcement_result_from_chain_error(
+            e, tool_name, tool_args, warrant_id
+        )
+        mapped.presented_chain = _presented_chain
+        mapped.pop_auth_args = _pop_auth_args
+        mapped.authorizer = authorizer if authorizer is not None else _auth
+        return mapped
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:
         # Known authorization failures - expected behavior
         logger.debug(f"Authorization denied for {tool_name}: {e}")
@@ -1648,7 +1672,7 @@ async def _enforce_tool_call_async_impl(
                     or constraint_args is not None
                     or _pop_auth_args != _constraint_auth_args
                 )
-                if warrant_chain:
+                if warrant_chain or hasattr(authorizer, "check_chain"):
                     if use_split_view and hasattr(authorizer, "check_chain_with_pop_args"):
                         _chain_result = authorizer.check_chain_with_pop_args(
                             full_chain,
@@ -1725,8 +1749,14 @@ async def _enforce_tool_call_async_impl(
         )
     except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
         raise
-    except ApprovalRequired:
-        raise
+    except ApprovalRequired as e:
+        mapped = _enforcement_result_from_chain_error(
+            e, tool_name, tool_args, warrant_id
+        )
+        mapped.presented_chain = _presented_chain
+        mapped.pop_auth_args = _pop_auth_args
+        mapped.authorizer = authorizer if authorizer is not None else _auth
+        return mapped
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:
         logger.debug(f"Authorization denied for {tool_name}: {e}")
         if isinstance(e, ExpiredError):
