@@ -551,6 +551,28 @@ if (Symbol.dispose) SdkSession.prototype[Symbol.dispose] = SdkSession.prototype.
 exports.SdkSession = SdkSession;
 
 /**
+ * Typed preflight of a warrant's approval gates for `(tool, args)`.
+ *
+ * Returns `{ status: "not_gated"|"exempt"|"required", tool, kind?, argument?,
+ * arguments, message?, error? }`. Parse errors fail closed with
+ * `status: "required"` and `error` set. This is not an authorization
+ * decision — the authorizer remains the source of truth.
+ * @param {string} warrant_b64
+ * @param {string} tool
+ * @param {any} args_json
+ * @returns {any}
+ */
+function approval_requirement(warrant_b64, tool, args_json) {
+    const ptr0 = passStringToWasm0(warrant_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.approval_requirement(ptr0, len0, ptr1, len1, args_json);
+    return ret;
+}
+exports.approval_requirement = approval_requirement;
+
+/**
  * @param {string} warrant_b64
  * @param {string} tool
  * @param {any} args_json
@@ -767,6 +789,9 @@ exports.decode_warrant = decode_warrant;
  * Returns `{ approval_required: true/false, tool, error }`.
  * This reads `extensions["tenuo.approval_gates"]` from the warrant, parses it,
  * and runs the gate evaluation logic from tenuo-core.
+ *
+ * Malformed warrants, gate maps, or arguments fail closed (`approval_required: true`).
+ * Prefer `approval_requirement` when the caller must distinguish exemptions.
  * @param {string} warrant_b64
  * @param {string} tool
  * @param {any} args_json
@@ -796,6 +821,26 @@ function init_panic_hook() {
     wasm.init_panic_hook();
 }
 exports.init_panic_hook = init_panic_hook;
+
+/**
+ * Inspect how a warrant gates `tool`, without evaluating arguments.
+ *
+ * Returns `{ kind: "none"|"whole_tool"|"conditional", tool, arguments, message?, error? }`.
+ * Parse errors fail closed with `kind: "unknown"` and `error` set so callers
+ * cannot treat a malformed map as ungated.
+ * @param {string} warrant_b64
+ * @param {string} tool
+ * @returns {any}
+ */
+function inspect_approval_gate(warrant_b64, tool) {
+    const ptr0 = passStringToWasm0(warrant_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.inspect_approval_gate(ptr0, len0, ptr1, len1);
+    return ret;
+}
+exports.inspect_approval_gate = inspect_approval_gate;
 
 /**
  * Parse a `TENUO_CONNECT_TOKEN` string into its component fields.

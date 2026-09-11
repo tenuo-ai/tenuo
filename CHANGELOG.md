@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Typed approval-gate preflight.** `Warrant.approval_requirement(tool, args)`
+  returns `NotGated`, `Exempt`, or `Required` using the same
+  `Constraint::matches` implementation as the authorizer.
+  `Warrant.inspect_approval_gate(tool)` distinguishes no gate, an
+  unconditional whole-tool gate, and a per-argument conditional gate so
+  SDKs do not parse raw `tenuo.approval_gates` CBOR keys. Python:
+  `approval_requirement` / `inspect_approval_gate` (also on `Warrant`).
+  WASM/TS: `approval_requirement` / `inspect_approval_gate`. Boolean
+  `evaluate_approval_gates` is unchanged and wraps the typed evaluator.
+
 ### Changed
 
+- **WASM `evaluate_approval_gates` fails closed** on an invalid warrant,
+  malformed gate map, or unparseable arguments (`approval_required: true`
+  plus `error`). Previously those cases returned `approval_required: false`.
 - **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
   (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
   messages are unchanged. Code that catches `TenuoError` or switches on `code`

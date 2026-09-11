@@ -970,6 +970,48 @@ impl Warrant {
         }
     }
 
+    /// Parse the signed `tenuo.approval_gates` extension.
+    ///
+    /// Returns `Ok(None)` when the extension is absent or empty.
+    /// Returns `Err` when the bytes are present but malformed (fail-closed).
+    pub fn approval_gate_map(&self) -> Result<Option<crate::approval_gate::ApprovalGateMap>> {
+        crate::approval_gate::parse_approval_gate_map(
+            self.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+        )
+    }
+
+    /// Inspect how this warrant gates `tool`, without evaluating arguments.
+    ///
+    /// Distinguishes no gate, an unconditional whole-tool gate, and a
+    /// per-argument conditional gate. Does not decide authorization.
+    pub fn inspect_approval_gate(
+        &self,
+        tool: &str,
+    ) -> Result<crate::approval_gate::ApprovalGateInspection> {
+        let map = self.approval_gate_map()?;
+        Ok(crate::approval_gate::inspect_approval_gate(
+            map.as_ref(),
+            tool,
+        ))
+    }
+
+    /// Evaluate whether a concrete tool call requires approval.
+    ///
+    /// Uses the same [`crate::constraints::Constraint::matches`] implementation
+    /// as the authorizer. Does **not** check capability constraints, PoP,
+    /// expiry, or collected approvals — those remain authorizer-only.
+    ///
+    /// Malformed or unknown gate encodings return `Err` (fail-closed). Do not
+    /// treat an error as "not gated".
+    pub fn approval_requirement(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Result<crate::approval_gate::ApprovalRequirement> {
+        let map = self.approval_gate_map()?;
+        crate::approval_gate::approval_requirement(map.as_ref(), tool, args)
+    }
+
     /// Get the payload bytes (for batch signature verification).
     pub fn payload_bytes(&self) -> &[u8] {
         &self.payload_bytes

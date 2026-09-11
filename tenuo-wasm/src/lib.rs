@@ -2599,79 +2599,222 @@ pub struct ApprovalGateResult {
     pub error: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+pub struct ApprovalRequirementResult {
+    pub status: String,
+    pub tool: String,
+    pub kind: Option<String>,
+    pub argument: Option<String>,
+    #[serde(rename = "arguments")]
+    pub arguments: Vec<String>,
+    pub message: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ApprovalGateInspectionResult {
+    pub kind: String,
+    pub tool: String,
+    #[serde(rename = "arguments")]
+    pub arguments: Vec<String>,
+    pub message: Option<String>,
+    pub error: Option<String>,
+}
+
+fn fail_closed_gate_result(tool: &str, error: String) -> JsValue {
+    serde_wasm_bindgen::to_value(&ApprovalGateResult {
+        approval_required: true,
+        tool: tool.to_string(),
+        error: Some(error),
+    })
+    .unwrap()
+}
+
+fn fail_closed_requirement(tool: &str, error: String) -> JsValue {
+    serde_wasm_bindgen::to_value(&ApprovalRequirementResult {
+        status: "required".to_string(),
+        tool: tool.to_string(),
+        kind: Some("whole_tool".to_string()),
+        argument: None,
+        arguments: Vec::new(),
+        message: None,
+        error: Some(error),
+    })
+    .unwrap()
+}
+
+fn requirement_to_js(
+    tool: &str,
+    req: approval_gate::ApprovalRequirement,
+) -> ApprovalRequirementResult {
+    use approval_gate::{ApprovalGateKind, ApprovalRequirement};
+    match req {
+        ApprovalRequirement::NotGated => ApprovalRequirementResult {
+            status: "not_gated".into(),
+            tool: tool.to_string(),
+            kind: None,
+            argument: None,
+            arguments: Vec::new(),
+            message: None,
+            error: None,
+        },
+        ApprovalRequirement::Exempt { arguments } => ApprovalRequirementResult {
+            status: "exempt".into(),
+            tool: tool.to_string(),
+            kind: None,
+            argument: arguments.first().cloned(),
+            arguments,
+            message: None,
+            error: None,
+        },
+        ApprovalRequirement::Required { kind, message } => {
+            let (kind_s, argument) = match kind {
+                ApprovalGateKind::WholeTool => (Some("whole_tool".into()), None),
+                ApprovalGateKind::Argument { name } => (Some("argument".into()), Some(name)),
+            };
+            ApprovalRequirementResult {
+                status: "required".into(),
+                tool: tool.to_string(),
+                kind: kind_s,
+                arguments: argument.iter().cloned().collect(),
+                argument,
+                message: Some(message),
+                error: None,
+            }
+        }
+    }
+}
+
 /// Evaluate whether a tool call requires approval based on the warrant's embedded approval gates.
 ///
 /// Returns `{ approval_required: true/false, tool, error }`.
 /// This reads `extensions["tenuo.approval_gates"]` from the warrant, parses it,
 /// and runs the gate evaluation logic from tenuo-core.
+///
+/// Malformed warrants, gate maps, or arguments fail closed (`approval_required: true`).
+/// Prefer `approval_requirement` when the caller must distinguish exemptions.
 #[wasm_bindgen]
-pub fn evaluate_approval_gates(
-    warrant_b64: &str,
-    tool: &str,
-    args_json: JsValue,
-) -> JsValue {
+pub fn evaluate_approval_gates(warrant_b64: &str, tool: &str, args_json: JsValue) -> JsValue {
     init_panic_hook();
 
     let warrant = match wire::decode_base64(warrant_b64.trim()) {
         Ok(w) => w,
         Err(e) => {
-            return serde_wasm_bindgen::to_value(&ApprovalGateResult {
-                approval_required: false,
-                tool: tool.to_string(),
-                error: Some(format!("Invalid warrant: {}", e)),
-            })
-            .unwrap();
-        }
-    };
-
-    let gate_map = match approval_gate::parse_approval_gate_map(
-        warrant.extension(approval_gate::APPROVAL_GATE_EXTENSION_KEY),
-    ) {
-        Ok(gm) => gm,
-        Err(e) => {
-            return serde_wasm_bindgen::to_value(&ApprovalGateResult {
-                approval_required: false,
-                tool: tool.to_string(),
-                error: Some(format!("Failed to parse approval gates: {}", e)),
-            })
-            .unwrap();
+            return fail_closed_gate_result(tool, format!("Invalid warrant: {}", e));
         }
     };
 
     let args: HashMap<String, ConstraintValue> = match serde_wasm_bindgen::from_value(args_json) {
         Ok(a) => a,
         Err(e) => {
-            return serde_wasm_bindgen::to_value(&ApprovalGateResult {
-                approval_required: false,
-                tool: tool.to_string(),
-                error: Some(format!("Invalid arguments: {}", e)),
-            })
-            .unwrap();
+            return fail_closed_gate_result(tool, format!("Invalid arguments: {}", e));
         }
     };
 
-    let required = match approval_gate::evaluate_approval_gates(
-        gate_map.as_ref(),
-        tool,
-        &args,
-    ) {
-        Ok(r) => r,
+    match warrant.approval_requirement(tool, &args) {
+        Ok(req) => serde_wasm_bindgen::to_value(&ApprovalGateResult {
+            approval_required: req.requires_approval(),
+            tool: tool.to_string(),
+            error: None,
+        })
+        .unwrap(),
+        Err(e) => fail_closed_gate_result(tool, format!("Gate evaluation error (fail-safe): {}", e)),
+    }
+}
+
+/// Typed preflight of a warrant's approval gates for `(tool, args)`.
+///
+/// Returns `{ status: "not_gated"|"exempt"|"required", tool, kind?, argument?,
+/// arguments, message?, error? }`. Parse errors fail closed with
+/// `status: "required"` and `error` set. This is not an authorization
+/// decision — the authorizer remains the source of truth.
+#[wasm_bindgen]
+pub fn approval_requirement(warrant_b64: &str, tool: &str, args_json: JsValue) -> JsValue {
+    init_panic_hook();
+
+    let warrant = match wire::decode_base64(warrant_b64.trim()) {
+        Ok(w) => w,
         Err(e) => {
-            return serde_wasm_bindgen::to_value(&ApprovalGateResult {
-                approval_required: true,
+            return fail_closed_requirement(tool, format!("Invalid warrant: {}", e));
+        }
+    };
+
+    let args: HashMap<String, ConstraintValue> = match serde_wasm_bindgen::from_value(args_json) {
+        Ok(a) => a,
+        Err(e) => {
+            return fail_closed_requirement(tool, format!("Invalid arguments: {}", e));
+        }
+    };
+
+    match warrant.approval_requirement(tool, &args) {
+        Ok(req) => serde_wasm_bindgen::to_value(&requirement_to_js(tool, req)).unwrap(),
+        Err(e) => fail_closed_requirement(tool, format!("Gate evaluation error (fail-safe): {}", e)),
+    }
+}
+
+/// Inspect how a warrant gates `tool`, without evaluating arguments.
+///
+/// Returns `{ kind: "none"|"whole_tool"|"conditional", tool, arguments, message?, error? }`.
+/// Parse errors fail closed with `kind: "unknown"` and `error` set so callers
+/// cannot treat a malformed map as ungated.
+#[wasm_bindgen]
+pub fn inspect_approval_gate(warrant_b64: &str, tool: &str) -> JsValue {
+    init_panic_hook();
+
+    let warrant = match wire::decode_base64(warrant_b64.trim()) {
+        Ok(w) => w,
+        Err(e) => {
+            return serde_wasm_bindgen::to_value(&ApprovalGateInspectionResult {
+                kind: "unknown".into(),
                 tool: tool.to_string(),
-                error: Some(format!("Gate evaluation error (fail-safe): {}", e)),
+                arguments: Vec::new(),
+                message: None,
+                error: Some(format!("Invalid warrant: {}", e)),
             })
             .unwrap();
         }
     };
 
-    serde_wasm_bindgen::to_value(&ApprovalGateResult {
-        approval_required: required,
-        tool: tool.to_string(),
-        error: None,
-    })
-    .unwrap()
+    match warrant.inspect_approval_gate(tool) {
+        Ok(insp) => {
+            use approval_gate::ApprovalGateInspection;
+            let result = match insp {
+                ApprovalGateInspection::None => ApprovalGateInspectionResult {
+                    kind: "none".into(),
+                    tool: tool.to_string(),
+                    arguments: Vec::new(),
+                    message: None,
+                    error: None,
+                },
+                ApprovalGateInspection::WholeTool { message } => ApprovalGateInspectionResult {
+                    kind: "whole_tool".into(),
+                    tool: tool.to_string(),
+                    arguments: Vec::new(),
+                    message,
+                    error: None,
+                },
+                ApprovalGateInspection::Conditional {
+                    arguments,
+                    message,
+                } => ApprovalGateInspectionResult {
+                    kind: "conditional".into(),
+                    tool: tool.to_string(),
+                    arguments,
+                    message,
+                    error: None,
+                },
+            };
+            serde_wasm_bindgen::to_value(&result).unwrap()
+        }
+        Err(e) => serde_wasm_bindgen::to_value(&ApprovalGateInspectionResult {
+            kind: "unknown".into(),
+            tool: tool.to_string(),
+            arguments: Vec::new(),
+            message: None,
+            error: Some(format!("Failed to parse approval gates: {}", e)),
+        })
+        .unwrap(),
+    }
 }
 
 // ---------------------------------------------------------------------------

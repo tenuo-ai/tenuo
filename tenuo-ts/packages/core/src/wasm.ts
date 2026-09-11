@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { TenuoConfigurationError } from "./errors.ts";
+import { TenuoConfigurationError, TenuoError } from "./errors.ts";
 import type { TenuoErrorCode } from "./api.ts";
 
 export type WasmDecision = {
@@ -397,4 +397,88 @@ export function inspectParts(payloadHex: string, signatureHex: string): WasmInsp
 /** Hex public key for a 32-byte holder secret. Ed25519, derived in Rust. */
 export function publicKeyHexFromHolderKey(holderSecret: Uint8Array): string {
   return loadWasm().sdkPublicKeyFromHolderKey(holderSecret);
+}
+
+export type ApprovalRequirementStatus = "not_gated" | "exempt" | "required";
+
+export type ApprovalRequirement = {
+  status: ApprovalRequirementStatus;
+  tool: string;
+  kind?: "whole_tool" | "argument";
+  argument?: string;
+  arguments: string[];
+  message?: string;
+};
+
+export type ApprovalGateInspection = {
+  kind: "none" | "whole_tool" | "conditional" | "unknown";
+  tool: string;
+  arguments: string[];
+  message?: string;
+};
+
+type ApprovalWasm = {
+  approval_requirement(
+    warrantB64: string,
+    tool: string,
+    args: unknown,
+  ): ApprovalRequirement & { error?: string };
+  inspect_approval_gate(
+    warrantB64: string,
+    tool: string,
+  ): ApprovalGateInspection & { error?: string };
+  evaluate_approval_gates(
+    warrantB64: string,
+    tool: string,
+    args: unknown,
+  ): { approval_required: boolean; tool: string; error?: string };
+};
+
+function loadApprovalWasm(): ApprovalWasm {
+  const require = createRequire(import.meta.url);
+  return require(generatedPath()) as ApprovalWasm;
+}
+
+function throwIfGateError(error: string | undefined): void {
+  if (error) {
+    throw new TenuoError("TENUO_CONFIGURATION", error);
+  }
+}
+
+/**
+ * Typed preflight of a warrant's approval gates for `(tool, args)`.
+ *
+ * Uses the same constraint matcher as the authorizer. This is not an
+ * authorization decision — do not override a core deny with an exempt result.
+ * Malformed encodings throw (fail-closed).
+ */
+export function approvalRequirement(
+  warrantB64: string,
+  tool: string,
+  args: Record<string, unknown>,
+): ApprovalRequirement {
+  const result = loadApprovalWasm().approval_requirement(warrantB64, tool, args);
+  throwIfGateError(result.error);
+  return result;
+}
+
+/** Inspect how a warrant gates `tool`, without evaluating arguments. */
+export function inspectApprovalGate(warrantB64: string, tool: string): ApprovalGateInspection {
+  const result = loadApprovalWasm().inspect_approval_gate(warrantB64, tool);
+  throwIfGateError(result.error);
+  return result;
+}
+
+/**
+ * Boolean wrapper around {@link approvalRequirement}.
+ * `true` iff the typed status is `required`.
+ */
+export function evaluateApprovalGates(
+  warrantB64: string,
+  tool: string,
+  args: Record<string, unknown>,
+): boolean {
+  const result = loadApprovalWasm().evaluate_approval_gates(warrantB64, tool, args);
+  throwIfGateError(result.error);
+  return result.approval_required;
 }

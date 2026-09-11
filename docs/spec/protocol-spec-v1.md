@@ -478,6 +478,11 @@ def authorize(warrant, tool, args, pop_signature, approvals=[], tool_reqs={}):
     verify_pop(warrant, pop_signature, tool, args)
     
     # 6. Multi-sig enforcement (if an approval gate fires for this call)
+    # evaluate_approval_gates is the boolean form of
+    # warrant.approval_requirement(tool, args) (NotGated | Exempt | Required).
+    # Adapters must not treat every tool listed in tenuo.approval_gates as
+    # unconditionally gated — Exempt/Constraint gates are argument-conditional.
+    # Preflight must not override this authorizer check.
     if evaluate_approval_gates(warrant, tool, args):
         if not warrant.required_approvers():
             raise ApprovalGateMisconfigured()
