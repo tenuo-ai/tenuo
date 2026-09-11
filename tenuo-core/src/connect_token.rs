@@ -93,12 +93,15 @@ impl ConnectToken {
     /// Parse a raw `tenuo_ct_…` string into a [`ConnectToken`].
     pub fn parse(raw: &str) -> Result<Self, ConnectTokenError> {
         let encoded = raw
+            .trim()
             .strip_prefix(TOKEN_PREFIX)
             .ok_or(ConnectTokenError::MissingPrefix)?;
 
         let json_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(encoded)
             .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(encoded))
+            .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(encoded))
+            .or_else(|_| base64::engine::general_purpose::STANDARD.decode(encoded))
             .map_err(|e| ConnectTokenError::Base64(e.to_string()))?;
 
         let value: serde_json::Value = serde_json::from_slice(&json_bytes)
@@ -298,6 +301,16 @@ mod tests {
         let raw = format!("{TOKEN_PREFIX}{padded}");
         let ct = ConnectToken::parse(&raw).unwrap();
         assert_eq!(ct.registration_token.as_deref(), Some("tok-alias"));
+    }
+
+    #[test]
+    fn parse_trims_whitespace_and_accepts_standard_base64() {
+        let payload = br#"{"v":1,"e":"https://control.example.com/v1","k":"tc_abc"}"#;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(payload);
+        let raw = format!("  {TOKEN_PREFIX}{encoded}\n");
+        let ct = ConnectToken::parse(&raw).unwrap();
+        assert_eq!(ct.api_key, "tc_abc");
+        assert_eq!(ct.endpoint, "https://control.example.com");
     }
 
     #[test]

@@ -147,11 +147,6 @@ impl MemoryReceiptSink {
         stored[cursor..].to_vec()
     }
 
-    /// Snapshot from `cursor`. Does not remove anything.
-    pub fn drain_from(&self, cursor: &mut usize) -> Vec<Receipt> {
-        self.peek_from(*cursor)
-    }
-
     /// Remove the first `count` stored receipts.
     pub fn drop_prefix(&self, count: usize) -> usize {
         let Ok(mut stored) = self.stored.lock() else {
@@ -270,8 +265,8 @@ mod tests {
         let reference = sink.persist(&receipt).unwrap();
         assert!(reference.id.starts_with("mem:"));
         assert_eq!(sink.stored().len(), 1);
-        assert_eq!(sink.drain_from(&mut 0).len(), 1);
-        assert_eq!(sink.drain_from(&mut 0).len(), 1);
+        assert_eq!(sink.peek_from(0).len(), 1);
+        assert_eq!(sink.peek_from(0).len(), 1);
         assert_eq!(sink.drop_prefix(1), 1);
         assert!(sink.pending().is_empty());
     }
