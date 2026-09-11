@@ -865,7 +865,6 @@ pub fn sdk_verify_receipt(wire: &str) -> Result<JsValue, JsError> {
         outcome: match payload.outcome {
             tenuo::receipt::Outcome::Allow => "allow".into(),
             tenuo::receipt::Outcome::Deny => "deny".into(),
-            _ => "deny".into(),
         },
         action: payload.action,
         decision_code: payload.decision_code,
@@ -1911,7 +1910,6 @@ pub(crate) fn cv_to_json(value: &ConstraintValue) -> serde_json::Value {
             }
             serde_json::Value::Object(obj)
         }
-        _ => serde_json::Value::Null,
     }
 }
 

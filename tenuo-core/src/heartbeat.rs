@@ -1038,50 +1038,10 @@ pub async fn start_heartbeat_loop_until(
                 debug!(
                     authorizer_id = %authorizer_id,
                     status = %response.status,
+                    latest_srl_version = ?response.latest_srl_version,
+                    refresh_required = response.refresh_required,
                     "Heartbeat sent successfully"
                 );
-
-                // Check if SRL update is needed
-                let needs_update = response.refresh_required
-                    || response
-                        .latest_srl_version
-                        .map(|v| v > local_srl_version)
-                        .unwrap_or(false);
-
-                if needs_update {
-                    if let Some(ref authorizer) = config.authorizer {
-                        if let Some(ref trusted_root) = config.trusted_root {
-                            match fetch_and_apply_srl(&client, &config, authorizer, trusted_root)
-                                .await
-                            {
-                                Ok(new_version) => {
-                                    local_srl_version = new_version;
-                                    info!(
-                                        srl_version = new_version,
-                                        refresh_required = response.refresh_required,
-                                        "SRL updated from control plane"
-                                    );
-                                    // Record successful fetch
-                                    if let Some(ref metrics) = config.metrics {
-                                        metrics.record_srl_fetch(true, Some(new_version)).await;
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        error = %e,
-                                        "Failed to fetch SRL from control plane"
-                                    );
-                                    // Record failed fetch
-                                    if let Some(ref metrics) = config.metrics {
-                                        metrics.record_srl_fetch(false, None).await;
-                                    }
-                                }
-                            }
-                        } else {
-                            warn!("SRL update needed but no trusted root configured");
-                        }
-                    }
-                }
             }
             Err(e) => {
                 warn!(
@@ -1089,6 +1049,31 @@ pub async fn start_heartbeat_loop_until(
                     error = %e,
                     "Heartbeat failed, will retry on next interval"
                 );
+            }
+        }
+
+        // Re-fetch on every tick so tracker freshness does not lapse while
+        // the published list version is unchanged.
+        if let (Some(authorizer), Some(trusted_root)) = (&config.authorizer, &config.trusted_root) {
+            match fetch_and_apply_srl(&client, &config, authorizer, trusted_root).await {
+                Ok(new_version) => {
+                    if new_version != local_srl_version {
+                        info!(
+                            srl_version = new_version,
+                            "SRL refreshed from control plane"
+                        );
+                    }
+                    local_srl_version = new_version;
+                    if let Some(ref metrics) = config.metrics {
+                        metrics.record_srl_fetch(true, Some(new_version)).await;
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to fetch SRL from control plane");
+                    if let Some(ref metrics) = config.metrics {
+                        metrics.record_srl_fetch(false, None).await;
+                    }
+                }
             }
         }
     }
@@ -1121,6 +1106,7 @@ async fn run_audit_flush_loop(
 ) {
     let mut buffer: Vec<AuthorizationEvent> = Vec::with_capacity(config.audit_batch_size);
     let mut flush_ticker = interval(Duration::from_secs(config.audit_flush_interval_secs));
+    let mut next_flush_at = Instant::now();
 
     // Skip the first immediate tick
     flush_ticker.tick().await;
@@ -1133,20 +1119,33 @@ async fn run_audit_flush_loop(
                     Some(e) => {
                         buffer.push(e);
 
-                        // Flush if batch is full
-                        if buffer.len() >= config.audit_batch_size {
-                            flush_audit_events(&client, &config, &authorizer_id, &mut buffer).await;
+                        // Flush if batch is full and Retry-After has elapsed.
+                        if buffer.len() >= config.audit_batch_size
+                            && Instant::now() >= next_flush_at
+                        {
+                            if let Some(wait) =
+                                flush_audit_events(&client, &config, &authorizer_id, &mut buffer)
+                                    .await
+                            {
+                                next_flush_at = Instant::now() + wait;
+                            }
                         }
                     }
                     None => {
-                        // Channel closed (sender dropped), flush remaining events and exit
+                        // Channel closed: one immediate flush, no Retry-After wait.
                         if !buffer.is_empty() {
                             info!(
                                 authorizer_id = %authorizer_id,
                                 remaining_events = buffer.len(),
                                 "Flushing remaining audit events before shutdown"
                             );
-                            flush_audit_events(&client, &config, &authorizer_id, &mut buffer).await;
+                            let _ = flush_audit_events(
+                                &client,
+                                &config,
+                                &authorizer_id,
+                                &mut buffer,
+                            )
+                            .await;
                         }
                         info!("Audit channel closed, exiting flush loop");
                         break;
@@ -1155,8 +1154,12 @@ async fn run_audit_flush_loop(
             }
             // Periodic flush
             _ = flush_ticker.tick() => {
-                if !buffer.is_empty() {
-                    flush_audit_events(&client, &config, &authorizer_id, &mut buffer).await;
+                if !buffer.is_empty() && Instant::now() >= next_flush_at {
+                    if let Some(wait) =
+                        flush_audit_events(&client, &config, &authorizer_id, &mut buffer).await
+                    {
+                        next_flush_at = Instant::now() + wait;
+                    }
                 }
             }
         }
@@ -1240,9 +1243,9 @@ async fn flush_audit_events(
     config: &HeartbeatConfig,
     authorizer_id: &str,
     buffer: &mut Vec<AuthorizationEvent>,
-) {
+) -> Option<Duration> {
     if buffer.is_empty() {
-        return;
+        return None;
     }
 
     let event_count = buffer.len();
@@ -1278,6 +1281,7 @@ async fn flush_audit_events(
                 event_count, authorizer_id
             );
             buffer.clear();
+            None
         }
         Ok(response) => {
             let status = response.status();
@@ -1298,7 +1302,7 @@ async fn flush_audit_events(
                     authorizer_id
                 );
                 buffer.clear();
-                return;
+                return None;
             }
             warn!(
                 authorizer_id = %authorizer_id,
@@ -1312,10 +1316,8 @@ async fn flush_audit_events(
                 &body[..body.len().min(200)],
                 authorizer_id
             );
-            if let Some(wait) = retry_after {
-                tokio::time::sleep(wait).await;
-            }
             cap_audit_buffer(buffer, config.audit_batch_size);
+            retry_after
         }
         Err(e) => {
             warn!(
@@ -1325,6 +1327,7 @@ async fn flush_audit_events(
                 "Network error flushing audit events, will retry"
             );
             cap_audit_buffer(buffer, config.audit_batch_size);
+            None
         }
     }
 }

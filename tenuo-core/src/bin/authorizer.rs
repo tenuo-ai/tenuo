@@ -514,6 +514,8 @@ struct AppState {
     started_at: std::time::Instant,
     /// Decision-time SRL freshness. `None` when no tracker was requested.
     revocation_tracker: Option<Arc<tenuo::revocation_tracker::RevocationTracker>>,
+    /// Skip the tracker gate until the first list is accepted or this elapses.
+    srl_warmup: Duration,
 }
 
 struct HeartbeatShutdown {
@@ -620,18 +622,21 @@ async fn prepare_serve(
     }
     let settings_first_root = authorizer.trusted_root_keys().first().cloned();
 
-    let loaded_srl_version = if let Some(path) = &cli.revocation_list {
+    let loaded_srl = if let Some(path) = &cli.revocation_list {
         let srl = load_signed_revocation_list(path)?;
-        let version = srl.version();
         let Some(first) = authorizer.trusted_root_keys().first().cloned() else {
             return Err("a trusted root is required to verify the revocation list".into());
         };
-        authorizer.set_revocation_list(srl, &first)?;
+        authorizer.set_revocation_list(srl.clone(), &first)?;
         eprintln!("Loaded signed revocation list from: {}", path.display());
-        Some(version)
+        Some(srl)
     } else {
-        initial_srl_version
+        None
     };
+    let loaded_srl_version = loaded_srl
+        .as_ref()
+        .map(|srl| srl.version())
+        .or(initial_srl_version);
 
     let debug_mode = config.settings.debug_mode;
     let compiled = CompiledGatewayConfig::compile(config)?;
@@ -785,6 +790,22 @@ async fn prepare_serve(
                 None
             };
 
+            if let (Some(tracker), Some(srl)) = (&revocation_tracker, &loaded_srl) {
+                let fetched_at = chrono::Utc::now();
+                if let Err(e) = tracker.accept(
+                    tenuo::revocation_tracker::RevocationUpdate {
+                        srl: srl.clone(),
+                        fetched_at,
+                    },
+                    fetched_at,
+                ) {
+                    warn!(
+                        error = %e,
+                        "file revocation list was not accepted into the tracker"
+                    );
+                }
+            }
+
             let heartbeat_config = HeartbeatConfig {
                 control_plane_url: tenuo::connect_token::normalize_control_plane_url(&url),
                 api_key: key.clone(),
@@ -840,6 +861,7 @@ async fn prepare_serve(
         metrics,
         started_at: std::time::Instant::now(),
         revocation_tracker,
+        srl_warmup: Duration::from_secs(cli.heartbeat_interval.saturating_mul(2).max(60)),
     });
 
     Ok(ServeReady {
@@ -1553,22 +1575,30 @@ async fn handle_request(
 
     if let Some(tracker) = &state.revocation_tracker {
         if let Err(e) = tracker.latest(chrono::Utc::now()) {
-            warn!(
-                request_id = %request_id,
-                event = "authorization_denied",
-                reason = "revocation_stale",
-                error = %e,
-                "Signed revocation list is missing or stale"
-            );
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({
-                    "error": "revocation_unavailable",
-                    "message": "signed revocation list is missing or stale",
-                    "request_id": request_id
-                })),
-            )
-                .into_response();
+            if state.started_at.elapsed() < state.srl_warmup {
+                warn!(
+                    request_id = %request_id,
+                    error = %e,
+                    "SRL tracker not ready; allowing during warm-up"
+                );
+            } else {
+                warn!(
+                    request_id = %request_id,
+                    event = "authorization_denied",
+                    reason = "revocation_stale",
+                    error = %e,
+                    "Signed revocation list is missing or stale"
+                );
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "error": "revocation_unavailable",
+                        "message": "signed revocation list is missing or stale",
+                        "request_id": request_id
+                    })),
+                )
+                    .into_response();
+            }
         }
     }
 
@@ -2082,6 +2112,7 @@ routes:
             metrics: None,
             started_at: std::time::Instant::now(),
             revocation_tracker: None,
+            srl_warmup: Duration::from_secs(60),
         });
         Router::new()
             .route("/health", axum::routing::get(health_check))
@@ -2798,6 +2829,7 @@ routes:
             metrics: None,
             started_at: std::time::Instant::now(),
             revocation_tracker: None,
+            srl_warmup: Duration::from_secs(60),
         });
         let app = build_router(state);
 

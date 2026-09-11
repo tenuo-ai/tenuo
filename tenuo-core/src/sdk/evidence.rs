@@ -97,10 +97,21 @@ impl ReceiptSigner for LocalReceiptSigner {
 
 /// In-memory sink for tests and local RequiredBeforeExecution.
 pub struct MemoryReceiptSink {
-    stored: Mutex<Vec<Receipt>>,
+    stored: Mutex<SinkBuf>,
     max: usize,
     deny_max: usize,
     overflowed: AtomicUsize,
+}
+
+struct SinkBuf {
+    items: Vec<StoredReceipt>,
+    allows: usize,
+    denies: usize,
+}
+
+struct StoredReceipt {
+    receipt: Receipt,
+    deny: bool,
 }
 
 impl Default for MemoryReceiptSink {
@@ -115,12 +126,19 @@ impl MemoryReceiptSink {
         Self::default()
     }
 
-    /// Bound outbox. A full sink drops the new receipt, counts it, and
-    /// returns [`ReceiptSinkError::Unavailable`]. Best-effort evidence
-    /// swallows that error; RequiredBeforeExecution denies.
+    /// Bound outbox. `max` is the cap for allow receipts and, separately,
+    /// for deny receipts, so the buffer can hold up to `2 * max` items.
+    /// A full side drops the new receipt, counts it, and returns
+    /// [`ReceiptSinkError::Unavailable`]. Best-effort evidence swallows
+    /// that error; RequiredBeforeExecution denies. A payload whose outcome
+    /// cannot be read is rejected without consuming either budget.
     pub fn with_capacity(max: usize) -> Self {
         Self {
-            stored: Mutex::new(Vec::new()),
+            stored: Mutex::new(SinkBuf {
+                items: Vec::new(),
+                allows: 0,
+                denies: 0,
+            }),
             max: max.max(1),
             deny_max: max.max(1),
             overflowed: AtomicUsize::new(0),
@@ -134,7 +152,10 @@ impl MemoryReceiptSink {
 
     /// Everything stored so far.
     pub fn stored(&self) -> Vec<Receipt> {
-        self.stored.lock().map(|g| g.clone()).unwrap_or_default()
+        self.stored
+            .lock()
+            .map(|g| g.items.iter().map(|item| item.receipt.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// Unacknowledged receipts. Same as [`Self::stored`] after prefix drops.
@@ -156,44 +177,52 @@ impl MemoryReceiptSink {
         let Ok(mut stored) = self.stored.lock() else {
             return 0;
         };
-        let n = count.min(stored.len());
-        stored.drain(..n);
+        let n = count.min(stored.items.len());
+        let removed: Vec<bool> = stored.items.drain(..n).map(|item| item.deny).collect();
+        for deny in removed {
+            if deny {
+                stored.denies = stored.denies.saturating_sub(1);
+            } else {
+                stored.allows = stored.allows.saturating_sub(1);
+            }
+        }
         n
     }
 }
 
-fn receipt_is_deny(receipt: &Receipt) -> bool {
-    receipt
-        .verify_signature()
+fn receipt_is_deny(receipt: &Receipt) -> Option<bool> {
+    ciborium::from_reader::<crate::receipt::ReceiptPayload, _>(receipt.payload.as_slice())
+        .ok()
         .map(|payload| payload.outcome == crate::receipt::Outcome::Deny)
-        .unwrap_or(false)
 }
 
 impl ReceiptSink for MemoryReceiptSink {
     fn persist(&self, receipt: &Receipt) -> Result<ReceiptRef, ReceiptSinkError> {
+        let deny = receipt_is_deny(receipt).ok_or(ReceiptSinkError::Unavailable)?;
         let mut stored = self
             .stored
             .lock()
             .map_err(|_| ReceiptSinkError::Unavailable)?;
-        let deny = receipt_is_deny(receipt);
         let (used, cap) = if deny {
-            (
-                stored.iter().filter(|r| receipt_is_deny(r)).count(),
-                self.deny_max,
-            )
+            (stored.denies, self.deny_max)
         } else {
-            (
-                stored.iter().filter(|r| !receipt_is_deny(r)).count(),
-                self.max,
-            )
+            (stored.allows, self.max)
         };
         if used >= cap {
             self.overflowed.fetch_add(1, Ordering::Relaxed);
             return Err(ReceiptSinkError::Unavailable);
         }
-        stored.push(receipt.clone());
+        stored.items.push(StoredReceipt {
+            receipt: receipt.clone(),
+            deny,
+        });
+        if deny {
+            stored.denies += 1;
+        } else {
+            stored.allows += 1;
+        }
         Ok(ReceiptRef {
-            id: format!("mem:{}", stored.len()),
+            id: format!("mem:{}", stored.items.len()),
         })
     }
 }
@@ -329,6 +358,30 @@ mod tests {
         assert!(sink.persist(&allow).is_ok());
         assert_eq!(sink.stored().len(), 2);
         assert_eq!(sink.overflowed(), 1);
+    }
+
+    #[test]
+    fn undecodable_payload_does_not_consume_allow_budget() {
+        let sink = MemoryReceiptSink::with_capacity(1);
+        let signer = LocalReceiptSigner::for_development();
+        let mut garbage = sign_payload(
+            &ReceiptPayload::allow(vec![0xA0], "tool:read", 1, "inv-2", [1u8; 64])
+                .to_cbor()
+                .unwrap(),
+            &signer,
+        )
+        .unwrap();
+        garbage.payload = vec![0xff, 0x00];
+        assert_eq!(sink.persist(&garbage), Err(ReceiptSinkError::Unavailable));
+        let allow = sign_payload(
+            &ReceiptPayload::allow(vec![0xA0], "tool:read", 1, "inv-2", [1u8; 64])
+                .to_cbor()
+                .unwrap(),
+            &signer,
+        )
+        .unwrap();
+        assert!(sink.persist(&allow).is_ok());
+        assert_eq!(sink.stored().len(), 1);
     }
 
     #[test]

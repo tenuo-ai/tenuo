@@ -133,7 +133,6 @@ fn constraint_value_to_json(cv: &ConstraintValue) -> JsonValue {
                 .collect(),
         ),
         ConstraintValue::Null => JsonValue::Null,
-        _ => JsonValue::Null,
     }
 }
 

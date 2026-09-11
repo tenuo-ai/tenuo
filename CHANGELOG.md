@@ -86,7 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Debug`/`Serialize` redact secrets.
 - **Sidecar SRL floor.** The chart mounts an `emptyDir` at
   `/var/lib/tenuo/srl-floor` and sets `TENUO_REVOCATION_FLOOR`. Opening the
-  floor fails closed when a tracker was requested.
+  floor fails closed when a control plane and trusted root are configured.
+  A read-only root filesystem without that env var now exits at startup
+  instead of warning and running without a floor.
 
 ### Fixed
 
@@ -124,12 +126,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Receipt overflow under `RequiredBeforeExecution`.** A full memory sink
   returns `Unavailable` so the guard denies. Best-effort still proceeds and
   counts the overflow. The previous `Ok(overflow ref)` silently bypassed
-  the required-evidence check. `MemoryReceiptSink` is now capped at 10,000
-  (unbounded in 0.2.5). Deny receipts use a separate budget so they cannot
-  starve allows. Required-evidence callers must
+  the required-evidence check. `MemoryReceiptSink::with_capacity(n)` caps
+  allows and denies separately (up to `2 * n` stored). Classification
+  reads the payload once; counters update on push and drop.
+  `overflowed()` is the combined drop count. An undecodable payload is
+  rejected without consuming a budget. Required-evidence callers must
   `acknowledge_receipts` / drain or they are denied after the allow cap.
 - **Sidecar shutdown flush.** After HTTP drains, the audit sender is dropped
-  and the flush loop is joined so queued events are delivered.
+  and the flush loop is joined so queued events are delivered. A 429
+  records a not-before time and skips flushes until then; shutdown still
+  attempts one immediate flush.
+- **Receipt chain under concurrency.** Previous-hash, sign, and persist
+  share one lock. The link advances only after a successful persist, so a
+  verifier walking the outbox does not see a predecessor that was never
+  stored.
+- **Received-path deny receipts omit an unverified PoP.** A
+  signature-invalid denial no longer embeds the wire signature in the
+  shape reserved for a valid holder proof. Async holder denials now carry
+  the PoP after it is signed. Preflight cancellation and deadline denials
+  emit a deny receipt.
 - **TypeScript: published source maps are usable.** `@tenuo/core` and
   `@tenuo/mcp` JavaScript maps embed the original TypeScript
   (`sourcesContent`), so debuggers and `node --enable-source-maps` show SDK
@@ -165,7 +180,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contained invalid hex.
 - **Sidecar graceful shutdown.** SIGTERM/ctrl-c drain the HTTP server, then
   the audit flush. SRL fetch goes through `RevocationTracker` with a file
-  floor. Request checks consult `latest()` and deny when the list is stale.
+  floor; a file-loaded list is accepted into the tracker. The sidecar
+  re-fetches on every heartbeat so an unchanged version does not go stale.
+  Request checks consult `latest()` after a warm-up window and deny when
+  the list is still missing or stale.
 
 ## [0.2.5] - 2026-09-06
 

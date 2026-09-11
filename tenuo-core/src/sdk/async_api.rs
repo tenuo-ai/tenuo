@@ -221,7 +221,7 @@ impl Guard {
         call: &Call<'_>,
         control: &AttemptControl,
     ) -> Result<super::decision::Decision, Denial> {
-        self.preflight_async(control)?;
+        self.preflight_or_deny(authority.chain(), call, control)?;
         match self
             .authorize_holder_async(
                 authority,
@@ -231,13 +231,18 @@ impl Guard {
             .await
         {
             Ok(authorized) => {
-                self.reject_if_cancelled(control)?;
+                self.reject_or_deny(
+                    authority.chain(),
+                    call,
+                    control,
+                    Some(authorized.pop_signature()),
+                )?;
                 self.complete_allow(&authorized)
             }
-            Err(denial) => {
+            Err((denial, pop)) => {
                 self.record_deny(&denial);
                 #[cfg(feature = "receipts")]
-                self.emit_deny_receipt(authority.chain(), call, &denial, None);
+                self.emit_deny_receipt(authority.chain(), call, &denial, pop.as_ref());
                 Err(denial)
             }
         }
@@ -250,16 +255,26 @@ impl Guard {
         call: &Call<'_>,
         control: &AttemptControl,
     ) -> Result<super::decision::Decision, Denial> {
-        self.preflight_async(control)?;
+        self.preflight_or_deny(received.chain(), call, control)?;
         match self.authorize_received(received, call) {
             Ok(authorized) => {
-                self.reject_if_cancelled(control)?;
+                self.reject_or_deny(
+                    received.chain(),
+                    call,
+                    control,
+                    Some(authorized.pop_signature()),
+                )?;
                 self.complete_allow(&authorized)
             }
             Err(denial) => {
                 self.record_deny(&denial);
                 #[cfg(feature = "receipts")]
-                self.emit_deny_receipt(received.chain(), call, &denial, Some(received.signature()));
+                self.emit_deny_receipt(
+                    received.chain(),
+                    call,
+                    &denial,
+                    super::guard::verified_received_pop(&denial, received.signature()),
+                );
                 Err(denial)
             }
         }
@@ -273,7 +288,8 @@ impl Guard {
         control: &AttemptControl,
         op: impl FnOnce(&AuthorizedCall<'_>) -> Result<T, E>,
     ) -> Result<Guarded<T>, GuardError<E>> {
-        self.preflight_async(control).map_err(GuardError::Denied)?;
+        self.preflight_or_deny(authority.chain(), call, control)
+            .map_err(GuardError::Denied)?;
         let authorized = self
             .authorize_holder_async(
                 authority,
@@ -281,14 +297,19 @@ impl Guard {
                 control,
             )
             .await
-            .map_err(|denial| {
+            .map_err(|(denial, pop)| {
                 self.record_deny(&denial);
                 #[cfg(feature = "receipts")]
-                self.emit_deny_receipt(authority.chain(), call, &denial, None);
+                self.emit_deny_receipt(authority.chain(), call, &denial, pop.as_ref());
                 GuardError::Denied(denial)
             })?;
-        self.reject_if_cancelled(control)
-            .map_err(GuardError::Denied)?;
+        self.reject_or_deny(
+            authority.chain(),
+            call,
+            control,
+            Some(authorized.pop_signature()),
+        )
+        .map_err(GuardError::Denied)?;
         let decision = self
             .complete_allow(&authorized)
             .map_err(GuardError::Denied)?;
@@ -304,20 +325,58 @@ impl Guard {
         control: &AttemptControl,
         op: impl FnOnce(&AuthorizedCall<'_>) -> Result<T, E>,
     ) -> Result<Guarded<T>, GuardError<E>> {
-        self.preflight_async(control).map_err(GuardError::Denied)?;
+        self.preflight_or_deny(received.chain(), call, control)
+            .map_err(GuardError::Denied)?;
         let authorized = self.authorize_received(received, call).map_err(|denial| {
             self.record_deny(&denial);
             #[cfg(feature = "receipts")]
-            self.emit_deny_receipt(received.chain(), call, &denial, Some(received.signature()));
+            self.emit_deny_receipt(
+                received.chain(),
+                call,
+                &denial,
+                super::guard::verified_received_pop(&denial, received.signature()),
+            );
             GuardError::Denied(denial)
         })?;
-        self.reject_if_cancelled(control)
-            .map_err(GuardError::Denied)?;
+        self.reject_or_deny(
+            received.chain(),
+            call,
+            control,
+            Some(authorized.pop_signature()),
+        )
+        .map_err(GuardError::Denied)?;
         let decision = self
             .complete_allow(&authorized)
             .map_err(GuardError::Denied)?;
         let value = op(&authorized).map_err(GuardError::Operation)?;
         Ok(Guarded { value, decision })
+    }
+
+    fn preflight_or_deny(
+        &self,
+        chain: &[Warrant],
+        call: &Call<'_>,
+        control: &AttemptControl,
+    ) -> Result<(), Denial> {
+        self.preflight_async(control).inspect_err(|denial| {
+            self.record_deny(denial);
+            #[cfg(feature = "receipts")]
+            self.emit_deny_receipt(chain, call, denial, None);
+        })
+    }
+
+    fn reject_or_deny(
+        &self,
+        chain: &[Warrant],
+        call: &Call<'_>,
+        control: &AttemptControl,
+        pop: Option<&Signature>,
+    ) -> Result<(), Denial> {
+        self.reject_if_cancelled(control).inspect_err(|denial| {
+            self.record_deny(denial);
+            #[cfg(feature = "receipts")]
+            self.emit_deny_receipt(chain, call, denial, pop);
+        })
     }
 
     pub(crate) fn preflight_async(&self, control: &AttemptControl) -> Result<(), Denial> {

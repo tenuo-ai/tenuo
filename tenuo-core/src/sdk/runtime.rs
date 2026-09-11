@@ -962,4 +962,97 @@ mod tests {
         assert!(session.check(&Call::borrowed("write", &args)).is_err());
         assert!(session.check(&Call::borrowed("read", &args)).is_ok());
     }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn persist_failure_does_not_advance_receipt_chain() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = Warrant::builder()
+            .capability("read", ConstraintSet::new())
+            .holder(holder.public_key())
+            .ttl(Duration::from_secs(300))
+            .build(&issuer)
+            .unwrap();
+        let runtime = Runtime::builder()
+            .holder(holder)
+            .trusted_root(issuer.public_key())
+            .ttl_fallback(Duration::from_secs(600))
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_capacity(1)
+            .build()
+            .unwrap();
+        let session = runtime.session_from_warrant(warrant).unwrap();
+        let args = HashMap::new();
+        let first = session.check(&Call::borrowed("read", &args)).unwrap();
+        let a = first.receipt.clone().expect("first receipt");
+        let second = session.check(&Call::borrowed("read", &args)).unwrap();
+        assert!(second.receipt.is_some());
+        assert_eq!(session.peek_receipts().len(), 1);
+        session.acknowledge_receipts(1);
+        let third = session.check(&Call::borrowed("read", &args)).unwrap();
+        let c = third.receipt.expect("third receipt");
+        assert_eq!(
+            c.verify_signature().unwrap().prev_receipt_hash,
+            Some(a.digest().unwrap())
+        );
+    }
+
+    #[cfg(feature = "receipts")]
+    #[test]
+    fn concurrent_receipts_share_one_predecessor_chain() {
+        use std::collections::HashSet;
+        use std::thread;
+
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let warrant = Warrant::builder()
+            .capability("read", ConstraintSet::new())
+            .holder(holder.public_key())
+            .ttl(Duration::from_secs(300))
+            .build(&issuer)
+            .unwrap();
+        let runtime = Runtime::builder()
+            .holder(holder)
+            .trusted_root(issuer.public_key())
+            .ttl_fallback(Duration::from_secs(600))
+            .evidence_policy(EvidencePolicy::BestEffort)
+            .receipt_capacity(128)
+            .build()
+            .unwrap();
+        let session = Arc::new(runtime.session_from_warrant(warrant).unwrap());
+        let threads = 8;
+        let per_thread = 10;
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                let session = session.clone();
+                thread::spawn(move || {
+                    let args = HashMap::new();
+                    for _ in 0..per_thread {
+                        session.check(&Call::borrowed("read", &args)).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("worker");
+        }
+        let receipts = session.peek_receipts();
+        assert_eq!(receipts.len(), threads * per_thread);
+        let digests: HashSet<_> = receipts.iter().map(|r| r.digest().unwrap()).collect();
+        assert_eq!(digests.len(), receipts.len());
+        let mut predecessors = HashSet::new();
+        let mut roots = 0usize;
+        for receipt in &receipts {
+            match receipt.verify_signature().unwrap().prev_receipt_hash {
+                None => roots += 1,
+                Some(prev) => assert!(predecessors.insert(prev), "duplicate predecessor"),
+            }
+        }
+        assert_eq!(roots, 1);
+        assert_eq!(predecessors.len(), receipts.len() - 1);
+        for prev in &predecessors {
+            assert!(digests.contains(prev), "link to unpublished receipt");
+        }
+    }
 }
