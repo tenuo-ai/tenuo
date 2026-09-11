@@ -14,8 +14,8 @@
     "skipLibCheck": true,
     "noEmit": false,
     "declaration": true,
-    "declarationMap": true,
     "sourceMap": true,
+    "inlineSources": true,
     "rootDir": "src",
     "outDir": "dist",
     "types": ["node"]

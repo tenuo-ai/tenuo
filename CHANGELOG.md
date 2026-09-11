@@ -106,6 +106,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the required-evidence check. `MemoryReceiptSink` is now capped at 10,000
   (unbounded in 0.2.5). Required-evidence callers must
   `acknowledge_receipts` / drain or they are denied after the cap.
+- **TypeScript: published source maps are usable.** `@tenuo/core` and
+  `@tenuo/mcp` JavaScript maps embed the original TypeScript
+  (`sourcesContent`), so debuggers and `node --enable-source-maps` show SDK
+  source instead of pointing at `../src/*.ts` files that are not in the
+  package. Declaration maps are no longer published; editors fall back to the
+  `.d.ts` files.
 
 ### Changed
 
