@@ -109,6 +109,13 @@ cd tenuo-core && cargo run --example sdk_mcp_demo --features sdk,mcp-transport
 cd tenuo-core && cargo run --example sdk_runtime --features sdk,receipts
 ```
 
+Rig manager-worker calling a GitHub-shaped MCP server (outside this crate, so
+Rig/rmcp stay out of `tenuo-core` dev-dependencies):
+
+```bash
+cargo run --manifest-path examples/rig-mcp-delegation/Cargo.toml
+```
+
 ## Features
 
 | Feature | Description |

@@ -96,6 +96,54 @@ jobs:
         working-directory: tenuo-core
 
   # ============================================================================
+  # RIG + MCP DEMO
+  # ============================================================================
+  rig-mcp-demo:
+    name: Rig MCP demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install mold linker
+        uses: ./.github/actions/apt-install
+        with:
+          packages: mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Configure mold linker
+        run: |
+          mkdir -p ~/.cargo
+          cat >> ~/.cargo/config.toml << 'EOF'
+          [target.x86_64-unknown-linux-gnu]
+          linker = "clang"
+          rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+          EOF
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+        with:
+          workspaces: examples/rig-mcp-delegation
+
+      - name: Format
+        run: cargo fmt --all -- --check
+        working-directory: examples/rig-mcp-delegation
+
+      - name: Run
+        run: cargo run --locked --manifest-path examples/rig-mcp-delegation/Cargo.toml
+
+  # ============================================================================
   # PYTHON SDK
   # ============================================================================
   python-sdk:
