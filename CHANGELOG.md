@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`RuntimeBuilder::revocation_floor_path`.** Persist SRL floors at an
+  explicit path so a read-only or root-owned identity mount does not fail
+  `Runtime::build`. File-store errors name the path.
+
+### Fixed
+
+- **Receipt overflow under `RequiredBeforeExecution`.** A full memory sink
+  returns `Unavailable` so the guard denies. Best-effort still proceeds and
+  counts the overflow. The previous `Ok(overflow ref)` silently bypassed
+  the required-evidence check.
+
 ### Changed
 
 - **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
