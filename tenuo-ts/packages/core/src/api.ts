@@ -182,13 +182,25 @@ export type ToolLike<
   execute: (args: TArgs, options?: unknown) => TResult | Promise<TResult>;
 };
 
-export type ToolPolicy = {
+type KeysOfUnion<T> = T extends unknown ? keyof T : never;
+
+export type ToolPolicy<TArgs = undefined> = {
   /**
    * Host ceiling. AND'd with the session in Rust.
    * Non-empty maps are zero-trust: every call argument must be named here.
    * `{}` means no extra ceiling (session/warrant only).
    */
-  readonly allow: AllowPolicy;
+  readonly allow: [NonNullable<TArgs>] extends [object]
+    ? [KeysOfUnion<NonNullable<TArgs>>] extends [never]
+      ? AllowPolicy
+      : string extends KeysOfUnion<NonNullable<TArgs>>
+        ? AllowPolicy
+        : number extends KeysOfUnion<NonNullable<TArgs>>
+          ? AllowPolicy
+          : symbol extends KeysOfUnion<NonNullable<TArgs>>
+            ? AllowPolicy
+            : { readonly [Field in KeysOfUnion<NonNullable<TArgs>>]?: ConstraintExpr }
+    : AllowPolicy;
   readonly capability?: string;
 };
 
@@ -645,7 +657,7 @@ export interface Tenuo {
    */
   tool<T extends { execute: (args: never) => unknown }>(
     inner: T,
-    policy: ToolPolicy,
+    policy: ToolPolicy<Parameters<T["execute"]>[0]>,
   ): ProtectedTool<T>;
   session(input: SessionInput): Session;
   /** Import a warrant minted elsewhere (Rust / Python / another process). */
