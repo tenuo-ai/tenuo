@@ -124,6 +124,7 @@ fn hop_constraint_deny(client: &Guard, authority: &PresentedAuthority) {
         }
         Ok(_) => panic!("expected constraint deny"),
         Err(GuardError::Operation(_)) => panic!("operation must not run"),
+        Err(_) => panic!("unexpected guard error"),
     }
 }
 
@@ -182,6 +183,7 @@ fn hop_approval_retry(
         }
         Ok(_) => panic!("expected approval-required"),
         Err(GuardError::Operation(_)) => panic!("operation must not run"),
+        Err(_) => panic!("unexpected guard error"),
     };
 
     let approvals = client.resolve_approvals(&request).expect("provider");
