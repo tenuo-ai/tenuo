@@ -38,17 +38,29 @@ ceiling. `devRoot()` requires `NODE_ENV=development` or `test`,
 `devRoot({ allowInProduction: true })`, or `TENUO_ALLOW_DEV=1`. Unset
 `NODE_ENV` is not treated as development.
 
-Production loads an issued warrant and a trusted root:
+Production loads an issued warrant and a trusted root. Prefer `Runtime` when
+the same holder identity, roots, revocation list, and receipt buffer should
+outlive a single call:
 
 ```ts
-const tenuo = createTenuo({
+const identity = createTenuo.identity(createTenuo.holderKeyFromEnv("TENUO_HOLDER_SECRET"));
+const runtime = createTenuo.runtime({
+  identity,
   trustedRoots: [createTenuo.publicKeyFromEnv("TENUO_ROOT_PUBLIC_KEY")],
+  receipts: "collect",
 });
-const session = tenuo.sessionFromWire({
-  warrant: process.env.TENUO_WARRANT!,
-  holderKey: createTenuo.holderKeyFromEnv("TENUO_HOLDER_SECRET"),
-});
+const session = runtime.sessionFromWire(process.env.TENUO_WARRANT!);
+await readFile.execute({ path: "/data/q3.pdf" }, { session });
+const receipts = session.drainReceipts(); // persist, then upload
 ```
+
+`createTenuo.parseConnectToken(raw)` decodes a `tenuo_ct_…` token. It does not
+read environment variables or invent an origin. Relative `/v1` endpoints need
+`token.resolveEndpoint({ localBase })`. Callers append `/v1/…` to the bare
+origin.
+
+See [Receipt delivery](../../README.md#receipt-delivery) for peek / drain / ack
+guarantees. This package does not perform HTTP, discovery, or upload.
 
 Delegation to another agent rebinds a narrower child to that agent's key. The
 current holder signs; core refuses any child that is not within its parent

@@ -23,12 +23,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `evaluate_approval_gates` stays on the gate-map-only evaluator so
   split-view callers (PoP args vs constraint args) still see a firing
   gate. TypeScript also exports `evaluateApprovalGates`.
+- **Holder `Runtime` and `Session` (`sdk`).** Persist an Ed25519 identity,
+  configure trust / TTL fallback / receipt policy once, and bind each
+  warrant into a session. `drain_receipts` / `peek_receipts` are the same
+  snapshot; only `acknowledge_receipts` removes items. Sessions created
+  before the first SRL keep the TTL fallback until a list is applied, then
+  enforce that list on the next check. `SignedRevocationList::{from_base64,
+  to_base64}` is the decode API. `ConnectToken::resolve_endpoint` accepts a
+  caller-provided base for relative `/v1` tokens.
+- **Python holder Runtime.** `HolderIdentity`, `ConnectToken.parse`, and
+  `Runtime` own identity, trusted roots, the current signed revocation list,
+  `session_from_wire` / `session_scope`, and an aggregate receipt outbox
+  (`peek_receipts` / `drain_receipts` / `acknowledge_receipts`). Receipts
+  are removed only after acknowledgement. `Runtime.install()` is the
+  process default when no session is in scope. MCP, FastAPI, A2A, and
+  Temporal accept `runtime=` and authorize inbound calls through
+  `verify_inbound_call`.
+- **`tenuo_core.ReceiptIssuer`.** Local receipt-v1 signing.
+  `ConnectToken` parse is strict version 1, redacts credentials in
+  `repr`/`str`/`Debug`, accepts padded Base64URL and `r` /
+  `registration_token` aliases, and exposes `needs_endpoint_base` /
+  `resolve_endpoint`.
+- **Shared holder-lifecycle vectors.** Rust, Python, and TypeScript load
+  `tests/vectors/holder-lifecycle.json` for connect-token parse, identity
+  derivation, and receipt outbox flags.
+- **TypeScript holder Runtime.** `createTenuo.runtime({ identity, trustedRoots,
+  revocationList?, receipts })` owns identity, roots, SRL refresh
+  (`applyRevocationList`), and `sessionFromWire`. `receipts: "collect"` retains
+  tool, `present()`, MCP attach, and verify/handler receipts until
+  `acknowledgeReceipts()`. `drainReceipts()` is a snapshot of the same buffer.
+  No network and no hosted defaults.
+- **TypeScript connect-token parse.** `createTenuo.parseConnectToken` accepts
+  a complete `tenuo_ct_…` token (padded or unpadded Base64URL, version 1).
+  Relative endpoints resolve only with `token.resolveEndpoint({ localBase })`.
+  Rust and WASM parsers now share prefix, padding, `/v1` strip, and the `r` /
+  `registration_token` aliases.
+- **TypeScript holder identity.** `createTenuo.generateIdentity()` and
+  `createTenuo.identity(holderKey)` redact the secret from JSON, inspect, and
+  `toString`. No filesystem API in core.
+- **`RuntimeBuilder::revocation_floor_path`.** Persist SRL floors at an
+  explicit path so a read-only or root-owned identity mount does not fail
+  `Runtime::build`. File-store errors name the floor path.
+- **`Authorizer::installed_revocation_list`.** Public so adapters can refuse
+  to roll a newer verifier list back to a stale Runtime SRL.
+
+### Fixed
+
+- **Sign-path `ApprovalRequired`.** `_enforce_tool_call` raises again when
+  `verify_mode == "sign"` and no handler is configured. Verify mode still
+  maps the gate to an `EnforcementResult`. Adapters that catch the
+  exception (`@guard`, LangChain, CrewAI, LangGraph, ADK) keep a request
+  hash instead of a false constraint explanation.
+- **`Authorizer.installed_revocation_list`.** Exported so
+  `apply_runtime_revocation` can refuse to roll a verifier holding v5
+  back to a Runtime list at v1.
+- **`DeferredEmitter` delivery contract.** A full queue no longer blocks
+  the request thread. The newest decision is shed and counted on
+  `shed_count`. Failed sink delivery is retried in place with backoff
+  (five attempts, interruptible by `close`) and then dropped and counted
+  on `retry_drops`. It is not re-queued and not retried in a tight loop.
+- **Python Runtime multi-hop sessions.** `session_scope` and `Session`
+  install the decoded parent chain on `chain_scope`, so a root →
+  intermediate → holder stack authorizes instead of failing as
+  `UntrustedRoot`.
+- **Receipt outbox overflow.** A full collector no longer turns an allow
+  into a denial. The new receipt is dropped, `receipt_overflows` counts
+  it, and the authorized call proceeds.
+- **`HolderIdentity.load_or_create` races.** The complete key is written
+  and fsynced to a unique `0600` temp file, then the destination is
+  claimed atomically. A concurrent loser loads the winner. Destination
+  is never visible half-written.
+- **Runtime `acknowledgeReceipts` follows emission order.** Session
+  receipts always land on the runtime outbox, including when the tool was
+  built on another `createTenuo` instance. Acking `n` removes the oldest
+  emitted wires by identity. `receiptMax` must be a positive integer.
+  `Session` now requires `peekReceipts` / `drainReceipts` /
+  `acknowledgeReceipts` (empty snapshots are fine for non-runtime
+  implementers).
+- **Receipt overflow under `RequiredBeforeExecution`.** A full memory sink
+  returns `Unavailable` so the guard denies. Best-effort still proceeds and
+  counts the overflow. The previous `Ok(overflow ref)` silently bypassed
+  the required-evidence check. `MemoryReceiptSink` is now capped at 10,000
+  (unbounded in 0.2.5). Required-evidence callers must
+  `acknowledge_receipts` / drain or they are denied after the cap.
 
 ### Changed
 
 - **WASM `evaluate_approval_gates` fails closed** on an invalid warrant,
   malformed gate map, or unparseable arguments (`approval_required: true`
   plus `error`). Previously those cases returned `approval_required: false`.
+- **Connect token version is required.** `ConnectToken::parse` rejects a
+  missing `v`, `v=0`, and any version other than 1. Tokens issued without
+  `v` fail at parse after upgrade. This is a breaking change from 0.2.5.
+- **`drainReceipts()` is a snapshot.** It matches `peekReceipts()`. Only
+  `acknowledgeReceipts(n)` removes items. A second drain is not empty.
+- **`RevocationError` is `#[non_exhaustive]`.** A new `UnavailableAt` arm
+  names the floor path; downstream matches need a wildcard.
 - **TypeScript: invalid constraint definitions throw `TenuoConfigurationError`**
   (`TENUO_CONFIGURATION`) instead of a generic `Error`. Validation rules and
   messages are unchanged. Code that catches `TenuoError` or switches on `code`

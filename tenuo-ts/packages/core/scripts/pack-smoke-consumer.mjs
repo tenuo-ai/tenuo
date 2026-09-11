@@ -129,4 +129,35 @@ if (mcpVerified.path !== "/data/q3.pdf") {
   throw new Error("unexpected mcp verify: " + JSON.stringify(mcpVerified));
 }
 
+const parsed = createTenuo.parseConnectToken(
+  `tenuo_ct_${Buffer.from(JSON.stringify({
+    v: 1,
+    e: "https://control.example.com/v1",
+    k: "tc_smoke",
+  })).toString("base64url")}`,
+);
+if (parsed.endpoint !== "https://control.example.com" || parsed.apiKey !== "tc_smoke") {
+  throw new Error("unexpected connect token: " + JSON.stringify(parsed));
+}
+
+const holder = createTenuo.identity(workerKey);
+const runtime = createTenuo.runtime({
+  identity: holder,
+  trustedRoots: [tenuo.issuerPublicKey()],
+  receipts: "collect",
+});
+const runtimeSession = runtime.sessionFromWire(issued.toWire());
+const runtimeRead = runtime.tenuo.tool(
+  { execute: async ({ path }) => path },
+  { capability: "read_file", allow: {} },
+);
+const runtimeGot = await runtimeRead.execute({ path: "/data/q3.pdf" }, { session: runtimeSession });
+if (runtimeGot !== "/data/q3.pdf") {
+  throw new Error("unexpected runtime execute: " + runtimeGot);
+}
+const drained = runtimeSession.drainReceipts();
+if (drained.length !== 1) {
+  throw new Error("expected one collected receipt, got " + drained.length);
+}
+
 console.log("pack smoke ok");

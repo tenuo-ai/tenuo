@@ -33,7 +33,11 @@ import type {
   TenuoMcp,
   ToolPolicy,
 } from "./api.ts";
+import { parseConnectToken } from "./connect.ts";
+import { generateIdentity, identityFromKey } from "./identity.ts";
 import { createMcp, presentCall, verifyPresented, type Decide } from "./mcp.ts";
+import { collectReceipt, emitIsolatedReceipt, inheritSessionCollector } from "./receipts.ts";
+import { createRuntime } from "./runtime.ts";
 import { AuthorizationDeniedError, ApprovalRequiredError, TenuoConfigurationError, TenuoError } from "./errors.ts";
 import { Session, isSession, nativeSession } from "./session.ts";
 import {
@@ -329,7 +333,7 @@ class TenuoClient implements Tenuo {
     this.decide = (decision, tool, native, args) => {
       this.applyDecision(decision, tool, native, args);
     };
-    this.mcp = createMcp(this.context, this.decide);
+    this.mcp = createMcp(this.context, this.decide, this);
   }
 
   private applyDecision(
@@ -388,7 +392,7 @@ class TenuoClient implements Tenuo {
         policy.allow,
         requestIdFrom(callOptions),
       );
-      emitReceipt(callOptions, decision.receipt);
+      emitReceipt(callOptions, decision.receipt, session, this);
       if (decision.outcome === "allow") {
         return original(plainArgs(decision.args), forwardExecuteOptions(callOptions));
       }
@@ -539,7 +543,9 @@ class TenuoClient implements Tenuo {
     }
     const native = options === undefined ? undefined : narrowOptionsJson(options);
     try {
-      return new Session(this.context.narrow(nativeSession(session), allow, native));
+      const child = new Session(this.context.narrow(nativeSession(session), allow, native));
+      inheritSessionCollector(session, child);
+      return child;
     } catch (error) {
       throw chainError(error);
     }
@@ -643,7 +649,8 @@ class TenuoClient implements Tenuo {
     if (!isSession(session)) {
       throw new TenuoConfigurationError("present() requires a Tenuo Session, not a plain object");
     }
-    return presentCall(this.context, this.decide, session, tool, args, options, "present()").presented;
+    return presentCall(this.context, this.decide, session, tool, args, options, "present()", this)
+      .presented;
   }
 
   verify(
@@ -652,7 +659,16 @@ class TenuoClient implements Tenuo {
     args: Readonly<Record<string, unknown>>,
     options?: McpVerifyOptions,
   ): Promise<Readonly<Record<string, unknown>>> {
-    return verifyPresented(this.context, this.decide, presented, tool, args, options, "verify()");
+    return verifyPresented(
+      this.context,
+      this.decide,
+      presented,
+      tool,
+      args,
+      options,
+      "verify()",
+      this,
+    );
   }
 
   revocationList(input: RevocationListInput): string {
@@ -898,7 +914,13 @@ function normalizeWireBytes(value: string | Uint8Array): string {
   return bytesToHex(value);
 }
 
-function emitReceipt(callOptions: unknown, receipt: string | undefined): void {
+function emitReceipt(
+  callOptions: unknown,
+  receipt: string | undefined,
+  session: Session,
+  host: object,
+): void {
+  collectReceipt(receipt, session, host);
   if (receipt === undefined || callOptions === null || typeof callOptions !== "object") {
     return;
   }
@@ -909,14 +931,7 @@ function emitReceipt(callOptions: unknown, receipt: string | undefined): void {
   if (typeof onReceipt !== "function") {
     return;
   }
-  try {
-    const result = onReceipt(receipt);
-    if (result !== null && typeof result === "object" && "then" in result && typeof result.then === "function") {
-      void Promise.resolve(result).catch(() => undefined);
-    }
-  } catch {
-    // Receipt hooks must not deny or fail the tool.
-  }
+  emitIsolatedReceipt(onReceipt as (receipt: string) => void | Promise<void>, receipt);
 }
 
 function requestIdFrom(callOptions: unknown): string | undefined {
@@ -1247,6 +1262,10 @@ export const createTenuo: ((options?: CreateTenuoOptions) => Tenuo) & {
   verifyReceiptChain: typeof verifyReceiptChain;
   controlPlaneApprovalRequestV1: typeof controlPlaneApprovalRequestV1;
   signedApprovalsFromResponseV1: typeof signedApprovalsFromResponseV1;
+  parseConnectToken: typeof parseConnectToken;
+  identity: typeof identityFromKey;
+  generateIdentity: typeof generateIdentity;
+  runtime: (options: Parameters<typeof createRuntime>[1]) => ReturnType<typeof createRuntime>;
 } = Object.assign(createTenuoImpl, {
   devRoot,
   publicKeyFromEnv,
@@ -1268,4 +1287,8 @@ export const createTenuo: ((options?: CreateTenuoOptions) => Tenuo) & {
   verifyReceiptChain,
   controlPlaneApprovalRequestV1,
   signedApprovalsFromResponseV1,
+  parseConnectToken,
+  identity: identityFromKey,
+  generateIdentity,
+  runtime: (options: Parameters<typeof createRuntime>[1]) => createRuntime(createTenuoImpl, options),
 });

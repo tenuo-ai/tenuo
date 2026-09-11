@@ -122,10 +122,11 @@ pub use sdk::{
     ApprovalError, ApprovalProvider, ArgumentShape, ArgumentShapePolicy, AuthorizationAttempt,
     AuthorizedCall, Call, Clock, Decision, DecisionMetadata, DelegationError, DelegationProfile,
     Denial, DenialReporting, Diagnostics, Guard, GuardBuildError, GuardError, HolderSigner,
-    LocalApprovalSigner, LocalSigner, ObservationRecord, ObservationVerdict, ObserveBuildError,
-    ObserveError, Observed, ObservedOutcome, ObservingGuard, ObservingGuardBuilder,
-    OwnedReceivedAuthorization, PresentedAuthority, PresentedRequest, ReceivedAuthorization,
-    Retryability, RevocationMode, SdkDenialKind, SystemClock, Tenuo, TenuoBuildError, ValueClass,
+    IdentityError, LocalApprovalSigner, LocalSigner, ObservationRecord, ObservationVerdict,
+    ObserveBuildError, ObserveError, Observed, ObservedOutcome, ObservingGuard,
+    ObservingGuardBuilder, OwnedReceivedAuthorization, PersistentIdentity, PresentedAuthority,
+    PresentedRequest, ReceivedAuthorization, Retryability, RevocationMode, Runtime, RuntimeError,
+    SdkDenialKind, Session, SessionWarrant, SystemClock, Tenuo, TenuoBuildError, ValueClass,
     VerifiedProjection,
 };
 #[cfg(feature = "async")]

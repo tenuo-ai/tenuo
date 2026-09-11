@@ -1218,11 +1218,11 @@ pub fn sign_receipt(payload_json: JsValue, authorizer_key_hex: &str) -> JsValue 
 // Connect token parsing
 // ============================================================================
 
-/// Parse a `TENUO_CONNECT_TOKEN` string into its component fields.
+/// Parse a complete `tenuo_ct_…` token into its component fields.
 ///
-/// The token is a base64url-encoded JSON blob: `{ v, e, k, a?, t? }`.
-/// This WASM binding keeps the parsing canonical so TypeScript doesn't need
-/// to duplicate the decode logic.
+/// Accepts padded and unpadded Base64URL. Version must be 1; omitted `v`
+/// is an error. Trailing `/v1` is stripped from `e`.
+/// Registration-token aliases: `t`, `r`, `registration_token`.
 ///
 /// Returns `{ endpoint, apiKey, agentId?, registrationToken?, error? }`.
 #[wasm_bindgen]
@@ -1231,12 +1231,12 @@ pub fn parse_connect_token(token: &str) -> JsValue {
 
     #[derive(serde::Deserialize)]
     struct RawToken {
-        v: u32,
+        v: Option<u32>,
         e: String,
         k: String,
         #[serde(default)]
         a: Option<String>,
-        #[serde(default, alias = "r")]
+        #[serde(default, alias = "r", alias = "registration_token")]
         t: Option<String>,
     }
 
@@ -1252,43 +1252,57 @@ pub fn parse_connect_token(token: &str) -> JsValue {
         error: Option<String>,
     }
 
+    fn fail(error: String) -> JsValue {
+        serde_wasm_bindgen::to_value(&TokenResult {
+            endpoint: None,
+            api_key: None,
+            agent_id: None,
+            registration_token: None,
+            error: Some(error),
+        })
+        .unwrap()
+    }
+
+    const PREFIX: &str = "tenuo_ct_";
+    let encoded = match token.trim().strip_prefix(PREFIX) {
+        Some(rest) => rest,
+        None => return fail("token must start with 'tenuo_ct_'".to_string()),
+    };
+
     let bytes = match base64::Engine::decode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD, token.trim())
-        .or_else(|_| base64::Engine::decode(
-            &base64::engine::general_purpose::URL_SAFE, token.trim()))
-    {
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        encoded,
+    )
+    .or_else(|_| {
+        base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE, encoded)
+    }) {
         Ok(b) => b,
-        Err(e) => return serde_wasm_bindgen::to_value(&TokenResult {
-            endpoint: None, api_key: None, agent_id: None, registration_token: None,
-            error: Some(format!("base64url decode: {}", e)),
-        }).unwrap(),
+        Err(e) => return fail(format!("base64url decode: {}", e)),
     };
     let raw: RawToken = match serde_json::from_slice(&bytes) {
         Ok(t) => t,
-        Err(e) => return serde_wasm_bindgen::to_value(&TokenResult {
-            endpoint: None, api_key: None, agent_id: None, registration_token: None,
-            error: Some(format!("JSON parse: {}", e)),
-        }).unwrap(),
+        Err(e) => return fail(format!("JSON parse: {}", e)),
     };
-    if raw.v > 1 {
-        return serde_wasm_bindgen::to_value(&TokenResult {
-            endpoint: None, api_key: None, agent_id: None, registration_token: None,
-            error: Some(format!("unsupported token version: {}", raw.v)),
-        }).unwrap();
+    match raw.v {
+        None => return fail("version is required. This SDK supports version 1.".to_string()),
+        Some(1) => {}
+        Some(other) => return fail(format!("unsupported token version: {}", other)),
     }
     if raw.e.is_empty() || raw.k.is_empty() {
-        return serde_wasm_bindgen::to_value(&TokenResult {
-            endpoint: None, api_key: None, agent_id: None, registration_token: None,
-            error: Some("token missing required fields (e, k)".to_string()),
-        }).unwrap();
+        return fail("token missing required fields (e, k)".to_string());
+    }
+    let mut endpoint = raw.e.trim_end_matches('/').to_string();
+    if endpoint.ends_with("/v1") {
+        endpoint.truncate(endpoint.len() - 3);
     }
     serde_wasm_bindgen::to_value(&TokenResult {
-        endpoint: Some(raw.e),
+        endpoint: Some(endpoint),
         api_key: Some(raw.k),
         agent_id: raw.a,
         registration_token: raw.t,
         error: None,
-    }).unwrap()
+    })
+    .unwrap()
 }
 
 fn to_auth_error(msg: &str) -> JsValue {

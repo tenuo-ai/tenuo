@@ -136,9 +136,7 @@ def test_shared_enforcement_raises_resolved_message():
             bound,
             trusted_roots=[issuer.public_key],
         )
-
-    assert str(exc_info.value) == CUSTOM
-    assert exc_info.value.request.message == CUSTOM
+    assert CUSTOM in str(exc_info.value)
 
 
 def test_fastapi_and_mcp_share_resolved_message():

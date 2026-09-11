@@ -46,7 +46,7 @@ import queue
 import threading
 import time
 from pathlib import Path
-from typing import Callable, List, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, List, Optional, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,10 @@ __all__ = [
     "FileReceiptSink",
     "DeferredEmitter",
     "JournalEmitter",
+    "ReceiptCollector",
+    "ReceiptBufferFull",
     "deliver",
+    "collect_enforcement_receipt",
 ]
 
 
@@ -149,30 +152,125 @@ class FileReceiptSink:
         return self._path
 
 
+class ReceiptBufferFull(RuntimeError):
+    """The in-process receipt outbox is full. Nothing was evicted."""
+
+
+class ReceiptCollector:
+    """Thread-safe in-memory receipt outbox with peek / drain / ack.
+
+    Receipts stay in the buffer until ``acknowledge``. ``drain`` is a
+    non-consuming snapshot — the same contract as ``peek`` — so a failed
+    upload can retry without loss or silent eviction.
+    """
+
+    def __init__(self, maxsize: int = 10_000) -> None:
+        if not isinstance(maxsize, int) or maxsize < 1:
+            raise ValueError("maxsize must be a positive int")
+        self._max = maxsize
+        self._items: List[str] = []
+        self._lock = threading.Lock()
+        self.overflowed = 0
+
+    @property
+    def maxsize(self) -> int:
+        return self._max
+
+    def push(self, receipt: str) -> None:
+        if not receipt:
+            return
+        with self._lock:
+            if len(self._items) >= self._max:
+                self.overflowed += 1
+                raise ReceiptBufferFull(
+                    f"receipt outbox is full ({self._max}); "
+                    "acknowledge or raise maxsize — receipts are not evicted"
+                )
+            self._items.append(receipt)
+
+    def peek(self) -> List[str]:
+        with self._lock:
+            return list(self._items)
+
+    def drain(self) -> List[str]:
+        """Return pending receipts without removing them."""
+        return self.peek()
+
+    def acknowledge(self, count: int) -> int:
+        if not isinstance(count, int) or count < 0:
+            return 0
+        with self._lock:
+            n = min(count, len(self._items))
+            del self._items[:n]
+            return n
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._items)
+
+
 def deliver(
     sink: Optional[ReceiptSink],
     receipt_hex: Optional[str],
     on_error: Optional[Callable[[BaseException], None]] = None,
-) -> None:
+) -> bool:
     """Hand a receipt to a sink without letting failure reach the caller.
 
     Authorization is already decided by the time this runs, so a sink must not
     turn a permitted call into a denied one. The failure is reported rather
     than swallowed: an evidence gap nobody knows about is worse than one that
     shows up in the logs.
+
+    Returns True when there was nothing to deliver or the sink accepted the
+    receipt. Returns False when the sink raised — callers must retry the same
+    signed artifact rather than marking the item complete.
     """
     if sink is None or receipt_hex is None:
-        return
+        return True
     try:
         sink.handle(receipt_hex)
+        return True
     except BaseException as exc:  # noqa: BLE001 - isolation is the point
         if on_error is not None:
             try:
                 on_error(exc)
-                return
             except BaseException:  # noqa: BLE001
                 pass
         logger.warning("receipt sink failed; evidence for this decision was not stored", exc_info=exc)
+        return False
+
+
+def collect_enforcement_receipt(
+    result: object,
+    chain_result: Optional[object] = None,
+    runtime: Optional[object] = None,
+) -> None:
+    """Sign and enqueue a receipt when a Runtime with ``receipts='collect'`` is active.
+
+    Safe to call more than once for the same result: a second call is a no-op.
+    Structural refusals (no presented chain) produce no receipt.
+
+    ``runtime`` is the adapter's constructor Runtime when one was passed.
+    Otherwise the process-default or ``session_scope`` Runtime is used.
+    """
+    if result is None or getattr(result, "_tenuo_runtime_receipt", False):
+        return
+    if runtime is None:
+        try:
+            from .runtime import get_runtime
+        except Exception:  # pragma: no cover
+            return
+        runtime = get_runtime()
+    if runtime is None:
+        return
+    collect = getattr(runtime, "collect_result", None)
+    if not callable(collect):
+        return
+    collect(result, chain_result)
+    try:
+        setattr(result, "_tenuo_runtime_receipt", True)
+    except (AttributeError, TypeError):
+        pass
 
 
 # ── emission postures ────────────────────────────────────────────────────────
@@ -197,12 +295,13 @@ class DeferredEmitter:
     The decision context is queued **by reference** — do not mutate the
     ``chain_result`` after emitting it.
 
-    The hot path pays a blocking enqueue. A single worker signs in FIFO
+    The hot path pays a non-blocking enqueue. A single worker signs in FIFO
     order — which is what preserves the receipt chain — and hands the wire
-    to the sink. ``maxsize`` is the loss budget: a SIGKILL loses at most the
-    queued decisions, and under sustained overload the enqueue blocks rather
-    than sheds, because anonymous interior gaps are the one thing the chain
-    cannot expose. Size it as ``rate × the longest outage to ride out``.
+    to the sink. Failed delivery is retried in place with backoff, then
+    dropped (never re-queued). ``maxsize`` is the loss budget: a SIGKILL
+    loses at most the queued decisions. Under sustained overload the newest
+    decision is shed and counted on ``shed_count`` rather than blocking the
+    caller. Size it as ``rate × the longest outage to ride out``.
 
     ``maxsize`` is required to be positive. The unbounded configuration lost
     five million receipts in one measured crash and is not constructible.
@@ -220,6 +319,9 @@ class DeferredEmitter:
         self._inner: Optional[_ReceiptIssuer] = None
         self._on_error: Optional[Callable[[BaseException], None]] = None
         self._worker: Optional[threading.Thread] = None
+        self._stop = threading.Event()
+        self._shed_count = 0
+        self._retry_drops = 0
 
     # Called by ControlPlaneClient: the emitter signs with the client's own
     # key so both postures share one identity and one chain.
@@ -230,10 +332,31 @@ class DeferredEmitter:
         self._worker.start()
 
     def emit_allow(self, chain_result, tool, allowed, ts, request_id, decision_code) -> None:
-        self._q.put(("allow", chain_result, tool, allowed, ts, request_id, decision_code))
+        self._enqueue(("allow", chain_result, tool, allowed, ts, request_id, decision_code))
 
     def emit_denial(self, chain, tool, args, ts, request_id, decision_code, verified_pop) -> None:
-        self._q.put(("deny", chain, tool, args, ts, request_id, decision_code, verified_pop))
+        self._enqueue(("deny", chain, tool, args, ts, request_id, decision_code, verified_pop))
+
+    def _enqueue(self, item: Any) -> None:
+        try:
+            self._q.put_nowait(item)
+        except queue.Full:
+            self._shed_count += 1
+            logger.warning(
+                "deferred receipt queue is full; newest decision shed "
+                "(shed_count=%s)",
+                self._shed_count,
+            )
+
+    @property
+    def shed_count(self) -> int:
+        """Decisions dropped because the queue was full."""
+        return self._shed_count
+
+    @property
+    def retry_drops(self) -> int:
+        """Signed receipts dropped after sink retries were exhausted."""
+        return self._retry_drops
 
     def qsize(self) -> int:
         return self._q.qsize()
@@ -248,7 +371,9 @@ class DeferredEmitter:
                 inner = self._inner
                 if inner is None:
                     raise RuntimeError("DeferredEmitter is not attached")
-                if item[0] == "allow":
+                if item[0] == "signed":
+                    wire = item[1]
+                elif item[0] == "allow":
                     _, chain_result, tool, allowed, ts, request_id, code = item
                     wire = inner.issue_receipt(
                         chain_result, tool, allowed, ts, request_id, code
@@ -258,7 +383,24 @@ class DeferredEmitter:
                     wire = inner.issue_denial_receipt(
                         chain, tool, args, ts, request_id, code, pop
                     )
-                deliver(self._sink, wire, self._on_error)
+                if not deliver(self._sink, wire, self._on_error):
+                    delay = 0.05
+                    delivered = False
+                    for _attempt in range(5):
+                        if self._stop.wait(delay):
+                            break
+                        if deliver(self._sink, wire, self._on_error):
+                            delivered = True
+                            break
+                        delay = min(delay * 2, 1.0)
+                    if not delivered:
+                        self._retry_drops += 1
+                        logger.warning(
+                            "deferred receipt sink failed after retries; "
+                            "this signed receipt was dropped (not re-queued, "
+                            "retry_drops=%s)",
+                            self._retry_drops,
+                        )
             except Exception as exc:  # noqa: BLE001 — one bad item must not kill the worker
                 logger.warning("deferred receipt emission failed", exc_info=exc)
             finally:
@@ -284,6 +426,13 @@ class DeferredEmitter:
     def close(self, timeout: float = 10.0) -> None:
         if self._worker is None:
             return
+        self._stop.set()
+        if not self.flush(timeout):
+            logger.warning(
+                "deferred receipt emitter close abandoned queued or "
+                "in-flight receipts after %.1fs",
+                timeout,
+            )
         # put() without a timeout hangs forever when the queue is full and
         # the worker is blocked in the sink — shutdown must not.
         try:

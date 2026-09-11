@@ -2081,8 +2081,7 @@ impl Authorizer {
     ///
     /// Guard snapshots this at build time. Decision-time checks use the
     /// snapshot, not this field (S34).
-    #[cfg(feature = "sdk")]
-    pub(crate) fn installed_revocation_list(&self) -> Option<&SignedRevocationList> {
+    pub fn installed_revocation_list(&self) -> Option<&SignedRevocationList> {
         self.revocation_list.as_ref()
     }
 

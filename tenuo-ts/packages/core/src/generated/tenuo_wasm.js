@@ -843,11 +843,11 @@ function inspect_approval_gate(warrant_b64, tool) {
 exports.inspect_approval_gate = inspect_approval_gate;
 
 /**
- * Parse a `TENUO_CONNECT_TOKEN` string into its component fields.
+ * Parse a complete `tenuo_ct_…` token into its component fields.
  *
- * The token is a base64url-encoded JSON blob: `{ v, e, k, a?, t? }`.
- * This WASM binding keeps the parsing canonical so TypeScript doesn't need
- * to duplicate the decode logic.
+ * Accepts padded and unpadded Base64URL. Version must be 1; omitted `v`
+ * is an error. Trailing `/v1` is stripped from `e`.
+ * Registration-token aliases: `t`, `r`, `registration_token`.
  *
  * Returns `{ endpoint, apiKey, agentId?, registrationToken?, error? }`.
  * @param {string} token

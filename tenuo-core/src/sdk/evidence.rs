@@ -4,7 +4,10 @@ use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::receipt::{Receipt, RECEIPT_VERSION};
 use crate::SIGNATURE_CONTEXT;
 use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+
+const DEFAULT_RECEIPT_CAPACITY: usize = 10_000;
 
 /// How receipt persistence interacts with the authorization outcome.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -92,9 +95,16 @@ impl ReceiptSigner for LocalReceiptSigner {
 }
 
 /// In-memory sink for tests and local RequiredBeforeExecution.
-#[derive(Default)]
 pub struct MemoryReceiptSink {
     stored: Mutex<Vec<Receipt>>,
+    max: usize,
+    overflowed: AtomicUsize,
+}
+
+impl Default for MemoryReceiptSink {
+    fn default() -> Self {
+        Self::with_capacity(DEFAULT_RECEIPT_CAPACITY)
+    }
 }
 
 impl MemoryReceiptSink {
@@ -103,9 +113,49 @@ impl MemoryReceiptSink {
         Self::default()
     }
 
+    /// Bound outbox. A full sink drops the new receipt, counts it, and
+    /// returns [`ReceiptSinkError::Unavailable`]. Best-effort evidence
+    /// swallows that error; RequiredBeforeExecution denies.
+    pub fn with_capacity(max: usize) -> Self {
+        Self {
+            stored: Mutex::new(Vec::new()),
+            max: max.max(1),
+            overflowed: AtomicUsize::new(0),
+        }
+    }
+
+    /// Receipts dropped because the outbox was full.
+    pub fn overflowed(&self) -> usize {
+        self.overflowed.load(Ordering::Relaxed)
+    }
+
     /// Everything stored so far.
     pub fn stored(&self) -> Vec<Receipt> {
         self.stored.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// Unacknowledged receipts. Same as [`Self::stored`] after prefix drops.
+    pub fn pending(&self) -> Vec<Receipt> {
+        self.stored()
+    }
+
+    /// Receipts at and after `cursor` without removing them.
+    pub fn peek_from(&self, cursor: usize) -> Vec<Receipt> {
+        let stored = self.stored();
+        if cursor >= stored.len() {
+            return Vec::new();
+        }
+        stored[cursor..].to_vec()
+    }
+
+    /// Remove the first `count` stored receipts.
+    pub fn drop_prefix(&self, count: usize) -> usize {
+        let Ok(mut stored) = self.stored.lock() else {
+            return 0;
+        };
+        let n = count.min(stored.len());
+        stored.drain(..n);
+        n
     }
 }
 
@@ -115,6 +165,10 @@ impl ReceiptSink for MemoryReceiptSink {
             .stored
             .lock()
             .map_err(|_| ReceiptSinkError::Unavailable)?;
+        if stored.len() >= self.max {
+            self.overflowed.fetch_add(1, Ordering::Relaxed);
+            return Err(ReceiptSinkError::Unavailable);
+        }
         stored.push(receipt.clone());
         Ok(ReceiptRef {
             id: format!("mem:{}", stored.len()),
@@ -210,6 +264,22 @@ mod tests {
         let reference = sink.persist(&receipt).unwrap();
         assert!(reference.id.starts_with("mem:"));
         assert_eq!(sink.stored().len(), 1);
+        assert_eq!(sink.peek_from(0).len(), 1);
+        assert_eq!(sink.peek_from(0).len(), 1);
+        assert_eq!(sink.drop_prefix(1), 1);
+        assert!(sink.pending().is_empty());
+    }
+
+    #[test]
+    fn memory_sink_overflow_is_counted_and_unavailable() {
+        let sink = MemoryReceiptSink::with_capacity(1);
+        let signer = LocalReceiptSigner::for_development();
+        let payload = ReceiptPayload::allow(vec![0xA0], "tool:read", 1, "inv-2", [1u8; 64]);
+        let receipt = sign_payload(&payload.to_cbor().unwrap(), &signer).unwrap();
+        assert!(sink.persist(&receipt).is_ok());
+        assert_eq!(sink.persist(&receipt), Err(ReceiptSinkError::Unavailable));
+        assert_eq!(sink.stored().len(), 1);
+        assert_eq!(sink.overflowed(), 1);
     }
 
     #[test]

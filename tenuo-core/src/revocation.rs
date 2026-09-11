@@ -46,6 +46,7 @@
 use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::domain::{REVOCATION_REQUEST_CONTEXT, SRL_CONTEXT};
 use crate::error::{Error, Result};
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -412,6 +413,19 @@ impl SignedRevocationList {
         Ok(srl)
     }
 
+    /// Decode a standard-base64 CBOR SRL. Fetching the string is the caller's job.
+    pub fn from_base64(encoded: &str) -> Result<Self> {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded.trim())
+            .map_err(|e| Error::DeserializationError(e.to_string()))?;
+        Self::from_bytes(&bytes)
+    }
+
+    /// Encode as standard-base64 CBOR.
+    pub fn to_base64(&self) -> Result<String> {
+        Ok(base64::engine::general_purpose::STANDARD.encode(self.to_bytes()?))
+    }
+
     /// Serialize the payload for signing/verification.
     fn payload_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
@@ -523,6 +537,21 @@ impl Default for SrlBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_revocation_list_base64_round_trip() {
+        let keypair = SigningKey::generate();
+        let srl = SignedRevocationList::builder()
+            .revoke("tnu_wrt_compromised_1")
+            .version(4)
+            .build(&keypair)
+            .unwrap();
+        let encoded = srl.to_base64().unwrap();
+        let decoded = SignedRevocationList::from_base64(&encoded).unwrap();
+        assert_eq!(decoded.version(), 4);
+        assert!(decoded.is_revoked("tnu_wrt_compromised_1"));
+        assert!(decoded.verify(&keypair.public_key()).is_ok());
+    }
 
     #[test]
     fn test_signed_revocation_list_basic() {

@@ -20,6 +20,8 @@ model.
 - [Production patterns](#production-patterns)
 - [Where Tenuo Cloud fits](#where-tenuo-cloud-fits)
 - [Authorization outcomes](#handle-authorization-outcomes)
+- [Holder runtime](#holder-runtime)
+- [Receipt delivery](#receipt-delivery)
 - [Receipts and revocation](#receipts-and-revocation)
 - [MCP](#mcp)
 - [Develop the SDK](#develop-the-sdk)
@@ -637,6 +639,67 @@ try {
 
 An approval is a signed Tenuo approval envelope. A boolean such as
 `userApproved: true` is not authorization evidence.
+
+## Holder runtime
+
+`createTenuo.runtime()` is the long-lived holder constructor. It owns identity,
+trusted roots, the current signed revocation list, and optional receipt
+collection. It does not perform network I/O or choose a hosted origin.
+
+```ts
+const identity = createTenuo.generateIdentity();
+const runtime = createTenuo.runtime({
+  identity,
+  trustedRoots: [root],
+  revocationList: srl, // optional; refresh with runtime.applyRevocationList(next)
+  receipts: "collect",
+});
+
+const session = runtime.sessionFromWire(warrant);
+await readFile.execute({ path: "/data/q3.pdf" }, { session });
+const receipts = session.peekReceipts();
+session.acknowledgeReceipts(receipts.length);
+```
+
+`createTenuo.parseConnectToken(raw)` parses a complete `tenuo_ct_…` token
+(padded or unpadded Base64URL, version 1 only). Tokens without `v` are
+rejected. Trailing `/v1` is stripped. Scheme-less hostnames and loopback
+origins are left as written. Relative `/v1` needs
+`token.resolveEndpoint({ localBase })` — core never reads env vars or
+defaults to localhost.
+
+`createTenuo.generateIdentity()` / `createTenuo.identity(holderKey)` keep the
+secret out of `JSON.stringify`, `util.inspect`, `toString`, spread, and
+`structuredClone`. Filesystem persistence stays in the caller.
+
+## Receipt delivery
+
+`drainReceipts()` and `peekReceipts()` are the same snapshot. Nothing is
+removed until `acknowledgeReceipts(n)`.
+
+| API | Effect |
+|---|---|
+| `peekReceipts()` | Copy pending receipts. Does not remove them. |
+| `drainReceipts()` | Same as `peekReceipts()`. |
+| `acknowledgeReceipts(n)` | Remove the first `n` pending receipts from the shared outbox (emission order). Session copies of those wires are removed by identity. |
+
+Guarantees:
+
+- Emission order is preserved on the runtime outbox. Session and host
+  receipts share that outbox, so `runtime.acknowledgeReceipts(1)` acks the
+  oldest emitted receipt, not "host buffer first."
+- Two consecutive drains return the same items until acknowledge.
+- Unrelated sessions do not share a buffer. Presented-path verify / MCP
+  handler receipts are on `runtime.peekReceipts()`.
+- Allow and deny receipts are both collected.
+- Explicit `onReceipt` still works and stays isolated (hook failures never
+  deny). Collection itself is synchronous; it does not use fire-and-forget
+  Promises.
+- Persistence and upload are the caller's job.
+
+For a retrying uploader: peek, copy into a durable retry buffer, then
+`acknowledgeReceipts(batch.length)`. Only drop a receipt from the retry
+buffer after a successful upload.
 
 ## Receipts and revocation
 

@@ -1,5 +1,10 @@
 import type { Session as SessionContract, SessionInfo } from "./api.ts";
 import { TenuoConfigurationError } from "./errors.ts";
+import {
+  acknowledgeSessionReceipts,
+  drainSessionReceipts,
+  peekSessionReceipts,
+} from "./runtime.ts";
 import type { WasmSession, WasmSessionInfo } from "./wasm.ts";
 
 const inspect = Symbol.for("nodejs.util.inspect.custom");
@@ -92,6 +97,22 @@ export class Session implements SessionContract {
       out.minApprovals = info.min_approvals;
     }
     return out;
+  }
+
+  /**
+   * Snapshot of collected receipts. Same as `drainReceipts`; nothing is
+   * removed until `acknowledgeReceipts`.
+   */
+  peekReceipts(): string[] {
+    return peekSessionReceipts(this);
+  }
+
+  drainReceipts(): string[] {
+    return drainSessionReceipts(this);
+  }
+
+  acknowledgeReceipts(count: number): number {
+    return acknowledgeSessionReceipts(this, count);
   }
 }
 
