@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `inspect_approval_gate` (also on `Warrant`). TypeScript:
   `approvalRequirement` / `inspectApprovalGate` / `evaluateApprovalGates`.
   WASM: `approval_requirement` / `inspect_approval_gate`. Boolean
-  `evaluate_approval_gates` is `true` only for `Required`.
+  `evaluate_approval_gates` stays on the gate-map-only evaluator so
+  split-view callers (PoP args vs constraint args) still see a firing
+  gate. TypeScript also exports `evaluateApprovalGates`.
 
 ### Changed
 

@@ -2732,9 +2732,15 @@ pub fn evaluate_approval_gates(warrant_b64: &str, tool: &str, args_json: JsValue
         }
     };
 
-    match warrant.approval_requirement(tool, &args) {
-        Ok(req) => serde_wasm_bindgen::to_value(&ApprovalGateResult {
-            approval_required: req.requires_approval(),
+    let map = match warrant.approval_gate_map() {
+        Ok(m) => m,
+        Err(e) => {
+            return fail_closed_gate_result(tool, format!("Gate evaluation error (fail-safe): {}", e));
+        }
+    };
+    match approval_gate::evaluate_approval_gates(map.as_ref(), tool, &args) {
+        Ok(required) => serde_wasm_bindgen::to_value(&ApprovalGateResult {
+            approval_required: required,
             tool: tool.to_string(),
             error: None,
         })

@@ -306,6 +306,20 @@ type Generated = {
   sdkInspectRevocationList(wire: string): WasmSrlInfo;
   sdkVerifyReceipt(wire: string): WasmReceipt;
   sdkVerifyReceiptChain(wire: string, roots: string[]): WasmReceiptChain;
+  approval_requirement(
+    warrantB64: string,
+    tool: string,
+    args: unknown,
+  ): ApprovalRequirement & { error?: string };
+  inspect_approval_gate(
+    warrantB64: string,
+    tool: string,
+  ): ApprovalGateInspection & { error?: string };
+  evaluate_approval_gates(
+    warrantB64: string,
+    tool: string,
+    args: unknown,
+  ): { approval_required: boolean; tool: string; error?: string };
 };
 
 let loaded: Generated | undefined;
@@ -419,25 +433,8 @@ export type ApprovalGateInspection = {
   message?: string;
 };
 
-type ApprovalWasm = {
-  approval_requirement(
-    warrantB64: string,
-    tool: string,
-    args: unknown,
-  ): ApprovalRequirement & { error?: string };
-  inspect_approval_gate(
-    warrantB64: string,
-    tool: string,
-  ): ApprovalGateInspection & { error?: string };
-  evaluate_approval_gates(
-    warrantB64: string,
-    tool: string,
-    args: unknown,
-  ): { approval_required: boolean; tool: string; error?: string };
-};
-
-function loadApprovalWasm(): ApprovalWasm {
-  return loadWasm() as unknown as ApprovalWasm;
+function loadApprovalWasm() {
+  return loadWasm();
 }
 
 function throwIfGateError(error: string | undefined): void {
@@ -471,8 +468,9 @@ export function inspectApprovalGate(warrantB64: string, tool: string): ApprovalG
 }
 
 /**
- * Boolean wrapper around {@link approvalRequirement}.
- * `true` iff the typed status is `required`.
+ * Gate-map-only boolean. Does not run capability checks, so split-view
+ * callers (PoP args vs constraint args) still see a firing gate. Prefer
+ * {@link approvalRequirement} when the caller must distinguish `denied`.
  */
 export function evaluateApprovalGates(
   warrantB64: string,

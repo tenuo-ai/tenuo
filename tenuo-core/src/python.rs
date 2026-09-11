@@ -5751,11 +5751,8 @@ fn py_evaluate_approval_gates(
     args: &Bound<'_, PyDict>,
 ) -> PyResult<bool> {
     let rust_args = py_tool_args(args)?;
-    Ok(warrant
-        .inner
-        .approval_requirement(tool, &rust_args)
-        .map_err(to_py_err)?
-        .requires_approval())
+    let map = warrant.inner.approval_gate_map().map_err(to_py_err)?;
+    crate::approval_gate::evaluate_approval_gates(map.as_ref(), tool, &rust_args).map_err(to_py_err)
 }
 
 /// Typed preflight of a warrant's approval gates for ``(tool, args)``.

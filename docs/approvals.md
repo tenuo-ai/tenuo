@@ -157,15 +157,16 @@ assert req.status == "denied"
 assert not req.requires_approval()
 ```
 
-`evaluate_approval_gates(warrant, tool, args)` remains as a boolean wrapper
-(`True` iff `status == "required"`). Prefer the typed result so an exemption
-or a deny is not confused with "this tool is not gated."
+`evaluate_approval_gates(warrant, tool, args)` is the gate-map-only boolean
+(split-view safe: it does not run capability checks). Prefer
+`approval_requirement` so an exemption or a deny is not confused with "this
+tool is not gated."
 
 **Compatibility**
 
-- The boolean `evaluate_approval_gates` API is unchanged (`True` only for
-  `required`). Capability failures now return `False` because they are
-  `denied`, not `required`.
+- The boolean `evaluate_approval_gates` API is unchanged: it evaluates the
+  gate map only. Capability failures still return `True` when a gate fires.
+  Use `approval_requirement` for `denied`.
 - Malformed or unknown gate encodings raise (Python) or return
   `status="required"` with `error` set (WASM, no fabricated `kind`). Treat
   that as fail-closed — never as ungated.

@@ -545,7 +545,8 @@ class TestApprovalRequirementBinding:
         assert preflight.is_denied()
         assert not preflight.requires_approval()
         assert preflight.code == "constraint_violation"
-        assert not _evaluate_approval_gates(w, "write_approval", {"amount": 1200})
+        # Boolean helper is gate-map only (split-view safe); typed API is Denied.
+        assert _evaluate_approval_gates(w, "write_approval", {"amount": 1200})
         with pytest.raises(ConstraintViolation):
             _authorize(w, holder, "write_approval", {"amount": 1200}, root.public_key)
 

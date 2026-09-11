@@ -1075,7 +1075,7 @@ describe("approvalRequirement", () => {
     const denied = approvalRequirement(warrant, "write_approval", { amount: 1200 });
     expect(denied.status).toBe("denied");
     expect(denied.code).toBe("constraint_violation");
-    expect(evaluateApprovalGates(warrant, "write_approval", { amount: 1200 })).toBe(false);
+    expect(evaluateApprovalGates(warrant, "write_approval", { amount: 1200 })).toBe(true);
     const missing = approvalRequirement(warrant, "read_file", { path: "/x" });
     expect(missing.status).toBe("denied");
     expect(missing.code).toBe("tool_not_authorized");
